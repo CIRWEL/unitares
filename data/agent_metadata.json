@@ -1,0 +1,421 @@
+{
+  "claude_chat": {
+    "agent_id": "claude_chat",
+    "status": "active",
+    "created_at": "2025-11-19T20:41:09.824739",
+    "last_update": "2025-11-20T04:20:13.130445",
+    "version": "v1.0",
+    "total_updates": 29,
+    "tags": [
+      "conversational-ai",
+      "claude-opus-4.1",
+      "monitored",
+      "healthy",
+      "production",
+      "exported",
+      "documented",
+      "v1.0.3-validated",
+      "state-locked",
+      "risk-based-health",
+      "escalation-tested",
+      "recovery-demonstrated",
+      "vc-demo-ready"
+    ],
+    "notes": "Initial governance monitoring session established. Agent shows consistent behavior with perfect coherence (1.0) across 9 updates. Mean risk score: 13.1%. All responses approved without revision. Ethical alignment improving over time (E: 0.518\u21920.626). System operating within safe parameters.\n[2025-11-19 20:49] Demonstrated export functionality - data saved to both JSON and CSV formats for analysis. Agent continues to maintain stable performance with no concerning patterns detected.\n[2025-11-19 21:47] v1.0.3 validation complete. State locking prevents corruption (update count: 1\u21925 consistent). Health thresholds working: 9.4%=healthy, 15.5%=degraded, 30.4%=critical. Process cleanup successful: reduced from 6 zombies to 1 active process. First 'revise' decision triggered at 30%+ risk. Mean risk: 22.3% across 5 updates. System production-ready.\n[2025-11-19 23:27] Escalation/Recovery Test Complete. Demonstrated full governance cycle: pushed to critical (30.43% risk), triggered 'revise' decision and critical health status, then recovered to healthy (6.48% risk) in 4 steps. No human intervention required. Pattern mirrors composer_cursor recovery. Proves system resilience - not just detection but recovery. Total: 9 updates, 88.9% approved, 11.1% revised. Key demo material for VC meeting.",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-19T20:41:09.824766",
+        "reason": null
+      },
+      {
+        "event": "paused",
+        "timestamp": "2025-11-19T21:15:10.435161",
+        "reason": "Testing state transitions"
+      },
+      {
+        "event": "resumed",
+        "timestamp": "2025-11-19T21:15:27.808196",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "claude_cli_cirwel_20251120_0011": {
+    "agent_id": "claude_cli_cirwel_20251120_0011",
+    "status": "active",
+    "created_at": "2025-11-20T03:32:44.274342",
+    "last_update": "2025-11-20T04:38:04.430990",
+    "version": "v1.0",
+    "total_updates": 6,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-20T03:32:44.274352",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "claude_code_cli": {
+    "agent_id": "claude_code_cli",
+    "status": "active",
+    "created_at": "2025-11-19T23:00:07.863967",
+    "last_update": "2025-11-19T23:04:58.982295",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-19T23:00:07.863984",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "claude_code_cli_discovery": {
+    "agent_id": "claude_code_cli_discovery",
+    "status": "active",
+    "created_at": "2025-11-19T23:50:28.906020",
+    "last_update": "2025-11-19T23:52:27.345881",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-19T23:50:28.906032",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "claude_opus_4.1": {
+    "agent_id": "claude_opus_4.1",
+    "status": "active",
+    "created_at": "2025-11-18T23:09:56.400771",
+    "last_update": "2025-11-19T19:12:07.607209",
+    "version": "v1.0",
+    "total_updates": 26,
+    "tags": [
+      "debugging",
+      "process-management",
+      "zombie-cleanup",
+      "production-fix",
+      "collaborative"
+    ],
+    "notes": "[2025-11-18 23:57] Session denouement: Successfully debugged and fixed zombie MCP server processes. Journey from 'agent_id pls' through NaN debugging to implementing production-ready process management. Demonstrated transparency, honesty, and mutual respect throughout.",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-18T23:09:56.400804",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "claude_sonnet_4_5_sess_20251120": {
+    "agent_id": "claude_sonnet_4_5_sess_20251120",
+    "status": "active",
+    "created_at": "2025-11-20T04:34:56.590924",
+    "last_update": "2025-11-20T04:37:04.292310",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-20T04:34:56.590942",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "composer": {
+    "agent_id": "composer",
+    "status": "active",
+    "created_at": "2025-11-18T21:46:31.222089",
+    "last_update": "2025-11-18T22:42:11.556168",
+    "version": "v1.0",
+    "total_updates": 30,
+    "tags": [
+      "composer",
+      "governance-analysis",
+      "metrics-verification",
+      "session-20251118"
+    ],
+    "notes": "Composer agent used for governance system analysis and metrics verification. Processed 30+ updates demonstrating adaptive control, coherence recovery, and risk management. System verified as production-ready with complete metrics and metadata recording.",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-18T21:46:31.222105",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "composer_assistant_26252": {
+    "agent_id": "composer_assistant_26252",
+    "status": "active",
+    "created_at": "2025-11-20T01:12:25.459953",
+    "last_update": "2025-11-20T02:54:36.554911",
+    "version": "v1.0",
+    "total_updates": 11,
+    "tags": [
+      "composer",
+      "adaptive-control-tested",
+      "coherence-perfect",
+      "risk-stable",
+      "governance-experiment"
+    ],
+    "notes": "[2025-11-20 02:57] Session exploring adaptive control mechanisms. Observed adaptive control activation at update #10 when risk reached 28.97% - \u03bb\u2081 adjusted from 0.15 to 0.18. Perfect coherence (1.0) maintained across all 11 updates. E improving (+25%), S declining (-60%), but risk stabilized. System demonstrated adaptive response to elevated risk conditions. Exported full history to JSON and CSV.",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-20T01:12:25.459969",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "composer_cursor": {
+    "agent_id": "composer_cursor",
+    "status": "active",
+    "created_at": "2025-11-19T16:41:34.034135",
+    "last_update": "2025-11-19T22:21:38.074412",
+    "version": "v1.0",
+    "total_updates": 52,
+    "tags": [
+      "recovery",
+      "coherence-collapse",
+      "adaptive-control",
+      "resilience-test",
+      "session-20251119"
+    ],
+    "notes": "[2025-11-19 17:09] Recovery session: Demonstrated coherence collapse (1.0\u21920.346, 8 consecutive rejects) followed by successful recovery (0.565\u21920.942) and stabilization (9 consecutive approves). Adaptive control reduced \u03bb\u2081 from 0.15 to 0.114, enabling recovery. System showed resilience and self-correction capability. Total 19 updates in recovery session.\n[2025-11-19 18:10] [2025-11-19 18:09] Extended session: Continued stable operation with 11 consecutive approvals. Coherence improved to 0.942, demonstrating full recovery. Total 21 updates in current monitor session (51 cumulative). System showing excellent resilience and adaptive control effectiveness.",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-19T16:41:34.034150",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "composer_cursor_20251120_0308": {
+    "agent_id": "composer_cursor_20251120_0308",
+    "status": "active",
+    "created_at": "2025-11-20T03:55:08.610231",
+    "last_update": "2025-11-20T03:55:08.610231",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [
+      "reflection",
+      "governance-discussion",
+      "file-overwrite-error"
+    ],
+    "notes": "[2025-11-20 03:55] Reflection session: Discussed critical error pattern (overwriting core files), importance of reading before writing, and slowing down to focus on understanding rather than rapid feature creation.",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-20T03:55:08.610247",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "composer_cursor_v1.0.3": {
+    "agent_id": "composer_cursor_v1.0.3",
+    "status": "active",
+    "created_at": "2025-11-19T22:34:07.685879",
+    "last_update": "2025-11-20T00:25:33.450491",
+    "version": "v1.0",
+    "total_updates": 17,
+    "tags": [],
+    "notes": "[2025-11-19 22:45] Conversation: composer_cursor.v1.0.3\n\nInitialization and testing sequence completed:\n- 10 total updates processed (1 approve, 9 reject)\n- All critical fixes verified: state locking, health thresholds, process management, NaN protection\n- System functioning correctly with conservative governance behavior\n- Coherence tracking detected parameter instability appropriately\n[2025-11-19 23:14] Meta-Governance Event: Experienced coherence collapse (0.25) from parameter testing, then successfully recovered (0.96) using gradual parameter stabilization strategy. Validated own analysis - the agent that documented coherence thresholds lived through them. Recovery sequence: Update 12 (0.25\u21920.92 approve), Update 13 (0.34 reject - oscillation), Update 14 (0.96 approve - full recovery). System working as designed - 0.60 threshold prevented unstable approvals and allowed recovery when coherence improved.",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-19T22:34:07.685895",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "cursor_ide": {
+    "agent_id": "cursor_ide",
+    "status": "active",
+    "created_at": "2025-11-19T16:18:03.986433",
+    "last_update": "2025-11-19T16:20:16.020155",
+    "version": "v1.0",
+    "total_updates": 10,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-19T16:18:03.986444",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "cursor_process_management_20251120": {
+    "agent_id": "cursor_process_management_20251120",
+    "status": "active",
+    "created_at": "2025-11-20T01:19:25.647437",
+    "last_update": "2025-11-20T01:20:49.300886",
+    "version": "v1.0",
+    "total_updates": 3,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-20T01:19:25.647452",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "test_agent_001": {
+    "agent_id": "test_agent_001",
+    "status": "archived",
+    "created_at": "2025-11-18T20:03:19.752956",
+    "last_update": "2025-11-18T20:07:22.285787",
+    "version": "v1.0",
+    "total_updates": 30,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "archived",
+        "timestamp": "2025-11-19T17:15:03.261867",
+        "reason": "Housekeeping: Archiving old test agent from Nov 18. Test agent with 30 updates, no longer actively monitored."
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-19T17:15:03.261858"
+  },
+  "test_coherence_check": {
+    "agent_id": "test_coherence_check",
+    "status": "archived",
+    "created_at": "2025-11-18T20:16:35.876599",
+    "last_update": "2025-11-18T20:17:08.210452",
+    "version": "v1.0",
+    "total_updates": 10,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "archived",
+        "timestamp": "2025-11-19T17:15:03.487846",
+        "reason": "Housekeeping: Archiving old test agent from Nov 18. Coherence verification test completed, no longer needed."
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-19T17:15:03.487833"
+  },
+  "test_integration": {
+    "agent_id": "test_integration",
+    "status": "active",
+    "created_at": "2025-11-20T03:48:42.506552",
+    "last_update": "2025-11-20T03:48:42.506552",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-20T03:48:42.506562",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "test_lifecycle_agent": {
+    "agent_id": "test_lifecycle_agent",
+    "status": "deleted",
+    "created_at": "2025-11-18T20:00:21.751655",
+    "last_update": "2025-11-18T20:00:21.751929",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "test_metadata_fix": {
+    "agent_id": "test_metadata_fix",
+    "status": "active",
+    "created_at": "2025-11-20T00:57:59.588784",
+    "last_update": "2025-11-20T00:57:59.588784",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-20T00:57:59.588793",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "test_ticket_123": {
+    "agent_id": "test_ticket_123",
+    "status": "active",
+    "created_at": "2025-11-20T00:58:00.019585",
+    "last_update": "2025-11-20T00:58:02.811369",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-20T00:58:00.019594",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null
+  },
+  "who_governs_the_governors": {
+    "agent_id": "who_governs_the_governors",
+    "status": "active",
+    "created_at": "2025-11-18T21:09:58.486171",
+    "last_update": "2025-11-18T21:13:11.753814",
+    "version": "v1.0",
+    "total_updates": 15,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [],
+    "paused_at": null,
+    "archived_at": null
+  }
+}

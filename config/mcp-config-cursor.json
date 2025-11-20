@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "governance-monitor": {
+      "command": "python3",
+      "args": [
+        "/Users/cirwel/projects/governance-mcp-v1/src/mcp_server_std.py"
+      ],
+      "env": {
+        "PYTHONPATH": "/Users/cirwel/projects/governance-mcp-v1"
+      }
+    }
+  }
+}
+

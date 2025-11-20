@@ -1,0 +1,13 @@
+# MCP Server Dependencies
+# Install with: pip install -r requirements-mcp.txt
+
+# Core MCP SDK
+mcp>=0.1.0
+
+# Governance system dependencies
+numpy>=1.24.0
+psutil>=5.9.0  # For process management and cleanup
+
+# Optional: for better JSON handling
+orjson>=3.9.0
+

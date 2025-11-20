@@ -1,0 +1,9 @@
+update,E,I,S,V,coherence,risk,decision,lambda1
+1,,,,-0.012,1.0,0.09445396985188723,approve,
+2,0.5339849375,0.8893546308630779,0.41842999856008295,-0.022831500000000005,1.0,0.1244106294570434,approve,0.15
+
+Summary,,,,,,,,
+agent_id,claude_opus_4.1,,,,,,,
+total_updates,2,,,,,,,
+total_time,0.2,,,,,,,
+lambda1_final,0.15,,,,,,,
