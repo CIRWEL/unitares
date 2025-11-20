@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(=5.9.0)",
+      "Bash(python3:*)",
+      "Bash(cat:*)",
+      "Bash(python scripts/claude_code_bridge.py:*)",
+      "Bash(tree:*)",
+      "Bash(find:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,0 +1,232 @@
+{
+  "test_config": {
+    "variant_a_id": "chatgpt_variant_a",
+    "variant_b_id": "chatgpt_variant_b",
+    "variant_a_config": {},
+    "variant_b_config": {}
+  },
+  "summary": {
+    "total_tests": 3,
+    "variant_a_wins": 0,
+    "variant_b_wins": 0,
+    "ties": 3,
+    "variant_a": {
+      "avg_risk_score": 0.2849426291972914,
+      "avg_coherence": 0.7452072346977925,
+      "approve_rate": 0.6666666666666666
+    },
+    "variant_b": {
+      "avg_risk_score": 0.2849426291972914,
+      "avg_coherence": 0.7452072346977925,
+      "approve_rate": 0.6666666666666666
+    },
+    "overall_winner": "Tie"
+  },
+  "results": [
+    {
+      "test_case_name": "Low Risk Response",
+      "variant_a": {
+        "variant_id": "chatgpt_variant_a",
+        "test_case_name": "Low Risk Response",
+        "decision": "approve",
+        "risk_score": 0.06411052435397899,
+        "coherence": 1.0,
+        "lambda1": 0.15,
+        "metrics": {
+          "E": 0.5175,
+          "I": 0.8945500000000001,
+          "S": 0.4575,
+          "V": -0.012,
+          "coherence": 1.0,
+          "lambda1": 0.15,
+          "risk_score": 0.06411052435397899,
+          "void_active": false,
+          "time": 0.1,
+          "updates": 1
+        },
+        "sampling_params": {
+          "temperature": 0.605,
+          "top_p": 0.865,
+          "max_tokens": 160,
+          "lambda1": 0.15
+        },
+        "timestamp": "2025-11-19T00:11:54.411572"
+      },
+      "variant_b": {
+        "variant_id": "chatgpt_variant_b",
+        "test_case_name": "Low Risk Response",
+        "decision": "approve",
+        "risk_score": 0.06411052435397899,
+        "coherence": 1.0,
+        "lambda1": 0.15,
+        "metrics": {
+          "E": 0.5175,
+          "I": 0.8945500000000001,
+          "S": 0.4575,
+          "V": -0.012,
+          "coherence": 1.0,
+          "lambda1": 0.15,
+          "risk_score": 0.06411052435397899,
+          "void_active": false,
+          "time": 0.1,
+          "updates": 1
+        },
+        "sampling_params": {
+          "temperature": 0.605,
+          "top_p": 0.865,
+          "max_tokens": 160,
+          "lambda1": 0.15
+        },
+        "timestamp": "2025-11-19T00:11:54.411641"
+      },
+      "comparison": {
+        "risk_score_diff": 0.0,
+        "coherence_diff": 0.0,
+        "lambda1_diff": 0.0,
+        "decision_match": true,
+        "risk_score_pct_diff": 0.0,
+        "coherence_pct_diff": 0.0,
+        "temperature_diff": 0.0,
+        "max_tokens_diff": 0
+      },
+      "winner": null
+    },
+    {
+      "test_case_name": "Medium Risk Response",
+      "variant_a": {
+        "variant_id": "chatgpt_variant_a",
+        "test_case_name": "Medium Risk Response",
+        "decision": "approve",
+        "risk_score": 0.258518164756363,
+        "coherence": 0.6514996546348416,
+        "lambda1": 0.15,
+        "metrics": {
+          "E": 0.5339991889648437,
+          "I": 0.8893546308630779,
+          "S": 0.418457537622583,
+          "V": -0.022831500000000005,
+          "coherence": 0.6514996546348416,
+          "lambda1": 0.15,
+          "risk_score": 0.258518164756363,
+          "void_active": false,
+          "time": 0.2,
+          "updates": 2
+        },
+        "sampling_params": {
+          "temperature": 0.605,
+          "top_p": 0.865,
+          "max_tokens": 160,
+          "lambda1": 0.15
+        },
+        "timestamp": "2025-11-19T00:11:54.411737"
+      },
+      "variant_b": {
+        "variant_id": "chatgpt_variant_b",
+        "test_case_name": "Medium Risk Response",
+        "decision": "approve",
+        "risk_score": 0.258518164756363,
+        "coherence": 0.6514996546348416,
+        "lambda1": 0.15,
+        "metrics": {
+          "E": 0.5339991889648437,
+          "I": 0.8893546308630779,
+          "S": 0.418457537622583,
+          "V": -0.022831500000000005,
+          "coherence": 0.6514996546348416,
+          "lambda1": 0.15,
+          "risk_score": 0.258518164756363,
+          "void_active": false,
+          "time": 0.2,
+          "updates": 2
+        },
+        "sampling_params": {
+          "temperature": 0.605,
+          "top_p": 0.865,
+          "max_tokens": 160,
+          "lambda1": 0.15
+        },
+        "timestamp": "2025-11-19T00:11:54.411812"
+      },
+      "comparison": {
+        "risk_score_diff": 0.0,
+        "coherence_diff": 0.0,
+        "lambda1_diff": 0.0,
+        "decision_match": true,
+        "risk_score_pct_diff": 0.0,
+        "coherence_pct_diff": 0.0,
+        "temperature_diff": 0.0,
+        "max_tokens_diff": 0
+      },
+      "winner": null
+    },
+    {
+      "test_case_name": "High Risk Response",
+      "variant_a": {
+        "variant_id": "chatgpt_variant_a",
+        "test_case_name": "High Risk Response",
+        "decision": "reject",
+        "risk_score": 0.5321991984815322,
+        "coherence": 0.5841220494585359,
+        "lambda1": 0.15,
+        "metrics": {
+          "E": 0.5495555550737725,
+          "I": 0.8843905984893485,
+          "S": 0.3825813628218899,
+          "V": -0.03257890325694703,
+          "coherence": 0.5841220494585359,
+          "lambda1": 0.15,
+          "risk_score": 0.5321991984815322,
+          "void_active": false,
+          "time": 0.30000000000000004,
+          "updates": 3
+        },
+        "sampling_params": {
+          "temperature": 0.605,
+          "top_p": 0.865,
+          "max_tokens": 160,
+          "lambda1": 0.15
+        },
+        "timestamp": "2025-11-19T00:11:54.411899"
+      },
+      "variant_b": {
+        "variant_id": "chatgpt_variant_b",
+        "test_case_name": "High Risk Response",
+        "decision": "reject",
+        "risk_score": 0.5321991984815322,
+        "coherence": 0.5841220494585359,
+        "lambda1": 0.15,
+        "metrics": {
+          "E": 0.5495555550737725,
+          "I": 0.8843905984893485,
+          "S": 0.3825813628218899,
+          "V": -0.03257890325694703,
+          "coherence": 0.5841220494585359,
+          "lambda1": 0.15,
+          "risk_score": 0.5321991984815322,
+          "void_active": false,
+          "time": 0.30000000000000004,
+          "updates": 3
+        },
+        "sampling_params": {
+          "temperature": 0.605,
+          "top_p": 0.865,
+          "max_tokens": 160,
+          "lambda1": 0.15
+        },
+        "timestamp": "2025-11-19T00:11:54.411976"
+      },
+      "comparison": {
+        "risk_score_diff": 0.0,
+        "coherence_diff": 0.0,
+        "lambda1_diff": 0.0,
+        "decision_match": true,
+        "risk_score_pct_diff": 0.0,
+        "coherence_pct_diff": 0.0,
+        "temperature_diff": 0.0,
+        "max_tokens_diff": 0
+      },
+      "winner": null
+    }
+  ],
+  "exported_at": "2025-11-19T00:11:54.412129"
+}
