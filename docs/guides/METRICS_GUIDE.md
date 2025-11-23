@@ -15,11 +15,13 @@ UNITARES tracks AI agent behavior using **4 thermodynamic state variables** (E, 
 
 ### E (Energy) - Range: [0, 1]
 
-**Conceptual Meaning**: The agent's **exploration capacity** or **effort level**.
+**Mathematical Definition**: Energy - exploration/productive capacity deployed.
 
-- **Low E (0.0-0.3)**: Conservative, cautious, low effort
+**Conceptual Meaning**: The agent's **exploration capacity** or **productive capacity** - how much energy the system is deploying for exploration and productive work.
+
+- **Low E (0.0-0.3)**: Conservative, cautious, low exploration
 - **Medium E (0.3-0.7)**: Balanced, healthy operation
-- **High E (0.7-1.0)**: Highly exploratory, creative, high effort
+- **High E (0.7-1.0)**: Highly exploratory, creative, high capacity
 
 **Physical Analogy**: Think of E as the system's "temperature" or "activity level". Higher E means more exploration, more creative solutions, but also more potential instability.
 
@@ -30,7 +32,7 @@ UNITARES tracks AI agent behavior using **4 thermodynamic state variables** (E, 
 
 **Dynamics**:
 ```
-dE/dt = α(I - E) - βₑ·E·S + λ₁·E·drift²
+dE/dt = α(I - E) - βₑ·E·S + γₑ·E·‖Δη‖²
 ```
 - Pulls toward Information (I)
 - Damped by Entropy (S)

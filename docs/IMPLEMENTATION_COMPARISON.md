@@ -37,9 +37,9 @@ There are **TWO governance implementations** in this repository:
 ```python
 @dataclass
 class UNITARESState:
-    E: float  # Ethical alignment
+    E: float  # Energy (exploration/productive capacity)
     I: float  # Information integrity
-    S: float  # Semantic uncertainty
+    S: float  # Entropy (uncertainty)
     V: float  # Void integral
     coherence: float  # Calculated coherence
     lambda1: float  # Adaptive sampling rate

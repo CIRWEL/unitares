@@ -40,10 +40,10 @@ governance_core/
 from governance_core import State
 
 state = State(
-    E=0.7,  # Ethical allocation [0, 1]
+    E=0.7,  # Energy (exploration/productive capacity) [0, 1]
     I=0.8,  # Information integrity [0, 1]
     S=0.2,  # Semantic uncertainty [0, 2]
-    V=0.0,  # Void integral [-2, 2]
+    V=0.0,  # Void integral (E-I imbalance) [-2, 2]
 )
 ```
 
