@@ -64,3 +64,12 @@ secrets/
 *.tmp
 *.bak
 *.old
+
+# Lock files (runtime)
+data/.metadata.lock
+
+# Test artifacts (keep test files, ignore outputs)
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/

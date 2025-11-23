@@ -22,6 +22,7 @@ import signal
 import atexit
 import os
 import time
+import fcntl
 
 try:
     import psutil
@@ -56,8 +57,8 @@ from datetime import datetime
 import os
 
 # Server version - increment when making breaking changes or critical fixes
-SERVER_VERSION = "1.0.3"  # Added state locking, health thresholds, and process heartbeat
-SERVER_BUILD_DATE = "2025-11-18"
+SERVER_VERSION = "2.0.0"  # UNITARES v2.0: Architecture unification with governance_core
+SERVER_BUILD_DATE = "2025-11-22"
 
 # PID file for process tracking
 PID_FILE = Path(project_root) / "data" / ".mcp_server.pid"
@@ -128,30 +129,138 @@ METADATA_FILE = Path(project_root) / "data" / "agent_metadata.json"
 
 
 def load_metadata() -> None:
-    """Load agent metadata from file"""
+    """Load agent metadata from file with locking to prevent race conditions"""
     global agent_metadata
     if METADATA_FILE.exists():
         try:
+            # Use same lock mechanism as save_metadata, but with timeout to prevent hangs
+            metadata_lock_file = METADATA_FILE.parent / ".metadata.lock"
+            lock_fd = os.open(str(metadata_lock_file), os.O_CREAT | os.O_RDWR)
+            lock_acquired = False
+            start_time = time.time()
+            timeout = 2.0  # Shorter timeout for reads (2 seconds)
+            
+            try:
+                # Try to acquire shared lock with timeout (non-blocking)
+                while time.time() - start_time < timeout:
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)  # Non-blocking shared lock
+                        lock_acquired = True
+                        break
+                    except IOError:
+                        # Lock held by another process, wait and retry
+                        time.sleep(0.05)  # Shorter sleep for reads
+                
+                if not lock_acquired:
+                    # Timeout - read without lock (better than hanging)
+                    print(f"[UNITARES MCP] Warning: Metadata lock timeout ({timeout}s) for read, reading without lock", file=sys.stderr)
+                    # Fall through to read without lock
+                else:
+                    # Lock acquired, read with lock protection
+                    with open(METADATA_FILE, 'r') as f:
+                        data = json.load(f)
+                        agent_metadata = {
+                            agent_id: AgentMetadata(**meta)
+                            for agent_id, meta in data.items()
+                        }
+                    return  # Success, exit early
+                
+            finally:
+                if lock_acquired:
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    except:
+                        pass
+                os.close(lock_fd)
+            
+            # Fallback: read without lock if timeout occurred
+            # This is safe for reads - worst case is stale data, but prevents hangs
             with open(METADATA_FILE, 'r') as f:
                 data = json.load(f)
                 agent_metadata = {
                     agent_id: AgentMetadata(**meta)
                     for agent_id, meta in data.items()
                 }
+                
         except Exception as e:
-            print(f"Warning: Could not load metadata: {e}", file=sys.stderr)
+            print(f"[UNITARES MCP] Warning: Could not load metadata: {e}", file=sys.stderr)
 
 
 def save_metadata() -> None:
-    """Save agent metadata to file"""
+    """Save agent metadata to file with locking to prevent race conditions"""
     METADATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(METADATA_FILE, 'w') as f:
-        # Sort by agent_id for consistent file output
-        data = {
-            agent_id: meta.to_dict()
-            for agent_id, meta in sorted(agent_metadata.items())
-        }
-        json.dump(data, f, indent=2)
+    
+    # Use a global metadata lock to prevent concurrent writes
+    # This is separate from per-agent locks and protects the shared metadata file
+    metadata_lock_file = METADATA_FILE.parent / ".metadata.lock"
+    
+    try:
+        # Acquire exclusive lock on metadata file with timeout (prevents hangs)
+        lock_fd = os.open(str(metadata_lock_file), os.O_CREAT | os.O_RDWR)
+        lock_acquired = False
+        start_time = time.time()
+        timeout = 5.0  # 5 second timeout (same as agent lock)
+
+        try:
+            # Try to acquire lock with timeout (non-blocking)
+            while time.time() - start_time < timeout:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_acquired = True
+                    break
+                except IOError:
+                    # Lock held by another process, wait and retry
+                    time.sleep(0.1)
+
+            if not lock_acquired:
+                # Timeout reached - log warning but use fallback
+                print(f"[UNITARES MCP] Warning: Metadata lock timeout after {timeout}s, using fallback write", file=sys.stderr)
+                raise TimeoutError("Metadata lock timeout")
+
+            # Reload metadata to get latest state from disk (in case another process updated it)
+            # Then merge with our in-memory changes (in-memory takes precedence)
+            merged_metadata = {}
+            if METADATA_FILE.exists():
+                try:
+                    with open(METADATA_FILE, 'r') as f:
+                        existing_data = json.load(f)
+                        # Start with what's on disk
+                        for agent_id, meta_dict in existing_data.items():
+                            merged_metadata[agent_id] = AgentMetadata(**meta_dict)
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    # If file is corrupted, start fresh
+                    pass
+            
+            # Overwrite with in-memory state (our changes take precedence)
+            for agent_id, meta in agent_metadata.items():
+                merged_metadata[agent_id] = meta
+            
+            # Write merged state
+            with open(METADATA_FILE, 'w') as f:
+                # Sort by agent_id for consistent file output
+                data = {
+                    agent_id: meta.to_dict()
+                    for agent_id, meta in sorted(merged_metadata.items())
+                }
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())  # Ensure written to disk
+            
+            # Update in-memory state with merged result (includes any new agents from disk)
+            agent_metadata.update(merged_metadata)
+            
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+    except Exception as e:
+        print(f"[UNITARES MCP] Warning: Could not acquire metadata lock: {e}", file=sys.stderr)
+        # Fallback: try without lock (not ideal but better than failing silently)
+        with open(METADATA_FILE, 'w') as f:
+            data = {
+                agent_id: meta.to_dict()
+                for agent_id, meta in sorted(agent_metadata.items())
+            }
+            json.dump(data, f, indent=2)
 
 
 def get_or_create_metadata(agent_id: str) -> AgentMetadata:
@@ -182,7 +291,7 @@ load_metadata()
 
 
 def cleanup_stale_processes():
-    """Clean up stale MCP server processes on startup"""
+    """Clean up stale MCP server processes on startup - only if we have too many"""
     if not PSUTIL_AVAILABLE:
         print("[UNITARES MCP] Skipping stale process cleanup (psutil not available)", file=sys.stderr)
         return
@@ -196,36 +305,59 @@ def cleanup_stale_processes():
                 if cmdline and any('mcp_server_std.py' in str(arg) for arg in cmdline):
                     pid = proc.info['pid']
                     if pid != CURRENT_PID:  # Don't kill ourselves
+                        create_time = proc.info.get('create_time', 0)
+                        age_seconds = time.time() - create_time
+                        # Check for heartbeat file to see if process is active
+                        heartbeat_file = Path(project_root) / "data" / "processes" / f"heartbeat_{pid}.txt"
+                        has_recent_heartbeat = False
+                        if heartbeat_file.exists():
+                            try:
+                                with open(heartbeat_file, 'r') as f:
+                                    last_heartbeat = float(f.read())
+                                heartbeat_age = time.time() - last_heartbeat
+                                has_recent_heartbeat = heartbeat_age < 300  # 5 minutes
+                            except (ValueError, IOError):
+                                pass
+                        
                         current_processes.append({
                             'pid': pid,
-                            'create_time': proc.info.get('create_time', 0)
+                            'create_time': create_time,
+                            'age_seconds': age_seconds,
+                            'has_recent_heartbeat': has_recent_heartbeat
                         })
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
         
-        # Sort by creation time (oldest first)
-        current_processes.sort(key=lambda x: x['create_time'])
-        
-        # Keep the most recent processes (likely active connections)
-        # Only clean up if we exceed the threshold
+        # Only clean up if we exceed the threshold AND processes are truly stale
+        # Don't kill processes that have recent heartbeats (active connections)
         if len(current_processes) > MAX_KEEP_PROCESSES:
-            stale_count = len(current_processes) - MAX_KEEP_PROCESSES
-            print(f"[UNITARES MCP] Found {len(current_processes)} server processes, cleaning up {stale_count} stale ones (keeping {MAX_KEEP_PROCESSES} most recent)...", file=sys.stderr)
+            # Sort by creation time (oldest first)
+            current_processes.sort(key=lambda x: x['create_time'])
             
-            for proc_info in current_processes[:-MAX_KEEP_PROCESSES]:  # All except last MAX_KEEP_PROCESSES
-                try:
-                    proc = psutil.Process(proc_info['pid'])
-                    age_seconds = time.time() - proc_info['create_time']
-                    age_minutes = int(age_seconds / 60)
-                    print(f"[UNITARES MCP] Killing stale process PID {proc_info['pid']} (age: {age_minutes}m)", file=sys.stderr)
-                    proc.terminate()
-                    # Give it a moment to clean up
+            # Only kill processes that:
+            # 1. Are older than 5 minutes AND don't have recent heartbeat
+            # 2. AND we're over the limit
+            stale_processes = [
+                p for p in current_processes[:-MAX_KEEP_PROCESSES]  # All except last MAX_KEEP_PROCESSES
+                if p['age_seconds'] > 300 and not p['has_recent_heartbeat']
+            ]
+            
+            if stale_processes:
+                print(f"[UNITARES MCP] Found {len(current_processes)} server processes, cleaning up {len(stale_processes)} truly stale ones (keeping {MAX_KEEP_PROCESSES} most recent)...", file=sys.stderr)
+                
+                for proc_info in stale_processes:
                     try:
-                        proc.wait(timeout=2)
-                    except psutil.TimeoutExpired:
-                        proc.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                    print(f"[UNITARES MCP] Could not kill PID {proc_info['pid']}: {e}", file=sys.stderr)
+                        proc = psutil.Process(proc_info['pid'])
+                        age_minutes = int(proc_info['age_seconds'] / 60)
+                        print(f"[UNITARES MCP] Killing stale process PID {proc_info['pid']} (age: {age_minutes}m, no recent heartbeat)", file=sys.stderr)
+                        proc.terminate()
+                        # Give it a moment to clean up
+                        try:
+                            proc.wait(timeout=2)
+                        except psutil.TimeoutExpired:
+                            proc.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                        print(f"[UNITARES MCP] Could not kill PID {proc_info['pid']}: {e}", file=sys.stderr)
     except Exception as e:
         print(f"[UNITARES MCP] Warning: Could not clean stale processes: {e}", file=sys.stderr)
 
@@ -263,15 +395,22 @@ signal.signal(signal.SIGTERM, signal_handler)
 # Register cleanup on exit
 atexit.register(remove_pid_file)
 
+# Write heartbeat immediately on startup to mark this process as active
+# This prevents other clients from killing this process during their cleanup
+process_mgr.write_heartbeat()
+
 # Clean up stale processes on startup (using ProcessManager)
+# Use longer max_age to avoid killing active connections from other clients
+# Only kill processes that are truly stale (5+ minutes old without heartbeat)
 try:
-    cleaned = process_mgr.cleanup_zombies(max_keep_processes=MAX_KEEP_PROCESSES)
+    cleaned = process_mgr.cleanup_zombies(max_age_seconds=300, max_keep_processes=MAX_KEEP_PROCESSES)
     if cleaned:
         print(f"[UNITARES MCP] Cleaned up {len(cleaned)} zombie processes on startup", file=sys.stderr)
 except Exception as e:
     print(f"[UNITARES MCP] Warning: Could not clean zombies on startup: {e}", file=sys.stderr)
 
-# Also run legacy cleanup for compatibility
+# Also run legacy cleanup for compatibility (but only if we have too many processes)
+# Don't kill processes aggressively - let multiple clients coexist
 cleanup_stale_processes()
 
 # Write PID file
@@ -708,6 +847,9 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> Sequence[Tex
                     result['metrics']['health_status'] = health_status.value
                     result['metrics']['health_message'] = health_message
 
+                    # Add EISV labels for API documentation
+                    result['eisv_labels'] = UNITARESMonitor.get_eisv_labels()
+
                     # Add warning to response if applicable
                     response = {
                         "success": True,
@@ -744,6 +886,9 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> Sequence[Tex
                 )]
 
             metrics = monitor.get_metrics()
+
+            # Add EISV labels for API documentation
+            metrics['eisv_labels'] = UNITARESMonitor.get_eisv_labels()
 
             return [TextContent(
                 type="text",
