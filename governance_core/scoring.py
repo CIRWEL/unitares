@@ -42,7 +42,7 @@ def phi_objective(
         Φ score (higher is better)
 
     Interpretation:
-        - Φ rewards high E (ethical allocation)
+        - Φ rewards high E (energy/exploration capacity)
         - Φ rewards high I (information integrity)
         - Φ penalizes high S (semantic uncertainty)
         - Φ penalizes high |V| (E-I imbalance)
@@ -56,7 +56,7 @@ def phi_objective(
     d_eta = drift_norm(delta_eta)
 
     phi = (
-        weights.wE * state.E                    # Reward ethical allocation
+        weights.wE * state.E                    # Reward energy/exploration capacity
         - weights.wI * (1.0 - state.I)          # Reward information integrity
         - weights.wS * state.S                  # Penalize uncertainty
         - weights.wV * abs(state.V)             # Penalize imbalance

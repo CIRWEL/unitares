@@ -86,7 +86,7 @@ class Weights:
 
     Φ = wE·E - wI·(1-I) - wS·S - wV·|V| - wEta·‖Δη‖²
     """
-    wE: float = 0.5      # Weight for ethical allocation
+    wE: float = 0.5      # Weight for energy/exploration capacity
     wI: float = 0.5      # Weight for information integrity
     wS: float = 0.5      # Weight for semantic uncertainty
     wV: float = 0.5      # Weight for void imbalance

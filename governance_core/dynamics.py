@@ -14,10 +14,10 @@ Mathematical Framework:
     dV/dt = κ(E - I) - δ·V
 
 where:
-    E: Ethical allocation [0,1]
+    E: Energy (exploration/productive capacity) [0,1]
     I: Information integrity [0,1]
     S: Semantic uncertainty [0,2]
-    V: Void integral [-2,2]
+    V: Void integral (E-I imbalance, like free energy) [-2,2]
     C(V,Θ): Coherence function
     ‖Δη‖: Ethical drift norm
 """
@@ -39,10 +39,10 @@ class State:
     Represents the four core state variables of the UNITARES system.
 
     Attributes:
-        E: Ethical allocation capacity [0, 1]
+        E: Energy (exploration/productive capacity) [0, 1]
         I: Information integrity [0, 1]
         S: Semantic uncertainty / disorder [0, 2]
-        V: Void integral (E-I imbalance accumulator) [-2, 2]
+        V: Void integral (E-I imbalance, like free energy) [-2, 2]
     """
     E: float
     I: float

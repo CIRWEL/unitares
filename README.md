@@ -117,7 +117,7 @@ python scripts/claude_code_bridge.py --export
 
 The system tracks four coupled variables:
 
-- **E**: Energy (exploration capacity)
+- **E**: Energy [0, 1] - exploration and productive capacity
 - **I**: Information Integrity (preservation measure)
 - **S**: Entropy (uncertainty / ethical drift)
 - **V**: Void Integral (E-I balance)

@@ -66,7 +66,7 @@ They are **not duplicates** - they are **different layers** of the same architec
 ```python
 @dataclass
 class State:
-    E: float  # Ethical allocation
+    E: float  # Energy (exploration/productive capacity)
     I: float  # Information integrity
     S: float  # Semantic uncertainty
     V: float  # Void integral

@@ -615,7 +615,7 @@ class UNITARESMonitor:
         return {
             'E': {
                 'label': 'Energy',
-                'description': 'Exploration capacity',
+                'description': 'Exploration capacity / Productive capacity deployed',
                 'range': '[0.0, 1.0]'
             },
             'I': {
