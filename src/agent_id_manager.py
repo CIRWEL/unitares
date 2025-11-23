@@ -25,6 +25,89 @@ COMMON_AGENT_IDS: Set[str] = {
 }
 
 
+def detect_interface_prefix() -> str:
+    """
+    Detect the interface/environment and return appropriate prefix for agent IDs.
+    
+    Returns:
+        Prefix string like "composer_cursor", "cursor_ide", "claude_chat", or "claude_cli"
+    """
+    # Check for explicit override via environment variable
+    explicit_prefix = os.getenv("GOVERNANCE_AGENT_PREFIX")
+    if explicit_prefix:
+        return explicit_prefix
+    
+    # Detect based on environment variables and process context
+    # Cursor/Composer indicators
+    if os.getenv("CURSOR_PID") or os.getenv("CURSOR_VERSION") or os.getenv("CURSOR_AGENT"):
+        return "composer_cursor"
+    
+    # Check parent process name (if available)
+    try:
+        import psutil
+        current_process = psutil.Process()
+        # Check current process name first
+        proc_name = current_process.name().lower()
+        if "cursor" in proc_name:
+            return "composer_cursor"
+        
+        # Check parent process
+        parent = current_process.parent()
+        if parent:
+            parent_name = parent.name().lower()
+            if "cursor" in parent_name:
+                return "composer_cursor"
+            elif "claude" in parent_name:
+                return "claude_chat"
+        
+        # Check process tree up to 3 levels
+        for _ in range(3):
+            try:
+                if parent:
+                    parent = parent.parent()
+                    if parent:
+                        parent_name = parent.name().lower()
+                        if "cursor" in parent_name:
+                            return "composer_cursor"
+                        elif "claude" in parent_name:
+                            return "claude_chat"
+            except (psutil.NoSuchProcess, AttributeError):
+                break
+    except (ImportError, AttributeError, psutil.NoSuchProcess):
+        pass
+    
+    # Check common environment patterns
+    term_program = os.getenv("TERM_PROGRAM", "").lower()
+    if "cursor" in term_program:
+        return "composer_cursor"
+    
+    # Check if running via MCP (likely Cursor or Claude Desktop)
+    # MCP servers are typically invoked by Cursor or Claude Desktop
+    if os.getenv("MCP_SERVER_NAME"):
+        # Could be either, default to cursor since that's more common for dev work
+        return "composer_cursor"
+    
+    # Check PYTHONPATH for IDE indicators
+    pythonpath = os.getenv("PYTHONPATH", "").lower()
+    if "cursor" in pythonpath or "ide" in pythonpath:
+        return "composer_cursor"
+    
+    # Check if we're being called from a script in Cursor context
+    # Look for Cursor-specific paths in the call stack or environment
+    cwd = os.getcwd().lower()
+    if "cursor" in cwd or os.path.exists("/Applications/Cursor.app"):
+        return "composer_cursor"
+    
+    # Default based on common usage patterns
+    # If we're in a script context, likely CLI
+    if os.getenv("_") and "python" in os.getenv("_", "").lower():
+        return "claude_cli"
+    
+    # Final fallback: default to composer_cursor for modern IDE usage
+    # (Most users will be in Cursor/Composer context)
+    return "composer_cursor"
+
+
 class AgentIDManager:
     """Manages agent ID generation with collision detection and session persistence"""
     
@@ -99,7 +182,8 @@ class AgentIDManager:
         """Generate session-based agent ID with context"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         username = os.getenv('USER', os.getenv('USERNAME', 'user'))
-        return f"claude_cli_{username}_{timestamp}"
+        prefix = detect_interface_prefix()
+        return f"{prefix}_{username}_{timestamp}"
     
     def _generate_purpose_id(self, purpose: str) -> str:
         """Generate purpose-based agent ID"""
@@ -107,7 +191,8 @@ class AgentIDManager:
         purpose_clean = ''.join(c if c.isalnum() or c == '_' else '_' 
                                 for c in purpose.lower())
         date = datetime.now().strftime('%Y%m%d')
-        return f"claude_cli_{purpose_clean}_{date}"
+        prefix = detect_interface_prefix()
+        return f"{prefix}_{purpose_clean}_{date}"
     
     def _validate_custom_id(self, agent_id: str, interactive: bool) -> str:
         """Validate custom agent ID and warn about problematic patterns"""

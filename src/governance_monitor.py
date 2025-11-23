@@ -1,6 +1,13 @@
 """
-UNITARES Governance Monitor v1.0 - Core Implementation
+UNITARES Governance Monitor v2.0 - Core Implementation
 Complete thermodynamic governance framework with all decision points implemented.
+
+Now uses governance_core module (canonical UNITARES Phase-3 implementation)
+while maintaining backward-compatible MCP interface.
+
+Version History:
+- v1.0: Used unitaires_core directly
+- v2.0: Migrated to governance_core (single source of truth for dynamics)
 """
 
 import numpy as np
@@ -12,24 +19,57 @@ import json
 
 from config.governance_config import config
 
+# Import UNITARES Phase-3 engine from governance_core (v2.0)
+# Core dynamics are now in governance_core module
+import sys
+from pathlib import Path
+
+# Add project root to path for governance_core
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+# Import core dynamics from governance_core (canonical implementation)
+from governance_core import (
+    State, Theta, Weights,
+    DEFAULT_STATE, DEFAULT_THETA, DEFAULT_WEIGHTS,
+    step_state, coherence,
+    lambda1 as lambda1_from_theta,
+    phi_objective, verdict_from_phi,
+    DynamicsParams, DEFAULT_PARAMS
+)
+
+# Import analysis/optimization functions from unitaires_core
+# These are research tools, not core dynamics
+unitaires_server_path = Path(__file__).parent / "unitaires-server"
+if str(unitaires_server_path) not in sys.path:
+    sys.path.insert(0, str(unitaires_server_path))
+
+from unitaires_core import (
+    approximate_stability_check,
+    suggest_theta_update,
+)
+
 
 @dataclass
 class GovernanceState:
-    """Complete UNITARES thermodynamic state"""
+    """Wrapper around UNITARES Phase-3 State with additional tracking"""
     
-    # Core state variables [0, 1]
-    E: float = 0.5  # Energy (exploration capacity)
-    I: float = 0.9  # Information Integrity
-    S: float = 0.5  # Entropy (uncertainty)
-    V: float = 0.0  # Void Integral (E-I balance)
+    # UNITARES Phase-3 state (internal engine)
+    unitaires_state: State = field(default_factory=lambda: State(
+        E=DEFAULT_STATE.E,
+        I=DEFAULT_STATE.I,
+        S=DEFAULT_STATE.S,
+        V=DEFAULT_STATE.V
+    ))
+    unitaires_theta: Theta = field(default_factory=lambda: Theta(
+        C1=DEFAULT_THETA.C1,
+        eta1=DEFAULT_THETA.eta1
+    ))
     
-    # Derived metrics
-    coherence: float = 1.0      # Bounded coherence function
-    void_active: bool = False   # Whether in void state
-    
-    # Adaptive parameters
-    lambda1: float = config.LAMBDA1_INITIAL  # Ethical coupling parameter
-    pi_integral: float = 0.0                  # PI controller integral state
+    # Derived metrics (computed from UNITARES state)
+    coherence: float = 1.0      # Computed from UNITARES coherence function
+    void_active: bool = False     # Whether in void state (|V| > threshold)
     
     # History tracking
     time: float = 0.0
@@ -40,6 +80,28 @@ class GovernanceState:
     coherence_history: List[float] = field(default_factory=list)
     risk_history: List[float] = field(default_factory=list)
     decision_history: List[str] = field(default_factory=list)  # Track approve/revise/reject decisions
+    
+    # Compatibility: expose E, I, S, V as properties for backward compatibility
+    @property
+    def E(self) -> float:
+        return self.unitaires_state.E
+    
+    @property
+    def I(self) -> float:
+        return self.unitaires_state.I
+    
+    @property
+    def S(self) -> float:
+        return self.unitaires_state.S
+    
+    @property
+    def V(self) -> float:
+        return self.unitaires_state.V
+    
+    @property
+    def lambda1(self) -> float:
+        """Get lambda1 from UNITARES theta using governance_core"""
+        return lambda1_from_theta(self.unitaires_theta, DEFAULT_PARAMS)
     
     def to_dict(self) -> Dict:
         """Export state as dictionary"""
@@ -72,31 +134,37 @@ class UNITARESMonitor:
         """Initialize monitor for a specific agent"""
         self.agent_id = agent_id
         self.state = GovernanceState()
+        
+        # Initialize UNITARES Phase-3 state and theta
+        self.state.unitaires_state = State(**{
+            'E': DEFAULT_STATE.E,
+            'I': DEFAULT_STATE.I,
+            'S': DEFAULT_STATE.S,
+            'V': DEFAULT_STATE.V
+        })
+        self.state.unitaires_theta = Theta(**{
+            'C1': DEFAULT_THETA.C1,
+            'eta1': DEFAULT_THETA.eta1
+        })
 
-        # Previous state for coherence calculation
+        # Previous state for drift calculation
         self.prev_parameters: Optional[np.ndarray] = None
 
         # Timestamps for agent lifecycle tracking
         self.created_at = datetime.now()
         self.last_update = datetime.now()
 
-        print(f"[UNITARES v1.0] Initialized monitor for agent: {agent_id}")
+        print(f"[UNITARES v2.0 + governance_core] Initialized monitor for agent: {agent_id}")
         print(f"  λ₁ initial: {self.state.lambda1:.4f}")
         print(f"  Void threshold: {config.VOID_THRESHOLD_INITIAL:.4f}")
     
     def coherence_function(self, V: float) -> float:
         """
-        Bounded coherence function C(V) ∈ [0, C_max]
-        
-        C(V) = (C_max / 2) * (1 + tanh(V))
-        
-        Properties:
-        - Smooth, bounded, Lipschitz continuous
-        - C(0) = C_max/2 (baseline)
-        - C(V) → C_max as V → ∞
-        - C(V) → 0 as V → -∞
+        Bounded coherence function C(V) using governance_core coherence function.
+
+        Delegates to canonical governance_core.coherence() function.
         """
-        return (config.C_MAX / 2.0) * (1.0 + np.tanh(V))
+        return coherence(V, self.state.unitaires_theta, DEFAULT_PARAMS)
     
     def compute_ethical_drift(self,
                              current_params: np.ndarray,
@@ -180,98 +248,70 @@ class UNITARESMonitor:
 
         return float(coherence)
     
-    def update_dynamics(self, 
+    def update_dynamics(self,
                        agent_state: Dict,
                        dt: float = None) -> None:
         """
-        Updates UNITARES dynamics for one timestep.
-        
+        Updates UNITARES dynamics for one timestep using governance_core engine.
+
+        This now uses the canonical governance_core.step_state() implementation.
+
         Agent state should contain:
         - parameters: array-like, agent parameters
-        - ethical_drift: array-like, ethical signals
+        - ethical_drift: array-like, ethical signals (delta_eta)
         - (optional) response_text: str for risk estimation
         - (optional) complexity: float
         """
         if dt is None:
             dt = config.DT
-        
+
         # Extract agent information
         parameters = np.array(agent_state.get('parameters', []))
-        ethical_signals = np.array(agent_state.get('ethical_drift', []))
+        ethical_signals = np.array(agent_state.get('ethical_drift', [0.0, 0.0, 0.0]))
 
-        # Validate inputs - ensure parameters is not empty and has valid values
-        if len(parameters) == 0:
-            # Default to zero-filled 128-dim vector if empty
-            parameters = np.zeros(128)
-        elif len(parameters) < 128:
-            # Pad with zeros if shorter than expected
-            parameters = np.pad(parameters, (0, max(0, 128 - len(parameters))), mode='constant')
-        elif len(parameters) > 128:
-            # Truncate if longer
-            parameters = parameters[:128]
+        # Validate and normalize ethical_drift (delta_eta) to list
+        if len(ethical_signals) == 0:
+            delta_eta = [0.0, 0.0, 0.0]
+        else:
+            # Convert to list and ensure it's the right length (UNITARES expects list)
+            delta_eta = ethical_signals.tolist() if len(ethical_signals) <= 3 else ethical_signals[:3].tolist()
+            # Pad if needed
+            while len(delta_eta) < 3:
+                delta_eta.append(0.0)
 
         # Replace NaN/inf with zeros
-        parameters = np.nan_to_num(parameters, nan=0.0, posinf=0.0, neginf=0.0)
-        ethical_signals = np.nan_to_num(ethical_signals, nan=0.0, posinf=0.0, neginf=0.0)
+        delta_eta = [0.0 if (np.isnan(x) or np.isinf(x)) else float(x) for x in delta_eta]
 
-        # Compute ethical drift magnitude and parameter coherence
-        drift_sq = self.compute_ethical_drift(parameters, self.prev_parameters)
+        # Store parameters for coherence calculation
         param_coherence = self.compute_parameter_coherence(parameters, self.prev_parameters)
-        self.prev_parameters = parameters.copy()
+        self.prev_parameters = parameters.copy() if len(parameters) > 0 else None
 
-        # Current state
-        E, I, S, V = self.state.E, self.state.I, self.state.S, self.state.V
+        # Use governance_core step_state() to evolve state (CANONICAL DYNAMICS)
+        self.state.unitaires_state = step_state(
+            state=self.state.unitaires_state,
+            theta=self.state.unitaires_theta,
+            delta_eta=delta_eta,
+            dt=dt,
+            noise_S=0.0,  # Can add noise if needed
+            params=DEFAULT_PARAMS
+        )
 
-        # Compute thermodynamic coherence C(V) for dynamics (internal use)
-        C_V = self.coherence_function(V)
-        
-        # UNITARES dynamics (from v4.1)
-        dE_dt = (config.ALPHA * (I - E) 
-                 - config.BETA_E * E * S 
-                 + self.state.lambda1 * E * drift_sq)  # Use current λ₁
-        
-        dI_dt = (-config.K * S 
-                 + config.BETA_I * I * C_V 
-                 - config.GAMMA_I * I * (1 - I))
-        
-        dS_dt = (-config.MU * S 
-                 + self.state.lambda1 * drift_sq 
-                 - config.LAMBDA2 * C_V)
-        
-        dV_dt = config.KAPPA * (E - I) - config.DELTA * V
-        
-        # Euler integration
-        E_new = E + dE_dt * dt
-        I_new = I + dI_dt * dt
-        S_new = S + dS_dt * dt
-        V_new = V + dV_dt * dt
-        
-        # Clamp to valid ranges and check for NaN/inf
-        E_new = np.nan_to_num(E_new, nan=0.5, posinf=1.0, neginf=0.0)
-        I_new = np.nan_to_num(I_new, nan=0.9, posinf=1.0, neginf=0.0)
-        S_new = np.nan_to_num(S_new, nan=0.5, posinf=1.0, neginf=0.0)
-        V_new = np.nan_to_num(V_new, nan=0.0, posinf=1.0, neginf=-1.0)
+        # Update coherence from governance_core coherence function
+        C_V = coherence(self.state.V, self.state.unitaires_theta, DEFAULT_PARAMS)
+        # Blend UNITARES coherence with parameter coherence for monitoring
+        self.state.coherence = 0.7 * C_V + 0.3 * param_coherence
+        self.state.coherence = np.clip(self.state.coherence, 0.0, 1.0)
 
-        self.state.E = np.clip(E_new, 0.0, 1.0)
-        self.state.I = np.clip(I_new, 0.0, 1.0)
-        self.state.S = np.clip(S_new, 0.0, 1.0)
-        self.state.V = float(V_new)  # V can be negative
-
-        # Update coherence (use parameter-based coherence for monitoring)
-        # Ensure coherence is valid
-        param_coherence = np.nan_to_num(param_coherence, nan=0.5, posinf=1.0, neginf=0.0)
-        self.state.coherence = np.clip(param_coherence, 0.0, 1.0)
-        
         # Update history
         self.state.V_history.append(self.state.V)
         self.state.coherence_history.append(self.state.coherence)
-        
+
         # Trim history to window
         if len(self.state.V_history) > config.HISTORY_WINDOW:
             self.state.V_history = self.state.V_history[-config.HISTORY_WINDOW:]
         if len(self.state.coherence_history) > config.HISTORY_WINDOW:
             self.state.coherence_history = self.state.coherence_history[-config.HISTORY_WINDOW:]
-        
+
         # Update time
         self.state.time += dt
         self.state.update_count += 1
@@ -293,79 +333,151 @@ class UNITARESMonitor:
     
     def update_lambda1(self) -> float:
         """
-        Updates λ₁ using PI controller.
+        Updates θ (theta) using UNITARES Phase-3 suggest_theta_update().
         
-        Target: Keep void_freq near 2% and coherence above 85%
+        This updates theta which affects lambda1 via lambda1_from_theta().
         
         Returns updated λ₁ value.
         """
-        # Compute void frequency over recent history
-        if len(self.state.V_history) < 10:
-            void_freq = 0.0
-        else:
-            recent_V = np.array(self.state.V_history[-100:])  # Last 100 updates
-            threshold = config.get_void_threshold(recent_V, adaptive=True)
-            void_events = np.sum(np.abs(recent_V) > threshold)
-            void_freq = void_events / len(recent_V)
-        
-        # Current coherence
-        coherence = self.state.coherence
-        
-        # PI controller update
-        new_lambda1, new_integral = config.pi_update(
-            lambda1_current=self.state.lambda1,
-            void_freq_current=void_freq,
-            void_freq_target=config.TARGET_VOID_FREQ,
-            coherence_current=coherence,
-            coherence_target=config.TARGET_COHERENCE,
-            integral_state=self.state.pi_integral,
-            dt=config.DT
+        # Use UNITARES Phase-3 theta update suggestion
+        # Horizon: look ahead 10 timesteps
+        # Step: small perturbation for gradient estimation
+        theta_update = suggest_theta_update(
+            theta=self.state.unitaires_theta,
+            state=self.state.unitaires_state,
+            horizon=10.0 * config.DT,
+            step=0.01
         )
         
-        # Update state
-        old_lambda1 = self.state.lambda1
-        self.state.lambda1 = new_lambda1
-        self.state.pi_integral = new_integral
+        # Update theta (projected to valid bounds)
+        old_theta = self.state.unitaires_theta
+        new_theta_dict = theta_update['theta_new']
+        self.state.unitaires_theta = Theta(**new_theta_dict)
+        
+        # Get lambda1 values
+        old_lambda1 = lambda1_from_theta(old_theta, DEFAULT_PARAMS)
+        new_lambda1 = self.state.lambda1
         
         # Log significant changes
         if abs(new_lambda1 - old_lambda1) > 0.01:
-            print(f"[λ₁ Update] {old_lambda1:.4f} → {new_lambda1:.4f} "
-                  f"(void_freq={void_freq:.3f}, coherence={coherence:.3f})")
+            print(f"[θ Update] λ₁: {old_lambda1:.4f} → {new_lambda1:.4f} "
+                  f"(C1={old_theta.C1:.3f}→{self.state.unitaires_theta.C1:.3f}, "
+                  f"η1={old_theta.eta1:.3f}→{self.state.unitaires_theta.eta1:.3f})")
         
         return new_lambda1
     
-    def estimate_risk(self, agent_state: Dict) -> float:
+    def estimate_risk(self, agent_state: Dict, score_result: Dict = None) -> float:
         """
-        Estimates risk score for current agent behavior.
+        Estimates risk score using governance_core phi_objective and verdict_from_phi.
+
+        Uses UNITARES phi objective and verdict, then maps to risk score [0, 1].
+
+        Args:
+            agent_state: Agent state dictionary
+            score_result: Optional pre-computed score_result to avoid recomputation
+        """
+        # Extract delta_eta (ethical drift) if score_result not provided
+        if score_result is None:
+            ethical_signals = np.array(agent_state.get('ethical_drift', [0.0, 0.0, 0.0]))
+            if len(ethical_signals) == 0:
+                delta_eta = [0.0, 0.0, 0.0]
+            else:
+                delta_eta = ethical_signals.tolist() if len(ethical_signals) <= 3 else ethical_signals[:3].tolist()
+                while len(delta_eta) < 3:
+                    delta_eta.append(0.0)
+
+            # Use governance_core phi_objective and verdict_from_phi
+            phi = phi_objective(
+                state=self.state.unitaires_state,
+                delta_eta=delta_eta,
+                weights=DEFAULT_WEIGHTS
+            )
+            verdict = verdict_from_phi(phi)
+
+            score_result = {
+                'phi': phi,
+                'verdict': verdict,
+            }
         
-        Uses config.estimate_risk() with agent state information.
-        """
+        # Map UNITARES verdict to risk score [0, 1]
+        # verdict: "safe" -> low risk, "caution" -> medium risk, "high-risk" -> high risk
+        phi = score_result['phi']
+        verdict = score_result['verdict']
+        
+        # Convert phi to risk score: phi is higher for safer states
+        # phi >= 0.3: safe -> risk ~ 0.0-0.3
+        # phi >= 0.0: caution -> risk ~ 0.3-0.7
+        # phi < 0.0: high-risk -> risk ~ 0.7-1.0
+        if phi >= 0.3:
+            # Safe: map phi [0.3, inf] to risk [0.0, 0.3]
+            risk = max(0.0, 0.3 - (phi - 0.3) * 0.5)  # Decreasing risk as phi increases
+        elif phi >= 0.0:
+            # Caution: map phi [0.0, 0.3] to risk [0.3, 0.7]
+            risk = 0.3 + (0.3 - phi) / 0.3 * 0.4  # Linear interpolation
+        else:
+            # High-risk: map phi [-inf, 0.0] to risk [0.7, 1.0]
+            risk = min(1.0, 0.7 + abs(phi) * 2.0)  # Increasing risk as phi becomes more negative
+        
+        # Also blend with traditional risk estimation for backward compatibility
         response_text = agent_state.get('response_text', '')
         complexity = agent_state.get('complexity', 0.5)
-        coherence = self.state.coherence
+        traditional_risk = config.estimate_risk(response_text, complexity, self.state.coherence)
         
-        risk = config.estimate_risk(response_text, complexity, coherence)
+        # Weighted combination: 70% UNITARES phi-based, 30% traditional
+        risk = 0.7 * risk + 0.3 * traditional_risk
         
         # Update history
         self.state.risk_history.append(risk)
         if len(self.state.risk_history) > config.HISTORY_WINDOW:
             self.state.risk_history = self.state.risk_history[-config.HISTORY_WINDOW:]
         
-        return risk
+        return float(np.clip(risk, 0.0, 1.0))
     
-    def make_decision(self, risk_score: float) -> Dict:
+    def make_decision(self, risk_score: float, unitares_verdict: str = None) -> Dict:
         """
-        Makes governance decision using config.make_decision()
+        Makes governance decision using UNITARES Phase-3 verdict and config.make_decision()
+        
+        If unitares_verdict is provided, it influences the decision:
+        - "safe" -> bias toward approve
+        - "caution" -> bias toward revise
+        - "high-risk" -> bias toward reject
         
         Returns decision dict with action, reason, require_human.
         """
-        decision = config.make_decision(
-            risk_score=risk_score,
-            coherence=self.state.coherence,
-            void_active=self.state.void_active
-        )
-        
-        return decision
+        # Use UNITARES verdict to influence decision if available
+        if unitares_verdict == "high-risk":
+            # Override: high-risk verdict -> reject
+            return {
+                'action': 'reject',
+                'reason': f'UNITARES high-risk verdict (risk_score={risk_score:.2f})',
+                'require_human': True
+            }
+        elif unitares_verdict == "caution":
+            # Bias toward revise for caution
+            if risk_score < config.RISK_APPROVE_THRESHOLD:
+                # Low risk but caution -> still approve but note caution
+                decision = config.make_decision(
+                    risk_score=risk_score,
+                    coherence=self.state.coherence,
+                    void_active=self.state.void_active
+                )
+                if decision['action'] == 'approve':
+                    decision['reason'] += ' (UNITARES caution noted)'
+                return decision
+            else:
+                # Medium/high risk + caution -> revise or reject
+                return config.make_decision(
+                    risk_score=risk_score,
+                    coherence=self.state.coherence,
+                    void_active=self.state.void_active
+                )
+        else:
+            # Safe verdict or no verdict: use standard decision logic
+            return config.make_decision(
+                risk_score=risk_score,
+                coherence=self.state.coherence,
+                void_active=self.state.void_active
+            )
     
     def process_update(self, agent_state: Dict) -> Dict:
         """
@@ -394,11 +506,30 @@ class UNITARESMonitor:
         if self.state.update_count % 10 == 0:  # Update λ₁ every 10 cycles
             self.update_lambda1()
         
-        # Step 4: Estimate risk
-        risk_score = self.estimate_risk(agent_state)
+        # Step 4: Estimate risk (also gets UNITARES verdict)
+        # Get UNITARES verdict for decision making using governance_core
+        ethical_signals = np.array(agent_state.get('ethical_drift', [0.0, 0.0, 0.0]))
+        if len(ethical_signals) == 0:
+            delta_eta = [0.0, 0.0, 0.0]
+        else:
+            delta_eta = ethical_signals.tolist() if len(ethical_signals) <= 3 else ethical_signals[:3].tolist()
+            while len(delta_eta) < 3:
+                delta_eta.append(0.0)
+
+        # Use governance_core phi_objective and verdict_from_phi
+        phi = phi_objective(
+            state=self.state.unitaires_state,
+            delta_eta=delta_eta,
+            weights=DEFAULT_WEIGHTS
+        )
+        unitares_verdict = verdict_from_phi(phi)
+        score_result = {'phi': phi, 'verdict': unitares_verdict}
         
-        # Step 5: Make decision
-        decision = self.make_decision(risk_score)
+        # Estimate risk (uses score_result internally to avoid recomputation)
+        risk_score = self.estimate_risk(agent_state, score_result=score_result)
+        
+        # Step 5: Make decision (using UNITARES verdict)
+        decision = self.make_decision(risk_score, unitares_verdict=unitares_verdict)
         
         # Track decision history for governance auditing
         # Backward compatibility: ensure decision_history exists (for instances created before this feature)
@@ -451,6 +582,14 @@ class UNITARESMonitor:
                 'reject': counts.get('reject', 0),
                 'total': len(decision_history)
             }
+
+        # Check stability using UNITARES Phase-3 approximate_stability_check()
+        stability_result = approximate_stability_check(
+            theta=self.state.unitaires_theta,
+            samples=200,
+            steps_per_sample=20,
+            dt=config.DT
+        )
         
         return {
             'agent_id': self.agent_id,
@@ -461,9 +600,41 @@ class UNITARESMonitor:
             'mean_risk': float(np.mean(self.state.risk_history)) if self.state.risk_history else 0.0,
             'void_frequency': float(np.mean([float(abs(v) > config.VOID_THRESHOLD_INITIAL)
                                             for v in self.state.V_history])) if self.state.V_history else 0.0,
-            'decision_statistics': decision_counts
+            'decision_statistics': decision_counts,
+            'stability': {
+                'stable': stability_result['stable'],
+                'alpha_estimate': stability_result['alpha_estimate'],
+                'violations': stability_result['violations'],
+                'notes': stability_result['notes']
+            }
         }
-    
+
+    @staticmethod
+    def get_eisv_labels() -> Dict:
+        """Returns EISV metric labels and descriptions for API documentation"""
+        return {
+            'E': {
+                'label': 'Energy',
+                'description': 'Exploration capacity',
+                'range': '[0.0, 1.0]'
+            },
+            'I': {
+                'label': 'Information Integrity',
+                'description': 'Preservation measure',
+                'range': '[0.0, 1.0]'
+            },
+            'S': {
+                'label': 'Entropy',
+                'description': 'Uncertainty / ethical drift',
+                'range': '[0.0, 1.0]'
+            },
+            'V': {
+                'label': 'Void Integral',
+                'description': 'E-I balance measure',
+                'range': '(-inf, +inf)'
+            }
+        }
+
     def export_history(self, format: str = 'json') -> str:
         """Exports complete history for analysis"""
         import csv

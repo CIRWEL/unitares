@@ -86,7 +86,10 @@ class GovernanceMCPServer:
             
             # Process update
             result = monitor.process_update(agent_state)
-            
+
+            # Add EISV labels for API documentation
+            result['eisv_labels'] = UNITARESMonitor.get_eisv_labels()
+
             return {
                 'success': True,
                 **result
@@ -127,7 +130,10 @@ class GovernanceMCPServer:
             
             monitor = self.monitors[agent_id]
             metrics = monitor.get_metrics()
-            
+
+            # Add EISV labels for API documentation
+            metrics['eisv_labels'] = UNITARESMonitor.get_eisv_labels()
+
             return {
                 'success': True,
                 **metrics,

@@ -1,6 +1,6 @@
-# UNITARES Governance Framework v1.0
+# UNITARES Governance Framework v2.0
 
-**Complete, production-ready AI governance system with all decision points implemented.**
+**Complete, production-ready AI governance system with unified architecture and all decision points implemented.**
 
 ## 🎯 What's New in v1.0
 
