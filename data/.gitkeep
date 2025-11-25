@@ -1,2 +1,2 @@
-# Data directory for governance history CSV files
-
+# This file ensures the data/ directory is tracked in git
+# Actual data files (agent_metadata.json, knowledge/, etc.) are ignored

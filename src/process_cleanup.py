@@ -38,7 +38,7 @@ class ProcessManager:
             # Non-critical, don't fail if heartbeat can't be written
             pass
     
-    def cleanup_zombies(self, max_age_seconds: int = 300, max_keep_processes: int = 36):
+    def cleanup_zombies(self, max_age_seconds: int = 300, max_keep_processes: int = 72):
         """
         Remove processes with stale heartbeats or exceeding process limit.
         

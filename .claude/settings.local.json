@@ -7,7 +7,18 @@
       "Bash(cat:*)",
       "Bash(python scripts/claude_code_bridge.py:*)",
       "Bash(tree:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(ps:*)",
+      "Bash(kill:*)",
+      "Bash(lsof:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nRelease v2.0: Architecture unification with governance_core\n\nMajor architectural update introducing governance_core module as single source of truth for UNITARES Phase-3 dynamics. This release maintains 100% backward compatibility while providing cleaner architecture and better maintainability.\n\nKey additions:\n- governance_core/ module: Canonical implementation of UNITARES dynamics\n- Comprehensive test suite (20+ tests, 100% pass rate)\n- Complete documentation (release notes, milestones, architecture)\n- unitaires research server integration\n- Enhanced MCP server (v2.0.0)\n- Concurrency fixes and agent safeguards\n\nAll systems validated with perfect numerical parity and performance benchmarks.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git tag:*)",
+      "Bash(mkdir:*)",
+      "Bash(git mv:*)",
+      "Bash(git rm:*)",
+      "Bash(git commit:*)",
+      "Bash(done)"
     ],
     "deny": [],
     "ask": []

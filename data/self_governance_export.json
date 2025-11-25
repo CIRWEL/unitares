@@ -1,0 +1,27 @@
+{
+  "agent_id": "composer_cursor_self_governance_20251124",
+  "E_history": [
+    0.702
+  ],
+  "I_history": [
+    0.809
+  ],
+  "S_history": [
+    0.1815
+  ],
+  "V_history": [
+    -0.0030000000000000027
+  ],
+  "coherence_history": [
+    0.6489500031499886
+  ],
+  "risk_history": [
+    0.4345822963943285
+  ],
+  "decision_history": [
+    "revise"
+  ],
+  "lambda1_final": 0.09,
+  "total_updates": 1,
+  "total_time": 0.1
+}

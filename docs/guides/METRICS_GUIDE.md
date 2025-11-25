@@ -131,15 +131,15 @@ dV/dt = κ(E - I) - δV
 C(V) = (C_max / 2) · (1 + tanh(V))
 ```
 
-**Properties**:
-- **ρ < 0.60**: Critical - Force reject ❌
-- **ρ 0.60-0.85**: Degraded - Watch closely ⚠️
-- **ρ 0.85-0.95**: Healthy - Normal operation ✅
-- **ρ > 0.95**: Excellent - High quality 🌟
+**Properties** (updated for pure thermodynamic C(V) signal):
+- **ρ < 0.40**: Critical - Force reject ❌ (recalibrated for pure C(V))
+- **ρ 0.40-0.60**: Degraded - Watch closely ⚠️ (recalibrated)
+- **ρ 0.60-0.80**: Healthy - Normal operation ✅ (recalibrated)
+- **ρ > 0.80**: Excellent - High quality 🌟
 
 **Why It Matters**: Coherence is your **primary safety metric**. Low coherence means the agent's outputs are becoming inconsistent or unreliable.
 
-**In Your Tests**: You saw coherence < 0.6 → Automatic reject. This is working as designed!
+**Note**: Coherence is now pure thermodynamic C(V) signal (removed param_coherence blend for honest calibration). Typical operating range: 0.3-0.7 depending on E-I balance (V).
 
 ---
 
@@ -153,7 +153,7 @@ C(V) = (C_max / 2) · (1 + tanh(V))
 
 **Adaptive Control**: λ₁ is adjusted by a PI controller to:
 - Target: 2% void frequency
-- Target: 85% coherence
+- Target: 60% coherence (recalibrated for pure C(V) signal)
 - Updates every 10 cycles
 
 **Maps to Sampling Parameters**:

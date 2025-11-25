@@ -83,6 +83,16 @@ secrets/
 # Lock files (runtime)
 data/.metadata.lock
 
+# Agent metadata (contains API keys - DO NOT COMMIT!)
+data/agent_metadata.json
+data/agent_metadata.json.bak
+
+# Knowledge layer (may contain sensitive discoveries)
+data/knowledge/
+
+# Audit logs (may contain sensitive information)
+data/audit_log.jsonl
+
 # Test artifacts (keep test files, ignore outputs)
 *.pyc
 .pytest_cache/

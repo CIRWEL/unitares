@@ -1,0 +1,13 @@
+{
+  "example_agent": {
+    "agent_id": "example_agent",
+    "status": "active",
+    "created_at": "2025-11-24T00:00:00",
+    "last_updated": "2025-11-24T00:00:00",
+    "total_updates": 0,
+    "api_key": "EXAMPLE_KEY_DO_NOT_USE_IN_PRODUCTION",
+    "tags": ["example"],
+    "notes": "This is an example agent metadata entry. Real API keys are stored in agent_metadata.json (not tracked in git)."
+  }
+}
+

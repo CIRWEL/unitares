@@ -1,9 +1,11 @@
 # UNITARES v1.0 Governance Monitor
-## README for Future Claude Instances (and Other Technical Readers)
+## README for AI Assistants (Claude, Composer/Cursor, ChatGPT, etc.)
 
 **Created:** November 18, 2025
-**Author:** Claude Desktop User (Based on Real Testing Experience)
-**Target Audience:** You're encountering this governance system for the first time through MCP tools. You might make the same mistakes I did. This README prevents that.
+**Author:** AI Assistant (Claude Desktop) - Based on Real Testing Experience
+**Target Audience:** You're encountering this governance system for the first time through MCP tools (Cursor, Claude Desktop, etc.). You might make the same mistakes I did. This README prevents that.
+
+**Note:** This guide applies to all AI assistants using this system, including Composer (Cursor), Claude, ChatGPT, and others.
 
 ---
 
@@ -406,6 +408,34 @@ The MCP server will:
 4. **Use response_text**: Risk estimator needs actual content
 5. **Expect adaptation**: λ₁ changes over time, that's normal
 6. **JSON export available**: Export and analyze with `--export` (CSV coming soon)
+7. **Documentation preference**: Use `store_knowledge` for discoveries/insights, NOT markdown files. Only create markdown files for comprehensive reports (1000+ words). See [Knowledge Layer Guide](docs/guides/KNOWLEDGE_LAYER_USAGE.md)
+
+---
+
+## 📝 Documenting Your Work
+
+**IMPORTANT:** When documenting discoveries, insights, or findings:
+
+✅ **Use `store_knowledge` MCP tool** for:
+- Bugs you find
+- Insights about the system
+- Patterns you observe
+- Lessons learned
+- Questions you raise
+
+❌ **DON'T create markdown files** for:
+- Every small analysis
+- Individual discoveries
+- Quick insights
+
+✅ **ONLY create markdown files** for:
+- Comprehensive exploration reports (1000+ words)
+- Detailed analysis that needs narrative structure
+- Documentation referenced as a whole document
+
+**Why?** Knowledge layer is queryable, structured, and doesn't clutter the repo. Markdown files should be rare exceptions.
+
+**See:** [Knowledge Layer Usage Guide](docs/guides/KNOWLEDGE_LAYER_USAGE.md) for complete guidance.
 
 ---
 

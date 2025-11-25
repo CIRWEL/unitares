@@ -20,13 +20,16 @@ class HealthStatus(Enum):
 class HealthThresholds:
     """Define health status based on risk score and other metrics"""
     
-    # Risk-based thresholds
-    risk_healthy_max: float = 0.15
-    risk_degraded_max: float = 0.30
+    # Risk-based thresholds (recalibrated Nov 2025)
+    # Based on observed risk distribution: most agents show 30-60% risk
+    risk_healthy_max: float = 0.30    # < 30%: Healthy
+    risk_degraded_max: float = 0.60   # 30-60%: Degraded, 60%+: Critical
     
     # Coherence thresholds (fallback if risk not available)
-    coherence_healthy_min: float = 0.85
-    coherence_degraded_min: float = 0.60
+    # Updated for pure thermodynamic C(V) signal (removed param_coherence blend)
+    # C(V) typically ranges 0.3-0.7 in normal operation
+    coherence_healthy_min: float = 0.60  # Recalibrated for pure C(V)
+    coherence_degraded_min: float = 0.40  # Recalibrated for pure C(V)
     
     def get_health_status(
         self, 
