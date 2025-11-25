@@ -1,10 +1,35 @@
-# UNITARES Governance Framework v2.0
+# UNITARES Governance Framework v2.1
 
-**Complete, production-ready AI governance system with unified architecture and all decision points implemented.**
+**Complete, production-ready AI governance system with unified architecture, auto-healing infrastructure, and all decision points implemented.**
 
-## 🎯 What's New in v2.0
+## 🎯 What's New in v2.1 (2025-11-25)
 
-This version **completes the missing pieces** from previous iterations:
+This version adds **production-hardened infrastructure** with auto-recovery capabilities:
+
+### ✅ Auto-Healing Lock System
+- **Automatic stale lock detection** - Detects locks from dead processes
+- **Process health checking** - Validates PIDs before cleanup
+- **Exponential backoff retry** - 3 attempts with smart waiting (0.2s * 2^attempt)
+- **Self-recovering** - No manual intervention needed for crashed processes
+- **Fixes Cursor freeze issues** - Automatically prevents lock contention
+
+### ✅ Loop Detection & Prevention
+- **Recent activity tracking** - Monitors `recent_update_timestamps` and `recent_decisions`
+- **Pattern detection** - Identifies infinite update loops
+- **Automatic cooldown** - Enforces `loop_cooldown_until` when loops detected
+- **Prevents runaway agents** - Blocks rapid-fire updates during cooldown
+
+### ✅ Agent Hierarchy & Spawning
+- **Parent/child tracking** - `parent_agent_id` and `spawn_reason` fields
+- **API key authentication** - Unique keys per agent prevent impersonation
+- **Multi-agent support** - Track lineage and dependencies
+- **Debugging aid** - Trace agent spawning chains
+
+### ✅ Enhanced Capacity & Reliability
+- **Doubled process limit** - MAX_KEEP_PROCESSES: 36 → 72
+- **Better concurrency** - Support for Cursor + Claude Desktop + other MCP clients
+- **Modular handlers** - Clean handler registry pattern (29 handlers)
+- **Recovery tools** - One-command fix script for common issues
 
 ### ✅ Elegant Handler Architecture (2025-11-25)
 - **Refactored MCP server** from massive elif chain (1,700+ lines) to clean handler registry pattern (~30 lines)

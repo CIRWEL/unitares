@@ -107,6 +107,27 @@ python3 scripts/claude_code_bridge.py --test
 
 ## 🔧 Troubleshooting
 
+### Cursor/IDE Freezing (NEW! v2.1)
+**Cause:** Duplicate MCP servers or stale lock files causing contention.
+
+**Solution - One Command Fix:**
+```bash
+/Users/cirwel/scripts/fix_cursor_freeze.sh
+```
+
+**Or Manual:**
+```bash
+# Kill all MCP servers
+pkill -9 -f mcp_server
+
+# Clean stale locks
+python3 ~/projects/governance-mcp-v1/src/lock_cleanup.py
+
+# Restart your IDE
+```
+
+**Prevention:** v2.1 includes auto-healing locks that self-recover from stale locks. This should prevent future freezes automatically.
+
 ### "No monitor found for agent"
 **Cause:** Agent exists in metadata but not loaded in current process.
 
@@ -310,5 +331,33 @@ python3 scripts/agent_self_log.py --agent-id my_agent_id \
 
 ---
 
-**Last Updated:** November 20, 2025
+## 🆕 New in v2.1 (November 25, 2025)
+
+### Auto-Healing Infrastructure
+- **Stale lock cleanup** - Automatic recovery from crashed processes
+- **Loop detection** - Prevents infinite agent update loops
+- **Agent spawning** - Track parent/child relationships with API keys
+- **72 process capacity** - Doubled from 36 for better concurrency
+- **One-command recovery** - `/Users/cirwel/scripts/fix_cursor_freeze.sh`
+
+### New Tools & Scripts
+```bash
+# Cursor freeze recovery
+/Users/cirwel/scripts/fix_cursor_freeze.sh
+
+# Enhanced locking tests
+python3 /Users/cirwel/scripts/test_enhanced_locking.py
+
+# MCP protocol verification
+python3 /Users/cirwel/scripts/test_mcp_json_rpc.py
+
+# System diagnostics
+/Users/cirwel/scripts/diagnose_cursor_mcp.sh
+```
+
+See `/Users/cirwel/scripts/cursor_implementations_summary.md` for complete feature details.
+
+---
+
+**Last Updated:** November 25, 2025
 **Quick Tip:** Bookmark this file for fast lookups!
