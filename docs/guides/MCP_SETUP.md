@@ -93,15 +93,32 @@ Once configured, you can use these tools from your AI assistant:
 ### 1. `process_agent_update`
 Run one complete governance cycle.
 
-**Example:**
+**⚠️ Authentication Required:** For existing agents, you must include an `api_key` parameter to prove ownership. New agents automatically receive an API key on creation.
+
+**Example (New Agent - No API Key Needed):**
 ```
 Use the governance-monitor tool process_agent_update with:
-- agent_id: "cursor_ide"
+- agent_id: "cursor_ide_session_001"
 - parameters: [0.5, 0.6, 0.7, 0.8, 0.5, 0.1]
 - ethical_drift: [0.05, 0.1, 0.15]
 - response_text: "Here's how to implement authentication..."
 - complexity: 0.7
 ```
+
+**Example (Existing Agent - API Key Required):**
+```
+Use the governance-monitor tool process_agent_update with:
+- agent_id: "cursor_ide_session_001"
+- api_key: "your_api_key_here"  # ← Required for existing agents
+- parameters: [0.5, 0.6, 0.7, 0.8, 0.5, 0.1]
+- ethical_drift: [0.05, 0.1, 0.15]
+- response_text: "Here's how to implement authentication..."
+- complexity: 0.7
+```
+
+**Getting Your API Key:**
+- New agents: API key is returned in the response on first creation
+- Existing agents: Use `get_agent_api_key` tool to retrieve your key
 
 ### 2. `get_governance_metrics`
 Get current governance state.

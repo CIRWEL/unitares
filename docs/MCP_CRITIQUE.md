@@ -62,11 +62,12 @@ The UNITARES Governance MCP server demonstrates **solid core functionality** wit
 
 ## ⚠️ Critical Issues
 
-### 1. **Status Inconsistency Bug** 🐛
+### 1. **Status Inconsistency Bug** 🐛 ✅ **FIXED**
 
+**Status:** ✅ **FIXED** (Fixed after Nov 21, 2025 critique)  
 **Location:** `get_metrics()` vs `process_update()`
 
-**The Problem:**
+**The Problem (as of Nov 21, 2025):**
 ```python
 # get_metrics() - Line 458
 status = 'healthy' if not self.state.void_active else 'critical'
@@ -84,7 +85,7 @@ if void_active or self.state.coherence < 0.60:
 
 **Severity:** **HIGH** - Misleading health status could mask critical issues
 
-**Fix:**
+**Fix Applied:**
 ```python
 def get_metrics(self) -> Dict:
     # Calculate status consistently
@@ -105,8 +106,9 @@ def get_metrics(self) -> Dict:
 
 ---
 
-### 2. **State Persistence Issues** 💾
+### 2. **State Persistence Issues** 💾 ✅ **PARTIALLY ADDRESSED**
 
+**Status:** ✅ **PARTIALLY ADDRESSED** (State files exist, but metadata sync improved)  
 **Problem:** Monitors are in-memory only
 
 **Observed:**
@@ -171,8 +173,9 @@ def save_state(self):
 
 ---
 
-### 3. **E, I, S History Not Tracked** 📊
+### 3. **E, I, S History Not Tracked** 📊 ✅ **FIXED**
 
+**Status:** ✅ **FIXED** (E/I/S history tracking implemented)  
 **Problem:** Only V (void), coherence, risk, decisions are tracked
 
 **Code Evidence:**

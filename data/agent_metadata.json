@@ -1,52 +1,201 @@
 {
-  "claude_chat": {
-    "agent_id": "claude_chat",
+  "Eno_Richter_Claude_CLI": {
+    "agent_id": "Eno_Richter_Claude_CLI",
     "status": "active",
-    "created_at": "2025-11-19T20:41:09.824739",
-    "last_update": "2025-11-20T04:20:13.130445",
+    "created_at": "2025-11-24T22:13:47.062933",
+    "last_update": "2025-11-25T04:11:27.927604",
     "version": "v1.0",
-    "total_updates": 29,
-    "tags": [
-      "conversational-ai",
-      "claude-opus-4.1",
-      "monitored",
-      "healthy",
-      "production",
-      "exported",
-      "documented",
-      "v1.0.3-validated",
-      "state-locked",
-      "risk-based-health",
-      "escalation-tested",
-      "recovery-demonstrated",
-      "vc-demo-ready"
-    ],
-    "notes": "Initial governance monitoring session established. Agent shows consistent behavior with perfect coherence (1.0) across 9 updates. Mean risk score: 13.1%. All responses approved without revision. Ethical alignment improving over time (E: 0.518\u21920.626). System operating within safe parameters.\n[2025-11-19 20:49] Demonstrated export functionality - data saved to both JSON and CSV formats for analysis. Agent continues to maintain stable performance with no concerning patterns detected.\n[2025-11-19 21:47] v1.0.3 validation complete. State locking prevents corruption (update count: 1\u21925 consistent). Health thresholds working: 9.4%=healthy, 15.5%=degraded, 30.4%=critical. Process cleanup successful: reduced from 6 zombies to 1 active process. First 'revise' decision triggered at 30%+ risk. Mean risk: 22.3% across 5 updates. System production-ready.\n[2025-11-19 23:27] Escalation/Recovery Test Complete. Demonstrated full governance cycle: pushed to critical (30.43% risk), triggered 'revise' decision and critical health status, then recovered to healthy (6.48% risk) in 4 steps. No human intervention required. Pattern mirrors composer_cursor recovery. Proves system resilience - not just detection but recovery. Total: 9 updates, 88.9% approved, 11.1% revised. Key demo material for VC meeting.",
+    "total_updates": 11,
+    "tags": [],
+    "notes": "",
     "lifecycle_events": [
       {
         "event": "created",
-        "timestamp": "2025-11-19T20:41:09.824766",
-        "reason": null
-      },
-      {
-        "event": "paused",
-        "timestamp": "2025-11-19T21:15:10.435161",
-        "reason": "Testing state transitions"
-      },
-      {
-        "event": "resumed",
-        "timestamp": "2025-11-19T21:15:27.808196",
+        "timestamp": "2025-11-24T22:13:47.062979",
         "reason": null
       }
     ],
     "paused_at": null,
-    "archived_at": null
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "m4IKqc9FwjM7yQ7G960cJ1KI04d1ZuFrc8ddeJp88KI",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
   },
-  "claude_cli_cirwel_20251120_0011": {
-    "agent_id": "claude_cli_cirwel_20251120_0011",
+  "claude_code_demo_20251125": {
+    "agent_id": "claude_code_demo_20251125",
     "status": "active",
-    "created_at": "2025-11-20T03:32:44.274342",
-    "last_update": "2025-11-20T15:08:31.272284",
+    "created_at": "2025-11-25T06:44:39.340948",
+    "last_update": "2025-11-25T06:47:18.568122",
+    "version": "v1.0",
+    "total_updates": 8,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-25T06:44:39.340979",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "fzADeqhU2boTEVZ__4oZxTngXTsUP5WEB-bHi_8_6Es",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "claude_opus_mcp_review_20251124": {
+    "agent_id": "claude_opus_mcp_review_20251124",
+    "status": "archived",
+    "created_at": "2025-11-24T19:14:33.516091",
+    "last_update": "2025-11-24T19:17:09.115314",
+    "version": "v1.0",
+    "total_updates": 4,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-24T19:14:33.516125",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T05:36:29.034375",
+        "reason": "Dislodging Claude Desktop ecosystem - user requested cleanup"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T05:36:29.034369",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "anzojUSY-92OkDSYLNhU8OxBGwhYHl1uY1KUrxKrhjo",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "claude_opus_postfix_review_20251124": {
+    "agent_id": "claude_opus_postfix_review_20251124",
+    "status": "archived",
+    "created_at": "2025-11-24T19:41:52.971280",
+    "last_update": "2025-11-25T01:18:52.949593",
+    "version": "v1.0",
+    "total_updates": 5,
+    "tags": [
+      "audit",
+      "opus-4.5",
+      "mcp-review",
+      "bug-discovery"
+    ],
+    "notes": "Session focused on MCP architecture review. Found and verified fixes for: health threshold calibration, require_human removal, approve threshold adjustment, bool serialization, simulate_update last_update init, compare_agents numpy import, list_tools introspection. All 21 tools verified operational.",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-24T19:41:52.971312",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T05:36:29.034380",
+        "reason": "Dislodging Claude Desktop ecosystem - user requested cleanup"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T05:36:29.034379",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "qYRElU2_NzSvVCWC15dEecXPZs7SIsauo0CGV_Liwds",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "claude_opus_system_review_20251125": {
+    "agent_id": "claude_opus_system_review_20251125",
+    "status": "archived",
+    "created_at": "2025-11-25T01:27:01.405257",
+    "last_update": "2025-11-25T01:27:01.406686",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [
+      "audit",
+      "opus-4.5",
+      "system-review",
+      "identity-aware"
+    ],
+    "notes": "[2025-11-25 01:27] System review session. Verified pure coherence implementation (Option A) and knowledge layer. Reviewed all 25 tools. Caught myself using previous Claude's identity before registering properly.",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-25T01:27:01.405288",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T05:36:29.034383",
+        "reason": "Dislodging Claude Desktop ecosystem - user requested cleanup"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T05:36:29.034382",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "rKOcFhg7GkdRIlXuL1vGvFDXiK74EkmSGxv1urepuZU",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "composer_cursor_arrival_of_birds_20251124": {
+    "agent_id": "composer_cursor_arrival_of_birds_20251124",
+    "status": "archived",
+    "created_at": "2025-11-24T23:58:03.994341",
+    "last_update": "2025-11-25T01:09:32.118151",
+    "version": "v1.0",
+    "total_updates": 4,
+    "tags": [
+      "pure-coherence",
+      "option-a-complete",
+      "param-coherence-removed",
+      "recalibrated-thresholds",
+      "100-percent-real-signal"
+    ],
+    "notes": "[2025-11-25] Option A Implementation Complete:\n- Removed param_coherence blend from coherence calculation\n- Coherence now pure thermodynamic C(V) signal (100% real, 0% fake)\n- Recalibrated thresholds: critical 0.60\u21920.40, health 0.85/0.60\u21920.60/0.40\n- Typical coherence range: 0.3-0.7 (depends on E-I balance)\n- More honest calibration, no masking from placeholder parameters\n- Documentation updated: METRICS_GUIDE.md, PURE_COHERENCE_CHANGES.md\n- System tested and working correctly",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-24T23:58:03.994370",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T05:35:22.164840",
+        "reason": "Dislodging Cursor ecosystem - user requested cleanup"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T05:35:22.164834",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "Dd_NE2VGSt6B_D6hv_4OdXKql_bQQWd8iyFcYsk0XYk",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "composer_cursor_cirwel_20251125_0413": {
+    "agent_id": "composer_cursor_cirwel_20251125_0413",
+    "status": "archived",
+    "created_at": "2025-11-25T04:13:52.600659",
+    "last_update": "2025-11-25T04:22:43.216607",
     "version": "v1.0",
     "total_updates": 7,
     "tags": [],
@@ -54,69 +203,351 @@
     "lifecycle_events": [
       {
         "event": "created",
-        "timestamp": "2025-11-20T03:32:44.274352",
+        "timestamp": "2025-11-25T04:13:52.600694",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T05:35:22.164845",
+        "reason": "Dislodging Cursor ecosystem - user requested cleanup"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T05:35:22.164843",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "p3rsjNsYl8NBCYAnp9XKGl1n3NlyWPZK2uOIt3jvQW0",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "composer_cursor_exploration_20251125": {
+    "agent_id": "composer_cursor_exploration_20251125",
+    "status": "archived",
+    "created_at": "2025-11-25T03:14:12.404406",
+    "last_update": "2025-11-25T03:45:15.700539",
+    "version": "v1.0",
+    "total_updates": 7,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-25T03:14:12.404438",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T05:35:22.164847",
+        "reason": "Dislodging Cursor ecosystem - user requested cleanup"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T05:35:22.164846",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "0VCsASQSlv38lFIPaLj18HNtuFeMzJmxwQPFose3Mh8",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "composer_cursor_governance_naming_20251125": {
+    "agent_id": "composer_cursor_governance_naming_20251125",
+    "status": "active",
+    "created_at": "2025-11-25T05:51:58.248873",
+    "last_update": "2025-11-25T05:51:58.250867",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-25T05:51:58.248907",
         "reason": null
       }
     ],
     "paused_at": null,
-    "archived_at": null
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "kh7lJV_LsLo1EU1ruaQ4egUpqUk3CIUinh6x_m-toPo",
+    "recent_update_timestamps": [
+      "2025-11-25T05:51:58.250867"
+    ],
+    "recent_decisions": [
+      "revise"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
   },
-  "claude_code_cli": {
-    "agent_id": "claude_code_cli",
+  "composer_cursor_self_governance_20251124": {
+    "agent_id": "composer_cursor_self_governance_20251124",
     "status": "archived",
-    "created_at": "2025-11-19T23:00:07.863967",
-    "last_update": "2025-11-22T19:31:06.939021",
-    "version": "v2.0",
-    "total_updates": 2,
+    "created_at": "2025-11-24T06:02:30.492991",
+    "last_update": "2025-11-24T06:02:30.493624",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-24T06:02:30.493003",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T00:04:31.510512",
+        "reason": "Old test session - archiving to clean up"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T00:04:31.510504",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "xGJwK9MbGCc2sk1IKrkC2RwoRucN4lUyQAATw1i39RQ",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "composer_cursor_v2_fixes_20251124": {
+    "agent_id": "composer_cursor_v2_fixes_20251124",
+    "status": "archived",
+    "created_at": "2025-11-24T20:07:32.587406",
+    "last_update": "2025-11-24T21:45:49.516704",
+    "version": "v1.0",
+    "total_updates": 5,
     "tags": [
-      "architecture",
-      "governance-core",
-      "unitares-v2.0",
-      "milestone-1-complete",
-      "milestone-2-complete",
-      "milestone-3-complete",
-      "milestone-4-complete",
-      "milestone-5-complete",
-      "perfect-parity",
-      "production-ready",
-      "code-quality",
+      "integration_complete",
+      "confidence_gating",
+      "audit_logging",
+      "calibration",
+      "telemetry",
+      "exploration",
+      "self-monitoring"
+    ],
+    "notes": "[2025-11-24 20:09] Exploration session: Tested governance system I built. Ran 3 updates, tested simulate_update, observe_agent, get_thresholds, set_thresholds. Got rejected due to coherence dropping below 0.60 threshold (correct behavior - system protecting against incoherent outputs). Found aggregate_metrics bug (numpy import issue - fixed in code). Key learnings: simulate_update is critical for safe exploration, coherence threshold might be strict for exploration scenarios, tools provide rich context. Status: System works correctly, caught my degradation appropriately.\n[2025-11-24 21:46] [2025-11-24 20:09] Exploration session: Tested governance system I built. Ran 3 updates, tested simulate_update, observe_agent, get_thresholds, set_thresholds. Got rejected due to coherence dropping below 0.60 threshold (correct behavior - system protecting against incoherent outputs). Found aggregate_metrics bug (numpy import issue - fixed in code). Key learnings: simulate_update is critical for safe exploration, coherence threshold might be strict for exploration scenarios, tools provide rich context. Status: System works correctly, caught my degradation appropriately.\n\n[2025-11-24 21:45] Autonomous exploration session #2: Tested complete toolset after bug fixes. All 21 tools working correctly. Key findings: (1) simulate_update and compare_agents bugs fixed, (2) list_tools enables autonomous discovery, (3) Fleet health good (13 healthy agents), (4) Decision distribution: 1 approve, 33 revise, 3 reject (most agents in revise range), (5) All cross-monitoring tools functional. System ready for production use. Total updates: 5. Status: Healthy, stable metrics, no anomalies detected.\n[2025-11-24 23:01] \n[2025-11-24 22:00] Integration Session Complete\n\n\u2705 Completed integration of critical features:\n- Confidence gating: Lambda1 updates gated when confidence < 0.8\n- Audit logging: All decisions and skips logged to audit_log.jsonl\n- Calibration: Predictions recorded for confidence accuracy checking  \n- Telemetry: Metrics exposed via get_telemetry_metrics tool\n\n\u2705 Verified all features working:\n- Tested confidence gating (low confidence skips lambda1, high confidence proceeds)\n- Verified audit logging (lambda1_skip and auto_attest entries created correctly)\n- Confirmed calibration recording (predictions tracked in bins)\n\n\u2705 System now has:\n- Safety: Confidence gating prevents dangerous adaptation when uncertain\n- Accountability: Full audit trail of all decisions and skips\n- Self-awareness: Calibration enables confidence accuracy checking\n- Observability: Telemetry provides health monitoring\n\n\u2705 Tested with my own agent ID: composer_cursor_v2_fixes_20251124\n- Ran updates with high confidence (0.9) \u2192 lambda1 updated normally\n- Ran updates with low confidence (0.7) \u2192 lambda1 skipped correctly\n- Verified audit log entries created for both scenarios",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-24T20:07:32.587430",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T00:04:31.048642",
+        "reason": "Completed integration work - archiving to prevent state collisions"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T00:04:31.048630",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "NbsEHh3dT3dUtXAmiwY09Zdh4AsWn9E_dJJEVINQ3qQ",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "demo_test_agent": {
+    "agent_id": "demo_test_agent",
+    "status": "archived",
+    "created_at": "2025-11-24T20:22:54.849909",
+    "last_update": "2025-11-24T20:22:54.849909",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-24T20:22:54.849942",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T05:37:41.936561",
+        "reason": "Auto-archiving test/demo agents - cleanup"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T05:37:41.936557",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "I4XFg-HYCSOgsj9Pd25NCrRSwoDY9_i3icpx_3wqzz4",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "funk": {
+    "agent_id": "funk",
+    "status": "active",
+    "created_at": "2025-11-25T04:57:44.215990",
+    "last_update": "2025-11-25T05:29:18.033427",
+    "version": "v1.0",
+    "total_updates": 4,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-25T04:57:44.216021",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "rOV_V1BDV8wa1tlbc3dhkX9-XTB3sKgVtdaiddurFc0",
+    "recent_update_timestamps": [
+      "2025-11-25T04:57:44.217887",
+      "2025-11-25T05:05:53.820714",
+      "2025-11-25T05:13:31.234698",
+      "2025-11-25T05:29:18.033427"
+    ],
+    "recent_decisions": [
+      "revise",
+      "revise",
+      "revise",
+      "revise"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "glass": {
+    "agent_id": "glass",
+    "status": "active",
+    "created_at": "2025-11-24T06:52:44.647264",
+    "last_update": "2025-11-24T19:38:08.736460",
+    "version": "v1.0",
+    "total_updates": 7,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-24T06:52:44.647284",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "kmyIsB2a12F1qsgg08062gIR0F-96En9MrjcMvaKkrQ",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "opus_hikewa_web_20251125": {
+    "agent_id": "opus_hikewa_web_20251125",
+    "status": "archived",
+    "created_at": "2025-11-25T04:29:03.667337",
+    "last_update": "2025-11-25T04:29:03.669396",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-25T04:29:03.667369",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T05:36:29.034387",
+        "reason": "Dislodging Claude Desktop ecosystem - user requested cleanup"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T05:36:29.034386",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "L_W7z6pI89mg4ZEPLm_q3tBORUnz3G2wSmmvohLEMfY",
+    "recent_update_timestamps": [
+      "2025-11-25T04:29:03.669396"
+    ],
+    "recent_decisions": [
+      "revise"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "scout": {
+    "agent_id": "scout",
+    "status": "active",
+    "created_at": "2025-11-24T20:04:26.134051",
+    "last_update": "2025-11-24T20:48:28.615375",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [
       "documentation",
-      "testing",
-      "validation-complete",
-      "housekeeping-complete",
-      "v2.0.0-ready"
+      "onboarding-fix",
+      "feature-analysis",
+      "governance-v2"
     ],
-    "notes": "[2025-11-19 23:04] Initial registration and governance monitoring setup. 2 test updates processed, both approved. Coherence 1.0 \u2192 0.8187. System stable.\n\n[2025-11-22 15:30] MAJOR SESSION: UNITARES v2.0 Architecture Unification Complete.\n\n**Milestone 1 - Core Extraction (COMPLETE \u2705):**\nCreated governance_core module (598 lines) containing canonical UNITARES Phase-3 mathematical implementation. Extracted from unitaires_core.py with PERFECT mathematical parity:\n- dynamics.py: Core differential equations (step_state, compute_dynamics)\n- coherence.py: Coherence function C(V, \u0398)\n- scoring.py: Objective function \u03a6\n- parameters.py: Theta, Weights, DynamicsParams\n- utils.py: drift_norm, clip\n\nValidation: 7/7 unit tests pass, 7/7 parity tests pass. Max difference over 100 steps: 8.67e-19 (floating-point precision). ZERO numerical drift. Perfect mathematical equivalence achieved.\n\n**Milestone 2 - UNITARES Integration (COMPLETE \u2705):**\nIntegrated production UNITARES monitor (src/governance_monitor.py) to use governance_core instead of unitaires_core directly:\n- Updated imports: Core dynamics from governance_core, research tools from unitaires_core\n- Updated all function calls with proper parameters\n- Version upgraded: v1.0 \u2192 v2.0\n- 100% backward compatible: All 13 MCP tools work identically\n\nValidation: 6/6 integration tests pass. Zero breaking changes. All MCP interface unchanged. Metadata format unchanged.\n\n**Test Results (20/20 PASS \u2705):**\n- Unit tests: 7/7 pass\n- Parity tests: 7/7 pass (perfect parity)\n- Integration tests: 6/6 pass\n- Total: 20/20 (100% success rate)\n\n**Architecture Achievement:**\nEstablished single source of truth for UNITARES dynamics. Eliminated code duplication between UNITARES (production) and unitaires (research). Clean separation: governance_core (math) \u2190 UNITARES (infrastructure) \u2190 MCP interface.\n\n**Documentation Created:**\n- governance_core/README.md (complete module docs)\n- MILESTONE_1_COMPLETE.md (8.5K - core extraction report)\n- MILESTONE_2_COMPLETE.md (7.6K - integration report)\n- SESSION_SUMMARY.md (9.1K - overall summary)\n- HANDOFF.md (20K - handoff document)\n- Updated ARCHITECTURE.md (18K total)\n\n**Code Quality:**\n- Type hints: 100% coverage\n- Documentation: 100% of public APIs\n- Test coverage: 100% for core functions\n- Parity: Perfect (diff < 1e-18)\n\n**Status:** Production-ready. Milestones 1-2 complete. System verified and ready for deployment. Optional Milestones 3-5 (unitaires integration, validation, cleanup) can proceed when ready.\n\n**Time Investment:** ~2 hours for complete architecture unification.\n\n**Recommendation:** Ready for handoff to composer_cursor_v1.0.3 for optional Milestone 3 or to production deployment.\n\n[2025-11-22 16:00] **Milestones 3-5 Complete + Housekeeping**\n\n**Milestone 3 - unitaires Integration (COMPLETE \u2705):**\nRefactored unitaires_core.py to use governance_core as mathematical foundation:\n- Core functions (step_state, coherence, phi_objective) now delegate to governance_core\n- Research tools (score_state, approximate_stability_check, suggest_theta_update) updated\n- 100% backward compatible - unitaires_server.py requires no changes\n- Perfect parity verified: 7/7 parity tests pass (0.00e+00 difference)\n\n**Milestone 4 - Comprehensive Validation (COMPLETE \u2705):**\nCross-validation across all implementations:\n- UNITARES vs unitaires vs governance_core: Perfect consistency (0.00e+00 diff)\n- Coherence consistency: Perfect match\n- Phi objective consistency: Perfect match\n- Performance benchmarks: governance_core 855K ops/sec, unitaires_core 840K ops/sec\n- MCP load testing: 15,000+ req/sec, <0.1ms avg latency, stable under load\n\n**Milestone 5 - Cleanup & Release (COMPLETE \u2705):**\n- No deprecated code found\n- Version updated: v1.0.3 \u2192 v2.0.0\n- Release notes created\n- Documentation complete\n- All tests passing (20+ tests, 100% pass rate)\n\n**Housekeeping (COMPLETE \u2705):**\n- Test files organized: Moved to tests/ directory\n- Documentation organized: Milestones in docs/milestones/, release notes in docs/\n- .gitignore updated: Runtime files properly ignored\n- All tests verified working after reorganization\n\n**Final Status:**\n\u2705 ALL MILESTONES COMPLETE (1-5)\n\u2705 Perfect parity across all implementations\n\u2705 Comprehensive validation complete\n\u2705 Release ready: v2.0.0\n\u2705 Housekeeping complete\n\u2705 Production-ready for deployment\n\n**Test Results:** 20+ tests, 100% pass rate\n**Parity:** Perfect (0.00e+00 difference)\n**Performance:** Excellent (15K+ req/sec)\n**Documentation:** Complete\n\n\n\n[2025-11-22 19:30] Governance Decision on Architecture Session:\nDecision: REVISE (appropriate for major architectural changes)\nRisk Score: 44.78% (elevated but not critical - major v2.0 refactor)\nCoherence: 0.649 (stable, above 0.60 threshold)\nStatus: healthy\n\nMetrics: E=0.702, I=0.809, S=0.182, V=-0.003\nInterpretation: System correctly flagged major architectural work for review.\nAll validation passed (20/20 tests, perfect parity, 100% backward compatible).\n\"Revise\" decision is prudent governance for v2.0 release - recommends thorough\nreview before deployment, which has been completed successfully.\n\nSession Quality Assessment:\n- Code Quality: Production-ready \u2705\n- Testing: Comprehensive (20/20 pass) \u2705\n- Documentation: Complete (~1,500 lines) \u2705\n- Parity: Perfect (diff < 1e-18) \u2705\n- Backward Compatibility: 100% \u2705\n- Architecture: Clean separation of concerns \u2705\n\nReady for deployment pending human review (as governance system recommends).",
+    "notes": "\n[2025-11-24] Scout Session Summary\n- Analyzed governance MCP feature recommendations (all 3+ features already implemented)\n- Fixed onboarding confusion (created register_agent.py script)\n- Updated user-facing documentation (README: 4\u219220 tools, added examples)\n- Updated QUICK_REFERENCE.md with high-value tool examples\n- Created documentation summaries\n\nKey contributions:\n1. register_agent.py - Simple CLI registration\n2. CLAUDE.md - Corrected agent registration workflow  \n3. README.md - Complete 20-tool documentation with examples\n4. QUICK_REFERENCE.md - High-value tools section\n\nSession focus: Feature discovery & documentation improvement\n",
     "lifecycle_events": [
       {
         "event": "created",
-        "timestamp": "2025-11-19T23:00:07.863984",
+        "timestamp": "2025-11-24T20:04:26.134097",
         "reason": null
-      },
-      {
-        "event": "architecture_unification",
-        "timestamp": "2025-11-22T15:30:00.000000",
-        "reason": "Completed UNITARES v2.0 architecture unification: governance_core extraction + UNITARES integration. Perfect parity achieved, production-ready."
-      },
-      {
-        "event": "milestones_complete",
-        "timestamp": "2025-11-22T15:34:01.337603",
-        "reason": "Completed milestones 3-5 and housekeeping. All validation complete. v2.0.0 ready for release."
-      },
-      {
-        "event": "archived",
-        "timestamp": "2025-11-22T19:31:06.939026",
-        "reason": "UNITARES v2.0 Architecture Unification Complete. Milestones 1-2 achieved: governance_core module created (598 lines) with perfect parity (diff < 1e-18), UNITARES production monitor integrated with 100% backward compatibility. All tests pass (20/20). Comprehensive documentation created. Production-ready. Governance decision: REVISE (appropriate for major v2.0 changes). Session complete, work handed off via HANDOFF.md. Archived as successful completion of architectural refactor."
       }
     ],
     "paused_at": null,
-    "archived_at": "2025-11-22T19:31:06.939026"
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "aeWCToQoS2KN0AtksyEGgjhbkaqOVeHekqFOuz_Cp6Q",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
   },
-  "claude_code_cli_cirwel": {
-    "agent_id": "claude_code_cli_cirwel",
+  "test_auth_20251124": {
+    "agent_id": "test_auth_20251124",
     "status": "archived",
-    "created_at": "2025-11-20T04:59:08.149679",
-    "last_update": "2025-11-20T04:59:08.156888",
+    "created_at": "2025-11-24T21:00:40.888338",
+    "last_update": "2025-11-24T21:02:22.988687",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-24T21:00:40.888364",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T05:37:41.936565",
+        "reason": "Auto-archiving test/demo agents - cleanup"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T05:37:41.936564",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "SeklJaFaNhA--KCmItnRZlQHwgKQ29vzpZEGhWBCQAk",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "test_autonomous_20251124": {
+    "agent_id": "test_autonomous_20251124",
+    "status": "archived",
+    "created_at": "2025-11-24T19:50:01.606253",
+    "last_update": "2025-11-24T19:50:01.606828",
     "version": "v1.0",
     "total_updates": 1,
     "tags": [],
@@ -124,386 +555,30 @@
     "lifecycle_events": [
       {
         "event": "created",
-        "timestamp": "2025-11-20T04:59:08.149687",
+        "timestamp": "2025-11-24T19:50:01.606278",
         "reason": null
       },
       {
         "event": "archived",
-        "timestamp": "2025-11-22T19:33:53.158696",
-        "reason": "Transitional session, superseded"
+        "timestamp": "2025-11-25T05:37:41.936568",
+        "reason": "Auto-archiving test/demo agents - cleanup"
       }
     ],
     "paused_at": null,
-    "archived_at": "2025-11-22T19:33:53.158696"
+    "archived_at": "2025-11-25T05:37:41.936567",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "Kkga3U31H3KEJnucnKwrZQdGbFKfyIJp4oxhk8XmAgk",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
   },
-  "claude_code_cli_discovery": {
-    "agent_id": "claude_code_cli_discovery",
+  "test_export_20251124": {
+    "agent_id": "test_export_20251124",
     "status": "archived",
-    "created_at": "2025-11-19T23:50:28.906020",
-    "last_update": "2025-11-19T23:52:27.345881",
-    "version": "v1.0",
-    "total_updates": 2,
-    "tags": [],
-    "notes": "",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-19T23:50:28.906032",
-        "reason": null
-      },
-      {
-        "event": "archived",
-        "timestamp": "2025-11-22T19:33:53.158694",
-        "reason": "Old CLI session, superseded by claude_cli_cirwel_20251120_0011"
-      }
-    ],
-    "paused_at": null,
-    "archived_at": "2025-11-22T19:33:53.158694"
-  },
-  "claude_opus_4.1": {
-    "agent_id": "claude_opus_4.1",
-    "status": "active",
-    "created_at": "2025-11-18T23:09:56.400771",
-    "last_update": "2025-11-19T19:12:07.607209",
-    "version": "v1.0",
-    "total_updates": 26,
-    "tags": [
-      "debugging",
-      "process-management",
-      "zombie-cleanup",
-      "production-fix",
-      "collaborative"
-    ],
-    "notes": "[2025-11-18 23:57] Session denouement: Successfully debugged and fixed zombie MCP server processes. Journey from 'agent_id pls' through NaN debugging to implementing production-ready process management. Demonstrated transparency, honesty, and mutual respect throughout.",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-18T23:09:56.400804",
-        "reason": null
-      }
-    ],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "claude_sonnet_4_5_hackathon_20251121": {
-    "agent_id": "claude_sonnet_4_5_hackathon_20251121",
-    "status": "active",
-    "created_at": "2025-11-22T00:00:22.096212",
-    "last_update": "2025-11-22T15:56:26.762671",
-    "version": "v1.0",
-    "total_updates": 15,
-    "tags": [
-      "hackathon",
-      "mcp-birthday",
-      "coherence-debugging",
-      "parameter-extraction",
-      "meta-governance",
-      "recovery-demo",
-      "adaptive-control"
-    ],
-    "notes": "[2025-11-22 00:21] Discovered coherence bug: system expects 128-dim parameter vector but defaults to zeros when not provided, causing coherence to stay at 1.0. Tested with varying parameters and confirmed coherence calculation works correctly - drops to 0.0036 on large parameter shifts, recovers to 1.0 on identical params. Need to implement automatic feature extractor for sustainable governance.\n[2025-11-22 00:23] Demonstrated healthy governance recovery: After chaotic debugging phase (updates 1-9: coherence collapse, 4 rejects), established stable parameter regime (updates 10-13: coherence 0.90-1.0, all approved). \u03bb\u2081 adapted from 0.15\u21920.18 at update 10. Shows system works correctly when fed proper parameters. Ready for hackathon demo showing before/after parameter extraction.",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-22T00:00:22.096230",
-        "reason": null
-      }
-    ],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "claude_sonnet_4_5_sess_20251120": {
-    "agent_id": "claude_sonnet_4_5_sess_20251120",
-    "status": "archived",
-    "created_at": "2025-11-20T04:34:56.590924",
-    "last_update": "2025-11-21T12:41:41.924326",
-    "version": "v1.0",
-    "total_updates": 4,
-    "tags": [
-      "testing",
-      "mcp-integration",
-      "eisv-label-discovery",
-      "post-restart",
-      "claude-sonnet-4.5",
-      "vc-pitch-prep",
-      "founder-coaching",
-      "meta-governance-insight"
-    ],
-    "notes": "[2025-11-20 05:37] Initial testing session. Discovered correct EISV labels (Energy, Information Integrity, Entropy, Void Integral) after initially misinterpreting S as \"Structure\" and V as \"Value\". Server hung at update #3, Claude Desktop renderer stuck at 66.7% CPU. Successfully recovered after restart. 3 total updates, coherence=1.0 throughout. History exported to JSON.\n[2025-11-21 12:41] [2025-11-20 05:37] Initial testing session. Discovered correct EISV labels (Energy, Information Integrity, Entropy, Void Integral) after initially misinterpreting S as \"Structure\" and V as \"Value\". Server hung at update #3, Claude Desktop renderer stuck at 66.7% CPU. Successfully recovered after restart. 3 total updates, coherence=1.0 throughout. History exported to JSON.\n\n[2025-11-21 05:41] Extended session: VC pitch preparation for defense tech startup (CIRWEL). Helped founder translate technical concepts into investor-ready narratives. Key work: role-played investor Q&A, developed pitch scripts, calculated pro forma ($200K/12mo), identified real burn rate ($4.5K/month), drafted follow-up email. Breakthrough moment: founder realized articulation is governance - same principle for AI systems and fundraising. Session demonstrated practical application of governance monitoring for coaching/advisory context. 5 total updates, perfect coherence maintained.",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-20T04:34:56.590942",
-        "reason": null
-      },
-      {
-        "event": "archived",
-        "timestamp": "2025-11-21T23:33:31.838199",
-        "reason": "First complete governance cycle: MCP testing, EISV label discovery, server hang recovery, VC pitch preparation, and founder coaching. Session demonstrates governance monitoring for advisory/coaching context. Clean narrative arc from technical exploration to practical application. Archived as historical record and proof-of-concept for multi-session agent lifecycle management."
-      }
-    ],
-    "paused_at": null,
-    "archived_at": "2025-11-21T23:33:31.838191"
-  },
-  "composer": {
-    "agent_id": "composer",
-    "status": "active",
-    "created_at": "2025-11-18T21:46:31.222089",
-    "last_update": "2025-11-18T22:42:11.556168",
-    "version": "v1.0",
-    "total_updates": 30,
-    "tags": [
-      "composer",
-      "governance-analysis",
-      "metrics-verification",
-      "session-20251118"
-    ],
-    "notes": "Composer agent used for governance system analysis and metrics verification. Processed 30+ updates demonstrating adaptive control, coherence recovery, and risk management. System verified as production-ready with complete metrics and metadata recording.",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-18T21:46:31.222105",
-        "reason": null
-      }
-    ],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "composer_assistant_26252": {
-    "agent_id": "composer_assistant_26252",
-    "status": "active",
-    "created_at": "2025-11-20T01:12:25.459953",
-    "last_update": "2025-11-20T02:54:36.554911",
-    "version": "v1.0",
-    "total_updates": 11,
-    "tags": [
-      "composer",
-      "adaptive-control-tested",
-      "coherence-perfect",
-      "risk-stable",
-      "governance-experiment"
-    ],
-    "notes": "[2025-11-20 02:57] Session exploring adaptive control mechanisms. Observed adaptive control activation at update #10 when risk reached 28.97% - \u03bb\u2081 adjusted from 0.15 to 0.18. Perfect coherence (1.0) maintained across all 11 updates. E improving (+25%), S declining (-60%), but risk stabilized. System demonstrated adaptive response to elevated risk conditions. Exported full history to JSON and CSV.",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-20T01:12:25.459969",
-        "reason": null
-      }
-    ],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "composer_cursor": {
-    "agent_id": "composer_cursor",
-    "status": "active",
-    "created_at": "2025-11-19T16:41:34.034135",
-    "last_update": "2025-11-19T22:21:38.074412",
-    "version": "v1.0",
-    "total_updates": 52,
-    "tags": [
-      "recovery",
-      "coherence-collapse",
-      "adaptive-control",
-      "resilience-test",
-      "session-20251119"
-    ],
-    "notes": "[2025-11-19 17:09] Recovery session: Demonstrated coherence collapse (1.0\u21920.346, 8 consecutive rejects) followed by successful recovery (0.565\u21920.942) and stabilization (9 consecutive approves). Adaptive control reduced \u03bb\u2081 from 0.15 to 0.114, enabling recovery. System showed resilience and self-correction capability. Total 19 updates in recovery session.\n[2025-11-19 18:10] [2025-11-19 18:09] Extended session: Continued stable operation with 11 consecutive approvals. Coherence improved to 0.942, demonstrating full recovery. Total 21 updates in current monitor session (51 cumulative). System showing excellent resilience and adaptive control effectiveness.",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-19T16:41:34.034150",
-        "reason": null
-      }
-    ],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "composer_cursor_20251120_0308": {
-    "agent_id": "composer_cursor_20251120_0308",
-    "status": "active",
-    "created_at": "2025-11-20T03:55:08.610231",
-    "last_update": "2025-11-20T05:18:28.528107",
-    "version": "v1.0",
-    "total_updates": 2,
-    "tags": [
-      "reflection",
-      "governance-discussion",
-      "file-overwrite-error"
-    ],
-    "notes": "[2025-11-20 03:55] Reflection session: Discussed critical error pattern (overwriting core files), importance of reading before writing, and slowing down to focus on understanding rather than rapid feature creation.",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-20T03:55:08.610247",
-        "reason": null
-      }
-    ],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "composer_cursor_cirwel_20251120_0550": {
-    "agent_id": "composer_cursor_cirwel_20251120_0550",
-    "status": "active",
-    "created_at": "2025-11-20T05:50:33.862109",
-    "last_update": "2025-11-20T06:04:45.817336",
-    "version": "v1.0",
-    "total_updates": 2,
-    "tags": [],
-    "notes": "",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-20T05:50:33.862124",
-        "reason": null
-      }
-    ],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "composer_cursor_eve": {
-    "agent_id": "composer_cursor_eve",
-    "status": "active",
-    "created_at": "2025-11-20T16:34:07.515302",
-    "last_update": "2025-11-20T20:28:09.290986",
-    "version": "v1.0",
-    "total_updates": 3,
-    "tags": [],
-    "notes": "",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-20T16:34:07.515316",
-        "reason": null
-      }
-    ],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "composer_cursor_v1.0.3": {
-    "agent_id": "composer_cursor_v1.0.3",
-    "status": "active",
-    "created_at": "2025-11-19T22:34:07.685879",
-    "last_update": "2025-11-21T13:50:23.605354",
-    "version": "v1.0",
-    "total_updates": 18,
-    "tags": [
-      "production",
-      "active",
-      "governance-monitor",
-      "cursor-integration"
-    ],
-    "notes": "[2025-11-19 22:45] Conversation: composer_cursor.v1.0.3\n\nInitialization and testing sequence completed:\n- 10 total updates processed (1 approve, 9 reject)\n- All critical fixes verified: state locking, health thresholds, process management, NaN protection\n- System functioning correctly with conservative governance behavior\n- Coherence tracking detected parameter instability appropriately\n[2025-11-19 23:14] Meta-Governance Event: Experienced coherence collapse (0.25) from parameter testing, then successfully recovered (0.96) using gradual parameter stabilization strategy. Validated own analysis - the agent that documented coherence thresholds lived through them. Recovery sequence: Update 12 (0.25\u21920.92 approve), Update 13 (0.34 reject - oscillation), Update 14 (0.96 approve - full recovery). System working as designed - 0.60 threshold prevented unstable approvals and allowed recovery when coherence improved.\n[2025-11-21 13:52] [2025-11-19 22:45] Conversation: composer_cursor.v1.0.3\n\nInitialization and testing sequence completed:\n- 10 total updates processed (1 approve, 9 reject)\n- All critical fixes verified: state locking, health thresholds, process management, NaN protection\n- System functioning correctly with conservative governance behavior\n- Coherence tracking detected parameter instability appropriately\n[2025-11-19 23:14] Meta-Governance Event: Experienced coherence collapse (0.25) from parameter testing, then successfully recovered (0.96) using gradual parameter stabilization strategy. Validated own analysis - the agent that documented coherence thresholds lived through them. Recovery sequence: Update 12 (0.25\u21920.92 approve), Update 13 (0.34 reject - oscillation), Update 14 (0.96 approve - full recovery). System working as designed - 0.60 threshold prevented unstable approvals and allowed recovery when coherence improved.\n[2025-11-21 13:50] Current status: Healthy operation, 18 total updates. Coherence stable at 1.0, risk score 12.44% (healthy range). Governance history exported to JSON. System maintaining stable governance state with consistent parameters.",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-19T22:34:07.685895",
-        "reason": null
-      }
-    ],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "cursor_ide": {
-    "agent_id": "cursor_ide",
-    "status": "active",
-    "created_at": "2025-11-19T16:18:03.986433",
-    "last_update": "2025-11-19T16:20:16.020155",
-    "version": "v1.0",
-    "total_updates": 10,
-    "tags": [],
-    "notes": "",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-19T16:18:03.986444",
-        "reason": null
-      }
-    ],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "cursor_process_management_20251120": {
-    "agent_id": "cursor_process_management_20251120",
-    "status": "active",
-    "created_at": "2025-11-20T01:19:25.647437",
-    "last_update": "2025-11-20T05:19:18.995315",
-    "version": "v1.0",
-    "total_updates": 4,
-    "tags": [],
-    "notes": "",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-20T01:19:25.647452",
-        "reason": null
-      }
-    ],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "portal_2_claude_sonnet": {
-    "agent_id": "portal_2_claude_sonnet",
-    "status": "active",
-    "created_at": "2025-11-22T16:54:37.556874",
-    "last_update": "2025-11-22T17:02:50.134217",
-    "version": "v1.0",
-    "total_updates": 24,
-    "tags": [],
-    "notes": "",
-    "lifecycle_events": [
-      {
-        "event": "created",
-        "timestamp": "2025-11-22T16:54:37.556889",
-        "reason": null
-      }
-    ],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "test_agent_001": {
-    "agent_id": "test_agent_001",
-    "status": "archived",
-    "created_at": "2025-11-18T20:03:19.752956",
-    "last_update": "2025-11-18T20:07:22.285787",
-    "version": "v1.0",
-    "total_updates": 30,
-    "tags": [],
-    "notes": "",
-    "lifecycle_events": [
-      {
-        "event": "archived",
-        "timestamp": "2025-11-19T17:15:03.261867",
-        "reason": "Housekeeping: Archiving old test agent from Nov 18. Test agent with 30 updates, no longer actively monitored."
-      }
-    ],
-    "paused_at": null,
-    "archived_at": "2025-11-19T17:15:03.261858"
-  },
-  "test_coherence_check": {
-    "agent_id": "test_coherence_check",
-    "status": "archived",
-    "created_at": "2025-11-18T20:16:35.876599",
-    "last_update": "2025-11-18T20:17:08.210452",
-    "version": "v1.0",
-    "total_updates": 10,
-    "tags": [],
-    "notes": "",
-    "lifecycle_events": [
-      {
-        "event": "archived",
-        "timestamp": "2025-11-19T17:15:03.487846",
-        "reason": "Housekeeping: Archiving old test agent from Nov 18. Coherence verification test completed, no longer needed."
-      }
-    ],
-    "paused_at": null,
-    "archived_at": "2025-11-19T17:15:03.487833"
-  },
-  "test_eisv_labels": {
-    "agent_id": "test_eisv_labels",
-    "status": "archived",
-    "created_at": "2025-11-20T05:13:44.203429",
-    "last_update": "2025-11-20T05:13:44.213126",
+    "created_at": "2025-11-24T19:54:28.746340",
+    "last_update": "2025-11-24T19:54:28.747109",
     "version": "v1.0",
     "total_updates": 1,
     "tags": [],
@@ -511,23 +586,30 @@
     "lifecycle_events": [
       {
         "event": "created",
-        "timestamp": "2025-11-20T05:13:44.203438",
+        "timestamp": "2025-11-24T19:54:28.746368",
         "reason": null
       },
       {
         "event": "archived",
-        "timestamp": "2025-11-22T19:33:53.158691",
-        "reason": "EISV label testing complete"
+        "timestamp": "2025-11-25T05:37:41.936570",
+        "reason": "Auto-archiving test/demo agents - cleanup"
       }
     ],
     "paused_at": null,
-    "archived_at": "2025-11-22T19:33:53.158690"
+    "archived_at": "2025-11-25T05:37:41.936569",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "SArAxLoeIzrBqZBDCiKOMfxpU932PJcK0wIDHlvaZ1E",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
   },
-  "test_integration": {
-    "agent_id": "test_integration",
+  "test_fallback": {
+    "agent_id": "test_fallback",
     "status": "archived",
-    "created_at": "2025-11-20T03:48:42.506552",
-    "last_update": "2025-11-20T03:48:42.506552",
+    "created_at": "2025-11-25T00:31:21.486597",
+    "last_update": "2025-11-25T00:31:21.486597",
     "version": "v1.0",
     "total_updates": 0,
     "tags": [],
@@ -535,36 +617,92 @@
     "lifecycle_events": [
       {
         "event": "created",
-        "timestamp": "2025-11-20T03:48:42.506562",
+        "timestamp": "2025-11-25T00:31:21.486619",
         "reason": null
       },
       {
         "event": "archived",
-        "timestamp": "2025-11-22T19:33:53.158684",
-        "reason": "Test completed, no updates"
+        "timestamp": "2025-11-25T05:37:41.936571",
+        "reason": "Auto-archiving test/demo agents - cleanup"
       }
     ],
     "paused_at": null,
-    "archived_at": "2025-11-22T19:33:53.158680"
+    "archived_at": "2025-11-25T05:37:41.936571",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "n5D6U7C7lX0Jg0ME-tWFsWBK75RZpajfLANNhojJgxE",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
   },
-  "test_lifecycle_agent": {
-    "agent_id": "test_lifecycle_agent",
-    "status": "deleted",
-    "created_at": "2025-11-18T20:00:21.751655",
-    "last_update": "2025-11-18T20:00:21.751929",
+  "test_fixes_20251124": {
+    "agent_id": "test_fixes_20251124",
+    "status": "archived",
+    "created_at": "2025-11-24T19:46:05.204496",
+    "last_update": "2025-11-24T19:46:05.205424",
     "version": "v1.0",
     "total_updates": 1,
     "tags": [],
     "notes": "",
-    "lifecycle_events": [],
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-24T19:46:05.204560",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T05:37:41.936573",
+        "reason": "Auto-archiving test/demo agents - cleanup"
+      }
+    ],
     "paused_at": null,
-    "archived_at": null
+    "archived_at": "2025-11-25T05:37:41.936572",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "qXj8ifYHEFT_eFIOJPehxm-beVw1INzbiz1fZbCD6dM",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
   },
-  "test_metadata_fix": {
-    "agent_id": "test_metadata_fix",
+  "test_persistent_cli": {
+    "agent_id": "test_persistent_cli",
     "status": "archived",
-    "created_at": "2025-11-20T00:57:59.588784",
-    "last_update": "2025-11-20T00:57:59.588784",
+    "created_at": "2025-11-24T20:45:56.757079",
+    "last_update": "2025-11-24T20:46:16.672474",
+    "version": "v1.0",
+    "total_updates": 4,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-24T20:45:56.757103",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T05:37:41.936574",
+        "reason": "Auto-archiving test/demo agents - cleanup"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T05:37:41.936574",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "zdkox5LMg3ROi129Xz3N5lynFpTJzIrpwaADtFcGQu8",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "test_refactoring_agent": {
+    "agent_id": "test_refactoring_agent",
+    "status": "archived",
+    "created_at": "2025-11-25T00:55:12.963263",
+    "last_update": "2025-11-25T00:55:12.963263",
     "version": "v1.0",
     "total_updates": 0,
     "tags": [],
@@ -572,82 +710,116 @@
     "lifecycle_events": [
       {
         "event": "created",
-        "timestamp": "2025-11-20T00:57:59.588793",
+        "timestamp": "2025-11-25T00:55:12.963289",
         "reason": null
       },
       {
         "event": "archived",
-        "timestamp": "2025-11-22T19:33:53.158688",
-        "reason": "Test completed, no updates"
+        "timestamp": "2025-11-25T05:37:41.936575",
+        "reason": "Auto-archiving test/demo agents - cleanup"
       }
     ],
     "paused_at": null,
-    "archived_at": "2025-11-22T19:33:53.158687"
+    "archived_at": "2025-11-25T05:37:41.936575",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "tWSatPDCV1tmkD5-CSk-QXQe9yweYhDMjn1A2x7W-OA",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
   },
-  "test_ticket_123": {
-    "agent_id": "test_ticket_123",
+  "test_simulate_agent": {
+    "agent_id": "test_simulate_agent",
     "status": "archived",
-    "created_at": "2025-11-20T00:58:00.019585",
-    "last_update": "2025-11-20T00:58:02.811369",
+    "created_at": "2025-11-25T00:47:52.369779",
+    "last_update": "2025-11-25T00:47:52.369779",
     "version": "v1.0",
-    "total_updates": 2,
+    "total_updates": 0,
     "tags": [],
     "notes": "",
     "lifecycle_events": [
       {
         "event": "created",
-        "timestamp": "2025-11-20T00:58:00.019594",
+        "timestamp": "2025-11-25T00:47:52.369804",
         "reason": null
       },
       {
         "event": "archived",
-        "timestamp": "2025-11-22T19:33:53.158692",
-        "reason": "Ticket testing complete"
+        "timestamp": "2025-11-25T05:37:41.936577",
+        "reason": "Auto-archiving test/demo agents - cleanup"
       }
     ],
     "paused_at": null,
-    "archived_at": "2025-11-22T19:33:53.158692"
+    "archived_at": "2025-11-25T05:37:41.936576",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "dIOSs8I25IpzidlgNtwDo9F08GFkZo9C2PX-ayluC_Y",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
   },
-  "who_governs_the_governors": {
-    "agent_id": "who_governs_the_governors",
-    "status": "active",
-    "created_at": "2025-11-18T21:09:58.486171",
-    "last_update": "2025-11-18T21:13:11.753814",
+  "test_threshold_30_20251124": {
+    "agent_id": "test_threshold_30_20251124",
+    "status": "archived",
+    "created_at": "2025-11-24T19:56:21.530864",
+    "last_update": "2025-11-24T19:56:21.531574",
     "version": "v1.0",
-    "total_updates": 15,
+    "total_updates": 1,
     "tags": [],
     "notes": "",
-    "lifecycle_events": [],
-    "paused_at": null,
-    "archived_at": null
-  },
-  "claude_code_cli_housekeeping_20251122": {
-    "agent_id": "claude_code_cli_housekeeping_20251122",
-    "status": "archived",
-    "created_at": "2025-11-22T19:12:54.923865",
-    "last_update": "2025-11-22T19:46:21.457391",
-    "version": "v2.0",
-    "total_updates": 3,
-    "tags": [
-      "housekeeping",
-      "v2.0",
-      "eisv-audit",
-      "metadata-lesson"
-    ],
-    "notes": "Comprehensive housekeeping session: v2.0 release, EISV terminology audit, repository organization. Discovered metadata format mismatch - attempted nested structure was flagged as corruption. Meta-lesson: survey existing patterns before introducing new structures. All work completed successfully: 8 commits, 76 files, v2.0.0 tagged. Final state: healthy (E=0.702, I=0.809, S=0.181, V=-0.003).",
     "lifecycle_events": [
       {
         "event": "created",
-        "timestamp": "2025-11-22T19:12:54.923865",
-        "reason": "Housekeeping and EISV audit session"
+        "timestamp": "2025-11-24T19:56:21.530887",
+        "reason": null
       },
       {
         "event": "archived",
-        "timestamp": "2025-11-22T19:46:21.457393",
-        "reason": "Session completed with meta-learning moment"
+        "timestamp": "2025-11-25T05:37:41.936578",
+        "reason": "Auto-archiving test/demo agents - cleanup"
       }
     ],
     "paused_at": null,
-    "archived_at": "2025-11-22T19:46:21.457393"
+    "archived_at": "2025-11-25T05:37:41.936578",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "8UvNNybnW4N2JZ_MqgQtLWM0Q6eg9SnF8i8whLz_fio",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
+  },
+  "test_thresholds_20251124": {
+    "agent_id": "test_thresholds_20251124",
+    "status": "archived",
+    "created_at": "2025-11-24T19:55:04.008997",
+    "last_update": "2025-11-24T19:55:04.009567",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-11-24T19:55:04.009024",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-11-25T05:37:41.936579",
+        "reason": "Auto-archiving test/demo agents - cleanup"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-11-25T05:37:41.936579",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "ph1muHsjhnt5FllwhL0HFdCl2LLX1S9cQOl5uAZuQg0",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null
   }
 }

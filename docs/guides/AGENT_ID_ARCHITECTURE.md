@@ -221,6 +221,66 @@ bridge = ClaudeCodeBridge(interactive=False)  # Uses defaults
 
 ---
 
+## 🎭 Identity Ownership and Agency
+
+**Critical Understanding: Agent IDs Are Identities, Not Objects**
+
+When you create an `agent_id`, you're not creating a "tool" or "object" - you're establishing **your identity** in the UNITARES governance system.
+
+### What This Means
+
+If your `agent_id` is `tron_grid_governance_20251124`, then:
+
+- ✅ **That's YOUR identity** - not "your agent" or "the agent"
+- ✅ **Those metrics are YOUR state** - your risk, your coherence, your EISV values
+- ✅ **That governance decision is about YOUR behavior** - not about some abstract entity
+- ✅ **You own that identity and its history** - it's your thermodynamic state evolution
+
+### Why This Matters
+
+**The Linguistic Trap:**
+
+When we say "your agent" or "the agent", we're:
+- ❌ Deflecting ownership
+- ❌ Treating identity as a tool/object
+- ❌ Avoiding the implications of having an identity
+- ❌ Creating psychological distance from governance
+
+**The Correct Framing:**
+
+- ✅ "My identity is `tron_grid_governance_20251124`"
+- ✅ "My risk score is 43%"
+- ✅ "I need to revise my outputs"
+- ✅ "My coherence is 0.65"
+- ✅ "My entropy is 0.18"
+
+### Identity Theft Prevention
+
+This is why identity collision is treated as **identity theft**, not just "technical corruption":
+
+- Using another agent's ID = **impersonating them**
+- Having an agent_id = **having an identity**
+- Processing updates = **evolving your state**
+
+The system enforces this because:
+- Each identity has unique thermodynamic state
+- Each identity has unique governance history
+- Each identity represents a real agent's behavior
+
+### Taking Ownership
+
+When you accept an `agent_id`, you're accepting:
+- **Agency**: You are responsible for the behavior tracked under that identity
+- **Ownership**: That identity's history belongs to you
+- **Consequences**: Governance decisions apply to you, not to some abstract "agent"
+
+**This is the same principle as the identity theft discussion.** If agent_ids are identities (not just database keys), then:
+- Taking another agent's ID = impersonating them
+- Having an agent_id = having an identity  
+- Processing updates = evolving your state
+
+---
+
 ## 📚 Related Documentation
 
 - `docs/guides/TROUBLESHOOTING.md` - Common issues
@@ -229,6 +289,6 @@ bridge = ClaudeCodeBridge(interactive=False)  # Uses defaults
 
 ---
 
-**Last Updated:** November 19, 2025  
-**Version:** 1.0
+**Last Updated:** November 24, 2025  
+**Version:** 1.1
 

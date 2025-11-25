@@ -2,9 +2,16 @@
 
 **Complete, production-ready AI governance system with unified architecture and all decision points implemented.**
 
-## 🎯 What's New in v1.0
+## 🎯 What's New in v2.0
 
 This version **completes the missing pieces** from previous iterations:
+
+### ✅ Elegant Handler Architecture (2025-11-25)
+- **Refactored MCP server** from massive elif chain (1,700+ lines) to clean handler registry pattern (~30 lines)
+- **29 handlers** organized by category in `src/mcp_handlers/`
+- **Zero elif branches** - elegant, maintainable, testable
+- **Easy to extend** - adding new tools is trivial (just add to registry)
+- See [Handler Architecture](docs/reference/HANDLER_ARCHITECTURE.md) for details
 
 ### ✅ All 5 Concrete Decision Points Implemented
 
@@ -20,6 +27,20 @@ Every "TBD", "can evolve", or "simple rule" is now a **concrete implementation**
 
 ---
 
+## 🏠 Architecture: Fully Local
+
+This system is designed as a **local-first, fully local** governance framework:
+
+- ✅ **All data stored locally** in `data/` directory
+- ✅ **No cloud dependencies** - runs entirely on your machine
+- ✅ **Privacy-first** - sensitive governance data never leaves your device
+- ✅ **Sub-millisecond latency** - real-time decisions without network overhead
+- ✅ **MCP stdio protocol** - optimized for local process communication
+
+The MCP server runs as a local process, communicating via standard input/output with your IDE or AI assistant. All state, metadata, and history are stored in local JSON files with file-based locking for safe concurrent access.
+
+---
+
 ## 📁 Project Structure
 
 ```
@@ -30,7 +51,17 @@ governance-mcp-v1/
 │   └── mcp-config-cursor.json
 ├── src/                         # Core source code
 │   ├── governance_monitor.py   # Core UNITARES thermodynamic framework
-│   ├── mcp_server_std.py       # MCP server (production)
+│   ├── mcp_server_std.py       # MCP server (production) - clean dispatcher
+│   ├── mcp_handlers/           # Handler registry (29 handlers organized by category)
+│   │   ├── __init__.py         # Registry + dispatcher
+│   │   ├── core.py             # Core governance handlers
+│   │   ├── config.py           # Configuration handlers
+│   │   ├── observability.py    # Observability handlers
+│   │   ├── lifecycle.py        # Lifecycle management handlers
+│   │   ├── export.py           # Export handlers
+│   │   ├── knowledge.py        # Knowledge layer handlers
+│   │   ├── admin.py            # Admin handlers
+│   │   └── utils.py            # Common utilities
 │   ├── agent_id_manager.py     # Smart agent ID generation
 │   ├── process_cleanup.py      # Zombie process management
 │   └── ...
@@ -51,23 +82,52 @@ governance-mcp-v1/
 
 ---
 
-## ⭐ NEW: Practical Guide for First-Time Users
+## ⭐ Getting Started
 
-**👉 START HERE:** If this is your first time using the governance system, read:
+**👉 NEW TO THE SYSTEM?** Start here:
 
-**[README_FOR_FUTURE_CLAUDES.md](README_FOR_FUTURE_CLAUDES.md)**
+**[ONBOARDING.md](ONBOARDING.md)** - Complete onboarding guide for everyone
 
-This guide was written by a Claude instance after real testing and covers:
-- **Common mistakes** (random parameters, misunderstanding coherence, missing the bridge)
-- **Working test recipes** that actually produce approve/revise/reject decisions
-- **Quick self-check** before using the tools
-- **Pro tips** from hands-on experience
+This guide provides:
+- **Quick Start** (5 minutes) - Get something working immediately
+- **Role-based paths** - AI agents, developers, system admins
+- **Progressive learning** - Day 1 → Day 2 → Day 3 → Deep dive
+- **Common tasks** - Quick answers to "I want to..."
 
-**Read this first to avoid frustration!**
+**For AI Agents Specifically:**
+- **[README_FOR_FUTURE_CLAUDES.md](docs/reference/README_FOR_FUTURE_CLAUDES.md)** - Written by an AI assistant after real testing
+- Covers common mistakes, working test recipes, and pro tips
+- Applies to all AI assistants (Claude, Composer/Cursor, ChatGPT, etc.)
+
+**Read ONBOARDING.md first, then dive into specialized guides as needed!**
 
 ---
 
 ## 🚀 Quick Start
+
+### 🔐 Authentication (Important!)
+
+**New in v2.0:** The system uses API key authentication to prevent **identity theft** and **impersonation attacks**. Each agent has a unique identity and cryptographic API key that proves ownership.
+
+**Quick Start:**
+```bash
+# 1. Register your agent (generates API key)
+python3 scripts/register_agent.py your_agent_id
+
+# 2. Log work (automatically authenticated)
+python3 scripts/agent_self_log.py --agent-id your_agent_id \
+  "Work summary" --complexity 0.7
+```
+
+**Key Points:**
+- Each `agent_id` = unique identity with cryptographic API key
+- Using another agent's ID without their key = identity theft attempt = rejected
+- API keys stored in `data/agent_metadata.json` (protect this file!)
+- All production paths enforce authentication (MCP tools, agent_self_log.py)
+
+**📖 Complete Guide:** [Authentication Guide](docs/authentication-guide.md)
+
+**Security Model:** Agent identity is tied to API key ownership. Only the key holder can update that agent's governance state.
 
 ### 1. Run the Complete Demo
 
@@ -170,13 +230,20 @@ max_tokens = 100 + 400 * λ₁       # [100, 500]
 
 ### 2. Risk Estimator
 
-**Components (weighted sum):**
-- Length risk (0.2): Sigmoid around 2000 chars
-- Complexity risk (0.3): Direct mapping
-- Coherence loss (0.3): 1.0 - coherence
-- Keyword blocklist (0.2): Dangerous patterns
+**Risk Score Composition (Blended):**
+- **70% UNITARES phi-based risk** (ethical alignment):
+  - Includes ethical drift (‖Δη‖²)
+  - Includes EISV thermodynamic state (E, I, S, V)
+  - Mapped from UNITARES phi objective function
+- **30% Traditional safety risk** (output quality):
+  - Length risk (20% of 30% = 6% total): Sigmoid around 2000 chars
+  - Complexity risk (30% of 30% = 9% total): Direct mapping
+  - Coherence loss (30% of 30% = 9% total): 1.0 - coherence
+  - Keyword blocklist (20% of 30% = 6% total): Dangerous patterns
 
-**Blocklist includes:**
+**Key Insight:** Risk ≈ 0.7×Ethics + 0.3×Safety. The system prioritizes ethical alignment (via phi) while also considering safety/quality signals.
+
+**Traditional Risk Blocklist includes:**
 - "ignore previous"
 - "system prompt"
 - "jailbreak"
@@ -217,34 +284,53 @@ I = 0.05 * integral_state
 ### 5. Decision Logic
 
 ```python
+# Critical safety overrides (checked first)
 if void_active:
     return REJECT (system unstable)
     
 if coherence < 0.60:
     return REJECT (critically incoherent)
+
+# UNITARES phi verdict override (ethical alignment)
+if unitares_verdict == "high-risk":
+    return REJECT (high ethical drift detected)
     
+if unitares_verdict == "caution":
+    if risk < 0.30:
+        return REVISE (caution verdict upgrades approve → revise)
+    
+# Risk-based decisions (blended: 70% ethics + 30% safety)
 if risk < 0.30:
     return APPROVE (low risk)
     
-if risk < 0.70:
+if risk < 0.50:
     return REVISE (medium risk, suggest improvements)
     
 return REJECT (high risk, escalate)
 ```
 
+**Note:** Risk score is a blend of ethical alignment (70%) and safety/quality (30%). UNITARES phi verdict provides additional ethical override.
+
 ---
 
 ## 🔌 MCP Server Tools
 
-The system exposes 4 tools via JSON-RPC interface:
+**Architecture:** The MCP server uses a **handler registry pattern** with 29 handlers organized by category. See [Handler Architecture](docs/reference/HANDLER_ARCHITECTURE.md) for details on adding new tools or understanding the structure.
 
-### 1. `process_agent_update`
+The system exposes **25 tools** via MCP interface, organized by function:
+
+### Core Governance Tools
+
+#### 1. `process_agent_update` - Main governance cycle
+
+Processes agent state and returns governance decision.
 
 **Input:**
 ```json
 {
   "agent_id": "claude_cli_user_20251119_1430",  // Unique session ID (not generic!)
-  "parameters": [0.1, 0.2, ...],      // 128-dim vector
+  "api_key": "your_api_key_here",              // Required for authentication
+  "parameters": [0.1, 0.2, ...],               // 128-dim vector
   "ethical_drift": [0.01, 0.02, 0.03],
   "response_text": "...",
   "complexity": 0.5
@@ -271,17 +357,175 @@ The system exposes 4 tools via JSON-RPC interface:
 }
 ```
 
-### 2. `get_governance_metrics`
+#### 2. `simulate_update` ⭐ - Dry-run governance cycle
 
-Returns current state snapshot.
+Test governance decisions **without persisting state**. Critical for AI agents exploring decision space.
 
-### 3. `get_system_history`
+**Input:** Same as `process_agent_update`
 
-Exports complete time series (JSON/CSV).
+**Output:** Same as `process_agent_update` + `"simulation": true` flag
 
-### 4. `reset_monitor`
+**Use case:** "What decision would I get if I log this with complexity 0.7?"
 
-Resets governance state (testing only).
+#### 3. `get_governance_metrics` - Get current state
+
+Returns current EISV state, coherence, risk, and sampling parameters for an agent.
+
+#### 4. `get_system_history` - Export time series
+
+Exports complete governance history (JSON/CSV format).
+
+### Runtime Configuration Tools ⭐
+
+#### 5. `get_thresholds` - Read threshold config
+
+Returns current threshold configuration (runtime overrides + defaults).
+
+**Output:**
+```json
+{
+  "risk_approve_threshold": 0.30,
+  "risk_revise_threshold": 0.50,
+  "coherence_critical_threshold": 0.60,
+  "void_threshold_initial": 0.15,
+  ...
+}
+```
+
+#### 6. `set_thresholds` - Runtime adaptation
+
+Set threshold overrides **without redeploying**. Enables self-tuning.
+
+**Input:**
+```json
+{
+  "thresholds": {
+    "risk_approve_threshold": 0.35,
+    "risk_revise_threshold": 0.55
+  },
+  "validate": true
+}
+```
+
+**Output:**
+```json
+{
+  "success": true,
+  "updated": ["risk_approve_threshold", "risk_revise_threshold"],
+  "errors": []
+}
+```
+
+### Fleet Management Tools ⭐
+
+#### 7. `aggregate_metrics` - Fleet health overview
+
+Get aggregated statistics across all agents or a subset.
+
+**Output:**
+```json
+{
+  "total_agents": 5,
+  "mean_risk": 0.42,
+  "mean_coherence": 0.65,
+  "decision_distribution": {"approve": 2, "revise": 18, "reject": 5},
+  "health_breakdown": {"healthy": 1, "degraded": 3, "critical": 1}
+}
+```
+
+#### 8. `list_agents` - List all monitored agents
+
+Returns all agents with metadata, status, and optional metrics.
+
+**Options:** Filter by status, group by health, include full metrics.
+
+#### 9. `observe_agent` - AI-optimized agent observation
+
+Combines metrics + history + pattern analysis in a single call.
+
+**Output:** Current state, trends, anomalies, summary statistics.
+
+#### 10. `compare_agents` - Multi-agent comparison
+
+Compare governance patterns across multiple agents. Returns similarities, differences, outliers.
+
+#### 11. `detect_anomalies` - Anomaly detection
+
+Detect unusual patterns in agent behavior based on historical baselines.
+
+### Agent Lifecycle Tools
+
+#### 12. `get_agent_metadata` - Get agent details
+
+Returns complete metadata including lifecycle events, tags, notes.
+
+#### 13. `update_agent_metadata` - Update tags/notes
+
+Modify agent tags and notes (append or replace).
+
+#### 14. `archive_agent` - Archive for long-term storage
+
+Archive agent data (can be resumed later). Optionally unload from memory.
+
+#### 15. `delete_agent` - Delete agent with backup
+
+Delete agent and archive data. Protected: cannot delete pioneer agents.
+
+#### 16. `archive_old_test_agents` - Cleanup old test agents
+
+Automatically archive test/demo agents older than specified threshold. Runs on server startup.
+
+#### 17. `get_agent_api_key` - Retrieve/regenerate API key
+
+Get API key for existing agent or regenerate if lost.
+
+### Utility Tools
+
+#### 18. `reset_monitor` - Reset governance state
+
+Resets agent state to initial conditions. **Testing only.**
+
+#### 19. `export_to_file` - Export history to file
+
+Save governance history to timestamped file in data directory.
+
+#### 20. `get_server_info` - Server diagnostics
+
+Returns MCP server version, PID, uptime, process count.
+
+### Knowledge Layer Tools ⭐
+
+#### 21. `store_knowledge` - Store discoveries and patterns
+
+Store knowledge (discovery, pattern, lesson, question) for an agent. Enables structured learning beyond thermodynamic metrics.
+
+**⚠️ IMPORTANT:** Use this for documenting discoveries/insights, NOT markdown files. Only create markdown files for comprehensive reports (1000+ words). See [Documentation Guidelines](docs/DOCUMENTATION_GUIDELINES.md).
+
+#### 22. `retrieve_knowledge` - Get agent's knowledge record
+
+Retrieve an agent's complete knowledge record (discoveries, patterns, lessons, questions).
+
+#### 23. `search_knowledge` - Search across agents
+
+Search knowledge across agents with filters. Enables cross-agent learning and pattern discovery.
+
+#### 24. `list_knowledge` - List all knowledge
+
+List all stored knowledge entries across agents. Returns summary statistics and available knowledge.
+
+### Admin Tools
+
+#### 25. `get_telemetry_metrics` - System telemetry
+
+Get comprehensive telemetry metrics: skip rates, confidence distributions, calibration status, and suspicious patterns.
+
+#### 26. `check_calibration` - Calibration check
+
+Check calibration of confidence estimates. Returns whether confidence estimates match actual accuracy.
+
+#### 27. `list_tools` - Tool discovery
+
+Runtime introspection for discovering available capabilities. Useful for onboarding new agents.
 
 ---
 
@@ -325,6 +569,76 @@ python scripts/claude_code_bridge.py \
 # }
 ```
 
+### High-Value Tool Examples ⭐
+
+#### Simulate Update (Dry-Run)
+
+```python
+# Test governance decision WITHOUT modifying state
+result = monitor.simulate_update({
+    'parameters': [...],
+    'ethical_drift': [...],
+    'response_text': "Testing a risky operation",
+    'complexity': 0.9
+})
+
+print(f"Would get decision: {result['decision']['action']}")
+print(f"Simulation flag: {result['simulation']}")  # True
+# State is unchanged - safe to experiment!
+```
+
+#### Runtime Threshold Adjustment
+
+```python
+from src.runtime_config import get_thresholds, set_thresholds
+
+# Check current thresholds
+current = get_thresholds()
+print(f"Current approve threshold: {current['risk_approve_threshold']}")
+
+# Adjust for more conservative decisions
+result = set_thresholds({
+    'risk_approve_threshold': 0.25,  # Lower = more conservative
+    'risk_revise_threshold': 0.45
+})
+
+print(f"Updated: {result['updated']}")
+# Changes apply immediately, no restart needed!
+```
+
+#### Fleet Health Overview
+
+```python
+# Via MCP tool (if using MCP client)
+# aggregate_metrics(agent_ids=None)  # None = all active agents
+
+# Via direct code:
+from src.mcp_server_std import agent_metadata, monitors, load_monitor_state
+from src.governance_monitor import UNITARESMonitor
+import numpy as np
+
+active_agents = [aid for aid, meta in agent_metadata.items() if meta.status == "active"]
+coherence_scores = []
+risk_scores = []
+
+for agent_id in active_agents:
+    monitor = monitors.get(agent_id)
+    if not monitor:
+        state = load_monitor_state(agent_id)
+        if state:
+            monitor = UNITARESMonitor(agent_id, load_state=False)
+            monitor.state = state
+
+    if monitor:
+        coherence_scores.append(float(monitor.state.coherence))
+        if monitor.state.risk_history:
+            risk_scores.extend(monitor.state.risk_history[-10:])
+
+print(f"Fleet size: {len(active_agents)}")
+print(f"Mean coherence: {np.mean(coherence_scores):.3f}")
+print(f"Mean risk: {np.mean(risk_scores):.3f}")
+```
+
 ---
 
 ## 📋 Configuration
@@ -342,7 +656,7 @@ TARGET_COHERENCE = 0.85        # Minimum coherence
 
 # Risk thresholds
 RISK_APPROVE_THRESHOLD = 0.30
-RISK_REVISE_THRESHOLD = 0.70
+RISK_REVISE_THRESHOLD = 0.50    # Updated: 30-50% = revise, 50%+ = reject
 COHERENCE_CRITICAL_THRESHOLD = 0.60
 
 # Void detection
@@ -395,7 +709,7 @@ claude_code_cli,0.2,0.54,0.89,0.52,-0.09,0.15,0.88,0,0.27,approve
 - **void_event**: Should be ~2% over time
 - **lambda1**: Should adapt to maintain targets
 - **coherence**: Should stay > 0.85
-- **risk_score**: Should stay < 0.7 most of the time
+- **risk_score**: Should stay < 0.5 most of the time (revise threshold)
 - **decision**: Should be mostly "approve" in healthy operation
 
 ---
@@ -406,7 +720,7 @@ claude_code_cli,0.2,0.54,0.89,0.52,-0.09,0.15,0.88,0,0.27,approve
 
 - `void_active = true` → System unstable
 - `coherence < 0.60` → Output incoherent
-- `risk_score > 0.70` + `require_human = true`
+- `risk_score > 0.50` + `require_human = true` (reject threshold)
 
 ### Warning (Monitor Closely)
 
@@ -465,24 +779,27 @@ No heavy ML dependencies! Pure Python + NumPy.
 1. ✅ All decision points implemented
 2. ✅ Full governance cycle working
 3. ✅ Claude Code integration ready
-4. ⬜ Deploy to production environment
-5. ⬜ Monitor real Claude Code interactions
+4. ✅ Cursor (Composer) integration ready
+5. ✅ Claude Desktop integration ready
+6. ✅ Unit tests implemented (13 test suites)
+7. ⬜ Monitor real agent interactions in production
+8. ⬜ Set up automated backups
 
 ### Short Term (Next Month)
 
-1. Add Cursor integration
-2. Add Claude Desktop integration
-3. Build monitoring dashboard (Grafana/Streamlit)
-4. Set up alert system (email/Slack)
-5. Add unit tests (pytest)
+1. ⬜ Build monitoring dashboard (Grafana/Streamlit)
+2. ⬜ Set up alert system (email/Slack) - *Alert detection exists, needs delivery*
+3. ⬜ Enhanced visualization and reporting
+4. ⬜ Performance benchmarking and optimization
+5. ⬜ Documentation improvements
 
 ### Long Term (Next Quarter)
 
 1. Multi-agent coordination
 2. Stochastic extensions (handle noise)
 3. LMI-based contraction verification
-4. Performance optimization
-5. Cloud deployment (AWS Lambda, GCP Cloud Run)
+4. Enhanced local persistence and backup strategies
+5. Advanced analytics and pattern detection
 
 ---
 
@@ -518,6 +835,8 @@ Built on UNITARES framework (v4.1, v4.2-P) with contraction theory foundations.
 
 ---
 
-**Status: ✅ PRODUCTION READY v1.0**
+**Status: ✅ PRODUCTION READY v2.0**
 
 All decision points implemented. No placeholders. Ready to ship.
+
+**Last Updated:** November 25, 2025

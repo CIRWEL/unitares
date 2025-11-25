@@ -16,8 +16,13 @@ from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 from collections import Counter
 import json
+import sys
 
 from config.governance_config import config
+
+# Import audit logging and calibration for accountability and self-awareness
+from src.audit_log import audit_logger
+from src.calibration import calibration_checker
 
 # Import UNITARES Phase-3 engine from governance_core (v2.0)
 # Core dynamics are now in governance_core module
@@ -76,10 +81,14 @@ class GovernanceState:
     update_count: int = 0
     
     # Rolling statistics for adaptive thresholds
-    V_history: List[float] = field(default_factory=list)
+    E_history: List[float] = field(default_factory=list)  # Energy history
+    I_history: List[float] = field(default_factory=list)  # Information integrity history
+    S_history: List[float] = field(default_factory=list)  # Entropy history
+    V_history: List[float] = field(default_factory=list)  # Void integral history
     coherence_history: List[float] = field(default_factory=list)
     risk_history: List[float] = field(default_factory=list)
     decision_history: List[str] = field(default_factory=list)  # Track approve/revise/reject decisions
+    timestamp_history: List[str] = field(default_factory=list)  # Track timestamps for each update
     
     # Compatibility: expose E, I, S, V as properties for backward compatibility
     @property
@@ -116,6 +125,149 @@ class GovernanceState:
             'time': float(self.time),
             'update_count': int(self.update_count)
         }
+    
+    def to_dict_with_history(self) -> Dict:
+        """Export state with full history for persistence"""
+        return {
+            # Current state values
+            'E': float(self.E),
+            'I': float(self.I),
+            'S': float(self.S),
+            'V': float(self.V),
+            'coherence': float(self.coherence),
+            'lambda1': float(self.lambda1),
+            'void_active': bool(self.void_active),
+            'time': float(self.time),
+            'update_count': int(self.update_count),
+            # UNITARES internal state
+            'unitaires_state': {
+                'E': float(self.unitaires_state.E),
+                'I': float(self.unitaires_state.I),
+                'S': float(self.unitaires_state.S),
+                'V': float(self.unitaires_state.V)
+            },
+            'unitaires_theta': {
+                'C1': float(self.unitaires_theta.C1),
+                'eta1': float(self.unitaires_theta.eta1)
+            },
+            # History arrays
+            'E_history': [float(e) for e in self.E_history],
+            'I_history': [float(i) for i in self.I_history],
+            'S_history': [float(s) for s in self.S_history],
+            'V_history': [float(v) for v in self.V_history],
+            'coherence_history': [float(c) for c in self.coherence_history],
+            'risk_history': [float(r) for r in self.risk_history],
+            'decision_history': list(self.decision_history),
+            'timestamp_history': list(self.timestamp_history)  # Timestamps for each update
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'GovernanceState':
+        """Create GovernanceState from dictionary (for loading persisted state)"""
+        from governance_core import State, Theta
+        
+        # Create state with loaded values
+        state = cls()
+        
+        # Load UNITARES internal state
+        if 'unitaires_state' in data:
+            us = data['unitaires_state']
+            state.unitaires_state = State(
+                E=float(us.get('E', DEFAULT_STATE.E)),
+                I=float(us.get('I', DEFAULT_STATE.I)),
+                S=float(us.get('S', DEFAULT_STATE.S)),
+                V=float(us.get('V', DEFAULT_STATE.V))
+            )
+        else:
+            # Fallback: use current state values
+            state.unitaires_state = State(
+                E=float(data.get('E', DEFAULT_STATE.E)),
+                I=float(data.get('I', DEFAULT_STATE.I)),
+                S=float(data.get('S', DEFAULT_STATE.S)),
+                V=float(data.get('V', DEFAULT_STATE.V))
+            )
+        
+        # Load UNITARES theta
+        if 'unitaires_theta' in data:
+            ut = data['unitaires_theta']
+            state.unitaires_theta = Theta(
+                C1=float(ut.get('C1', DEFAULT_THETA.C1)),
+                eta1=float(ut.get('eta1', DEFAULT_THETA.eta1))
+            )
+        
+        # Load derived metrics
+        state.coherence = float(data.get('coherence', 1.0))
+        state.void_active = bool(data.get('void_active', False))
+        state.time = float(data.get('time', 0.0))
+        state.update_count = int(data.get('update_count', 0))
+        
+        # Load history arrays
+        state.E_history = [float(e) for e in data.get('E_history', [])]
+        state.I_history = [float(i) for i in data.get('I_history', [])]
+        state.S_history = [float(s) for s in data.get('S_history', [])]
+        state.V_history = [float(v) for v in data.get('V_history', [])]
+        state.coherence_history = [float(c) for c in data.get('coherence_history', [])]
+        state.risk_history = [float(r) for r in data.get('risk_history', [])]
+        state.decision_history = list(data.get('decision_history', []))
+        state.timestamp_history = list(data.get('timestamp_history', []))  # Load timestamps
+        
+        return state
+    
+    def validate(self) -> tuple[bool, list[str]]:
+        """
+        Validate state invariants and bounds.
+        
+        Returns:
+            (is_valid, list_of_errors)
+        """
+        errors = []
+        
+        # Check bounds
+        if not (0.0 <= self.E <= 1.0):
+            errors.append(f"E out of bounds: {self.E} (expected [0, 1])")
+        if not (0.0 <= self.I <= 1.0):
+            errors.append(f"I out of bounds: {self.I} (expected [0, 1])")
+        if not (0.0 <= self.S <= 1.0):
+            errors.append(f"S out of bounds: {self.S} (expected [0, 1])")
+        if not (0.0 <= self.coherence <= 1.0):
+            errors.append(f"Coherence out of bounds: {self.coherence} (expected [0, 1])")
+        
+        # Check for NaN/inf
+        if np.isnan(self.E) or np.isinf(self.E):
+            errors.append(f"E is NaN or Inf: {self.E}")
+        if np.isnan(self.I) or np.isinf(self.I):
+            errors.append(f"I is NaN or Inf: {self.I}")
+        if np.isnan(self.S) or np.isinf(self.S):
+            errors.append(f"S is NaN or Inf: {self.S}")
+        if np.isnan(self.V) or np.isinf(self.V):
+            errors.append(f"V is NaN or Inf: {self.V}")
+        if np.isnan(self.coherence) or np.isinf(self.coherence):
+            errors.append(f"Coherence is NaN or Inf: {self.coherence}")
+        
+        # Check lambda1 bounds
+        lambda1_val = self.lambda1
+        if np.isnan(lambda1_val) or np.isinf(lambda1_val):
+            errors.append(f"lambda1 is NaN or Inf: {lambda1_val}")
+        elif not (0.0 <= lambda1_val <= 1.0):
+            errors.append(f"lambda1 out of bounds: {lambda1_val} (expected [0, 1])")
+        
+        # Check history consistency
+        history_lengths = [
+            len(self.E_history),
+            len(self.I_history),
+            len(self.S_history),
+            len(self.V_history),
+            len(self.coherence_history),
+            len(self.risk_history)
+        ]
+        if len(set(history_lengths)) > 1:
+            # Allow some variance (decision_history can be shorter)
+            max_len = max(history_lengths)
+            min_len = min(history_lengths)
+            if max_len - min_len > 1:  # More than 1 entry difference
+                errors.append(f"History length mismatch: E={len(self.E_history)}, I={len(self.I_history)}, S={len(self.S_history)}, V={len(self.V_history)}, coherence={len(self.coherence_history)}, risk={len(self.risk_history)}")
+        
+        return len(errors) == 0, errors
 
 
 class UNITARESMonitor:
@@ -130,11 +282,46 @@ class UNITARESMonitor:
     - Decision logic (approve/revise/reject)
     """
     
-    def __init__(self, agent_id: str):
-        """Initialize monitor for a specific agent"""
+    def __init__(self, agent_id: str, load_state: bool = True):
+        """
+        Initialize monitor for a specific agent
+        
+        Args:
+            agent_id: Unique identifier for the agent
+            load_state: If True, attempt to load persisted state from disk
+        """
         self.agent_id = agent_id
         self.state = GovernanceState()
         
+        # Initialize prev_parameters (needed for coherence calculation)
+        # This must be initialized regardless of whether state is loaded
+        self.prev_parameters: Optional[np.ndarray] = None
+        
+        # Initialize last_update timestamp (needed for simulate_update)
+        self.last_update = datetime.now()
+        
+        # Try to load persisted state if requested
+        if load_state:
+            persisted_state = self.load_persisted_state()
+            if persisted_state is not None:
+                self.state = persisted_state
+                # Ensure created_at is set (fallback to now if not in state)
+                if not hasattr(self, 'created_at'):
+                    self.created_at = datetime.now()
+                print(f"[UNITARES v2.0 + governance_core] Loaded persisted state for agent: {agent_id} ({len(self.state.V_history)} history entries)", file=sys.stderr)
+            else:
+                # Initialize fresh state
+                self._initialize_fresh_state()
+                print(f"[UNITARES v2.0 + governance_core] Initialized new monitor for agent: {agent_id}", file=sys.stderr)
+        else:
+            self._initialize_fresh_state()
+            print(f"[UNITARES v2.0 + governance_core] Initialized monitor for agent: {agent_id} (no state loading)", file=sys.stderr)
+
+        print(f"  λ₁ initial: {self.state.lambda1:.4f}", file=sys.stderr)
+        print(f"  Void threshold: {config.VOID_THRESHOLD_INITIAL:.4f}", file=sys.stderr)
+    
+    def _initialize_fresh_state(self):
+        """Initialize fresh state with default values"""
         # Initialize UNITARES Phase-3 state and theta
         self.state.unitaires_state = State(**{
             'E': DEFAULT_STATE.E,
@@ -153,10 +340,33 @@ class UNITARESMonitor:
         # Timestamps for agent lifecycle tracking
         self.created_at = datetime.now()
         self.last_update = datetime.now()
-
-        print(f"[UNITARES v2.0 + governance_core] Initialized monitor for agent: {agent_id}")
-        print(f"  λ₁ initial: {self.state.lambda1:.4f}")
-        print(f"  Void threshold: {config.VOID_THRESHOLD_INITIAL:.4f}")
+    
+    def load_persisted_state(self) -> Optional[GovernanceState]:
+        """Load persisted state from disk if it exists"""
+        state_file = Path(project_root) / "data" / f"{self.agent_id}_state.json"
+        
+        if not state_file.exists():
+            return None
+        
+        try:
+            with open(state_file, 'r') as f:
+                data = json.load(f)
+                return GovernanceState.from_dict(data)
+        except Exception as e:
+            print(f"[UNITARES Monitor] Warning: Could not load persisted state for {self.agent_id}: {e}", file=sys.stderr)
+            return None
+    
+    def save_persisted_state(self) -> None:
+        """Save current state to disk"""
+        state_file = Path(project_root) / "data" / f"{self.agent_id}_state.json"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            state_data = self.state.to_dict_with_history()
+            with open(state_file, 'w') as f:
+                json.dump(state_data, f, indent=2)
+        except Exception as e:
+            print(f"[UNITARES Monitor] Warning: Could not save state for {self.agent_id}: {e}", file=sys.stderr)
     
     def coherence_function(self, V: float) -> float:
         """
@@ -202,6 +412,11 @@ class UNITARESMonitor:
                                     prev_params: Optional[np.ndarray]) -> float:
         """
         Computes coherence from parameter stability.
+        
+        **DEPRECATED**: This function is no longer used in coherence calculation.
+        Coherence is now pure thermodynamic C(V) signal (removed param_coherence blend).
+        
+        Kept for potential future use if real parameter extraction is implemented.
 
         Coherence = exp(-||Δθ|| / scale) where scale controls sensitivity.
 
@@ -282,8 +497,8 @@ class UNITARESMonitor:
         # Replace NaN/inf with zeros
         delta_eta = [0.0 if (np.isnan(x) or np.isinf(x)) else float(x) for x in delta_eta]
 
-        # Store parameters for coherence calculation
-        param_coherence = self.compute_parameter_coherence(parameters, self.prev_parameters)
+        # Store parameters for potential future use (deprecated - not used in coherence)
+        # Note: param_coherence removed in favor of pure thermodynamic signal
         self.prev_parameters = parameters.copy() if len(parameters) > 0 else None
 
         # Use governance_core step_state() to evolve state (CANONICAL DYNAMICS)
@@ -296,21 +511,49 @@ class UNITARESMonitor:
             params=DEFAULT_PARAMS
         )
 
-        # Update coherence from governance_core coherence function
+        # Update coherence from governance_core coherence function (pure thermodynamic)
+        # Removed param_coherence blend - using pure C(V) signal for honest calibration
         C_V = coherence(self.state.V, self.state.unitaires_theta, DEFAULT_PARAMS)
-        # Blend UNITARES coherence with parameter coherence for monitoring
-        self.state.coherence = 0.7 * C_V + 0.3 * param_coherence
+        self.state.coherence = C_V
         self.state.coherence = np.clip(self.state.coherence, 0.0, 1.0)
 
         # Update history
-        self.state.V_history.append(self.state.V)
-        self.state.coherence_history.append(self.state.coherence)
+        # Record full state history (E, I, S, V, coherence)
+        self.state.E_history.append(float(self.state.E))
+        self.state.I_history.append(float(self.state.I))
+        self.state.S_history.append(float(self.state.S))
+        self.state.V_history.append(float(self.state.V))
+        self.state.coherence_history.append(float(self.state.coherence))
+        self.state.timestamp_history.append(datetime.now().isoformat())  # Track timestamp
 
         # Trim history to window
+        if len(self.state.E_history) > config.HISTORY_WINDOW:
+            self.state.E_history = self.state.E_history[-config.HISTORY_WINDOW:]
+        if len(self.state.I_history) > config.HISTORY_WINDOW:
+            self.state.I_history = self.state.I_history[-config.HISTORY_WINDOW:]
+        if len(self.state.S_history) > config.HISTORY_WINDOW:
+            self.state.S_history = self.state.S_history[-config.HISTORY_WINDOW:]
         if len(self.state.V_history) > config.HISTORY_WINDOW:
             self.state.V_history = self.state.V_history[-config.HISTORY_WINDOW:]
         if len(self.state.coherence_history) > config.HISTORY_WINDOW:
             self.state.coherence_history = self.state.coherence_history[-config.HISTORY_WINDOW:]
+        if len(self.state.timestamp_history) > config.HISTORY_WINDOW:
+            self.state.timestamp_history = self.state.timestamp_history[-config.HISTORY_WINDOW:]
+
+        # Validate state after update
+        is_valid, errors = self.state.validate()
+        if not is_valid:
+            print(f"[UNITARES Monitor] Warning: State validation failed for {self.agent_id}: {', '.join(errors)}", file=sys.stderr)
+            # Attempt to fix common issues
+            if not (0.0 <= self.state.E <= 1.0) or np.isnan(self.state.E) or np.isinf(self.state.E):
+                self.state.unitaires_state.E = DEFAULT_STATE.E
+            if not (0.0 <= self.state.I <= 1.0) or np.isnan(self.state.I) or np.isinf(self.state.I):
+                self.state.unitaires_state.I = DEFAULT_STATE.I
+            if not (0.0 <= self.state.S <= 1.0) or np.isnan(self.state.S) or np.isinf(self.state.S):
+                self.state.unitaires_state.S = DEFAULT_STATE.S
+            if np.isnan(self.state.V) or np.isinf(self.state.V):
+                self.state.unitaires_state.V = DEFAULT_STATE.V
+            self.state.coherence = np.clip(self.state.coherence, 0.0, 1.0)
 
         # Update time
         self.state.time += dt
@@ -362,7 +605,8 @@ class UNITARESMonitor:
         if abs(new_lambda1 - old_lambda1) > 0.01:
             print(f"[θ Update] λ₁: {old_lambda1:.4f} → {new_lambda1:.4f} "
                   f"(C1={old_theta.C1:.3f}→{self.state.unitaires_theta.C1:.3f}, "
-                  f"η1={old_theta.eta1:.3f}→{self.state.unitaires_theta.eta1:.3f})")
+                  f"η1={old_theta.eta1:.3f}→{self.state.unitaires_theta.eta1:.3f})",
+                  file=sys.stderr)
         
         return new_lambda1
     
@@ -371,6 +615,13 @@ class UNITARESMonitor:
         Estimates risk score using governance_core phi_objective and verdict_from_phi.
 
         Uses UNITARES phi objective and verdict, then maps to risk score [0, 1].
+        
+        **Risk Score Composition:**
+        - 70% UNITARES phi-based risk (includes ethical drift ‖Δη‖², E, I, S, V state)
+        - 30% Traditional safety risk (length, complexity, coherence, keywords)
+        
+        This blend ensures risk reflects both ethical alignment (via phi) and 
+        safety/quality concerns (via traditional metrics).
 
         Args:
             agent_state: Agent state dictionary
@@ -423,8 +674,11 @@ class UNITARESMonitor:
         complexity = agent_state.get('complexity', 0.5)
         traditional_risk = config.estimate_risk(response_text, complexity, self.state.coherence)
         
-        # Weighted combination: 70% UNITARES phi-based, 30% traditional
-        risk = 0.7 * risk + 0.3 * traditional_risk
+        # Weighted combination: 70% UNITARES phi-based (ethical), 30% traditional (safety)
+        # Configurable weights (defaults match config, but can be overridden)
+        phi_weight = getattr(config, 'RISK_PHI_WEIGHT', 0.7)
+        traditional_weight = getattr(config, 'RISK_TRADITIONAL_WEIGHT', 0.3)
+        risk = phi_weight * risk + traditional_weight * traditional_risk
         
         # Update history
         self.state.risk_history.append(risk)
@@ -435,37 +689,33 @@ class UNITARESMonitor:
     
     def make_decision(self, risk_score: float, unitares_verdict: str = None) -> Dict:
         """
-        Makes governance decision using UNITARES Phase-3 verdict and config.make_decision()
+        Makes autonomous governance decision using UNITARES Phase-3 verdict and config.make_decision()
         
         If unitares_verdict is provided, it influences the decision:
         - "safe" -> bias toward approve
         - "caution" -> bias toward revise
         - "high-risk" -> bias toward reject
         
-        Returns decision dict with action, reason, require_human.
+        Returns decision dict with action and reason (fully autonomous, no human-in-the-loop).
         """
         # Use UNITARES verdict to influence decision if available
         if unitares_verdict == "high-risk":
             # Override: high-risk verdict -> reject
             return {
                 'action': 'reject',
-                'reason': f'UNITARES high-risk verdict (risk_score={risk_score:.2f})',
-                'require_human': True
+                'reason': f'UNITARES high-risk verdict (risk_score={risk_score:.2f}) - agent should halt'
             }
         elif unitares_verdict == "caution":
-            # Bias toward revise for caution
+            # Caution verdict: bias toward revise (stronger than before)
+            # If risk would approve, upgrade to revise due to caution
             if risk_score < config.RISK_APPROVE_THRESHOLD:
-                # Low risk but caution -> still approve but note caution
-                decision = config.make_decision(
-                    risk_score=risk_score,
-                    coherence=self.state.coherence,
-                    void_active=self.state.void_active
-                )
-                if decision['action'] == 'approve':
-                    decision['reason'] += ' (UNITARES caution noted)'
-                return decision
+                # Low risk but caution -> upgrade to revise (was approve)
+                return {
+                    'action': 'revise',
+                    'reason': f'UNITARES caution verdict (risk_score={risk_score:.2f}) - agent should self-correct despite low risk'
+                }
             else:
-                # Medium/high risk + caution -> revise or reject
+                # Medium/high risk + caution -> use standard decision (likely revise/reject)
                 return config.make_decision(
                     risk_score=risk_score,
                     coherence=self.state.coherence,
@@ -479,11 +729,59 @@ class UNITARESMonitor:
                 void_active=self.state.void_active
             )
     
-    def process_update(self, agent_state: Dict) -> Dict:
+    def simulate_update(self, agent_state: Dict, confidence: float = 1.0) -> Dict:
+        """
+        Dry-run governance cycle: Returns decision without persisting state.
+        
+        Useful for testing decisions before committing. Does NOT modify state.
+        
+        Args:
+            agent_state: Agent state dict with parameters, ethical_drift, response_text, complexity
+            confidence: Confidence level [0, 1] for this update. Defaults to 1.0.
+        
+        Returns:
+            Same format as process_update, but state is NOT modified
+        """
+        import copy
+        
+        # Save current state completely
+        saved_state = copy.deepcopy(self.state)
+        saved_prev_params = copy.deepcopy(self.prev_parameters) if self.prev_parameters is not None else None
+        saved_last_update = self.last_update
+        
+        try:
+            # Create temporary state copy for simulation
+            temp_state = copy.deepcopy(self.state)
+            temp_prev_params = copy.deepcopy(self.prev_parameters) if self.prev_parameters is not None else None
+            
+            # Swap to temporary state
+            self.state = temp_state
+            self.prev_parameters = temp_prev_params
+            
+            # Run full governance cycle (modifies temp_state) with confidence
+            result = self.process_update(agent_state, confidence=confidence)
+            
+            # Mark as simulation
+            result['simulation'] = True
+            result['note'] = 'This was a simulation - state was not modified'
+            
+            return result
+        finally:
+            # Always restore original state, even if error occurred
+            self.state = saved_state
+            self.prev_parameters = saved_prev_params
+            self.last_update = saved_last_update
+    
+    def process_update(self, agent_state: Dict, confidence: float = 1.0) -> Dict:
         """
         Complete governance cycle: Update → Adapt → Decide
 
         This is the main API method called by the MCP server.
+
+        Args:
+            agent_state: Agent state dict with parameters, ethical_drift, response_text, complexity
+            confidence: Confidence level [0, 1] for this update. Defaults to 1.0 (fully confident).
+                        When confidence < CONTROLLER_CONFIDENCE_THRESHOLD, lambda1 updates are skipped.
 
         Returns:
         {
@@ -495,6 +793,9 @@ class UNITARESMonitor:
         """
         # Update timestamp
         self.last_update = datetime.now()
+        
+        # Store confidence for audit logging
+        self.current_confidence = confidence
 
         # Step 1: Update thermodynamic state
         self.update_dynamics(agent_state)
@@ -502,9 +803,33 @@ class UNITARESMonitor:
         # Step 2: Check void state
         void_active = self.check_void_state()
         
-        # Step 3: Update λ₁ (every N updates)
-        if self.state.update_count % 10 == 0:  # Update λ₁ every 10 cycles
-            self.update_lambda1()
+        # Step 3: Update λ₁ (every N updates) - WITH CONFIDENCE GATING
+        # Updated to every 5 cycles for faster adaptation (was 10)
+        lambda1_skipped = False
+        if self.state.update_count % 5 == 0:  # Update λ₁ every 5 cycles
+            # Gate lambda1 updates based on confidence
+            if confidence >= config.CONTROLLER_CONFIDENCE_THRESHOLD:
+                self.update_lambda1()
+            else:
+                # Skip lambda1 update due to low confidence
+                lambda1_skipped = True
+                # Track skip count
+                if not hasattr(self.state, 'lambda1_update_skips'):
+                    self.state.lambda1_update_skips = 0
+                self.state.lambda1_update_skips += 1
+                
+                # Log skip via audit logger
+                audit_logger.log_lambda1_skip(
+                    agent_id=self.agent_id,
+                    confidence=confidence,
+                    threshold=config.CONTROLLER_CONFIDENCE_THRESHOLD,
+                    update_count=self.state.update_count,
+                    reason=f"confidence {confidence:.3f} < threshold {config.CONTROLLER_CONFIDENCE_THRESHOLD}"
+                )
+                
+                print(f"[UNITARES Monitor] Skipping λ₁ update for {self.agent_id}: "
+                      f"confidence {confidence:.3f} < threshold {config.CONTROLLER_CONFIDENCE_THRESHOLD}",
+                      file=sys.stderr)
         
         # Step 4: Estimate risk (also gets UNITARES verdict)
         # Get UNITARES verdict for decision making using governance_core
@@ -531,6 +856,33 @@ class UNITARESMonitor:
         # Step 5: Make decision (using UNITARES verdict)
         decision = self.make_decision(risk_score, unitares_verdict=unitares_verdict)
         
+        # Record prediction for calibration checking
+        # We predict "correct" if decision is approve (low risk) or revise (medium risk handled)
+        # High risk/reject decisions are predicted as "needs review"
+        predicted_correct = decision['action'] in ['approve', 'revise']
+        
+        # Record for calibration (actual correctness will be updated later via ground truth)
+        calibration_checker.record_prediction(
+            confidence=confidence,
+            predicted_correct=predicted_correct,
+            actual_correct=None  # Ground truth not available at decision time
+        )
+        
+        # Log decision via audit logger (for accountability and transparency)
+        audit_logger.log_auto_attest(
+            agent_id=self.agent_id,
+            confidence=confidence,
+            ci_passed=False,  # CI status not available in governance_monitor
+            risk_score=risk_score,
+            decision=decision['action'],
+            details={
+                'reason': decision.get('reason', ''),
+                'coherence': float(self.state.coherence),
+                'void_active': void_active,
+                'unitares_verdict': unitares_verdict
+            }
+        )
+        
         # Track decision history for governance auditing
         # Backward compatibility: ensure decision_history exists (for instances created before this feature)
         if not hasattr(self.state, 'decision_history'):
@@ -542,29 +894,40 @@ class UNITARESMonitor:
         # Step 6: Get sampling parameters for next generation
         sampling_params = config.lambda_to_params(self.state.lambda1)
         
-        # Determine overall status
+        # Determine overall status using health thresholds (recalibrated)
+        # Note: MCP server will also calculate health_status separately using health_checker
+        # This status field uses decision thresholds for backward compatibility
         if void_active or self.state.coherence < config.COHERENCE_CRITICAL_THRESHOLD:
             status = 'critical'
-        elif risk_score > config.RISK_REVISE_THRESHOLD:
+        elif risk_score > config.RISK_REVISE_THRESHOLD:  # Now 0.50 (was 0.70)
             status = 'degraded'
         else:
             status = 'healthy'
         
+        # Build metrics dict
+        metrics = {
+            'E': float(self.state.E),
+            'I': float(self.state.I),
+            'S': float(self.state.S),
+            'V': float(self.state.V),
+            'coherence': float(self.state.coherence),
+            'lambda1': float(self.state.lambda1),
+            'risk_score': float(risk_score),
+            'void_active': bool(void_active),
+            'time': float(self.state.time),
+            'updates': int(self.state.update_count),
+            'confidence': float(confidence),
+            'lambda1_skipped': lambda1_skipped
+        }
+        
+        # Add lambda1_skips count if available
+        if hasattr(self.state, 'lambda1_update_skips'):
+            metrics['lambda1_update_skips'] = int(self.state.lambda1_update_skips)
+        
         return {
             'status': status,
             'decision': decision,
-            'metrics': {
-                'E': float(self.state.E),
-                'I': float(self.state.I),
-                'S': float(self.state.S),
-                'V': float(self.state.V),
-                'coherence': float(self.state.coherence),
-                'lambda1': float(self.state.lambda1),
-                'risk_score': float(risk_score),
-                'void_active': bool(void_active),
-                'time': float(self.state.time),
-                'updates': int(self.state.update_count)
-            },
+            'metrics': metrics,
             'sampling_params': sampling_params,
             'timestamp': datetime.now().isoformat()
         }
@@ -591,10 +954,24 @@ class UNITARESMonitor:
             dt=config.DT
         )
         
+        # Calculate status consistently with process_update()
+        # Use most recent risk score if available, otherwise use mean
+        current_risk = float(np.mean(self.state.risk_history[-10:])) if len(self.state.risk_history) >= 10 else (
+            float(np.mean(self.state.risk_history)) if self.state.risk_history else 0.5
+        )
+        
+        # Status calculation matches process_update() logic
+        if self.state.void_active or self.state.coherence < config.COHERENCE_CRITICAL_THRESHOLD:
+            status = 'critical'
+        elif current_risk > config.RISK_REVISE_THRESHOLD:
+            status = 'degraded'
+        else:
+            status = 'healthy'
+        
         return {
             'agent_id': self.agent_id,
             'state': self.state.to_dict(),
-            'status': 'healthy' if not self.state.void_active else 'critical',
+            'status': status,
             'sampling_params': config.lambda_to_params(self.state.lambda1),
             'history_size': len(self.state.V_history),
             'mean_risk': float(np.mean(self.state.risk_history)) if self.state.risk_history else 0.0,
@@ -645,9 +1022,10 @@ class UNITARESMonitor:
         
         history = {
             'agent_id': self.agent_id,
-            'E_history': [self.state.E],  # Would need to track these
-            'I_history': [self.state.I],
-            'S_history': [self.state.S],
+            'timestamps': self.state.timestamp_history,  # Timestamps for each update
+            'E_history': self.state.E_history,  # Full history
+            'I_history': self.state.I_history,  # Full history
+            'S_history': self.state.S_history,  # Full history
             'V_history': self.state.V_history,
             'coherence_history': self.state.coherence_history,
             'risk_history': self.state.risk_history,
@@ -665,16 +1043,17 @@ class UNITARESMonitor:
             writer = csv.writer(output)
             
             # Write header
-            writer.writerow(['update', 'E', 'I', 'S', 'V', 'coherence', 'risk', 'decision', 'lambda1'])
+            writer.writerow(['update', 'timestamp', 'E', 'I', 'S', 'V', 'coherence', 'risk', 'decision', 'lambda1'])
             
-            # Write data rows
+            # Write data rows - use full history for E/I/S
             num_rows = len(self.state.V_history)
             for i in range(num_rows):
                 row = [
                     i + 1,
-                    self.state.E if i == num_rows - 1 else '',  # Only current E
-                    self.state.I if i == num_rows - 1 else '',  # Only current I
-                    self.state.S if i == num_rows - 1 else '',  # Only current S
+                    self.state.timestamp_history[i] if i < len(self.state.timestamp_history) else '',
+                    self.state.E_history[i] if i < len(self.state.E_history) else '',
+                    self.state.I_history[i] if i < len(self.state.I_history) else '',
+                    self.state.S_history[i] if i < len(self.state.S_history) else '',
                     self.state.V_history[i] if i < len(self.state.V_history) else '',
                     self.state.coherence_history[i] if i < len(self.state.coherence_history) else '',
                     self.state.risk_history[i] if i < len(self.state.risk_history) else '',
@@ -713,15 +1092,15 @@ if __name__ == "__main__":
         result = monitor.process_update(agent_state)
         
         if i % 20 == 0:
-            print(f"\n[Update {i}]")
-            print(f"  Status: {result['status']}")
-            print(f"  Decision: {result['decision']['action']}")
+            print(f"\n[Update {i}]", file=sys.stderr)
+            print(f"  Status: {result['status']}", file=sys.stderr)
+            print(f"  Decision: {result['decision']['action']}", file=sys.stderr)
             print(f"  Metrics: E={result['metrics']['E']:.3f}, "
                   f"I={result['metrics']['I']:.3f}, "
                   f"V={result['metrics']['V']:.3f}, "
-                  f"λ₁={result['metrics']['lambda1']:.3f}")
+                  f"λ₁={result['metrics']['lambda1']:.3f}", file=sys.stderr)
     
     # Get final metrics
-    print("\n" + "="*60)
-    print("Final Metrics:")
-    print(json.dumps(monitor.get_metrics(), indent=2))
+    print("\n" + "="*60, file=sys.stderr)
+    print("Final Metrics:", file=sys.stderr)
+    print(json.dumps(monitor.get_metrics(), indent=2), file=sys.stderr)

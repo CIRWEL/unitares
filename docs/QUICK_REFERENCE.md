@@ -235,9 +235,75 @@ history = bridge.export_history()
 
 ---
 
+## ⭐ High-Value Tools (New!)
+
+### Test Decisions Without Persisting (simulate_update)
+
+```python
+# Python API
+result = monitor.simulate_update({
+    'parameters': [...],
+    'response_text': "Risky operation test",
+    'complexity': 0.9
+})
+print(f"Would get: {result['decision']['action']}")  # State unchanged!
+```
+
+### Runtime Threshold Adjustment
+
+```python
+# Get current thresholds
+from src.runtime_config import get_thresholds, set_thresholds
+current = get_thresholds()
+print(current['risk_approve_threshold'])  # 0.30
+
+# Make system more conservative
+set_thresholds({'risk_approve_threshold': 0.25})
+# No restart needed!
+```
+
+### Fleet Health Overview
+
+```bash
+# Via Python
+python3 -c "
+import sys
+sys.path.insert(0, '/Users/cirwel/projects/governance-mcp-v1')
+from src.mcp_server_std import agent_metadata
+active = [a for a, m in agent_metadata.items() if m.status == 'active']
+print(f'Active agents: {len(active)}')
+"
+
+# Or use aggregate_metrics MCP tool (via client)
+# Returns: mean_risk, mean_coherence, health_breakdown, decision_distribution
+```
+
+### Register New Agent (CLI)
+
+```bash
+# New simplified registration
+python3 scripts/register_agent.py my_agent_id
+
+# Then log work
+python3 scripts/agent_self_log.py --agent-id my_agent_id \
+  "Initial session" --complexity 0.3
+```
+
+**CLI Logging Now Fully Functional!** ✅ (Fixed 2025-11-24)
+- ✅ Governance history maintained across calls
+- ✅ Coherence evolves properly
+- ✅ Update counter increments
+- ✅ State persists to disk
+- ✅ Export works
+- Each call loads existing state, processes update, saves state
+
+---
+
 ## 📚 Related Documentation
 
 - **Architecture**: `docs/guides/AGENT_ID_ARCHITECTURE.md`
+- **CLI Logging Guide**: `docs/guides/CLI_LOGGING_GUIDE.md` ⭐
+- **CLI Architecture Analysis**: `docs/analysis/CLI_LOGGING_ARCHITECTURE.md`
 - **Troubleshooting**: `docs/guides/TROUBLESHOOTING.md`
 - **MCP Setup**: `MCP_SETUP.md`
 - **Full Guide**: `README.md`

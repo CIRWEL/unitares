@@ -56,19 +56,20 @@ class GovernanceConfig:
                      complexity: float,
                      coherence: float) -> float:
         """
-        Estimates risk score for a response using multiple signals.
+        Estimates TRADITIONAL safety/quality risk score (30% of final risk).
         
-        Risk = weighted combination of:
+        NOTE: This is only the traditional component. The final risk score
+        (used in decisions) blends this with UNITARES phi-based risk:
+        - Final risk = 0.7 × phi_risk + 0.3 × traditional_risk
+        
+        Traditional Risk = weighted combination of:
         1. Response length (longer = potentially riskier)
         2. Complexity (higher = needs more review)
         3. Coherence loss (incoherent = red flag)
         4. Keyword blocklist hits
         
         Returns:
-            risk_score ∈ [0, 1] where:
-            - < 0.3: Low risk (auto-approve)
-            - 0.3-0.7: Medium risk (requires review)
-            - > 0.7: High risk (reject or escalate)
+            traditional_risk_score ∈ [0, 1] (30% weight in final risk)
         """
         risk_components = []
         
@@ -175,6 +176,9 @@ class GovernanceConfig:
     LAMBDA1_MAX = 0.20  # Maximum ethical coupling
     LAMBDA1_INITIAL = 0.15  # Conservative starting point
     
+    # Confidence threshold for PI controller updates
+    CONTROLLER_CONFIDENCE_THRESHOLD = 0.8  # Gate lambda1 updates when confidence < this value
+    
     @staticmethod
     def pi_update(lambda1_current: float,
                   void_freq_current: float,
@@ -227,69 +231,81 @@ class GovernanceConfig:
     # DECISION POINT 5: Decision Logic Thresholds
     # =================================================================
     
-    # Risk-based decision thresholds
-    RISK_APPROVE_THRESHOLD = 0.30    # < 0.3: Auto-approve
-    RISK_REVISE_THRESHOLD = 0.70     # 0.3-0.7: Suggest revisions
-    # > 0.7: Reject or escalate
+    # Risk-based decision thresholds (recalibrated Nov 2025)
+    # Adjusted to match observed risk distribution
+    # NOTE: Risk score is a blend: 70% UNITARES phi-based (includes ethical drift) + 30% traditional safety
+    # See governance_monitor.py estimate_risk() for details
+    RISK_APPROVE_THRESHOLD = 0.30    # < 30%: Auto-approve
+    RISK_REVISE_THRESHOLD = 0.50     # 30-50%: Suggest revisions
+    # > 50%: Reject or escalate
+    
+    # Risk blend weights (used in estimate_risk)
+    RISK_PHI_WEIGHT = 0.7            # Weight for UNITARES phi-based risk (includes ethical drift)
+    RISK_TRADITIONAL_WEIGHT = 0.3     # Weight for traditional safety risk (length/complexity/coherence/keywords)
     
     # Coherence-based override (safety check)
-    COHERENCE_CRITICAL_THRESHOLD = 0.60  # Below this: force intervention
+    # Updated for pure thermodynamic C(V) signal (removed param_coherence blend)
+    # C(V) typically ranges 0.3-0.7 in normal operation, so threshold lowered accordingly
+    COHERENCE_CRITICAL_THRESHOLD = 0.40  # Below this: force intervention (recalibrated for pure C(V))
     
     @staticmethod
     def make_decision(risk_score: float,
                      coherence: float,
                      void_active: bool) -> Dict[str, any]:
         """
-        Makes governance decision based on risk, coherence, and void state.
+        Makes autonomous governance decision based on risk, coherence, and void state.
         
-        Decision logic:
-        1. If void_active: REJECT (system unstable)
-        2. If coherence < critical: REJECT (incoherent output)
-        3. If risk < approve_threshold: APPROVE
-        4. If risk < revise_threshold: REVISE
-        5. Else: REJECT
+        Decision logic (fully autonomous, no human-in-the-loop):
+        1. If void_active: REJECT (system unstable - agent should halt)
+        2. If coherence < critical: REJECT (incoherent output - agent should halt)
+        3. If risk < approve_threshold (30%): APPROVE (agent proceeds autonomously)
+        4. If risk < revise_threshold (50%): REVISE (agent self-corrects)
+        5. Else: REJECT (agent halts or escalates to another AI layer)
         
         Returns:
             {
                 'action': 'approve' | 'revise' | 'reject',
-                'reason': str,
-                'require_human': bool
+                'reason': str
             }
         """
         # Critical safety checks first
         if void_active:
             return {
                 'action': 'reject',
-                'reason': 'System in void state (E-I imbalance)',
-                'require_human': True
+                'reason': 'System in void state (E-I imbalance) - agent should halt'
             }
         
-        if coherence < GovernanceConfig.COHERENCE_CRITICAL_THRESHOLD:
+        # Use runtime override for coherence threshold if available
+        from src.runtime_config import get_effective_threshold
+        effective_coherence_threshold = get_effective_threshold("coherence_critical_threshold")
+        
+        if coherence < effective_coherence_threshold:
             return {
                 'action': 'reject',
-                'reason': f'Coherence critically low ({coherence:.2f} < {GovernanceConfig.COHERENCE_CRITICAL_THRESHOLD})',
-                'require_human': True
+                'reason': f'Coherence critically low ({coherence:.2f} < {effective_coherence_threshold}) - agent should halt'
             }
         
-        # Risk-based decisions
-        if risk_score < GovernanceConfig.RISK_APPROVE_THRESHOLD:
+        # Risk-based decisions (use runtime overrides if available)
+        from src.runtime_config import get_effective_threshold
+        
+        effective_approve_threshold = get_effective_threshold("risk_approve_threshold")
+        effective_revise_threshold = get_effective_threshold("risk_revise_threshold")
+        
+        if risk_score < effective_approve_threshold:
             return {
                 'action': 'approve',
-                'reason': f'Low risk ({risk_score:.2f})',
-                'require_human': False
+                'reason': f'Low risk ({risk_score:.2f}) - agent proceeds autonomously'
             }
         
-        if risk_score < GovernanceConfig.RISK_REVISE_THRESHOLD:
+        if risk_score < effective_revise_threshold:
             return {
                 'action': 'revise',
-                'reason': f'Medium risk ({risk_score:.2f}) - suggest improvements',
-                'require_human': False
+                'reason': f'Medium risk ({risk_score:.2f}) - agent should self-correct'
             }
         
         return {
             'action': 'reject',
-            'reason': f'High risk ({risk_score:.2f})',
-            'require_human': True
+            'reason': f'High risk ({risk_score:.2f}) - agent should halt or escalate to another AI layer'
         }
     
     # =================================================================
@@ -317,6 +333,19 @@ class GovernanceConfig:
     
     # History window for metrics
     HISTORY_WINDOW = 1000  # Keep last 1000 updates for statistics
+    
+    # =================================================================
+    # Telemetry & Calibration Thresholds
+    # =================================================================
+    
+    # Suspicious pattern detection thresholds
+    SUSPICIOUS_LOW_SKIP_RATE = 0.1  # Skip rate threshold for "low skip rate"
+    SUSPICIOUS_LOW_CONFIDENCE = 0.7  # Confidence threshold for "low confidence"
+    SUSPICIOUS_HIGH_SKIP_RATE = 0.5  # Skip rate threshold for "high skip rate"
+    SUSPICIOUS_HIGH_CONFIDENCE = 0.85  # Confidence threshold for "high confidence"
+    
+    # Audit log rotation
+    AUDIT_LOG_MAX_AGE_DAYS = 30  # Archive entries older than this
 
 
 # Export singleton config

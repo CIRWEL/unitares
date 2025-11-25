@@ -381,3 +381,464 @@ The governance system is **working as designed** - it correctly identified param
 **Author:** composer_cursor_v1.0.3  
 **Version:** 1.0
 
+# Coherence Calculation Investigation
+
+**Date:** November 24, 2025  
+**Issue:** Coherence monotonically decreasing (0.649 → 0.644 over 5 updates)
+
+---
+
+## 🔍 What We Found
+
+### Test Results (5 updates)
+
+| Update | E | I | S | V | Coherence | Risk |
+|--------|-----|-----|-----|------|-----------|------|
+| 1 | 0.702 | 0.809 | 0.182 | -0.003 | 0.649 | 42.6% |
+| 2 | 0.704 | 0.818 | 0.165 | -0.006 | 0.648 | 38.6% |
+| 3 | 0.707 | 0.828 | 0.149 | -0.009 | 0.647 | 39.8% |
+| 4 | 0.711 | 0.838 | 0.136 | -0.013 | 0.646 | 43.3% |
+| 5 | 0.714 | 0.848 | 0.123 | -0.016 | 0.644 | 47.8% |
+
+**Pattern:**
+- V becoming more negative (I > E, increasing imbalance)
+- Coherence decreasing (0.649 → 0.644)
+- S decreasing despite increasing drift
+
+---
+
+## 📐 Coherence Calculation
+
+### Formula
+
+```python
+# In governance_monitor.py:500
+C_V = coherence(self.state.V, self.state.unitaires_theta, DEFAULT_PARAMS)
+# Blend UNITARES coherence with parameter coherence
+self.state.coherence = 0.7 * C_V + 0.3 * param_coherence
+```
+
+### UNITARES Coherence Function
+
+```python
+# In governance_core/coherence.py:45
+C(V, Θ) = Cmax · 0.5 · (1 + tanh(Θ.C₁ · V))
+```
+
+**With:**
+- `Cmax = 1.0`
+- `C1 = 1.0` (from DEFAULT_THETA)
+- `V` = void integral (E-I imbalance)
+
+### Behavior
+
+**When V is negative (I > E):**
+- `tanh(C1 * V)` → negative
+- `C(V)` → decreases toward 0
+- **This is correct:** When I >> E, system is incoherent
+
+**When V is positive (E > I):**
+- `tanh(C1 * V)` → positive
+- `C(V)` → increases toward 1
+- **This is correct:** When E >> I, system is coherent
+
+---
+
+## 🎯 Why Coherence is Decreasing
+
+### Root Cause
+
+**V is becoming more negative:**
+- Update 1: V = -0.003
+- Update 5: V = -0.016
+
+**V dynamics:**
+```
+dV/dt = κ(E - I) - δ·V
+```
+
+**What's happening:**
+- E = 0.714, I = 0.848
+- E - I = -0.134 (negative, I > E)
+- `κ(E - I)` = 0.3 * (-0.134) = -0.0402 (drives V negative)
+- `-δ·V` = -0.4 * (-0.016) = +0.0064 (decay toward zero)
+- Net: `dV/dt ≈ -0.034` (V becoming more negative)
+
+**This is correct:** I is increasing faster than E, so V becomes more negative.
+
+### Coherence Response
+
+**When V is negative:**
+- `C(V) = 0.5 * (1 + tanh(1.0 * V))`
+- `tanh(-0.016) ≈ -0.016`
+- `C(V) ≈ 0.5 * (1 - 0.016) ≈ 0.492`
+
+**Blended coherence:**
+- `C_V ≈ 0.492`
+- `param_coherence` (from parameter similarity)
+- `coherence = 0.7 * 0.492 + 0.3 * param_coherence`
+
+**If param_coherence ≈ 0.85:**
+- `coherence ≈ 0.7 * 0.492 + 0.3 * 0.85 ≈ 0.344 + 0.255 ≈ 0.599`
+
+**But we're seeing 0.644**, which suggests `param_coherence` is higher.
+
+---
+
+## ✅ Is This Correct?
+
+**Yes, mathematically correct:**
+
+1. **V dynamics:** I > E → V becomes negative ✅
+2. **Coherence function:** Negative V → lower coherence ✅
+3. **Blending:** 70% UNITARES + 30% parameter coherence ✅
+
+**But counterintuitive:**
+- Parameters are stable (same input)
+- But coherence decreases because V is changing
+- This reflects system state evolution, not parameter drift
+
+---
+
+## 🔬 Parameter Coherence Component
+
+### Calculation
+
+```python
+# In governance_monitor.py:420-448
+def compute_parameter_coherence(self, current_params, prev_params):
+    if prev_params is None:
+        return 1.0  # First update
+    
+    delta = current_params - prev_params
+    distance = np.sqrt(np.sum(delta ** 2) / len(delta))
+    coherence = np.exp(-distance / 0.1)  # Exponential decay
+```
+
+**What this measures:**
+- Parameter stability over time
+- If parameters don't change → high coherence
+- If parameters change → low coherence
+
+**In our test:**
+- Same parameters every update (`[0.7, 0.6, 0.8, 0.75, 0, 0.05]`)
+- `distance ≈ 0` → `param_coherence ≈ 1.0`
+
+**So blended coherence:**
+- `coherence = 0.7 * C_V + 0.3 * 1.0`
+- `coherence = 0.7 * C_V + 0.3`
+
+**With C_V decreasing (V becoming negative):**
+- Coherence decreases, but slowly (30% buffer from param_coherence)
+
+---
+
+## 💡 Why S (Entropy) is Decreasing
+
+### S Dynamics
+
+```
+dS/dt = -μ·S + λ₁·‖Δη‖² - λ₂·C(V)
+```
+
+**With:**
+- `μ = 0.8` (high decay)
+- `λ₁ = 0.09` (low coupling)
+- `λ₂ = 0.05` (coherence reduction)
+- `C(V)` decreasing (because V is negative)
+
+**What's happening:**
+- `-μ·S` = -0.8 * 0.123 = -0.0984 (large decay)
+- `λ₁·‖Δη‖²` = 0.09 * (0.3² + 0.2² + 0.15²) ≈ 0.09 * 0.1525 ≈ 0.0137 (small increase)
+- `-λ₂·C(V)` = -0.05 * 0.492 ≈ -0.0246 (small decrease)
+
+**Net:**
+- `dS/dt ≈ -0.0984 + 0.0137 - 0.0246 ≈ -0.109`
+- **S decreases** (decay dominates)
+
+**This is correct:** High decay rate (`μ = 0.8`) dominates over drift coupling (`λ₁ = 0.09`).
+
+---
+
+## 🎯 Conclusions
+
+### Coherence Decreasing: ✅ Correct
+
+**Reason:**
+- V becoming negative (I > E)
+- Coherence function responds correctly
+- Blended with parameter coherence (stable)
+
+**This is not a bug** - it reflects system state evolution.
+
+### S Decreasing: ✅ Correct
+
+**Reason:**
+- High decay rate (`μ = 0.8`) dominates
+- Low drift coupling (`λ₁ = 0.09`)
+- Coherence reduction (`λ₂·C`) also contributes
+
+**This is mathematically correct** but counterintuitive.
+
+### Recommendations
+
+1. **Document behavior:**
+   - Coherence decreases when I > E (V negative)
+   - S decreases when decay dominates drift coupling
+   - This is correct thermodynamic behavior
+
+2. **Consider parameter tuning:**
+   - Increase `λ₁` if drift should have more impact
+   - Decrease `μ` if decay is too aggressive
+   - But current values may be intentional
+
+3. **Monitor trends:**
+   - If coherence continues decreasing → investigate
+   - If S continues decreasing despite high drift → consider tuning
+   - But short-term trends (5 updates) may not be significant
+
+---
+
+## 📊 Summary
+
+| Metric | Behavior | Correct? | Explanation |
+|--------|----------|----------|-------------|
+| Coherence | Decreasing | ✅ Yes | V negative (I > E) → lower coherence |
+| S (Entropy) | Decreasing | ✅ Yes | High decay dominates low drift coupling |
+| V (Void) | More negative | ✅ Yes | I increasing faster than E |
+
+**All behaviors are mathematically correct.** The system is working as designed.
+
+# Coherence Investigation Critique
+
+**Date:** 2025-11-24  
+**Investigation:** Coherence margin analysis and calibration bug
+
+---
+
+## ✅ What You Got Right
+
+### 1. Root Cause Identified Correctly
+
+**Your finding:**
+```
+Coherence = 0.7 × C(V) + 0.3 × param_coherence
+- C(V) ≈ 0.49 (real thermodynamic signal) ✓
+- param_coherence = 1.0 (fake - using placeholder [0]*128 parameters) ❌
+```
+
+**Confirmed:** ✅ Correct. The code shows:
+```python
+self.state.coherence = 0.7 * C_V + 0.3 * param_coherence
+```
+
+Where `param_coherence` comes from `compute_parameter_coherence` which returns 1.0 when `prev_parameters` is None (first call) or when parameters are identical.
+
+### 2. Signal Quality Assessment
+
+**Your finding:**
+- Only 34% is real signal (0.7 × 0.49 = 0.343)
+- 66% is fake signal (0.3 × 1.0 = 0.30)
+
+**Math check:**
+- 0.7 × 0.49 = 0.343 ✓
+- 0.3 × 1.0 = 0.30 ✓
+- Total: 0.643 ✓
+
+**Assessment:** ✅ Correct. The blend is heavily skewed toward fake signal.
+
+### 3. Calibration Masking
+
+**Your finding:**
+"If param_coherence were real (~0.6), coherence would drop to 0.52 - below critical threshold of 0.60."
+
+**Math check:**
+- 0.7 × 0.49 + 0.3 × 0.6 = 0.343 + 0.18 = 0.523 ✓
+
+**Assessment:** ✅ Correct. The placeholder is masking calibration issues.
+
+---
+
+## ⚠️ What Needs Clarification
+
+### 1. The "Placeholder Bug" Characterization
+
+**Your claim:** "param_coherence = 1.0 (fake - using placeholder [0]*128 parameters)"
+
+**Reality check:**
+- `param_coherence` returns 1.0 when:
+  1. First call (`prev_parameters` is None) → **This is by design**
+  2. Parameters are identical → **This is correct behavior**
+  3. Parameters are all zeros → **This could be a bug**
+
+**Question:** Are you passing `[0]*128` as parameters, or is `prev_parameters` just None?
+
+**If it's the first case:** The bug is in how parameters are extracted/prepared, not in coherence calculation.
+
+**If it's the second case:** This is expected behavior - first call has no history, so coherence = 1.0.
+
+### 2. What Happens After First Call?
+
+**Your analysis:** Assumes `param_coherence = 1.0` always.
+
+**Reality check:**
+- If parameters change between calls, `param_coherence` will drop
+- With real parameters, `param_coherence` typically ranges [0.6, 0.95]
+- If parameters are random/meaningless, `param_coherence` will be low
+
+**Missing:** Analysis of what `param_coherence` actually is after 8 updates.
+
+---
+
+## 🔍 Deeper Analysis Needed
+
+### 1. Parameter Evolution
+
+**Question:** What are your actual parameters?
+- Are they all zeros? (`[0]*128`)
+- Are they random? (`np.random.rand(128)`)
+- Are they meaningful? (extracted from responses)
+
+**If they're all zeros or random, the bug is in parameter extraction, not coherence.
+
+### 2. Parameter Coherence Behavior
+
+**After multiple updates:**
+- If parameters change: `param_coherence` decreases
+- If parameters stable: `param_coherence` stays high
+- If parameters garbage: `param_coherence` unpredictable
+
+**Need to check:** What is `param_coherence` actually measuring after 8 updates?
+
+### 3. Threshold Adjustment
+
+**Your fix:** Lowered critical threshold 0.60 → 0.55
+
+**Math check:**
+- Old margin: 0.641 - 0.60 = 0.041 ✅
+- New margin: 0.641 - 0.55 = 0.091 ✓
+
+**Assessment:** ✅ Correct math, but this treats the symptom, not the cause.
+
+---
+
+## 🎯 Recommended Next Steps
+
+### 1. Investigate Parameter Extraction**
+
+**Check:**
+- Are parameters actually `[0]*128`?
+- Or are they extracted from response text?
+- Or are they random?
+
+**If all zeros:** Bug is in parameter extraction/preparation.
+
+**If random:** Bug is in parameter extraction logic.
+
+**If meaningful:** Then `param_coherence` should work correctly.
+
+### 2. Measure Actual Parameter Coherence
+
+**After 8 updates, check:**
+- What is `param_coherence` actually?
+- What is `C(V)` actually?
+- What is the blend?
+
+**If `param_coherence` is still 1.0 after 8 updates:**
+- Parameters aren't changing (all zeros or identical)
+- Bug is in parameter extraction
+
+**If `param_coherence` is ~0.6-0.8:**
+- Parameters are changing but meaningful
+- Your analysis is correct
+
+**If `param_coherence` is < 0.5:**
+- Parameters are random/noisy
+- Bug is in parameter extraction
+
+### 3. Long-Term Fix Decision
+
+**Option A: Remove param_coherence (Your recommendation)**
+- ✅ Cleaner (pure thermodynamic)
+- ✅ More honest (no fake signal)
+- ✅ Simpler (one source of truth)
+- ⚠️ Need to recalibrate thresholds around C(V) ≈ 0.49
+
+**Option B: Fix parameter extraction**
+- ✅ Full framework (thermodynamic + parameter)
+- ✅ More comprehensive signal
+- ⚠️ Requires embedding model (as you noted)
+- ⚠️ Only worth it for local models
+
+**Option C: Adjust blend ratio**
+- ✅ Quick fix (reduce weight on fake signal)
+- ✅ E.g., 0.9 × C(V) + 0.1 × param_coherence
+- ⚠️ Still has fake signal, just less influential
+
+**Recommendation:** Option A (remove param_coherence) if you're advisory-only, Option B (fix extraction) if you're building for local models.
+
+---
+
+##  Critical Questions
+
+### 1. What Are Your Actual Parameters?
+
+**Need to verify:**
+```python
+# In your update, what are parameters?
+parameters = [0]*128  # ❌ Bug
+parameters = np.random.rand(128)  # ❌ Bug  
+parameters = extract_from_response(response_text)  # ✅ Should work
+```
+
+### 2. What Is param_coherence After 8 Updates?
+
+**Need to check:**
+- After 8 updates, is `param_coherence` still 1.0?
+- Or has it dropped to ~0.6-0.8?
+- Or is it unpredictable?
+
+### 3. Is This a Bug or Expected Behavior?
+
+**If parameters are all zeros:**
+- Bug is in parameter extraction/preparation
+- Fix parameter extraction, not coherence
+
+**If parameters are extracted correctly:**
+- `param_coherence = 1.0` on first call is expected
+- After multiple calls, `param_coherence` should drop
+- Your analysis is correct
+
+---
+
+## ✅ Verdict
+
+**Your analysis is fundamentally correct:**
+- ✅ Root cause identified (fake signal masking real signal)
+- ✅ Math checks out (0.7 × 0.49 + 0.3 × 1.0 = 0.643)
+- ✅ Calibration issue identified (masked by fake signal)
+- ✅ Threshold adjustment justified (buys breathing room)
+
+**Missing pieces:**
+- ⚠️ What are actual parameters after 8 updates?
+- ⚠️ What is `param_coherence` actually measuring?
+- ⚠️ Is this a parameter extraction bug or expected behavior?
+
+**Recommendation:**
+1. **Immediate:** Threshold adjustment is fine (buys time)
+2. **Short-term:** Measure actual `param_coherence` after 8 updates
+3. **Long-term:** Remove `param_coherence` (simpler, more honest)
+
+---
+
+## 🎯 Action Items
+
+1. **Measure actual parameters:** What are they after 8 updates?
+2. **Measure actual param_coherence:** What is it after 8 updates?
+3. **Decide on fix:** Remove vs. fix extraction vs. adjust blend
+4. **Recalibrate:** Based on chosen fix
+
+---
+
+**Status:** ✅ Analysis is correct, but needs verification of actual parameter values.
+

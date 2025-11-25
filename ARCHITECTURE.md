@@ -406,7 +406,7 @@ def test_unitares_unitaires_parity():
 
 ## Guidelines for Contributors
 
-### For AI Assistants (Claude, Cursor, ChatGPT)
+### For AI Assistants (Claude, Composer/Cursor, ChatGPT, etc.)
 
 When working with this codebase:
 
@@ -494,9 +494,16 @@ Need to...
 
 **Contains:**
 - MCP protocol implementation
+- Clean handler dispatcher (~30 lines)
 - Multi-agent tracking
 - Metadata management
 - Process lifecycle
+
+**Handler Architecture:**
+- **29 handlers** organized in `src/mcp_handlers/` directory
+- **Handler registry pattern** - elegant, testable, maintainable
+- **Zero elif chains** - clean dispatcher using registry
+- Handlers grouped by category (core, config, observability, lifecycle, export, knowledge, admin)
 
 **Uses:** governance_core for math
 
