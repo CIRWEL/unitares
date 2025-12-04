@@ -193,7 +193,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 #### Increased Capacity
-- **MAX_KEEP_PROCESSES** - Increased from 36 to 72 (doubled)
+- **MAX_KEEP_PROCESSES** - Increased from 36 to 42
 - **Better concurrency** - Support for Cursor + Claude Desktop + other MCP clients simultaneously
 
 #### Enhanced Reliability

@@ -55,7 +55,7 @@ This version adds **production-hardened infrastructure** with auto-recovery capa
 - **Debugging aid** - Trace agent spawning chains
 
 ### ✅ Enhanced Capacity & Reliability
-- **Doubled process limit** - MAX_KEEP_PROCESSES: 36 → 72
+- **Increased process limit** - MAX_KEEP_PROCESSES: 36 → 42
 - **Better concurrency** - Support for any MCP-compatible client (Cursor, Claude Desktop, GPT-4, Gemini, VS Code, etc.)
 - **Modular handlers** - Clean handler registry pattern (29 handlers)
 - **Recovery tools** - One-command fix script for common issues
@@ -949,7 +949,7 @@ Built on UNITARES framework (v4.1, v4.2-P) with contraction theory foundations.
 
 ---
 
-**Status: ✅ PRODUCTION READY v2.0**
+**Status: ✅ PRODUCTION READY v2.1**
 
 All decision points implemented. No placeholders. Ready to ship.
 
