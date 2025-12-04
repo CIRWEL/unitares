@@ -1167,7 +1167,7 @@
   },
   "test_error_leakage": {
     "agent_id": "test_error_leakage",
-    "status": "active",
+    "status": "archived",
     "created_at": "2025-12-04T13:44:09.305319",
     "last_update": "2025-12-04T13:44:09.307461",
     "version": "v1.0",
@@ -1179,10 +1179,15 @@
         "event": "created",
         "timestamp": "2025-12-04T13:44:09.305343",
         "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-04T15:31:54.531572",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
       }
     ],
     "paused_at": null,
-    "archived_at": null,
+    "archived_at": "2025-12-04T15:31:54.531560",
     "parent_agent_id": null,
     "spawn_reason": null,
     "api_key": "7CUvg0l5FBQjrJnsSHsaKI4WL1ZxMfdEOtWDopXuqJ8",
