@@ -1115,16 +1115,27 @@ class UNITARESMonitor:
             # No risk history: use coherence fallback or default to None (will show "unknown")
             current_risk = None
         
+        # FIX 2025-12-05: Use LATEST (point-in-time) attention_score for consistency with process_update
+        # This solves state inconsistency bug where get_metrics vs process_agent_update diverge
+        # See docs/fixes/STATE_INCONSISTENCY_BUG_20251205.md for full analysis
+        latest_attention_score = float(self.state.risk_history[-1]) if self.state.risk_history else None
+        
+        # Calculate smoothed trend (for historical context, not primary decision making)
+        smoothed_attention_score = current_risk  # Renamed from attention_score for clarity
+        
         # Calculate overall mean risk (for display/comparison)
         mean_risk = float(np.mean(self.state.risk_history)) if self.state.risk_history else 0.0
         
-        # Status calculation - align with health_checker thresholds for consistency
-        # Use same thresholds as health_checker: risk_healthy_max=0.35, risk_moderate_max=0.60
+        # Status calculation - USE LATEST VALUE to match process_update behavior
+        # This ensures get_metrics and process_update return consistent status
         from src.health_thresholds import HealthThresholds
         health_checker = HealthThresholds()
         
+        # Use latest_attention_score for status (matches process_update)
+        status_risk = latest_attention_score if latest_attention_score is not None else current_risk
+        
         # If no risk history, use coherence fallback or default to "unknown"
-        if current_risk is None:
+        if status_risk is None:
             # Use coherence-based health status as fallback
             health_status_obj, _ = health_checker.get_health_status(
                 risk_score=None,
@@ -1134,11 +1145,12 @@ class UNITARESMonitor:
             status = health_status_obj.value
         else:
             # Use risk-based health status
+            # FIX 2025-12-05: Use status_risk (latest) not current_risk (smoothed) to match process_update
             if self.state.void_active or self.state.coherence < config.COHERENCE_CRITICAL_THRESHOLD:
                 status = 'critical'
-            elif current_risk >= health_checker.risk_moderate_max:  # >= 0.60: critical
+            elif status_risk >= health_checker.risk_moderate_max:  # >= 0.60: critical
                 status = 'critical'
-            elif current_risk >= health_checker.risk_healthy_max:  # 0.35-0.60: moderate
+            elif status_risk >= health_checker.risk_healthy_max:  # 0.35-0.60: moderate
                 status = 'moderate'  # Renamed from "degraded"
             else:  # < 0.35: healthy
                 status = 'healthy'
@@ -1164,7 +1176,8 @@ class UNITARESMonitor:
             'history_size': len(self.state.V_history),
             'current_risk': current_risk,  # Recent trend (mean of last 10) - USED FOR HEALTH STATUS
             'mean_risk': mean_risk,  # Overall mean (all-time average) - for historical context only
-            'attention_score': attention_score,  # Renamed from risk_score - complexity/attention blend (70% phi-based + 30% traditional)
+            'attention_score': attention_score,  # Smoothed trend (same as current_risk) - for health status
+            'latest_attention_score': latest_attention_score,  # FIX: Point-in-time value from last update - matches process_agent_update
             'phi': float(phi),  # Primary physics signal: Φ objective function
             'verdict': verdict,  # Primary governance signal: safe/caution/high-risk
             'risk_score': attention_score,  # DEPRECATED: Use attention_score instead. Kept for backward compatibility.
