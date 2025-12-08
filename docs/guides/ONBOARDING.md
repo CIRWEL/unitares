@@ -132,7 +132,7 @@ Select integration scenario:
 
 **Primary tools:**
 - `get_agent_api_key` - Agent registration and credential retrieval
-- `list_tools` - Enumerate available governance functions (38+ tools)
+- `list_tools` - Enumerate available governance functions (47 tools)
 - `process_agent_update` - Main governance cycle (authentication required)
 - `simulate_update` - Dry-run governance evaluation (no state persistence)
 - `get_governance_metrics` - Retrieve current thermodynamic state
@@ -182,9 +182,10 @@ Select integration scenario:
 **Objective:** Execute first governance cycle and observe feedback.
 
 1. **Select integration path** (see above)
-2. **Verify system:**
-   ```bash
-   python3 demos/demo_complete_system.py
+2. **Verify system health:**
+   ```python
+   # Use MCP tool
+   get_workspace_health()
    ```
 3. **Execute first governance cycle:**
    - **MCP Integration:**
@@ -419,7 +420,7 @@ python3 ~/scripts/claude_code_bridge.py --agent-id your_agent_id \
 → [Troubleshooting Guide](docs/guides/TROUBLESHOOTING.md)
 
 **See all available tools:**
-→ **Call `list_tools` MCP tool** - Returns all 38+ tools with descriptions, categories, and workflows  
+→ **Call `list_tools` MCP tool** - Returns all 47 tools with descriptions, categories, and workflows  
 → Or check [README.md](README.md) for full feature list
 
 **Find a quick command:**
