@@ -51,7 +51,7 @@ class DynamicsParams:
     E_max: float = 1.0
     I_min: float = 0.0
     I_max: float = 1.0
-    S_min: float = 0.0
+    S_min: float = 0.001  # Epistemic humility floor - prevents S=0.0 without external validation
     S_max: float = 2.0
     V_min: float = -2.0
     V_max: float = 2.0

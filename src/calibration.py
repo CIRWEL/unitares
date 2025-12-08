@@ -230,6 +230,123 @@ class CalibrationChecker:
         # Ensure pending_updates never goes negative (safety check)
         return max(0, pending)
     
+    def update_from_peer_verification(self, confidence: float, predicted_correct: bool, 
+                                     peer_agreed: bool, weight: float = 0.7):
+        """
+        Update calibration from peer verification (dialectic convergence).
+        
+        Uses peer agreement as a proxy for correctness, with configurable weight.
+        This acknowledges that peer verification is valuable for uncertainty detection
+        but is not definitive ground truth.
+        
+        Args:
+            confidence: Original confidence estimate
+            predicted_correct: Whether we predicted correct
+            peer_agreed: Whether peer agents agreed (converged)
+            weight: Weight for peer verification (default 0.7 = 70% of human ground truth)
+        """
+        # Find the bin
+        bin_key = None
+        for bin_min, bin_max in self.bins:
+            if bin_min <= confidence < bin_max or (bin_max == 1.0 and confidence == 1.0):
+                bin_key = f"{bin_min:.1f}-{bin_max:.1f}"
+                break
+        
+        if bin_key is None:
+            bin_key = f"{self.bins[-1][0]:.1f}-{self.bins[-1][1]:.1f}"
+        
+        stats = self.bin_stats[bin_key]
+        
+        # Record prediction
+        stats['count'] += 1
+        stats['confidence_sum'] += confidence
+        if predicted_correct:
+            stats['predicted_correct'] += 1
+        
+        # Update actual correctness with weighted peer agreement
+        # If peers agreed, treat as "probably correct" (weighted)
+        # This is a proxy, not ground truth - acknowledge uncertainty
+        if peer_agreed:
+            # Weighted update: peer agreement counts as partial correctness
+            # We increment by weight (0.7 = 70% confidence in correctness)
+            # This is tracked separately from human ground truth
+            stats['actual_correct'] += weight
+        
+        # Ensure actual_correct never exceeds count (safety check)
+        if stats['actual_correct'] > stats['count']:
+            stats['actual_correct'] = stats['count']
+        
+        # Save state after update
+        self.save_state()
+    
+    def update_from_peer_disagreement(self, confidence: float, predicted_correct: bool, 
+                                      disagreement_severity: float = 0.5):
+        """
+        Update calibration from peer disagreement (dialectic escalation/failure).
+        
+        Disagreement indicates the agent was overconfident - their confidence was too high
+        for the actual uncertainty in the situation. This lowers the effective calibration
+        by treating disagreement as a signal that confidence should have been lower.
+        
+        Args:
+            confidence: Original confidence estimate (which was too high)
+            predicted_correct: Whether we predicted correct
+            disagreement_severity: How severe the disagreement was (0.0-1.0)
+                                  - 0.5 = moderate disagreement (default)
+                                  - 1.0 = complete failure to converge
+                                  - 0.0 = minor disagreement
+        """
+        # Find the bin
+        bin_key = None
+        for bin_min, bin_max in self.bins:
+            if bin_min <= confidence < bin_max or (bin_max == 1.0 and confidence == 1.0):
+                bin_key = f"{bin_min:.1f}-{bin_max:.1f}"
+                break
+        
+        if bin_key is None:
+            bin_key = f"{self.bins[-1][0]:.1f}-{self.bins[-1][1]:.1f}"
+        
+        stats = self.bin_stats[bin_key]
+        
+        # Record prediction
+        stats['count'] += 1
+        stats['confidence_sum'] += confidence
+        if predicted_correct:
+            stats['predicted_correct'] += 1
+        
+        # Disagreement means confidence was too high
+        # We treat this as "actual correctness was lower than predicted"
+        # The severity determines how much we lower the actual_correct count
+        # Higher severity = more overconfidence = lower actual correctness
+        
+        # If agent predicted correct but peers disagreed, that's a mismatch
+        # We reduce actual_correct by the disagreement severity
+        # This effectively lowers the calibration accuracy for that confidence bin
+        
+        # For disagreement: if predicted_correct=True but peers disagreed,
+        # then actual correctness should be lower (we were overconfident)
+        if predicted_correct:
+            # Disagreement means we were wrong to be confident
+            # Reduce actual_correct by severity (e.g., 0.5 = half credit)
+            # This penalizes overconfidence
+            stats['actual_correct'] += (1.0 - disagreement_severity)
+        else:
+            # If we predicted incorrect, disagreement might actually mean we were right
+            # But this is less clear - for now, treat as neutral
+            # (Could be enhanced to track "disagreement when predicted wrong" separately)
+            stats['actual_correct'] += 0.3  # Small credit for being cautious
+        
+        # Ensure actual_correct never goes negative (safety check)
+        if stats['actual_correct'] < 0:
+            stats['actual_correct'] = 0
+        
+        # Ensure actual_correct never exceeds count (safety check)
+        if stats['actual_correct'] > stats['count']:
+            stats['actual_correct'] = stats['count']
+        
+        # Save state after update
+        self.save_state()
+    
     def save_state(self):
         """Save calibration state to file"""
         try:
@@ -273,6 +390,26 @@ class CalibrationChecker:
             self.reset()
 
 
-# Global calibration checker instance
-calibration_checker = CalibrationChecker()
+# Global calibration checker instance (lazy initialization to avoid blocking at import time)
+_calibration_checker_instance = None
+
+def get_calibration_checker() -> CalibrationChecker:
+    """Get or create calibration checker instance (lazy initialization)"""
+    global _calibration_checker_instance
+    if _calibration_checker_instance is None:
+        _calibration_checker_instance = CalibrationChecker()
+    return _calibration_checker_instance
+
+# Create a module-level proxy object that acts like the old calibration_checker
+# This defers initialization until first use, preventing blocking at import time
+class _CalibrationCheckerProxy:
+    """Proxy for calibration_checker that provides lazy access"""
+    def __getattr__(self, name):
+        return getattr(get_calibration_checker(), name)
+    
+    def __call__(self, *args, **kwargs):
+        # If someone tries to call calibration_checker() directly
+        return get_calibration_checker()
+
+calibration_checker = _CalibrationCheckerProxy()
 

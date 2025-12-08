@@ -16,7 +16,7 @@ Architecture:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Set, Optional
+from typing import Dict, List, Set, Optional, Literal
 from datetime import datetime
 import os
 from pathlib import Path
@@ -33,30 +33,37 @@ except ImportError:
 
 
 @dataclass
+class ResponseTo:
+    """Typed response link to another discovery"""
+    discovery_id: str
+    response_type: Literal["extend", "question", "disagree", "support"]
+
+@dataclass
 class DiscoveryNode:
     """Node in knowledge graph representing a single discovery"""
     id: str
     agent_id: str
-    type: str  # "bug_found", "insight", "pattern", "improvement", "question"
+    type: str  # "bug_found", "insight", "pattern", "improvement", "question", "answer"
     summary: str
     details: str = ""
     tags: List[str] = field(default_factory=list)
     severity: Optional[str] = None  # "low", "medium", "high", "critical"
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     status: str = "open"  # "open", "resolved", "archived", "disputed"
-    related_to: List[str] = field(default_factory=list)  # IDs of related discoveries
+    related_to: List[str] = field(default_factory=list)  # IDs of related discoveries (backward compat)
+    response_to: Optional[ResponseTo] = None  # Typed response to parent discovery
+    responses_from: List[str] = field(default_factory=list)  # IDs of discoveries that respond to this one (backlinks)
     references_files: List[str] = field(default_factory=list)
     resolved_at: Optional[str] = None
     updated_at: Optional[str] = None
     
-    def to_dict(self) -> dict:
+    def to_dict(self, include_details: bool = True) -> dict:
         """Convert to dictionary for JSON serialization"""
-        return {
+        result = {
             "id": self.id,
             "agent_id": self.agent_id,
             "type": self.type,
             "summary": self.summary,
-            "details": self.details,
             "tags": self.tags,
             "severity": self.severity,
             "timestamp": self.timestamp,
@@ -66,10 +73,40 @@ class DiscoveryNode:
             "resolved_at": self.resolved_at,
             "updated_at": self.updated_at
         }
+        
+        # Add typed response_to if present
+        if self.response_to:
+            result["response_to"] = {
+                "discovery_id": self.response_to.discovery_id,
+                "response_type": self.response_to.response_type
+            }
+        
+        # Add backlinks (responses_from)
+        if self.responses_from:
+            result["responses_from"] = self.responses_from
+        
+        if include_details:
+            result["details"] = self.details
+        else:
+            # Include truncated hint if details exist
+            if self.details:
+                result["has_details"] = True
+                result["details_preview"] = self.details[:100] + "..." if len(self.details) > 100 else self.details
+        return result
     
     @classmethod
     def from_dict(cls, data: dict) -> 'DiscoveryNode':
         """Create from dictionary"""
+        # Parse response_to if present
+        response_to = None
+        if "response_to" in data and data["response_to"]:
+            resp_data = data["response_to"]
+            if isinstance(resp_data, dict):
+                response_to = ResponseTo(
+                    discovery_id=resp_data["discovery_id"],
+                    response_type=resp_data["response_type"]
+                )
+        
         return cls(
             id=data["id"],
             agent_id=data["agent_id"],
@@ -81,6 +118,8 @@ class DiscoveryNode:
             timestamp=data.get("timestamp", datetime.now().isoformat()),
             status=data.get("status", "open"),
             related_to=data.get("related_to", []),
+            response_to=response_to,
+            responses_from=data.get("responses_from", []),
             references_files=data.get("references_files", []),
             resolved_at=data.get("resolved_at"),
             updated_at=data.get("updated_at")
@@ -124,12 +163,14 @@ class KnowledgeGraph:
         # Persistence state
         self.dirty = False
         self._save_task: Optional[asyncio.Task] = None
-        self._save_lock = asyncio.Lock()
+        self._save_lock: Optional[asyncio.Lock] = None  # Created lazily to avoid binding to wrong event loop
     
     async def add_discovery(self, discovery: DiscoveryNode) -> None:
         """
         Add discovery to graph - O(1) with indexes.
         Non-blocking, async background persistence.
+        
+        Handles bidirectional linking: if discovery has response_to, adds backlink to parent.
 
         Rate limiting: Max 10 stores/hour per agent (prevents poisoning flood attacks).
         """
@@ -137,6 +178,16 @@ class KnowledgeGraph:
         await self._check_rate_limit(discovery.agent_id)
 
         self.nodes[discovery.id] = discovery
+        
+        # Handle bidirectional linking: if this discovery responds to another, add backlink
+        if discovery.response_to:
+            parent_id = discovery.response_to.discovery_id
+            if parent_id in self.nodes:
+                parent = self.nodes[parent_id]
+                if discovery.id not in parent.responses_from:
+                    parent.responses_from.append(discovery.id)
+                    # Mark parent as dirty (backlink added)
+                    self.dirty = True
         
         # Update indexes (fast operations)
         # Agent index (ordered list)
@@ -307,11 +358,14 @@ class KnowledgeGraph:
         return self.nodes.get(discovery_id)
     
     async def update_discovery(self, discovery_id: str, updates: dict) -> bool:
-        """Update discovery fields - O(1)"""
+        """Update discovery fields - O(1) with backlink handling"""
         if discovery_id not in self.nodes:
             return False
         
         discovery = self.nodes[discovery_id]
+        
+        # Track old response_to for backlink cleanup
+        old_response_to = discovery.response_to
         
         # Update fields
         for key, value in updates.items():
@@ -319,8 +373,41 @@ class KnowledgeGraph:
                 old_value = getattr(discovery, key)
                 setattr(discovery, key, value)
                 
+                # Handle response_to changes (bidirectional linking)
+                if key == "response_to" and old_value != value:
+                    # Remove backlink from old parent
+                    if old_response_to:
+                        old_parent_id = old_response_to.discovery_id
+                        if old_parent_id in self.nodes:
+                            old_parent = self.nodes[old_parent_id]
+                            if discovery_id in old_parent.responses_from:
+                                old_parent.responses_from.remove(discovery_id)
+                                self.dirty = True
+                    
+                    # Add backlink to new parent
+                    if value:  # New response_to is not None
+                        if isinstance(value, ResponseTo):
+                            new_parent_id = value.discovery_id
+                        elif isinstance(value, dict):
+                            new_parent_id = value.get("discovery_id")
+                            # Convert dict to ResponseTo if needed
+                            if new_parent_id and "response_type" in value:
+                                value = ResponseTo(
+                                    discovery_id=new_parent_id,
+                                    response_type=value["response_type"]
+                                )
+                                setattr(discovery, key, value)  # Update with ResponseTo object
+                        else:
+                            new_parent_id = None
+                        
+                        if new_parent_id and new_parent_id in self.nodes:
+                            new_parent = self.nodes[new_parent_id]
+                            if discovery_id not in new_parent.responses_from:
+                                new_parent.responses_from.append(discovery_id)
+                                self.dirty = True
+                
                 # Update indexes if needed
-                if key == "tags" and old_value != value:
+                elif key == "tags" and old_value != value:
                     # Remove from old tags
                     for tag in old_value:
                         if tag in self.by_tag:
@@ -346,11 +433,28 @@ class KnowledgeGraph:
         return True
     
     async def delete_discovery(self, discovery_id: str) -> bool:
-        """Delete discovery from graph - O(1) with index cleanup"""
+        """Delete discovery from graph - O(1) with index cleanup and backlink removal"""
         if discovery_id not in self.nodes:
             return False
         
         discovery = self.nodes[discovery_id]
+        
+        # Remove backlinks: if this discovery responds to a parent, remove backlink
+        if discovery.response_to:
+            parent_id = discovery.response_to.discovery_id
+            if parent_id in self.nodes:
+                parent = self.nodes[parent_id]
+                if discovery_id in parent.responses_from:
+                    parent.responses_from.remove(discovery_id)
+                    self.dirty = True
+        
+        # Remove forward links: if other discoveries respond to this one, remove their backlinks
+        for child_id in discovery.responses_from:
+            if child_id in self.nodes:
+                child = self.nodes[child_id]
+                if child.response_to and child.response_to.discovery_id == discovery_id:
+                    child.response_to = None
+                    self.dirty = True
         
         # Remove from all indexes
         # Agent index
@@ -404,6 +508,10 @@ class KnowledgeGraph:
     
     async def _persist_async(self):
         """Schedule async background save - non-blocking"""
+        # Create lock lazily to avoid binding to wrong event loop
+        if self._save_lock is None:
+            self._save_lock = asyncio.Lock()
+        
         async with self._save_lock:
             if self._save_task and not self._save_task.done():
                 return  # Save already scheduled
@@ -414,6 +522,10 @@ class KnowledgeGraph:
         """Background save to disk - doesn't block queries"""
         # Debounce rapid writes (wait 100ms for more writes)
         await asyncio.sleep(0.1)
+        
+        # Create lock lazily to avoid binding to wrong event loop
+        if self._save_lock is None:
+            self._save_lock = asyncio.Lock()
         
         async with self._save_lock:
             if not self.dirty:
@@ -432,41 +544,61 @@ class KnowledgeGraph:
                 }
             }
             
-            # Save to disk (async if available)
-            try:
-                if AIOFILES_AVAILABLE:
-                    async with aiofiles.open(self.persist_file, 'w') as f:
-                        await f.write(json.dumps(data, indent=2))
-                else:
-                    # Fallback to sync I/O
+            # Save to disk - wrap ALL I/O in executor to avoid blocking event loop
+            # Even with aiofiles, json.dumps() is CPU-bound and can block
+            loop = asyncio.get_running_loop()
+            
+            def _save_file_sync():
+                """Synchronous file save - runs in executor to avoid blocking"""
+                try:
+                    # Serialize JSON (CPU-bound, can be slow for large graphs)
+                    json_str = json.dumps(data, indent=2)
+                    
+                    # Write to disk (I/O-bound)
                     with open(self.persist_file, 'w', encoding='utf-8') as f:
-                        json.dump(data, f, indent=2)
+                        f.write(json_str)
                         f.flush()  # Ensure buffered data written
                         os.fsync(f.fileno())  # Ensure written to disk
-                
+                except Exception as e:
+                    print(f"[KNOWLEDGE_GRAPH] Error saving file: {e}", file=sys.stderr)
+                    raise
+            
+            try:
+                # Run entire save operation in executor (non-blocking)
+                await loop.run_in_executor(None, _save_file_sync)
                 self.dirty = False
             except Exception as e:
                 print(f"[KNOWLEDGE_GRAPH] Warning: Could not save graph: {e}", file=sys.stderr)
     
     async def load(self):
-        """Load graph from disk on startup"""
-        if not self.persist_file.exists():
+        """Load graph from disk on startup - non-blocking"""
+        # Check file existence in executor to avoid blocking
+        loop = asyncio.get_running_loop()
+        file_exists = await loop.run_in_executor(None, lambda: self.persist_file.exists())
+        if not file_exists:
             return
         
         try:
-            if AIOFILES_AVAILABLE:
-                async with aiofiles.open(self.persist_file, 'r') as f:
-                    content = await f.read()
-                    data = json.loads(content)
-            else:
-                with open(self.persist_file, 'r') as f:
-                    data = json.load(f)
+            # Load file content in executor (even with aiofiles, json.loads() is blocking)
+            def _load_file_sync():
+                """Synchronous file loading function - runs in executor to avoid blocking event loop"""
+                try:
+                    # Always use sync I/O in executor (even if aiofiles available)
+                    # because json.load() is CPU-bound and blocks regardless
+                    with open(self.persist_file, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                except Exception as e:
+                    print(f"[KNOWLEDGE_GRAPH] Error loading file: {e}", file=sys.stderr)
+                    raise
             
-            # Restore nodes
+            # Run file I/O and JSON parsing in executor to avoid blocking event loop
+            data = await loop.run_in_executor(None, _load_file_sync)
+            
+            # Restore nodes (fast in-memory operations, no I/O)
             for node_id, node_data in data.get("nodes", {}).items():
                 self.nodes[node_id] = DiscoveryNode.from_dict(node_data)
             
-            # Restore indexes
+            # Restore indexes (fast in-memory operations)
             indexes = data.get("indexes", {})
             
             # by_agent: list (preserve order)
@@ -491,12 +623,16 @@ class KnowledgeGraph:
 
 # Global graph instance (initialized on first use)
 _graph_instance: Optional[KnowledgeGraph] = None
-_graph_lock = asyncio.Lock()
+_graph_lock: Optional[asyncio.Lock] = None  # Created lazily to avoid binding to wrong event loop
 
 
 async def get_knowledge_graph() -> KnowledgeGraph:
     """Get global knowledge graph instance (singleton)"""
-    global _graph_instance
+    global _graph_instance, _graph_lock
+    
+    # Create lock lazily in the current event loop (fixes import-time binding issue)
+    if _graph_lock is None:
+        _graph_lock = asyncio.Lock()
     
     async with _graph_lock:
         if _graph_instance is None:

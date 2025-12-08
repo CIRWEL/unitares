@@ -258,8 +258,11 @@ class DialecticSession:
         
         Improved convergence detection:
         - Both agents must agree (agrees=True)
-        - Both must reference similar conditions (fuzzy matching)
+        - Both must reference similar conditions (semantic matching via normalized keywords)
         - Both must agree on root cause (semantic similarity)
+        
+        FIXED: Now uses semantic comparison instead of exact string matching.
+        Normalizes conditions by extracting key action verbs and objects before comparing.
         """
         # Get last synthesis messages from both agents
         recent_synthesis = [msg for msg in self.transcript[-6:] if msg.phase == "synthesis"]
@@ -281,19 +284,42 @@ class DialecticSession:
         if not (msg_a.agrees and msg_b.agrees):
             return False
         
-        # Check if they're agreeing on similar conditions
-        conditions_a = set(msg_a.proposed_conditions or [])
-        conditions_b = set(msg_b.proposed_conditions or [])
+        # Check if they're agreeing on similar conditions (SEMANTIC MATCHING)
+        conditions_a = msg_a.proposed_conditions or []
+        conditions_b = msg_b.proposed_conditions or []
         
-        # At least 50% overlap in conditions (fuzzy match)
         if conditions_a and conditions_b:
-            overlap = len(conditions_a & conditions_b)
-            union = len(conditions_a | conditions_b)
-            similarity = overlap / union if union > 0 else 0.0
-            if similarity < 0.5:
+            # Normalize conditions by extracting key semantic elements
+            normalized_a = [self._normalize_condition(c) for c in conditions_a]
+            normalized_b = [self._normalize_condition(c) for c in conditions_b]
+            
+            # Compare normalized conditions using word-based similarity
+            # Count how many conditions from A have a match in B (and vice versa)
+            matches = 0
+            total = len(normalized_a) + len(normalized_b)
+            
+            for norm_a in normalized_a:
+                for norm_b in normalized_b:
+                    # Check semantic similarity (word overlap)
+                    similarity = self._semantic_similarity(norm_a, norm_b)
+                    if similarity >= 0.6:  # 60% word overlap = same condition
+                        matches += 1
+                        break
+            
+            # Require at least 50% of conditions to match semantically
+            match_ratio = (matches * 2) / total if total > 0 else 0.0
+            if match_ratio < 0.5:
                 return False
+            
+            # If conditions match well (>= 60%, same as similarity threshold), root cause check is optional
+            # This allows agents to agree on actions even if they frame the problem differently
+            conditions_match_well = match_ratio >= 0.6
+        else:
+            conditions_match_well = False
         
         # Check root cause agreement (basic string similarity)
+        # NOTE: Root cause matching is optional if conditions match well (>= 70%)
+        # This allows agents to agree on actions even if they frame the problem differently
         root_cause_a = (msg_a.root_cause or "").lower()
         root_cause_b = (msg_b.root_cause or "").lower()
         
@@ -303,10 +329,52 @@ class DialecticSession:
             words_b = set(root_cause_b.split())
             if words_a and words_b:
                 word_overlap = len(words_a & words_b) / len(words_a | words_b)
-                if word_overlap < 0.3:  # At least 30% word overlap
+                # If conditions match well, root cause check is optional (just needs > 0%)
+                # Otherwise require 20% word overlap
+                threshold = 0.0 if conditions_match_well else 0.2
+                if word_overlap < threshold:
                     return False
         
         return True
+    
+    def _normalize_condition(self, condition: str) -> str:
+        """
+        Normalize a condition string to extract key semantic elements.
+        
+        Removes:
+        - Parenthetical notes (e.g., "(low effort, reasonable hygiene)")
+        - Common filler words
+        - Punctuation
+        
+        Keeps:
+        - Action verbs (implement, add, defer, document, etc.)
+        - Key nouns (recently-reviewed check, reputation tracking, etc.)
+        """
+        import re
+        # Remove parenthetical notes
+        condition = re.sub(r'\([^)]*\)', '', condition)
+        # Remove common filler words
+        filler_words = {'the', 'a', 'an', 'and', 'or', 'but', 'to', 'for', 'of', 'in', 'on', 'at', 'by', 'with', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can'}
+        words = re.findall(r'\b[a-z]+\b', condition.lower())
+        key_words = [w for w in words if w not in filler_words and len(w) > 2]
+        return ' '.join(sorted(key_words))  # Sort for consistent comparison
+    
+    def _semantic_similarity(self, text1: str, text2: str) -> float:
+        """
+        Calculate semantic similarity between two normalized text strings.
+        
+        Uses word overlap (Jaccard similarity) on normalized text.
+        """
+        words1 = set(text1.split())
+        words2 = set(text2.split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = len(words1 & words2)
+        union = len(words1 | words2)
+        
+        return intersection / union if union > 0 else 0.0
     
     def _merge_proposals(self, msg_a: DialecticMessage, msg_b: DialecticMessage) -> Dict[str, Any]:
         """

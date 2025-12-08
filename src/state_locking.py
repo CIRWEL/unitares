@@ -8,14 +8,16 @@ Features:
 - Automatic stale lock cleanup before acquisition attempts
 - Exponential backoff retry with automatic recovery
 - Process health checking to detect stale locks
+- Async support for non-blocking lock acquisition in async contexts
 """
 
 import fcntl
 import os
 import time
 import json
+import asyncio
 from pathlib import Path
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 from typing import Optional, Dict, Any
 
 
@@ -243,6 +245,146 @@ class StateLockManager:
                     # Exponential backoff: wait longer on each retry
                     wait_time = 0.2 * (2 ** attempt)
                     time.sleep(wait_time)
+
+        except Exception as e:
+            # Close file descriptor on error (only if not already closed)
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                except:
+                    pass
+                try:
+                    os.close(lock_fd)
+                except (OSError, ValueError):
+                    # File descriptor already closed or invalid - this is OK
+                    pass
+                lock_fd = None
+
+            last_error = e
+        finally:
+            # Ensure lock_fd is closed even if we exit the loop early
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                except:
+                    pass
+                try:
+                    os.close(lock_fd)
+                except:
+                    pass
+        
+        # All retries exhausted - raise appropriate error
+        if last_error:
+            raise last_error
+        else:
+            raise TimeoutError(
+                f"Lock timeout for agent '{agent_id}' after {max_retries} attempts. "
+                f"Another process may be updating this agent. Try: wait and retry, or use cleanup_stale_locks tool."
+            )
+    
+    @asynccontextmanager
+    async def acquire_agent_lock_async(self, agent_id: str, timeout: float = 5.0, max_retries: int = 3):
+        """
+        Async version of acquire_agent_lock - uses asyncio.sleep() instead of time.sleep()
+        to avoid blocking the event loop.
+        
+        Use this in async handlers (like MCP handlers) to prevent blocking.
+        
+        Args:
+            agent_id: Agent identifier
+            timeout: Timeout per retry attempt in seconds
+            max_retries: Maximum number of retry attempts with cleanup
+        """
+        lock_file = self.lock_dir / f"{agent_id}.lock"
+        lock_fd = None
+        
+        # Automatic stale lock cleanup before attempting acquisition
+        # Run in executor to avoid blocking event loop (file I/O operations)
+        if self.auto_cleanup_stale:
+            try:
+                import asyncio
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, self._check_and_clean_stale_lock, lock_file)
+            except Exception:
+                # Non-critical, continue with lock acquisition
+                pass
+        
+        # Retry loop with exponential backoff and automatic cleanup
+        last_error = None
+        lock_fd = None
+        
+        try:
+            for attempt in range(max_retries):
+                start_time = time.time()
+                lock_fd = None
+
+                # Create lock file if doesn't exist
+                lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR)
+
+                # Try to acquire lock with timeout
+                while time.time() - start_time < timeout:
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        # Write PID and timestamp to lock file for debugging
+                        lock_info = {
+                            "pid": os.getpid(),
+                            "timestamp": time.time(),
+                            "agent_id": agent_id
+                        }
+                        os.ftruncate(lock_fd, 0)  # Clear file
+                        os.write(lock_fd, json.dumps(lock_info).encode())
+                        os.fsync(lock_fd)  # Ensure written to disk
+                        
+                        # Lock acquired successfully - yield control
+                        try:
+                            yield  # Lock acquired, allow operation
+                        finally:
+                            # Always release lock when exiting context
+                            try:
+                                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                            except:
+                                pass
+                            try:
+                                os.close(lock_fd)
+                            except (OSError, ValueError):
+                                # File descriptor already closed or invalid
+                                pass
+                            lock_fd = None  # Mark as closed
+                        return  # Success, exit retry loop
+                    except IOError:
+                        # Lock is held by another process, wait and retry (NON-BLOCKING)
+                        await asyncio.sleep(0.1)  # Use asyncio.sleep instead of time.sleep
+                
+                # Timeout reached - close file descriptor before retry
+                if lock_fd:
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    except:
+                        pass
+                    try:
+                        os.close(lock_fd)
+                    except (OSError, ValueError):
+                        # File descriptor already closed or invalid
+                        pass
+                    lock_fd = None
+                
+                # Before retrying, check if lock is stale and clean it
+                # Run in executor to avoid blocking event loop (file I/O operations)
+                if attempt < max_retries - 1:  # Don't clean on last attempt
+                    if self.auto_cleanup_stale:
+                        try:
+                            import asyncio
+                            loop = asyncio.get_running_loop()
+                            cleaned = await loop.run_in_executor(None, self._check_and_clean_stale_lock, lock_file)
+                            if cleaned:
+                                # Wait a bit before retrying after cleanup (NON-BLOCKING)
+                                await asyncio.sleep(0.2)  # Use asyncio.sleep instead of time.sleep
+                        except Exception:
+                            pass
+                    
+                    # Exponential backoff: wait longer on each retry (NON-BLOCKING)
+                    wait_time = 0.2 * (2 ** attempt)
+                    await asyncio.sleep(wait_time)  # Use asyncio.sleep instead of time.sleep
 
         except Exception as e:
             # Close file descriptor on error (only if not already closed)

@@ -12,7 +12,7 @@ from typing import Tuple, Optional
 
 class HealthStatus(Enum):
     HEALTHY = "healthy"
-    MODERATE = "moderate"  # Renamed from "degraded" - less negative, more accurate
+    MODERATE = "moderate"
     CRITICAL = "critical"
 
 

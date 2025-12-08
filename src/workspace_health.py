@@ -270,7 +270,7 @@ def get_workspace_health() -> Dict[str, Any]:
             health = "healthy"
             recommendation = "All systems operational. Workspace ready for development."
         elif total_issues <= 2:
-            health = "moderate"  # Renamed from "degraded" - less negative, more accurate
+            health = "moderate"
             recommendation = "Minor issues detected. Workspace functional but may need attention."
         else:
             health = "unhealthy"
