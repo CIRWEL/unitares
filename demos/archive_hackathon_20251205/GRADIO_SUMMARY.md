@@ -63,7 +63,7 @@ A comprehensive Gradio web interface to showcase your UNITARES Governance MCP pl
 
 ### 🔧 Explore MCP Tools
 - Complete tool catalog
-- 44+ MCP tools documented
+- Complete MCP tool catalog (list_tools() for details)
 - Category organization
 
 ## Quick Start

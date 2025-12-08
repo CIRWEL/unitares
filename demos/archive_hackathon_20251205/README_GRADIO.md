@@ -68,7 +68,7 @@ python gradio_demo.py --share
 
 ### 🔧 Explore MCP Tools
 - Complete tool catalog
-- 44+ MCP tools documented
+- Complete MCP tool catalog (list_tools() for current count)
 - Category organization
 
 ## Demo Scenarios for Hackathon

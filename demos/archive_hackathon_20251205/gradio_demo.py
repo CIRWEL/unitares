@@ -17,7 +17,8 @@ os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
 
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# FIX 2025-12-06: Need parent.parent.parent to get to project root (not just demos/)
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import gradio as gr
 import numpy as np
@@ -340,7 +341,9 @@ def list_agents_demo() -> str:
 def explore_mcp_tools() -> str:
     """Show available MCP tools"""
     tools_info = """
-## Available MCP Tools (44+)
+## Available MCP Tools
+
+Use `list_tools()` MCP call for complete list (43 tools as of Dec 2025)
 
 ### Core Governance
 - `process_agent_update` - Main governance cycle
@@ -587,11 +590,14 @@ if __name__ == "__main__":
     print("Starting Gradio Demo...")
     print("Open: http://127.0.0.1:7861")
     print("="*50 + "\n")
-    
+
+    # FIX 2025-12-06: Disable queueing to avoid asyncio context manager errors
+    # Simple demos don't need queueing - it just adds complexity
     demo.launch(
         server_name="127.0.0.1",  # localhost only
         server_port=7861,
         share=False,
-        show_error=True
+        show_error=True,
+        max_threads=40  # Handle requests directly without queue
     )
 

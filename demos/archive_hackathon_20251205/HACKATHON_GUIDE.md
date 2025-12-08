@@ -31,12 +31,12 @@ python gradio_demo.py --share
 **What to Show:**
 - Open the Gradio interface
 - Navigate to "Explore MCP Tools" tab
-- Show the 44+ available tools
+- Show available tools (list_tools() for complete list)
 
 **Key Points:**
 - "This is a thermodynamic AI governance platform"
 - "Uses Model Context Protocol (MCP) for seamless integration"
-- "44+ tools available for real-time governance"
+- "Complete tool suite for real-time governance (list_tools() for details)"
 
 ### 2. Core Functionality (5 minutes)
 
@@ -159,7 +159,7 @@ Compare metrics across agents
 5. **Real-Time** - Sub-millisecond decisions
 
 ### Technical Highlights
-- **44+ MCP Tools** - Comprehensive governance API
+- **Comprehensive MCP Tool Suite** - Use list_tools() for current inventory
 - **EISV Dynamics** - Four coupled state variables
 - **Adaptive Control** - Self-tuning parameters
 - **Circuit Breakers** - Automatic safety mechanisms
