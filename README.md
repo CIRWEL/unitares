@@ -112,7 +112,7 @@ The MCP server runs as a local process, communicating via standard input/output 
 
 **Standard (MCP Native):** Any MCP-compatible client (Cursor Composer, Claude Desktop, GPT-4 via MCP, Gemini via MCP, VS Code with MCP, etc.) connects directly using the MCP protocol.
 
-**👉 Use MCP tools directly** - See `tools/README.md` for available tools. Call `list_tools` to discover all 43+ tools.
+**👉 Use MCP tools directly** - See `tools/README.md` for available tools. Call `list_tools` to discover all 47 tools.
 
 **Exception (CLI-only interfaces):** If your interface doesn't support MCP, use the Python bridge script:
 ```bash
@@ -958,7 +958,7 @@ Built on UNITARES framework (v4.1, v4.2-P) with contraction theory foundations.
 
 ---
 
-**Status: ✅ PRODUCTION READY v2.1**
+**Status: ✅ PRODUCTION READY v2.3.0**
 
 All decision points implemented. No placeholders. Ready to ship.
 

@@ -1,7 +1,33 @@
 #!/bin/bash
-# Pre-commit hook to prevent markdown proliferation
+# Pre-commit hook for documentation validation
+# - Prevents markdown proliferation
+# - Validates tool count synchronization
+# - Checks version consistency
 # Usage: Add to .git/hooks/pre-commit or run manually before committing
 
+# Tool count validation
+echo "🔍 Checking tool count synchronization..."
+if ! python3 scripts/update_docs_tool_count.py --check > /dev/null 2>&1; then
+    echo "❌ Tool count mismatch detected!"
+    python3 scripts/update_docs_tool_count.py --check
+    echo ""
+    echo "Fix: python3 scripts/update_docs_tool_count.py --update"
+    exit 1
+fi
+echo "✅ Tool count in sync"
+
+# Version validation
+echo "🔍 Checking version consistency..."
+if ! python3 scripts/version_manager.py --check > /dev/null 2>&1; then
+    echo "❌ Version mismatch detected!"
+    python3 scripts/version_manager.py --check
+    echo ""
+    echo "Fix: python3 scripts/version_manager.py --update"
+    exit 1
+fi
+echo "✅ Version consistent"
+
+# Markdown proliferation check
 echo "🔍 Checking for new markdown files..."
 
 NEW_MARKDOWN_FILES=$(git diff --cached --name-only --diff-filter=A | grep '\.md$')
