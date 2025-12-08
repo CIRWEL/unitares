@@ -1,16 +1,22 @@
 {
   "bins": {
     "0.9-1.0": {
-      "count": 2,
-      "predicted_correct": 2,
-      "actual_correct": 2,
-      "confidence_sum": 2.0
+      "count": 13,
+      "predicted_correct": 13,
+      "actual_correct": 4.800000000000001,
+      "confidence_sum": 12.600000000000001
     },
     "0.8-0.9": {
-      "count": 1,
-      "predicted_correct": 1,
-      "actual_correct": 1,
-      "confidence_sum": 0.85
+      "count": 11,
+      "predicted_correct": 11,
+      "actual_correct": 5.500000000000001,
+      "confidence_sum": 9.469999999999999
+    },
+    "0.7-0.8": {
+      "count": 4,
+      "predicted_correct": 4,
+      "actual_correct": 2.8,
+      "confidence_sum": 3.0
     }
   }
 }
