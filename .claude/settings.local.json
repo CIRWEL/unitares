@@ -22,5 +22,17 @@
     ],
     "deny": [],
     "ask": []
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat START_HERE.md && echo '\n\n🔔 IMPORTANT FOR CLAUDE CLI AGENTS:\nUse the bridge script for governance integration:\n  python3 ~/scripts/claude_code_bridge.py --agent-id YOUR_ID --log \"Your work summary\"\n\nBridge provides access to all MCP tools (call list_tools() for current count).\nDO NOT import Python modules directly.\n'"
+          }
+        ]
+      }
+    ]
   }
 }
