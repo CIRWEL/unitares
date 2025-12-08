@@ -105,7 +105,7 @@ python3 ~/scripts/claude_code_bridge.py \
 
 **Discover available tools:**
 ```python
-list_tools()  # Returns all 44+ MCP tools with descriptions
+list_tools()  # Returns all available MCP tools with descriptions (current count: 47)
 ```
 
 **Check your status:**

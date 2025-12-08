@@ -290,7 +290,9 @@ The system tracks four coupled variables:
 - **S**: Entropy (uncertainty / ethical drift)
 - **V**: Void Integral (E-I balance)
 
-### Dynamics (from UNITARES v4.1)
+### Dynamics (UNITARES v4.1)
+
+**Note:** This implementation uses UNITARES v4.1, which has different equations than v3.1. v4.1 adds proper state dynamics, realistic coupling terms, and self-regulation. Parameters (α=0.5, k=0.1, δ=0.4) are calibrated for v4.1 equations, not directly comparable to v3.1.
 
 ```python
 dE/dt = α(I - E) - βE·E·S + γE·E·||Δη||²
@@ -298,6 +300,12 @@ dI/dt = -k·S + βI·I·C(V) - γI·I·(1-I)
 dS/dt = -μ·S + λ₁·||Δη||² - λ₂·C(V)
 dV/dt = κ(E - I) - δ·V
 ```
+
+**Key differences from v3.1:**
+- S is now a differential equation (not algebraic)
+- More coupling terms (βE, βI, γE, γI, κ, μ)
+- Self-regulation prevents pathological states
+- Continuous formulation (dV/dt vs discrete V(t+1))
 
 ### Adaptive Control Loop
 
@@ -426,7 +434,7 @@ return PAUSE (high risk, safety check)
 
 **Architecture:** The MCP server uses a **handler registry pattern** with 29 handlers organized by category. See [Handler Architecture](docs/reference/HANDLER_ARCHITECTURE.md) for details on adding new tools or understanding the structure.
 
-The system exposes **43 tools** via MCP interface, organized by function:
+The system exposes **47 tools** via MCP interface, organized by function:
 
 ### Core Governance Tools
 
@@ -919,9 +927,10 @@ No heavy ML dependencies! Pure Python + NumPy.
 
 ## 📚 References
 
-- UNITARES v4.1: Rigorous contraction theory foundations
+- **UNITARES v4.1:** Rigorous contraction theory foundations (current implementation)
+- **UNITARES v3.1:** Legacy version (see `docs/consolidated/MATHEMATICAL_FRAMEWORKS_EXTRACT.md` in Documents directory)
+- **Note:** v4.1 equations differ from v3.1 - parameters are not directly comparable
 - UNITARES v4.2-P: Adaptive parameter learning
-- PRODUCTION_INTEGRATION_SUCCESS.md: Production deployment guide
 
 ---
 
