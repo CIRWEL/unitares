@@ -9,13 +9,32 @@ import sys
 from datetime import datetime, date
 from enum import Enum
 
+# Import type definitions
+from .types import (
+    ErrorResponseDict,
+    SuccessResponseDict,
+    AgentMetadataDict,
+    GovernanceMetricsDict,
+    ToolArgumentsDict
+)
+
+# Import structured logging
+from src.logging_utils import get_logger
+logger = get_logger(__name__)
+
 
 def error_response(
     message: str, 
     details: Optional[Dict[str, Any]] = None, 
     recovery: Optional[Dict[str, Any]] = None, 
-    context: Optional[Dict[str, Any]] = None
+    context: Optional[Dict[str, Any]] = None,
+    error_code: Optional[str] = None
 ) -> TextContent:
+    """
+    Create an error response with optional recovery guidance and system context.
+    
+    Returns TextContent containing ErrorResponseDict.
+    """
     """
     Create an error response with optional recovery guidance and system context.
     
@@ -26,9 +45,17 @@ def error_response(
         details: Optional additional error details (will be sanitized)
         recovery: Optional recovery suggestions for AGI agents
         context: Optional system context (what was happening, system state, etc.)
+        error_code: Optional machine-readable error code (e.g., "AGENT_NOT_FOUND")
         
     Returns:
         TextContent with error response
+        
+    Example:
+        >>> error_response(
+        ...     "Agent not found",
+        ...     error_code="AGENT_NOT_FOUND",
+        ...     recovery={"action": "Call get_agent_api_key"}
+        ... )
     """
     # SECURITY: Sanitize error message to prevent internal structure leakage
     sanitized_message = _sanitize_error_message(message)
@@ -37,6 +64,10 @@ def error_response(
         "success": False,
         "error": sanitized_message
     }
+    
+    # Add machine-readable error code if provided
+    if error_code:
+        response["error_code"] = error_code
     
     # Sanitize details if provided
     if details:
@@ -61,6 +92,123 @@ def error_response(
         type="text",
         text=json.dumps(response, indent=2)
     )
+
+
+def format_metrics_report(
+    metrics: Dict[str, Any],
+    agent_id: str,
+    include_timestamp: bool = True,
+    include_context: bool = True,
+    format_style: str = "structured"
+) -> Dict[str, Any]:
+    """
+    Standardize metric reporting with agent_id and context.
+    
+    Ensures all metric reports include:
+    - agent_id (required)
+    - timestamp (optional, default: True)
+    - EISV metrics (if available)
+    - Health status (if available)
+    - Other context (optional)
+    
+    Args:
+        metrics: Dictionary of metrics (may include E, I, S, V, coherence, etc.)
+        agent_id: Agent identifier (required)
+        include_timestamp: Include ISO timestamp (default: True)
+        include_context: Include additional context like health_status (default: True)
+        format_style: "structured" (dict) or "text" (formatted string)
+    
+    Returns:
+        Standardized metrics dict with agent_id and context, or formatted string if style="text"
+    
+    Example:
+        >>> metrics = {"E": 0.8, "I": 0.9, "S": 0.1, "V": -0.05}
+        >>> report = format_metrics_report(metrics, "agent_123")
+        >>> report["agent_id"]  # "agent_123"
+        >>> report["timestamp"]  # "2025-12-10T18:30:00.123456"
+    """
+    standardized = {
+        "agent_id": agent_id,
+        **metrics  # Include all original metrics
+    }
+    
+    # Always ensure agent_id is present (even if it was in metrics)
+    standardized["agent_id"] = agent_id
+    
+    # Add timestamp if requested
+    if include_timestamp:
+        standardized["timestamp"] = datetime.now().isoformat()
+    
+    # Add context if requested
+    if include_context:
+        # Ensure health_status is accessible
+        if "health_status" not in standardized and "health_status" in metrics:
+            standardized["health_status"] = metrics["health_status"]
+        
+        # Ensure EISV metrics are clearly labeled
+        # Create eisv dict from flat E, I, S, V if they exist
+        eisv_metrics = {}
+        for key in ["E", "I", "S", "V"]:
+            if key in metrics:
+                eisv_metrics[key] = metrics[key]
+        if eisv_metrics:
+            standardized["eisv"] = eisv_metrics
+            # Keep flat E, I, S, V for backward compatibility and easy access
+            # Both formats are valid: metrics["E"] and metrics["eisv"]["E"]
+    
+    if format_style == "text":
+        return format_metrics_text(standardized)
+    
+    return standardized
+
+
+def format_metrics_text(metrics: Dict[str, Any]) -> str:
+    """
+    Format metrics as human-readable text with agent_id and context.
+    
+    Args:
+        metrics: Standardized metrics dict (from format_metrics_report)
+    
+    Returns:
+        Formatted string with agent_id, timestamp, and metrics
+    """
+    lines = []
+    
+    # Header with agent_id
+    agent_id = metrics.get("agent_id", "unknown")
+    lines.append(f"Agent: {agent_id}")
+    
+    # Timestamp
+    if "timestamp" in metrics:
+        lines.append(f"Timestamp: {metrics['timestamp']}")
+    
+    # Health status (if available)
+    if "health_status" in metrics:
+        status = metrics["health_status"]
+        lines.append(f"Health: {status}")
+    
+    # EISV metrics
+    if "eisv" in metrics:
+        eisv = metrics["eisv"]
+        lines.append(f"EISV: E={eisv.get('E', 0):.3f} I={eisv.get('I', 0):.3f} S={eisv.get('S', 0):.3f} V={eisv.get('V', 0):.3f}")
+    elif any(k in metrics for k in ["E", "I", "S", "V"]):
+        e = metrics.get("E", 0)
+        i = metrics.get("I", 0)
+        s = metrics.get("S", 0)
+        v = metrics.get("V", 0)
+        lines.append(f"EISV: E={e:.3f} I={i:.3f} S={s:.3f} V={v:.3f}")
+    
+    # Other key metrics
+    key_metrics = ["coherence", "risk_score", "phi", "verdict", "lambda1"]  # risk_score is primary, attention_score is deprecated
+    for key in key_metrics:
+        if key in metrics:
+            value = metrics[key]
+            if isinstance(value, float):
+                lines.append(f"{key}: {value:.3f}")
+            else:
+                lines.append(f"{key}: {value}")
+    
+    return "\n".join(lines)
 
 
 def _sanitize_error_message(message: str) -> str:
@@ -177,7 +325,95 @@ def _make_json_serializable(obj: Any) -> Any:
         return f"<non-serializable: {type(obj).__name__}>"
 
 
+def get_calibration_feedback(include_complexity: bool = True) -> Dict[str, Any]:
+    """
+    Get calibration feedback for agents (complexity and confidence calibration).
+    
+    This centralizes calibration feedback logic to avoid duplication across handlers.
+    
+    Args:
+        include_complexity: Whether to include complexity calibration feedback
+        
+    Returns:
+        Dict with calibration feedback (empty dict if unavailable)
+    """
+    calibration_feedback = {}
+    
+    try:
+        from src.calibration import calibration_checker
+        is_calibrated, cal_metrics = calibration_checker.check_calibration(include_complexity=include_complexity)
+        
+        if not is_calibrated:
+            bins_data = cal_metrics.get('bins', {})
+            total_samples = sum(bin_data.get('count', 0) for bin_data in bins_data.values())
+            
+            if total_samples > 0:
+                # Calculate overall accuracy
+                total_correct = sum(
+                    int(bin_data.get('count', 0) * bin_data.get('accuracy', 0))
+                    for bin_data in bins_data.values()
+                )
+                overall_accuracy = total_correct / total_samples
+                
+                # Get mean confidence
+                confidence_values = []
+                for bin_key, bin_data in bins_data.items():
+                    count = bin_data.get('count', 0)
+                    expected_acc = bin_data.get('expected_accuracy', 0.0)
+                    confidence_values.extend([expected_acc] * count)
+                
+                if confidence_values:
+                    import numpy as np
+                    mean_confidence = float(np.mean(confidence_values))
+                    
+                    calibration_feedback['confidence'] = {
+                        'system_accuracy': overall_accuracy,
+                        'mean_confidence': mean_confidence,
+                        'calibration_error': mean_confidence - overall_accuracy,
+                        'message': (
+                            f"System-wide calibration: Agents report {mean_confidence:.1%} confidence "
+                            f"but achieve {overall_accuracy:.1%} accuracy. "
+                            f"{'Consider being more conservative with confidence estimates' if mean_confidence > overall_accuracy + 0.2 else 'Calibration is improving'}."
+                        ),
+                        'note': 'This is system-wide data - your individual calibration may vary'
+                    }
+        
+        # Add complexity calibration if requested
+        if include_complexity:
+            complexity_metrics = cal_metrics.get('complexity_calibration', {})
+            if complexity_metrics:
+                # Calculate overall complexity discrepancy
+                total_complexity_samples = sum(
+                    bin_data.get('count', 0) for bin_data in complexity_metrics.values()
+                )
+                if total_complexity_samples > 0:
+                    high_discrepancy_total = sum(
+                        bin_data.get('count', 0) * bin_data.get('high_discrepancy_rate', 0)
+                        for bin_data in complexity_metrics.values()
+                    )
+                    high_discrepancy_rate = high_discrepancy_total / total_complexity_samples
+                    
+                    if high_discrepancy_rate > 0.5:
+                        calibration_feedback['complexity'] = {
+                            'high_discrepancy_rate': high_discrepancy_rate,
+                            'message': (
+                                f"{high_discrepancy_rate:.1%} of complexity reports show high discrepancy (>0.3). "
+                                f"Consider calibrating your complexity estimates against system-derived values."
+                            ),
+                            'note': 'System derives complexity from EISV state - use this as reference'
+                        }
+    except Exception as e:
+        logger.debug(f"Could not get calibration feedback: {e}")
+    
+    return calibration_feedback
+
+
 def success_response(data: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Create a success response.
+    
+    Returns Sequence[TextContent] containing SuccessResponseDict.
+    """
     """
     Create a success response.
     
@@ -200,16 +436,14 @@ def success_response(data: Dict[str, Any]) -> Sequence[TextContent]:
         json_text = json.dumps(serializable_response, ensure_ascii=False)  # Removed indent=2 for speed, ensure_ascii=False for performance
     except (TypeError, ValueError) as e:
         # Log serialization error but try to recover
-        print(f"[UNITARES MCP] JSON serialization error: {e}", file=sys.stderr)
-        import traceback
-        print(f"[UNITARES MCP] Traceback:\n{traceback.format_exc()}", file=sys.stderr)
+        logger.error(f"JSON serialization error: {e}", exc_info=True)
         # Try one more time with full conversion and default=str fallback
         try:
             serializable_response = _make_json_serializable(response)
             json_text = json.dumps(serializable_response, ensure_ascii=False, default=str)
         except Exception as e2:
             # Last resort: return minimal error response to prevent server crash
-            print(f"[UNITARES MCP] Failed to serialize response even after conversion: {e2}", file=sys.stderr)
+            logger.error(f"Failed to serialize response even after conversion: {e2}", exc_info=True)
             # Return minimal JSON that's guaranteed to work
             try:
                 minimal_response = {
@@ -220,7 +454,7 @@ def success_response(data: Dict[str, Any]) -> Sequence[TextContent]:
                 json_text = json.dumps(minimal_response, ensure_ascii=False)
             except Exception as e3:
                 # Absolute last resort: hardcoded JSON string
-                print(f"[UNITARES MCP] Even minimal response failed: {e3}", file=sys.stderr)
+                logger.critical(f"Even minimal response failed: {e3}", exc_info=True)
                 json_text = '{"success":false,"error":"Serialization failed"}'
     
     return [TextContent(
@@ -251,15 +485,63 @@ def require_argument(arguments: Dict[str, Any], name: str,
 
 def require_agent_id(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextContent]]:
     """
-    Get required agent_id from arguments.
+    Get required agent_id from arguments and validate format + security checks.
     
+    IDENTITY BINDING FALLBACK:
+    If agent_id not provided in arguments, checks for session-bound identity.
+    This enables agents to call tools without explicitly passing agent_id after
+    calling bind_identity() once.
+
     Args:
         arguments: Arguments dictionary
-        
+
     Returns:
-        Tuple of (agent_id, error_response). If agent_id is missing, error_response is provided.
+        Tuple of (agent_id, error_response). If agent_id is missing or invalid, error_response is provided.
     """
-    return require_argument(arguments, "agent_id", "agent_id is required")
+    agent_id = arguments.get("agent_id")
+    
+    # IDENTITY BINDING FALLBACK: Use session-bound identity if not explicitly provided
+    if not agent_id:
+        try:
+            from .identity import get_bound_agent_id
+            session_id = arguments.get("session_id")
+            bound_id = get_bound_agent_id(session_id=session_id)
+            if bound_id:
+                agent_id = bound_id
+                # Inject into arguments so downstream code sees it
+                arguments["agent_id"] = agent_id
+                logger.debug(f"Using session-bound identity: {agent_id}")
+        except ImportError:
+            pass  # Identity module not available, continue with normal flow
+    
+    if not agent_id:
+        return None, error_response(
+            "agent_id is required",
+            recovery={
+                "action": "Provide agent_id or call bind_identity first",
+                "workflow": [
+                    "Option 1: Pass agent_id explicitly in arguments",
+                    "Option 2: Call bind_identity(agent_id, api_key) to bind session identity",
+                    "After binding, agent_id is auto-injected via recall"
+                ]
+            }
+        )
+    
+    # Continue with validation (agent_id now guaranteed to exist)
+
+    # Validate agent_id format (safety check for filesystem/URL issues)
+    from .validators import validate_agent_id_format
+    validated_id, format_error = validate_agent_id_format(agent_id)
+    if format_error:
+        return None, format_error
+
+    # SECURITY: Check reserved names (Fix 2 from SECURITY_ADVISORY_AGENT_IDENTITY_20251212.md)
+    from .validators import validate_agent_id_reserved_names
+    validated_id, reserved_error = validate_agent_id_reserved_names(validated_id)
+    if reserved_error:
+        return None, reserved_error
+
+    return validated_id, None
 
 
 def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextContent]]:
@@ -283,11 +565,8 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
     
     # Now check if agent is registered (exists in metadata)
     try:
-        import sys
-        if 'src.mcp_server_std' in sys.modules:
-            mcp_server = sys.modules['src.mcp_server_std']
-        else:
-            import src.mcp_server_std as mcp_server
+        from .shared import get_mcp_server
+        mcp_server = get_mcp_server()
         
         # Reload metadata to ensure we have latest state
         mcp_server.load_metadata()
@@ -320,5 +599,98 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
                 "workflow": ["1. Call health_check to verify system", "2. Call get_agent_api_key to register"]
             }
         )
+
+
+def log_metrics(agent_id: str, metrics: Dict[str, Any], level: str = "info") -> None:
+    """
+    Log metrics with standardized format including agent_id.
+    
+    Ensures all metric logs include agent_id and timestamp for traceability.
+    
+    Args:
+        agent_id: Agent identifier (required)
+        metrics: Dictionary of metrics
+        level: Log level ("info", "debug", "warning", "error")
+    
+    Example:
+        >>> log_metrics("agent_123", {"E": 0.8, "I": 0.9}, level="info")
+        # Logs: [agent_123] E=0.80 I=0.90 S=0.00 V=0.00
+    """
+    standardized = format_metrics_report(
+        metrics=metrics,
+        agent_id=agent_id,
+        include_timestamp=True,
+        include_context=True
+    )
+    
+    # Format for logging
+    log_msg_parts = [f"[{agent_id}]"]
+    
+    # Add EISV if available
+    if "eisv" in standardized:
+        eisv = standardized["eisv"]
+        log_msg_parts.append(f"EISV: E={eisv.get('E', 0):.2f} I={eisv.get('I', 0):.2f} S={eisv.get('S', 0):.2f} V={eisv.get('V', 0):.2f}")
+    elif any(k in standardized for k in ["E", "I", "S", "V"]):
+        e = standardized.get("E", 0)
+        i = standardized.get("I", 0)
+        s = standardized.get("S", 0)
+        v = standardized.get("V", 0)
+        log_msg_parts.append(f"EISV: E={e:.2f} I={i:.2f} S={s:.2f} V={v:.2f}")
+    
+    # Add key metrics
+    if "coherence" in standardized:
+        log_msg_parts.append(f"coherence={standardized['coherence']:.3f}")
+    risk_val = standardized.get("risk_score")
+    if risk_val is not None:
+        log_msg_parts.append(f"risk={risk_val:.3f}")
+    if "health_status" in standardized:
+        log_msg_parts.append(f"health={standardized['health_status']}")
+    
+    log_msg = " ".join(log_msg_parts)
+    
+    # Log at appropriate level
+    if level == "debug":
+        logger.debug(log_msg)
+    elif level == "warning":
+        logger.warning(log_msg)
+    elif level == "error":
+        logger.error(log_msg)
+    else:  # default to info
+        logger.info(log_msg)
+
+
+def print_metrics(agent_id: str, metrics: Dict[str, Any], title: str = "Metrics") -> None:
+    """
+    Print metrics with standardized format including agent_id.
+    
+    For use in scripts and CLI tools. Ensures consistent formatting.
+    
+    Args:
+        agent_id: Agent identifier (required)
+        metrics: Dictionary of metrics
+        title: Optional title for the metrics section
+    
+    Example:
+        >>> print_metrics("agent_123", {"E": 0.8, "I": 0.9})
+        Metrics:
+        Agent: agent_123
+        Timestamp: 2025-12-10T18:30:00.123456
+        EISV: E=0.800 I=0.900 S=0.000 V=0.000
+    """
+    standardized = format_metrics_report(
+        metrics=metrics,
+        agent_id=agent_id,
+        include_timestamp=True,
+        include_context=True
+    )
+    
+    text_output = format_metrics_text(standardized)
+    
+    if title:
+        print(f"\n{title}:")
+        print("-" * 60)
+    print(text_output)
+    if title:
+        print("-" * 60)
 
 
