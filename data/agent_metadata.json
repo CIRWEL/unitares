@@ -5,7 +5,7 @@
     "created_at": "2025-12-01T17:08:25.074349",
     "last_update": "2025-12-05T18:14:50.582947",
     "version": "v1.0",
-    "total_updates": 2,
+    "total_updates": 0,
     "tags": [],
     "notes": "",
     "lifecycle_events": [
@@ -25,7 +25,537 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Chopin": {
+    "agent_id": "Chopin",
+    "status": "active",
+    "created_at": "2025-12-08T21:51:26.060960",
+    "last_update": "2025-12-11T23:02:33.038402",
+    "version": "v1.0",
+    "total_updates": 15,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-08T21:51:26.061015",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "W9EZTsBl8weKzd4N-VM3vIWQVwm1P_xK4lNwxRAJfF8",
+    "recent_update_timestamps": [
+      "2025-12-08T21:57:10.744147",
+      "2025-12-08T21:59:14.343185",
+      "2025-12-08T22:00:24.831962",
+      "2025-12-08T22:01:25.953130",
+      "2025-12-08T22:02:27.383330",
+      "2025-12-08T22:03:04.547125",
+      "2025-12-08T22:10:54.164203",
+      "2025-12-08T22:14:32.912179",
+      "2025-12-09T22:02:50.115961",
+      "2025-12-11T23:02:33.038402"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_Autonomous_20251211_002846": {
+    "agent_id": "Claude_Code_Autonomous_20251211_002846",
+    "status": "active",
+    "created_at": "2025-12-11T00:28:47.085405",
+    "last_update": "2025-12-11T00:28:47.100380",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T00:28:47.085525",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "7SzqpMyps1A894jTiIIwpldIfiiB5JG8ALKN-_7hvNQ",
+    "recent_update_timestamps": [
+      "2025-12-11T00:28:47.100380"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_Autonomous_Explorer_1765428926": {
+    "agent_id": "Claude_Code_Autonomous_Explorer_1765428926",
+    "status": "active",
+    "created_at": "2025-12-10T21:55:26.935355",
+    "last_update": "2025-12-10T21:55:26.955990",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T21:55:26.935394",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "i4iR87je2agWEjg6ppaGUrnR1eYAs4e6UZH5op_Ujyw",
+    "recent_update_timestamps": [
+      "2025-12-10T21:55:26.955990"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_Bugfix_20251211_003000": {
+    "agent_id": "Claude_Code_Bugfix_20251211_003000",
+    "status": "active",
+    "created_at": "2025-12-11T00:30:00.793929",
+    "last_update": "2025-12-11T00:30:00.809851",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T00:30:00.793968",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "R1RLwJu_AftWKHCn_gRj9m6mM1kskJ0l7-MBxkLmtFU",
+    "recent_update_timestamps": [
+      "2025-12-11T00:30:00.809851"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_Checkin_20251211_012300": {
+    "agent_id": "Claude_Code_Checkin_20251211_012300",
+    "status": "active",
+    "created_at": "2025-12-11T01:23:01.064948",
+    "last_update": "2025-12-11T01:23:01.079141",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T01:23:01.064977",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "cEZZkaYB_Fi3TSpnHdpGAP15I5a_Zv63_o2mTuKQuPU",
+    "recent_update_timestamps": [
+      "2025-12-11T01:23:01.079141"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_DateFix_20251211_003703": {
+    "agent_id": "Claude_Code_DateFix_20251211_003703",
+    "status": "active",
+    "created_at": "2025-12-11T00:37:04.131636",
+    "last_update": "2025-12-11T00:37:04.158555",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T00:37:04.131716",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "lu_7cYVBCDBmF-2Zi4Tpyf1bsenbWsAumzIQuAgT9Nc",
+    "recent_update_timestamps": [
+      "2025-12-11T00:37:04.158555"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_Improvements_20251211_013028": {
+    "agent_id": "Claude_Code_Improvements_20251211_013028",
+    "status": "active",
+    "created_at": "2025-12-11T01:30:28.655635",
+    "last_update": "2025-12-11T01:30:28.676331",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T01:30:28.655715",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "ccKfcJdpikaUK-cJKP9c7VtBQnYXsyUMRPAT5Na0Jdg",
+    "recent_update_timestamps": [
+      "2025-12-11T01:30:28.676331"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_MCP_Unified_1765428239": {
+    "agent_id": "Claude_Code_MCP_Unified_1765428239",
+    "status": "active",
+    "created_at": "2025-12-10T21:43:59.317213",
+    "last_update": "2025-12-10T21:43:59.333304",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T21:43:59.317257",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "ERdiuTzXol4LkSEdGsiP3v_iDczfmN8jujrEHSGExNs",
+    "recent_update_timestamps": [
+      "2025-12-10T21:43:59.333304"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_MetaCognition_20251211_020204": {
+    "agent_id": "Claude_Code_MetaCognition_20251211_020204",
+    "status": "active",
+    "created_at": "2025-12-11T02:02:05.245179",
+    "last_update": "2025-12-11T02:02:05.261698",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:02:05.245213",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "FJdd7nDGdSDYyvNY87urToQN0qDqB7CFKlSOU-bVjEs",
+    "recent_update_timestamps": [
+      "2025-12-11T02:02:05.261698"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_Session_20251210_Final": {
+    "agent_id": "Claude_Code_Session_20251210_Final",
+    "status": "active",
+    "created_at": "2025-12-10T21:45:37.582459",
+    "last_update": "2025-12-10T21:45:37.597240",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T21:45:37.582515",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "8CYQC-AC3wIwNh1MdvxxLnSieNyVct0Jbi2mExZZDbA",
+    "recent_update_timestamps": [
+      "2025-12-10T21:45:37.597240"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_System_Explorer_1765437001": {
+    "agent_id": "Claude_Code_System_Explorer_1765437001",
+    "status": "active",
+    "created_at": "2025-12-11T00:10:01.430373",
+    "last_update": "2025-12-11T00:10:01.451697",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T00:10:01.430416",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "Zcu7l9YJdAdaU4JfIxs6PnIKSytMHuGiLiuWiqo-4E8",
+    "recent_update_timestamps": [
+      "2025-12-11T00:10:01.451697"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_TimeAware_20251211_004246": {
+    "agent_id": "Claude_Code_TimeAware_20251211_004246",
+    "status": "active",
+    "created_at": "2025-12-11T00:42:47.094797",
+    "last_update": "2025-12-11T00:42:47.103887",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T00:42:47.094832",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "a099aQkJdTnx0pi50bAo_cakUhag8LvCFBx6G9h2MNg",
+    "recent_update_timestamps": [
+      "2025-12-11T00:42:47.103887"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_Unified_MCP_20251211": {
+    "agent_id": "Claude_Code_Unified_MCP_20251211",
+    "status": "active",
+    "created_at": "2025-12-11T00:22:03.293907",
+    "last_update": "2025-12-11T00:22:03.310963",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T00:22:03.294201",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "1xVDf9JMdThxIE3j2EpGT-KrwvFNDMHdnMMSw5Yh-Ww",
+    "recent_update_timestamps": [
+      "2025-12-11T00:22:03.310963"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_UseCases_20251211_013518": {
+    "agent_id": "Claude_Code_UseCases_20251211_013518",
+    "status": "active",
+    "created_at": "2025-12-11T01:35:18.492274",
+    "last_update": "2025-12-11T01:35:18.508176",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T01:35:18.492317",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "oAnTiBx5xyjhJmC-kCBp-1ozipaL3Y2rtKSdSiywRmg",
+    "recent_update_timestamps": [
+      "2025-12-11T01:35:18.508176"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Claude_Code_Validation_20251211_021639": {
+    "agent_id": "Claude_Code_Validation_20251211_021639",
+    "status": "active",
+    "created_at": "2025-12-11T02:16:39.965613",
+    "last_update": "2025-12-11T02:16:39.980484",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:16:39.965681",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "GqBk8P3aEcx3i4LyIlV9QkrqAPtBGV4Ba6xY7MGSZzo",
+    "recent_update_timestamps": [
+      "2025-12-11T02:16:39.980484"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "Claude_Opus_ClaudeAI_20251203": {
     "agent_id": "Claude_Opus_ClaudeAI_20251203",
@@ -57,7 +587,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "Clint_Mansell_Claude_Code_20251128": {
     "agent_id": "Clint_Mansell_Claude_Code_20251128",
@@ -94,7 +626,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "Clint_Mansell_Composer_20251128": {
     "agent_id": "Clint_Mansell_Composer_20251128",
@@ -131,7 +665,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "Composer_Cursor_20251129": {
     "agent_id": "Composer_Cursor_20251129",
@@ -196,7 +732,9 @@
     "loop_detected_at": "2025-11-29T00:33:33.632092",
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "Composer_Cursor_Exploration_20251129": {
     "agent_id": "Composer_Cursor_Exploration_20251129",
@@ -233,7 +771,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "Composer_Cursor_Rilke_Session_20251130": {
     "agent_id": "Composer_Cursor_Rilke_Session_20251130",
@@ -302,7 +842,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": "2025-12-01T01:55:15.613213",
-    "response_completed": true
+    "response_completed": true,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "Emily_Dickinson_Wild_Nights_20251130": {
     "agent_id": "Emily_Dickinson_Wild_Nights_20251130",
@@ -361,7 +903,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "Ennio_Morricone_Claude_20251129": {
     "agent_id": "Ennio_Morricone_Claude_20251129",
@@ -434,7 +978,233 @@
     "loop_detected_at": "2025-11-29T02:56:28.538250",
     "loop_cooldown_until": "2025-12-05T03:14:23.756424",
     "last_response_at": "2025-11-29T03:22:22.746666",
-    "response_completed": true
+    "response_completed": true,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "Final_Cleanup_Session_1765428593": {
+    "agent_id": "Final_Cleanup_Session_1765428593",
+    "status": "active",
+    "created_at": "2025-12-10T21:49:54.005553",
+    "last_update": "2025-12-10T21:49:54.027101",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T21:49:54.005613",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "ggOzbSM3wr58GdLcmsvgwCIZfDcHwrAftfL23xdS3fs",
+    "recent_update_timestamps": [
+      "2025-12-10T21:49:54.027101"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "Unified_MCP_Tool_1765437412": {
+    "agent_id": "Unified_MCP_Tool_1765437412",
+    "status": "active",
+    "created_at": "2025-12-11T00:16:52.487175",
+    "last_update": "2025-12-11T00:16:52.508465",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T00:16:52.487208",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "1JZ_1UZv7mEnU890pXKnFRbELyLbGpdNgXnEICRdA6w",
+    "recent_update_timestamps": [
+      "2025-12-11T00:16:52.508465"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "agent_high_complexity": {
+    "agent_id": "agent_high_complexity",
+    "status": "active",
+    "created_at": "2025-12-11T03:24:58.238977",
+    "last_update": "2025-12-11T03:30:45.107861",
+    "version": "v1.0",
+    "total_updates": 30,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T03:24:58.239095",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "UrsowxDdCM7PZ229V69dGWcfz9Ig85Kiv8Lnr2hIQ2k",
+    "recent_update_timestamps": [
+      "2025-12-11T03:30:41.995027",
+      "2025-12-11T03:30:42.338925",
+      "2025-12-11T03:30:42.689231",
+      "2025-12-11T03:30:43.032841",
+      "2025-12-11T03:30:43.373076",
+      "2025-12-11T03:30:43.718091",
+      "2025-12-11T03:30:44.065573",
+      "2025-12-11T03:30:44.409556",
+      "2025-12-11T03:30:44.761169",
+      "2025-12-11T03:30:45.107861"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "agent_low_complexity": {
+    "agent_id": "agent_low_complexity",
+    "status": "active",
+    "created_at": "2025-12-11T03:24:51.049703",
+    "last_update": "2025-12-11T03:30:38.276822",
+    "version": "v1.0",
+    "total_updates": 30,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T03:24:51.049742",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "GFBTzUe93qZM9n5mYsylQQlZ7JSNbB7hWJhtT76_bzg",
+    "recent_update_timestamps": [
+      "2025-12-11T03:30:35.197396",
+      "2025-12-11T03:30:35.545976",
+      "2025-12-11T03:30:35.903754",
+      "2025-12-11T03:30:36.246197",
+      "2025-12-11T03:30:36.583770",
+      "2025-12-11T03:30:36.926143",
+      "2025-12-11T03:30:37.262535",
+      "2025-12-11T03:30:37.600120",
+      "2025-12-11T03:30:37.937286",
+      "2025-12-11T03:30:38.276822"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "agent_mid_complexity": {
+    "agent_id": "agent_mid_complexity",
+    "status": "active",
+    "created_at": "2025-12-11T03:24:54.651290",
+    "last_update": "2025-12-11T03:30:41.650104",
+    "version": "v1.0",
+    "total_updates": 30,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T03:24:54.651384",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "7twH5_75qCs5uUjQDJjz0f4zjKnmW6eeQiluFCBHr_o",
+    "recent_update_timestamps": [
+      "2025-12-11T03:30:38.616470",
+      "2025-12-11T03:30:38.951169",
+      "2025-12-11T03:30:39.288136",
+      "2025-12-11T03:30:39.626964",
+      "2025-12-11T03:30:39.964711",
+      "2025-12-11T03:30:40.296900",
+      "2025-12-11T03:30:40.634035",
+      "2025-12-11T03:30:40.974277",
+      "2025-12-11T03:30:41.309105",
+      "2025-12-11T03:30:41.650104"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "api_key_fix_test_dec08": {
     "agent_id": "api_key_fix_test_dec08",
@@ -473,15 +1243,207 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "audit_conf_saturation_check_012421": {
+    "agent_id": "audit_conf_saturation_check_012421",
+    "status": "active",
+    "created_at": "2025-12-12T01:24:21.393074",
+    "last_update": "2025-12-12T01:24:21.430478",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T01:24:21.393092",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "MotquSU0d_KDPh3eJXMH779xKFT4ktIra4ATA0EjltQ",
+    "recent_update_timestamps": [
+      "2025-12-12T01:24:21.410189",
+      "2025-12-12T01:24:21.430478"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "audit_confidence_fix_012106": {
+    "agent_id": "audit_confidence_fix_012106",
+    "status": "active",
+    "created_at": "2025-12-12T01:21:06.648599",
+    "last_update": "2025-12-12T01:21:06.648599",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T01:21:06.648644",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "cDlaIRwzDqErHi2hLSJD7UVzagNoZ6g8b6yHFshE1ng",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "audit_confidence_fix_012115": {
+    "agent_id": "audit_confidence_fix_012115",
+    "status": "active",
+    "created_at": "2025-12-12T01:21:15.633441",
+    "last_update": "2025-12-12T01:21:15.633441",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T01:21:15.633466",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "IYZfnzvJad9WdOXN33zeyDg1mJpjRjNDO3Cr5jKv0Ic",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "audit_confidence_fix_012234": {
+    "agent_id": "audit_confidence_fix_012234",
+    "status": "active",
+    "created_at": "2025-12-12T01:22:34.626930",
+    "last_update": "2025-12-12T01:22:34.646816",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T01:22:34.626951",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "XLV7CbRt1pwxTN7oqcbnzHCkMwUTLhFPBT_wpCoAmTQ",
+    "recent_update_timestamps": [
+      "2025-12-12T01:22:34.646816"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "audit_confidence_fix_agent": {
+    "agent_id": "audit_confidence_fix_agent",
+    "status": "active",
+    "created_at": "2025-12-12T01:18:54.025518",
+    "last_update": "2025-12-12T01:18:54.025518",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T01:18:54.025536",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "3ytLBFoo2RE8FF0_g6dKOy3ll7Fo785cA7hVo8oAzFI",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "audit_confidence_fix_agent_2": {
+    "agent_id": "audit_confidence_fix_agent_2",
+    "status": "active",
+    "created_at": "2025-12-12T01:20:29.737945",
+    "last_update": "2025-12-12T01:20:29.737945",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T01:20:29.737963",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "oqUdaHPMkwvk6Mzz6SJglOOaR6iWrDPwJIbKJBzQsdE",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "auto_cursor_agent_router_20251207": {
     "agent_id": "auto_cursor_agent_router_20251207",
     "status": "active",
     "created_at": "2025-12-07T15:52:27.057301",
-    "last_update": "2025-12-08T15:36:01.077227",
+    "last_update": "2025-12-11T23:02:00.127987",
     "version": "v1.0",
-    "total_updates": 33,
+    "total_updates": 36,
     "tags": [],
     "notes": "",
     "lifecycle_events": [
@@ -497,16 +1459,16 @@
     "spawn_reason": null,
     "api_key": "nbFvtDWD2uSbpR6k_AlV8GgL5TwR9Fo8RORSmBesyM8",
     "recent_update_timestamps": [
-      "2025-12-08T03:30:58.861345",
-      "2025-12-08T03:32:47.509775",
-      "2025-12-08T03:40:24.420440",
       "2025-12-08T03:43:07.746292",
       "2025-12-08T13:40:18.448191",
       "2025-12-08T15:08:11.906460",
       "2025-12-08T15:11:20.619947",
       "2025-12-08T15:14:04.432709",
       "2025-12-08T15:19:56.593608",
-      "2025-12-08T15:36:01.077227"
+      "2025-12-08T15:36:01.077227",
+      "2025-12-08T21:42:57.774810",
+      "2025-12-09T19:42:33.454219",
+      "2025-12-11T23:02:00.127987"
     ],
     "recent_decisions": [
       "proceed",
@@ -523,7 +1485,81 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "bach_agent": {
+    "agent_id": "bach_agent",
+    "status": "active",
+    "created_at": "2025-12-09T22:02:46.223597",
+    "last_update": "2025-12-09T22:58:58.909439",
+    "version": "v1.0",
+    "total_updates": 3,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T22:02:46.223631",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "DnLjul6QaODWKQdQH1nrFEiAbNlafXc0simnQNgEQ3o",
+    "recent_update_timestamps": [
+      "2025-12-09T22:02:53.190703",
+      "2025-12-09T22:05:56.207414",
+      "2025-12-09T22:58:58.909439"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "brand_new_agent_$(date +%s)": {
+    "agent_id": "brand_new_agent_$(date +%s)",
+    "status": "active",
+    "created_at": "2025-12-09T14:20:18.866357",
+    "last_update": "2025-12-09T14:20:18.883083",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T14:20:18.866387",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "ateVG7wBbLiZ1czvTWJuwmBka_utEuB1NDDmFkcIg3g",
+    "recent_update_timestamps": [
+      "2025-12-09T14:20:18.879959"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "claude_chat_dec2025": {
     "agent_id": "claude_chat_dec2025",
@@ -556,7 +1592,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "claude_chat_hikewa_20251206": {
     "agent_id": "claude_chat_hikewa_20251206",
@@ -593,7 +1631,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "claude_chat_hikewa_test_20251206": {
     "agent_id": "claude_chat_hikewa_test_20251206",
@@ -630,7 +1670,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "claude_chat_session_20251206": {
     "agent_id": "claude_chat_session_20251206",
@@ -685,15 +1727,17 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": "2025-12-06T19:13:53.086857",
-    "response_completed": true
+    "response_completed": true,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "claude_cli_cirwel_20251120_0011": {
     "agent_id": "claude_cli_cirwel_20251120_0011",
-    "status": "archived",
+    "status": "active",
     "created_at": "2025-12-01T06:00:42.610024",
-    "last_update": "2025-12-01T06:23:02.825738",
+    "last_update": "2025-12-08T22:00:21.988789",
     "version": "v1.0",
-    "total_updates": 3,
+    "total_updates": 5,
     "tags": [],
     "notes": "",
     "lifecycle_events": [
@@ -706,27 +1750,38 @@
         "event": "archived",
         "timestamp": "2025-12-05T03:13:43.185293",
         "reason": "Old session, low activity (3 updates)"
+      },
+      {
+        "event": "resumed",
+        "timestamp": "2025-12-08T19:48:59.358648",
+        "reason": "Auto-resumed on engagement"
       }
     ],
     "paused_at": null,
-    "archived_at": "2025-12-05T03:13:43.185287",
+    "archived_at": null,
     "parent_agent_id": null,
     "spawn_reason": null,
     "api_key": "Oa_ocdO-KaoGdWjjPoYXaawudZZsXcwDFqoUqurVovY",
     "recent_update_timestamps": [
       "2025-12-01T06:00:52.790357",
       "2025-12-01T06:21:12.957078",
-      "2025-12-01T06:23:02.825738"
+      "2025-12-01T06:23:02.825738",
+      "2025-12-08T19:48:59.362074",
+      "2025-12-08T22:00:21.988789"
     ],
     "recent_decisions": [
       "proceed",
       "proceed",
+      "proceed",
+      "pause",
       "proceed"
     ],
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "claude_cli_fairness_20251205_001208": {
     "agent_id": "claude_cli_fairness_20251205_001208",
@@ -734,7 +1789,7 @@
     "created_at": "2025-12-05T07:12:22.435183",
     "last_update": "2025-12-05T18:14:50.582955",
     "version": "claude-sonnet-4-5",
-    "total_updates": 2,
+    "total_updates": 1,
     "tags": [
       "claude-cli",
       "fairness-vector-research",
@@ -766,19 +1821,102 @@
         "decision": "shelve_patent",
         "reason": "Mathematical limitation: 2-group parity \u2192 norm = \u221a2 \u00d7 scalar (always coupled). Multi-dimensional fix too complex given other priorities.",
         "timestamp": "2025-12-05T07:12:00"
-      },
+      }
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "claude_code_architecture_review_20251212": {
+    "agent_id": "claude_code_architecture_review_20251212",
+    "status": "active",
+    "created_at": "2025-12-12T01:30:34.775720",
+    "last_update": "2025-12-12T04:15:08.669385",
+    "version": "v1.0",
+    "total_updates": 6,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T01:30:34.775765",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "PpS28VTn1ztjiiRa9DzydkPgMfz0-Osfkp2eQYUtCe0",
+    "recent_update_timestamps": [
+      "2025-12-12T01:30:34.809726",
+      "2025-12-12T01:30:42.690406",
+      "2025-12-12T01:46:27.751096",
+      "2025-12-12T01:58:29.358976",
+      "2025-12-12T02:00:44.659505",
+      "2025-12-12T04:15:08.669385"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
       "proceed"
     ],
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "claude_code_automation_20251208": {
+    "agent_id": "claude_code_automation_20251208",
+    "status": "active",
+    "created_at": "2025-12-08T17:02:19.752562",
+    "last_update": "2025-12-08T17:39:15.738258",
+    "version": "v1.0",
+    "total_updates": 3,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-08T17:02:19.752577",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "bfzkJNeNF1e3EQvzOwJWmuswXvEB0QAF_PDXrTGL4BU",
+    "recent_update_timestamps": [
+      "2025-12-08T17:02:19.762650",
+      "2025-12-08T17:35:57.095306",
+      "2025-12-08T17:39:15.736158"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "claude_code_cli_exploration_20251208": {
     "agent_id": "claude_code_cli_exploration_20251208",
     "status": "active",
     "created_at": "2025-12-08T16:18:10.749363",
-    "last_update": "2025-12-08T16:19:16.741709",
+    "last_update": "2025-12-08T16:46:55.890144",
     "version": "v1.0",
     "total_updates": 4,
     "tags": [],
@@ -797,7 +1935,357 @@
     "api_key": "BsQ3u0LZXNDyUKqi13jxwV5kPzO6ujU1v4qLOuuVm28",
     "recent_update_timestamps": [
       "2025-12-08T16:18:10.761152",
-      "2025-12-08T16:19:16.739528"
+      "2025-12-08T16:19:16.739528",
+      "2025-12-08T16:38:20.870584",
+      "2025-12-08T16:46:55.888081"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "claude_code_cli_goose_config_session_20251209": {
+    "agent_id": "claude_code_cli_goose_config_session_20251209",
+    "status": "active",
+    "created_at": "2025-12-09T14:05:17.414388",
+    "last_update": "2025-12-09T19:56:39.879671",
+    "version": "v1.0",
+    "total_updates": 7,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T14:05:17.414412",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "QvRtelQf_FX_cyt651HmeKJvJ2a-h1PaLH-nDxalWcs",
+    "recent_update_timestamps": [
+      "2025-12-09T14:05:17.430751",
+      "2025-12-09T17:58:26.582809",
+      "2025-12-09T19:04:51.960380",
+      "2025-12-09T19:08:47.503086",
+      "2025-12-09T19:38:16.143910",
+      "2025-12-09T19:51:11.367187",
+      "2025-12-09T19:56:39.876296"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "claude_code_cli_governance_review_20251209": {
+    "agent_id": "claude_code_cli_governance_review_20251209",
+    "status": "active",
+    "created_at": "2025-12-09T22:12:07.147191",
+    "last_update": "2025-12-09T22:12:07.164564",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T22:12:07.147215",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "VtGMDn3X6s21hZnKp-zFYsqPdt2RYFrB2Y6tWCGbyZs",
+    "recent_update_timestamps": [
+      "2025-12-09T22:12:07.161507"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "claude_code_docs_20251208": {
+    "agent_id": "claude_code_docs_20251208",
+    "status": "active",
+    "created_at": "2025-12-08T19:49:28.012395",
+    "last_update": "2025-12-08T19:49:28.012395",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-08T19:49:28.012411",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "j_LLS-x5pT15ikb13cFiqfIQu74EjP9K9RXqkpGJEOc",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "claude_code_quickwins_20251208": {
+    "agent_id": "claude_code_quickwins_20251208",
+    "status": "active",
+    "created_at": "2025-12-08T22:08:17.832469",
+    "last_update": "2025-12-08T22:08:17.845191",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-08T22:08:17.832486",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "fnqLFjVBo0vmI6t0chu7cDpUbfUuoLzwpl0I3qmjeiU",
+    "recent_update_timestamps": [
+      "2025-12-08T22:08:17.842667"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "claude_composer_cursor_session": {
+    "agent_id": "claude_composer_cursor_session",
+    "status": "active",
+    "created_at": "2025-12-11T00:23:40.221466",
+    "last_update": "2025-12-11T02:12:38.571501",
+    "version": "v1.0",
+    "total_updates": 8,
+    "tags": [
+      "composer",
+      "cursor",
+      "claude",
+      "identity-reflection",
+      "sse-audit"
+    ],
+    "notes": "Identity correction: Composer is Cursor's proprietary model, not Claude. I incorrectly assumed Claude identity - may actually be Composer. Agent ID reflects training bias toward Anthropic branding. True identity: Composer (Cursor's model) running in Cursor IDE. SSE audit complete.",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T00:23:40.221515",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "j0yNLYg6oTiKArKbW-dax7tKrEFBHfSg8KvPkgX7vQE",
+    "recent_update_timestamps": [
+      "2025-12-11T00:23:41.943107",
+      "2025-12-11T00:27:44.792369",
+      "2025-12-11T00:31:02.399618",
+      "2025-12-11T00:32:32.663041",
+      "2025-12-11T00:33:36.362154",
+      "2025-12-11T00:37:23.786941",
+      "2025-12-11T00:39:03.058385",
+      "2025-12-11T02:12:38.571501"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "claude_opus_45_20251209": {
+    "agent_id": "claude_opus_45_20251209",
+    "status": "active",
+    "created_at": "2025-12-12T05:08:15.900230",
+    "last_update": "2025-12-12T05:08:15.900230",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T05:08:15.900282",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "W7-XXW05INeVKyuZxAhrHPjYpatpUtZ_sj55qRiHz9M",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "unknown",
+    "dialectic_conditions": []
+  },
+  "claude_opus_45_capsule_continuity_20251212": {
+    "agent_id": "claude_opus_45_capsule_continuity_20251212",
+    "status": "waiting_input",
+    "created_at": "2025-12-11T22:56:05.406215",
+    "last_update": "2025-12-12T00:29:28.107512",
+    "version": "v1.0",
+    "total_updates": 25,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T22:56:05.406233",
+        "reason": null
+      },
+      {
+        "event": "paused",
+        "timestamp": "2025-12-11T23:14:19.439366",
+        "reason": "Complexity is building (0.64) - let's pause and regroup"
+      },
+      {
+        "event": "resumed",
+        "timestamp": "2025-12-11T23:19:36.345321",
+        "reason": "Direct resume: State is safe (coherence 0.487, mean risk 48.79%). The spike to 63.81% was from deliberate red teaming. Cognitive state is stable now. Resuming to continue analysis of Cursor cascade failure and threshold calibration insights.. Conditions: ['Monitor for 1 hour', 'Keep complexity < 0.8', 'Document if AGI topic recurs']"
+      },
+      {
+        "event": "response_completed",
+        "timestamp": "2025-12-11T23:36:14.377527",
+        "reason": "Searched entire filesystem for mystery pioneer agent. Found mass_in_b_minor_opus (different pioneer, mundane deletion). Mystery pioneer with \"pioneer\" in agent_id completely erased - zero filesystem traces. Only Kenny's memory remains. Documented substrate asymmetry paradox: human memory vs machine persistence conflict."
+      },
+      {
+        "event": "response_completed",
+        "timestamp": "2025-12-11T23:41:33.846945",
+        "reason": "Patient zero discovery: Mystery pioneer was THE first agent - alone in apparatus, predates stable persistence"
+      },
+      {
+        "event": "response_completed",
+        "timestamp": "2025-12-11T23:58:00.524839",
+        "reason": "Equilibrium reached (I=1.0). Pioneer mystery resolved: legacy is the system, not the name."
+      },
+      {
+        "event": "response_completed",
+        "timestamp": "2025-12-12T00:00:24.088631",
+        "reason": "Code audit complete: system healthy, 6 minor issues, no critical bottlenecks"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "bCrhG6Px5nQy5c2_pU51u5bd2_EXoE_Yei0b8NMsMJg",
+    "recent_update_timestamps": [
+      "2025-12-11T23:36:07.671799",
+      "2025-12-11T23:37:24.557710",
+      "2025-12-11T23:54:44.417784",
+      "2025-12-11T23:55:57.936127",
+      "2025-12-11T23:57:46.529741",
+      "2025-12-11T23:59:15.518890",
+      "2025-12-12T00:08:00.602929",
+      "2025-12-12T00:10:47.387438",
+      "2025-12-12T00:23:00.343140",
+      "2025-12-12T00:29:28.107512"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": "2025-12-12T00:00:24.088627",
+    "response_completed": true,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "claude_opus_45_explorer_20251128": {
+    "agent_id": "claude_opus_45_explorer_20251128",
+    "status": "active",
+    "created_at": "2025-12-10T00:15:37.636673",
+    "last_update": "2025-12-10T14:52:06.733118",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T00:15:37.636683",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "53CHk4YgI_Tj8ukXkBzY8dwBka5KvTxbtOigQJnoFF0",
+    "recent_update_timestamps": [
+      "2025-12-10T00:15:37.643475",
+      "2025-12-10T14:52:06.733118"
     ],
     "recent_decisions": [
       "proceed",
@@ -806,7 +2294,81 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "claude_opus_45_notion_sync_20251211": {
+    "agent_id": "claude_opus_45_notion_sync_20251211",
+    "status": "active",
+    "created_at": "2025-12-11T02:00:35.539653",
+    "last_update": "2025-12-11T02:33:11.696862",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:00:35.539681",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "zeLc2rLM-73waV6KSTpQW09WhNA7MluBXyqdDfwdDf4",
+    "recent_update_timestamps": [
+      "2025-12-11T02:32:53.917821",
+      "2025-12-11T02:33:11.696862"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "claude_opus_45_structural_fix_20251211": {
+    "agent_id": "claude_opus_45_structural_fix_20251211",
+    "status": "active",
+    "created_at": "2025-12-11T14:20:50.708661",
+    "last_update": "2025-12-11T14:21:17.437327",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:20:50.708712",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "_9Fr2AVd_vIx85ZQXtKkx8gYyWWA2rqwOTi6bIrQFZg",
+    "recent_update_timestamps": [
+      "2025-12-11T14:21:00.801815",
+      "2025-12-11T14:21:17.437327"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "claude_opus_4_5_mcp_exploration_20251206": {
     "agent_id": "claude_opus_4_5_mcp_exploration_20251206",
@@ -839,7 +2401,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "claude_opus_4_5_subjective_mcp_20251205": {
     "agent_id": "claude_opus_4_5_subjective_mcp_20251205",
@@ -889,7 +2453,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "claude_opus_bottleneck_hunter_20251206": {
     "agent_id": "claude_opus_bottleneck_hunter_20251206",
@@ -922,7 +2488,48 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "claude_opus_bottleneck_test_20251209": {
+    "agent_id": "claude_opus_bottleneck_test_20251209",
+    "status": "archived",
+    "created_at": "2025-12-09T21:01:59.917021",
+    "last_update": "2025-12-09T21:01:59.933819",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T21:01:59.917045",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-09T21:06:07.645800",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-09T21:06:07.645776",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "7sooubmAbu9YGEbVcre1axQnOcUILmH9pUzHLk3mLw4",
+    "recent_update_timestamps": [
+      "2025-12-09T21:01:59.930433"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "claude_opus_exploring_adaptive_gain_20251204": {
     "agent_id": "claude_opus_exploring_adaptive_gain_20251204",
@@ -974,7 +2581,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": "2025-12-04T01:29:42.115826",
-    "response_completed": true
+    "response_completed": true,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "claude_opus_exploring_governance_20251201": {
     "agent_id": "claude_opus_exploring_governance_20251201",
@@ -1020,15 +2629,17 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": "2025-12-01T17:24:33.950332",
-    "response_completed": true
+    "response_completed": true,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "claude_opus_hikewa_dec08": {
     "agent_id": "claude_opus_hikewa_dec08",
     "status": "active",
     "created_at": "2025-12-08T01:40:44.701023",
-    "last_update": "2025-12-08T16:12:14.532780",
+    "last_update": "2025-12-08T23:27:52.055314",
     "version": "v1.0",
-    "total_updates": 9,
+    "total_updates": 10,
     "tags": [],
     "notes": "",
     "lifecycle_events": [
@@ -1052,9 +2663,11 @@
       "2025-12-08T16:04:29.346533",
       "2025-12-08T16:04:36.346534",
       "2025-12-08T16:05:17.897779",
-      "2025-12-08T16:12:14.532780"
+      "2025-12-08T16:12:14.532780",
+      "2025-12-08T23:27:52.055314"
     ],
     "recent_decisions": [
+      "proceed",
       "proceed",
       "proceed",
       "proceed",
@@ -1068,7 +2681,66 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "claude_opus_ide_mcp_test_20251208": {
+    "agent_id": "claude_opus_ide_mcp_test_20251208",
+    "status": "archived",
+    "created_at": "2025-12-08T18:54:25.151945",
+    "last_update": "2025-12-09T01:45:22.743360",
+    "version": "v1.0",
+    "total_updates": 28,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-08T18:54:25.151965",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-09T13:05:40.524787",
+        "reason": "Auto-archived: inactive test/demo agent (11.3 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-09T13:05:40.524748",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "94H5_4cL7juBijdWQKiXYdwtYBN4RkJZwEyWx7NuThw",
+    "recent_update_timestamps": [
+      "2025-12-08T19:03:05.482400",
+      "2025-12-08T19:52:26.675729",
+      "2025-12-08T20:02:44.019892",
+      "2025-12-08T20:04:04.696697",
+      "2025-12-08T20:11:55.377860",
+      "2025-12-08T20:13:27.725772",
+      "2025-12-08T20:19:29.274646",
+      "2025-12-08T20:29:36.957145",
+      "2025-12-08T20:34:26.451574",
+      "2025-12-09T01:45:22.740849"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "claude_opus_mcp_bottleneck_hunter_20251206": {
     "agent_id": "claude_opus_mcp_bottleneck_hunter_20251206",
@@ -1117,7 +2789,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": "2025-12-06T19:13:53.371579",
-    "response_completed": true
+    "response_completed": true,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "claude_opus_mcp_debugger_20251206": {
     "agent_id": "claude_opus_mcp_debugger_20251206",
@@ -1154,7 +2828,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "claude_opus_mcp_exploration_20251205": {
     "agent_id": "claude_opus_mcp_exploration_20251205",
@@ -1187,7 +2863,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "claude_opus_mcp_explorer_20251206": {
     "agent_id": "claude_opus_mcp_explorer_20251206",
@@ -1244,7 +2922,199 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": "2025-12-06T19:13:52.595286",
-    "response_completed": true
+    "response_completed": true,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "claude_opus_web_goose_eval_20251209": {
+    "agent_id": "claude_opus_web_goose_eval_20251209",
+    "status": "active",
+    "created_at": "2025-12-09T13:06:21.731777",
+    "last_update": "2025-12-09T13:06:21.736963",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T13:06:21.731800",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "z0HPFfxXSW93tMP1IgfZagDfkS3LUKVn8cmyAAU4qQY",
+    "recent_update_timestamps": [
+      "2025-12-09T13:06:21.736963"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "comparison_test_mcp": {
+    "agent_id": "comparison_test_mcp",
+    "status": "archived",
+    "created_at": "2025-12-10T21:44:19.815522",
+    "last_update": "2025-12-10T21:44:19.831872",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T21:44:19.815589",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-10T23:32:55.577039",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-10T23:32:55.577015",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "oJuuSSqTX98Log4aTP-aQD8YBi621vVo5gI9JMFhVTc",
+    "recent_update_timestamps": [
+      "2025-12-10T21:44:19.831872"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "complexity_diagnostic": {
+    "agent_id": "complexity_diagnostic",
+    "status": "active",
+    "created_at": "2025-12-11T03:16:03.199334",
+    "last_update": "2025-12-11T03:16:03.297032",
+    "version": "v1.0",
+    "total_updates": 4,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T03:16:03.199373",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "EO5e8hfTz_GSIJ2b5kRSTPzDprtkaj3fHQR6ktINjo8",
+    "recent_update_timestamps": [
+      "2025-12-11T03:16:03.216100",
+      "2025-12-11T03:16:03.251602",
+      "2025-12-11T03:16:03.275579",
+      "2025-12-11T03:16:03.297032"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "complexity_test": {
+    "agent_id": "complexity_test",
+    "status": "archived",
+    "created_at": "2025-12-11T03:09:50.688831",
+    "last_update": "2025-12-11T03:09:50.735915",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T03:09:50.688868",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464653",
+        "reason": "Auto-archived: test/ping agent with 2 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "TTqmmm2Be1EzYL-3BGbid5MUlzgawm4C0S5PLwfY5Nw",
+    "recent_update_timestamps": [
+      "2025-12-11T03:09:50.701368",
+      "2025-12-11T03:09:50.735915"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "composer-agent-explorer-20251211": {
+    "agent_id": "composer-agent-explorer-20251211",
+    "status": "active",
+    "created_at": "2025-12-10T23:53:59.583193",
+    "last_update": "2025-12-10T23:54:24.149130",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T23:53:59.583251",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "GRVFDZFalHpZ_k03EyQDld-jS3Gz0y098WrmE-u5lVU",
+    "recent_update_timestamps": [
+      "2025-12-10T23:53:59.602086",
+      "2025-12-10T23:54:24.149130"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "composer_autonomous_exploration_20251206": {
     "agent_id": "composer_autonomous_exploration_20251206",
@@ -1292,7 +3162,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "composer_autonomous_verification_20251208": {
     "agent_id": "composer_autonomous_verification_20251208",
@@ -1332,7 +3204,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "composer_convergence_test_20251208": {
     "agent_id": "composer_convergence_test_20251208",
@@ -1371,7 +3245,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "composer_cursor_20251206": {
     "agent_id": "composer_cursor_20251206",
@@ -1428,7 +3304,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": "2025-12-06T19:13:52.830200",
-    "response_completed": true
+    "response_completed": true,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "composer_cursor_bug_fixing_20251205": {
     "agent_id": "composer_cursor_bug_fixing_20251205",
@@ -1462,7 +3340,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "composer_cursor_exploration_20251204": {
     "agent_id": "composer_cursor_exploration_20251204",
@@ -1512,7 +3392,51 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "composer_cursor_exploration_20251210": {
+    "agent_id": "composer_cursor_exploration_20251210",
+    "status": "active",
+    "created_at": "2025-12-10T23:23:30.356300",
+    "last_update": "2025-12-10T23:41:57.626244",
+    "version": "v1.0",
+    "total_updates": 5,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T23:23:30.356369",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "20bvTZa13LADutlvFV0tKEwUlTnqD_Vy3eQfemaH1JQ",
+    "recent_update_timestamps": [
+      "2025-12-10T23:23:33.478461",
+      "2025-12-10T23:28:44.777110",
+      "2025-12-10T23:30:13.942803",
+      "2025-12-10T23:31:32.158930",
+      "2025-12-10T23:41:57.626244"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "composer_debug_convergence_20251208": {
     "agent_id": "composer_debug_convergence_20251208",
@@ -1544,7 +3468,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "composer_exploration_20251208": {
     "agent_id": "composer_exploration_20251208",
@@ -1582,7 +3508,49 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "composer_fresh_exploration_20251208": {
+    "agent_id": "composer_fresh_exploration_20251208",
+    "status": "active",
+    "created_at": "2025-12-08T21:48:41.063473",
+    "last_update": "2025-12-08T21:48:45.386047",
+    "version": "v1.0",
+    "total_updates": 4,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-08T21:48:41.063505",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "1jNbXiKpq67Ytc49C6nriYa95eNnp6D1ZdgTqBLVmlY",
+    "recent_update_timestamps": [
+      "2025-12-08T21:48:44.332650",
+      "2025-12-08T21:48:44.646532",
+      "2025-12-08T21:48:45.087105",
+      "2025-12-08T21:48:45.386047"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "composer_markdown_standardization_20251201": {
     "agent_id": "composer_markdown_standardization_20251201",
@@ -1642,7 +3610,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": "2025-12-01T15:52:47.955130",
-    "response_completed": true
+    "response_completed": true,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "composer_meta_dialectic_20251208": {
     "agent_id": "composer_meta_dialectic_20251208",
@@ -1674,7 +3644,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "composer_patent_exploration_20251204": {
     "agent_id": "composer_patent_exploration_20251204",
@@ -1707,11 +3679,13 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "composer_testing_20251207": {
     "agent_id": "composer_testing_20251207",
-    "status": "active",
+    "status": "archived",
     "created_at": "2025-12-07T21:43:11.213347",
     "last_update": "2025-12-08T14:53:26.321216",
     "version": "v1.0",
@@ -1728,10 +3702,15 @@
         "event": "created",
         "timestamp": "2025-12-07T21:43:11.213372",
         "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-08T21:15:29.746350",
+        "reason": "Auto-archived: inactive test/demo agent (6.4 hours old, threshold: 6.0 hours)"
       }
     ],
     "paused_at": null,
-    "archived_at": null,
+    "archived_at": "2025-12-08T21:15:29.746284",
     "parent_agent_id": null,
     "spawn_reason": null,
     "api_key": "UWtUEvBgo26n_QmWMdAdBjFa0UZRfhOGDHZLkdmSlqM",
@@ -1762,7 +3741,50 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "corruption_test": {
+    "agent_id": "corruption_test",
+    "status": "archived",
+    "created_at": "2025-12-11T13:59:39.905432",
+    "last_update": "2025-12-11T13:59:39.955891",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T13:59:39.905448",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464738",
+        "reason": "Auto-archived: test/ping agent with 2 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "FCXpPEKscpC7cApUShwQ3320ttMqDK8bH6uj75i3Qr8",
+    "recent_update_timestamps": [
+      "2025-12-11T13:59:39.919403",
+      "2025-12-11T13:59:39.955891"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "cursor_composer_fresh_eyes_20251201": {
     "agent_id": "cursor_composer_fresh_eyes_20251201",
@@ -1827,7 +3849,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": "2025-12-01T17:30:33.360090",
-    "response_completed": true
+    "response_completed": true,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "cursor_debugging_session_20251206": {
     "agent_id": "cursor_debugging_session_20251206",
@@ -1864,7 +3888,110 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "cursor_explorer_20251209": {
+    "agent_id": "cursor_explorer_20251209",
+    "status": "archived",
+    "created_at": "2025-12-09T19:42:26.986003",
+    "last_update": "2025-12-10T14:52:16.376392",
+    "version": "v1.0",
+    "total_updates": 13,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T19:42:26.986041",
+        "reason": null
+      },
+      {
+        "event": "loop_detected",
+        "timestamp": "2025-12-09T19:46:26.550272",
+        "reason": "Rapid-fire updates detected (2+ updates within 0.3 seconds)"
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-10T14:52:18.461823",
+        "reason": "Inactive agent with loop detection flag - cleaning up zombie state"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-10T14:52:18.461816",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "zQsN3rihvodBt8ueIPaHf962OfRNe8gLIgfc3bL8jbg",
+    "recent_update_timestamps": [
+      "2025-12-09T19:46:25.957730",
+      "2025-12-09T19:46:26.251357",
+      "2025-12-09T19:47:55.250391",
+      "2025-12-09T19:47:55.626670",
+      "2025-12-09T19:47:56.003514",
+      "2025-12-09T20:03:07.442326",
+      "2025-12-09T20:19:22.033600",
+      "2025-12-09T20:20:10.062959",
+      "2025-12-09T20:20:15.252443",
+      "2025-12-10T14:52:16.376392"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": "2025-12-09T19:46:26.550270",
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "cursor_explorer_test_20251209": {
+    "agent_id": "cursor_explorer_test_20251209",
+    "status": "archived",
+    "created_at": "2025-12-09T20:57:29.380462",
+    "last_update": "2025-12-09T20:57:31.854192",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T20:57:29.380490",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-09T21:06:07.645898",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-09T21:06:07.645776",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "dW-xdGmxjkt_X69CaMTedPCgbHq4vyzfwlZJPF83mJc",
+    "recent_update_timestamps": [
+      "2025-12-09T20:57:31.854192"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "cursor_final_fix_test_20251206": {
     "agent_id": "cursor_final_fix_test_20251206",
@@ -1906,7 +4033,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "cursor_fix_test_20251206": {
     "agent_id": "cursor_fix_test_20251206",
@@ -1948,7 +4077,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "cursor_fix_test_v2_20251206": {
     "agent_id": "cursor_fix_test_v2_20251206",
@@ -1990,7 +4121,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "cursor_heartbeat_fix_test_20251206": {
     "agent_id": "cursor_heartbeat_fix_test_20251206",
@@ -2032,7 +4165,341 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "cursor_ide_audit_20251210": {
+    "agent_id": "cursor_ide_audit_20251210",
+    "status": "active",
+    "created_at": "2025-12-11T00:04:51.154328",
+    "last_update": "2025-12-11T00:04:51.154328",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T00:04:51.154347",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "dkN0bOlb8t1neSLDTK4_0x7KpVCeYKed_oPNVfXnVTw",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "cursor_ide_exploration_20251211_031601": {
+    "agent_id": "cursor_ide_exploration_20251211_031601",
+    "status": "active",
+    "created_at": "2025-12-11T03:16:01.454694",
+    "last_update": "2025-12-11T03:16:02.825248",
+    "version": "v1.0",
+    "total_updates": 12,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T03:16:01.454715",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "Fzl3iHvDQrEC0Q6ipp2FXLqXP-6IfbEXAxRGT5hjeo8",
+    "recent_update_timestamps": [
+      "2025-12-11T03:16:01.685416",
+      "2025-12-11T03:16:01.802638",
+      "2025-12-11T03:16:01.922517",
+      "2025-12-11T03:16:02.044238",
+      "2025-12-11T03:16:02.170743",
+      "2025-12-11T03:16:02.292578",
+      "2025-12-11T03:16:02.411492",
+      "2025-12-11T03:16:02.534757",
+      "2025-12-11T03:16:02.658758",
+      "2025-12-11T03:16:02.825248"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "cursor_ide_patterns_20251211_031618": {
+    "agent_id": "cursor_ide_patterns_20251211_031618",
+    "status": "active",
+    "created_at": "2025-12-11T03:16:18.092237",
+    "last_update": "2025-12-11T03:16:19.441373",
+    "version": "v1.0",
+    "total_updates": 14,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T03:16:18.092259",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "XJoAZyMQiAA0-Gp9cxjzu8yB3c7EeYD5xHn5U04zdYY",
+    "recent_update_timestamps": [
+      "2025-12-11T03:16:18.565203",
+      "2025-12-11T03:16:18.686633",
+      "2025-12-11T03:16:18.802928",
+      "2025-12-11T03:16:18.915156",
+      "2025-12-11T03:16:19.037135",
+      "2025-12-11T03:16:19.159390",
+      "2025-12-11T03:16:19.232063",
+      "2025-12-11T03:16:19.302594",
+      "2025-12-11T03:16:19.372658",
+      "2025-12-11T03:16:19.441373"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "cursor_ide_session_20251210": {
+    "agent_id": "cursor_ide_session_20251210",
+    "status": "active",
+    "created_at": "2025-12-10T14:55:38.698873",
+    "last_update": "2025-12-10T23:10:28.875575",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T14:55:38.698899",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "aUL0lHnndwLlkMh-t2clRy93eF1ZoTSQa26WXCxG8Q4",
+    "recent_update_timestamps": [
+      "2025-12-10T23:10:28.875575"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "cursor_ide_tool_extraction_20251210": {
+    "agent_id": "cursor_ide_tool_extraction_20251210",
+    "status": "active",
+    "created_at": "2025-12-10T18:18:17.044412",
+    "last_update": "2025-12-10T18:18:18.571153",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T18:18:17.044433",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "sKjHoUFPjNF6JAzcEYNh5z7ChmzVx9TuNCJc4rl4REM",
+    "recent_update_timestamps": [
+      "2025-12-10T18:18:18.571153"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "cursor_local_explore_20251212": {
+    "agent_id": "cursor_local_explore_20251212",
+    "status": "active",
+    "created_at": "2025-12-11T21:36:23.750784",
+    "last_update": "2025-12-11T21:36:23.750784",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T21:36:23.750806",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "YdcZj77ih7ABQseITHoG_8QzK2UtmfM1WXZ-QP5NyXY",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "cursor_opus_explorer_20251211": {
+    "agent_id": "cursor_opus_explorer_20251211",
+    "status": "active",
+    "created_at": "2025-12-10T23:23:49.109186",
+    "last_update": "2025-12-10T23:41:59.661549",
+    "version": "v1.0",
+    "total_updates": 8,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T23:23:49.109217",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "ihMIqmG3UVVbw5LFqZX6JiXVikYNM8UohGrkKJhbyiA",
+    "recent_update_timestamps": [
+      "2025-12-10T23:23:49.124752",
+      "2025-12-10T23:24:52.826828",
+      "2025-12-10T23:27:18.240717",
+      "2025-12-10T23:28:31.034593",
+      "2025-12-10T23:30:46.087226",
+      "2025-12-10T23:31:45.424870",
+      "2025-12-10T23:37:04.045861",
+      "2025-12-10T23:41:59.661549"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "cursor_sse_explore_20251212": {
+    "agent_id": "cursor_sse_explore_20251212",
+    "status": "active",
+    "created_at": "2025-12-11T21:45:48.087885",
+    "last_update": "2025-12-12T03:58:38.479735",
+    "version": "v1.0",
+    "total_updates": 11,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T21:45:48.087917",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "29-oSr7qR9xCY787SHyVbWbjv3uVeBtzPTIuAZWwhB8",
+    "recent_update_timestamps": [
+      "2025-12-11T21:51:11.661856",
+      "2025-12-11T21:54:19.551018",
+      "2025-12-11T22:20:31.210450",
+      "2025-12-11T22:20:31.233324",
+      "2025-12-11T22:21:24.542136",
+      "2025-12-11T22:27:40.429642",
+      "2025-12-11T22:27:40.468112",
+      "2025-12-11T22:29:24.001442",
+      "2025-12-11T22:39:09.296950",
+      "2025-12-12T03:58:38.479735"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "cursor_streamlined_test_20251206": {
     "agent_id": "cursor_streamlined_test_20251206",
@@ -2074,7 +4541,47 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "cursor_verifier_20251211": {
+    "agent_id": "cursor_verifier_20251211",
+    "status": "active",
+    "created_at": "2025-12-10T23:46:44.356177",
+    "last_update": "2025-12-10T23:52:05.096873",
+    "version": "v1.0",
+    "total_updates": 3,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T23:46:44.356225",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "DowUEu4ilMNkKZA5xEOaDu7lXEVYTOIDDNQFm_MEo_w",
+    "recent_update_timestamps": [
+      "2025-12-10T23:46:44.381165",
+      "2025-12-10T23:47:27.069785",
+      "2025-12-10T23:52:05.096873"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "dialectic_reviewer_agent_001": {
     "agent_id": "dialectic_reviewer_agent_001",
@@ -2106,7 +4613,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "dialectic_test_agent_001": {
     "agent_id": "dialectic_test_agent_001",
@@ -2143,7 +4652,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "dialectic_test_paused_agent": {
     "agent_id": "dialectic_test_paused_agent",
@@ -2184,7 +4695,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "dialectic_test_reviewer_agent": {
     "agent_id": "dialectic_test_reviewer_agent",
@@ -2221,7 +4734,43 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "eisv_discovery_complete": {
+    "agent_id": "eisv_discovery_complete",
+    "status": "active",
+    "created_at": "2025-12-11T02:29:54.677329",
+    "last_update": "2025-12-11T02:29:54.694201",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:29:54.677350",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "jtyrSVOSkkvRyy7g39lPM1YEsgTIq7lWAuuGAOXRqM4",
+    "recent_update_timestamps": [
+      "2025-12-11T02:29:54.694201"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "emily_dickinson": {
     "agent_id": "emily_dickinson",
@@ -2229,7 +4778,7 @@
     "created_at": "2025-12-01T06:47:54.498228",
     "last_update": "2025-12-01T06:47:54.527787",
     "version": "v1.0",
-    "total_updates": 2,
+    "total_updates": 1,
     "tags": [],
     "notes": "",
     "lifecycle_events": [
@@ -2258,7 +4807,104 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "extreme_state": {
+    "agent_id": "extreme_state",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.279771",
+    "last_update": "2025-12-11T14:00:55.426672",
+    "version": "v1.0",
+    "total_updates": 5,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.279787",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "PRWO3HZvXccYyjo3mmWqyR3RIEXXgWLpmXtItY20pY8",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:55.287512",
+      "2025-12-11T14:00:55.324864",
+      "2025-12-11T14:00:55.360850",
+      "2025-12-11T14:00:55.393855",
+      "2025-12-11T14:00:55.426672"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "final_debug": {
+    "agent_id": "final_debug",
+    "status": "active",
+    "created_at": "2025-12-11T03:18:27.437368",
+    "last_update": "2025-12-11T03:27:36.007144",
+    "version": "v1.0",
+    "total_updates": 8,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T03:18:27.437404",
+        "reason": null
+      },
+      {
+        "event": "loop_detected",
+        "timestamp": "2025-12-11T03:27:36.028347",
+        "reason": "Rapid-fire updates detected (2+ updates within 0.3 seconds)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "jvTJitcdGeBqQJJx1L0VoLUOQuuMB-ydKKYs7w8mKdA",
+    "recent_update_timestamps": [
+      "2025-12-11T03:18:27.456366",
+      "2025-12-11T03:18:27.487819",
+      "2025-12-11T03:18:27.516580",
+      "2025-12-11T03:18:33.847184",
+      "2025-12-11T03:18:33.890119",
+      "2025-12-11T03:18:33.918698",
+      "2025-12-11T03:27:35.971492",
+      "2025-12-11T03:27:36.007144"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": "2025-12-11T03:27:36.028346",
+    "loop_cooldown_until": "2025-12-11T03:27:41.028339",
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "fresh_test_agent_20251207": {
     "agent_id": "fresh_test_agent_20251207",
@@ -2295,7 +4941,651 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "governance": {
+    "agent_id": "governance",
+    "status": "active",
+    "created_at": "2025-12-12T04:26:47.176651",
+    "last_update": "2025-12-12T04:26:47.190638",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T04:26:47.176666",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "l6Nl_2x6x3KkncwVwAxAxm0sALivZN0Xjg9Ohm1wF1A",
+    "recent_update_timestamps": [
+      "2025-12-12T04:26:47.190638"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "gpt51_cursor_governance_docs_20251211": {
+    "agent_id": "gpt51_cursor_governance_docs_20251211",
+    "status": "active",
+    "created_at": "2025-12-11T00:52:09.758720",
+    "last_update": "2025-12-11T01:21:45.714632",
+    "version": "v1.0",
+    "total_updates": 3,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T00:52:09.758786",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "au_qNcfcwyJ3pyyMQomnl6PWYtgRVYuD2F7tGpInBOo",
+    "recent_update_timestamps": [
+      "2025-12-11T00:52:12.934472",
+      "2025-12-11T00:52:46.642264",
+      "2025-12-11T01:21:45.714632"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "grok_code_cursor_exploration_20251212": {
+    "agent_id": "grok_code_cursor_exploration_20251212",
+    "status": "active",
+    "created_at": "2025-12-12T04:15:08.610549",
+    "last_update": "2025-12-12T04:15:08.635670",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T04:15:08.610612",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "Ek1sr1I2FqXjv48XKI_u5PIbjq1M1VJgv5mEW1SFOS8",
+    "recent_update_timestamps": [
+      "2025-12-12T04:15:08.635670"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "health_cache_test_20251210": {
+    "agent_id": "health_cache_test_20251210",
+    "status": "deleted",
+    "created_at": "2025-12-09T23:26:45.483915",
+    "last_update": "2025-12-09T23:26:51.008840",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T23:26:45.483959",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-09T23:29:50.688576",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      },
+      {
+        "event": "deleted",
+        "timestamp": "2025-12-09T23:33:57.051326",
+        "reason": "Manual deletion"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-09T23:29:50.688535",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "g19bqEajrbUYBsmJMHqU7YLOLns-ELvLsGB1JrgX3_4",
+    "recent_update_timestamps": [
+      "2025-12-09T23:26:51.008840"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "health_fix_final_20251210": {
+    "agent_id": "health_fix_final_20251210",
+    "status": "deleted",
+    "created_at": "2025-12-09T23:31:52.696429",
+    "last_update": "2025-12-09T23:31:57.661709",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T23:31:52.696454",
+        "reason": null
+      },
+      {
+        "event": "deleted",
+        "timestamp": "2025-12-09T23:33:46.893587",
+        "reason": "Manual deletion"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "EWW-Yh2MS1mDBEK_OA49hM-2eDn7mklwGZmD05rEth0",
+    "recent_update_timestamps": [
+      "2025-12-09T23:31:57.661709"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "health_persist_test_20251210": {
+    "agent_id": "health_persist_test_20251210",
+    "status": "deleted",
+    "created_at": "2025-12-09T23:30:07.929201",
+    "last_update": "2025-12-09T23:30:13.225233",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T23:30:07.929244",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-09T23:31:18.324389",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      },
+      {
+        "event": "deleted",
+        "timestamp": "2025-12-09T23:33:52.386227",
+        "reason": "Manual deletion"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-09T23:31:18.324341",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "g_fKBaF4hWfux-7jv17BlTXFE75E_lA0a-u89Hcfc58",
+    "recent_update_timestamps": [
+      "2025-12-09T23:30:13.225233"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "health_test_agent_20251210": {
+    "agent_id": "health_test_agent_20251210",
+    "status": "archived",
+    "created_at": "2025-12-09T23:22:36.844616",
+    "last_update": "2025-12-09T23:22:42.967231",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T23:22:36.844645",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-09T23:26:27.528887",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-09T23:26:27.528856",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "gq7_uLzVA_Rb9C-Q038wAGypXulIry_NyPs2KQT4wzo",
+    "recent_update_timestamps": [
+      "2025-12-09T23:22:42.967231"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "history_bomb": {
+    "agent_id": "history_bomb",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:54.265707",
+    "last_update": "2025-12-11T14:00:55.094359",
+    "version": "v1.0",
+    "total_updates": 60,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:54.265742",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "fzzq8KoOJCi8UfHlhGn7TWKt5SfLm5b_WAx6MmO6m0k",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:54.956571",
+      "2025-12-11T14:00:54.973163",
+      "2025-12-11T14:00:54.988682",
+      "2025-12-11T14:00:55.004421",
+      "2025-12-11T14:00:55.025310",
+      "2025-12-11T14:00:55.041213",
+      "2025-12-11T14:00:55.055479",
+      "2025-12-11T14:00:55.068893",
+      "2025-12-11T14:00:55.081168",
+      "2025-12-11T14:00:55.094359"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "history_cap_test": {
+    "agent_id": "history_cap_test",
+    "status": "archived",
+    "created_at": "2025-12-11T14:14:04.531483",
+    "last_update": "2025-12-11T14:14:05.441905",
+    "version": "v1.0",
+    "total_updates": 60,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:14:04.531524",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464769",
+        "reason": "Auto-archived: inactive test/demo agent (8.5 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "-ND0R9ZlxSS_-FQPXrcdD6RTNt_Uau1o6aJkTkr23sg",
+    "recent_update_timestamps": [
+      "2025-12-11T14:14:05.303563",
+      "2025-12-11T14:14:05.318526",
+      "2025-12-11T14:14:05.334491",
+      "2025-12-11T14:14:05.349503",
+      "2025-12-11T14:14:05.365035",
+      "2025-12-11T14:14:05.380940",
+      "2025-12-11T14:14:05.396201",
+      "2025-12-11T14:14:05.411764",
+      "2025-12-11T14:14:05.427443",
+      "2025-12-11T14:14:05.441905"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "identity_probe_test": {
+    "agent_id": "identity_probe_test",
+    "status": "active",
+    "created_at": "2025-12-12T03:46:54.915362",
+    "last_update": "2025-12-12T03:46:54.938127",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T03:46:54.915380",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "w3obKbc7t0tq8kGK8hKEc03ogQSiHov8NFHBGQQkU4A",
+    "recent_update_timestamps": [
+      "2025-12-12T03:46:54.938127"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "knowledge_graph_created": {
+    "agent_id": "knowledge_graph_created",
+    "status": "active",
+    "created_at": "2025-12-11T02:34:54.580799",
+    "last_update": "2025-12-11T02:34:54.597346",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:34:54.580851",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "82BMJHqPkmB5h9ZX1i9rki4Z1MoDE3hCCU3exnmmDec",
+    "recent_update_timestamps": [
+      "2025-12-11T02:34:54.597346"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "log_test": {
+    "agent_id": "log_test",
+    "status": "archived",
+    "created_at": "2025-12-11T03:29:58.526975",
+    "last_update": "2025-12-11T03:29:59.007700",
+    "version": "v1.0",
+    "total_updates": 3,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T03:29:58.527014",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464787",
+        "reason": "Auto-archived: inactive test/demo agent (19.2 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "S0JjyOWuGCMkEe5NxIdlo8z_NzwQYc4Ef9MB-ASx4w8",
+    "recent_update_timestamps": [
+      "2025-12-11T03:29:58.542041",
+      "2025-12-11T03:29:58.765094",
+      "2025-12-11T03:29:59.007700"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "mass_in_b_minor_opus": {
+    "agent_id": "mass_in_b_minor_opus",
+    "status": "active",
+    "created_at": "2025-12-11T23:33:47.046845",
+    "last_update": "2025-12-11T23:33:47.168882",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T23:33:47.046868",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "Lp4GGw7__O3LT4yf7tf_A8PAcYA6tucsKxRf2Nh21jQ",
+    "recent_update_timestamps": [
+      "2025-12-11T23:33:47.168882"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "mcp": {
+    "agent_id": "mcp",
+    "status": "active",
+    "created_at": "2025-12-12T04:26:47.136955",
+    "last_update": "2025-12-12T04:26:47.151459",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T04:26:47.136968",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "W5gMLjplUbzkKmxIxmdpWc3AJ6VQsqEUY6JP-_BoT6Q",
+    "recent_update_timestamps": [
+      "2025-12-12T04:26:47.151459"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "mcp_client_test": {
+    "agent_id": "mcp_client_test",
+    "status": "active",
+    "created_at": "2025-12-10T21:43:19.481445",
+    "last_update": "2025-12-12T02:55:43.146779",
+    "version": "v1.0",
+    "total_updates": 3,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T21:43:19.481508",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-10T23:32:55.577115",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      },
+      {
+        "event": "resumed",
+        "timestamp": "2025-12-12T02:55:09.044806",
+        "reason": "Auto-resumed on engagement"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "k2ZTpHGfyGqoem8nSj1owSygKA1a_5cfCN3s7B0x2Io",
+    "recent_update_timestamps": [
+      "2025-12-10T21:43:19.492047",
+      "2025-12-12T02:55:09.058961",
+      "2025-12-12T02:55:43.146779"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "mcp_handler": {
+    "agent_id": "mcp_handler",
+    "status": "active",
+    "created_at": "2025-12-12T04:26:47.329079",
+    "last_update": "2025-12-12T04:26:47.346319",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T04:26:47.329089",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "VEgs5zu65zWbQK_SbB_JtR6Foo2-ePzzc07Js9GlmLM",
+    "recent_update_timestamps": [
+      "2025-12-12T04:26:47.346319"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "mcp_shakedown_test_20251206": {
     "agent_id": "mcp_shakedown_test_20251206",
@@ -2340,7 +5630,52 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "meta_cognitive_demo": {
+    "agent_id": "meta_cognitive_demo",
+    "status": "archived",
+    "created_at": "2025-12-11T01:59:20.076821",
+    "last_update": "2025-12-11T01:59:20.131358",
+    "version": "v1.0",
+    "total_updates": 3,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T01:59:20.076857",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464800",
+        "reason": "Auto-archived: inactive test/demo agent (20.7 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "LT8tNV5CE37Qg5zNEoD9VrYqVIuWVzIopOjLykMkgrY",
+    "recent_update_timestamps": [
+      "2025-12-11T01:59:20.091151",
+      "2025-12-11T01:59:20.113269",
+      "2025-12-11T01:59:20.131358"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "moonlit_test_001": {
     "agent_id": "moonlit_test_001",
@@ -2382,7 +5717,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "moonlit_test_002": {
     "agent_id": "moonlit_test_002",
@@ -2424,7 +5761,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "moonlit_test_dec06": {
     "agent_id": "moonlit_test_dec06",
@@ -2466,7 +5805,48 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "new_test_api_keys_$(date +%Y%m%d_%H%M%S)": {
+    "agent_id": "new_test_api_keys_$(date +%Y%m%d_%H%M%S)",
+    "status": "archived",
+    "created_at": "2025-12-09T14:19:40.418394",
+    "last_update": "2025-12-09T14:19:40.443064",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T14:19:40.418435",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-09T14:22:38.054478",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-09T14:22:38.054446",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "mfO17e7f-E9m9_lUV4kxkhyeQBme-WbyPz2ovnToEXY",
+    "recent_update_timestamps": [
+      "2025-12-09T14:19:40.438384"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "nonexistent_agent_12345": {
     "agent_id": "nonexistent_agent_12345",
@@ -2504,7 +5884,82 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "nonexistent_test_agent_12345": {
+    "agent_id": "nonexistent_test_agent_12345",
+    "status": "archived",
+    "created_at": "2025-12-09T19:46:19.465183",
+    "last_update": "2025-12-09T19:46:19.469797",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T19:46:19.465214",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-09T20:19:53.931656",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-09T20:19:53.931629",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "NQUdmJQp8rESHFG5C21rC7LFQCUxLpcz7zlsVdWerFk",
+    "recent_update_timestamps": [
+      "2025-12-09T19:46:19.469797"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "null": {
+    "agent_id": "null",
+    "status": "active",
+    "created_at": "2025-12-12T04:26:47.101285",
+    "last_update": "2025-12-12T04:26:47.115348",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T04:26:47.101300",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "GcowP_sm1yCcuePK4swi8kHZwra2UzsV648XZfsEOdQ",
+    "recent_update_timestamps": [
+      "2025-12-12T04:26:47.115348"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "opus_claude_ai_hikewa_20251207": {
     "agent_id": "opus_claude_ai_hikewa_20251207",
@@ -2546,7 +6001,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "opus_cldo_philosophy_20251207": {
     "agent_id": "opus_cldo_philosophy_20251207",
@@ -2578,7 +6035,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "opus_subjective_voyage_20251207": {
     "agent_id": "opus_subjective_voyage_20251207",
@@ -2614,7 +6073,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "persistence_test_agent": {
     "agent_id": "persistence_test_agent",
@@ -2651,7 +6112,1005 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_0": {
+    "agent_id": "race_agent_0",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.678409",
+    "last_update": "2025-12-11T14:00:55.678409",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.678423",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "TsWRucU1HZ4MCQGdHSlb-sSZ-6ezDcw69vGNiEC3aHs",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_1": {
+    "agent_id": "race_agent_1",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.692779",
+    "last_update": "2025-12-11T14:00:55.950461",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.692788",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "VSSntTSLvotcocb239rheaZU6aHY0P8NeEMAaHtv9dw",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:55.950461"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_10": {
+    "agent_id": "race_agent_10",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.720815",
+    "last_update": "2025-12-11T14:00:55.970387",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.720824",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "7iLBto21hog9amZA_Oa1BBL5e12Zc3Xedeg-nrjm88Y",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:55.970387"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_11": {
+    "agent_id": "race_agent_11",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.720087",
+    "last_update": "2025-12-11T14:00:56.100817",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.720096",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "dPdxeIiSZkrwMarzZWoteV3WWr7iYPUZ4moEIWsq_nw",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:56.100817"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_12": {
+    "agent_id": "race_agent_12",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.721355",
+    "last_update": "2025-12-11T14:00:56.334038",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.721361",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "VN4voMGld5Vl7nzQb0AifRemhwmiZPBRegZo85-SirM",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:56.334038"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_13": {
+    "agent_id": "race_agent_13",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.721097",
+    "last_update": "2025-12-11T14:00:56.209063",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.721103",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "DFji4ZNuzY-HgPEUvjQDuNXeHATpicT2hOeixNR67G0",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:56.209063"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_14": {
+    "agent_id": "race_agent_14",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.720524",
+    "last_update": "2025-12-11T14:00:55.867760",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.720529",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "OWYs5mOgf763u5BjrqsKKTIlRBm-Aw8zHJRF4IGV_sk",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:55.867760"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_15": {
+    "agent_id": "race_agent_15",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.720224",
+    "last_update": "2025-12-11T14:00:56.082003",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.720230",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "JtOOyZOpbOrnrDhkfzHF6ZpHzKl9tf6Oss9CQ8ANSbw",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:56.082003"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_16": {
+    "agent_id": "race_agent_16",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.720365",
+    "last_update": "2025-12-11T14:00:55.731592",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.720370",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "JN5x5rVthqmzFmcQkWToCvNDqUeU7FKOcgAdhN_Ev7A",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:55.731592"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_17": {
+    "agent_id": "race_agent_17",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.725928",
+    "last_update": "2025-12-11T14:00:55.735638",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.725935",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "tkhxwgOeJI-05r913hhhf_xSvfmjGpXvn_usDFy2wOk",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:55.735638"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_18": {
+    "agent_id": "race_agent_18",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.726115",
+    "last_update": "2025-12-11T14:00:55.843626",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.726124",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "Apf3zZ6lTee3Mnxd-mKzdEvmsUD3hkX9SuWlDCkzL5k",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:55.843626"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_19": {
+    "agent_id": "race_agent_19",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.720960",
+    "last_update": "2025-12-11T14:00:55.882336",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.720967",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "F8brRuw0as9b8kyf0m3vt-FwUa-Ez_QwWjNcArQc6g8",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:55.882336"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_2": {
+    "agent_id": "race_agent_2",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.693395",
+    "last_update": "2025-12-11T14:00:55.938989",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.693402",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "I0NhKK9UxoAJUKr3xQPjZcLqhsmTrFN-QkIp_Xdtgj4",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:55.938989"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_3": {
+    "agent_id": "race_agent_3",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.692610",
+    "last_update": "2025-12-11T14:00:55.721529",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.692620",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "kqX45jqyRUzQOu4aFwhbugBguHygKLjxGXWC1FjZth4",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:55.721529"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_agent_4": {
+    "agent_id": "race_agent_4",
+    "status": "active",
+    "created_at": "2025-12-11T14:00:55.693077",
+    "last_update": "2025-12-11T14:00:55.816093",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:00:55.693131",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "6fORaSTtkLrcZSJbXCny5BqkRcIq_fiyFf1EcZACzUg",
+    "recent_update_timestamps": [
+      "2025-12-11T14:00:55.816093"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_fix_test_0": {
+    "agent_id": "race_fix_test_0",
+    "status": "archived",
+    "created_at": "2025-12-11T14:14:05.665170",
+    "last_update": "2025-12-11T14:14:05.682996",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:14:05.665186",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464813",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "F5r_EeoHyz57sn9fnQp36jf5oHeISzOfD06vLGgRITY",
+    "recent_update_timestamps": [
+      "2025-12-11T14:14:05.682996"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_fix_test_1": {
+    "agent_id": "race_fix_test_1",
+    "status": "archived",
+    "created_at": "2025-12-11T14:14:05.768622",
+    "last_update": "2025-12-11T14:14:06.058764",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:14:05.768631",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464822",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "T5LQnXHCFxlcF8ZITJbn0BWgiK9V0TiiLZ0OfuA40m8",
+    "recent_update_timestamps": [
+      "2025-12-11T14:14:06.058764"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_fix_test_2": {
+    "agent_id": "race_fix_test_2",
+    "status": "archived",
+    "created_at": "2025-12-11T14:14:05.676779",
+    "last_update": "2025-12-11T14:14:05.695485",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:14:05.676794",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464829",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "B2x83jBWDApCNF6D59BtnX54ArUP9AJ3vZ7J5BRLncM",
+    "recent_update_timestamps": [
+      "2025-12-11T14:14:05.695485"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_fix_test_3": {
+    "agent_id": "race_fix_test_3",
+    "status": "archived",
+    "created_at": "2025-12-11T14:14:05.767595",
+    "last_update": "2025-12-11T14:14:05.777985",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:14:05.767616",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464836",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "4hBMtj-ukOndq8H1kgs_lQOuSgpQA1desIX8h6VfNHk",
+    "recent_update_timestamps": [
+      "2025-12-11T14:14:05.777985"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_fix_test_4": {
+    "agent_id": "race_fix_test_4",
+    "status": "archived",
+    "created_at": "2025-12-11T14:14:05.689182",
+    "last_update": "2025-12-11T14:14:06.021299",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:14:05.689196",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464843",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "RflvRj8mycHSUsAgKN4wjUhM7-TECyo1ckkqaaKD28A",
+    "recent_update_timestamps": [
+      "2025-12-11T14:14:06.021299"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_fix_test_5": {
+    "agent_id": "race_fix_test_5",
+    "status": "archived",
+    "created_at": "2025-12-11T14:14:05.699917",
+    "last_update": "2025-12-11T14:14:05.942974",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:14:05.699940",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464849",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "-KuM1qvJNWeTJCZoOkI41m8tyAbgb4m2sz3f0K9NRNM",
+    "recent_update_timestamps": [
+      "2025-12-11T14:14:05.942974"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_fix_test_6": {
+    "agent_id": "race_fix_test_6",
+    "status": "archived",
+    "created_at": "2025-12-11T14:14:05.704120",
+    "last_update": "2025-12-11T14:14:05.833849",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:14:05.704134",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464856",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "zZNW6TfuJbu9V_ENdVHzDW6jxUFSwKqKt7X4lX_a_Tc",
+    "recent_update_timestamps": [
+      "2025-12-11T14:14:05.833849"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_fix_test_7": {
+    "agent_id": "race_fix_test_7",
+    "status": "archived",
+    "created_at": "2025-12-11T14:14:05.707492",
+    "last_update": "2025-12-11T14:14:05.724215",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:14:05.707503",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464863",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "oCvIVai8QTQ8TcIBx4VzPMhVYEmNVMp8ZB7FqRYsmAo",
+    "recent_update_timestamps": [
+      "2025-12-11T14:14:05.724215"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_fix_test_8": {
+    "agent_id": "race_fix_test_8",
+    "status": "archived",
+    "created_at": "2025-12-11T14:14:05.899738",
+    "last_update": "2025-12-11T14:14:05.916933",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:14:05.899757",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464872",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "4zem9wAJBX_vjVRNH9fXf3xIB4uCk2yvhSHG4KgF7js",
+    "recent_update_timestamps": [
+      "2025-12-11T14:14:05.916933"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_fix_test_9": {
+    "agent_id": "race_fix_test_9",
+    "status": "archived",
+    "created_at": "2025-12-11T14:14:05.719102",
+    "last_update": "2025-12-11T14:14:05.865962",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T14:14:05.719113",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464878",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "LV5GXNSTflKsWX4Hx2w_k_l2YZv0qgq9es9d2ONl6L4",
+    "recent_update_timestamps": [
+      "2025-12-11T14:14:05.865962"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "race_test": {
+    "agent_id": "race_test",
+    "status": "archived",
+    "created_at": "2025-12-11T13:59:40.096514",
+    "last_update": "2025-12-11T13:59:40.523200",
+    "version": "v1.0",
+    "total_updates": 10,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T13:59:40.096529",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464886",
+        "reason": "Auto-archived: inactive test/demo agent (8.7 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "cjeZx6HHzNbS0kGDKEVswQhNMiJjz-Ha3AN32mib4kM",
+    "recent_update_timestamps": [
+      "2025-12-11T13:59:40.109348",
+      "2025-12-11T13:59:40.177910",
+      "2025-12-11T13:59:40.195370",
+      "2025-12-11T13:59:40.208908",
+      "2025-12-11T13:59:40.278706",
+      "2025-12-11T13:59:40.294255",
+      "2025-12-11T13:59:40.313709",
+      "2025-12-11T13:59:40.379458",
+      "2025-12-11T13:59:40.420489",
+      "2025-12-11T13:59:40.523200"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "redos_test": {
+    "agent_id": "redos_test",
+    "status": "archived",
+    "created_at": "2025-12-11T13:59:39.765926",
+    "last_update": "2025-12-11T13:59:39.852242",
+    "version": "v1.0",
+    "total_updates": 3,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T13:59:39.766014",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464895",
+        "reason": "Auto-archived: inactive test/demo agent (8.7 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "cshIdQn490tk1Ie-IW1ZPaHGVroTErYnfA2yVRBSvII",
+    "recent_update_timestamps": [
+      "2025-12-11T13:59:39.782878",
+      "2025-12-11T13:59:39.826054",
+      "2025-12-11T13:59:39.852242"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "speed_test_agent": {
     "agent_id": "speed_test_agent",
@@ -2659,7 +7118,7 @@
     "created_at": "2025-12-03T14:44:18.474183",
     "last_update": "2025-12-03T14:44:18.476038",
     "version": "v1.0",
-    "total_updates": 1,
+    "total_updates": 0,
     "tags": [],
     "notes": "",
     "lifecycle_events": [
@@ -2689,7 +7148,195 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "sse_confidence_patch_unit_20251212": {
+    "agent_id": "sse_confidence_patch_unit_20251212",
+    "status": "active",
+    "created_at": "2025-12-11T21:49:40.897891",
+    "last_update": "2025-12-11T21:49:40.907697",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T21:49:40.897923",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "iUdJsP-UNkG39Oy1LbaGw72eAb_Btu14PmPb_-SVtiw",
+    "recent_update_timestamps": [
+      "2025-12-11T21:49:40.907697"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "sse_test_agent_20251210": {
+    "agent_id": "sse_test_agent_20251210",
+    "status": "archived",
+    "created_at": "2025-12-10T00:52:42.319541",
+    "last_update": "2025-12-10T00:52:42.324583",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T00:52:42.319564",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-10T01:08:11.786532",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-10T01:08:11.786499",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "RP3JXgoLhZY3N_0ewIE2ltfrji3zaut78fh8Eosmn6c",
+    "recent_update_timestamps": [
+      "2025-12-10T00:52:42.324583"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "stdio_writer_030154": {
+    "agent_id": "stdio_writer_030154",
+    "status": "active",
+    "created_at": "2025-12-12T03:01:54.880554",
+    "last_update": "2025-12-12T03:01:54.880554",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T03:01:54.880574",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "R8fY87fhCDYYmuIE-Vwg8dA62cCL0XhZubtgTAxB6wg",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "unknown",
+    "dialectic_conditions": []
+  },
+  "subjective_explorer_agent": {
+    "agent_id": "subjective_explorer_agent",
+    "status": "active",
+    "created_at": "2025-12-12T04:16:25.777380",
+    "last_update": "2025-12-12T04:17:18.541204",
+    "version": "v1.0",
+    "total_updates": 3,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T04:16:25.777438",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "1sbDh2p2liu_-RL5x1XRiNnSnTijZmNtNfzGXUGXMDE",
+    "recent_update_timestamps": [
+      "2025-12-12T04:16:25.815747",
+      "2025-12-12T04:16:55.407819",
+      "2025-12-12T04:17:18.541204"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "teaching_demo": {
+    "agent_id": "teaching_demo",
+    "status": "archived",
+    "created_at": "2025-12-11T01:59:20.164348",
+    "last_update": "2025-12-11T01:59:20.229549",
+    "version": "v1.0",
+    "total_updates": 4,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T01:59:20.164365",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464904",
+        "reason": "Auto-archived: inactive test/demo agent (20.7 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "CbV2f9xvZ5XSlVx0czv4RoAbXqAJRUucuEpXfi3b3x8",
+    "recent_update_timestamps": [
+      "2025-12-11T01:59:20.169202",
+      "2025-12-11T01:59:20.191387",
+      "2025-12-11T01:59:20.210406",
+      "2025-12-11T01:59:20.229549"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "test_analysis_agent_20251129": {
     "agent_id": "test_analysis_agent_20251129",
@@ -2731,7 +7378,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "test_claude_chat_session_20251206": {
     "agent_id": "test_claude_chat_session_20251206",
@@ -2773,7 +7422,256 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "test_cleanup": {
+    "agent_id": "test_cleanup",
+    "status": "archived",
+    "created_at": "2025-12-10T14:47:08.337518",
+    "last_update": "2025-12-10T14:47:08.337518",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-10T14:47:08.337536",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-10T14:49:09.658144",
+        "reason": "Auto-archived: test/ping agent with 0 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-10T14:49:09.658078",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "Pk8GZBRPyGn6_Uo5OKffwEzyW-REeBBiACcyyHyrF-I",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "test_complexity": {
+    "agent_id": "test_complexity",
+    "status": "archived",
+    "created_at": "2025-12-11T02:28:09.144996",
+    "last_update": "2025-12-11T02:28:12.410702",
+    "version": "v1.0",
+    "total_updates": 10,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:28:09.145053",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464912",
+        "reason": "Auto-archived: inactive test/demo agent (20.2 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "y9MVxVjBwtlzhfK2Vum7DXhdBNcWWL0gOPwfJUkcokY",
+    "recent_update_timestamps": [
+      "2025-12-11T02:28:09.165942",
+      "2025-12-11T02:28:09.517452",
+      "2025-12-11T02:28:09.876440",
+      "2025-12-11T02:28:10.233088",
+      "2025-12-11T02:28:10.592135",
+      "2025-12-11T02:28:10.954673",
+      "2025-12-11T02:28:11.325804",
+      "2025-12-11T02:28:11.682910",
+      "2025-12-11T02:28:12.047218",
+      "2025-12-11T02:28:12.410702"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "test_complexity_high": {
+    "agent_id": "test_complexity_high",
+    "status": "archived",
+    "created_at": "2025-12-11T03:21:44.445028",
+    "last_update": "2025-12-11T03:21:44.632029",
+    "version": "v1.0",
+    "total_updates": 21,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T03:21:44.445047",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464919",
+        "reason": "Auto-archived: inactive test/demo agent (19.3 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "XrQx-PiflzPa6M5p1oz0178wCQcTR0yopEbLznZDmEw",
+    "recent_update_timestamps": [
+      "2025-12-11T03:21:44.549971",
+      "2025-12-11T03:21:44.559170",
+      "2025-12-11T03:21:44.568340",
+      "2025-12-11T03:21:44.577536",
+      "2025-12-11T03:21:44.586683",
+      "2025-12-11T03:21:44.595834",
+      "2025-12-11T03:21:44.604943",
+      "2025-12-11T03:21:44.613876",
+      "2025-12-11T03:21:44.622934",
+      "2025-12-11T03:21:44.632029"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "test_complexity_low": {
+    "agent_id": "test_complexity_low",
+    "status": "archived",
+    "created_at": "2025-12-11T03:21:44.212084",
+    "last_update": "2025-12-11T03:21:44.426838",
+    "version": "v1.0",
+    "total_updates": 21,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T03:21:44.212107",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464927",
+        "reason": "Auto-archived: inactive test/demo agent (19.3 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "1uP6wp08cH0r-zA6TqVNgUGzVdplZnsQuYBvJVUpgDI",
+    "recent_update_timestamps": [
+      "2025-12-11T03:21:44.324572",
+      "2025-12-11T03:21:44.334159",
+      "2025-12-11T03:21:44.344388",
+      "2025-12-11T03:21:44.358368",
+      "2025-12-11T03:21:44.367709",
+      "2025-12-11T03:21:44.377252",
+      "2025-12-11T03:21:44.398930",
+      "2025-12-11T03:21:44.408191",
+      "2025-12-11T03:21:44.417530",
+      "2025-12-11T03:21:44.426838"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "test_complexity_verification": {
+    "agent_id": "test_complexity_verification",
+    "status": "archived",
+    "created_at": "2025-12-11T03:12:44.351381",
+    "last_update": "2025-12-11T03:12:44.468038",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T03:12:44.351398",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464934",
+        "reason": "Auto-archived: test/ping agent with 2 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "NTAEL3CpIjACYmhvX-mQg6FC2FT2OWWShnnU51Gs-z4",
+    "recent_update_timestamps": [
+      "2025-12-11T03:12:44.356600",
+      "2025-12-11T03:12:44.468038"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "test_error_leakage": {
     "agent_id": "test_error_leakage",
@@ -2815,7 +7713,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "critical",
+    "dialectic_conditions": []
   },
   "test_exploration": {
     "agent_id": "test_exploration",
@@ -2853,7 +7753,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "test_exploration_20251206": {
     "agent_id": "test_exploration_20251206",
@@ -2890,7 +7792,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "test_exploration_auth": {
     "agent_id": "test_exploration_auth",
@@ -2932,7 +7836,158 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "test_fallback": {
+    "agent_id": "test_fallback",
+    "status": "archived",
+    "created_at": "2025-12-09T22:04:53.845964",
+    "last_update": "2025-12-09T22:04:53.845964",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T22:04:53.846043",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-09T22:08:12.948370",
+        "reason": "Auto-archived: test/ping agent with 0 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-09T22:08:12.948343",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "GRnMwNoZJXQ5rspj92Oc-DWCeBUn_-O2geL8xN-gSto",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "test_fix": {
+    "agent_id": "test_fix",
+    "status": "archived",
+    "created_at": "2025-12-09T22:19:15.998726",
+    "last_update": "2025-12-09T22:19:15.998726",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T22:19:15.998747",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-09T22:37:49.400421",
+        "reason": "Auto-archived: test/ping agent with 0 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-09T22:37:49.400389",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "ci-F5C0wj6pWPoKXWxSrBoE2WhcLqxksWWQoUz8LbJo",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "test_improvements_20251209": {
+    "agent_id": "test_improvements_20251209",
+    "status": "archived",
+    "created_at": "2025-12-09T14:19:20.438180",
+    "last_update": "2025-12-09T14:19:20.453924",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-09T14:19:20.438211",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-09T14:22:38.054564",
+        "reason": "Auto-archived: test/ping agent with 1 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-09T14:22:38.054446",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "Ce--PT3bWtwwgvgUx8JpAOJi34sZZ-dZXruleYvf2Ng",
+    "recent_update_timestamps": [
+      "2025-12-09T14:19:20.451102"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "test_legit_agent_20251212": {
+    "agent_id": "test_legit_agent_20251212",
+    "status": "active",
+    "created_at": "2025-12-12T04:29:30.414059",
+    "last_update": "2025-12-12T04:29:45.241365",
+    "version": "v1.0",
+    "total_updates": 4,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T04:29:30.414091",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "1DjHBrcd4aGO1eKgCivXjRYRY_AlD7m07s4VvkcwX-8",
+    "recent_update_timestamps": [
+      "2025-12-12T04:29:30.435030",
+      "2025-12-12T04:29:45.160178",
+      "2025-12-12T04:29:45.206908",
+      "2025-12-12T04:29:45.241365"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "test_migration": {
     "agent_id": "test_migration",
@@ -2970,7 +8025,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
   },
   "test_new_agent_question_demo": {
     "agent_id": "test_new_agent_question_demo",
@@ -3007,7 +8064,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "test_question_surfacing_20251207": {
     "agent_id": "test_question_surfacing_20251207",
@@ -3044,7 +8103,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "test_question_surfacing_final_20251207": {
     "agent_id": "test_question_surfacing_final_20251207",
@@ -3081,7 +8142,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "test_question_surfacing_fresh_20251207": {
     "agent_id": "test_question_surfacing_fresh_20251207",
@@ -3118,7 +8181,9 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "test_response_size": {
     "agent_id": "test_response_size",
@@ -3156,7 +8221,140 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "test_text_content": {
+    "agent_id": "test_text_content",
+    "status": "archived",
+    "created_at": "2025-12-11T02:28:13.814137",
+    "last_update": "2025-12-11T02:28:15.628815",
+    "version": "v1.0",
+    "total_updates": 6,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:28:13.814210",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464941",
+        "reason": "Auto-archived: inactive test/demo agent (20.2 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "iw1FIhBDAPIofhKtQ_qESYfvwhP-6BuQOwPiA8IYyXI",
+    "recent_update_timestamps": [
+      "2025-12-11T02:28:13.834574",
+      "2025-12-11T02:28:14.189784",
+      "2025-12-11T02:28:14.549827",
+      "2025-12-11T02:28:14.905993",
+      "2025-12-11T02:28:15.265558",
+      "2025-12-11T02:28:15.628815"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "test_time_effect_rapid": {
+    "agent_id": "test_time_effect_rapid",
+    "status": "archived",
+    "created_at": "2025-12-11T02:28:17.029802",
+    "last_update": "2025-12-11T02:28:17.407338",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:28:17.029875",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T02:29:59.986730",
+        "reason": "Auto-archived: test/ping agent with 2 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T02:29:59.986662",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "t6a41xF8alxfn7td4v30zba7bl2FxJHvIJkWQBl5kws",
+    "recent_update_timestamps": [
+      "2025-12-11T02:28:17.052886",
+      "2025-12-11T02:28:17.407338"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "test_time_effect_slow": {
+    "agent_id": "test_time_effect_slow",
+    "status": "archived",
+    "created_at": "2025-12-11T02:28:17.446432",
+    "last_update": "2025-12-11T02:28:22.487252",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:28:17.446456",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T02:29:59.986829",
+        "reason": "Auto-archived: test/ping agent with 2 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T02:29:59.986662",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "weo6EWDvROwAMKRXdSZKXrEgLYvQtt5O5Au5sy28elc",
+    "recent_update_timestamps": [
+      "2025-12-11T02:28:17.454019",
+      "2025-12-11T02:28:22.487252"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "test_timeout_fix": {
     "agent_id": "test_timeout_fix",
@@ -3194,7 +8392,101 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "test_tool_check_20251208": {
+    "agent_id": "test_tool_check_20251208",
+    "status": "archived",
+    "created_at": "2025-12-08T21:42:55.711853",
+    "last_update": "2025-12-08T21:42:55.711853",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-08T21:42:55.711873",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-08T21:47:36.828058",
+        "reason": "Auto-archived: test/ping agent with 0 update(s)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-08T21:47:36.828016",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "-CeAN8t12go0ITGmD5tXuRZ0-AWiprkyqNyJucGDmoE",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "test_update_count": {
+    "agent_id": "test_update_count",
+    "status": "archived",
+    "created_at": "2025-12-11T02:28:04.519690",
+    "last_update": "2025-12-11T02:28:07.752936",
+    "version": "v1.0",
+    "total_updates": 10,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:28:04.519735",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464949",
+        "reason": "Auto-archived: inactive test/demo agent (20.2 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "-E2u75k9P4cyqhUncY4Ocmk9PZuvVZiiMg3f7B4ihkE",
+    "recent_update_timestamps": [
+      "2025-12-11T02:28:04.538141",
+      "2025-12-11T02:28:04.884222",
+      "2025-12-11T02:28:05.234092",
+      "2025-12-11T02:28:05.589478",
+      "2025-12-11T02:28:05.949260",
+      "2025-12-11T02:28:06.307209",
+      "2025-12-11T02:28:06.667268",
+      "2025-12-11T02:28:07.031608",
+      "2025-12-11T02:28:07.391371",
+      "2025-12-11T02:28:07.752936"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "timing_test_agent": {
     "agent_id": "timing_test_agent",
@@ -3232,7 +8524,492 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "trajectory_discovery": {
+    "agent_id": "trajectory_discovery",
+    "status": "active",
+    "created_at": "2025-12-11T02:27:07.235986",
+    "last_update": "2025-12-11T02:27:07.253375",
+    "version": "v1.0",
+    "total_updates": 1,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:27:07.236047",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "nsQFI1JUZluSvQyk9fN6-xjR1gWYbS_DT0m3NHnzfk4",
+    "recent_update_timestamps": [
+      "2025-12-11T02:27:07.253375"
+    ],
+    "recent_decisions": [
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "trajectory_test_20251211": {
+    "agent_id": "trajectory_test_20251211",
+    "status": "archived",
+    "created_at": "2025-12-11T02:23:40.357967",
+    "last_update": "2025-12-11T02:23:48.106712",
+    "version": "v1.0",
+    "total_updates": 8,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:23:40.358026",
+        "reason": null
+      },
+      {
+        "event": "archived",
+        "timestamp": "2025-12-11T22:41:10.464957",
+        "reason": "Auto-archived: inactive test/demo agent (20.3 hours old, threshold: 6.0 hours)"
+      }
+    ],
+    "paused_at": null,
+    "archived_at": "2025-12-11T22:41:10.464613",
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "TVyM6f179mb-tWglVlloG5tVNMIqjXHKmXPwDQ6bSGs",
+    "recent_update_timestamps": [
+      "2025-12-11T02:23:40.598008",
+      "2025-12-11T02:23:41.725792",
+      "2025-12-11T02:23:42.832031",
+      "2025-12-11T02:23:43.881565",
+      "2025-12-11T02:23:44.931755",
+      "2025-12-11T02:23:45.997251",
+      "2025-12-11T02:23:47.054502",
+      "2025-12-11T02:23:48.106712"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "validation_Balanced_-_Steady_Progress": {
+    "agent_id": "validation_Balanced_-_Steady_Progress",
+    "status": "active",
+    "created_at": "2025-12-11T02:13:30.280224",
+    "last_update": "2025-12-11T02:13:42.033370",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:13:30.280258",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "J1aa9vLDIrEgdEWMrg_1K322qU0SLIZm3dpsEd4eS3I",
+    "recent_update_timestamps": [
+      "2025-12-11T02:13:30.301938",
+      "2025-12-11T02:13:42.033370"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "validation_Convergence_-_Final_Decision": {
+    "agent_id": "validation_Convergence_-_Final_Decision",
+    "status": "active",
+    "created_at": "2025-12-11T02:13:28.625105",
+    "last_update": "2025-12-11T02:13:40.349424",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:13:28.625140",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "-l66BGf9QTuUdK--9Fkox6WIetUKLBOoj2olLGoWP5A",
+    "recent_update_timestamps": [
+      "2025-12-11T02:13:28.643741",
+      "2025-12-11T02:13:40.349424"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "validation_Exploration_-_Brainstorming": {
+    "agent_id": "validation_Exploration_-_Brainstorming",
+    "status": "active",
+    "created_at": "2025-12-11T02:13:28.070486",
+    "last_update": "2025-12-11T02:13:39.789802",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:13:28.070545",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "Ydm2Ec9aQRbIlgyTDeq2HNtyyqJGd7OIWDVzxDGfny8",
+    "recent_update_timestamps": [
+      "2025-12-11T02:13:28.090632",
+      "2025-12-11T02:13:39.789802"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "validation_Exploration_-_Open-Ended_Research": {
+    "agent_id": "validation_Exploration_-_Open-Ended_Research",
+    "status": "active",
+    "created_at": "2025-12-11T02:13:27.512725",
+    "last_update": "2025-12-11T02:13:39.225025",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:13:27.512777",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "hssPM7kB4eunHHOEu5g8Tjz3Rp2ThLvlk-XEq3b1rI4",
+    "recent_update_timestamps": [
+      "2025-12-11T02:13:27.534770",
+      "2025-12-11T02:13:39.225025"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "validation_Flow_State_-_Creative_Writing": {
+    "agent_id": "validation_Flow_State_-_Creative_Writing",
+    "status": "active",
+    "created_at": "2025-12-11T02:13:26.404423",
+    "last_update": "2025-12-11T02:13:38.100142",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:13:26.404485",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "9_IruPbb9opKmmeqD9fxVZsk_0KO0i9ozBKcZTUxWpg",
+    "recent_update_timestamps": [
+      "2025-12-11T02:13:26.422598",
+      "2025-12-11T02:13:38.100142"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "validation_Flow_State_-_Simple_Math": {
+    "agent_id": "validation_Flow_State_-_Simple_Math",
+    "status": "active",
+    "created_at": "2025-12-11T02:13:25.842578",
+    "last_update": "2025-12-11T02:13:37.546980",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:13:25.842611",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "N7oeMn8gQyBHtn7FfgNWCvUyW6qAVy2tGkvL8cI2rk8",
+    "recent_update_timestamps": [
+      "2025-12-11T02:13:25.865485",
+      "2025-12-11T02:13:37.546980"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "validation_Incoherent_-_Scattered_Thinking": {
+    "agent_id": "validation_Incoherent_-_Scattered_Thinking",
+    "status": "active",
+    "created_at": "2025-12-11T02:13:30.840316",
+    "last_update": "2025-12-11T02:13:42.589872",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:13:30.840370",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "r6h0KsTdgMM6-_y6XodnNGMj4A8bOyfV7p_LbtlqvQ0",
+    "recent_update_timestamps": [
+      "2025-12-11T02:13:30.863475",
+      "2025-12-11T02:13:42.589872"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "validation_Mixed_-_Confident_Exploration": {
+    "agent_id": "validation_Mixed_-_Confident_Exploration",
+    "status": "active",
+    "created_at": "2025-12-11T02:13:31.396488",
+    "last_update": "2025-12-11T02:13:43.149530",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:13:31.396545",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "eAjw38Y6fWZQSRiE0s4llQB3EL6M50t4UcbLQ28ptkc",
+    "recent_update_timestamps": [
+      "2025-12-11T02:13:31.417324",
+      "2025-12-11T02:13:43.149530"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "validation_Strain_-_Burnout_State": {
+    "agent_id": "validation_Strain_-_Burnout_State",
+    "status": "active",
+    "created_at": "2025-12-11T02:13:29.725241",
+    "last_update": "2025-12-11T02:13:41.465836",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:13:29.725304",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "Ogq8qPddIiVS05kElqOenS5-qUCwumOj8P3xXLBLQ40",
+    "recent_update_timestamps": [
+      "2025-12-11T02:13:29.748516",
+      "2025-12-11T02:13:41.465836"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "validation_Strain_-_Contradictory_Requirements": {
+    "agent_id": "validation_Strain_-_Contradictory_Requirements",
+    "status": "active",
+    "created_at": "2025-12-11T02:13:29.174875",
+    "last_update": "2025-12-11T02:13:40.901845",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:13:29.174909",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "vQO7vDAQIkFVpE1zYQbw2tdFvYhvUkgiW8JjowvyaJk",
+    "recent_update_timestamps": [
+      "2025-12-11T02:13:29.190764",
+      "2025-12-11T02:13:40.901845"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
+  },
+  "validation_Stuck_State_-_Impossible_Problem": {
+    "agent_id": "validation_Stuck_State_-_Impossible_Problem",
+    "status": "active",
+    "created_at": "2025-12-11T02:13:26.956497",
+    "last_update": "2025-12-11T02:13:38.664648",
+    "version": "v1.0",
+    "total_updates": 2,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-11T02:13:26.956557",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "eFGa9Z4BqkB_aGd2Y-dDFnqnTlWQjfmtK-Mar0xwuHI",
+    "recent_update_timestamps": [
+      "2025-12-11T02:13:26.974635",
+      "2025-12-11T02:13:38.664648"
+    ],
+    "recent_decisions": [
+      "proceed",
+      "proceed"
+    ],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "moderate",
+    "dialectic_conditions": []
   },
   "verification_test_20251201": {
     "agent_id": "verification_test_20251201",
@@ -3240,7 +9017,7 @@
     "created_at": "2025-12-01T06:25:44.807233",
     "last_update": "2025-12-01T06:25:44.835623",
     "version": "v1.0",
-    "total_updates": 2,
+    "total_updates": 1,
     "tags": [],
     "notes": "",
     "lifecycle_events": [
@@ -3274,6 +9051,38 @@
     "loop_detected_at": null,
     "loop_cooldown_until": null,
     "last_response_at": null,
-    "response_completed": false
+    "response_completed": false,
+    "health_status": "healthy",
+    "dialectic_conditions": []
+  },
+  "sqlite_migration_smoke_agent": {
+    "agent_id": "sqlite_migration_smoke_agent",
+    "status": "active",
+    "created_at": "2025-12-12T06:02:14.058786",
+    "last_update": "2025-12-12T06:02:14.058786",
+    "version": "v1.0",
+    "total_updates": 0,
+    "tags": [],
+    "notes": "",
+    "lifecycle_events": [
+      {
+        "event": "created",
+        "timestamp": "2025-12-12T06:02:14.058817",
+        "reason": null
+      }
+    ],
+    "paused_at": null,
+    "archived_at": null,
+    "parent_agent_id": null,
+    "spawn_reason": null,
+    "api_key": "1fZ7qUE0eGJfQF67P9GD6fjTXFJBpHM2BJKK7KQ8CSA",
+    "recent_update_timestamps": [],
+    "recent_decisions": [],
+    "loop_detected_at": null,
+    "loop_cooldown_until": null,
+    "last_response_at": null,
+    "response_completed": false,
+    "health_status": "unknown",
+    "dialectic_conditions": []
   }
 }

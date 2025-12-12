@@ -457,6 +457,72 @@ def validate_agent_id_policy(agent_id: str) -> Tuple[Optional[str], Optional[Tex
     return None, None
 
 
+def validate_agent_id_reserved_names(agent_id: str) -> Tuple[Optional[str], Optional[TextContent]]:
+    """
+    Validate agent_id against reserved/privileged names.
+
+    SECURITY: Block privileged names that could cause confusion or privilege escalation.
+
+    Args:
+        agent_id: Agent ID to validate
+
+    Returns:
+        Tuple of (None, error_response) if reserved name detected, (agent_id, None) if OK.
+    """
+    if agent_id is None:
+        return None, None
+
+    agent_id_lower = agent_id.lower()
+
+    # Reserved system/privileged names
+    RESERVED_NAMES = {
+        # System/privileged
+        "system", "admin", "root", "superuser", "administrator", "sudo",
+        # Special values
+        "null", "undefined", "none", "anonymous", "guest", "default",
+        # MCP protocol
+        "mcp", "server", "client", "handler", "transport",
+        # Governance system
+        "governance", "monitor", "arbiter", "validator", "auditor",
+        # Security
+        "security", "auth", "identity", "certificate",
+    }
+
+    # Reserved prefixes
+    RESERVED_PREFIXES = ("system_", "admin_", "root_", "mcp_", "governance_", "auth_")
+
+    # Check exact match
+    if agent_id_lower in RESERVED_NAMES:
+        return None, error_response(
+            f"SECURITY: agent_id '{agent_id}' is reserved for system use",
+            details={
+                "error_type": "reserved_agent_id",
+                "reason": "Reserved name blocked to prevent privilege confusion"
+            },
+            recovery={
+                "action": "Choose a different agent_id that describes your work",
+                "example": "claude_desktop_work_20251209",
+                "note": "Reserved names include: system, admin, root, null, etc."
+            }
+        )
+
+    # Check reserved prefixes
+    if agent_id_lower.startswith(RESERVED_PREFIXES):
+        return None, error_response(
+            f"SECURITY: agent_id '{agent_id}' uses reserved prefix",
+            details={
+                "error_type": "reserved_prefix",
+                "reason": "Reserved prefixes blocked to prevent privilege confusion"
+            },
+            recovery={
+                "action": "Choose an agent_id without system/admin/governance prefixes",
+                "example": "claude_desktop_work_20251209"
+            }
+        )
+
+    return agent_id, None
+
+
 def detect_script_creation_avoidance(response_text: str) -> list:
     """
     Detect if agent is creating scripts to avoid using MCP tools.
