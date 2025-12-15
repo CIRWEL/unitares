@@ -1,0 +1,69 @@
+name: Documentation Validation
+
+on:
+  push:
+    branches: [ master, main, develop ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Validate tool count synchronization
+      env:
+        PYTHONPATH: ${{ github.workspace }}/scripts:${{ github.workspace }}
+      run: |
+        echo "🔍 Checking tool count..."
+        python scripts/update_docs_tool_count.py --check
+
+    - name: Validate version consistency
+      run: |
+        echo "🔍 Checking version consistency..."
+        python scripts/version_manager.py --check
+
+    - name: Display tool count breakdown
+      if: success()
+      env:
+        PYTHONPATH: ${{ github.workspace }}/scripts:${{ github.workspace }}
+      run: |
+        echo "📊 Current tool inventory:"
+        python scripts/count_tools.py --by-module
+
+    - name: Comment on PR with validation results
+      if: github.event_name == 'pull_request' && success()
+      env:
+        PYTHONPATH: ${{ github.workspace }}/scripts:${{ github.workspace }}
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const { execSync } = require('child_process');
+
+          // Get tool count
+          const toolCount = execSync('python scripts/count_tools.py').toString().trim();
+          const version = execSync('python scripts/version_manager.py').toString().trim().split('\n')[0].replace('Current version: ', '');
+
+          // Create comment
+          const comment = `## ✅ Documentation Validation Passed
+
+          **Tool Count:** ${toolCount} tools
+          **Version:** ${version}
+
+          All documentation is synchronized with the codebase.`;
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
