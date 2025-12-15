@@ -24,7 +24,14 @@
       "Bash(timeout 15 python3:*)",
       "Bash(echo 'No matches in src/*.py' grep -r ''hello'' /Users/cirwel/projects/governance-mcp-v1/src/ --include=*.py)",
       "Bash(timeout 30 python3:*)",
-      "Bash(/dev/null ls -la /Users/cirwel/projects/governance-mcp-v1/data/activity/qwen_goose*)"
+      "Bash(/dev/null ls -la /Users/cirwel/projects/governance-mcp-v1/data/activity/qwen_goose*)",
+      "Bash(gh auth:*)",
+      "Bash(git rev-list:*)",
+      "Bash(git push:*)",
+      "Bash(gh repo list:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(gh api:*)",
+      "Bash(gh repo delete:*)"
     ],
     "deny": [],
     "ask": []
