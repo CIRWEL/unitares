@@ -32,6 +32,10 @@
     <dict>
         <key>PYTHONPATH</key>
         <string>/Users/cirwel/projects/governance-mcp-v1</string>
+        <key>DB_BACKEND</key>
+        <string>postgres</string>
+        <key>DB_POSTGRES_URL</key>
+        <string>postgresql://postgres:postgres@localhost:5432/governance</string>
     </dict>
 </dict>
 </plist>

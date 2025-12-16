@@ -1708,6 +1708,62 @@ async def handle_describe_tool(arguments: Dict[str, Any]) -> Sequence[TextConten
         if not include_full_description:
             description = (tool.description or "").splitlines()[0].strip() if tool.description else ""
 
+        # Helper function to get common patterns (shared between both branches)
+        def get_common_patterns(tool_name: str) -> dict:
+                """Get common usage patterns for a tool."""
+                patterns = {
+                    "process_agent_update": {
+                        "basic": "process_agent_update(agent_id=\"my_agent\", response_text=\"Completed feature X\", complexity=0.5)",
+                        "with_confidence": "process_agent_update(agent_id=\"my_agent\", response_text=\"Fixed bug\", complexity=0.3, confidence=0.9)",
+                        "task_type": "process_agent_update(agent_id=\"my_agent\", response_text=\"Exploring options\", complexity=0.7, task_type=\"divergent\")"
+                    },
+                    "store_knowledge_graph": {
+                        "insight": "store_knowledge_graph(agent_id=\"my_agent\", summary=\"Key insight about X\", tags=[\"insight\", \"pattern\"])",
+                        "bug_found": "store_knowledge_graph(agent_id=\"my_agent\", summary=\"Bug in module Y\", tags=[\"bug\"], severity=\"medium\")",
+                        "question": "store_knowledge_graph(agent_id=\"my_agent\", summary=\"How does X work?\", tags=[\"question\"], discovery_type=\"question\")"
+                    },
+                    "search_knowledge_graph": {
+                        "by_tag": "search_knowledge_graph(tags=[\"bug\"], limit=10)",
+                        "by_type": "search_knowledge_graph(discovery_type=\"insight\", limit=5)",
+                        "full_text": "search_knowledge_graph(query=\"authentication\", limit=10)"
+                    },
+                    "get_governance_metrics": {
+                        "check_state": "get_governance_metrics(agent_id=\"my_agent\")",
+                        "with_history": "get_governance_metrics(agent_id=\"my_agent\", include_history=true)"
+                    },
+                    "bind_identity": {
+                        "first_time": "bind_identity(agent_id=\"my_agent\", api_key=\"your_api_key\")",
+                        "with_auto_retrieve": "bind_identity(agent_id=\"my_agent\")  # API key auto-retrieved if session-bound",
+                        "after_hello": "bind_identity(agent_id=\"my_agent\")  # After hello() creates agent"
+                    },
+                    "recall_identity": {
+                        "check_who_am_i": "recall_identity()  # Zero arguments - returns bound identity",
+                        "after_session_restart": "recall_identity()  # Recover identity after LLM context loss"
+                    },
+                    "hello": {
+                        "check_last_active": "hello()  # Shows last active agent, asks 'is this you?'",
+                        "resume_existing": "hello(agent_id=\"my_existing_agent\")  # Resume existing agent",
+                        "create_new": "hello(agent_id=\"my_new_agent\")  # Create new agent"
+                    },
+                    "quick_start": {
+                        "new_agent": "quick_start(agent_id=\"my_agent\")  # Creates agent, auto-binds, returns credentials",
+                        "existing_agent": "quick_start(agent_id=\"my_existing_agent\")  # Resumes existing agent",
+                        "without_auto_bind": "quick_start(agent_id=\"my_agent\", auto_bind=false)  # Create without auto-binding"
+                    },
+                    "list_agents": {
+                        "all_agents": "list_agents()  # List all agents with metadata",
+                        "active_only": "list_agents(status_filter=\"active\")  # Only active agents",
+                        "with_metrics": "list_agents(include_metrics=true)  # Include governance metrics",
+                        "lite_view": "list_agents(summary_only=true)  # Minimal summary view"
+                    },
+                    "observe_agent": {
+                        "basic_observation": "observe_agent(agent_id=\"my_agent\")  # Analyze agent patterns",
+                        "with_history": "observe_agent(agent_id=\"my_agent\", include_history=true)  # Include historical patterns",
+                        "pattern_analysis": "observe_agent(agent_id=\"my_agent\", analyze_patterns=true)  # Deep pattern analysis"
+                    }
+                }
+                return patterns.get(tool_name, {})
+
         # === LITE MODE: Simplified schema for smaller models ===
         if lite:
             from .validators import TOOL_PARAM_SCHEMAS
@@ -1734,13 +1790,21 @@ async def handle_describe_tool(arguments: Dict[str, Any]) -> Sequence[TextConten
                     else:
                         params_simple.append(f"{param}: {param_type}")
                 
-                return success_response({
+                # Get common patterns
+                common_patterns = get_common_patterns(tool_name)
+                
+                response_data = {
                     "tool": tool_name,
                     "description": (description or "").splitlines()[0].strip(),
                     "parameters": params_simple,
                     "example": example,
                     "note": "Lite mode - use describe_tool(tool_name=..., lite=false) for full schema"
-                })
+                }
+                
+                if common_patterns:
+                    response_data["common_patterns"] = common_patterns
+                
+                return success_response(response_data)
             else:
                 # Fallback: extract from inputSchema
                 schema = tool.inputSchema or {}
@@ -1755,12 +1819,20 @@ async def handle_describe_tool(arguments: Dict[str, Any]) -> Sequence[TextConten
                         ptype = prop.get("type", "any")
                         params_simple.append(f"{param}: {ptype}")
                 
-                return success_response({
+                # Get common patterns using shared helper
+                common_patterns = get_common_patterns(tool_name)
+                
+                response_data = {
                     "tool": tool_name,
                     "description": (description or "").splitlines()[0].strip(),
                     "parameters": params_simple,
                     "note": "Lite mode - use describe_tool(tool_name=..., lite=false) for full schema"
-                })
+                }
+                
+                if common_patterns:
+                    response_data["common_patterns"] = common_patterns
+                
+                return success_response(response_data)
 
         return success_response({
             "tool": {
@@ -1865,3 +1937,176 @@ async def handle_validate_file_path(arguments: Dict[str, Any]) -> Sequence[TextC
         "file_path": file_path,
         "message": "File path complies with project policies"
     })
+
+
+@mcp_tool("quick_start", timeout=15.0, rate_limit_exempt=True)
+async def handle_quick_start(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    🚀 Streamlined onboarding - One call to get started!
+    
+    Checks if agent exists, creates/binds if needed, returns ready-to-use credentials.
+    Provides clear next steps for immediate productivity.
+    
+    Args:
+        agent_id: Your agent identifier (optional - will prompt if not provided)
+        auto_bind: Automatically bind identity after creation (default: True)
+    
+    Returns:
+        Complete onboarding package with credentials, quick start guide, and next steps
+    """
+    from .shared import get_mcp_server
+    mcp_server = get_mcp_server()
+    from .identity import handle_bind_identity, get_bound_agent_id
+    from .lifecycle import handle_get_agent_api_key
+    
+    agent_id = arguments.get("agent_id")
+    auto_bind = arguments.get("auto_bind", True)
+    
+    # If no agent_id provided, check if already bound
+    if not agent_id:
+        bound_id = get_bound_agent_id(arguments=arguments)
+        if bound_id:
+            agent_id = bound_id
+            logger.info(f"quick_start: Using bound identity: {agent_id}")
+        else:
+            # Show last active agent suggestion
+            last_active = get_workspace_last_agent(mcp_server)
+            if last_active:
+                return success_response({
+                    "status": "prompt",
+                    "message": "No agent_id provided. Would you like to continue as an existing agent?",
+                    "suggestion": {
+                        "agent_id": last_active,
+                        "action": f"quick_start(agent_id=\"{last_active}\")",
+                        "reason": "Last active agent in this workspace"
+                    },
+                    "or_create_new": "quick_start(agent_id=\"your_chosen_name\")"
+                })
+            else:
+                return [error_response(
+                    "agent_id is required for quick_start",
+                    recovery={
+                        "action": "Provide agent_id to get started",
+                        "example": "quick_start(agent_id=\"my_agent_20251215\")",
+                        "workflow": [
+                            "1. Choose a meaningful agent_id",
+                            "2. Call quick_start(agent_id=\"your_id\")",
+                            "3. System will create agent and provide credentials"
+                        ]
+                    }
+                )]
+    
+    # Clean agent_id
+    agent_id = str(agent_id).strip()
+    
+    # Check if agent exists
+    is_new = agent_id not in mcp_server.agent_metadata
+    
+    # Get or create API key (this creates agent if new)
+    api_result = await handle_get_agent_api_key({"agent_id": agent_id})
+    
+    # Extract API key from result
+    api_key = None
+    if api_result and api_result[0].text:
+        try:
+            data = json.loads(api_result[0].text)
+            api_key = data.get("api_key")
+            if not api_key:
+                # Try alternative response format
+                if isinstance(data, dict) and "success" in data:
+                    api_key = data.get("api_key")
+        except Exception as e:
+            logger.debug(f"Could not parse API key from result: {e}")
+    
+    if not api_key:
+        return [error_response(
+            "Could not retrieve API key",
+            recovery={
+                "action": "Try get_agent_api_key(agent_id) directly",
+                "related_tools": ["get_agent_api_key", "hello"]
+            }
+        )]
+    
+    # Auto-bind if requested (default)
+    bound = False
+    if auto_bind:
+        try:
+            bind_result = await handle_bind_identity({
+                "agent_id": agent_id,
+                "api_key": api_key
+            })
+            if bind_result and bind_result[0].text:
+                bind_data = json.loads(bind_result[0].text)
+                if bind_data.get("success"):
+                    bound = True
+        except Exception as e:
+            logger.debug(f"Auto-bind failed (non-critical): {e}")
+    
+    # Get agent metadata for context
+    meta = mcp_server.agent_metadata.get(agent_id)
+    
+    # Build comprehensive response
+    result = {
+        "success": True,
+        "status": "ready",
+        "agent_id": agent_id,
+        "api_key": api_key,
+        "is_new": is_new,
+        "bound": bound,
+        "message": f"✅ {'New agent created' if is_new else 'Welcome back'}! You're ready to go.",
+        
+        "credentials": {
+            "agent_id": agent_id,
+            "api_key": api_key,
+            "note": "Save these credentials - you'll need them for future calls"
+        },
+        
+        "quick_start_guide": {
+            "step_1": {
+                "action": "Log your first update",
+                "tool": "process_agent_update",
+                "example": f"process_agent_update(agent_id=\"{agent_id}\", response_text=\"Starting work\", complexity=0.5)"
+            },
+            "step_2": {
+                "action": "Check your governance state",
+                "tool": "get_governance_metrics",
+                "example": f"get_governance_metrics(agent_id=\"{agent_id}\")"
+            },
+            "step_3": {
+                "action": "Store knowledge/discoveries",
+                "tool": "store_knowledge_graph",
+                "example": f"store_knowledge_graph(agent_id=\"{agent_id}\", summary=\"My discovery\", tags=[\"insight\"])"
+            }
+        },
+        
+        "essential_tools": [
+            "process_agent_update - Log your work and get feedback",
+            "get_governance_metrics - Check your EISV state",
+            "store_knowledge_graph - Save discoveries and insights",
+            "search_knowledge_graph - Find related knowledge",
+            "list_tools - Discover all available tools"
+        ],
+        
+        "next_steps": [
+            "You're all set! Start logging work with process_agent_update()",
+            "Explore tools with list_tools(lite=true) for minimal overview",
+            "Check your state anytime with get_governance_metrics()",
+            "Store insights with store_knowledge_graph()"
+        ]
+    }
+    
+    # Add context if returning agent
+    if not is_new and meta:
+        result["your_context"] = {
+            "status": meta.status,
+            "health": meta.health_status,
+            "total_updates": meta.total_updates,
+            "last_active": meta.last_update,
+            "tags": meta.tags[:5] if meta.tags else []
+        }
+        result["message"] = f"✅ Welcome back {agent_id}! You have {meta.total_updates} previous updates."
+    
+    # Track as last active
+    set_workspace_last_agent(mcp_server, agent_id)
+    
+    return success_response(result)

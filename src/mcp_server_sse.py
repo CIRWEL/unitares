@@ -59,6 +59,11 @@ SSE_PID_FILE = Path(project_root) / "data" / ".mcp_server_sse.pid"
 SSE_LOCK_FILE = Path(project_root) / "data" / ".mcp_server_sse.lock"
 CURRENT_PID = os.getpid()
 
+# Server readiness flag - prevents "request before initialization" errors
+# when multiple clients reconnect simultaneously after a server restart
+SERVER_READY = False
+SERVER_STARTUP_TIME = None
+
 # ============================================================================
 # Prometheus Metrics Definitions
 # ============================================================================
@@ -662,11 +667,24 @@ async def describe_tool(
     tool_name: str,
     include_schema: bool = True,
     include_full_description: bool = True,
+    lite: bool = True,
 ) -> str:
     return await get_tool_wrapper("describe_tool")(
         tool_name=tool_name,
         include_schema=include_schema,
         include_full_description=include_full_description,
+        lite=lite,
+    )
+
+@tool_no_schema(description="🚀 Streamlined onboarding - One call to get started! Checks if agent exists, creates/binds if needed, returns ready-to-use credentials.")
+async def quick_start(
+    agent_id: str = None,
+    auto_bind: bool = True,
+) -> dict:
+    """quick_start(agent_id) - Streamlined onboarding with auto-creation and binding"""
+    return await get_tool_wrapper("quick_start")(
+        agent_id=agent_id,
+        auto_bind=auto_bind,
     )
 
 
@@ -1490,6 +1508,11 @@ def parse_args():
         action="store_true",
         help="Enable auto-reload for development"
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force start: clean up any stale lock files"
+    )
     return parser.parse_args()
 
 
@@ -1559,16 +1582,37 @@ def remove_sse_pid_file():
 
 
 def acquire_sse_lock():
-    """Acquire lock file to prevent multiple SSE server instances"""
+    """Acquire lock file to prevent multiple SSE server instances.
+
+    Automatically cleans up stale locks from dead processes.
+    """
     lock_fd = None
     try:
         SSE_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        # Check for stale lock file before trying to acquire
+        if SSE_LOCK_FILE.exists():
+            try:
+                with open(SSE_LOCK_FILE, 'r') as f:
+                    lock_info = json.load(f)
+                    old_pid = lock_info.get("pid")
+                    if old_pid and not is_process_alive(old_pid):
+                        logger.info(f"Cleaning up stale lock from dead process (PID: {old_pid})")
+                        SSE_LOCK_FILE.unlink()
+            except (json.JSONDecodeError, KeyError, IOError):
+                # Corrupt lock file - safe to remove
+                logger.info("Cleaning up corrupt lock file")
+                try:
+                    SSE_LOCK_FILE.unlink()
+                except FileNotFoundError:
+                    pass
+
         lock_fd = os.open(str(SSE_LOCK_FILE), os.O_CREAT | os.O_RDWR)
-        
+
         try:
             # Try to acquire exclusive lock (non-blocking)
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            
+
             # Write PID and timestamp to lock file
             lock_info = {
                 "pid": CURRENT_PID,
@@ -1578,7 +1622,7 @@ def acquire_sse_lock():
             os.ftruncate(lock_fd, 0)
             os.write(lock_fd, json.dumps(lock_info).encode())
             os.fsync(lock_fd)
-            
+
             logger.debug(f"Acquired SSE lock file: {SSE_LOCK_FILE} (PID: {CURRENT_PID})")
             return lock_fd
         except IOError:
@@ -1622,18 +1666,27 @@ def release_sse_lock(lock_fd):
 async def main():
     """Main entry point for SSE server."""
     args = parse_args()
-    
+
+    # --force: Explicitly clean up lock file before starting
+    if args.force and SSE_LOCK_FILE.exists():
+        logger.info(f"--force: Removing lock file {SSE_LOCK_FILE}")
+        try:
+            SSE_LOCK_FILE.unlink()
+        except Exception as e:
+            logger.warning(f"Could not remove lock file: {e}")
+
     # Process deduplication: Check for and kill existing SSE processes
     killed = cleanup_existing_sse_processes()
     if killed:
         logger.info(f"Cleaned up {len(killed)} existing SSE server process(es)")
-    
+
     # Acquire lock to prevent multiple instances
     lock_fd = None
     try:
         lock_fd = acquire_sse_lock()
     except RuntimeError as e:
         print(f"\n❌ Error: {e}", file=sys.stderr)
+        print("💡 Tip: Use --force to clean up stale locks", file=sys.stderr)
         sys.exit(1)
     
     # Write PID file
@@ -1651,8 +1704,28 @@ async def main():
     except Exception as e:
         logger.warning(f"Could not clean up stale locks at startup: {e}")
 
+    # Initialize database abstraction layer
+    try:
+        from src.db import init_db, close_db, get_db
+        await init_db()
+        db = get_db()
+        backend_type = os.environ.get("DB_BACKEND", "sqlite")
+        logger.info(f"Database initialized: backend={backend_type}")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        print(f"\n❌ Database initialization failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
     # Register cleanup handlers
     def cleanup():
+        # Close database connections
+        try:
+            import asyncio
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(close_db())
+            loop.close()
+        except Exception as e:
+            logger.warning(f"Error closing database: {e}")
         release_sse_lock(lock_fd)
         remove_sse_pid_file()
     
@@ -1669,14 +1742,17 @@ async def main():
 ╠════════════════════════════════════════════════════════════════════╣
 ║  Version:  {SERVER_VERSION}                                                   ║
 ║                                                                    ║
-║  MCP Clients (Claude, Cursor):                                     ║
-║    Endpoint: {endpoint:<54}║
-║    Config:   {config_json:<54}║
+║  MCP Transports:                                                   ║
+║    SSE (legacy):       {endpoint:<46}║
+║    Streamable HTTP:    http://{args.host}:{args.port}/mcp                              ║
 ║                                                                    ║
-║  OpenAI-Compatible (GPT, Ollama, local):                           ║
-║    DISABLED - Focus on MCP protocol                                ║
+║  REST API:                                                         ║
+║    List tools:         GET  /v1/tools                              ║
+║    Call tool:          POST /v1/tools/call                         ║
+║    Health:             GET  /health                                ║
+║    Metrics:            GET  /metrics                               ║
 ║                                                                    ║
-║  One server, all clients.                                          ║
+║  One server, all transports.                                       ║
 ╚════════════════════════════════════════════════════════════════════╝
 """)
     
@@ -1689,8 +1765,28 @@ async def main():
         from starlette.responses import JSONResponse
         from starlette.middleware.cors import CORSMiddleware
         
-        # Get the Starlette app from FastMCP
+        # Get the Starlette app from FastMCP (SSE transport)
         app = mcp.sse_app()
+        
+        # === Add Streamable HTTP transport (MCP 1.24.0+) ===
+        # Clients can connect to /mcp for the new transport with resumability
+        try:
+            from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+            from mcp.server.streamable_http import StreamableHTTPServerTransport
+            
+            # Create session manager for Streamable HTTP
+            _streamable_session_manager = StreamableHTTPSessionManager(
+                app=mcp._mcp_server,  # Access the underlying MCP server
+                json_response=False,  # Use SSE streams (default, more efficient)
+                stateless=False,      # Track sessions for resumability
+            )
+            
+            HAS_STREAMABLE_HTTP = True
+            logger.info("Streamable HTTP transport available at /mcp")
+        except Exception as e:
+            HAS_STREAMABLE_HTTP = False
+            _streamable_session_manager = None
+            logger.info(f"Streamable HTTP transport not available: {e}")
         
         # === Add CORS support for web-based GPT/Gemini clients ===
         app.add_middleware(
@@ -1730,16 +1826,16 @@ async def main():
                     query_string = scope.get("query_string", b"").decode("utf-8", errors="ignore")
                     if "probe=true" in query_string or "probe=1" in query_string:
                         response_body = json.dumps({
-                            "status": "ready",
+                            "status": "ready" if SERVER_READY else "warming_up",
                             "endpoint": "/sse",
                             "transport": "SSE",
-                            "message": "SSE endpoint is available. Remove ?probe to start streaming connection.",
+                            "message": "SSE endpoint is available. Remove ?probe to start streaming connection." if SERVER_READY else "Server is warming up, please retry in 2 seconds.",
                             "hint": "Use /health for quick health checks, /sse for MCP client connections",
                             "server_version": SERVER_VERSION,
                         }).encode("utf-8")
                         await send({
                             "type": "http.response.start",
-                            "status": 200,
+                            "status": 200 if SERVER_READY else 503,
                             "headers": [[b"content-type", b"application/json"]],
                         })
                         await send({
@@ -1747,6 +1843,31 @@ async def main():
                             "body": response_body,
                         })
                         return
+                
+                # === Server Warmup Check ===
+                # Prevent "request before initialization" errors when clients reconnect
+                # too quickly after a server restart. SSE connections are allowed (they need
+                # to establish to complete MCP initialization), but health checks report status.
+                if path == "/health" and not SERVER_READY:
+                    response_body = json.dumps({
+                        "status": "warming_up",
+                        "message": "Server is starting up, please retry in 2 seconds",
+                        "hint": "This prevents 'request before initialization' errors during multi-client reconnection",
+                        "server_version": SERVER_VERSION,
+                    }).encode("utf-8")
+                    await send({
+                        "type": "http.response.start",
+                        "status": 503,
+                        "headers": [
+                            [b"content-type", b"application/json"],
+                            [b"retry-after", b"2"],
+                        ],
+                    })
+                    await send({
+                        "type": "http.response.body",
+                        "body": response_body,
+                    })
+                    return
 
                 # Generate base id (stable per SSE connection, unique per HTTP request)
                 base_id = headers.get("x-client-id")
@@ -1958,6 +2079,22 @@ async def main():
         
         # Start auto calibration task (non-blocking)
         asyncio.create_task(startup_auto_calibration())
+        
+        # === Server warmup task ===
+        # Prevents "request before initialization" errors when multiple clients
+        # reconnect simultaneously after a server restart
+        async def server_warmup_task():
+            """Set server ready flag after short warmup to allow MCP initialization."""
+            global SERVER_READY, SERVER_STARTUP_TIME
+            SERVER_STARTUP_TIME = datetime.now()
+            
+            # Short delay to ensure MCP transport is initialized
+            await asyncio.sleep(2.0)
+            
+            SERVER_READY = True
+            logger.info(f"[WARMUP] Server ready to accept requests (warmup complete)")
+        
+        asyncio.create_task(server_warmup_task())
         
         # === HTTP REST endpoints for non-MCP clients (Llama, Mistral, etc.) ===
         # Any model that can make HTTP calls can use governance
@@ -2218,9 +2355,12 @@ async def main():
             if not _check_http_auth(request):
                 return _http_unauthorized()
             return JSONResponse({
-                "status": "ok", 
-                "mcp": "/sse", 
-                "http": "/v1/tools",
+                "status": "ok" if SERVER_READY else "warming_up",
+                "version": SERVER_VERSION,
+                "transports": {
+                    "sse": "/sse (legacy, stable)",
+                    "streamable_http": "/mcp (new, with resumability)" if HAS_STREAMABLE_HTTP else "not available"
+                },
                 "endpoints": {
                     "list_tools": "GET /v1/tools",
                     "call_tool": "POST /v1/tools/call",
@@ -2235,7 +2375,7 @@ async def main():
                 "session": {
                     "header": "X-Session-ID (recommended for stable identity binding)"
                 },
-                "warning": "Do NOT curl /sse directly - it streams indefinitely. Use /health or /sse?probe=true to test connectivity."
+                "note": "Use /sse for legacy MCP clients, /mcp for new Streamable HTTP clients (Cursor 0.43+)"
             })
         
         async def http_metrics(request):
@@ -2318,6 +2458,60 @@ async def main():
         app.routes.append(Route("/v1/tools/call", http_call_tool, methods=["POST"]))
         app.routes.append(Route("/health", http_health, methods=["GET"]))
         app.routes.append(Route("/metrics", http_metrics, methods=["GET"]))
+        
+        # === Streamable HTTP endpoint (/mcp) ===
+        # New MCP 1.24.0+ transport with resumability and bidirectional streaming
+        _streamable_task_group = None
+        _streamable_running = False
+        
+        if HAS_STREAMABLE_HTTP and _streamable_session_manager is not None:
+            import anyio
+            
+            async def start_streamable_http():
+                """Start the Streamable HTTP session manager in background."""
+                nonlocal _streamable_task_group, _streamable_running
+                try:
+                    async with anyio.create_task_group() as tg:
+                        _streamable_session_manager._task_group = tg
+                        _streamable_session_manager._has_started = True
+                        _streamable_running = True
+                        logger.info("[STREAMABLE] Session manager started")
+                        # Keep running until cancelled
+                        await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    logger.info("[STREAMABLE] Session manager shutting down")
+                    _streamable_running = False
+                except Exception as e:
+                    logger.error(f"[STREAMABLE] Session manager error: {e}", exc_info=True)
+                    _streamable_running = False
+            
+            # Start the session manager as a background task
+            streamable_task = asyncio.create_task(start_streamable_http())
+            
+            async def streamable_mcp_handler(request):
+                """Handle Streamable HTTP MCP requests at /mcp."""
+                if not _streamable_running:
+                    return JSONResponse({
+                        "error": "Streamable HTTP transport not ready",
+                        "hint": "Try again in a moment"
+                    }, status_code=503)
+                try:
+                    # Delegate to the session manager
+                    await _streamable_session_manager.handle_request(
+                        request.scope,
+                        request.receive,
+                        request._send
+                    )
+                except Exception as e:
+                    logger.error(f"Streamable HTTP error: {e}", exc_info=True)
+                    return JSONResponse({
+                        "error": "Streamable HTTP transport error",
+                        "details": str(e)
+                    }, status_code=500)
+            
+            # Register the /mcp route for all methods (GET for SSE stream, POST for messages, DELETE for disconnect)
+            app.routes.append(Route("/mcp", streamable_mcp_handler, methods=["GET", "POST", "DELETE"]))
+            logger.info("Registered /mcp endpoint for Streamable HTTP transport")
 
         # Optional CORS for browser-based clients
         if HTTP_CORS_ALLOW_ORIGIN:

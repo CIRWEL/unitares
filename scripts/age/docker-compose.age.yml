@@ -1,17 +1,23 @@
 services:
   postgres-age:
-    image: apache/age:latest
+    image: apache/age:PG16_latest
     container_name: postgres-age
     environment:
-      POSTGRES_PASSWORD: test
+      POSTGRES_PASSWORD: postgres
       POSTGRES_USER: postgres
-      POSTGRES_DB: postgres
+      POSTGRES_DB: governance
     ports:
       - "5432:5432"
     volumes:
       - postgres-age-data:/var/lib/postgresql/data
+      - ../../db/postgres/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ../../db/postgres/partitions.sql:/docker-entrypoint-initdb.d/02-partitions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d governance"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
 volumes:
   postgres-age-data:
-

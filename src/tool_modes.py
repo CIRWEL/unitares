@@ -154,10 +154,10 @@ def get_tools_for_mode(mode: str = "full") -> Set[str]:
             return {t.name for t in get_tool_definitions()}
         except Exception:
             # Fallback (best-effort): union of categories
-            all_tools = set()
-            for tools in TOOL_CATEGORIES.values():
-                all_tools.update(tools)
-            return all_tools
+        all_tools = set()
+        for tools in TOOL_CATEGORIES.values():
+            all_tools.update(tools)
+        return all_tools
 
     # Check if it's a category name
     if mode in TOOL_CATEGORIES:

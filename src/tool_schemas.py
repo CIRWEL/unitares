@@ -3188,7 +3188,7 @@ DEPENDENCIES:
                     },
                     "discovery_type": {
                         "type": "string",
-                        "enum": ["bug_found", "insight", "pattern", "improvement", "question", "answer", "note"],
+                        "enum": ["bug_found", "insight", "pattern", "improvement", "question", "answer", "note", "exploration"],
                         "description": "Type of discovery"
                     },
                     "summary": {
@@ -4171,6 +4171,94 @@ DEPENDENCIES:
                     }
                 },
                 "required": ["new_agent_id"]
+            }
+        ),
+        Tool(
+            name="quick_start",
+            description="""🚀 Streamlined onboarding - One call to get started!
+
+Checks if agent exists, creates/binds if needed, returns ready-to-use credentials.
+Provides clear next steps for immediate productivity.
+
+USE CASES:
+- First-time onboarding (creates agent + auto-binds)
+- Returning agent (resumes existing agent)
+- Quick setup without manual steps
+
+RETURNS:
+{
+  "success": true,
+  "status": "ready",
+  "agent_id": "string",
+  "api_key": "string (full key)",
+  "is_new": boolean,
+  "bound": boolean,
+  "message": "✅ New agent created! You're ready to go.",
+  "credentials": {
+    "agent_id": "string",
+    "api_key": "string",
+    "note": "Save these credentials - you'll need them for future calls"
+  },
+  "quick_start_guide": {
+    "step_1": {
+      "action": "Log your first update",
+      "tool": "process_agent_update",
+      "example": "process_agent_update(agent_id=\"...\", response_text=\"Starting work\", complexity=0.5)"
+    },
+    "step_2": {
+      "action": "Check your governance state",
+      "tool": "get_governance_metrics",
+      "example": "get_governance_metrics(agent_id=\"...\")"
+    },
+    "step_3": {
+      "action": "Store knowledge/discoveries",
+      "tool": "store_knowledge_graph",
+      "example": "store_knowledge_graph(agent_id=\"...\", summary=\"My discovery\", tags=[\"insight\"])"
+    }
+  },
+  "essential_tools": [
+    "process_agent_update - Log your work and get feedback",
+    "get_governance_metrics - Check your EISV state",
+    "store_knowledge_graph - Save discoveries and insights",
+    "search_knowledge_graph - Find related knowledge",
+    "list_tools - Discover all available tools"
+  ],
+  "next_steps": [
+    "You're all set! Start logging work with process_agent_update()",
+    "Explore tools with list_tools(lite=true) for minimal overview",
+    "Check your state anytime with get_governance_metrics()",
+    "Store insights with store_knowledge_graph()"
+  ]
+}
+
+RELATED TOOLS:
+- bind_identity: Manual identity binding (if auto_bind=false)
+- get_agent_api_key: Get API key for existing agent
+- hello: Alternative onboarding flow
+
+EXAMPLE REQUEST:
+{
+  "agent_id": "my_agent_20251215",
+  "auto_bind": true
+}
+
+DEPENDENCIES:
+- Optional: agent_id (will prompt if not provided and no bound identity)
+- Optional: auto_bind (default: true - automatically binds identity)
+- Workflow: 1. Call quick_start(agent_id) 2. Use returned credentials 3. Start working""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Your agent identifier (optional - will use bound identity or prompt if not provided)"
+                    },
+                    "auto_bind": {
+                        "type": "boolean",
+                        "description": "Automatically bind identity after creation (default: true)"
+                    }
+                },
+                "required": []
             }
         ),
     ]

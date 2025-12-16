@@ -52,7 +52,6 @@ async def handle_set_thresholds(arguments: Dict[str, Any]) -> Sequence[TextConte
         )]
     
     # Verify authentication
-    import src.mcp_server_std as mcp_server
     if agent_id not in mcp_server.agent_metadata:
         return agent_not_found_error(agent_id)
     

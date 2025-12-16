@@ -19,6 +19,9 @@ psutil>=5.9.0
 aiofiles>=23.2.1
 orjson>=3.9.0
 
+# PostgreSQL + AGE support (optional - for production deployment)
+asyncpg>=0.29.0
+
 # Testing and coverage (optional but included for convenience)
 pytest>=7.4.0
 pytest-cov>=4.1.0

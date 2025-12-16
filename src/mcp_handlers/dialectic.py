@@ -105,6 +105,9 @@ from src.dialectic_db import (
     get_session_by_agent_async as sqlite_get_session_by_agent,
 )
 
+# Import database abstraction for dual-write (Phase 4 migration)
+from src.db import get_db
+
 
 # Check for aiofiles availability
 try:
@@ -509,6 +512,27 @@ async def handle_request_dialectic_review(arguments: ToolArgumentsDict) -> Seque
                 synthesis_round=session.synthesis_round,
                 paused_agent_state=agent_state,
             )
+
+            # DUAL-WRITE: Create session in PostgreSQL (Phase 4 migration)
+            try:
+                db = get_db()
+                await db.create_dialectic_session(
+                    session_id=session.session_id,
+                    paused_agent_id=agent_id,
+                    reviewer_agent_id=reviewer_id,
+                    reason=reason,
+                    discovery_id=discovery_id,
+                    dispute_type=dispute_type,
+                    session_type="recovery",
+                    topic=None,
+                    max_synthesis_rounds=session.max_synthesis_rounds,
+                    synthesis_round=session.synthesis_round,
+                    paused_agent_state=agent_state,
+                )
+                logger.debug(f"Dual-write: Created dialectic session {session.session_id[:16]}... in new DB")
+            except Exception as e:
+                # Non-fatal: old DB still works, log and continue
+                logger.warning(f"Dual-write dialectic session creation failed: {e}", exc_info=True)
         except Exception as e:
             logger.warning(f"Could not create session in SQLite (continuing with JSON): {e}")
 
@@ -712,6 +736,24 @@ async def handle_request_exploration_session(arguments: Dict[str, Any]) -> Seque
                 max_synthesis_rounds=session.max_synthesis_rounds,
                 synthesis_round=session.synthesis_round,
             )
+
+            # DUAL-WRITE: Create exploration session in PostgreSQL (Phase 4 migration)
+            try:
+                db = get_db()
+                await db.create_dialectic_session(
+                    session_id=session.session_id,
+                    paused_agent_id=agent_id,
+                    reviewer_agent_id=reviewer_id,
+                    reason=f"exploration: {topic}" if topic else "exploration session",
+                    session_type="exploration",
+                    topic=topic,
+                    max_synthesis_rounds=session.max_synthesis_rounds,
+                    synthesis_round=session.synthesis_round,
+                )
+                logger.debug(f"Dual-write: Created exploration session {session.session_id[:16]}... in new DB")
+            except Exception as e:
+                # Non-fatal: old DB still works, log and continue
+                logger.warning(f"Dual-write exploration session creation failed: {e}", exc_info=True)
         except Exception as e:
             logger.warning(f"Could not create exploration session in SQLite (continuing with JSON): {e}")
 
@@ -840,6 +882,23 @@ async def handle_submit_thesis(arguments: Dict[str, Any]) -> Sequence[TextConten
                     reasoning=arguments.get('reasoning'),
                 )
                 await sqlite_update_phase(session_id, session.phase.value)
+
+                # DUAL-WRITE: Add thesis message and update phase in PostgreSQL (Phase 4 migration)
+                try:
+                    db = get_db()
+                    await db.add_dialectic_message(
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        message_type="thesis",
+                        root_cause=arguments.get('root_cause'),
+                        proposed_conditions=arguments.get('proposed_conditions', []),
+                        reasoning=arguments.get('reasoning'),
+                    )
+                    await db.update_dialectic_session_phase(session_id, session.phase.value)
+                    logger.debug(f"Dual-write: Added thesis message for session {session_id[:16]}... in new DB")
+                except Exception as e:
+                    # Non-fatal: old DB still works, log and continue
+                    logger.warning(f"Dual-write thesis message failed: {e}", exc_info=True)
             except Exception as e:
                 logger.warning(f"Could not update SQLite after thesis: {e}")
 
@@ -957,6 +1016,23 @@ async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextCo
                     reasoning=arguments.get('reasoning'),
                 )
                 await sqlite_update_phase(session_id, session.phase.value)
+
+                # DUAL-WRITE: Add antithesis message and update phase in PostgreSQL (Phase 4 migration)
+                try:
+                    db = get_db()
+                    await db.add_dialectic_message(
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        message_type="antithesis",
+                        observed_metrics=arguments.get('observed_metrics', {}),
+                        concerns=arguments.get('concerns', []),
+                        reasoning=arguments.get('reasoning'),
+                    )
+                    await db.update_dialectic_session_phase(session_id, session.phase.value)
+                    logger.debug(f"Dual-write: Added antithesis message for session {session_id[:16]}... in new DB")
+                except Exception as e:
+                    # Non-fatal: old DB still works, log and continue
+                    logger.warning(f"Dual-write antithesis message failed: {e}", exc_info=True)
             except Exception as e:
                 logger.warning(f"Could not update SQLite after antithesis: {e}")
 
@@ -1078,6 +1154,24 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
                     agrees=arguments.get('agrees', False),
                 )
                 await sqlite_update_phase(session_id, session.phase.value)
+
+                # DUAL-WRITE: Add synthesis message and update phase in PostgreSQL (Phase 4 migration)
+                try:
+                    db = get_db()
+                    await db.add_dialectic_message(
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        message_type="synthesis",
+                        root_cause=arguments.get('root_cause'),
+                        proposed_conditions=arguments.get('proposed_conditions', []),
+                        reasoning=arguments.get('reasoning'),
+                        agrees=arguments.get('agrees', False)
+                    )
+                    await db.update_dialectic_session_phase(session_id, session.phase.value)
+                    logger.debug(f"Dual-write: Added synthesis message for session {session_id[:16]}... in new DB")
+                except Exception as e:
+                    # Non-fatal: old DB still works, log and continue
+                    logger.warning(f"Dual-write synthesis message failed: {e}", exc_info=True)
             except Exception as e:
                 logger.warning(f"Could not update SQLite after synthesis: {e}")
 
@@ -1126,6 +1220,19 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
                         resolution={"action": "block", "reason": violation},
                         status="failed"
                     )
+
+                    # DUAL-WRITE: Resolve session as failed in PostgreSQL (Phase 4 migration)
+                    try:
+                        db = get_db()
+                        await db.resolve_dialectic_session(
+                            session_id=session_id,
+                            resolution={"action": "block", "reason": violation},
+                            status="failed"
+                        )
+                        logger.debug(f"Dual-write: Resolved session {session_id[:16]}... as failed in new DB")
+                    except Exception as e:
+                        # Non-fatal: old DB still works, log and continue
+                        logger.warning(f"Dual-write resolve session (failed) failed: {e}", exc_info=True)
                 except Exception as e:
                     logger.warning(f"Could not resolve session in SQLite: {e}")
                 # Save session to JSON (backward compat)
@@ -1171,6 +1278,19 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
                         resolution=resolution.to_dict(),
                         status="resolved"
                     )
+
+                    # DUAL-WRITE: Resolve session in PostgreSQL (Phase 4 migration)
+                    try:
+                        db = get_db()
+                        await db.resolve_dialectic_session(
+                            session_id=session_id,
+                            resolution=resolution.to_dict(),
+                            status="resolved"
+                        )
+                        logger.debug(f"Dual-write: Resolved session {session_id[:16]}... in new DB")
+                    except Exception as e:
+                        # Non-fatal: old DB still works, log and continue
+                        logger.warning(f"Dual-write resolve session failed: {e}", exc_info=True)
                 except Exception as e:
                     logger.warning(f"Could not resolve session in SQLite: {e}")
 

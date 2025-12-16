@@ -8,6 +8,8 @@ from typing import Dict, Any, Sequence
 from mcp.types import TextContent
 from datetime import datetime, timedelta
 import sys
+import hashlib
+from src.db import get_db
 
 # Import from mcp_server_std module (using shared utility)
 from .shared import get_mcp_server
@@ -455,7 +457,24 @@ async def handle_update_agent_metadata(arguments: Dict[str, Any]) -> Sequence[Te
     import asyncio
     loop = asyncio.get_running_loop()
     await mcp_server.schedule_metadata_save(force=False)
-    
+
+    # DUAL-WRITE: Update metadata in PostgreSQL (Phase 3 migration)
+    try:
+        db = get_db()
+        await db.update_identity_metadata(
+            agent_id=agent_id,
+            metadata={
+                "tags": meta.tags,
+                "notes": meta.notes,
+                "updated_at": datetime.now().isoformat()
+            },
+            merge=True
+        )
+        logger.debug(f"Dual-write: Updated metadata in new DB for {agent_id}")
+    except Exception as e:
+        # Non-fatal: old DB still works, log and continue
+        logger.warning(f"Dual-write metadata update failed: {e}", exc_info=True)
+
     return success_response({
         "success": True,
         "message": "Agent metadata updated",
@@ -547,7 +566,20 @@ async def handle_archive_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
     import asyncio
     loop = asyncio.get_running_loop()
     await mcp_server.schedule_metadata_save(force=False)
-    
+
+    # DUAL-WRITE: Update status to archived in PostgreSQL (Phase 3 migration)
+    try:
+        db = get_db()
+        await db.update_identity_status(
+            agent_id=agent_id,
+            status="archived",
+            disabled_at=datetime.now()
+        )
+        logger.debug(f"Dual-write: Archived identity in new DB for {agent_id}")
+    except Exception as e:
+        # Non-fatal: old DB still works, log and continue
+        logger.warning(f"Dual-write archive status failed: {e}", exc_info=True)
+
     return success_response({
         "success": True,
         "message": f"Agent '{agent_id}' archived successfully",
@@ -692,7 +724,20 @@ async def handle_delete_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
     import asyncio
     loop = asyncio.get_running_loop()
     await mcp_server.schedule_metadata_save(force=False)
-    
+
+    # DUAL-WRITE: Update status to deleted in PostgreSQL (Phase 3 migration)
+    try:
+        db = get_db()
+        await db.update_identity_status(
+            agent_id=agent_id,
+            status="deleted",
+            disabled_at=datetime.now()
+        )
+        logger.debug(f"Dual-write: Deleted identity in new DB for {agent_id}")
+    except Exception as e:
+        # Non-fatal: old DB still works, log and continue
+        logger.warning(f"Dual-write delete status failed: {e}", exc_info=True)
+
     return success_response({
         "success": True,
         "message": f"Agent '{agent_id}' deleted successfully",

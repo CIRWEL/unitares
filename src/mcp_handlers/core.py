@@ -6,15 +6,17 @@ to ensure all metrics (E, I, S, V) are reported together, preventing selection b
 See docs/guides/EISV_COMPLETENESS.md for usage.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Sequence
 from mcp.types import TextContent
 import json
 import sys
 import asyncio
+import hashlib
 from .utils import success_response, error_response, require_agent_id, require_registered_agent, _make_json_serializable
 from .decorators import mcp_tool
 from .validators import validate_complexity, validate_confidence, validate_ethical_drift, validate_response_text
 from src.logging_utils import get_logger
+from src.db import get_db
 
 logger = get_logger(__name__)
 
@@ -631,6 +633,24 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                 api_key = meta.api_key  # Get generated key
                 # Schedule immediate save for new agent creation (critical operation)
                 await mcp_server.schedule_metadata_save(force=True)
+
+                # DUAL-WRITE: Create identity in PostgreSQL (Phase 2 migration)
+                try:
+                    db = get_db()
+                    api_key_hash = hashlib.sha256(meta.api_key.encode()).hexdigest() if meta.api_key else ""
+                    await db.upsert_identity(
+                        agent_id=agent_id,
+                        api_key_hash=api_key_hash,
+                        metadata={
+                            "status": getattr(meta, 'status', 'active'),
+                            "created_at": getattr(meta, 'created_at', datetime.now().isoformat()),
+                            "source": "process_agent_update"
+                        }
+                    )
+                    logger.debug(f"Dual-write: Created identity in new DB for {agent_id}")
+                except Exception as e:
+                    # Non-fatal: old DB still works, log and continue
+                    logger.warning(f"Dual-write to new DB failed for new agent: {e}", exc_info=True)
             else:
                 # Reuse metadata fetched earlier (avoid duplicate lookup)
                 if not meta:
@@ -690,6 +710,83 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                 meta.health_status = health_status.value
                 # Schedule save so health_status persists to disk (force=True for immediate save)
                 await mcp_server.schedule_metadata_save(force=True)
+
+            # DUAL-WRITE: Persist EISV state to PostgreSQL (Phase 2 migration)
+            try:
+                db = get_db()
+                # Get identity from new DB (may exist from previous dual-write or bind_identity)
+                identity = await db.get_identity(agent_id)
+                if identity:
+                    # Extract EISV metrics from result
+                    E_val = metrics_dict.get('E', 0.7)
+                    I_val = metrics_dict.get('I', 0.8)
+                    S_val = metrics_dict.get('S', 0.1)
+                    V_val = metrics_dict.get('V', 0.0)
+                    regime_val = metrics_dict.get('regime', 'EXPLORATION')
+                    coh_val = metrics_dict.get('coherence', 0.5)
+
+                    # Map regime to allowed values in DB constraint
+                    allowed_regimes = {'nominal', 'warning', 'critical', 'recovery',
+                                       'EXPLORATION', 'CONVERGENCE', 'DIVERGENCE', 'STABLE'}
+                    db_regime = regime_val.upper() if regime_val.upper() in allowed_regimes else 'nominal'
+
+                    await db.record_agent_state(
+                        identity_id=identity.identity_id,
+                        entropy=S_val,  # S is entropy in EISV
+                        integrity=I_val,
+                        stability_index=1.0 - S_val if S_val else 1.0,  # Inverse of entropy
+                        volatility=V_val,
+                        regime=db_regime,
+                        coherence=coh_val,
+                        state_json={
+                            "E": E_val,
+                            "risk_score": risk_score,
+                            "verdict": metrics_dict.get('verdict', 'continue'),
+                            "phi": metrics_dict.get('phi', 0.0),
+                            "health_status": health_status.value
+                        }
+                    )
+                    logger.debug(f"Dual-write: Saved agent state to new DB for {agent_id}")
+                else:
+                    # Identity doesn't exist in new DB yet - create it first
+                    api_key_hash = hashlib.sha256(api_key.encode()).hexdigest() if api_key else ""
+                    new_identity_id = await db.upsert_identity(
+                        agent_id=agent_id,
+                        api_key_hash=api_key_hash,
+                        metadata={"source": "process_agent_update_state_sync"}
+                    )
+                    if new_identity_id:
+                        E_val = metrics_dict.get('E', 0.7)
+                        I_val = metrics_dict.get('I', 0.8)
+                        S_val = metrics_dict.get('S', 0.1)
+                        V_val = metrics_dict.get('V', 0.0)
+                        regime_val = metrics_dict.get('regime', 'EXPLORATION')
+
+                        # Map regime to allowed values
+                        allowed_regimes = {'nominal', 'warning', 'critical', 'recovery',
+                                           'EXPLORATION', 'CONVERGENCE', 'DIVERGENCE', 'STABLE'}
+                        db_regime = regime_val.upper() if regime_val.upper() in allowed_regimes else 'nominal'
+
+                        await db.record_agent_state(
+                            identity_id=new_identity_id,
+                            entropy=S_val,
+                            integrity=I_val,
+                            stability_index=1.0 - S_val if S_val else 1.0,
+                            volatility=V_val,
+                            regime=db_regime,
+                            coherence=metrics_dict.get('coherence', 0.5),
+                            state_json={
+                                "E": E_val,
+                                "risk_score": risk_score,
+                                "verdict": metrics_dict.get('verdict', 'continue'),
+                                "phi": metrics_dict.get('phi', 0.0),
+                                "health_status": health_status.value
+                            }
+                        )
+                        logger.debug(f"Dual-write: Created identity and saved state for {agent_id}")
+            except Exception as e:
+                # Non-fatal: old DB still works, log and continue
+                logger.warning(f"Dual-write state to new DB failed: {e}", exc_info=True)
 
             # Add EISV labels for reflexivity - essential for agents to understand their state
             # Bridges physics (Energy, Entropy, Void Integral) with practical understanding

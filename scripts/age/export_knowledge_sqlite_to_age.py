@@ -174,17 +174,17 @@ def export(
                 if mode == "create":
                     kv = []
                     for k, v in props.items():
-                        if v is None:
+                        if v is None or v == "":
                             continue
                         if k in ("total_updates", "tag_count"):
                             kv.append(f"{k}: {int(v)}")
                         else:
                             kv.append(f"{k}: {_sql_quote(v)}")
-                    cy = f"CREATE (:Agent {{{', '.join(kv)}}}) RETURN 1;"
+                    cy = f"CREATE (:Agent {{{', '.join(kv)}}}) RETURN 1"
                 else:
                     sets = []
                     for k, v in props.items():
-                        if k == "id" or v is None:
+                        if k == "id" or v is None or v == "":
                             continue
                         if k in ("total_updates", "tag_count"):
                             sets.append(f"a.{k} = {int(v)}")
@@ -193,7 +193,7 @@ def export(
                     cy = f"MERGE (a:Agent {{id: {_sql_quote(aid)}}})"
                     if sets:
                         cy += " SET " + ", ".join(sets)
-                    cy += " RETURN 1;"
+                    cy += " RETURN 1"
                 f.write(_cypher_stmt(graph, cy))
 
                 # Agent tags (reuse Tag label)
@@ -201,10 +201,10 @@ def export(
                 for tag in tags:
                     if not tag:
                         continue
-                    f.write(_cypher_stmt(graph, f"MERGE (:Tag {{name: {_sql_quote(tag)}}}) RETURN 1;"))
+                    f.write(_cypher_stmt(graph, f"MERGE (:Tag {{name: {_sql_quote(tag)}}}) RETURN 1"))
                     cy = (
                         f"MATCH (a:Agent {{id: {_sql_quote(aid)}}}), (t:Tag {{name: {_sql_quote(tag)}}}) "
-                        f"{rel_kw} (a)-[:HAS_TAG]->(t) RETURN 1;"
+                        f"{rel_kw} (a)-[:HAS_TAG]->(t) RETURN 1"
                     )
                     f.write(_cypher_stmt(graph, cy))
 
@@ -219,14 +219,14 @@ def export(
                 if mode == "create":
                     cy = (
                         f"MATCH (p:Agent {{id: {_sql_quote(parent)}}}), (c:Agent {{id: {_sql_quote(child)}}}) "
-                        f"CREATE (p)-[:SPAWNED {{reason: {_sql_quote(_truncate(reason, 300))}}}]->(c) RETURN 1;"
+                        f"CREATE (p)-[:SPAWNED {{reason: {_sql_quote(_truncate(reason, 300))}}}]->(c) RETURN 1"
                     )
                 else:
                     cy = (
                         f"MATCH (p:Agent {{id: {_sql_quote(parent)}}}), (c:Agent {{id: {_sql_quote(child)}}}) "
                         f"MERGE (p)-[r:SPAWNED]->(c) "
                         f"SET r.reason = {_sql_quote(_truncate(reason, 300))} "
-                        f"RETURN 1;"
+                        f"RETURN 1"
                     )
                 f.write(_cypher_stmt(graph, cy))
 
@@ -276,21 +276,19 @@ def export(
             if mode == "create":
                 kv = []
                 for k, v in props.items():
-                    if v is None:
+                    if v is None or v == "":
                         continue
                     if isinstance(v, (int, float)) and k == "confidence":
                         kv.append(f"{k}: {float(v)}")
                     else:
                         kv.append(f"{k}: {_sql_quote(v)}")
-                cy = f"CREATE (:Discovery {{{', '.join(kv)}}}) RETURN 1;"
+                cy = f"CREATE (:Discovery {{{', '.join(kv)}}}) RETURN 1"
             else:
                 # Idempotent import: MERGE by stable id, then SET other properties.
                 # This avoids duplicate nodes on re-run and allows incremental updates.
                 sets = []
                 for k, v in props.items():
-                    if k == "id":
-                        continue
-                    if v is None:
+                    if k == "id" or v is None or v == "":
                         continue
                     if isinstance(v, (int, float)) and k == "confidence":
                         sets.append(f"d.{k} = {float(v)}")
@@ -299,7 +297,7 @@ def export(
                 cy = f"MERGE (d:Discovery {{id: {_sql_quote(did)}}})"
                 if sets:
                     cy += " SET " + ", ".join(sets)
-                cy += " RETURN 1;"
+                cy += " RETURN 1"
             f.write(_cypher_stmt(graph, cy))
             count += 1
 
@@ -312,7 +310,7 @@ def export(
         f.write("-- Tags\n")
         for row in _iter_rows(conn, "SELECT DISTINCT tag FROM discovery_tags ORDER BY tag ASC"):
             tag = row["tag"]
-            cy = f"MERGE (:Tag {{name: {_sql_quote(tag)}}}) RETURN 1;"
+            cy = f"MERGE (:Tag {{name: {_sql_quote(tag)}}}) RETURN 1"
             f.write(_cypher_stmt(graph, cy))
         f.write("\n")
 
@@ -327,7 +325,7 @@ def export(
             rel_kw = "CREATE" if mode == "create" else "MERGE"
             cy = (
                 f"MATCH (d:Discovery {{id: {_sql_quote(did)}}}), (t:Tag {{name: {_sql_quote(tag)}}}) "
-                f"{rel_kw} (d)-[:HAS_TAG]->(t) RETURN 1;"
+                f"{rel_kw} (d)-[:HAS_TAG]->(t) RETURN 1"
             )
             f.write(_cypher_stmt(graph, cy))
         f.write("\n")
@@ -353,7 +351,7 @@ def export(
                 if mode == "create":
                     cy = (
                         f"MATCH (a:Discovery {{id: {_sql_quote(src)}}}), (b:Discovery {{id: {_sql_quote(dst)}}}) "
-                        f"CREATE (a)-[:RESPONSE_TO {{response_type: {_sql_quote(resp_type)}}}]->(b) RETURN 1;"
+                        f"CREATE (a)-[:RESPONSE_TO {{response_type: {_sql_quote(resp_type)}}}]->(b) RETURN 1"
                     )
                 else:
                     # MERGE edge and set response_type for idempotency.
@@ -361,14 +359,14 @@ def export(
                         f"MATCH (a:Discovery {{id: {_sql_quote(src)}}}), (b:Discovery {{id: {_sql_quote(dst)}}}) "
                         f"MERGE (a)-[r:RESPONSE_TO]->(b) "
                         f"SET r.response_type = {_sql_quote(resp_type)} "
-                        f"RETURN 1;"
+                        f"RETURN 1"
                     )
                 f.write(_cypher_stmt(graph, cy))
             elif et == "related_to":
                 rel_kw = "CREATE" if mode == "create" else "MERGE"
                 cy = (
                     f"MATCH (a:Discovery {{id: {_sql_quote(src)}}}), (b:Discovery {{id: {_sql_quote(dst)}}}) "
-                    f"{rel_kw} (a)-[:RELATED_TO]->(b) RETURN 1;"
+                    f"{rel_kw} (a)-[:RELATED_TO]->(b) RETURN 1"
                 )
                 f.write(_cypher_stmt(graph, cy))
             else:
@@ -411,17 +409,17 @@ def export(
                 if mode == "create":
                     kv = []
                     for k, v in props.items():
-                        if v is None:
+                        if v is None or v == "":
                             continue
                         if k in ("max_synthesis_rounds", "synthesis_round"):
                             kv.append(f"{k}: {int(v)}")
                         else:
                             kv.append(f"{k}: {_sql_quote(v)}")
-                    cy = f"CREATE (:DialecticSession {{{', '.join(kv)}}}) RETURN 1;"
+                    cy = f"CREATE (:DialecticSession {{{', '.join(kv)}}}) RETURN 1"
                 else:
                     sets = []
                     for k, v in props.items():
-                        if k == "id" or v is None:
+                        if k == "id" or v is None or v == "":
                             continue
                         if k in ("max_synthesis_rounds", "synthesis_round"):
                             sets.append(f"s.{k} = {int(v)}")
@@ -430,7 +428,7 @@ def export(
                     cy = f"MERGE (s:DialecticSession {{id: {_sql_quote(sid)}}})"
                     if sets:
                         cy += " SET " + ", ".join(sets)
-                    cy += " RETURN 1;"
+                    cy += " RETURN 1"
                 f.write(_cypher_stmt(graph, cy))
 
                 # Link session to agents and discovery (best-effort; nodes may not exist)
@@ -443,7 +441,7 @@ def export(
                         _cypher_stmt(
                             graph,
                             f"MATCH (s:DialecticSession {{id: {_sql_quote(sid)}}}), (a:Agent {{id: {_sql_quote(paused)}}}) "
-                            f"{rel_kw} (s)-[:PAUSED_AGENT]->(a) RETURN 1;",
+                            f"{rel_kw} (s)-[:PAUSED_AGENT]->(a) RETURN 1",
                         )
                     )
                 if reviewer and include_agents:
@@ -451,7 +449,7 @@ def export(
                         _cypher_stmt(
                             graph,
                             f"MATCH (s:DialecticSession {{id: {_sql_quote(sid)}}}), (r:Agent {{id: {_sql_quote(reviewer)}}}) "
-                            f"{rel_kw} (s)-[:REVIEWER]->(r) RETURN 1;",
+                            f"{rel_kw} (s)-[:REVIEWER]->(r) RETURN 1",
                         )
                     )
                 if disc_id:
@@ -459,7 +457,7 @@ def export(
                         _cypher_stmt(
                             graph,
                             f"MATCH (s:DialecticSession {{id: {_sql_quote(sid)}}}), (d:Discovery {{id: {_sql_quote(disc_id)}}}) "
-                            f"{rel_kw} (s)-[:ABOUT_DISCOVERY]->(d) RETURN 1;",
+                            f"{rel_kw} (s)-[:ABOUT_DISCOVERY]->(d) RETURN 1",
                         )
                     )
 
@@ -498,17 +496,17 @@ def export(
                 if mode == "create":
                     kv = []
                     for k, v in props.items():
-                        if v is None:
+                        if v is None or v == "":
                             continue
                         if k in ("seq", "agrees"):
                             kv.append(f"{k}: {int(v)}")
                         else:
                             kv.append(f"{k}: {_sql_quote(v)}")
-                    cy = f"CREATE (:DialecticMessage {{{', '.join(kv)}}}) RETURN 1;"
+                    cy = f"CREATE (:DialecticMessage {{{', '.join(kv)}}}) RETURN 1"
                 else:
                     sets = []
                     for k, v in props.items():
-                        if k == "id" or v is None:
+                        if k == "id" or v is None or v == "":
                             continue
                         if k in ("seq", "agrees"):
                             sets.append(f"m.{k} = {int(v)}")
@@ -517,7 +515,7 @@ def export(
                     cy = f"MERGE (m:DialecticMessage {{id: {_sql_quote(msg_id)}}})"
                     if sets:
                         cy += " SET " + ", ".join(sets)
-                    cy += " RETURN 1;"
+                    cy += " RETURN 1"
                 f.write(_cypher_stmt(graph, cy))
 
                 rel_kw = "CREATE" if mode == "create" else "MERGE"
@@ -525,7 +523,7 @@ def export(
                     _cypher_stmt(
                         graph,
                         f"MATCH (s:DialecticSession {{id: {_sql_quote(sid)}}}), (m:DialecticMessage {{id: {_sql_quote(msg_id)}}}) "
-                        f"{rel_kw} (s)-[:HAS_MESSAGE]->(m) RETURN 1;",
+                        f"{rel_kw} (s)-[:HAS_MESSAGE]->(m) RETURN 1",
                     )
                 )
                 if aid and include_agents:
@@ -533,7 +531,7 @@ def export(
                         _cypher_stmt(
                             graph,
                             f"MATCH (a:Agent {{id: {_sql_quote(aid)}}}), (m:DialecticMessage {{id: {_sql_quote(msg_id)}}}) "
-                            f"{rel_kw} (a)-[:WROTE]->(m) RETURN 1;",
+                            f"{rel_kw} (a)-[:WROTE]->(m) RETURN 1",
                         )
                     )
 

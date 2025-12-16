@@ -143,7 +143,7 @@ Select integration scenario:
 
 **Primary tools:**
 - `get_agent_api_key` - Agent registration and credential retrieval
-- `list_tools` - Enumerate available governance functions (47 tools)
+- `list_tools` - Enumerate available governance functions (58 tools)
 - `process_agent_update` - Main governance cycle (authentication required)
 - `simulate_update` - Dry-run governance evaluation (no state persistence)
 - `get_governance_metrics` - Retrieve current thermodynamic state
