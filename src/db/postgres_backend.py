@@ -670,7 +670,7 @@ class PostgresBackend(DatabaseBackend):
                     result = row["result"]
                     if isinstance(result, str):
                         try:
-                        results.append(json.loads(result))
+                            results.append(json.loads(result))
                         except json.JSONDecodeError:
                             results.append(result)
                     elif isinstance(result, (dict, list)):
