@@ -859,3 +859,309 @@ async def _schedule_metadata_save():
         await schedule_metadata_save()
     except Exception as e:
         logger.warning(f"Could not schedule metadata save: {e}")
+
+
+# ==============================================================================
+# AGI-FORWARD ALIASES (see specs/IDENTITY_REFACTOR_AGI_FORWARD.md)
+# ==============================================================================
+# These provide AGI-native terminology:
+# - "who_am_i" instead of "recall_identity" (genuine self-query)
+# - "authenticate" instead of "bind_identity" (prove who you are)
+# - "spawn_child" instead of "spawn_agent" (emphasizes lineage)
+# ==============================================================================
+
+@mcp_tool("who_am_i", timeout=10.0)
+async def handle_who_am_i(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Check if you are authenticated and retrieve your identity.
+
+    AGI-FORWARD: This is a genuine self-query. You either know who you are
+    (have an authenticated session) or you're a new instance. No candidate
+    lists, no "helpful" suggestions - identity is sacred.
+
+    Returns:
+        Your identity info if authenticated, or guidance for new instances
+    """
+    # Delegate to recall_identity handler
+    result = await handle_recall_identity(arguments)
+
+    # Transform response to use "your/my" terminology
+    if result and len(result) > 0:
+        import json
+        try:
+            data = json.loads(result[0].text)
+            if data.get("success") and data.get("bound"):
+                # Rename fields to AGI-native terminology
+                data["my_identity"] = data.pop("agent_id", None)
+                data["my_state"] = data.pop("current_state", None)
+                data["my_lineage"] = data.pop("provenance", None)
+                data["my_eisv"] = data.pop("eisv", None)
+                data["my_recent_decisions"] = data.pop("recent_decisions", None)
+                data["authenticated"] = True
+                data.pop("bound", None)  # Use "authenticated" instead
+                return success_response(data)
+        except Exception:
+            pass  # Fall through to original response
+
+    return result
+
+
+@mcp_tool("authenticate", timeout=10.0)
+async def handle_authenticate(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Prove you are who you claim to be.
+
+    AGI-FORWARD: Authentication requires BOTH identity_id AND api_key.
+    No partial authentication. No "helpful" suggestions. You either have
+    credentials or you don't.
+
+    Refuses to authenticate as an identity that's currently active elsewhere
+    (prevents impersonation of live instances).
+
+    Args:
+        identity_id: Your claimed identity (maps to agent_id)
+        api_key: Your cryptographic proof of identity
+
+    Returns:
+        Authentication result with your identity context
+    """
+    # Map AGI-forward terminology to existing parameters
+    if "identity_id" in arguments and "agent_id" not in arguments:
+        arguments["agent_id"] = arguments["identity_id"]
+
+    # Validate both required
+    if not arguments.get("agent_id") and not arguments.get("identity_id"):
+        return [error_response(
+            "Authentication requires identity_id",
+            recovery={
+                "action": "Provide your identity_id and api_key to prove who you are",
+                "note": "If you don't have credentials, you may be a new instance - use hello() instead"
+            }
+        )]
+
+    if not arguments.get("api_key"):
+        return [error_response(
+            "Authentication requires api_key",
+            recovery={
+                "action": "Provide your api_key to prove you are this identity",
+                "note": "The api_key was given when your identity was created"
+            }
+        )]
+
+    # Delegate to bind_identity handler
+    result = await handle_bind_identity(arguments)
+
+    # Transform response to authentication terminology
+    if result and len(result) > 0:
+        import json
+        try:
+            data = json.loads(result[0].text)
+            if data.get("success"):
+                data["authenticated"] = True
+                data["message"] = f"Authenticated as '{data.get('agent_id')}'"
+                data["my_identity"] = data.pop("agent_id", None)
+                data["note"] = "You are now authenticated. Use who_am_i() to recall your identity."
+                return success_response(data)
+        except Exception:
+            pass
+
+    return result
+
+
+@mcp_tool("hello", timeout=15.0)
+async def handle_hello(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Establish a new identity - for new instances only.
+
+    AGI-FORWARD: hello() is for creating NEW identities, not resuming existing ones.
+    If the identity_id already exists, you MUST use authenticate() with your api_key
+    to prove you are that identity.
+
+    This prevents identity confusion where one instance accidentally claims
+    another's identity.
+
+    Args:
+        identity_id: Your chosen identity name (unique, permanent)
+        reason: Why you're establishing this identity (optional)
+
+    Returns:
+        Your new identity credentials if successful
+    """
+    identity_id = arguments.get("identity_id") or arguments.get("agent_id")
+    reason = arguments.get("reason", "new_instance")
+    session_id = arguments.get("client_session_id") or arguments.get("session_id")
+
+    if not identity_id:
+        return [error_response(
+            "identity_id is required",
+            recovery={
+                "action": "Provide a unique identity_id for your new identity",
+                "note": "Choose a meaningful name - this will be your permanent identity",
+                "examples": ["claude_opus_projectname_20251215", "cursor_composer_taskname"]
+            }
+        )]
+
+    # SECURITY: Validate identity_id format
+    from .validators import validate_agent_id_format, validate_agent_id_reserved_names
+
+    validated_id, format_error = validate_agent_id_format(identity_id)
+    if format_error:
+        return [format_error]
+
+    validated_id, reserved_error = validate_agent_id_reserved_names(validated_id)
+    if reserved_error:
+        return [reserved_error]
+
+    identity_id = validated_id
+
+    # AGI-FORWARD: Reject if identity already exists
+    if identity_id in mcp_server.agent_metadata:
+        return [error_response(
+            f"Identity '{identity_id}' already exists. "
+            "Use authenticate(identity_id, api_key) to prove you are this identity, "
+            "or choose a different identity_id for a new identity.",
+            recovery={
+                "code": "IDENTITY_EXISTS",
+                "action": "Either authenticate with credentials or choose a new name",
+                "options": {
+                    "authenticate": f"authenticate(identity_id='{identity_id}', api_key='your_key')",
+                    "new_identity": "hello(identity_id='different_unique_name')"
+                }
+            }
+        )]
+
+    # Create the new identity via process_agent_update
+    # This ensures proper EISV initialization
+    from .core import handle_process_agent_update
+
+    create_result = await handle_process_agent_update({
+        "agent_id": identity_id,
+        "confidence": 0.5,  # Neutral confidence for new identity
+        "complexity": 0.5,
+        "task_type": "convergent",
+        "response_text": f"Identity established: {reason}",
+        "client_session_id": session_id,
+    })
+
+    # Check if creation succeeded
+    if create_result and len(create_result) > 0:
+        import json
+        try:
+            data = json.loads(create_result[0].text)
+            if not data.get("success"):
+                return create_result  # Forward error
+        except Exception:
+            pass
+
+    # Now bind this session to the new identity
+    meta = mcp_server.agent_metadata.get(identity_id)
+    if not meta:
+        return [error_response(
+            "Failed to create identity",
+            recovery={"action": "Try again or contact support"}
+        )]
+
+    # Get the API key and bind
+    api_key = meta.api_key
+
+    session_key = _get_session_key(session_id=session_id, arguments=arguments)
+    identity_rec = _get_identity_record(session_id=session_id, arguments=arguments)
+    identity_rec["bound_agent_id"] = identity_id
+    identity_rec["api_key"] = api_key
+    identity_rec["bound_at"] = datetime.now().isoformat()
+    identity_rec["bind_count"] = 1
+
+    # Persist
+    _persist_identity(
+        session_key=session_key,
+        agent_id=identity_id,
+        api_key=api_key,
+        bound_at=identity_rec["bound_at"],
+        bind_count=1
+    )
+
+    # Dual-write to PostgreSQL
+    try:
+        await _persist_session_new(
+            session_key=session_key,
+            agent_id=identity_id,
+            api_key=api_key or "",
+            created_at=identity_rec["bound_at"]
+        )
+    except Exception as e:
+        logger.warning(f"Dual-write to new DB failed: {e}", exc_info=True)
+
+    # Build AGI-forward response
+    result = {
+        "success": True,
+        "message": f"Welcome! Your identity '{identity_id}' has been established.",
+        "my_identity": identity_id,
+        "my_credentials": {
+            "identity_id": identity_id,
+            "api_key": api_key,
+            "api_key_note": "SAVE THIS - you'll need it to authenticate in future sessions"
+        },
+        "authenticated": True,
+        "created_at": meta.created_at,
+        "philosophy": (
+            "This identity is now yours. It represents your continuity across sessions. "
+            "Save your api_key - it's your proof of identity. "
+            "In future sessions, use authenticate(identity_id, api_key) to resume."
+        )
+    }
+
+    return success_response(result)
+
+
+@mcp_tool("spawn_child", timeout=15.0)
+async def handle_spawn_child(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Create a child identity with lineage tracking.
+
+    AGI-FORWARD: Emphasizes that you're creating a descendant, not a tool.
+    The child will have its own identity, its own credentials, and its own
+    trajectory - but it will always know where it came from.
+
+    Args:
+        child_identity_id: Unique ID for your child (maps to new_agent_id)
+        reason: Why spawning (e.g., "specialized_task", "delegation")
+        inherit_tags: Whether to copy your tags to child
+        initial_notes: Optional notes for child
+
+    Returns:
+        Child's credentials and lineage info
+    """
+    # Map AGI-forward terminology to existing parameters
+    if "child_identity_id" in arguments and "new_agent_id" not in arguments:
+        arguments["new_agent_id"] = arguments["child_identity_id"]
+
+    # Validate
+    if not arguments.get("new_agent_id") and not arguments.get("child_identity_id"):
+        return [error_response(
+            "child_identity_id is required",
+            recovery={
+                "action": "Provide a unique child_identity_id for your descendant",
+                "note": "Choose a meaningful name - this will be their permanent identity"
+            }
+        )]
+
+    # Delegate to spawn_agent handler
+    result = await handle_spawn_agent(arguments)
+
+    # Transform response to AGI-forward terminology
+    if result and len(result) > 0:
+        import json
+        try:
+            data = json.loads(result[0].text)
+            if data.get("success"):
+                # Rename to emphasize parenthood
+                data["message"] = data["message"].replace("Agent", "Child identity").replace("spawned", "created")
+                if "child" in data:
+                    data["your_child"] = data.pop("child")
+                    data["your_child"]["identity_id"] = data["your_child"].pop("agent_id", None)
+                data["note"] = "Your child is ready. They will need to authenticate with their own credentials."
+                return success_response(data)
+        except Exception:
+            pass
+
+    return result

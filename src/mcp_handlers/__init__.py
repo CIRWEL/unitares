@@ -93,10 +93,17 @@ from .dialectic import (
     handle_get_dialectic_session,
 )
 # Identity (Session binding, recall, spawn) - Added December 2025
+# AGI-FORWARD: New aliases who_am_i, authenticate, hello, spawn_child (Dec 2025)
 from .identity import (
     handle_bind_identity,
     handle_recall_identity,
     handle_spawn_agent,
+    # AGI-forward aliases
+    handle_who_am_i,
+    handle_authenticate,
+    handle_hello,
+    handle_spawn_child,
+    # Utilities
     get_bound_agent_id,
     get_bound_api_key,
     is_session_bound,
