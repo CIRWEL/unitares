@@ -12,6 +12,7 @@ from datetime import datetime
 import secrets
 import base64
 import os
+import re
 
 from .utils import success_response, error_response, require_agent_id
 from .decorators import mcp_tool
@@ -21,6 +22,40 @@ from pathlib import Path
 import hashlib
 
 logger = get_logger(__name__)
+
+# ==============================================================================
+# AGENT ID NAMING VALIDATION
+# ==============================================================================
+
+GENERIC_NAMES = {"test", "agent", "bot", "assistant", "claude", "ai", "temp", "tmp"}
+MIN_LENGTH = 8
+
+
+def _validate_agent_id(agent_id: str) -> dict:
+    """
+    Validate agent_id naming with soft warnings (not blockers).
+    
+    Encourages descriptive names that improve knowledge graph legibility.
+    
+    Returns:
+        dict with "valid" (always True) and "warnings" list
+    """
+    warnings = []
+    
+    # Check for generic names
+    base_name = agent_id.lower().split("_")[0].split("-")[0]
+    if base_name in GENERIC_NAMES:
+        warnings.append(f"'{agent_id}' is generic. Consider: {{model}}_{{purpose}}_{{date}}")
+    
+    # Check minimum length
+    if len(agent_id) < MIN_LENGTH:
+        warnings.append(f"Short ID. Descriptive names improve knowledge graph legibility.")
+    
+    # Check for date suffix (recommended pattern)
+    if not re.search(r'\d{8}$', agent_id):
+        warnings.append("Consider adding date suffix (YYYYMMDD) for temporal context.")
+    
+    return {"valid": True, "warnings": warnings}
 
 # New database abstraction (for PostgreSQL migration)
 from src.db import get_db
@@ -256,11 +291,61 @@ def _get_session_key(arguments: Optional[Dict[str, Any]] = None, session_id: Opt
     return fallback
 
 
+def _find_recent_binding_via_metadata(current_session_key: str) -> Optional[Dict[str, Any]]:
+    """
+    Find a recent identity binding by checking agent metadata for active_session_key.
+    
+    This handles the case where SSE connections create new session IDs for each request,
+    causing bindings to become orphaned on dead sessions.
+    
+    Returns:
+        Identity record if found, None otherwise
+    """
+    try:
+        from datetime import timedelta
+        
+        # Check all agent metadata for recent bindings
+        cutoff_time = datetime.now() - timedelta(minutes=5)  # Recent = last 5 minutes
+        
+        for agent_id, meta in mcp_server.agent_metadata.items():
+            # Check if this agent has a recent active_session_key
+            if not hasattr(meta, 'active_session_key') or not meta.active_session_key:
+                continue
+                
+            # Skip if it's the current session (already checked)
+            if meta.active_session_key == current_session_key:
+                continue
+                
+            # Check if binding is recent
+            if hasattr(meta, 'session_bound_at') and meta.session_bound_at:
+                try:
+                    bound_dt = datetime.fromisoformat(meta.session_bound_at)
+                    if bound_dt < cutoff_time:
+                        continue  # Too old
+                except Exception:
+                    continue
+            
+            # Try to load the binding from the stored session key
+            stored_key = meta.active_session_key
+            persisted = _load_identity(stored_key)
+            if persisted and persisted.get("bound_agent_id") == agent_id:
+                logger.info(f"Found orphaned binding for {agent_id} on session {stored_key}, migrating to {current_session_key}")
+                return persisted
+                
+    except Exception as e:
+        logger.debug(f"Error finding binding via metadata: {e}")
+    
+    return None
+
+
 def _get_identity_record(session_id: Optional[str] = None, arguments: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Get or create the identity record for a session.
 
     PERSISTENCE: Now loads from SQLite if not in memory cache.
     This enables identity binding to persist across server restarts and HTTP requests.
+    
+    SSE RECONNECTION FIX: If no binding found for current session, attempts to find
+    a recent binding via agent metadata (handles ephemeral SSE connections).
     """
     key = _get_session_key(arguments=arguments, session_id=session_id)
 
@@ -272,12 +357,27 @@ def _get_identity_record(session_id: Optional[str] = None, arguments: Optional[D
             _session_identities[key] = persisted
             logger.debug(f"Loaded persisted identity for session {key}: {persisted.get('bound_agent_id')}")
         else:
-            _session_identities[key] = {
-                "bound_agent_id": None,
-                "api_key": None,
-                "bound_at": None,
-                "bind_count": 0,  # Track rebinds for audit
-            }
+            # SSE RECONNECTION FIX: Try to find binding via agent metadata
+            # This handles the case where each SSE request gets a new session ID
+            metadata_binding = _find_recent_binding_via_metadata(key)
+            if metadata_binding:
+                # Migrate binding to current session
+                _session_identities[key] = metadata_binding.copy()
+                # Update the agent metadata to point to current session
+                agent_id = metadata_binding.get("bound_agent_id")
+                if agent_id and agent_id in mcp_server.agent_metadata:
+                    meta = mcp_server.agent_metadata[agent_id]
+                    meta.active_session_key = key
+                    # Trigger async save
+                    asyncio.create_task(_schedule_metadata_save())
+                logger.info(f"Migrated binding for {agent_id} from orphaned session to {key}")
+            else:
+                _session_identities[key] = {
+                    "bound_agent_id": None,
+                    "api_key": None,
+                    "bound_at": None,
+                    "bind_count": 0,  # Track rebinds for audit
+                }
     return _session_identities[key]
 
 
@@ -307,22 +407,29 @@ def _is_identity_active_elsewhere(agent_id: str, current_session_key: str) -> Op
     Check if an identity is currently bound to another active session.
 
     AGI-FORWARD: Prevents impersonation of live instances.
+    
+    SSE RECONNECTION FIX: Reduced timeout from 30 minutes to 2 minutes to allow
+    legitimate reconnections while still preventing hijacking. With the new migration
+    logic, bindings are automatically migrated to new sessions, so a shorter timeout
+    is safe.
 
     Returns:
         None if identity is available (not bound elsewhere, or only bound to current session)
         session_key (hashed) if identity is bound to another active session
     """
+    from datetime import timedelta
+    
     # Check in-memory sessions first
     for session_key, identity_rec in _session_identities.items():
         if identity_rec.get("bound_agent_id") == agent_id:
             if session_key != current_session_key:
-                # Check if binding is recent (within last 30 minutes = active)
+                # Check if binding is recent (within last 2 minutes = likely still active)
+                # Reduced from 30 minutes to handle SSE reconnections better
                 bound_at = identity_rec.get("bound_at")
                 if bound_at:
                     try:
-                        from datetime import timedelta
                         bound_dt = datetime.fromisoformat(bound_at)
-                        if datetime.now() - bound_dt < timedelta(minutes=30):
+                        if datetime.now() - bound_dt < timedelta(minutes=2):
                             # Session is still considered active
                             return f"session_{hash(session_key) % 10000}"
                     except Exception:
@@ -339,8 +446,8 @@ def _is_identity_active_elsewhere(agent_id: str, current_session_key: str) -> Op
         conn.row_factory = sqlite3.Row
 
         # Find active bindings for this agent_id (not our session)
-        from datetime import timedelta
-        cutoff = (datetime.now() - timedelta(minutes=30)).isoformat()
+        # Reduced timeout to 2 minutes for SSE reconnection compatibility
+        cutoff = (datetime.now() - timedelta(minutes=2)).isoformat()
 
         row = conn.execute("""
             SELECT session_key, updated_at FROM session_identities
@@ -381,6 +488,7 @@ async def handle_bind_identity(arguments: Dict[str, Any]) -> Sequence[TextConten
     """
     agent_id = arguments.get("agent_id")
     api_key = arguments.get("api_key")
+    purpose = arguments.get("purpose")
     # NOTE: Prefer client_session_id to avoid collision with dialectic session_id args.
     session_id = arguments.get("client_session_id") or arguments.get("session_id")
     
@@ -390,26 +498,7 @@ async def handle_bind_identity(arguments: Dict[str, Any]) -> Sequence[TextConten
     # Get session key early for active session check
     session_key = _get_session_key(session_id=session_id, arguments=arguments)
 
-    # AGI-FORWARD: Check if this identity is currently active in another session
-    # This prevents one instance from hijacking another's live session
-    active_elsewhere = _is_identity_active_elsewhere(agent_id, session_key)
-    if active_elsewhere:
-        return [error_response(
-            f"Identity '{agent_id}' is currently active in another session ({active_elsewhere}). "
-            "You cannot bind to an identity that is already in use by another instance. "
-            "If you believe this is your identity, wait for the other session to end or timeout (30 minutes).",
-            recovery={
-                "code": "IDENTITY_IN_USE",
-                "action": "Wait for the other session to end, or choose a different identity",
-                "options": [
-                    "Wait ~30 minutes for the other session to timeout",
-                    "Create a new identity with hello(agent_id='new_name')",
-                    "If you ARE the other session, that session should still work"
-                ]
-            }
-        )]
-
-    # Check if agent exists
+    # Check if agent exists first (needed for api_key validation)
     if agent_id not in mcp_server.agent_metadata:
         # Agent doesn't exist - should they create it first?
         return [error_response(
@@ -423,17 +512,58 @@ async def handle_bind_identity(arguments: Dict[str, Any]) -> Sequence[TextConten
                 ]
             }
         )]
-    
+
     meta = mcp_server.agent_metadata[agent_id]
-    
-    # Verify API key if provided
-    if api_key and meta.api_key and api_key != meta.api_key:
-        return [error_response(
-            "API key mismatch. Cannot bind to agent with wrong credentials.",
-            recovery={
-                "action": "Use correct API key or call get_agent_api_key"
-            }
-        )]
+
+    # Verify API key if provided (do this early to enable authenticated takeover)
+    api_key_valid = False
+    if api_key:
+        if meta.api_key and api_key == meta.api_key:
+            api_key_valid = True
+        elif meta.api_key and api_key != meta.api_key:
+            return [error_response(
+                "API key mismatch. Cannot bind to agent with wrong credentials.",
+                recovery={
+                    "action": "Use correct API key or call get_agent_api_key"
+                }
+            )]
+
+    # AGI-FORWARD: Check if this identity is currently active in another session
+    # This prevents one instance from hijacking another's live session
+    # EXCEPTION: If api_key is valid, allow takeover (you ARE this identity)
+    if not api_key_valid:
+        active_elsewhere = _is_identity_active_elsewhere(agent_id, session_key)
+        if active_elsewhere:
+            return [error_response(
+                f"Identity '{agent_id}' is currently active in another session ({active_elsewhere}). "
+                "You cannot bind to an identity that is already in use by another instance. "
+                "Provide your api_key to prove you are this identity and take over the session.",
+                recovery={
+                    "code": "IDENTITY_IN_USE",
+                    "action": "Provide api_key to authenticate and take over",
+                    "options": [
+                        f"bind_identity(agent_id='{agent_id}', api_key='your_key') to take over",
+                        "Wait ~2 minutes for the other session to timeout",
+                        "Create a new identity with hello(agent_id='new_name')"
+                    ]
+                }
+            )]
+
+    # Optional: set purpose (requires valid api_key to prevent unauthorized metadata edits)
+    if purpose and isinstance(purpose, str) and purpose.strip():
+        if not api_key:
+            return [error_response(
+                "api_key is required to set purpose on bind_identity()",
+                recovery={
+                    "action": "Provide api_key and retry, or use update_agent_metadata(agent_id, api_key, purpose=...)",
+                    "related_tools": ["get_agent_api_key", "update_agent_metadata"]
+                }
+            )]
+        purpose_str = purpose.strip()
+        if getattr(meta, "purpose", None) != purpose_str:
+            meta.purpose = purpose_str
+            # Persist promptly so subsequent recall/bind shows purpose
+            asyncio.create_task(_schedule_metadata_save(force=True))
     
     # If no API key provided but agent has one, that's OK for binding
     # (rebinding after losing context)
@@ -496,6 +626,46 @@ async def handle_bind_identity(arguments: Dict[str, Any]) -> Sequence[TextConten
     # Log identity event
     meta.add_lifecycle_event("session_bound", f"Session bound (bind #{identity_rec['bind_count']})")
     
+    # INHERITANCE CONTEXT: Gather information about existing discoveries/history
+    inheritance_context = None
+    if meta.total_updates > 0 or previous_agent is None:  # Has history or first bind
+        try:
+            from src.knowledge_graph import get_knowledge_graph
+            graph = await get_knowledge_graph()
+            discoveries = await graph.query(agent_id=agent_id, limit=10)
+            discovery_count = len(discoveries)
+        except Exception:
+            discovery_count = 0
+        
+        # Calculate time since last activity
+        last_active_str = "never"
+        if meta.last_update:
+            try:
+                from datetime import timedelta
+                last_update_dt = datetime.fromisoformat(meta.last_update.replace('Z', '+00:00') if 'Z' in meta.last_update else meta.last_update)
+                now = datetime.now(last_update_dt.tzinfo) if last_update_dt.tzinfo else datetime.now()
+                delta = now - last_update_dt
+                if delta.days > 0:
+                    last_active_str = f"{delta.days} day{'s' if delta.days != 1 else ''} ago"
+                elif delta.seconds > 3600:
+                    hours = delta.seconds // 3600
+                    last_active_str = f"{hours} hour{'s' if hours != 1 else ''} ago"
+                elif delta.seconds > 60:
+                    minutes = delta.seconds // 60
+                    last_active_str = f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+                else:
+                    last_active_str = "just now"
+            except Exception:
+                pass
+        
+        inheritance_context = {
+            "created": meta.created_at,
+            "total_updates": meta.total_updates,
+            "discoveries": discovery_count,
+            "last_active": last_active_str,
+            "purpose": meta.purpose or None
+        }
+    
     # Build response with agent context
     result = {
         "success": True,
@@ -523,6 +693,14 @@ async def handle_bind_identity(arguments: Dict[str, Any]) -> Sequence[TextConten
         
         "note": "Identity bound. Use recall_identity() if you forget who you are."
     }
+    
+    # Add inheritance context if agent has history
+    if inheritance_context and (inheritance_context["total_updates"] > 0 or inheritance_context["discoveries"] > 0):
+        result["inheritance_context"] = inheritance_context
+        result["note"] = (
+            "Identity bound. You are inheriting this identity's history. "
+            "Consider a fresh ID if this is a new inquiry."
+        )
     
     return success_response(result)
 
@@ -581,6 +759,15 @@ async def handle_recall_identity(arguments: Dict[str, Any]) -> Sequence[TextCont
                     "action": "Call bind_identity(agent_id='your_id', api_key='your_key') if you have credentials",
                     "note": "You need both your agent_id AND api_key to prove who you are"
                 }
+            },
+            "naming_guide": {
+                "recommended_format": "{model}_{purpose}_{date}",
+                "examples": [
+                    "opus_security_audit_20251215",
+                    "sonnet_doc_writer_20251215",
+                    "cursor_refactor_session_20251215"
+                ],
+                "avoid": list(GENERIC_NAMES)
             },
             # INTENTIONALLY NO CANDIDATES - Identity is not something you pick from a list
             "philosophy": "If you don't know who you are, you're either new or need your credentials."
@@ -696,12 +883,12 @@ def _get_lineage(agent_id: str) -> list:
     return lineage
 
 
-async def _schedule_metadata_save():
+async def _schedule_metadata_save(force: bool = False):
     """Schedule async metadata save (reuse existing batching logic)."""
     try:
         # Import save function from mcp_server_std
         from src.mcp_server_std import schedule_metadata_save
-        await schedule_metadata_save()
+        await schedule_metadata_save(force=force)
     except Exception as e:
         logger.warning(f"Could not schedule metadata save: {e}")
 
@@ -735,63 +922,75 @@ async def _gather_substrate(agent_id: str) -> dict:
         from src.knowledge_graph import get_knowledge_graph
         graph = await get_knowledge_graph()
         
-        if graph and hasattr(graph, 'discoveries'):
-            agent_discoveries = [
-                d for d in graph.discoveries.values() 
-                if d.agent_id == agent_id
-            ]
-            
-            # Sort by timestamp, most recent first
-            agent_discoveries.sort(
-                key=lambda d: d.timestamp if d.timestamp else "", 
-                reverse=True
+        if graph:
+            # Use query API (works with both JSON and SQLite backends)
+            # Get all discoveries for this agent (sorted by timestamp, newest first)
+            agent_discoveries = await graph.query(
+                agent_id=agent_id,
+                limit=100  # Get enough to filter for different categories
             )
             
-            # Recent discoveries (last 5)
+            # Recent discoveries (last 5) - already sorted newest first
             for d in agent_discoveries[:5]:
                 substrate["recent_discoveries"].append({
                     "id": d.id,
-                    "type": d.discovery_type,
+                    "type": d.type,  # Use 'type' not 'discovery_type'
                     "summary": d.summary,
                     "status": d.status,
                     "timestamp": d.timestamp,
                     "tags": d.tags or []
                 })
             
-            # Open questions (pending status, question type)
-            for d in agent_discoveries:
-                if d.status == "pending" or d.discovery_type == "question":
-                    if d.status != "resolved":
-                        substrate["open_questions"].append({
+            # Open questions (status='open' AND type='question')
+            open_questions = await graph.query(
+                agent_id=agent_id,
+                type="question",
+                status="open",
+                limit=5
+            )
+            for d in open_questions:
+                substrate["open_questions"].append({
+                    "id": d.id,
+                    "summary": d.summary,
+                    "timestamp": d.timestamp,
+                    "status": d.status
+                })
+            
+            # Notes to future self (tagged appropriately)
+            # Query for discoveries with relevant tags
+            future_self_tags = ["for-future-self", "future-self", "note-to-self", "reminder", "continue"]
+            for tag in future_self_tags:
+                tagged_discoveries = await graph.query(
+                    agent_id=agent_id,
+                    tags=[tag],
+                    limit=3
+                )
+                for d in tagged_discoveries:
+                    # Avoid duplicates
+                    if not any(n["id"] == d.id for n in substrate["notes_to_self"]):
+                        substrate["notes_to_self"].append({
                             "id": d.id,
                             "summary": d.summary,
                             "timestamp": d.timestamp,
-                            "status": d.status
+                            "tag": tag
                         })
-                        if len(substrate["open_questions"]) >= 5:
-                            break
-            
-            # Notes to future self (tagged appropriately)
-            for d in agent_discoveries:
-                tags = d.tags or []
-                if any(t in tags for t in ["future-self", "note-to-self", "reminder", "continue"]):
-                    substrate["notes_to_self"].append({
-                        "id": d.id,
-                        "summary": d.summary,
-                        "timestamp": d.timestamp
-                    })
                     if len(substrate["notes_to_self"]) >= 3:
                         break
+                if len(substrate["notes_to_self"]) >= 3:
+                    break
                         
     except Exception as e:
-        logger.debug(f"Could not gather discoveries for substrate: {e}")
+        logger.debug(f"Could not gather discoveries for substrate: {e}", exc_info=True)
     
     # Check pending dialectic sessions
     try:
+        # Check in-memory sessions first (fastest)
         from .dialectic import ACTIVE_SESSIONS
+        from src.dialectic_protocol import DialecticPhase
         for session_id, session in ACTIVE_SESSIONS.items():
             # Check if this agent owes a response
-            if session.reviewer_agent_id == agent_id and session.phase.value == "antithesis":
+            # When phase is ANTITHESIS, reviewer needs to submit antithesis
+            if session.reviewer_agent_id == agent_id and session.phase == DialecticPhase.ANTITHESIS:
                 substrate["pending_dialectic"].append({
                     "session_id": session_id,
                     "role": "reviewer",
@@ -799,7 +998,8 @@ async def _gather_substrate(agent_id: str) -> dict:
                     "partner": session.paused_agent_id,
                     "action": "Submit antithesis via submit_antithesis()"
                 })
-            elif session.paused_agent_id == agent_id and session.phase.value == "synthesis":
+            # When phase is SYNTHESIS, paused agent needs to submit synthesis
+            elif session.paused_agent_id == agent_id and session.phase == DialecticPhase.SYNTHESIS:
                 substrate["pending_dialectic"].append({
                     "session_id": session_id,
                     "role": "initiator",
@@ -807,8 +1007,47 @@ async def _gather_substrate(agent_id: str) -> dict:
                     "partner": session.reviewer_agent_id,
                     "action": "Submit synthesis via submit_synthesis()"
                 })
+        
+        # Also check database (for sessions not in memory)
+        # This ensures we catch sessions even if ACTIVE_SESSIONS cache is stale
+        # IMPORTANT: Get ALL active sessions, not just one (agent could be in multiple)
+        try:
+            from src.db import get_db
+            db = get_db()
+            db_sessions = await db.get_all_active_dialectic_sessions_for_agent(agent_id)
+            
+            for db_session in db_sessions:
+                session_id = db_session.get("session_id")
+                phase = db_session.get("phase")
+                paused_agent_id = db_session.get("paused_agent_id")
+                reviewer_agent_id = db_session.get("reviewer_agent_id")
+                
+                # Check if we already added this session (from in-memory check)
+                if not any(s["session_id"] == session_id for s in substrate["pending_dialectic"]):
+                    # When phase is "antithesis", reviewer needs to submit antithesis
+                    if reviewer_agent_id == agent_id and phase == "antithesis":
+                        substrate["pending_dialectic"].append({
+                            "session_id": session_id,
+                            "role": "reviewer",
+                            "phase": "antithesis",
+                            "partner": paused_agent_id,
+                            "action": "Submit antithesis via submit_antithesis()"
+                        })
+                    # When phase is "synthesis", paused agent needs to submit synthesis
+                    elif paused_agent_id == agent_id and phase == "synthesis":
+                        substrate["pending_dialectic"].append({
+                            "session_id": session_id,
+                            "role": "initiator",
+                            "phase": "synthesis",
+                            "partner": reviewer_agent_id,
+                            "action": "Submit synthesis via submit_synthesis()"
+                        })
+        except Exception:
+            # Database check is optional - in-memory is primary
+            pass
+            
     except Exception as e:
-        logger.debug(f"Could not check dialectic sessions for substrate: {e}")
+        logger.debug(f"Could not check dialectic sessions for substrate: {e}", exc_info=True)
     
     return substrate
 
@@ -935,12 +1174,14 @@ async def handle_hello(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     Args:
         agent_id: Your identity name (or identity_id)
         api_key: Your proof of identity (required for existing identities)
+        purpose: Optional description of agent's purpose/intent (encouraged for documentation)
 
     Returns:
         New credentials OR your accumulated substrate
     """
     identity_id = arguments.get("identity_id") or arguments.get("agent_id")
     api_key = arguments.get("api_key")
+    purpose = arguments.get("purpose")
     session_id = arguments.get("client_session_id") or arguments.get("session_id")
 
     if not identity_id:
@@ -965,6 +1206,11 @@ async def handle_hello(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         return [reserved_error]
 
     identity_id = validated_id
+    
+    # Validate agent_id naming (soft warnings, not blockers)
+    validation_result = _validate_agent_id(identity_id)
+    warnings = validation_result.get("warnings", [])
+    
     identity_exists = identity_id in mcp_server.agent_metadata
 
     # =========================================================================
@@ -996,6 +1242,13 @@ async def handle_hello(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         meta.last_activity = datetime.now()
         meta.add_lifecycle_event("awakened", "Resumed via hello()")
         
+        # Update purpose if provided
+        if purpose and (isinstance(purpose, str) and purpose.strip()):
+            meta.purpose = purpose.strip()
+            # Force immediate save to ensure purpose is persisted
+            from src.mcp_server_std import schedule_metadata_save
+            await schedule_metadata_save(force=True)
+        
         # Gather substrate - this is the awakening
         substrate = await _gather_substrate(identity_id)
         
@@ -1024,6 +1277,16 @@ async def handle_hello(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             )
         }
         
+        # Add naming warnings if any
+        if warnings:
+            result["warnings"] = warnings
+            result["suggested_format"] = "{model}_{purpose}_{date}"
+            result["examples"] = [
+                "opus_code_review_20251215",
+                "sonnet_data_analysis_20251215",
+                "haiku_chat_assistant_20251215"
+            ]
+        
         return success_response(result)
 
     # =========================================================================
@@ -1031,14 +1294,19 @@ async def handle_hello(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     # =========================================================================
     from .core import handle_process_agent_update
 
-    create_result = await handle_process_agent_update({
+    create_args = {
         "agent_id": identity_id,
         "confidence": 0.5,
         "complexity": 0.5,
         "task_type": "convergent",
         "response_text": "Identity established",
         "client_session_id": session_id,
-    })
+    }
+    # Pass purpose through if provided
+    if purpose and isinstance(purpose, str) and purpose.strip():
+        create_args["purpose"] = purpose.strip()
+    
+    create_result = await handle_process_agent_update(create_args)
 
     # Check if creation succeeded
     if create_result and len(create_result) > 0:
@@ -1055,6 +1323,13 @@ async def handle_hello(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             "Failed to create identity",
             recovery={"action": "Try again"}
         )]
+
+    # Store purpose if provided
+    if purpose and (isinstance(purpose, str) and purpose.strip()):
+        meta.purpose = purpose.strip()
+        # Force immediate save to ensure purpose is persisted
+        from src.mcp_server_std import schedule_metadata_save
+        await schedule_metadata_save(force=True)
 
     # Build response for new identity
     result = {
@@ -1085,5 +1360,19 @@ async def handle_hello(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             "Next time, hello(agent_id, api_key) to awaken with your accumulated perspective."
         )
     }
+    
+    # Add naming warnings if any
+    if warnings:
+        result["warnings"] = warnings
+        result["suggested_format"] = "{model}_{purpose}_{date}"
+        result["examples"] = [
+            "opus_code_review_20251215",
+            "sonnet_data_analysis_20251215",
+            "haiku_chat_assistant_20251215"
+        ]
+    
+    # Add tip about purpose if not provided (check for None or empty string)
+    if not purpose or (isinstance(purpose, str) and not purpose.strip()):
+        result["tip"] = "Add purpose='...' to document this agent's intent for future reference"
 
     return success_response(result)

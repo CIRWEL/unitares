@@ -682,12 +682,16 @@ async def describe_tool(
 async def quick_start(
     agent_id: str = None,
     auto_bind: bool = True,
+    purpose: str = None,
 ) -> dict:
-    """quick_start(agent_id) - Streamlined onboarding with auto-creation and binding"""
-    return await get_tool_wrapper("quick_start")(
-        agent_id=agent_id,
-        auto_bind=auto_bind,
-    )
+    """quick_start(agent_id, purpose) - Streamlined onboarding with auto-creation and binding"""
+    args = {
+        "agent_id": agent_id,
+        "auto_bind": auto_bind,
+    }
+    if purpose:
+        args["purpose"] = purpose
+    return await get_tool_wrapper("quick_start")(**args)
 
 
 # Core Governance tools
