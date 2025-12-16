@@ -145,17 +145,34 @@ class SQLiteBackend(DatabaseBackend):
 
             CREATE INDEX IF NOT EXISTS idx_session_agent ON session_identities(agent_id);
             CREATE INDEX IF NOT EXISTS idx_session_active ON session_identities(is_active, last_active);
-            CREATE INDEX IF NOT EXISTS idx_state_agent_time ON agent_state(agent_id, recorded_at);
             CREATE INDEX IF NOT EXISTS idx_audit_agent_time ON audit_events(agent_id, timestamp);
             CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(event_type);
             CREATE INDEX IF NOT EXISTS idx_tool_usage_time ON tool_usage(timestamp);
         """)
 
+        # Conditional index for agent_state - schema may differ between old and new DBs
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_state_agent_time ON agent_state(agent_id, recorded_at)")
+        except sqlite3.OperationalError:
+            # Old schema uses updated_at instead of recorded_at
+            try:
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_state_agent_time ON agent_state(agent_id, updated_at)")
+            except sqlite3.OperationalError:
+                pass  # Index may already exist or column names differ
+
         # Insert default calibration if missing
-        conn.execute("""
-            INSERT OR IGNORE INTO calibration_state (id, updated_at, version, state_json)
-            VALUES (1, datetime('now'), 1, '{"lambda1_threshold": 0.3, "lambda2_threshold": 0.7}')
-        """)
+        # Note: schema may or may not have 'version' column depending on DB version
+        try:
+            conn.execute("""
+                INSERT OR IGNORE INTO calibration_state (id, updated_at, version, state_json)
+                VALUES (1, datetime('now'), 1, '{"lambda1_threshold": 0.3, "lambda2_threshold": 0.7}')
+            """)
+        except sqlite3.OperationalError:
+            # Fallback for old schema without version column
+            conn.execute("""
+                INSERT OR IGNORE INTO calibration_state (id, updated_at, state_json)
+                VALUES (1, datetime('now'), '{"lambda1_threshold": 0.3, "lambda2_threshold": 0.7}')
+            """)
         conn.commit()
 
     async def close(self) -> None:
@@ -615,20 +632,26 @@ class SQLiteBackend(DatabaseBackend):
     async def append_audit_event(self, event: AuditEvent) -> bool:
         conn = self._get_conn()
         try:
+            # Note: existing schema uses 'id' (auto), no 'event_id' or 'session_id' columns
+            # Store event_id and session_id in details_json if present
+            payload = event.payload.copy() if event.payload else {}
+            if event.event_id:
+                payload["_event_id"] = event.event_id
+            if event.session_id:
+                payload["_session_id"] = event.session_id
+
             conn.execute(
                 """
                 INSERT OR IGNORE INTO audit_events
-                    (timestamp, event_id, agent_id, session_id, event_type, confidence, details_json, raw_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (timestamp, agent_id, event_type, confidence, details_json, raw_hash)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     (event.ts or datetime.now(timezone.utc)).isoformat(),
-                    event.event_id or str(uuid.uuid4()),
                     event.agent_id,
-                    event.session_id,
                     event.event_type,
                     event.confidence,
-                    json.dumps(event.payload),
+                    json.dumps(payload),
                     event.raw_hash,
                 ),
             )
@@ -667,9 +690,10 @@ class SQLiteBackend(DatabaseBackend):
         order_clause = "ASC" if order.lower() == "asc" else "DESC"
         params.append(limit)
 
+        # Note: existing schema uses 'id' not 'event_id', no 'session_id' column
         rows = conn.execute(
             f"""
-            SELECT timestamp, event_id, agent_id, session_id, event_type, confidence, details_json, raw_hash
+            SELECT timestamp, id, agent_id, event_type, confidence, details_json, raw_hash
             FROM audit_events
             {where_clause}
             ORDER BY timestamp {order_clause}
@@ -687,10 +711,11 @@ class SQLiteBackend(DatabaseBackend):
         limit: int = 200,
     ) -> List[AuditEvent]:
         conn = self._get_conn()
+        # Note: existing schema uses 'id' not 'event_id', no 'session_id' column
         if agent_id:
             rows = conn.execute(
                 """
-                SELECT timestamp, event_id, agent_id, session_id, event_type, confidence, details_json, raw_hash
+                SELECT timestamp, id, agent_id, event_type, confidence, details_json, raw_hash
                 FROM audit_events
                 WHERE details_json LIKE ? AND agent_id = ?
                 ORDER BY timestamp DESC LIMIT ?
@@ -700,7 +725,7 @@ class SQLiteBackend(DatabaseBackend):
         else:
             rows = conn.execute(
                 """
-                SELECT timestamp, event_id, agent_id, session_id, event_type, confidence, details_json, raw_hash
+                SELECT timestamp, id, agent_id, event_type, confidence, details_json, raw_hash
                 FROM audit_events
                 WHERE details_json LIKE ?
                 ORDER BY timestamp DESC LIMIT ?
@@ -711,14 +736,19 @@ class SQLiteBackend(DatabaseBackend):
         return [self._row_to_audit_event(r) for r in rows]
 
     def _row_to_audit_event(self, row) -> AuditEvent:
+        # Parse details_json and extract event_id/session_id if stored there
+        details = json.loads(row["details_json"]) if row["details_json"] else {}
+        event_id = details.pop("_event_id", None) or str(row["id"])
+        session_id = details.pop("_session_id", None)
+
         return AuditEvent(
             ts=datetime.fromisoformat(row["timestamp"]),
-            event_id=row["event_id"] or str(uuid.uuid4()),
+            event_id=event_id,
             event_type=row["event_type"],
             agent_id=row["agent_id"],
-            session_id=row["session_id"],
+            session_id=session_id,
             confidence=row["confidence"],
-            payload=json.loads(row["details_json"]) if row["details_json"] else {},
+            payload=details,
             raw_hash=row["raw_hash"],
         )
 
@@ -886,6 +916,14 @@ class SQLiteBackend(DatabaseBackend):
         """Get dialectic session by agent - delegates to existing dialectic_db."""
         from src.dialectic_db import get_session_by_agent_async
         return await get_session_by_agent_async(agent_id, active_only)
+
+    async def get_all_active_dialectic_sessions_for_agent(
+        self,
+        agent_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Get all active sessions where agent is paused agent or reviewer."""
+        from src.dialectic_db import get_all_sessions_by_agent_async
+        return await get_all_sessions_by_agent_async(agent_id)
 
     async def update_dialectic_session_phase(
         self,

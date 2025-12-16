@@ -1,21 +1,16 @@
 """
 Dual-Write Backend for Migration
 
-Writes to both SQLite and PostgreSQL during migration phase.
-Reads from PostgreSQL (primary) with SQLite fallback.
+Writes to both SQLite (primary) and PostgreSQL (secondary).
+Reads from SQLite. Used during migration to keep both databases in sync.
 
-Usage:
-    DB_BACKEND=dual
-    DB_POSTGRES_URL=postgresql://...
-    DB_SQLITE_PATH=data/governance.db
-    DB_DUAL_READ_PRIMARY=postgres  # or sqlite
+Set DB_BACKEND=dual to use this backend.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -34,120 +29,74 @@ logger = logging.getLogger(__name__)
 
 class DualWriteBackend(DatabaseBackend):
     """
-    Dual-write backend for migration.
+    Dual-write backend for safe migration from SQLite to PostgreSQL.
 
-    Writes go to both backends (SQLite + PostgreSQL).
-    Reads come from the primary (configurable, default: postgres).
-    Fallback to secondary on primary failure.
+    - Reads from SQLite (primary, source of truth)
+    - Writes to both SQLite and PostgreSQL
+    - Logs discrepancies for investigation
     """
 
     def __init__(self):
         self._sqlite = SQLiteBackend()
         self._postgres = PostgresBackend()
-        self._read_primary = os.environ.get("DB_DUAL_READ_PRIMARY", "postgres").lower()
-        self._initialized = False
-
-    @property
-    def _primary(self) -> DatabaseBackend:
-        return self._postgres if self._read_primary == "postgres" else self._sqlite
-
-    @property
-    def _secondary(self) -> DatabaseBackend:
-        return self._sqlite if self._read_primary == "postgres" else self._postgres
+        self._postgres_available = False
 
     async def init(self) -> None:
         """Initialize both backends."""
-        errors = []
-
-        try:
-            await self._sqlite.init()
-        except Exception as e:
-            errors.append(f"SQLite init failed: {e}")
-            logger.error(f"SQLite initialization failed: {e}")
+        await self._sqlite.init()
 
         try:
             await self._postgres.init()
+            self._postgres_available = True
+            logger.info("Dual-write: PostgreSQL backend initialized")
         except Exception as e:
-            errors.append(f"PostgreSQL init failed: {e}")
-            logger.error(f"PostgreSQL initialization failed: {e}")
-
-        if len(errors) == 2:
-            raise RuntimeError(f"Both backends failed to initialize: {errors}")
-
-        self._initialized = True
-        logger.info(f"DualWriteBackend initialized. Read primary: {self._read_primary}")
+            logger.warning(f"Dual-write: PostgreSQL unavailable, SQLite-only mode: {e}")
+            self._postgres_available = False
 
     async def close(self) -> None:
         """Close both backends."""
-        await asyncio.gather(
-            self._sqlite.close(),
-            self._postgres.close(),
-            return_exceptions=True,
-        )
-        self._initialized = False
+        await self._sqlite.close()
+        if self._postgres_available:
+            try:
+                await self._postgres.close()
+            except Exception as e:
+                logger.warning(f"Error closing PostgreSQL: {e}")
 
     async def health_check(self) -> Dict[str, Any]:
         """Return health from both backends."""
-        sqlite_health, postgres_health = await asyncio.gather(
-            self._sqlite.health_check(),
-            self._postgres.health_check(),
-            return_exceptions=True,
-        )
+        sqlite_health = await self._sqlite.health_check()
+
+        postgres_health = {"status": "unavailable"}
+        if self._postgres_available:
+            try:
+                postgres_health = await self._postgres.health_check()
+            except Exception as e:
+                postgres_health = {"status": "error", "error": str(e)}
 
         return {
-            "status": "healthy" if isinstance(sqlite_health, dict) and isinstance(postgres_health, dict) else "degraded",
             "backend": "dual",
-            "read_primary": self._read_primary,
-            "sqlite": sqlite_health if isinstance(sqlite_health, dict) else {"error": str(sqlite_health)},
-            "postgres": postgres_health if isinstance(postgres_health, dict) else {"error": str(postgres_health)},
+            "primary": sqlite_health,
+            "secondary": postgres_health,
+            "postgres_available": self._postgres_available,
         }
 
-    async def _dual_write(self, method_name: str, *args, **kwargs) -> Any:
-        """Execute a write method on both backends."""
-        sqlite_method = getattr(self._sqlite, method_name)
-        postgres_method = getattr(self._postgres, method_name)
+    # =========================================================================
+    # HELPER: Dual-write with error handling
+    # =========================================================================
 
-        results = await asyncio.gather(
-            sqlite_method(*args, **kwargs),
-            postgres_method(*args, **kwargs),
-            return_exceptions=True,
-        )
+    async def _write_both(self, op_name: str, sqlite_coro, postgres_coro):
+        """Execute write on both backends, log errors on secondary."""
+        # Always write to SQLite first (primary)
+        result = await sqlite_coro
 
-        sqlite_result, postgres_result = results
+        # Write to PostgreSQL if available (secondary, async)
+        if self._postgres_available:
+            try:
+                await postgres_coro
+            except Exception as e:
+                logger.error(f"Dual-write {op_name} failed on PostgreSQL: {e}")
 
-        # Log any failures
-        if isinstance(sqlite_result, Exception):
-            logger.warning(f"SQLite {method_name} failed: {sqlite_result}")
-        if isinstance(postgres_result, Exception):
-            logger.warning(f"PostgreSQL {method_name} failed: {postgres_result}")
-
-        # Return result from primary, fallback to secondary
-        if self._read_primary == "postgres":
-            if not isinstance(postgres_result, Exception):
-                return postgres_result
-            elif not isinstance(sqlite_result, Exception):
-                return sqlite_result
-            else:
-                raise postgres_result
-        else:
-            if not isinstance(sqlite_result, Exception):
-                return sqlite_result
-            elif not isinstance(postgres_result, Exception):
-                return postgres_result
-            else:
-                raise sqlite_result
-
-    async def _read_with_fallback(self, method_name: str, *args, **kwargs) -> Any:
-        """Execute a read method with fallback."""
-        primary_method = getattr(self._primary, method_name)
-        secondary_method = getattr(self._secondary, method_name)
-
-        try:
-            result = await primary_method(*args, **kwargs)
-            return result
-        except Exception as e:
-            logger.warning(f"Primary read {method_name} failed, falling back: {e}")
-            return await secondary_method(*args, **kwargs)
+        return result
 
     # =========================================================================
     # IDENTITY OPERATIONS
@@ -161,15 +110,17 @@ class DualWriteBackend(DatabaseBackend):
         metadata: Optional[Dict[str, Any]] = None,
         created_at: Optional[datetime] = None,
     ) -> int:
-        return await self._dual_write(
-            "upsert_identity", agent_id, api_key_hash, parent_agent_id, metadata, created_at
+        return await self._write_both(
+            "upsert_identity",
+            self._sqlite.upsert_identity(agent_id, api_key_hash, parent_agent_id, metadata, created_at),
+            self._postgres.upsert_identity(agent_id, api_key_hash, parent_agent_id, metadata, created_at),
         )
 
     async def get_identity(self, agent_id: str) -> Optional[IdentityRecord]:
-        return await self._read_with_fallback("get_identity", agent_id)
+        return await self._sqlite.get_identity(agent_id)
 
     async def get_identity_by_id(self, identity_id: int) -> Optional[IdentityRecord]:
-        return await self._read_with_fallback("get_identity_by_id", identity_id)
+        return await self._sqlite.get_identity_by_id(identity_id)
 
     async def list_identities(
         self,
@@ -177,7 +128,7 @@ class DualWriteBackend(DatabaseBackend):
         limit: int = 100,
         offset: int = 0,
     ) -> List[IdentityRecord]:
-        return await self._read_with_fallback("list_identities", status, limit, offset)
+        return await self._sqlite.list_identities(status, limit, offset)
 
     async def update_identity_status(
         self,
@@ -185,7 +136,11 @@ class DualWriteBackend(DatabaseBackend):
         status: str,
         disabled_at: Optional[datetime] = None,
     ) -> bool:
-        return await self._dual_write("update_identity_status", agent_id, status, disabled_at)
+        return await self._write_both(
+            "update_identity_status",
+            self._sqlite.update_identity_status(agent_id, status, disabled_at),
+            self._postgres.update_identity_status(agent_id, status, disabled_at),
+        )
 
     async def update_identity_metadata(
         self,
@@ -193,10 +148,14 @@ class DualWriteBackend(DatabaseBackend):
         metadata: Dict[str, Any],
         merge: bool = True,
     ) -> bool:
-        return await self._dual_write("update_identity_metadata", agent_id, metadata, merge)
+        return await self._write_both(
+            "update_identity_metadata",
+            self._sqlite.update_identity_metadata(agent_id, metadata, merge),
+            self._postgres.update_identity_metadata(agent_id, metadata, merge),
+        )
 
     async def verify_api_key(self, agent_id: str, api_key: str) -> bool:
-        return await self._read_with_fallback("verify_api_key", agent_id, api_key)
+        return await self._sqlite.verify_api_key(agent_id, api_key)
 
     # =========================================================================
     # SESSION OPERATIONS
@@ -210,34 +169,43 @@ class DualWriteBackend(DatabaseBackend):
         client_type: Optional[str] = None,
         client_info: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        return await self._dual_write(
-            "create_session", session_id, identity_id, expires_at, client_type, client_info
+        return await self._write_both(
+            "create_session",
+            self._sqlite.create_session(session_id, identity_id, expires_at, client_type, client_info),
+            self._postgres.create_session(session_id, identity_id, expires_at, client_type, client_info),
         )
 
     async def get_session(self, session_id: str) -> Optional[SessionRecord]:
-        return await self._read_with_fallback("get_session", session_id)
+        return await self._sqlite.get_session(session_id)
 
     async def update_session_activity(self, session_id: str) -> bool:
-        return await self._dual_write("update_session_activity", session_id)
+        return await self._write_both(
+            "update_session_activity",
+            self._sqlite.update_session_activity(session_id),
+            self._postgres.update_session_activity(session_id),
+        )
 
     async def end_session(self, session_id: str) -> bool:
-        return await self._dual_write("end_session", session_id)
+        return await self._write_both(
+            "end_session",
+            self._sqlite.end_session(session_id),
+            self._postgres.end_session(session_id),
+        )
 
     async def get_active_sessions_for_identity(
         self,
         identity_id: int,
     ) -> List[SessionRecord]:
-        return await self._read_with_fallback("get_active_sessions_for_identity", identity_id)
+        return await self._sqlite.get_active_sessions_for_identity(identity_id)
 
     async def cleanup_expired_sessions(self) -> int:
-        # Run on both, return max count
-        results = await asyncio.gather(
-            self._sqlite.cleanup_expired_sessions(),
-            self._postgres.cleanup_expired_sessions(),
-            return_exceptions=True,
-        )
-        counts = [r for r in results if isinstance(r, int)]
-        return max(counts) if counts else 0
+        result = await self._sqlite.cleanup_expired_sessions()
+        if self._postgres_available:
+            try:
+                await self._postgres.cleanup_expired_sessions()
+            except Exception as e:
+                logger.warning(f"PostgreSQL session cleanup failed: {e}")
+        return result
 
     # =========================================================================
     # AGENT STATE OPERATIONS
@@ -254,30 +222,39 @@ class DualWriteBackend(DatabaseBackend):
         coherence: float,
         state_json: Optional[Dict[str, Any]] = None,
     ) -> int:
-        return await self._dual_write(
+        return await self._write_both(
             "record_agent_state",
-            identity_id, entropy, integrity, stability_index, volatility, regime, coherence, state_json
+            self._sqlite.record_agent_state(
+                identity_id, entropy, integrity, stability_index, volatility, regime, coherence, state_json
+            ),
+            self._postgres.record_agent_state(
+                identity_id, entropy, integrity, stability_index, volatility, regime, coherence, state_json
+            ),
         )
 
     async def get_latest_agent_state(
         self,
         identity_id: int,
     ) -> Optional[AgentStateRecord]:
-        return await self._read_with_fallback("get_latest_agent_state", identity_id)
+        return await self._sqlite.get_latest_agent_state(identity_id)
 
     async def get_agent_state_history(
         self,
         identity_id: int,
         limit: int = 100,
     ) -> List[AgentStateRecord]:
-        return await self._read_with_fallback("get_agent_state_history", identity_id, limit)
+        return await self._sqlite.get_agent_state_history(identity_id, limit)
 
     # =========================================================================
     # AUDIT OPERATIONS
     # =========================================================================
 
     async def append_audit_event(self, event: AuditEvent) -> bool:
-        return await self._dual_write("append_audit_event", event)
+        return await self._write_both(
+            "append_audit_event",
+            self._sqlite.append_audit_event(event),
+            self._postgres.append_audit_event(event),
+        )
 
     async def query_audit_events(
         self,
@@ -288,8 +265,8 @@ class DualWriteBackend(DatabaseBackend):
         limit: int = 1000,
         order: str = "asc",
     ) -> List[AuditEvent]:
-        return await self._read_with_fallback(
-            "query_audit_events", agent_id, event_type, start_time, end_time, limit, order
+        return await self._sqlite.query_audit_events(
+            agent_id, event_type, start_time, end_time, limit, order
         )
 
     async def search_audit_events(
@@ -298,33 +275,39 @@ class DualWriteBackend(DatabaseBackend):
         agent_id: Optional[str] = None,
         limit: int = 200,
     ) -> List[AuditEvent]:
-        return await self._read_with_fallback("search_audit_events", query, agent_id, limit)
+        return await self._sqlite.search_audit_events(query, agent_id, limit)
 
     # =========================================================================
     # CALIBRATION OPERATIONS
     # =========================================================================
 
     async def get_calibration(self) -> Dict[str, Any]:
-        return await self._read_with_fallback("get_calibration")
+        return await self._sqlite.get_calibration()
 
     async def update_calibration(self, data: Dict[str, Any]) -> bool:
-        return await self._dual_write("update_calibration", data)
+        return await self._write_both(
+            "update_calibration",
+            self._sqlite.update_calibration(data),
+            self._postgres.update_calibration(data),
+        )
 
     # =========================================================================
-    # GRAPH OPERATIONS (PostgreSQL only)
+    # GRAPH OPERATIONS
     # =========================================================================
 
     async def graph_available(self) -> bool:
-        """Graph is only available via PostgreSQL backend."""
-        return await self._postgres.graph_available()
+        if self._postgres_available:
+            return await self._postgres.graph_available()
+        return False
 
     async def graph_query(
         self,
         cypher: str,
         params: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        """Graph queries go directly to PostgreSQL."""
-        return await self._postgres.graph_query(cypher, params)
+        if self._postgres_available:
+            return await self._postgres.graph_query(cypher, params)
+        return []
 
     # =========================================================================
     # TOOL USAGE OPERATIONS
@@ -340,9 +323,14 @@ class DualWriteBackend(DatabaseBackend):
         error_type: Optional[str] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        return await self._dual_write(
+        return await self._write_both(
             "append_tool_usage",
-            agent_id, session_id, tool_name, latency_ms, success, error_type, payload
+            self._sqlite.append_tool_usage(
+                agent_id, session_id, tool_name, latency_ms, success, error_type, payload
+            ),
+            self._postgres.append_tool_usage(
+                agent_id, session_id, tool_name, latency_ms, success, error_type, payload
+            ),
         )
 
     async def query_tool_usage(
@@ -353,8 +341,8 @@ class DualWriteBackend(DatabaseBackend):
         end_time: Optional[datetime] = None,
         limit: int = 1000,
     ) -> List[Dict[str, Any]]:
-        return await self._read_with_fallback(
-            "query_tool_usage", agent_id, tool_name, start_time, end_time, limit
+        return await self._sqlite.query_tool_usage(
+            agent_id, tool_name, start_time, end_time, limit
         )
 
     # =========================================================================
@@ -365,65 +353,102 @@ class DualWriteBackend(DatabaseBackend):
         self,
         session_id: str,
         paused_agent_id: str,
-        reason: str,
-        scope: str = "general",
-    ) -> bool:
-        return await self._dual_write(
+        reviewer_agent_id: Optional[str] = None,
+        reason: Optional[str] = None,
+        discovery_id: Optional[str] = None,
+        dispute_type: Optional[str] = None,
+        session_type: Optional[str] = None,
+        topic: Optional[str] = None,
+        max_synthesis_rounds: Optional[int] = None,
+        synthesis_round: Optional[int] = None,
+        paused_agent_state: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return await self._write_both(
             "create_dialectic_session",
-            session_id, paused_agent_id, reason, scope
+            self._sqlite.create_dialectic_session(
+                session_id, paused_agent_id, reviewer_agent_id, reason, discovery_id,
+                dispute_type, session_type, topic, max_synthesis_rounds, synthesis_round, paused_agent_state
+            ),
+            self._postgres.create_dialectic_session(
+                session_id, paused_agent_id, reviewer_agent_id, reason, discovery_id,
+                dispute_type, session_type, topic, max_synthesis_rounds, synthesis_round, paused_agent_state
+            ),
         )
 
     async def get_dialectic_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        return await self._read_with_fallback("get_dialectic_session", session_id)
+        return await self._sqlite.get_dialectic_session(session_id)
 
     async def get_dialectic_session_by_agent(
         self,
         agent_id: str,
+        active_only: bool = True,
     ) -> Optional[Dict[str, Any]]:
-        return await self._read_with_fallback("get_dialectic_session_by_agent", agent_id)
+        return await self._sqlite.get_dialectic_session_by_agent(agent_id, active_only)
+
+    async def get_all_active_dialectic_sessions_for_agent(
+        self,
+        agent_id: str,
+    ) -> List[Dict[str, Any]]:
+        return await self._sqlite.get_all_active_dialectic_sessions_for_agent(agent_id)
 
     async def update_dialectic_session_phase(
         self,
         session_id: str,
         phase: str,
     ) -> bool:
-        return await self._dual_write("update_dialectic_session_phase", session_id, phase)
+        return await self._write_both(
+            "update_dialectic_session_phase",
+            self._sqlite.update_dialectic_session_phase(session_id, phase),
+            self._postgres.update_dialectic_session_phase(session_id, phase),
+        )
 
     async def update_dialectic_session_reviewer(
         self,
         session_id: str,
         reviewer_agent_id: str,
     ) -> bool:
-        return await self._dual_write(
+        return await self._write_both(
             "update_dialectic_session_reviewer",
-            session_id, reviewer_agent_id
+            self._sqlite.update_dialectic_session_reviewer(session_id, reviewer_agent_id),
+            self._postgres.update_dialectic_session_reviewer(session_id, reviewer_agent_id),
         )
 
     async def add_dialectic_message(
         self,
         session_id: str,
-        message_type: str,
         agent_id: str,
-        content: str,
-    ) -> bool:
-        return await self._dual_write(
+        message_type: str,
+        root_cause: Optional[str] = None,
+        proposed_conditions: Optional[List[str]] = None,
+        reasoning: Optional[str] = None,
+        observed_metrics: Optional[Dict[str, Any]] = None,
+        concerns: Optional[List[str]] = None,
+        agrees: Optional[bool] = None,
+        signature: Optional[str] = None,
+    ) -> int:
+        return await self._write_both(
             "add_dialectic_message",
-            session_id, message_type, agent_id, content
+            self._sqlite.add_dialectic_message(
+                session_id, agent_id, message_type, root_cause, proposed_conditions,
+                reasoning, observed_metrics, concerns, agrees, signature
+            ),
+            self._postgres.add_dialectic_message(
+                session_id, agent_id, message_type, root_cause, proposed_conditions,
+                reasoning, observed_metrics, concerns, agrees, signature
+            ),
         )
 
     async def resolve_dialectic_session(
         self,
         session_id: str,
-        resolution: str,
-        outcome: Optional[str] = None,
+        resolution: Dict[str, Any],
+        status: str = "resolved",
     ) -> bool:
-        return await self._dual_write(
+        return await self._write_both(
             "resolve_dialectic_session",
-            session_id, resolution, outcome
+            self._sqlite.resolve_dialectic_session(session_id, resolution, status),
+            self._postgres.resolve_dialectic_session(session_id, resolution, status),
         )
 
     async def is_agent_in_active_dialectic_session(self, agent_id: str) -> bool:
-        return await self._read_with_fallback(
-            "is_agent_in_active_dialectic_session",
-            agent_id
-        )
+        return await self._sqlite.is_agent_in_active_dialectic_session(agent_id)

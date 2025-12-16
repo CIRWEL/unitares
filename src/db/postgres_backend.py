@@ -49,7 +49,7 @@ class PostgresBackend(DatabaseBackend):
         self._db_url = os.environ.get("DB_POSTGRES_URL", "postgresql://postgres:postgres@localhost:5432/governance")
         self._min_conn = int(os.environ.get("DB_POSTGRES_MIN_CONN", "2"))
         self._max_conn = int(os.environ.get("DB_POSTGRES_MAX_CONN", "10"))
-        self._age_graph = os.environ.get("DB_AGE_GRAPH", "governance")
+        self._age_graph = os.environ.get("DB_AGE_GRAPH", "governance_graph")
 
     async def init(self) -> None:
         """Initialize connection pool and verify schema."""
@@ -481,6 +481,17 @@ class PostgresBackend(DatabaseBackend):
     async def append_audit_event(self, event: AuditEvent) -> bool:
         async with self._pool.acquire() as conn:
             try:
+                # event_id must be passed as UUID object for asyncpg
+                # Handle invalid UUID strings gracefully by generating new UUID
+                event_id_uuid: uuid.UUID
+                if event.event_id:
+                    try:
+                        event_id_uuid = uuid.UUID(event.event_id)
+                    except (ValueError, AttributeError):
+                        event_id_uuid = uuid.uuid4()  # Invalid format, generate new
+                else:
+                    event_id_uuid = uuid.uuid4()
+
                 await conn.execute(
                     """
                     INSERT INTO audit.events (ts, event_id, agent_id, session_id, event_type, confidence, payload, raw_hash)
@@ -488,7 +499,7 @@ class PostgresBackend(DatabaseBackend):
                     ON CONFLICT DO NOTHING
                     """,
                     event.ts or datetime.now(timezone.utc),
-                    event.event_id or str(uuid.uuid4()),
+                    event_id_uuid,
                     event.agent_id,
                     event.session_id,
                     event.event_type,
@@ -830,7 +841,7 @@ class PostgresBackend(DatabaseBackend):
                     session_id,
                     paused_agent_id,
                     reviewer_agent_id,
-                    "awaiting_thesis",  # Initial phase
+                    "thesis",  # Initial phase (DialecticPhase.THESIS.value)
                     "active",
                     reason,
                     discovery_id,
@@ -903,6 +914,26 @@ class PostgresBackend(DatabaseBackend):
             if row:
                 return await self.get_dialectic_session(row["session_id"])
             return None
+
+    async def get_all_active_dialectic_sessions_for_agent(
+        self,
+        agent_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Get all active sessions where agent is paused agent or reviewer."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT session_id FROM core.dialectic_sessions
+                WHERE (paused_agent_id = $1 OR reviewer_agent_id = $1)
+                AND status = 'active'
+                ORDER BY created_at DESC
+            """, agent_id)
+            
+            sessions = []
+            for row in rows:
+                session = await self.get_dialectic_session(row["session_id"])
+                if session:
+                    sessions.append(session)
+            return sessions
 
     async def update_dialectic_session_phase(
         self,
