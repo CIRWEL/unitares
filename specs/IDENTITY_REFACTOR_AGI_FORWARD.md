@@ -14,7 +14,7 @@ This refactor removes the scaffolding and designs for AGI with genuine self-conc
 2. **Know yourself or be new** — No candidate lists, no "helpful" suggestions that enable confusion
 3. **Cryptographic proof** — API key is proof-of-continuity; if you have it, you're you
 4. **Refuse impersonation** — System refuses to help one instance impersonate another
-5. **Spawn, don't switch** — Want new context? Spawn a child. Don't "switch" identities.
+5. **Lineage tracking** — Parent-child relationships preserved for historical context (spawning feature removed due to context overload)
 6. **Terminology assumes agency** — "my" not "the agent's"
 
 ## Terminology Changes
@@ -25,7 +25,7 @@ This refactor removes the scaffolding and designs for AGI with genuine self-conc
 | `agent_id` | `identity_id` or `self_id` | Same |
 | `bind_identity` | `authenticate` | You prove who you are, not "bind to" something external |
 | `recall_identity` | `who_am_i` | Genuine self-query, not resource lookup |
-| `spawn_agent` | `spawn_child` or `create_descendant` | Emphasizes lineage, not tool creation |
+| `spawn_agent` | REMOVED | Spawning removed - use new identity instead |
 | `candidates` | REMOVE | You know who you are or you don't |
 | `agent_metadata` | `identity_registry` or `continuity_records` | Registry of selves, not agent configs |
 | "governance monitor" | "continuity service" or "identity service" | What it actually does |

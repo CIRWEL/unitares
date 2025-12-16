@@ -3964,7 +3964,7 @@ DEPENDENCIES:
         ),
         
         # ========================================================================
-        # IDENTITY TOOLS - Session binding, recall, and spawn
+        # IDENTITY TOOLS - Session binding and recall
         # ========================================================================
         Tool(
             name="bind_identity",
@@ -3987,8 +3987,7 @@ RETURNS:
   "bound_at": "ISO timestamp",
   "rebind": boolean,
   "provenance": {
-    "parent_agent_id": "string (if spawned)",
-    "spawn_reason": "string",
+    "parent_agent_id": "string (if created via lineage)",
     "lineage_depth": int
   },
   "current_state": {
@@ -4000,7 +3999,6 @@ RETURNS:
 
 RELATED TOOLS:
 - recall_identity: Recover identity if lost
-- spawn_agent: Create child agent with lineage
 - get_agent_api_key: Get API key for binding
 
 EXAMPLE REQUEST:
@@ -4049,8 +4047,7 @@ RETURNS (if bound):
   "api_key_hint": "gk_live_abc123...",
   "bound_at": "ISO timestamp",
   "provenance": {
-    "parent_agent_id": "string (if spawned)",
-    "spawn_reason": "string",
+    "parent_agent_id": "string (if has lineage)",
     "created_at": "ISO timestamp",
     "lineage_depth": int,
     "lineage": ["oldest_ancestor", ..., "parent", "self"]
@@ -4083,7 +4080,6 @@ RETURNS (if not bound):
 
 RELATED TOOLS:
 - bind_identity: Establish identity binding
-- spawn_agent: Create child with lineage
 
 EXAMPLE REQUEST:
 {}
@@ -4095,82 +4091,6 @@ DEPENDENCIES:
                 "type": "object",
                 "properties": {},
                 "required": []
-            }
-        ),
-        Tool(
-            name="spawn_agent",
-            description="""Create a child agent with permanent lineage tracking.
-
-Parent relationship is recorded forever. Enables provenance tree:
-  claude_opus_45
-      ├── cursor_audit_task (spawned for audit)
-      │       └── subtask_001 (spawned for detail)
-      └── research_agent (spawned for research)
-
-USE CASES:
-- Delegate subtask to specialized agent
-- Create child for different context/domain
-- Split work across multiple agents
-- Track provenance in multi-agent systems
-
-RETURNS:
-{
-  "success": true,
-  "message": "Agent 'new_id' spawned from 'parent_id'",
-  "child": {
-    "agent_id": "string",
-    "api_key": "string (full key for child)",
-    "status": "active",
-    "created_at": "ISO timestamp"
-  },
-  "lineage": {
-    "parent_agent_id": "string",
-    "spawn_reason": "string",
-    "lineage_depth": int,
-    "full_lineage": ["ancestor", ..., "parent", "child"]
-  },
-  "next_steps": [...]
-}
-
-RELATED TOOLS:
-- bind_identity: Bind child session to new agent
-- recall_identity: Check lineage
-- get_agent_metadata: View full provenance
-
-EXAMPLE REQUEST:
-{
-  "new_agent_id": "audit_subtask_20251212",
-  "reason": "specialized_code_review",
-  "inherit_tags": true,
-  "initial_notes": "Focused on security audit of auth module"
-}
-
-DEPENDENCIES:
-- Requires: Bound identity (call bind_identity first)
-- Requires: new_agent_id (must be unique)
-- Optional: reason, inherit_tags (default: false), initial_notes
-- Workflow: 1. bind_identity 2. spawn_agent 3. Child calls bind_identity with returned credentials""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "new_agent_id": {
-                        "type": "string",
-                        "description": "Unique identifier for new child agent"
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Why spawning (e.g., 'specialized_task', 'delegation', 'context_overflow')"
-                    },
-                    "inherit_tags": {
-                        "type": "boolean",
-                        "description": "Copy parent's tags to child (default: false)"
-                    },
-                    "initial_notes": {
-                        "type": "string",
-                        "description": "Optional notes for new agent"
-                    }
-                },
-                "required": ["new_agent_id"]
             }
         ),
         Tool(

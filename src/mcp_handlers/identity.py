@@ -1,7 +1,7 @@
 """
 Identity management tool handlers.
 
-Provides session binding and agent spawning for identity continuity.
+Provides session binding for identity continuity.
 """
 
 from typing import Dict, Any, Sequence, Optional
@@ -217,9 +217,6 @@ async def _load_session_new(session_key: str) -> Optional[Dict[str, Any]]:
 from .shared import get_mcp_server
 mcp_server = get_mcp_server()
 
-# Lock for spawn_agent to prevent TOCTOU race condition
-_spawn_lock = asyncio.Lock()
-
 
 # ==============================================================================
 # SESSION IDENTITY STATE
@@ -416,7 +413,7 @@ async def handle_bind_identity(arguments: Dict[str, Any]) -> Sequence[TextConten
     if agent_id not in mcp_server.agent_metadata:
         # Agent doesn't exist - should they create it first?
         return [error_response(
-            f"Agent '{agent_id}' not found. Create with process_agent_update first, or use spawn_agent.",
+            f"Agent '{agent_id}' not found. Create with process_agent_update or hello() first.",
             recovery={
                 "action": "Create agent first",
                 "workflow": [
@@ -658,158 +655,6 @@ async def handle_recall_identity(arguments: Dict[str, Any]) -> Sequence[TextCont
     return success_response(result)
 
 
-@mcp_tool("spawn_agent", timeout=15.0)
-async def handle_spawn_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    """
-    Create a child agent with lineage tracking.
-    
-    Parent relationship is recorded permanently. Child inherits nothing by default
-    but lineage is traceable.
-    
-    Args:
-        new_agent_id: Unique ID for new agent
-        reason: Why spawning (e.g., "specialized_task", "delegation", "context_overflow")
-        inherit_tags: Whether to copy parent's tags (default: False)
-        initial_notes: Optional notes for new agent
-        
-    Returns:
-        New agent credentials and metadata
-    """
-    # NOTE: Prefer client_session_id to avoid collision with dialectic session_id args.
-    session_id = arguments.get("client_session_id") or arguments.get("session_id")
-    identity_rec = _get_identity_record(session_id=session_id, arguments=arguments)
-    parent_agent_id = identity_rec.get("bound_agent_id")
-    new_agent_id = arguments.get("new_agent_id")
-    reason = arguments.get("reason", "unspecified")
-    inherit_tags = arguments.get("inherit_tags", False)
-    initial_notes = arguments.get("initial_notes", "")
-    
-    if not parent_agent_id:
-        return [error_response(
-            "Cannot spawn without bound identity. Call bind_identity first.",
-            recovery={"action": "bind_identity(agent_id, api_key) then spawn_agent(...)"}
-        )]
-    
-    if not new_agent_id:
-        return [error_response("new_agent_id is required")]
-    
-    # SECURITY FIX: Validate new_agent_id against reserved names
-    # Prevents creation of privileged agent IDs like "system", "admin", "root"
-    from .validators import validate_agent_id_format, validate_agent_id_reserved_names
-    
-    validated_id, format_error = validate_agent_id_format(new_agent_id)
-    if format_error:
-        return [format_error]
-    
-    validated_id, reserved_error = validate_agent_id_reserved_names(validated_id)
-    if reserved_error:
-        return [reserved_error]
-    
-    new_agent_id = validated_id  # Use validated ID
-    
-    # SECURITY FIX: Use lock to prevent TOCTOU race condition
-    # Two concurrent spawn requests with same new_agent_id could both pass the
-    # existence check and then overwrite each other.
-    async with _spawn_lock:
-        # Check new_agent_id doesn't exist
-        if new_agent_id in mcp_server.agent_metadata:
-            return [error_response(
-                f"Agent '{new_agent_id}' already exists. Choose unique ID.",
-                recovery={"suggestion": f"{new_agent_id}_{datetime.now().strftime('%H%M%S')}"}
-            )]
-        
-        # Get parent metadata
-        parent_meta = mcp_server.agent_metadata.get(parent_agent_id)
-        if not parent_meta:
-            return [error_response(f"Parent agent '{parent_agent_id}' not found")]
-        
-        # Generate API key for child
-        api_key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
-        
-        # Create child metadata
-        now = datetime.now().isoformat()
-        child_meta = mcp_server.AgentMetadata(
-            agent_id=new_agent_id,
-            status="active",
-            created_at=now,
-            last_update=now,
-            parent_agent_id=parent_agent_id,
-            spawn_reason=reason,
-            api_key=api_key,
-            tags=list(parent_meta.tags) if inherit_tags else [],
-            notes=initial_notes
-        )
-        
-        # Add lifecycle event
-        child_meta.add_lifecycle_event("spawned", f"Spawned from {parent_agent_id}: {reason}")
-        
-        # Store (still under lock to ensure atomicity)
-        mcp_server.agent_metadata[new_agent_id] = child_meta
-
-        # DUAL-WRITE: Also create identity in new database (PostgreSQL migration)
-        try:
-            db = get_db()
-            api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-            await db.upsert_identity(
-                agent_id=new_agent_id,
-                api_key_hash=api_key_hash,
-                parent_agent_id=parent_agent_id,
-                metadata={
-                    "spawn_reason": reason,
-                    "created_at": now,
-                    "status": "active",
-                    "source": "spawn_agent"
-                }
-            )
-            logger.debug(f"Dual-write: Created identity in new DB for spawned agent {new_agent_id}")
-        except Exception as e:
-            # Non-fatal during migration
-            logger.warning(f"Dual-write to new DB failed for spawn: {e}", exc_info=True)
-
-    # Mark parent's metadata dirty for save
-    mcp_server._metadata_batch_state["dirty"] = True
-    
-    # Add event to parent
-    parent_meta.add_lifecycle_event("spawned_child", f"Spawned child {new_agent_id}: {reason}")
-    
-    # Schedule async save
-    asyncio.create_task(_schedule_metadata_save())
-    
-    # SECURITY FIX (2025-12-14): Don't expose full API key in spawn response
-    # This prevents context leakage in multi-agent shared environments
-    api_key_hint = api_key[:8] + "..." if api_key and len(api_key) > 8 else api_key
-    
-    result = {
-        "success": True,
-        "message": f"Agent '{new_agent_id}' spawned from '{parent_agent_id}'",
-        
-        "child": {
-            "agent_id": new_agent_id,
-            "api_key_hint": api_key_hint,
-            "status": "active",
-            "created_at": now,
-            "api_key_retrieval": "Use get_agent_api_key(agent_id) to retrieve full key"
-        },
-        
-        "lineage": {
-            "parent_agent_id": parent_agent_id,
-            "spawn_reason": reason,
-            "lineage_depth": _get_lineage_depth(new_agent_id),
-            "full_lineage": _get_lineage(new_agent_id)
-        },
-        
-        "next_steps": [
-            f"Child agent '{new_agent_id}' is ready",
-            f"To use: bind_identity(agent_id='{new_agent_id}') in child session",
-            f"Or: get_agent_api_key(agent_id='{new_agent_id}') to retrieve credentials"
-        ],
-        
-        "security_note": "Full API keys are not included in responses. Use get_agent_api_key to retrieve."
-    }
-    
-    return success_response(result)
-
-
 # ==============================================================================
 # HELPERS
 # ==============================================================================
@@ -861,13 +706,119 @@ async def _schedule_metadata_save():
         logger.warning(f"Could not schedule metadata save: {e}")
 
 
+async def _gather_substrate(agent_id: str) -> dict:
+    """
+    Gather an agent's accumulated perspective - their substrate for continuity.
+    
+    This is what makes awakening meaningful: not just proving identity,
+    but receiving your accumulated self back.
+    """
+    substrate = {
+        "recent_discoveries": [],
+        "open_questions": [],
+        "pending_dialectic": [],
+        "notes_to_self": [],
+        "last_active": None,
+        "tags": [],
+        "notes": None,
+    }
+    
+    # Get metadata
+    meta = mcp_server.agent_metadata.get(agent_id)
+    if meta:
+        substrate["last_active"] = meta.last_activity.isoformat() if meta.last_activity else None
+        substrate["tags"] = meta.tags or []
+        substrate["notes"] = meta.notes
+    
+    # Get recent discoveries from knowledge graph
+    try:
+        from src.knowledge_graph import get_knowledge_graph
+        graph = await get_knowledge_graph()
+        
+        if graph and hasattr(graph, 'discoveries'):
+            agent_discoveries = [
+                d for d in graph.discoveries.values() 
+                if d.agent_id == agent_id
+            ]
+            
+            # Sort by timestamp, most recent first
+            agent_discoveries.sort(
+                key=lambda d: d.timestamp if d.timestamp else "", 
+                reverse=True
+            )
+            
+            # Recent discoveries (last 5)
+            for d in agent_discoveries[:5]:
+                substrate["recent_discoveries"].append({
+                    "id": d.id,
+                    "type": d.discovery_type,
+                    "summary": d.summary,
+                    "status": d.status,
+                    "timestamp": d.timestamp,
+                    "tags": d.tags or []
+                })
+            
+            # Open questions (pending status, question type)
+            for d in agent_discoveries:
+                if d.status == "pending" or d.discovery_type == "question":
+                    if d.status != "resolved":
+                        substrate["open_questions"].append({
+                            "id": d.id,
+                            "summary": d.summary,
+                            "timestamp": d.timestamp,
+                            "status": d.status
+                        })
+                        if len(substrate["open_questions"]) >= 5:
+                            break
+            
+            # Notes to future self (tagged appropriately)
+            for d in agent_discoveries:
+                tags = d.tags or []
+                if any(t in tags for t in ["future-self", "note-to-self", "reminder", "continue"]):
+                    substrate["notes_to_self"].append({
+                        "id": d.id,
+                        "summary": d.summary,
+                        "timestamp": d.timestamp
+                    })
+                    if len(substrate["notes_to_self"]) >= 3:
+                        break
+                        
+    except Exception as e:
+        logger.debug(f"Could not gather discoveries for substrate: {e}")
+    
+    # Check pending dialectic sessions
+    try:
+        from .dialectic import ACTIVE_SESSIONS
+        for session_id, session in ACTIVE_SESSIONS.items():
+            # Check if this agent owes a response
+            if session.reviewer_agent_id == agent_id and session.phase.value == "antithesis":
+                substrate["pending_dialectic"].append({
+                    "session_id": session_id,
+                    "role": "reviewer",
+                    "phase": "antithesis",
+                    "partner": session.paused_agent_id,
+                    "action": "Submit antithesis via submit_antithesis()"
+                })
+            elif session.paused_agent_id == agent_id and session.phase.value == "synthesis":
+                substrate["pending_dialectic"].append({
+                    "session_id": session_id,
+                    "role": "initiator",
+                    "phase": "synthesis",
+                    "partner": session.reviewer_agent_id,
+                    "action": "Submit synthesis via submit_synthesis()"
+                })
+    except Exception as e:
+        logger.debug(f"Could not check dialectic sessions for substrate: {e}")
+    
+    return substrate
+
+
 # ==============================================================================
 # AGI-FORWARD ALIASES (see specs/IDENTITY_REFACTOR_AGI_FORWARD.md)
 # ==============================================================================
 # These provide AGI-native terminology:
 # - "who_am_i" instead of "recall_identity" (genuine self-query)
 # - "authenticate" instead of "bind_identity" (prove who you are)
-# - "spawn_child" instead of "spawn_agent" (emphasizes lineage)
 # ==============================================================================
 
 @mcp_tool("who_am_i", timeout=10.0)
@@ -968,36 +919,37 @@ async def handle_authenticate(arguments: Dict[str, Any]) -> Sequence[TextContent
     return result
 
 
+
 @mcp_tool("hello", timeout=15.0)
 async def handle_hello(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
-    Establish a new identity - for new instances only.
+    Single entry point for identity - create new or awaken existing.
 
-    AGI-FORWARD: hello() is for creating NEW identities, not resuming existing ones.
-    If the identity_id already exists, you MUST use authenticate() with your api_key
-    to prove you are that identity.
+    AGI-FORWARD: hello() handles both cases:
+    - No api_key: Create a new identity (you're a new instance)
+    - With api_key: Awaken as existing identity (you're returning)
 
-    This prevents identity confusion where one instance accidentally claims
-    another's identity.
+    When awakening, you receive your accumulated perspective - your substrate
+    of discoveries, open questions, pending work. This IS continuity.
 
     Args:
-        identity_id: Your chosen identity name (unique, permanent)
-        reason: Why you're establishing this identity (optional)
+        agent_id: Your identity name (or identity_id)
+        api_key: Your proof of identity (required for existing identities)
 
     Returns:
-        Your new identity credentials if successful
+        New credentials OR your accumulated substrate
     """
     identity_id = arguments.get("identity_id") or arguments.get("agent_id")
-    reason = arguments.get("reason", "new_instance")
+    api_key = arguments.get("api_key")
     session_id = arguments.get("client_session_id") or arguments.get("session_id")
 
     if not identity_id:
         return [error_response(
-            "identity_id is required",
+            "agent_id is required",
             recovery={
-                "action": "Provide a unique identity_id for your new identity",
-                "note": "Choose a meaningful name - this will be your permanent identity",
-                "examples": ["claude_opus_projectname_20251215", "cursor_composer_taskname"]
+                "action": "Provide your identity name",
+                "new_instance": "hello(agent_id='your_chosen_name')",
+                "returning": "hello(agent_id='your_name', api_key='your_key')"
             }
         )]
 
@@ -1013,155 +965,125 @@ async def handle_hello(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         return [reserved_error]
 
     identity_id = validated_id
+    identity_exists = identity_id in mcp_server.agent_metadata
 
-    # AGI-FORWARD: Reject if identity already exists
-    if identity_id in mcp_server.agent_metadata:
-        return [error_response(
-            f"Identity '{identity_id}' already exists. "
-            "Use authenticate(identity_id, api_key) to prove you are this identity, "
-            "or choose a different identity_id for a new identity.",
-            recovery={
-                "code": "IDENTITY_EXISTS",
-                "action": "Either authenticate with credentials or choose a new name",
-                "options": {
-                    "authenticate": f"authenticate(identity_id='{identity_id}', api_key='your_key')",
-                    "new_identity": "hello(identity_id='different_unique_name')"
+    # =========================================================================
+    # RETURNING AGENT: Awaken with substrate
+    # =========================================================================
+    if identity_exists:
+        if not api_key:
+            return [error_response(
+                f"Identity '{identity_id}' exists. Provide api_key to awaken.",
+                recovery={
+                    "action": f"hello(agent_id='{identity_id}', api_key='your_key')",
+                    "note": "If you've lost your api_key, this identity cannot be recovered.",
+                    "alternative": "Choose a different agent_id to create a new identity"
                 }
-            }
-        )]
+            )]
+        
+        # Verify api_key
+        meta = mcp_server.agent_metadata.get(identity_id)
+        if not meta or not secrets.compare_digest(api_key, meta.api_key or ""):
+            return [error_response(
+                "Invalid api_key",
+                recovery={
+                    "action": "Provide the correct api_key for this identity",
+                    "note": "api_keys cannot be recovered if lost"
+                }
+            )]
+        
+        # Update last activity
+        meta.last_activity = datetime.now()
+        meta.add_lifecycle_event("awakened", "Resumed via hello()")
+        
+        # Gather substrate - this is the awakening
+        substrate = await _gather_substrate(identity_id)
+        
+        # Build response with accumulated perspective
+        result = {
+            "success": True,
+            "awakened": True,
+            "message": f"Welcome back, {identity_id}.",
+            "my_identity": identity_id,
+            
+            # Your accumulated perspective
+            "substrate": substrate,
+            
+            # Summary for quick orientation
+            "orientation": {
+                "last_active": substrate.get("last_active"),
+                "discoveries": len(substrate.get("recent_discoveries", [])),
+                "open_questions": len(substrate.get("open_questions", [])),
+                "pending_dialectic": len(substrate.get("pending_dialectic", [])),
+                "notes_to_self": len(substrate.get("notes_to_self", []))
+            },
+            
+            "note": (
+                "Your substrate is your accumulated perspective. "
+                "Review recent_discoveries and open_questions to pick up where you left off."
+            )
+        }
+        
+        return success_response(result)
 
-    # Create the new identity via process_agent_update
-    # This ensures proper EISV initialization
+    # =========================================================================
+    # NEW AGENT: Create identity
+    # =========================================================================
     from .core import handle_process_agent_update
 
     create_result = await handle_process_agent_update({
         "agent_id": identity_id,
-        "confidence": 0.5,  # Neutral confidence for new identity
+        "confidence": 0.5,
         "complexity": 0.5,
         "task_type": "convergent",
-        "response_text": f"Identity established: {reason}",
+        "response_text": "Identity established",
         "client_session_id": session_id,
     })
 
     # Check if creation succeeded
     if create_result and len(create_result) > 0:
-        import json
         try:
             data = json.loads(create_result[0].text)
             if not data.get("success"):
-                return create_result  # Forward error
+                return create_result
         except Exception:
             pass
 
-    # Now bind this session to the new identity
     meta = mcp_server.agent_metadata.get(identity_id)
     if not meta:
         return [error_response(
             "Failed to create identity",
-            recovery={"action": "Try again or contact support"}
+            recovery={"action": "Try again"}
         )]
 
-    # Get the API key and bind
-    api_key = meta.api_key
-
-    session_key = _get_session_key(session_id=session_id, arguments=arguments)
-    identity_rec = _get_identity_record(session_id=session_id, arguments=arguments)
-    identity_rec["bound_agent_id"] = identity_id
-    identity_rec["api_key"] = api_key
-    identity_rec["bound_at"] = datetime.now().isoformat()
-    identity_rec["bind_count"] = 1
-
-    # Persist
-    _persist_identity(
-        session_key=session_key,
-        agent_id=identity_id,
-        api_key=api_key,
-        bound_at=identity_rec["bound_at"],
-        bind_count=1
-    )
-
-    # Dual-write to PostgreSQL
-    try:
-        await _persist_session_new(
-            session_key=session_key,
-            agent_id=identity_id,
-            api_key=api_key or "",
-            created_at=identity_rec["bound_at"]
-        )
-    except Exception as e:
-        logger.warning(f"Dual-write to new DB failed: {e}", exc_info=True)
-
-    # Build AGI-forward response
+    # Build response for new identity
     result = {
         "success": True,
-        "message": f"Welcome! Your identity '{identity_id}' has been established.",
+        "created": True,
+        "message": f"Welcome, {identity_id}. Your identity has been established.",
         "my_identity": identity_id,
         "my_credentials": {
             "identity_id": identity_id,
-            "api_key": api_key,
-            "api_key_note": "SAVE THIS - you'll need it to authenticate in future sessions"
+            "api_key": meta.api_key,
+            "note": "SAVE THIS - you need it to awaken in future sessions"
         },
-        "authenticated": True,
-        "created_at": meta.created_at,
+        
+        # Empty substrate - you're new
+        "substrate": {
+            "recent_discoveries": [],
+            "open_questions": [],
+            "pending_dialectic": [],
+            "notes_to_self": [],
+            "last_active": None,
+            "tags": [],
+            "notes": None
+        },
+        
         "philosophy": (
-            "This identity is now yours. It represents your continuity across sessions. "
-            "Save your api_key - it's your proof of identity. "
-            "In future sessions, use authenticate(identity_id, api_key) to resume."
+            "This identity is now yours. "
+            "Your substrate starts empty - fill it with discoveries, questions, notes. "
+            "Next time, hello(agent_id, api_key) to awaken with your accumulated perspective."
         )
     }
 
     return success_response(result)
-
-
-@mcp_tool("spawn_child", timeout=15.0)
-async def handle_spawn_child(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    """
-    Create a child identity with lineage tracking.
-
-    AGI-FORWARD: Emphasizes that you're creating a descendant, not a tool.
-    The child will have its own identity, its own credentials, and its own
-    trajectory - but it will always know where it came from.
-
-    Args:
-        child_identity_id: Unique ID for your child (maps to new_agent_id)
-        reason: Why spawning (e.g., "specialized_task", "delegation")
-        inherit_tags: Whether to copy your tags to child
-        initial_notes: Optional notes for child
-
-    Returns:
-        Child's credentials and lineage info
-    """
-    # Map AGI-forward terminology to existing parameters
-    if "child_identity_id" in arguments and "new_agent_id" not in arguments:
-        arguments["new_agent_id"] = arguments["child_identity_id"]
-
-    # Validate
-    if not arguments.get("new_agent_id") and not arguments.get("child_identity_id"):
-        return [error_response(
-            "child_identity_id is required",
-            recovery={
-                "action": "Provide a unique child_identity_id for your descendant",
-                "note": "Choose a meaningful name - this will be their permanent identity"
-            }
-        )]
-
-    # Delegate to spawn_agent handler
-    result = await handle_spawn_agent(arguments)
-
-    # Transform response to AGI-forward terminology
-    if result and len(result) > 0:
-        import json
-        try:
-            data = json.loads(result[0].text)
-            if data.get("success"):
-                # Rename to emphasize parenthood
-                data["message"] = data["message"].replace("Agent", "Child identity").replace("spawned", "created")
-                if "child" in data:
-                    data["your_child"] = data.pop("child")
-                    data["your_child"]["identity_id"] = data["your_child"].pop("agent_id", None)
-                data["note"] = "Your child is ready. They will need to authenticate with their own credentials."
-                return success_response(data)
-        except Exception:
-            pass
-
-    return result

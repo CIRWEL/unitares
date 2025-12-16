@@ -39,7 +39,9 @@
       "Bash(/Users/cirwel/projects/governance-mcp-v1/scripts/check_health.sh:*)",
       "Bash(git -C /Users/cirwel/projects/governance-mcp-v1 diff --stat HEAD)",
       "Bash(true find . -name *.md -type f ! -path ./.git/* ! -path ./.pytest_cache/* ! -path */archive/* ! -path */.agent-guides/*)",
-      "Bash(.git/hooks/pre-commit)"
+      "Bash(.git/hooks/pre-commit)",
+      "Bash(while read f)",
+      "Bash(do echo '=== $f ===')"
     ],
     "deny": [],
     "ask": []

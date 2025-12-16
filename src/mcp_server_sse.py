@@ -805,27 +805,6 @@ async def recall_identity(ctx: Context = None) -> str:
         args["client_session_id"] = session_id
     return await get_tool_wrapper("recall_identity")(**args)
 
-@tool_no_schema(description="Spawn a child agent with lineage (requires bound identity; SSE-safe per client)")
-async def spawn_agent(
-    new_agent_id: str,
-    reason: str | None = None,
-    inherit_tags: bool = False,
-    initial_notes: str | None = None,
-    ctx: Context = None
-) -> str:
-    session_id = _session_id_from_ctx(ctx)
-    args: Dict[str, Any] = {
-        "new_agent_id": new_agent_id,
-        "inherit_tags": inherit_tags,
-    }
-    if reason is not None:
-        args["reason"] = reason
-    if initial_notes is not None:
-        args["initial_notes"] = initial_notes
-    if session_id:
-        args["client_session_id"] = session_id
-    return await get_tool_wrapper("spawn_agent")(**args)
-
 @tool_no_schema(description="Get complete metadata for an agent")
 async def get_agent_metadata(agent_id: str) -> str:
     return await get_tool_wrapper("get_agent_metadata")(agent_id=agent_id)

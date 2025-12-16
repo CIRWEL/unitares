@@ -1159,7 +1159,6 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             "get_related_discoveries_graph",
             "get_response_chain_graph",
             "get_knowledge_graph",  # Advanced knowledge graph lookup (less common than search)
-            "spawn_agent",  # Advanced: Create child agents with lineage
         }
     }
     
@@ -1418,11 +1417,6 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             "related_to": ["bind_identity", "get_agent_api_key"],
             "category": "identity"
         },
-        "spawn_agent": {
-            "depends_on": ["get_agent_api_key"],
-            "related_to": ["list_agents", "bind_identity"],
-            "category": "identity"
-        },
         # Admin Tools
         "backfill_calibration_from_dialectic": {
             "depends_on": ["check_calibration"],
@@ -1647,7 +1641,7 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             "export": ["get_system_history", "export_to_file"],
             "knowledge": ["store_knowledge_graph", "search_knowledge_graph", "get_knowledge_graph", "list_knowledge_graph", "find_similar_discoveries_graph", "get_discovery_details", "get_related_discoveries_graph", "get_response_chain_graph", "reply_to_question", "leave_note", "update_discovery_status_graph"],
             "dialectic": ["request_dialectic_review", "request_exploration_session", "submit_thesis", "submit_antithesis", "submit_synthesis", "get_dialectic_session", "nudge_dialectic_session"],
-            "identity": ["bind_identity", "recall_identity", "spawn_agent"],
+            "identity": ["bind_identity", "recall_identity"],
             "admin": ["reset_monitor", "get_server_info", "health_check", "check_calibration", "update_calibration_ground_truth", "get_telemetry_metrics", "get_tool_usage_stats", "list_tools", "describe_tool", "cleanup_stale_locks", "backfill_calibration_from_dialectic", "validate_file_path"],
             "workspace": ["get_workspace_health"]
         },

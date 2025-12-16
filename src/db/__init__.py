@@ -22,7 +22,7 @@ Usage:
     events = await db.query_audit_events(agent_id=agent_id, limit=100)
 
     # Graph operations (AGE only, graceful fallback on SQLite)
-    await db.graph_query("MATCH (a:Agent)-[:SPAWNED]->(b:Agent) RETURN a, b")
+    await db.graph_query("MATCH (a:Agent)-[:COLLABORATED]->(b:Agent) RETURN a, b")
 
 Configuration (environment variables):
     DB_BACKEND=sqlite|postgres|dual  (default: sqlite)

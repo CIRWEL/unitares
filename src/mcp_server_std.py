@@ -1627,94 +1627,6 @@ SERVER_START_TIME = datetime.now()
 # - cleanup_stale_processes() scans processes (can be slow)
 
 
-async def spawn_agent_with_inheritance(
-    new_agent_id: str,
-    parent_agent_id: str,
-    spawn_reason: str = "spawned",
-    inheritance_factor: float = 0.7
-) -> UNITARESMonitor:
-    """
-    Spawn a new agent with inherited state from parent.
-    
-    Args:
-        new_agent_id: ID for the new agent
-        parent_agent_id: ID of parent agent to inherit from
-        spawn_reason: Reason for spawning (e.g., "new_domain", "parent_archived")
-        inheritance_factor: How much state to inherit (0.0-1.0, default 0.7 = 70%)
-    
-    Returns:
-        New UNITARESMonitor with inherited state
-    """
-    # Check parent exists
-    if parent_agent_id not in agent_metadata:
-        raise ValueError(f"Parent agent '{parent_agent_id}' not found")
-    
-    # Get or create parent monitor to access state
-    parent_monitor = get_or_create_monitor(parent_agent_id)
-    parent_state = parent_monitor.state
-    parent_meta = agent_metadata[parent_agent_id]
-    
-    # Create new monitor
-    new_monitor = UNITARESMonitor(new_agent_id, load_state=False)
-    new_state = new_monitor.state
-    
-    # Inherit thermodynamic state (scaled by inheritance_factor)
-    new_state.E = parent_state.E * inheritance_factor + (1 - inheritance_factor) * 0.5
-    new_state.I = parent_state.I * inheritance_factor + (1 - inheritance_factor) * 0.5
-    new_state.S = parent_state.S * (1 - inheritance_factor * 0.5)  # Reset entropy more
-    new_state.V = parent_state.V * inheritance_factor * 0.5  # Reset void more
-    
-    # Inherit coherence (scaled)
-    new_state.coherence = parent_state.coherence * inheritance_factor + (1 - inheritance_factor) * 1.0
-    
-    # Inherit lambda1 (scaled toward default)
-    from config.governance_config import GovernanceConfig
-    config = GovernanceConfig()
-    default_lambda1 = (config.LAMBDA1_MIN + config.LAMBDA1_MAX) / 2
-    new_state.lambda1 = parent_state.lambda1 * inheritance_factor + default_lambda1 * (1 - inheritance_factor)
-    
-    # Inherit risk (scaled down, but with minimum based on parent)
-    parent_risk = getattr(parent_state, 'risk_score', None)
-    if parent_risk is not None:
-        # Inherit 50% of parent risk, but cap at 15% initial
-        inherited_risk = min(parent_risk * 0.5, 0.15)
-        # If parent was critical, new agent starts with at least 5% risk
-        if parent_risk >= 0.30:
-            inherited_risk = max(inherited_risk, 0.05)
-        new_state.risk_score = inherited_risk
-    
-    # Copy some history (scaled down)
-    history_length = min(len(parent_state.V_history), 100)  # Max 100 entries
-    if history_length > 0:
-        new_state.V_history = parent_state.V_history[-history_length:].copy()
-        new_state.coherence_history = parent_state.coherence_history[-history_length:].copy() if hasattr(parent_state, 'coherence_history') else []
-        new_state.risk_history = parent_state.risk_history[-history_length:].copy() if hasattr(parent_state, 'risk_history') else []
-    
-    # Create metadata with spawn tracking
-    now = datetime.now().isoformat()
-    new_meta = AgentMetadata(
-        agent_id=new_agent_id,
-        status="active",
-        created_at=now,
-        last_update=now,
-        parent_agent_id=parent_agent_id,
-        spawn_reason=spawn_reason,
-        tags=["spawned", f"parent:{parent_agent_id}"],
-        notes=f"Spawned from '{parent_agent_id}' ({spawn_reason}). Inherited {inheritance_factor*100:.0f}% of thermodynamic state."
-    )
-    new_meta.add_lifecycle_event("spawned", f"From {parent_agent_id}: {spawn_reason}")
-    
-    agent_metadata[new_agent_id] = new_meta
-    monitors[new_agent_id] = new_monitor
-    
-    # Save metadata using async version for batched updates
-    await schedule_metadata_save(force=True)  # Force immediate save for critical operation
-    
-    logger.info(f"Spawned agent '{new_agent_id}' from '{parent_agent_id}' (inheritance: {inheritance_factor*100:.0f}%)")
-    
-    return new_monitor
-
-
 def get_or_create_monitor(agent_id: str) -> UNITARESMonitor:
     """Get existing monitor or create new one with metadata, loading state if it exists"""
     # Ensure metadata exists
@@ -1755,28 +1667,6 @@ def check_agent_id_default(agent_id: str) -> str | None:
     if not agent_id or agent_id == "default_agent":
         return "⚠️ Using default agent_id. For multi-agent systems, specify explicit agent_id to avoid state mixing."
     return None
-
-
-def check_spawn_warning(agent_id: str) -> tuple[bool, str]:
-    """
-    Check if spawning might be inappropriate (e.g., similar active agent exists).
-    
-    Returns:
-        (should_warn, warning_message)
-    """
-    # Check for similar active agents (same prefix/base)
-    base_parts = agent_id.split("_")[:2]  # First 2 parts (e.g., "claude_code" from "claude_code_cli_session")
-    if len(base_parts) >= 2:
-        base_pattern = "_".join(base_parts)
-        similar_agents = [
-            aid for aid, meta in agent_metadata.items()
-            if aid.startswith(base_pattern) and meta.status == "active" and aid != agent_id
-        ]
-        
-        if similar_agents:
-            return True, f"Found similar active agent(s): {', '.join(similar_agents[:3])}. Consider self-updating instead of spawning to maintain identity and accountability."
-    
-    return False, ""
 
 
 def _detect_ci_status() -> bool:
@@ -2727,20 +2617,20 @@ def build_standardized_agent_info(
             state_info["error"] = str(e)
             state_info["metrics_available"] = False
     
-    # Build spawn relationship info
-    spawn_info = None
+    # Build lineage relationship info (if agent has a parent)
+    lineage_info = None
     if meta.parent_agent_id:
-        spawn_info = {
+        lineage_info = {
             "parent_agent_id": meta.parent_agent_id,
-            "spawn_reason": meta.spawn_reason or "spawned",
-            "is_spawned": True
+            "creation_reason": meta.spawn_reason or "created",
+            "has_lineage": True
         }
         # Check if parent still exists
         if meta.parent_agent_id in agent_metadata:
             parent_meta = agent_metadata[meta.parent_agent_id]
-            spawn_info["parent_status"] = parent_meta.status
+            lineage_info["parent_status"] = parent_meta.status
         else:
-            spawn_info["parent_status"] = "deleted"
+            lineage_info["parent_status"] = "deleted"
     
     # Build standardized structure
     return {
@@ -2756,7 +2646,7 @@ def build_standardized_agent_info(
             "total_updates": meta.total_updates,
             "tags": meta.tags or [],
             "notes_preview": notes_preview,
-            "spawn_info": spawn_info
+            "lineage_info": lineage_info
         },
         "state": state_info
     }

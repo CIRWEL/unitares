@@ -90,24 +90,4 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Function to record a SPAWNED relationship
-CREATE OR REPLACE FUNCTION core.record_spawn(p_parent_id TEXT, p_child_id TEXT, p_reason TEXT DEFAULT NULL)
-RETURNS VOID AS $$
-BEGIN
-    -- Ensure both agents exist
-    PERFORM core.sync_agent_to_graph(p_parent_id);
-    PERFORM core.sync_agent_to_graph(p_child_id);
-
-    -- Create edge
-    EXECUTE format(
-        $q$SELECT * FROM cypher('governance_graph', $$
-            MATCH (parent:Agent {agent_id: '%s'}), (child:Agent {agent_id: '%s'})
-            CREATE (parent)-[:SPAWNED {reason: '%s', ts: datetime()}]->(child)
-        $$) as (e agtype)$q$,
-        p_parent_id, p_child_id, COALESCE(p_reason, 'unknown')
-    );
-END;
-$$ LANGUAGE plpgsql;
-
 COMMENT ON FUNCTION core.sync_agent_to_graph IS 'Sync agent identity to AGE graph';
-COMMENT ON FUNCTION core.record_spawn IS 'Record agent spawn relationship in graph';
