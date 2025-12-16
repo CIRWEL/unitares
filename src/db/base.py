@@ -376,6 +376,14 @@ class DatabaseBackend(ABC):
         pass
 
     @abstractmethod
+    async def get_all_active_dialectic_sessions_for_agent(
+        self,
+        agent_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Get all active sessions where agent is paused agent or reviewer."""
+        pass
+
+    @abstractmethod
     async def update_dialectic_session_phase(
         self,
         session_id: str,
