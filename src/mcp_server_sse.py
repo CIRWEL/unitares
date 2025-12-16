@@ -623,12 +623,14 @@ def get_tool_wrapper(tool_name: str):
 
 # Health & Admin tools
 @tool_no_schema(description="🚀 SIMPLEST ONBOARDING - hello() shows last active, hello(agent_id='name') to register/resume")
-async def hello(agent_id: str = None) -> dict:
-    """hello() asks 'is this you?', hello(agent_id='name') registers or resumes that agent."""
+async def hello(agent_id: str = None, api_key: str = None) -> dict:
+    """hello() asks 'is this you?', hello(agent_id='name', api_key='key') resumes that agent."""
+    args = {}
     if agent_id:
-        return await get_tool_wrapper("hello")(agent_id=agent_id)
-    else:
-        return await get_tool_wrapper("hello")()
+        args["agent_id"] = agent_id
+    if api_key:
+        args["api_key"] = api_key
+    return await get_tool_wrapper("hello")(**args) if args else await get_tool_wrapper("hello")()
 
 @tool_no_schema(description="🔍 IDENTITY RECOVERY - Find yourself after session restart. No args needed.")
 async def who_am_i() -> dict:
