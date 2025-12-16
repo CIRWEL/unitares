@@ -299,8 +299,8 @@ def resource_not_found_error(
 
 
 def system_error(
-    tool_name: str, 
-    error: Exception, 
+    tool_name: str,
+    error: Exception,
     context: Optional[Dict[str, Any]] = None
 ) -> Sequence[TextContent]:
     """Standard error for system errors"""
@@ -310,6 +310,59 @@ def system_error(
         error_category="system_error",
         details={"error_type": "system_error", "tool_name": tool_name, "exception_type": type(error).__name__},
         recovery=RECOVERY_PATTERNS["system_error"],
+        context=context or {}
+    )]
+
+
+def tool_not_found_error(
+    tool_name: str,
+    available_tools: list,
+    context: Optional[Dict[str, Any]] = None
+) -> Sequence[TextContent]:
+    """
+    Elegant error for unknown tool with fuzzy suggestions.
+
+    Uses difflib to find similar tool names and provides helpful recovery.
+    """
+    import difflib
+
+    # Find similar tool names (fuzzy match)
+    similar = difflib.get_close_matches(tool_name, available_tools, n=3, cutoff=0.4)
+
+    # Build helpful message
+    if similar:
+        suggestions_str = ", ".join(f"'{s}'" for s in similar)
+        message = f"Tool '{tool_name}' not found. Did you mean: {suggestions_str}?"
+    else:
+        message = f"Tool '{tool_name}' not found."
+
+    # Categorize tools for discovery
+    common_tools = [t for t in available_tools if t in {
+        'process_agent_update', 'bind_identity', 'search_knowledge_graph',
+        'list_agents', 'health_check', 'list_tools', 'get_agent_api_key'
+    }]
+
+    return [error_response(
+        message,
+        error_code="TOOL_NOT_FOUND",
+        error_category="validation_error",
+        details={
+            "error_type": "tool_not_found",
+            "requested_tool": tool_name,
+            "similar_tools": similar,
+            "total_available": len(available_tools)
+        },
+        recovery={
+            "action": "Use list_tools to see all available tools, or try a suggested alternative",
+            "related_tools": ["list_tools", "health_check"] + similar[:2],
+            "workflow": [
+                "1. Check the tool name spelling",
+                f"2. Try one of the suggested alternatives: {similar}" if similar else "2. Use list_tools to browse available tools",
+                "3. Use describe_tool(tool_name) to see tool details"
+            ],
+            "suggestions": similar,
+            "common_tools": common_tools[:5]
+        },
         context=context or {}
     )]
 

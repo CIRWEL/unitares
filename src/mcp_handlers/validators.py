@@ -35,7 +35,7 @@ TOOL_PARAM_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "required": ["agent_id", "summary"],
         "optional": {
             # LITE-FIRST: defaults to "note" (simplest form)
-            "discovery_type": {"type": "enum", "values": ["bug_found", "insight", "pattern", "improvement", "question", "answer", "note"], "default": "note"},
+            "discovery_type": {"type": "enum", "values": ["bug_found", "insight", "pattern", "improvement", "question", "answer", "note", "exploration"], "default": "note"},
             "severity": {"type": "enum", "values": ["low", "medium", "high", "critical"], "default": "medium"},
             "tags": {"type": "list"},
             "details": {"type": "string"},
@@ -48,7 +48,7 @@ TOOL_PARAM_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "optional": {
             "query": {"type": "string"},
             "agent_id": {"type": "string"},
-            "discovery_type": {"type": "enum", "values": ["bug_found", "insight", "pattern", "improvement", "question", "answer", "note"]},
+            "discovery_type": {"type": "enum", "values": ["bug_found", "insight", "pattern", "improvement", "question", "answer", "note", "exploration"]},
             "tags": {"type": "list"},
             "semantic": {"type": "bool", "default": False},
             "include_provenance": {"type": "bool", "default": False},  # Include provenance & lineage chain
@@ -304,7 +304,7 @@ def _format_param_error(
 
 
 # Enum definitions for validation
-DISCOVERY_TYPES = {"bug_found", "insight", "pattern", "improvement", "question", "answer", "note"}
+DISCOVERY_TYPES = {"bug_found", "insight", "pattern", "improvement", "question", "answer", "note", "exploration"}
 SEVERITY_LEVELS = {"low", "medium", "high", "critical"}
 DISCOVERY_STATUSES = {"open", "resolved", "archived", "disputed"}
 TASK_TYPES = {"convergent", "divergent", "mixed"}

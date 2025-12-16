@@ -18,8 +18,12 @@ from .decorators import mcp_tool
 from src.logging_utils import get_logger
 import sqlite3
 from pathlib import Path
+import hashlib
 
 logger = get_logger(__name__)
+
+# New database abstraction (for PostgreSQL migration)
+from src.db import get_db
 
 # =============================================================================
 # SQLite Persistence for Session Identities
@@ -139,6 +143,75 @@ def _cleanup_old_identities(max_age_days: int = 7) -> int:
     finally:
         if conn:
             conn.close()
+
+
+# ==============================================================================
+# NEW DATABASE ABSTRACTION (PostgreSQL Migration - Dual Write)
+# ==============================================================================
+
+async def _persist_session_new(
+    session_key: str,
+    agent_id: str,
+    api_key: str,
+    created_at: str
+) -> bool:
+    """Persist session to new database abstraction (PostgreSQL). Returns True on success."""
+    try:
+        db = get_db()
+
+        # First ensure identity exists
+        api_key_hash = hashlib.sha256(api_key.encode()).hexdigest() if api_key else ""
+        identity = await db.get_identity(agent_id)
+
+        if not identity:
+            # Create identity if it doesn't exist
+            await db.upsert_identity(agent_id, api_key_hash, metadata={"source": "session_binding"})
+            identity = await db.get_identity(agent_id)
+
+        if not identity:
+            logger.warning(f"Could not create/fetch identity for {agent_id}")
+            return False
+
+        # Create session (expires in 24 hours by default)
+        from datetime import datetime, timedelta
+        expires_at = datetime.now() + timedelta(hours=24)
+
+        success = await db.create_session(
+            session_id=session_key,
+            identity_id=identity.identity_id,
+            expires_at=expires_at,
+            client_type="mcp",
+            client_info={"agent_id": agent_id}
+        )
+
+        if success:
+            logger.debug(f"Persisted session to new DB: {session_key} -> {agent_id}")
+        return success
+
+    except Exception as e:
+        logger.warning(f"Could not persist session to new DB: {e}", exc_info=True)
+        return False
+
+
+async def _load_session_new(session_key: str) -> Optional[Dict[str, Any]]:
+    """Load session from new database abstraction. Returns None if not found."""
+    try:
+        db = get_db()
+        session = await db.get_session(session_key)
+
+        if session:
+            return {
+                "bound_agent_id": session.agent_id,
+                "api_key": None,  # Don't return plaintext key
+                "bound_at": session.created_at.isoformat(),
+                "bind_count": 1,  # Legacy field, not tracked in new schema
+            }
+        return None
+
+    except Exception as e:
+        logger.warning(f"Could not load session from new DB: {e}", exc_info=True)
+        return None
+
 
 # Get mcp_server_std module (using shared utility)
 from .shared import get_mcp_server
@@ -389,7 +462,7 @@ async def handle_bind_identity(arguments: Dict[str, Any]) -> Sequence[TextConten
     # Trigger metadata save to persist active_session_key to agent_metadata table
     asyncio.create_task(_schedule_metadata_save())
 
-    # PERSISTENCE FIX: Save to SQLite for cross-restart persistence
+    # PERSISTENCE FIX: Save to SQLite for cross-restart persistence (OLD)
     _persist_identity(
         session_key=session_key,
         agent_id=agent_id,
@@ -397,6 +470,18 @@ async def handle_bind_identity(arguments: Dict[str, Any]) -> Sequence[TextConten
         bound_at=identity_rec["bound_at"],
         bind_count=identity_rec["bind_count"]
     )
+
+    # DUAL-WRITE: Also persist to new database abstraction (PostgreSQL migration)
+    try:
+        await _persist_session_new(
+            session_key=session_key,
+            agent_id=agent_id,
+            api_key=actual_api_key or "",
+            created_at=identity_rec["bound_at"]
+        )
+    except Exception as e:
+        # Non-fatal during migration - log but don't fail the binding
+        logger.warning(f"Dual-write to new DB failed: {e}", exc_info=True)
 
     # Audit log for identity forensics (Qwen audit recommendation #4)
     try:
@@ -471,8 +556,10 @@ async def handle_recall_identity(arguments: Dict[str, Any]) -> Sequence[TextCont
     identity_rec = _get_identity_record(session_id=session_id, arguments=arguments)
     agent_id = identity_rec.get("bound_agent_id")
     
-    # NOTE: Removed flawed fallback that returned ANY agent with active_session_key.
-    # If session key doesn't match, return "not bound" - don't guess wrong.
+    # NOTE: No fallback heuristics here. "Ask, don't guess."
+    # If session key doesn't match exactly, return "not bound" and let agent
+    # explicitly call bind_identity() or quick_start(). This prevents identity
+    # pollution where agents accidentally inherit another agent's identity.
     
     if not agent_id:
         # AGI-FORWARD DESIGN: No candidate lists, no "helpful" suggestions.
@@ -658,7 +745,27 @@ async def handle_spawn_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]
         
         # Store (still under lock to ensure atomicity)
         mcp_server.agent_metadata[new_agent_id] = child_meta
-    
+
+        # DUAL-WRITE: Also create identity in new database (PostgreSQL migration)
+        try:
+            db = get_db()
+            api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+            await db.upsert_identity(
+                agent_id=new_agent_id,
+                api_key_hash=api_key_hash,
+                parent_agent_id=parent_agent_id,
+                metadata={
+                    "spawn_reason": reason,
+                    "created_at": now,
+                    "status": "active",
+                    "source": "spawn_agent"
+                }
+            )
+            logger.debug(f"Dual-write: Created identity in new DB for spawned agent {new_agent_id}")
+        except Exception as e:
+            # Non-fatal during migration
+            logger.warning(f"Dual-write to new DB failed for spawn: {e}", exc_info=True)
+
     # Mark parent's metadata dirty for save
     mcp_server._metadata_batch_state["dirty"] = True
     

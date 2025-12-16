@@ -58,6 +58,7 @@ from .admin import (
     handle_get_workspace_health,
     handle_get_tool_usage_stats,
     handle_validate_file_path,
+    handle_quick_start,
 )
 # REMOVED: Knowledge layer handlers (archived November 28, 2025)
 # See docs/archive/KNOWLEDGE_LAYER_EXPERIMENT.md
@@ -105,7 +106,7 @@ from .identity import (
 from .utils import error_response, success_response
 
 # Error helpers (for exception handlers)
-from .error_helpers import timeout_error, system_error, rate_limit_error
+from .error_helpers import timeout_error, system_error, rate_limit_error, tool_not_found_error
 
 # Decorator utilities
 from .decorators import get_tool_registry as get_decorator_registry, get_tool_timeout
@@ -162,7 +163,8 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
     
     handler = TOOL_HANDLERS.get(name)
     if handler is None:
-        return None  # Signal to fallback to legacy elif chain
+        # Return helpful error with fuzzy suggestions instead of None
+        return tool_not_found_error(name, list(TOOL_HANDLERS.keys()))
     
     # Special rate limiting for expensive read-only tools (like list_agents)
     # These tools bypass general rate limiting but need protection against loops

@@ -137,7 +137,7 @@ governance-mcp-v1/
 │   ├── governance_monitor.py   # Core EISV dynamics
 │   ├── mcp_server_std.py       # MCP server (stdio)
 │   ├── mcp_server_sse.py       # MCP server (SSE multi-client)
-│   └── mcp_handlers/           # 49 tools across 13 files
+│   └── mcp_handlers/           # 58 tools across 13 files
 ├── governance_core/            # Pure dynamics implementation
 ├── config/                     # Configuration files
 ├── data/                       # Runtime data (auto-created)
