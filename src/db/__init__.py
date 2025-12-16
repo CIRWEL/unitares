@@ -1,8 +1,7 @@
 """
 Database Abstraction Layer
 
-Provides a unified interface for SQLite (current) and PostgreSQL+AGE (future) backends.
-Supports dual-write during migration and seamless cutover.
+Provides a unified interface for PostgreSQL+AGE (primary) with SQLite fallback.
 
 Usage:
     from src.db import get_db
@@ -21,14 +20,13 @@ Usage:
     await db.append_audit_event(event)
     events = await db.query_audit_events(agent_id=agent_id, limit=100)
 
-    # Graph operations (AGE only, graceful fallback on SQLite)
+    # Graph operations (AGE)
     await db.graph_query("MATCH (a:Agent)-[:COLLABORATED]->(b:Agent) RETURN a, b")
 
 Configuration (environment variables):
-    DB_BACKEND=sqlite|postgres|dual  (default: sqlite)
+    DB_BACKEND=postgres|sqlite|dual  (default: postgres)
     DB_POSTGRES_URL=postgresql://user:pass@host:port/db
-    DB_SQLITE_PATH=data/governance.db
-    DB_DUAL_WRITE=true|false  (for migration phase)
+    DB_SQLITE_PATH=data/governance.db  (for sqlite fallback)
 """
 
 from __future__ import annotations
@@ -48,16 +46,16 @@ def get_db() -> "DatabaseBackend":
     Get the configured database backend.
 
     Backend selection:
-    - DB_BACKEND=sqlite (default): Use SQLite
-    - DB_BACKEND=postgres: Use PostgreSQL + AGE
-    - DB_BACKEND=dual: Dual-write to both (for migration)
+    - DB_BACKEND=postgres (default): Use PostgreSQL + AGE
+    - DB_BACKEND=sqlite: Use SQLite (fallback/dev mode)
+    - DB_BACKEND=dual: Dual-write to both (migration)
     """
     global _db_instance
 
     if _db_instance is not None:
         return _db_instance
 
-    backend = os.environ.get("DB_BACKEND", "sqlite").lower()
+    backend = os.environ.get("DB_BACKEND", "postgres").lower()
 
     if backend == "sqlite":
         from .sqlite_backend import SQLiteBackend
