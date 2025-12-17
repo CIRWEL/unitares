@@ -366,6 +366,23 @@ class SQLiteBackend(DatabaseBackend):
         stored = row[0]
         return stored == api_key or stored == hashlib.sha256(api_key.encode()).hexdigest()
 
+    async def update_agent_fields(
+        self,
+        agent_id: str,
+        *,
+        status: Optional[str] = None,
+        purpose: Optional[str] = None,
+        notes: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        parent_agent_id: Optional[str] = None,
+        spawn_reason: Optional[str] = None,
+    ) -> bool:
+        """
+        SQLite backend has no core.agents table; agent fields live in agent_metadata/metadata_json.
+        No-op to satisfy the unified interface used by PostgreSQL migrations.
+        """
+        return True
+
     def _row_to_identity(self, row) -> IdentityRecord:
         created = datetime.fromisoformat(row["created_at"]) if row["created_at"] else datetime.now(timezone.utc)
         updated = datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else created

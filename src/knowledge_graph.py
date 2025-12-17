@@ -751,6 +751,7 @@ async def get_knowledge_graph() -> Any:
     Get global knowledge graph instance (singleton).
 
     Backend selection:
+    - UNITARES_KNOWLEDGE_BACKEND=age    -> force AGE (PostgreSQL + Apache AGE) backend
     - UNITARES_KNOWLEDGE_BACKEND=sqlite -> force SQLite backend
     - UNITARES_KNOWLEDGE_BACKEND=json   -> force JSON backend
     - UNITARES_KNOWLEDGE_BACKEND=auto   -> use SQLite if `data/knowledge.db` exists, else JSON
@@ -766,6 +767,21 @@ async def get_knowledge_graph() -> Any:
             return _graph_instance
 
         backend = os.getenv("UNITARES_KNOWLEDGE_BACKEND", "auto").strip().lower()
+
+        # AGE backend (PostgreSQL + Apache AGE)
+        if backend == "age":
+            try:
+                from src.storage.knowledge_graph_age import KnowledgeGraphAGE
+                _graph_instance = KnowledgeGraphAGE()
+                await _graph_instance.load()  # No-op but exists for compatibility
+                logger.info("Using AGE (PostgreSQL + Apache AGE) knowledge graph backend")
+                return _graph_instance
+            except Exception as e:
+                logger.warning(
+                    f"AGE knowledge graph backend unavailable; falling back to SQLite: {e}",
+                    exc_info=True
+                )
+                # Fall through to SQLite/JSON
 
         # Prefer SQLite when requested (or when auto + DB exists).
         if backend in ("sqlite", "auto"):

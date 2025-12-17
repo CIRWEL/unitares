@@ -75,7 +75,7 @@ class DialecticDB:
                     session_id TEXT PRIMARY KEY,
                     paused_agent_id TEXT NOT NULL,
                     reviewer_agent_id TEXT,
-                    phase TEXT NOT NULL DEFAULT 'awaiting_thesis',
+                    phase TEXT NOT NULL DEFAULT 'thesis',
                     status TEXT NOT NULL DEFAULT 'active',
                     created_at TEXT NOT NULL,
                     updated_at TEXT,
@@ -271,6 +271,26 @@ class DialecticDB:
             if row:
                 return self.get_session(row["session_id"])
             return None
+        finally:
+            conn.close()
+
+    def get_all_sessions_by_agent(self, agent_id: str) -> List[Dict[str, Any]]:
+        """Get all active sessions where agent is paused agent or reviewer."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute("""
+                SELECT session_id FROM dialectic_sessions
+                WHERE (paused_agent_id = ? OR reviewer_agent_id = ?)
+                AND status = 'active'
+                ORDER BY created_at DESC
+            """, (agent_id, agent_id))
+            rows = cursor.fetchall()
+            sessions = []
+            for row in rows:
+                session = self.get_session(row["session_id"])
+                if session:
+                    sessions.append(session)
+            return sessions
         finally:
             conn.close()
 
@@ -546,6 +566,13 @@ async def get_session_by_agent_async(agent_id: str, active_only: bool = True) ->
     db = await get_dialectic_db()
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: db.get_session_by_agent(agent_id, active_only))
+
+
+async def get_all_sessions_by_agent_async(agent_id: str) -> List[Dict[str, Any]]:
+    """Async wrapper for get_all_sessions_by_agent."""
+    db = await get_dialectic_db()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: db.get_all_sessions_by_agent(agent_id))
 
 
 async def is_agent_in_active_session_async(agent_id: str) -> bool:

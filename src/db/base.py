@@ -158,6 +158,26 @@ class DatabaseBackend(ABC):
         pass
 
     @abstractmethod
+    async def update_agent_fields(
+        self,
+        agent_id: str,
+        *,
+        status: Optional[str] = None,
+        purpose: Optional[str] = None,
+        notes: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        parent_agent_id: Optional[str] = None,
+        spawn_reason: Optional[str] = None,
+    ) -> bool:
+        """
+        Update selected fields on core.agents WITHOUT touching api_key.
+
+        Safer than upsert_agent() for routine metadata edits (purpose/notes/tags),
+        because it avoids accidental overwrites of api_key or created_at.
+        """
+        pass
+
+    @abstractmethod
     async def verify_api_key(self, agent_id: str, api_key: str) -> bool:
         """Verify API key for an identity."""
         pass

@@ -157,6 +157,65 @@ class DualWriteBackend(DatabaseBackend):
     async def verify_api_key(self, agent_id: str, api_key: str) -> bool:
         return await self._sqlite.verify_api_key(agent_id, api_key)
 
+    async def upsert_agent(
+        self,
+        agent_id: str,
+        api_key: str,
+        status: str = "active",
+        purpose: Optional[str] = None,
+        notes: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        parent_agent_id: Optional[str] = None,
+        spawn_reason: Optional[str] = None,
+        created_at: Optional[datetime] = None,
+    ) -> bool:
+        """
+        Create or update an agent in core.agents table (PostgreSQL only).
+        
+        This is required for foreign key references in dialectic_sessions.
+        SQLite doesn't have this table, so we only write to PostgreSQL.
+        """
+        if self._postgres_available:
+            try:
+                return await self._postgres.upsert_agent(
+                    agent_id, api_key, status, purpose, notes, tags,
+                    parent_agent_id, spawn_reason, created_at
+                )
+            except Exception as e:
+                logger.error(f"Dual-write upsert_agent failed on PostgreSQL: {e}")
+                return False
+        return False
+
+    async def update_agent_fields(
+        self,
+        agent_id: str,
+        *,
+        status: Optional[str] = None,
+        purpose: Optional[str] = None,
+        notes: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        parent_agent_id: Optional[str] = None,
+        spawn_reason: Optional[str] = None,
+    ) -> bool:
+        """
+        Partial update of core.agents (PostgreSQL only). SQLite has no core.agents table.
+        """
+        if self._postgres_available:
+            try:
+                return await self._postgres.update_agent_fields(
+                    agent_id,
+                    status=status,
+                    purpose=purpose,
+                    notes=notes,
+                    tags=tags,
+                    parent_agent_id=parent_agent_id,
+                    spawn_reason=spawn_reason,
+                )
+            except Exception as e:
+                logger.error(f"Dual-write update_agent_fields failed on PostgreSQL: {e}")
+                return False
+        return False
+
     # =========================================================================
     # SESSION OPERATIONS
     # =========================================================================
