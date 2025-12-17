@@ -109,6 +109,8 @@ class AgentMetadataDB:
                 conn.execute("ALTER TABLE agent_metadata ADD COLUMN active_session_key TEXT;")
             if "session_bound_at" not in existing_cols:
                 conn.execute("ALTER TABLE agent_metadata ADD COLUMN session_bound_at TEXT;")
+            if "purpose" not in existing_cols:
+                conn.execute("ALTER TABLE agent_metadata ADD COLUMN purpose TEXT;")
 
             # Record schema version
             conn.execute(
@@ -158,6 +160,7 @@ class AgentMetadataDB:
                     _json_dumps(d.get("dialectic_conditions") or []),
                     d.get("active_session_key"),
                     d.get("session_bound_at"),
+                    d.get("purpose"),
                 )
             )
 
@@ -173,7 +176,7 @@ class AgentMetadataDB:
                   loop_detected_at, loop_cooldown_until,
                   last_response_at, response_completed,
                   health_status, dialectic_conditions_json,
-                  active_session_key, session_bound_at
+                  active_session_key, session_bound_at, purpose
                 ) VALUES (
                   ?, ?, ?, ?, ?, ?,
                   ?, ?, ?,
@@ -182,7 +185,7 @@ class AgentMetadataDB:
                   ?, ?,
                   ?, ?,
                   ?, ?,
-                  ?, ?
+                  ?, ?, ?
                 )
                 ON CONFLICT(agent_id) DO UPDATE SET
                   status=excluded.status,
@@ -207,7 +210,8 @@ class AgentMetadataDB:
                   health_status=excluded.health_status,
                   dialectic_conditions_json=excluded.dialectic_conditions_json,
                   active_session_key=excluded.active_session_key,
-                  session_bound_at=excluded.session_bound_at;
+                  session_bound_at=excluded.session_bound_at,
+                  purpose=excluded.purpose;
                 """,
                 rows,
             )
@@ -245,6 +249,7 @@ class AgentMetadataDB:
                     "dialectic_conditions": _json_loads(row["dialectic_conditions_json"], []),
                     "active_session_key": row["active_session_key"] if "active_session_key" in row.keys() else None,
                     "session_bound_at": row["session_bound_at"] if "session_bound_at" in row.keys() else None,
+                    "purpose": row["purpose"] if "purpose" in row.keys() else None,
                 }
             return out
 

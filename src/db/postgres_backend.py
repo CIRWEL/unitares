@@ -25,6 +25,10 @@ from .base import (
     AgentStateRecord,
     AuditEvent,
 )
+from src.logging_utils import get_logger
+
+logger = get_logger(__name__)
+from .dialectic_constants import ACTIVE_DIALECTIC_STATUSES
 
 
 class PostgresBackend(DatabaseBackend):
@@ -153,6 +157,96 @@ class PostgresBackend(DatabaseBackend):
                 created_at,
             )
             return identity_id
+
+    async def upsert_agent(
+        self,
+        agent_id: str,
+        api_key: str,
+        status: str = "active",
+        purpose: Optional[str] = None,
+        notes: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        parent_agent_id: Optional[str] = None,
+        spawn_reason: Optional[str] = None,
+        created_at: Optional[datetime] = None,
+    ) -> bool:
+        """
+        Create or update an agent in core.agents table.
+        
+        This is required for foreign key references in dialectic_sessions.
+        Returns True if successful.
+        """
+        async with self._pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO core.agents (
+                        id, api_key, status, purpose, notes, tags,
+                        created_at, parent_agent_id, spawn_reason
+                    ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, now()), $8, $9)
+                    ON CONFLICT (id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        purpose = COALESCE(EXCLUDED.purpose, core.agents.purpose),
+                        notes = COALESCE(EXCLUDED.notes, core.agents.notes),
+                        tags = EXCLUDED.tags,
+                        updated_at = now()
+                    """,
+                    agent_id,
+                    api_key,
+                    status,
+                    purpose,
+                    notes,
+                    tags or [],
+                    created_at,
+                    parent_agent_id,
+                    spawn_reason,
+                )
+                return True
+            except Exception as e:
+                logger.error(f"Failed to upsert agent {agent_id} in core.agents: {e}")
+                return False
+
+    async def update_agent_fields(
+        self,
+        agent_id: str,
+        *,
+        status: Optional[str] = None,
+        purpose: Optional[str] = None,
+        notes: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        parent_agent_id: Optional[str] = None,
+        spawn_reason: Optional[str] = None,
+    ) -> bool:
+        """
+        Partial update of core.agents (does NOT modify api_key).
+        """
+        async with self._pool.acquire() as conn:
+            try:
+                result = await conn.execute(
+                    """
+                    UPDATE core.agents
+                    SET
+                        status = COALESCE($2, status),
+                        purpose = COALESCE($3, purpose),
+                        notes = COALESCE($4, notes),
+                        tags = COALESCE($5, tags),
+                        parent_agent_id = COALESCE($6, parent_agent_id),
+                        spawn_reason = COALESCE($7, spawn_reason),
+                        updated_at = now()
+                    WHERE id = $1
+                    """,
+                    agent_id,
+                    status,
+                    purpose,
+                    notes,
+                    tags,
+                    parent_agent_id,
+                    spawn_reason,
+                )
+                return "UPDATE 1" in result
+            except Exception as e:
+                logger.error(f"Failed to update agent fields for {agent_id}: {e}")
+                return False
 
     async def get_identity(self, agent_id: str) -> Optional[IdentityRecord]:
         async with self._pool.acquire() as conn:
@@ -829,28 +923,41 @@ class PostgresBackend(DatabaseBackend):
     ) -> Dict[str, Any]:
         async with self._pool.acquire() as conn:
             try:
+                # Map to new schema: id, session_type, status, paused_agent_id, reviewer_agent_id, etc.
+                # Store extra fields in resolution JSONB for backward compatibility
+                resolution_data = {}
+                if reason:
+                    resolution_data["reason"] = reason
+                if discovery_id:
+                    resolution_data["discovery_id"] = discovery_id
+                if dispute_type:
+                    resolution_data["dispute_type"] = dispute_type
+                if topic:
+                    resolution_data["topic"] = topic
+                if max_synthesis_rounds is not None:
+                    resolution_data["max_synthesis_rounds"] = max_synthesis_rounds
+                if synthesis_round is not None:
+                    resolution_data["synthesis_round"] = synthesis_round
+                if paused_agent_state:
+                    resolution_data["paused_agent_state"] = paused_agent_state
+                
+                # Default session_type to 'review' if not provided
+                final_session_type = session_type or "review"
+                # Initial status is 'thesis' (matches old 'phase' behavior)
+                initial_status = "thesis"
+                
                 await conn.execute("""
                     INSERT INTO core.dialectic_sessions (
-                        session_id, paused_agent_id, reviewer_agent_id,
-                        phase, status, created_at, updated_at,
-                        reason, discovery_id, dispute_type,
-                        session_type, topic, max_synthesis_rounds, synthesis_round,
-                        paused_agent_state_json
-                    ) VALUES ($1, $2, $3, $4, $5, now(), now(), $6, $7, $8, $9, $10, $11, $12, $13)
+                        id, session_type, status, paused_agent_id, reviewer_agent_id,
+                        created_at, updated_at, resolution
+                    ) VALUES ($1, $2, $3, $4, $5, now(), now(), $6)
                 """,
                     session_id,
+                    final_session_type,
+                    initial_status,
                     paused_agent_id,
                     reviewer_agent_id,
-                    "thesis",  # Initial phase (DialecticPhase.THESIS.value)
-                    "active",
-                    reason,
-                    discovery_id,
-                    dispute_type,
-                    session_type,
-                    topic,
-                    max_synthesis_rounds,
-                    synthesis_round or 0,
-                    json.dumps(paused_agent_state) if paused_agent_state else None,
+                    json.dumps(resolution_data) if resolution_data else None,
                 )
                 return {"session_id": session_id, "created": True}
             except Exception as e:
@@ -860,20 +967,45 @@ class PostgresBackend(DatabaseBackend):
 
     async def get_dialectic_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         async with self._pool.acquire() as conn:
-            # Get session
+            # Get session (using 'id' as primary key, but return as 'session_id' for compatibility)
             row = await conn.fetchrow("""
-                SELECT * FROM core.dialectic_sessions WHERE session_id = $1
+                SELECT * FROM core.dialectic_sessions WHERE id = $1
             """, session_id)
             if not row:
                 return None
 
             session = dict(row)
+            
+            # Map 'id' to 'session_id' for backward compatibility
+            session["session_id"] = session.pop("id", session_id)
+            
+            # Map 'status' to 'phase' for backward compatibility (status values match old phase values)
+            if "status" in session:
+                session["phase"] = session["status"]
 
-            # Parse JSON fields
-            if session.get("paused_agent_state_json"):
-                session["paused_agent_state"] = json.loads(session["paused_agent_state_json"]) if isinstance(session["paused_agent_state_json"], str) else session["paused_agent_state_json"]
-            if session.get("resolution_json"):
-                session["resolution"] = json.loads(session["resolution_json"]) if isinstance(session["resolution_json"], str) else session["resolution_json"]
+            # Parse resolution JSONB and extract backward-compat fields
+            if session.get("resolution"):
+                resolution = session["resolution"]
+                if isinstance(resolution, str):
+                    resolution = json.loads(resolution)
+                session["resolution"] = resolution
+                
+                # Extract fields from resolution for backward compatibility
+                if isinstance(resolution, dict):
+                    if "reason" in resolution:
+                        session["reason"] = resolution["reason"]
+                    if "discovery_id" in resolution:
+                        session["discovery_id"] = resolution["discovery_id"]
+                    if "dispute_type" in resolution:
+                        session["dispute_type"] = resolution["dispute_type"]
+                    if "topic" in resolution:
+                        session["topic"] = resolution["topic"]
+                    if "max_synthesis_rounds" in resolution:
+                        session["max_synthesis_rounds"] = resolution["max_synthesis_rounds"]
+                    if "synthesis_round" in resolution:
+                        session["synthesis_round"] = resolution["synthesis_round"]
+                    if "paused_agent_state" in resolution:
+                        session["paused_agent_state"] = resolution["paused_agent_state"]
 
             # Get messages
             rows = await conn.fetch("""
@@ -903,16 +1035,29 @@ class PostgresBackend(DatabaseBackend):
         active_only: bool = True,
     ) -> Optional[Dict[str, Any]]:
         async with self._pool.acquire() as conn:
-            status_filter = "AND status = 'active'" if active_only else ""
-            row = await conn.fetchrow(f"""
-                SELECT session_id FROM core.dialectic_sessions
-                WHERE (paused_agent_id = $1 OR reviewer_agent_id = $1)
-                {status_filter}
-                ORDER BY created_at DESC
-                LIMIT 1
-            """, agent_id)
+            # Postgres schema uses lifecycle-ish states in `status` (no 'active' value).
+            # "Active" sessions are the in-progress phases.
+            if active_only:
+                pg_active_statuses = tuple(s for s in ACTIVE_DIALECTIC_STATUSES if s != "active")
+                status_filter = "AND status = ANY($2::text[])"
+                row = await conn.fetchrow(f"""
+                    SELECT id FROM core.dialectic_sessions
+                    WHERE (paused_agent_id = $1 OR reviewer_agent_id = $1)
+                    {status_filter}
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, agent_id, list(pg_active_statuses))
+            else:
+                status_filter = ""
+                row = await conn.fetchrow(f"""
+                    SELECT id FROM core.dialectic_sessions
+                    WHERE (paused_agent_id = $1 OR reviewer_agent_id = $1)
+                    {status_filter}
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, agent_id)
             if row:
-                return await self.get_dialectic_session(row["session_id"])
+                return await self.get_dialectic_session(row["id"])
             return None
 
     async def get_all_active_dialectic_sessions_for_agent(
@@ -921,16 +1066,17 @@ class PostgresBackend(DatabaseBackend):
     ) -> List[Dict[str, Any]]:
         """Get all active sessions where agent is paused agent or reviewer."""
         async with self._pool.acquire() as conn:
+            pg_active_statuses = tuple(s for s in ACTIVE_DIALECTIC_STATUSES if s != "active")
             rows = await conn.fetch("""
-                SELECT session_id FROM core.dialectic_sessions
+                SELECT id FROM core.dialectic_sessions
                 WHERE (paused_agent_id = $1 OR reviewer_agent_id = $1)
-                AND status = 'active'
+                AND status = ANY($2::text[])
                 ORDER BY created_at DESC
-            """, agent_id)
+            """, agent_id, list(pg_active_statuses))
             
             sessions = []
             for row in rows:
-                session = await self.get_dialectic_session(row["session_id"])
+                session = await self.get_dialectic_session(row["id"])
                 if session:
                     sessions.append(session)
             return sessions
@@ -941,10 +1087,11 @@ class PostgresBackend(DatabaseBackend):
         phase: str,
     ) -> bool:
         async with self._pool.acquire() as conn:
+            # Map 'phase' to 'status' (they're the same in new schema)
             result = await conn.execute("""
                 UPDATE core.dialectic_sessions
-                SET phase = $1, updated_at = now()
-                WHERE session_id = $2
+                SET status = $1, updated_at = now()
+                WHERE id = $2
             """, phase, session_id)
             return "UPDATE 1" in result
 
@@ -957,7 +1104,7 @@ class PostgresBackend(DatabaseBackend):
             result = await conn.execute("""
                 UPDATE core.dialectic_sessions
                 SET reviewer_agent_id = $1, updated_at = now()
-                WHERE session_id = $2
+                WHERE id = $2
             """, reviewer_agent_id, session_id)
             return "UPDATE 1" in result
 
@@ -997,7 +1144,7 @@ class PostgresBackend(DatabaseBackend):
 
             # Update session timestamp
             await conn.execute("""
-                UPDATE core.dialectic_sessions SET updated_at = now() WHERE session_id = $1
+                UPDATE core.dialectic_sessions SET updated_at = now() WHERE id = $1
             """, session_id)
 
             return message_id
@@ -1011,8 +1158,8 @@ class PostgresBackend(DatabaseBackend):
         async with self._pool.acquire() as conn:
             result = await conn.execute("""
                 UPDATE core.dialectic_sessions
-                SET status = $1, phase = 'resolved', resolution_json = $2, updated_at = now()
-                WHERE session_id = $3
+                SET status = $1, resolution = $2, resolved_at = now(), updated_at = now()
+                WHERE id = $3
             """,
                 status,
                 json.dumps(resolution),
@@ -1022,10 +1169,11 @@ class PostgresBackend(DatabaseBackend):
 
     async def is_agent_in_active_dialectic_session(self, agent_id: str) -> bool:
         async with self._pool.acquire() as conn:
+            pg_active_statuses = tuple(s for s in ACTIVE_DIALECTIC_STATUSES if s != "active")
             result = await conn.fetchval("""
                 SELECT 1 FROM core.dialectic_sessions
                 WHERE (paused_agent_id = $1 OR reviewer_agent_id = $1)
-                AND status = 'active'
+                AND status = ANY($2::text[])
                 LIMIT 1
-            """, agent_id)
+            """, agent_id, list(pg_active_statuses))
             return result is not None
