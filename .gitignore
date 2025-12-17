@@ -28,6 +28,7 @@ env/
 
 # Runtime data (preserve agent data but exclude temp files)
 data/.mcp_server.pid
+data/.mcp_server_http.pid
 data/.mcp_server.lock
 data/locks/
 data/processes/
