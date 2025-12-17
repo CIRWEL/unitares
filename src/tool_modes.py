@@ -38,6 +38,7 @@ LITE_MODE_TOOLS: Set[str] = {
     "list_agents",               # View all agents
     "bind_identity",             # Bind session to agent identity
     "recall_identity",           # Recall session-bound identity
+    "quick_start",              # Streamlined onboarding (create/bind in one call)
 
     # System health (3 tools)
     "health_check",              # System status
@@ -60,6 +61,7 @@ TOOL_CATEGORIES = {
     "identity": {
         "bind_identity",
         "recall_identity",
+        "quick_start",
         "get_agent_api_key",
         "list_agents",
         "get_agent_metadata",

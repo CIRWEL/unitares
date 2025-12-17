@@ -326,6 +326,8 @@ class AgentMetadata:
     # Session binding persistence (for identity recovery across session key changes)
     active_session_key: str = None
     session_bound_at: str = None
+    # Purpose field for documenting agent intent (optional but encouraged)
+    purpose: str = None  # Optional description of agent's purpose/intent
 
     def __post_init__(self):
         if self.tags is None:
@@ -1157,8 +1159,14 @@ def save_metadata() -> None:
         _metadata_cache_state["dirty"] = False
 
 
-def get_or_create_metadata(agent_id: str) -> AgentMetadata:
-    """Get metadata for agent, creating if needed"""
+def get_or_create_metadata(agent_id: str, **kwargs) -> AgentMetadata:
+    """
+    Get metadata for agent, creating if needed.
+    
+    Args:
+        agent_id: Agent identifier
+        **kwargs: Optional fields to set on creation (e.g., purpose, notes, tags)
+    """
     if agent_id not in agent_metadata:
         now = datetime.now().isoformat()
         # Generate API key for new agent (authentication)
@@ -1177,6 +1185,11 @@ def get_or_create_metadata(agent_id: str) -> AgentMetadata:
         if agent_id == "default_agent":
             metadata.tags.append("pioneer")
             metadata.notes = "First agent - pioneer of the governance system"
+
+        # Set any additional fields provided via kwargs (e.g., purpose)
+        for key, value in kwargs.items():
+            if hasattr(metadata, key) and value is not None:
+                setattr(metadata, key, value)
 
         agent_metadata[agent_id] = metadata
 

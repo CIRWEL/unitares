@@ -8,6 +8,22 @@ Common issues and solutions when using the governance system.
 
 ---
 
+## Identity binding continuity (SSE reconnections / server restarts)
+
+Identity binding tries to preserve session-to-agent bindings across **SSE reconnections**. For safety, any “auto-resume identity” behavior is **conservative by default**.
+
+- **Metadata-based rebinding window**
+  - **Env**: `GOVERNANCE_IDENTITY_METADATA_LOOKBACK_SECONDS`
+  - **Default**: `300` (5 minutes)
+  - **What it does**: when a new SSE request arrives with a new `client_session_id`, the server may migrate a recent binding by checking `agent_metadata.active_session_key` and `agent_metadata.session_bound_at`.
+  - **Tradeoff**: longer windows improve continuity after restarts but increase the chance of resurrecting a stale binding in shared environments.
+
+- **DB-based auto-resume (opt-in)**
+  - **Env**: `GOVERNANCE_IDENTITY_AUTO_RESUME_DB`
+  - **Default**: `0` (disabled)
+  - **What it does**: in **async** handlers only, the server may attempt a last-resort lookup in the DB to auto-resume the most recent identity **only if exactly one** recently-active identity exists.
+  - **Why disabled by default**: it can be surprising in multi-user/shared setups. Enable only if you fully understand the implications.
+
 ## 🚨 Issue 0: "Too Many Cooks" - Lock Contention (CRITICAL)
 
 ### Symptoms

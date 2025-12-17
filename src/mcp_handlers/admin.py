@@ -564,6 +564,7 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
     from src.calibration import calibration_checker
     from src.telemetry import telemetry_collector
     from src.audit_log import audit_logger
+    from src.db import get_db
     
     checks = {}
     loop = asyncio.get_running_loop()
@@ -614,6 +615,41 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
         checks["telemetry"] = {
             "status": "error",
             "error": str(e)
+        }
+
+    # Check PRIMARY database backend (PostgreSQL/SQLite/Dual) via src.db abstraction.
+    # Note: calibration_db/audit_db below are legacy SQLite indexes; this check reports
+    # the backend that migration work targets (DB_BACKEND).
+    try:
+        import os
+        configured = os.getenv("DB_BACKEND", "postgres").lower()
+        db = get_db()
+        backend_class = type(db).__name__
+
+        # Best-effort init so health_check isn't just "Pool not initialized"
+        init_error = None
+        try:
+            await db.init()
+        except Exception as e:
+            init_error = str(e)
+
+        try:
+            db_info = await db.health_check()
+        except Exception as e:
+            db_info = {"status": "error", "error": str(e)}
+
+        db_status = db_info.get("status") if isinstance(db_info, dict) else None
+        checks["primary_db"] = {
+            "status": "healthy" if db_status == "healthy" else ("error" if db_status == "error" else "warning"),
+            "configured_backend": configured,
+            "backend_class": backend_class,
+            "init_error": init_error,
+            "info": db_info,
+        }
+    except Exception as e:
+        checks["primary_db"] = {
+            "status": "error",
+            "error": str(e),
         }
 
     # Check audit DB (SQLite index for audit log) - best effort.
@@ -1944,17 +1980,21 @@ async def handle_quick_start(arguments: Dict[str, Any]) -> Sequence[TextContent]
     Args:
         agent_id: Your agent identifier (optional - will prompt if not provided)
         auto_bind: Automatically bind identity after creation (default: True)
+        purpose: Optional description of agent's purpose/intent (encouraged for documentation)
     
     Returns:
         Complete onboarding package with credentials, quick start guide, and next steps
     """
     from .shared import get_mcp_server
     mcp_server = get_mcp_server()
-    from .identity import handle_bind_identity, get_bound_agent_id
+    from .identity import handle_bind_identity, get_bound_agent_id, _validate_agent_id
     from .lifecycle import handle_get_agent_api_key
+    import asyncio
     
     agent_id = arguments.get("agent_id")
     auto_bind = arguments.get("auto_bind", True)
+    purpose = arguments.get("purpose")
+    include_api_key = bool(arguments.get("include_api_key", False))
     
     # If no agent_id provided, check if already bound
     if not agent_id:
@@ -1993,22 +2033,39 @@ async def handle_quick_start(arguments: Dict[str, Any]) -> Sequence[TextContent]
     # Clean agent_id
     agent_id = str(agent_id).strip()
     
+    # Validate agent_id naming (soft warnings, not blockers)
+    validation_result = _validate_agent_id(agent_id)
+    warnings = validation_result.get("warnings", [])
+    
     # Check if agent exists
     is_new = agent_id not in mcp_server.agent_metadata
     
     # Get or create API key (this creates agent if new)
-    api_result = await handle_get_agent_api_key({"agent_id": agent_id})
+    # Pass purpose through so it can be set at creation time
+    api_args = {"agent_id": agent_id}
+    if purpose and isinstance(purpose, str) and purpose.strip():
+        api_args["purpose"] = purpose.strip()
+    api_result = await handle_get_agent_api_key(api_args)
     
     # Extract API key from result
     api_key = None
     if api_result and api_result[0].text:
         try:
             data = json.loads(api_result[0].text)
-            api_key = data.get("api_key")
-            if not api_key:
-                # Try alternative response format
-                if isinstance(data, dict) and "success" in data:
-                    api_key = data.get("api_key")
+            if isinstance(data, dict):
+                # Primary shape (expected): {"success": true, "agent_id": "...", "api_key": "...", ...}
+                api_key = data.get("api_key")
+
+                # Fallback shapes (older/alternate wrappers):
+                # - {"success": true, "result": {...}}
+                # - {"success": true, "data": {...}}
+                # - {"success": true, "payload": {...}}
+                if not api_key:
+                    for key in ("result", "data", "payload"):
+                        nested = data.get(key)
+                        if isinstance(nested, dict) and nested.get("api_key"):
+                            api_key = nested.get("api_key")
+                            break
         except Exception as e:
             logger.debug(f"Could not parse API key from result: {e}")
     
@@ -2020,6 +2077,13 @@ async def handle_quick_start(arguments: Dict[str, Any]) -> Sequence[TextContent]
                 "related_tools": ["get_agent_api_key", "hello"]
             }
         )]
+
+    # Hint is safe to return in LLM contexts (does not expose the key)
+    api_key_hint = api_key[:8] + "..." if isinstance(api_key, str) and len(api_key) > 8 else api_key
+    # If the caller chose not to auto-bind, returning the key is often required to proceed.
+    # Keep safety-first default, but avoid producing a "can't proceed" onboarding result.
+    if not auto_bind and not include_api_key:
+        include_api_key = True
     
     # Auto-bind if requested (default)
     bound = False
@@ -2039,20 +2103,36 @@ async def handle_quick_start(arguments: Dict[str, Any]) -> Sequence[TextContent]
     # Get agent metadata for context
     meta = mcp_server.agent_metadata.get(agent_id)
     
+    # Store purpose if provided (for new agents or updates)
+    # For new agents, purpose should already be set via get_or_create_metadata
+    # But we set it here too in case it wasn't passed through, or for updates
+    if purpose and meta and (isinstance(purpose, str) and purpose.strip()):
+        if getattr(meta, "purpose", None) != purpose.strip():
+            meta.purpose = purpose.strip()
+            # Force immediate save to ensure purpose is persisted
+            from src.mcp_server_std import schedule_metadata_save
+            await schedule_metadata_save(force=True)
+    
     # Build comprehensive response
     result = {
         "success": True,
         "status": "ready",
         "agent_id": agent_id,
-        "api_key": api_key,
+        "api_key": api_key if include_api_key else None,
+        "api_key_hint": api_key_hint,
         "is_new": is_new,
         "bound": bound,
         "message": f"✅ {'New agent created' if is_new else 'Welcome back'}! You're ready to go.",
         
         "credentials": {
             "agent_id": agent_id,
-            "api_key": api_key,
-            "note": "Save these credentials - you'll need them for future calls"
+            "api_key": api_key if include_api_key else None,
+            "api_key_hint": api_key_hint,
+            "note": (
+                "API key stored in your session after auto-bind; you can call process_agent_update without passing api_key."
+                if bound else
+                "Save these credentials - you'll need them for future calls"
+            )
         },
         
         "quick_start_guide": {
@@ -2088,6 +2168,20 @@ async def handle_quick_start(arguments: Dict[str, Any]) -> Sequence[TextContent]
             "Store insights with store_knowledge_graph()"
         ]
     }
+    
+    # Add naming warnings if any
+    if warnings:
+        result["warnings"] = warnings
+        result["suggested_format"] = "{model}_{purpose}_{date}"
+        result["examples"] = [
+            "opus_code_review_20251215",
+            "sonnet_data_analysis_20251215",
+            "haiku_chat_assistant_20251215"
+        ]
+    
+    # Add tip about purpose if not provided (check for None or empty string)
+    if not purpose or (isinstance(purpose, str) and not purpose.strip()):
+        result["tip"] = "Add purpose='...' to document this agent's intent for future reference"
     
     # Add context if returning agent
     if not is_new and meta:

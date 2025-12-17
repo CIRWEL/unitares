@@ -8,7 +8,7 @@ from typing import Dict, Any, Sequence, Optional
 from mcp.types import TextContent
 import json
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import secrets
 import base64
 import os
@@ -184,6 +184,30 @@ def _cleanup_old_identities(max_age_days: int = 7) -> int:
 # NEW DATABASE ABSTRACTION (PostgreSQL Migration - Dual Write)
 # ==============================================================================
 
+_db_ready_cache: Dict[int, bool] = {}
+
+
+async def _ensure_db_ready() -> None:
+    """
+    Best-effort, idempotent initialization for the DB backend.
+
+    Some call sites (identity continuity + session persistence) may execute even if
+    server initialization was skipped or partially failed. Without init(), Postgres
+    operations can crash (e.g., self._pool is None).
+    """
+    try:
+        db = get_db()
+        key = id(db)
+        if _db_ready_cache.get(key):
+            return
+        if hasattr(db, "init"):
+            await db.init()  # expected to be idempotent
+        _db_ready_cache[key] = True
+    except Exception as e:
+        # Non-fatal: callers will fall back to safer paths.
+        logger.debug(f"DB init skipped/failed in _ensure_db_ready: {e}")
+
+
 async def _persist_session_new(
     session_key: str,
     agent_id: str,
@@ -192,6 +216,7 @@ async def _persist_session_new(
 ) -> bool:
     """Persist session to new database abstraction (PostgreSQL). Returns True on success."""
     try:
+        await _ensure_db_ready()
         db = get_db()
 
         # First ensure identity exists
@@ -231,6 +256,7 @@ async def _persist_session_new(
 async def _load_session_new(session_key: str) -> Optional[Dict[str, Any]]:
     """Load session from new database abstraction. Returns None if not found."""
     try:
+        await _ensure_db_ready()
         db = get_db()
         session = await db.get_session(session_key)
 
@@ -303,9 +329,14 @@ def _find_recent_binding_via_metadata(current_session_key: str) -> Optional[Dict
     """
     try:
         from datetime import timedelta
+        # Configurable lookback window (seconds). Default keeps prior behavior (~5 minutes).
+        # You can extend for continuity across restarts, but longer windows increase the
+        # chance of resurrecting stale bindings in shared environments.
+        lookback_seconds = int(os.getenv("GOVERNANCE_IDENTITY_METADATA_LOOKBACK_SECONDS", "300"))
         
         # Check all agent metadata for recent bindings
-        cutoff_time = datetime.now() - timedelta(minutes=5)  # Recent = last 5 minutes
+        now = datetime.now(timezone.utc)
+        cutoff_time = now - timedelta(seconds=max(0, lookback_seconds))
         
         for agent_id, meta in mcp_server.agent_metadata.items():
             # Check if this agent has a recent active_session_key
@@ -320,6 +351,9 @@ def _find_recent_binding_via_metadata(current_session_key: str) -> Optional[Dict
             if hasattr(meta, 'session_bound_at') and meta.session_bound_at:
                 try:
                     bound_dt = datetime.fromisoformat(meta.session_bound_at)
+                    # Normalize naive timestamps to UTC for safe comparison
+                    if bound_dt.tzinfo is None:
+                        bound_dt = bound_dt.replace(tzinfo=timezone.utc)
                     if bound_dt < cutoff_time:
                         continue  # Too old
                 except Exception:
@@ -334,18 +368,87 @@ def _find_recent_binding_via_metadata(current_session_key: str) -> Optional[Dict
                 
     except Exception as e:
         logger.debug(f"Error finding binding via metadata: {e}")
-    
+
     return None
 
 
-def _get_identity_record(session_id: Optional[str] = None, arguments: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Get or create the identity record for a session.
+async def _find_recent_identity_from_db_async() -> Optional[Dict[str, Any]]:
+    """
+    Async version: Find the most recently active identity from the database.
+
+    This is a fallback for when metadata-based lookup fails (e.g., after server restart).
+    Only returns an identity if there's exactly ONE recently active identity to avoid
+    binding to the wrong agent in multi-user scenarios.
+
+    Returns:
+        Identity record dict if found, None otherwise
+    """
+    try:
+        from datetime import timedelta
+
+        await _ensure_db_ready()
+        db = get_db()
+
+        # Opt-in: DB auto-resume can be surprising in multi-user/shared environments.
+        # Keep default off; enable with GOVENANCE_IDENTITY_AUTO_RESUME_DB=1.
+        if os.getenv("GOVERNANCE_IDENTITY_AUTO_RESUME_DB", "0").strip().lower() not in ("1", "true", "yes", "on"):
+            return None
+
+        # Look for sessions active in the last 7 days
+        # Use timezone-aware datetime to match PostgreSQL TIMESTAMPTZ
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+
+        # Get recent sessions from the new DB
+        sessions = await db.list_identities(status="active", limit=10)
+
+        if not sessions:
+            return None
+
+        # Filter to recently active (have agent_state or session records)
+        recent_agents = []
+        for identity in sessions:
+            # Check if this identity has recent activity
+            states = await db.get_agent_state_history(identity.identity_id, limit=1)
+            if states:
+                recorded_at = states[0].recorded_at
+                # Normalize naive timestamps to UTC for safe comparison (SQLite backend may be naive)
+                if isinstance(recorded_at, datetime) and recorded_at.tzinfo is None:
+                    recorded_at = recorded_at.replace(tzinfo=timezone.utc)
+                if isinstance(recorded_at, datetime) and recorded_at > cutoff:
+                    recent_agents.append(identity)
+
+        # Only auto-bind if there's exactly ONE recently active identity
+        # This prevents accidentally binding to wrong agent in multi-user scenarios
+        if len(recent_agents) == 1:
+            identity = recent_agents[0]
+            logger.info(f"Auto-resuming most recent identity from DB: {identity.agent_id}")
+            return {
+                "bound_agent_id": identity.agent_id,
+                "api_key": None,  # Don't expose API key
+                "bound_at": datetime.now().isoformat(),
+                "bind_count": 1,
+                "auto_resumed": True,  # Flag for audit
+            }
+        elif len(recent_agents) > 1:
+            logger.debug(f"Multiple recent identities found ({len(recent_agents)}), not auto-binding")
+
+        return None
+
+    except Exception as e:
+        logger.debug(f"Error finding identity from DB: {e}")
+        return None
+
+
+async def _get_identity_record_async(session_id: Optional[str] = None, arguments: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Async version: Get or create the identity record for a session.
 
     PERSISTENCE: Now loads from SQLite if not in memory cache.
     This enables identity binding to persist across server restarts and HTTP requests.
     
     SSE RECONNECTION FIX: If no binding found for current session, attempts to find
     a recent binding via agent metadata (handles ephemeral SSE connections).
+    
+    CONTINUITY ENHANCEMENT: Tries PostgreSQL as last resort after server restart.
     """
     key = _get_session_key(arguments=arguments, session_id=session_id)
 
@@ -368,10 +471,68 @@ def _get_identity_record(session_id: Optional[str] = None, arguments: Optional[D
                 if agent_id and agent_id in mcp_server.agent_metadata:
                     meta = mcp_server.agent_metadata[agent_id]
                     meta.active_session_key = key
-                    # Trigger async save
-                    asyncio.create_task(_schedule_metadata_save())
+                    # Trigger save (loop-safe: may be called from sync contexts)
+                    _try_schedule_metadata_save()
                 logger.info(f"Migrated binding for {agent_id} from orphaned session to {key}")
             else:
+                # CONTINUITY ENHANCEMENT: Try PostgreSQL as last resort
+                # Useful after server restart when metadata is cleared
+                # Now we can use the async version since we're in an async context
+                db_binding = await _find_recent_identity_from_db_async()
+                if db_binding:
+                    _session_identities[key] = db_binding.copy()
+                    logger.info(f"Auto-resumed identity from DB: {db_binding.get('bound_agent_id')}")
+                else:
+                    _session_identities[key] = {
+                        "bound_agent_id": None,
+                        "api_key": None,
+                        "bound_at": None,
+                        "bind_count": 0,  # Track rebinds for audit
+                    }
+    return _session_identities[key]
+
+
+def _get_identity_record(session_id: Optional[str] = None, arguments: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Get or create the identity record for a session (synchronous version).
+
+    PERSISTENCE: Now loads from SQLite if not in memory cache.
+    This enables identity binding to persist across server restarts and HTTP requests.
+    
+    SSE RECONNECTION FIX: If no binding found for current session, attempts to find
+    a recent binding via agent metadata (handles ephemeral SSE connections).
+    
+    NOTE: This is the synchronous version. For async contexts, use _get_identity_record_async()
+    which can properly query PostgreSQL. This version will skip PostgreSQL lookup if called
+    from an async context (returns None for DB lookup).
+    """
+    key = _get_session_key(arguments=arguments, session_id=session_id)
+
+    # Check in-memory cache first
+    if key not in _session_identities:
+        # Try to load from SQLite persistence
+        persisted = _load_identity(key)
+        if persisted:
+            _session_identities[key] = persisted
+            logger.debug(f"Loaded persisted identity for session {key}: {persisted.get('bound_agent_id')}")
+        else:
+            # SSE RECONNECTION FIX: Try to find binding via agent metadata
+            # This handles the case where each SSE request gets a new session ID
+            metadata_binding = _find_recent_binding_via_metadata(key)
+            if metadata_binding:
+                # Migrate binding to current session
+                _session_identities[key] = metadata_binding.copy()
+                # Update the agent metadata to point to current session
+                agent_id = metadata_binding.get("bound_agent_id")
+                if agent_id and agent_id in mcp_server.agent_metadata:
+                    meta = mcp_server.agent_metadata[agent_id]
+                    meta.active_session_key = key
+                    # Trigger save (loop-safe: may be called from sync contexts)
+                    _try_schedule_metadata_save()
+                logger.info(f"Migrated binding for {agent_id} from orphaned session to {key}")
+            else:
+                # NOTE: Sync version intentionally does not query the DB for auto-resume.
+                # Async handlers should call `_get_identity_record_async()` which can do
+                # safe, opt-in DB fallback without `asyncio.run()` sharp edges.
                 _session_identities[key] = {
                     "bound_agent_id": None,
                     "api_key": None,
@@ -379,6 +540,30 @@ def _get_identity_record(session_id: Optional[str] = None, arguments: Optional[D
                     "bind_count": 0,  # Track rebinds for audit
                 }
     return _session_identities[key]
+
+
+def _try_schedule_metadata_save(force: bool = False) -> None:
+    """
+    Best-effort metadata persistence that is safe in both async and sync contexts.
+
+    `_get_identity_record()` is synchronous and may be called from non-async code paths.
+    `asyncio.create_task()` requires a running event loop; without one it raises:
+      RuntimeError: no running event loop
+
+    Strategy:
+    - If an event loop is running: schedule the async save task.
+    - Otherwise: fall back to synchronous `save_metadata()` to avoid crashing.
+    """
+    try:
+        asyncio.get_running_loop()
+        asyncio.create_task(_schedule_metadata_save(force=force))
+    except RuntimeError:
+        # No running loop (sync context) — do a safe synchronous persistence.
+        try:
+            from src.mcp_server_std import save_metadata
+            save_metadata()
+        except Exception as e:
+            logger.debug(f"Could not persist metadata synchronously: {e}")
 
 
 # Export _get_session_key for use in other modules (for consistent session key resolution)
@@ -551,11 +736,11 @@ async def handle_bind_identity(arguments: Dict[str, Any]) -> Sequence[TextConten
 
     # Optional: set purpose (requires valid api_key to prevent unauthorized metadata edits)
     if purpose and isinstance(purpose, str) and purpose.strip():
-        if not api_key:
+        if not api_key_valid:
             return [error_response(
-                "api_key is required to set purpose on bind_identity()",
+                "Valid api_key is required to set purpose on bind_identity()",
                 recovery={
-                    "action": "Provide api_key and retry, or use update_agent_metadata(agent_id, api_key, purpose=...)",
+                    "action": "Provide your correct api_key and retry, or use update_agent_metadata(agent_id, api_key, purpose=...)",
                     "related_tools": ["get_agent_api_key", "update_agent_metadata"]
                 }
             )]
@@ -574,7 +759,8 @@ async def handle_bind_identity(arguments: Dict[str, Any]) -> Sequence[TextConten
     logger.info(f"bind_identity: binding agent '{agent_id}' to session key '{session_key}'")
     logger.info(f"bind_identity: current _session_identities keys = {list(_session_identities.keys())}")
     logger.debug(f"bind_identity: session_id arg={session_id}, client_session_id in args={arguments.get('client_session_id')}")
-    identity_rec = _get_identity_record(session_id=session_id, arguments=arguments)
+    # Use async version to enable PostgreSQL continuity lookup
+    identity_rec = await _get_identity_record_async(session_id=session_id, arguments=arguments)
     previous_agent = identity_rec.get("bound_agent_id")
     identity_rec["bound_agent_id"] = agent_id
     identity_rec["api_key"] = actual_api_key
@@ -728,7 +914,8 @@ async def handle_recall_identity(arguments: Dict[str, Any]) -> Sequence[TextCont
 
     # NOTE: Prefer client_session_id to avoid collision with dialectic session_id args.
     session_id = arguments.get("client_session_id") or arguments.get("session_id")
-    identity_rec = _get_identity_record(session_id=session_id, arguments=arguments)
+    # Use async version to enable PostgreSQL continuity lookup
+    identity_rec = await _get_identity_record_async(session_id=session_id, arguments=arguments)
     agent_id = identity_rec.get("bound_agent_id")
     
     # NOTE: No fallback heuristics here. "Ask, don't guess."

@@ -452,6 +452,16 @@ async def handle_update_agent_metadata(arguments: Dict[str, Any]) -> Sequence[Te
             meta.notes = f"{meta.notes}\n[{timestamp}] {arguments['notes']}" if meta.notes else f"[{timestamp}] {arguments['notes']}"
         else:
             meta.notes = arguments["notes"]
+
+    # Update purpose if provided
+    if "purpose" in arguments:
+        purpose = arguments.get("purpose")
+        if purpose is None:
+            # Allow explicit null to clear purpose
+            meta.purpose = None
+        elif isinstance(purpose, str):
+            purpose_str = purpose.strip()
+            meta.purpose = purpose_str if purpose_str else None
     
     # Schedule batched metadata save (non-blocking)
     import asyncio
@@ -466,10 +476,24 @@ async def handle_update_agent_metadata(arguments: Dict[str, Any]) -> Sequence[Te
             metadata={
                 "tags": meta.tags,
                 "notes": meta.notes,
+                "purpose": getattr(meta, "purpose", None),
                 "updated_at": datetime.now().isoformat()
             },
             merge=True
         )
+
+        # Also keep core.agents in sync (purpose is a first-class column there).
+        # Use partial update to avoid accidental api_key overwrites.
+        if hasattr(db, "update_agent_fields"):
+            await db.update_agent_fields(
+                agent_id,
+                status=getattr(meta, "status", None),
+                purpose=getattr(meta, "purpose", None),
+                notes=getattr(meta, "notes", None),
+                tags=getattr(meta, "tags", None),
+                parent_agent_id=getattr(meta, "parent_agent_id", None),
+                spawn_reason=getattr(meta, "spawn_reason", None),
+            )
         logger.debug(f"Dual-write: Updated metadata in new DB for {agent_id}")
     except Exception as e:
         # Non-fatal: old DB still works, log and continue
@@ -481,6 +505,7 @@ async def handle_update_agent_metadata(arguments: Dict[str, Any]) -> Sequence[Te
         "agent_id": agent_id,
         "tags": meta.tags,
         "notes": meta.notes,
+        "purpose": getattr(meta, "purpose", None),
         "updated_at": datetime.now().isoformat()
     })
 
@@ -873,7 +898,24 @@ async def handle_get_agent_api_key(arguments: Dict[str, Any]) -> Sequence[TextCo
             )]
     
     # Get or create metadata (creates agent if new)
-    meta = mcp_server.get_or_create_metadata(agent_id)
+    # Check if purpose was passed through arguments (for quick_start/hello)
+    purpose = arguments.get("purpose")
+    purpose_str = purpose.strip() if isinstance(purpose, str) and purpose.strip() else None
+
+    # IMPORTANT: If creating a new agent, pass purpose at creation time so the
+    # AgentMetadata is initialized with purpose (matches core.py behavior).
+    if is_new_agent and purpose_str:
+        meta = mcp_server.get_or_create_metadata(agent_id, purpose=purpose_str)
+    else:
+        meta = mcp_server.get_or_create_metadata(agent_id)
+
+    # Persist purpose updates for existing agents (or if creation-time kwargs were missed)
+    if purpose_str and getattr(meta, "purpose", None) != purpose_str:
+        meta.purpose = purpose_str
+        # Force immediate save: purpose is documentation/forensics metadata and should persist promptly
+        # (For new agents, this is redundant with the is_new_agent force-save below but harmless.)
+        if not is_new_agent:
+            await mcp_server.schedule_metadata_save(force=True)
     
     # CRITICAL: Force immediate save for new agent creation to prevent key rotation bug
     # If metadata isn't saved, process_agent_update's load_metadata() will wipe it out

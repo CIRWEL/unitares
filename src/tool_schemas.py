@@ -1539,13 +1539,17 @@ EXAMPLE RESPONSE:
 
 DEPENDENCIES:
 - Requires: agent_id (must exist)
-- Optional: tags (replaces existing), notes (replaces or appends based on append_notes)""",
+- Optional: tags (replaces existing), notes (replaces or appends based on append_notes), purpose (documents intent)""",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier"
+                    },
+                    "api_key": {
+                        "type": "string",
+                        "description": "API key for authentication (required unless session-bound identity can supply it)"
                     },
                     "tags": {
                         "type": "array",
@@ -1555,6 +1559,10 @@ DEPENDENCIES:
                     "notes": {
                         "type": "string",
                         "description": "Notes to add or replace"
+                    },
+                    "purpose": {
+                        "type": "string",
+                        "description": "Optional description of agent's purpose/intent (e.g., 'migration planning', 'dialectic reviewer', 'ops triage')"
                     },
                     "append_notes": {
                         "type": "boolean",
@@ -2281,6 +2289,7 @@ EXAMPLE RESPONSE:
 DEPENDENCIES:
 - Requires: agent_id (will create if new)
 - Optional: regenerate (default: false, invalidates old key if true)
+- Optional: purpose (stores agent intent metadata if provided)
 - Security: API key required for process_agent_update on existing agents""",
             inputSchema={
                 "type": "object",
@@ -2289,10 +2298,18 @@ DEPENDENCIES:
                         "type": "string",
                         "description": "Agent identifier"
                     },
+                    "api_key": {
+                        "type": "string",
+                        "description": "API key for authentication (required for existing agents unless session-bound identity can supply it)"
+                    },
                     "regenerate": {
                         "type": "boolean",
                         "description": "Regenerate API key (invalidates old key)",
                         "default": False
+                    },
+                    "purpose": {
+                        "type": "string",
+                        "description": "Optional description of agent's purpose/intent (stored in metadata)"
                     }
                 },
                 "required": ["agent_id"]
@@ -4010,6 +4027,7 @@ EXAMPLE REQUEST:
 DEPENDENCIES:
 - Requires: agent_id (must exist - create with process_agent_update first)
 - Optional: api_key (helps verify but not required for rebinding)
+- Optional: purpose (requires api_key; sets agent purpose metadata)
 - Workflow: 1. Create agent 2. Get API key 3. bind_identity 4. Use recall_identity if lost""",
             inputSchema={
                 "type": "object",
@@ -4021,6 +4039,10 @@ DEPENDENCIES:
                     "api_key": {
                         "type": "string",
                         "description": "API key for verification (optional but recommended)"
+                    },
+                    "purpose": {
+                        "type": "string",
+                        "description": "Optional: set agent purpose metadata (requires api_key)"
                     }
                 },
                 "required": ["agent_id"]
@@ -4159,12 +4181,15 @@ RELATED TOOLS:
 EXAMPLE REQUEST:
 {
   "agent_id": "my_agent_20251215",
-  "auto_bind": true
+  "auto_bind": true,
+  "purpose": "migration planning"
 }
 
 DEPENDENCIES:
 - Optional: agent_id (will prompt if not provided and no bound identity)
 - Optional: auto_bind (default: true - automatically binds identity)
+- Optional: purpose (stores agent intent metadata if provided)
+- Optional: include_api_key (default: false - return full api_key in response; avoid in LLM chats to prevent safety blocks)
 - Workflow: 1. Call quick_start(agent_id) 2. Use returned credentials 3. Start working""",
             inputSchema={
                 "type": "object",
@@ -4176,6 +4201,15 @@ DEPENDENCIES:
                     "auto_bind": {
                         "type": "boolean",
                         "description": "Automatically bind identity after creation (default: true)"
+                    },
+                    "purpose": {
+                        "type": "string",
+                        "description": "Optional description of agent's purpose/intent (stored in metadata)"
+                    },
+                    "include_api_key": {
+                        "type": "boolean",
+                        "description": "If true, include the full api_key in the tool response. Recommended false for LLM chats; use session binding instead.",
+                        "default": False
                     }
                 },
                 "required": []

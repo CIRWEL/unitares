@@ -629,7 +629,13 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             if is_new_agent:
                 # Run blocking metadata creation in executor to avoid blocking event loop
                 # Reuse loop from line 187 (avoid redundant get_running_loop() call)
-                meta = await loop.run_in_executor(None, mcp_server.get_or_create_metadata, agent_id)
+                # Check if purpose was passed in arguments
+                purpose = arguments.get("purpose")
+                if purpose and isinstance(purpose, str) and purpose.strip():
+                    # Use lambda to pass keyword argument through executor
+                    meta = await loop.run_in_executor(None, lambda: mcp_server.get_or_create_metadata(agent_id, purpose=purpose.strip()))
+                else:
+                    meta = await loop.run_in_executor(None, mcp_server.get_or_create_metadata, agent_id)
                 api_key = meta.api_key  # Get generated key
                 # Schedule immediate save for new agent creation (critical operation)
                 await mcp_server.schedule_metadata_save(force=True)
@@ -638,6 +644,29 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                 try:
                     db = get_db()
                     api_key_hash = hashlib.sha256(meta.api_key.encode()).hexdigest() if meta.api_key else ""
+                    
+                    # CRITICAL: Create agent in core.agents FIRST, before creating identity
+                    # core.identities.agent_id has a foreign key constraint to core.agents(id)
+                    if hasattr(db, 'upsert_agent'):
+                        # Only for PostgreSQL backend
+                        ok = await db.upsert_agent(
+                            agent_id=agent_id,
+                            api_key=meta.api_key,
+                            status=getattr(meta, 'status', 'active'),
+                            purpose=getattr(meta, 'purpose', None),
+                            notes=getattr(meta, 'notes', None),
+                            tags=getattr(meta, 'tags', None),
+                            parent_agent_id=getattr(meta, 'parent_agent_id', None),
+                            spawn_reason=getattr(meta, 'spawn_reason', None),
+                            created_at=datetime.fromisoformat(meta.created_at) if hasattr(meta, 'created_at') and meta.created_at else None,
+                        )
+                        if not ok:
+                            # Don't attempt identity creation if agent row couldn't be created,
+                            # otherwise Postgres FK constraint will fail (core.identities.agent_id -> core.agents.id).
+                            raise RuntimeError(f"Dual-write failed: could not upsert agent '{agent_id}' in core.agents")
+                        logger.debug(f"Dual-write: Created agent in core.agents for {agent_id}")
+                    
+                    # Now create identity (foreign key constraint satisfied)
                     await db.upsert_identity(
                         agent_id=agent_id,
                         api_key_hash=api_key_hash,
@@ -1170,10 +1199,12 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             # This fixes the UX gap where reviewers didn't know they had pending work
             try:
                 from .dialectic import ACTIVE_SESSIONS
+                from src.dialectic_protocol import DialecticPhase
                 pending_dialectic = []
                 for session_id, session in ACTIVE_SESSIONS.items():
                     # Check if this agent is the reviewer and session needs antithesis
-                    if session.reviewer_agent_id == agent_id and session.phase.value == "antithesis":
+                    # When phase is ANTITHESIS, reviewer needs to submit antithesis
+                    if session.reviewer_agent_id == agent_id and session.phase == DialecticPhase.ANTITHESIS:
                         pending_dialectic.append({
                             "session_id": session_id,
                             "role": "reviewer",
@@ -1184,7 +1215,8 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                             "created_at": session.created_at.isoformat() if session.created_at else None
                         })
                     # Check if this agent is the paused agent and session needs synthesis
-                    elif session.paused_agent_id == agent_id and session.phase.value == "synthesis":
+                    # When phase is SYNTHESIS, paused agent needs to submit synthesis
+                    elif session.paused_agent_id == agent_id and session.phase == DialecticPhase.SYNTHESIS:
                         pending_dialectic.append({
                             "session_id": session_id,
                             "role": "initiator", 

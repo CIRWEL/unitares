@@ -683,6 +683,7 @@ async def quick_start(
     agent_id: str = None,
     auto_bind: bool = True,
     purpose: str = None,
+    include_api_key: bool = False,
 ) -> dict:
     """quick_start(agent_id, purpose) - Streamlined onboarding with auto-creation and binding"""
     args = {
@@ -691,6 +692,8 @@ async def quick_start(
     }
     if purpose:
         args["purpose"] = purpose
+    if include_api_key:
+        args["include_api_key"] = True
     return await get_tool_wrapper("quick_start")(**args)
 
 
