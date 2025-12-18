@@ -863,6 +863,98 @@ class CalibrationChecker:
             print(f"Warning: Failed to load calibration state: {e}, resetting", file=sys.stderr)
             self.reset()
 
+    def compute_correction_factors(self, min_samples: int = 5) -> Dict[str, float]:
+        """
+        Compute correction factors for each confidence bin based on historical accuracy.
+
+        AUTO-CALIBRATION: If agents report 90% confidence but are only 70% accurate,
+        the correction factor is 0.70/0.90 = 0.78. Multiply reported confidence by
+        this factor to get calibrated confidence.
+
+        Args:
+            min_samples: Minimum samples in a bin to compute correction (default 5)
+
+        Returns:
+            Dict mapping bin_key to correction factor (1.0 = well-calibrated)
+        """
+        corrections = {}
+
+        # Use tactical metrics (per-decision accuracy) for correction
+        for bin_key, stats in self.tactical_bin_stats.items():
+            if stats['count'] < min_samples:
+                continue
+
+            # Parse bin range for midpoint
+            bin_min, bin_max = map(float, bin_key.split('-'))
+            expected_accuracy = stats['confidence_sum'] / stats['count']  # Average confidence in bin
+            actual_accuracy = stats['actual_correct'] / stats['count']
+
+            if expected_accuracy > 0.01:  # Avoid division by near-zero
+                # Correction factor: actual/expected
+                # If expected 0.9 but actual 0.7, factor = 0.78
+                # If expected 0.5 but actual 0.6, factor = 1.2 (underconfident)
+                factor = actual_accuracy / expected_accuracy
+                # Clip to reasonable range [0.5, 1.5] to avoid extreme corrections
+                factor = max(0.5, min(1.5, factor))
+                corrections[bin_key] = factor
+
+        return corrections
+
+    def apply_confidence_correction(self, reported_confidence: float,
+                                    min_samples: int = 5) -> Tuple[float, Optional[str]]:
+        """
+        Apply calibration correction to a reported confidence value.
+
+        AUTO-CALIBRATION LOOP: This closes the learning loop by automatically
+        adjusting confidence based on historical accuracy.
+
+        Args:
+            reported_confidence: The confidence value reported by the agent [0, 1]
+            min_samples: Minimum samples needed to apply correction
+
+        Returns:
+            Tuple of (corrected_confidence, correction_info)
+            - corrected_confidence: Calibrated confidence value [0, 1]
+            - correction_info: String describing correction applied, or None
+        """
+        # Clamp input to valid range
+        reported_confidence = max(0.0, min(1.0, reported_confidence))
+
+        # Find the bin for this confidence
+        bin_key = None
+        for bin_min, bin_max in self.bins:
+            if bin_min <= reported_confidence < bin_max or (bin_max == 1.0 and reported_confidence == 1.0):
+                bin_key = f"{bin_min:.1f}-{bin_max:.1f}"
+                break
+
+        if bin_key is None:
+            return reported_confidence, None
+
+        # Check if we have enough samples for this bin
+        stats = self.tactical_bin_stats.get(bin_key)
+        if not stats or stats['count'] < min_samples:
+            return reported_confidence, None
+
+        # Compute correction
+        expected_accuracy = stats['confidence_sum'] / stats['count']
+        actual_accuracy = stats['actual_correct'] / stats['count']
+
+        if expected_accuracy < 0.01:
+            return reported_confidence, None
+
+        factor = actual_accuracy / expected_accuracy
+        factor = max(0.5, min(1.5, factor))  # Clip to reasonable range
+
+        corrected = reported_confidence * factor
+        corrected = max(0.0, min(1.0, corrected))  # Clamp to [0, 1]
+
+        # Only report if correction is significant (> 5%)
+        if abs(factor - 1.0) > 0.05:
+            info = f"calibration_adjusted: {reported_confidence:.2f} → {corrected:.2f} (factor={factor:.2f}, n={stats['count']})"
+            return corrected, info
+
+        return corrected, None
+
 
 # Global calibration checker instance (lazy initialization to avoid blocking at import time)
 _calibration_checker_instance = None
