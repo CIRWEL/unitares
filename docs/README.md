@@ -1,84 +1,143 @@
 # Documentation Structure
 
-This directory contains essential documentation for the UNITARES Governance Monitor system.
+**UNITARES Governance Monitor - Documentation Hub**
 
-**Last Updated:** 2025-12-23
-**Total Files:** 6 markdown files
+**Last Updated:** 2026-01-04
+
+---
+
+## Quick Start - Choose Your Path
+
+| You are... | Start here |
+|------------|------------|
+| **Claude Code (CLI)** | [CLAUDE_CODE_START_HERE.md](guides/CLAUDE_CODE_START_HERE.md) |
+| **MCP Client (Cursor, etc.)** | [START_HERE.md](guides/START_HERE.md) |
+| **Developer/Debugger** | [.agent-guides/DEVELOPER_AGENTS.md](../.agent-guides/DEVELOPER_AGENTS.md) |
+| **Human setting up MCP** | [MCP_SETUP.md](guides/MCP_SETUP.md) |
 
 ---
 
 ## Directory Structure
 
-### `/guides/` - User Guides (4 files)
-Essential guides for using the system:
+### `/guides/` - User Guides (36 files)
 
-- **[ONBOARDING.md](guides/ONBOARDING.md)** - Human onboarding guide
-- **[MCP_SETUP.md](guides/MCP_SETUP.md)** - MCP server setup instructions
-- **[TROUBLESHOOTING.md](guides/TROUBLESHOOTING.md)** - Common issues and solutions
-- **[THRESHOLDS.md](guides/THRESHOLDS.md)** - Governance thresholds and configuration
-- **[SCRIPTS_OVERVIEW.md](guides/SCRIPTS_OVERVIEW.md)** - Active vs archived scripts map
+**Entry Points:**
+- [START_HERE.md](guides/START_HERE.md) - Agent onboarding (MCP clients)
+- [CLAUDE_CODE_START_HERE.md](guides/CLAUDE_CODE_START_HERE.md) - Claude Code specific guide
+- [ONBOARDING.md](guides/ONBOARDING.md) - Comprehensive onboarding
 
-### `/reference/` - Reference Documentation (1 file)
+**Setup & Configuration:**
+- [MCP_SETUP.md](guides/MCP_SETUP.md) - MCP server setup
+- [THRESHOLDS.md](guides/THRESHOLDS.md) - Governance thresholds
+- [NGROK_DEPLOYMENT.md](guides/NGROK_DEPLOYMENT.md) - Remote access setup
+- [NGROK_GATEWAY.md](guides/NGROK_GATEWAY.md) - AI Gateway configuration
+- [HUGGINGFACE_EMBEDDINGS.md](guides/HUGGINGFACE_EMBEDDINGS.md) - Embedding model optimization
 
-- **[AI_ASSISTANT_GUIDE.md](reference/AI_ASSISTANT_GUIDE.md)** - Complete guide for AI agents using the system
+**Tutorials:**
+- [MULTI_AGENT_TUTORIAL.md](guides/MULTI_AGENT_TUTORIAL.md) - Multi-agent coordination
+- [MULTI_PROVIDER_SETUP.md](guides/MULTI_PROVIDER_SETUP.md) - Multi-provider configuration
+- [MODEL_INFERENCE_SETUP.md](guides/MODEL_INFERENCE_SETUP.md) - Model inference setup
 
-### `/theory/` - Theoretical Documentation (1 file)
+**Identity & Auth:**
+- [OAUTH_IDENTITY.md](guides/OAUTH_IDENTITY.md) - OAuth integration
+- [AGENT_IDENTITY_INTEGRATION.md](guides/AGENT_IDENTITY_INTEGRATION.md) - Identity integration
 
-- **[EISV_THEORETICAL_FOUNDATIONS.md](theory/EISV_THEORETICAL_FOUNDATIONS.md)** - Comprehensive theoretical treatment of EISV framework (mathematical elegance, domain integration, philosophical significance)
+**Troubleshooting:**
+- [TROUBLESHOOTING.md](guides/TROUBLESHOOTING.md) - Common issues and solutions
+- [NGROK_GATEWAY_TROUBLESHOOTING.md](guides/NGROK_GATEWAY_TROUBLESHOOTING.md) - Gateway issues
+- [SSE_VS_STDIO.md](guides/SSE_VS_STDIO.md) - Transport comparison
 
-### `/dev/` - Developer Documentation (1 file)
+### `/reference/` - Reference Documentation
 
-- **[TOOL_REGISTRATION.md](dev/TOOL_REGISTRATION.md)** - How to add/modify tools in the MCP server (auto-registration, session injection, SSE-only tools)
+- [AI_ASSISTANT_GUIDE.md](reference/AI_ASSISTANT_GUIDE.md) - Complete guide for AI agents
+- [CONCEPT_TRANSLATION_GUIDE.md](reference/CONCEPT_TRANSLATION_GUIDE.md) - Patent-to-code mapping
+- [PATENT_TO_IMPLEMENTATION_MAP.md](reference/PATENT_TO_IMPLEMENTATION_MAP.md) - Implementation map
+- [SSE_SERVER.md](reference/SSE_SERVER.md) - SSE server reference
+
+### `/theory/` - Theoretical Documentation
+
+- [EISV_THEORETICAL_FOUNDATIONS.md](theory/EISV_THEORETICAL_FOUNDATIONS.md) - EISV framework theory
+- [Enactive_Identity_Paper_Draft.md](theory/Enactive_Identity_Paper_Draft.md) - Research paper draft
+- [META_COGNITIVE_AI_DEEP_DIVE.md](theory/META_COGNITIVE_AI_DEEP_DIVE.md) - Meta-cognitive analysis
+
+### `/business/` - Business Documentation
+
+- [DEPLOYMENT_MODELS.md](business/DEPLOYMENT_MODELS.md) - Deployment strategies
+- [CUSTOMER_FEATURES_ANALYSIS.md](business/CUSTOMER_FEATURES_ANALYSIS.md) - Feature analysis
+- [ITERATION_STRATEGY.md](business/ITERATION_STRATEGY.md) - Development strategy
+
+### `/friction/` - UX Testing & Improvements
+
+Active UX testing logs and improvements.
+
+### `/archive/` - Historical Documentation
+
+Session artifacts and superseded documentation:
+- [2025-12/INDEX.md](archive/2025-12/INDEX.md) - December 2025 archive
+- [2026-01/INDEX.md](archive/2026-01/INDEX.md) - January 2026 archive (session artifacts)
 
 ---
 
-## Quick Start
+## Current Tool Count: 45+ Tools
 
-**New to the system?**
+- **Essential (Tier 1):** ~11 tools
+- **Common (Tier 2):** ~22 tools
+- **Advanced (Tier 3):** ~12 tools
 
-1. Read **[START_HERE.md](guides/START_HERE.md)** (5 min) - Quick onboarding
-2. Read **[AI_ASSISTANT_GUIDE.md](reference/AI_ASSISTANT_GUIDE.md)** (20 min) - Complete agent guide
-3. Reference **[TROUBLESHOOTING.md](guides/TROUBLESHOOTING.md)** as needed
-
-**Setting up MCP?**
-
-→ **[MCP_SETUP.md](guides/MCP_SETUP.md)**
-
-**Configuring thresholds?**
-
-→ **[THRESHOLDS.md](guides/THRESHOLDS.md)**
+Use `list_tools()` for the current list, or `list_tools(lite=true)` for essential tools only.
 
 ---
 
-## Project Root Documentation
+## Primary Entry Points
 
-- **[README.md](../README.md)** - Main project documentation
-- **[START_HERE.md](guides/START_HERE.md)** - Onboarding entry point
-- **[CHANGELOG.md](../CHANGELOG.md)** - Version history
+```
+                      AGENT ENTRY POINTS
 
----
-
-## Module Documentation
-
-- **[governance_core/README.md](../governance_core/README.md)** - Core module documentation
-- **[scripts/README.md](../scripts/README.md)** - Scripts documentation
-- **[data/README.md](../data/README.md)** - Data directory documentation
-- **[demos/README.md](../demos/README.md)** - Demo examples
-- **[tools/README.md](../tools/README.md)** - Tools documentation
+  Claude Code (CLI)          MCP Clients (Cursor, etc.)
+        |                            |
+        v                            v
+  CLAUDE_CODE_START_HERE      START_HERE.md
+        |                            |
+        +------------+---------------+
+                     v
+         onboard() / identity() (MCP tools)
+                     |
+                     v
+           AI_ASSISTANT_GUIDE.md (deep understanding)
+```
 
 ---
 
 ## Documentation Philosophy
 
 **Simplified structure:**
-- **5 essential docs** in `/docs/` - covers 90% of use cases
-- **Reference docs** organized by topic
-- **Module READMEs** for each major component
+- Choose your entry point based on your context
+- Essential guides cover 90% of use cases
+- Use `search_knowledge_graph()` for discoveries, insights, patterns
 
-**Knowledge Graph:**
-- Use `store_knowledge_graph` for discrete discoveries (bugs, insights, patterns)
-- Use markdown files for comprehensive guides (1000+ words)
+**Knowledge Graph vs Markdown:**
+- **Knowledge Graph:** Insights, discoveries, bugs, patterns, quick notes
+- **Markdown:** Reference guides, comprehensive documentation
+
+**Anti-proliferation:**
+- Session artifacts go to `/archive/YYYY-MM/`
+- Consolidate related docs rather than creating new ones
+- Update existing docs instead of creating variants
 
 ---
 
-**Last Updated:** 2025-12-23
+## Recent Cleanup (2026-01-04)
+
+Archived 61 session artifacts:
+- 17 GATEWAY configuration session files → `archive/2026-01/session-artifacts/gateway/`
+- 8 tool enhancement session files → `archive/2026-01/session-artifacts/tool-enhancements/`
+- 5 investigation trails → `archive/2026-01/session-artifacts/investigations/`
+- 31 one-off fixes → `archive/2026-01/session-artifacts/fixes/`
+
+Consolidated:
+- Multiple GATEWAY docs → `guides/NGROK_GATEWAY.md`
+- Fix docs → `guides/TROUBLESHOOTING.md`
+
+---
+
+**Last Updated:** 2026-01-04

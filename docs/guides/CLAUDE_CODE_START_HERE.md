@@ -160,7 +160,7 @@ asyncio.run(log_work())
 
 ## Advanced: Access All MCP Tools
 
-You have access to all 50 MCP tools via the Python client:
+You have access to all 45 MCP tools via the Python client:
 
 ```python
 import asyncio

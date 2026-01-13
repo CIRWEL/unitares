@@ -1,20 +1,28 @@
 """
-SQLite Index for Audit Log (Dual-write with JSONL)
+Audit Log Storage
+
+Provides backend-agnostic access to audit events.
+Delegates to PostgreSQL (via get_db()) when DB_BACKEND=postgres,
+falls back to SQLite for backward compatibility.
 
 Goal:
 - Keep `data/audit_log.jsonl` as the append-only raw truth for transparency.
-- Add SQLite as a query/index layer so agents can retrieve slices quickly without scanning files.
+- Add database as a query/index layer so agents can retrieve slices quickly.
 
 Design:
 - Store each audit entry as a row with JSON columns for `details` and `metadata`.
-- Use WAL mode + busy_timeout for multi-client access (SSE + stdio + background tasks).
+- Use WAL mode + busy_timeout for multi-client SQLite access.
+- Use PostgreSQL audit.events table when DB_BACKEND=postgres.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import os
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -484,3 +492,172 @@ class AuditDB:
         }
 
 
+# =========================================================================
+# Backend-Agnostic Async Wrappers
+# =========================================================================
+
+_audit_db: Optional[AuditDB] = None
+_db_lock: Optional[asyncio.Lock] = None
+
+
+def _use_postgres() -> bool:
+    """Check if we should use PostgreSQL backend."""
+    return os.getenv("DB_BACKEND", "").lower() == "postgres"
+
+
+async def _get_sqlite_db() -> AuditDB:
+    """Get or create SQLite audit DB instance."""
+    global _audit_db, _db_lock
+    if _db_lock is None:
+        _db_lock = asyncio.Lock()
+
+    async with _db_lock:
+        if _audit_db is None:
+            db_path = Path(os.getenv(
+                "UNITARES_AUDIT_DB_PATH",
+                str(Path(__file__).parent.parent / "data" / "governance.db")
+            ))
+            _audit_db = AuditDB(db_path)
+    return _audit_db
+
+
+async def append_audit_event_async(entry: Dict[str, Any], raw_hash: Optional[str] = None) -> bool:
+    """
+    Append an audit event to the appropriate backend.
+
+    Uses PostgreSQL via get_db() when DB_BACKEND=postgres,
+    falls back to SQLite otherwise.
+    """
+    if _use_postgres():
+        from src.db import get_db
+        from src.db.base import AuditEvent
+        db = get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+
+        # Convert dict to AuditEvent dataclass
+        event = AuditEvent(
+            ts=datetime.fromisoformat(entry["timestamp"]) if isinstance(entry.get("timestamp"), str) else entry.get("timestamp") or datetime.now(timezone.utc),
+            event_id=entry.get("event_id", ""),
+            event_type=entry.get("event_type", ""),
+            agent_id=entry.get("agent_id"),
+            session_id=entry.get("session_id"),
+            confidence=float(entry.get("confidence", 1.0)),
+            payload=entry.get("details", {}),
+            raw_hash=raw_hash,
+        )
+        return await db.append_audit_event(event)
+    else:
+        audit_db = await _get_sqlite_db()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: audit_db.append_event(entry, raw_hash))
+        return True
+
+
+async def query_audit_events_async(
+    agent_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    limit: int = 1000,
+    order: str = "asc",
+) -> List[Dict[str, Any]]:
+    """
+    Query audit events from the appropriate backend.
+
+    Uses PostgreSQL via get_db() when DB_BACKEND=postgres,
+    falls back to SQLite otherwise.
+    """
+    if _use_postgres():
+        from src.db import get_db
+        db = get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+
+        # Convert string times to datetime
+        start_dt = datetime.fromisoformat(start_time) if start_time else None
+        end_dt = datetime.fromisoformat(end_time) if end_time else None
+
+        events = await db.query_audit_events(
+            agent_id=agent_id,
+            event_type=event_type,
+            start_time=start_dt,
+            end_time=end_dt,
+            limit=limit,
+            order=order,
+        )
+        # Convert AuditEvent objects to dicts
+        return [
+            {
+                "timestamp": e.ts.isoformat() if e.ts else None,
+                "agent_id": e.agent_id,
+                "event_type": e.event_type,
+                "confidence": e.confidence,
+                "details": e.payload,
+                "event_id": e.event_id,
+            }
+            for e in events
+        ]
+    else:
+        audit_db = await _get_sqlite_db()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: audit_db.query(agent_id, event_type, start_time, end_time, limit, order)
+        )
+
+
+async def search_audit_events_async(
+    query: str,
+    agent_id: Optional[str] = None,
+    limit: int = 200,
+) -> List[Dict[str, Any]]:
+    """
+    Full-text search on audit events.
+
+    Uses PostgreSQL ILIKE when DB_BACKEND=postgres,
+    falls back to SQLite FTS5 otherwise.
+    """
+    if _use_postgres():
+        from src.db import get_db
+        db = get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+
+        events = await db.search_audit_events(query, agent_id, limit)
+        return [
+            {
+                "timestamp": e.ts.isoformat() if e.ts else None,
+                "agent_id": e.agent_id,
+                "event_type": e.event_type,
+                "confidence": e.confidence,
+                "details": e.payload,
+                "event_id": e.event_id,
+            }
+            for e in events
+        ]
+    else:
+        audit_db = await _get_sqlite_db()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: audit_db.fts_search(query, agent_id=agent_id, limit=limit)
+        )
+
+
+async def audit_health_check_async() -> Dict[str, Any]:
+    """
+    Health check for audit storage backend.
+    """
+    if _use_postgres():
+        from src.db import get_db
+        db = get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+        health = await db.health_check()
+        health["component"] = "audit"
+        return health
+    else:
+        audit_db = await _get_sqlite_db()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, audit_db.health_check)

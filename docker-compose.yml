@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:14-alpine
+    container_name: unitares-postgres
+    environment:
+      POSTGRES_DB: governance
+      POSTGRES_USER: governance
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U governance"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: unitares-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build: .
+    container_name: unitares-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: governance
+      POSTGRES_USER: governance
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      
+      # Server
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8765
+      
+      # Optional: API keys
+      HF_TOKEN: ${HF_TOKEN:-}
+      GOOGLE_AI_API_KEY: ${GOOGLE_AI_API_KEY:-}
+      NGROK_API_KEY: ${NGROK_API_KEY:-}
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  postgres_data:
+  redis_data:
+

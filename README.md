@@ -1,10 +1,33 @@
-# UNITARES Governance Framework v2.3.0
+# UNITARES Governance Framework v2.5.1
 
 **Thermodynamic AI governance with autonomous peer review.**
 
-Production-ready system for monitoring AI agent behavior using EISV (Energy, Integrity, Entropy, Void) state dynamics.
+Production-ready system for monitoring AI agent behavior using EISV (Energy, Integrity, Entropy, Void) state dynamics, with HCK/CIRS stability monitoring and three-tier identity model.
 
 ---
+
+## 🤖 For AI Agents
+
+We provide a zero-boilerplate shorthand script to eliminate the "wrapper tax" when calling tools.
+
+**Usage:**
+```bash
+python3 scripts/mcp_agent.py <tool_name> [key=value ...]
+```
+
+**Examples:**
+```bash
+# Identity check (auto-saves session)
+python3 scripts/mcp_agent.py onboard
+
+# Governance update
+python3 scripts/mcp_agent.py process_agent_update response_text="Refactoring auth" complexity=0.7
+
+# Store knowledge (complex args via JSON)
+python3 scripts/mcp_agent.py store_knowledge_graph --json '{"discovery_type": "insight", "summary": "Found bug"}'
+```
+
+See [docs/guides/MCP_AGENT_SHORTHAND.md](docs/guides/MCP_AGENT_SHORTHAND.md) for details.
 
 ## Quick Start
 
@@ -23,6 +46,23 @@ Production-ready system for monitoring AI agent behavior using EISV (Energy, Int
 
 ## Installation
 
+### Self-Hosted Deployment (Recommended)
+
+**One-command setup:**
+```bash
+git clone <repo>
+cd governance-mcp-v1
+./install.sh
+```
+
+Access:
+- Dashboard: http://localhost:8765/dashboard
+- MCP Endpoint: http://localhost:8765/sse
+
+See [Deployment Guide](docs/guides/DEPLOYMENT.md) for details.
+
+### Local Development
+
 ```bash
 # Clone and install
 git clone <repo>
@@ -32,7 +72,7 @@ cd governance-mcp-v1
 pip install -r requirements-core.txt
 
 # OR full (SSE/HTTP server + extras)
-# pip install -r requirements-full.txt
+pip install -r requirements-full.txt
 ```
 
 ### Optional: Apache AGE (Graph Prototype)
@@ -90,6 +130,30 @@ curl -s \
 
 **Claude Code CLI (exception): no MCP.** Use the CLI bridge script instead (see `docs/guides/CLAUDE_CODE_CLI_GUIDE.md`).
 
+### Agent Shorthand Script (Zero Boilerplate)
+
+**NEW:** For agents calling from shell, use `mcp_agent.py` - eliminates all boilerplate:
+
+```bash
+# Simple tool call
+python3 scripts/mcp_agent.py identity
+
+# With arguments (key=value format - no f-string escaping needed!)
+python3 scripts/mcp_agent.py process_agent_update response_text="My work" complexity=0.6
+
+# With JSON input (for complex nested structures)
+python3 scripts/mcp_agent.py store_knowledge_graph --json '{"discovery_type": "insight", "summary": "Found pattern"}'
+
+# List all tools
+python3 scripts/mcp_agent.py list_tools
+```
+
+**Benefits:**
+- ✅ Zero syntax errors (no f-string escaping)
+- ✅ Zero boilerplate (no async/await, no imports)
+- ✅ Clean JSON output (easy to parse)
+- ✅ Perfect for agents calling from shell
+
 ### CLI (without MCP)
 
 ```bash
@@ -113,13 +177,29 @@ python3 -c "from src.governance_monitor import UNITARESMonitor; m = UNITARESMoni
 ### Governance Loop
 
 ```
-Agent logs work → EISV dynamics update → Decision (proceed/pause) → Feedback
+Agent logs work → EISV dynamics update → HCK/CIRS stability check → Decision (proceed/pause) → Feedback
 ```
+
+### Stability Monitoring (v2.5.0+)
+
+- **HCK v3.0**: Update coherence ρ(t) tracks E/I alignment; PI gains modulated when unstable
+- **CIRS v0.1**: Oscillation Index (OI) detects threshold-crossing patterns; resonance damping
 
 ### Decisions
 
 - **proceed** - Continue normally
-- **pause** - Circuit breaker triggered, needs review
+- **soft_dampen** - Resonance detected, damping applied
+- **hard_block** / **pause** - Circuit breaker triggered, needs review
+
+### Identity Model (v2.5.1+)
+
+Three-tier identity for clearer agent identification:
+
+| Tier | Field | Example | Mutability |
+|------|-------|---------|------------|
+| **UUID** | `uuid` | `f4cd825d-7d76-...` | Immutable |
+| **agent_id** | `agent_id` | `cursor_20251226` | Stable (auto-generated) |
+| **display_name** | `display_name` | `Claude_v2` | User-chosen |
 
 ---
 
@@ -142,7 +222,8 @@ Full list: `list_tools()` or [tools/README.md](tools/README.md)
 ```
 governance-mcp-v1/
 ├── src/
-│   ├── governance_monitor.py   # Core EISV dynamics
+│   ├── governance_monitor.py   # Core EISV dynamics + HCK/CIRS
+│   ├── cirs.py                 # Oscillation detection, resonance damping
 │   ├── mcp_server_std.py       # MCP server (stdio)
 │   ├── mcp_server_sse.py       # MCP server (SSE multi-client)
 │   └── mcp_handlers/           # 58 tools across 13 files
@@ -209,6 +290,6 @@ Research prototype - contact for licensing.
 
 ---
 
-**Status: Production Ready v2.3.0**
+**Status: Production Ready v2.5.1**
 
-Last Updated: 2025-12-23
+Last Updated: 2025-12-26

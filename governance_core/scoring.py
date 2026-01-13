@@ -66,17 +66,19 @@ def phi_objective(
     return phi
 
 
-def verdict_from_phi(phi: float) -> str:
+def verdict_from_phi(phi: float, safe_threshold: float = 0.15, caution_threshold: float = 0.0) -> str:
     """
     Convert Φ score to verdict category.
 
-    Thresholds:
-        Φ ≥ 0.3  → "safe"
-        Φ ≥ 0.0  → "caution"
-        Φ < 0.0  → "high-risk"
+    Thresholds (configurable):
+        Φ ≥ safe_threshold (default 0.15)  → "safe"
+        Φ ≥ caution_threshold (default 0.0) → "caution"
+        Φ < caution_threshold              → "high-risk"
 
     Args:
         phi: Φ objective score
+        safe_threshold: Threshold for "safe" verdict (default 0.15, recalibrated Dec 2025)
+        caution_threshold: Threshold for "caution" verdict (default 0.0)
 
     Returns:
         Verdict string: "safe", "caution", or "high-risk"
@@ -86,10 +88,11 @@ def verdict_from_phi(phi: float) -> str:
         - "safe" suggests proceeding normally
         - "caution" suggests proceeding with safeguards
         - "high-risk" suggests human review or rejection
+        - Default 0.15 matches typical healthy state (E=0.7, I=0.8, S=0.2)
     """
-    if phi >= 0.3:
+    if phi >= safe_threshold:
         return "safe"
-    elif phi >= 0.0:
+    elif phi >= caution_threshold:
         return "caution"
     else:
         return "high-risk"

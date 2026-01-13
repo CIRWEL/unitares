@@ -20,19 +20,58 @@ CREATE SCHEMA IF NOT EXISTS audit;
 -- CORE TABLES
 -- ============================================================================
 
--- Identities (agents)
+-- Agents (core agent identity - matches ticket requirements)
+CREATE TABLE IF NOT EXISTS core.agents (
+    id                  TEXT PRIMARY KEY,
+    api_key             TEXT NOT NULL,
+    status              TEXT DEFAULT 'active'
+                        CHECK (status IN ('active', 'paused', 'archived')),
+    purpose             TEXT,
+    notes               TEXT,
+    tags                TEXT[],
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW(),
+    archived_at         TIMESTAMPTZ,
+    parent_agent_id     TEXT REFERENCES core.agents(id),
+    spawn_reason        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_agents_status ON core.agents(status) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_agents_parent ON core.agents(parent_agent_id) WHERE parent_agent_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_agents_created_at ON core.agents(created_at DESC);
+
+-- Helper function for updated_at triggers (must be defined before triggers)
+CREATE OR REPLACE FUNCTION core.update_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to update updated_at
+CREATE TRIGGER trg_agents_updated_at
+    BEFORE UPDATE ON core.agents
+    FOR EACH ROW EXECUTE FUNCTION core.update_timestamp();
+
+-- Identities (agents) - kept for backward compatibility
 CREATE TABLE IF NOT EXISTS core.identities (
     identity_id SERIAL PRIMARY KEY,
-    agent_id VARCHAR(255) UNIQUE NOT NULL,
+    agent_id VARCHAR(255) UNIQUE NOT NULL REFERENCES core.agents(id) ON DELETE CASCADE,
     api_key_hash VARCHAR(255) NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now(),
     status VARCHAR(50) DEFAULT 'active',
-    parent_agent_id VARCHAR(255),
+    parent_agent_id VARCHAR(255) REFERENCES core.agents(id),
     spawn_reason TEXT,
     disabled_at TIMESTAMPTZ,
     metadata JSONB DEFAULT '{}'::jsonb
 );
+
+-- Trigger to update updated_at (function already defined above)
+CREATE TRIGGER trg_identities_updated_at
+    BEFORE UPDATE ON core.identities
+    FOR EACH ROW EXECUTE FUNCTION core.update_timestamp();
 
 CREATE INDEX IF NOT EXISTS idx_identities_agent_id ON core.identities(agent_id);
 CREATE INDEX IF NOT EXISTS idx_identities_status ON core.identities(status);
@@ -87,8 +126,8 @@ ON CONFLICT (id) DO NOTHING;
 -- Dialectic Sessions
 CREATE TABLE IF NOT EXISTS core.dialectic_sessions (
     session_id VARCHAR(255) PRIMARY KEY,
-    paused_agent_id VARCHAR(255) NOT NULL,
-    reviewer_agent_id VARCHAR(255),
+    paused_agent_id VARCHAR(255) NOT NULL REFERENCES core.agents(id),
+    reviewer_agent_id VARCHAR(255) REFERENCES core.agents(id),
     phase VARCHAR(50) DEFAULT 'thesis',
     status VARCHAR(50) DEFAULT 'active',
     created_at TIMESTAMPTZ DEFAULT now(),
@@ -106,6 +145,11 @@ CREATE TABLE IF NOT EXISTS core.dialectic_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_dialectic_paused ON core.dialectic_sessions(paused_agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_dialectic_reviewer ON core.dialectic_sessions(reviewer_agent_id, status);
+
+-- Trigger to update updated_at (function already defined above)
+CREATE TRIGGER trg_dialectic_sessions_updated_at
+    BEFORE UPDATE ON core.dialectic_sessions
+    FOR EACH ROW EXECUTE FUNCTION core.update_timestamp();
 
 -- Dialectic Messages
 CREATE TABLE IF NOT EXISTS core.dialectic_messages (

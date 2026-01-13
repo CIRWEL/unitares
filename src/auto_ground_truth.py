@@ -200,50 +200,89 @@ def evaluate_objective_outcomes(outcomes: Dict) -> Optional[bool]:
 
 def evaluate_decision_outcome(entry: Dict, metadata: Dict) -> Optional[bool]:
     """
-    Evaluate whether a decision was correct based on agent outcomes.
-    
-    This evaluates STRATEGIC calibration (trajectory health) - whether agents
-    with high confidence ended up in healthy states.
-    
+    Evaluate whether a decision's CONFIDENCE was appropriate for the outcome.
+
+    CALIBRATION PRINCIPLE:
+    Instead of just checking "was agent healthy?" (almost always True),
+    we check "was the confidence level appropriate for the outcome quality?"
+
+    This creates meaningful variance in ground truth:
+    - High confidence + excellent outcome → True (appropriately confident)
+    - High confidence + poor outcome → False (overconfident)
+    - Low confidence + excellent outcome → False (underconfident)
+    - Low confidence + uncertain outcome → True (appropriately uncertain)
+
     Args:
         entry: Audit log entry with decision details
         metadata: Agent metadata dict
-        
+
     Returns:
-        True if decision was correct, False if incorrect, None if can't evaluate
+        True if confidence matched outcome, False if miscalibrated, None if can't evaluate
     """
+    # Extract confidence from entry (try multiple locations)
+    confidence = entry.get('confidence')
+    if confidence is None:
+        details = entry.get('details', {})
+        confidence = details.get('confidence', details.get('coherence', None))
+
+    if confidence is None:
+        return None  # Can't evaluate without confidence
+
+    confidence = float(confidence)
+
+    # Get agent state
     agent_id = entry.get('agent_id', 'unknown')
-    decision = entry.get('details', {}).get('decision', 'unknown')
-    risk_score = entry.get('details', {}).get('risk_score', 0)
-    coherence = entry.get('details', {}).get('coherence', 0)
-    
     agent_meta = metadata.get(agent_id, {})
     status = agent_meta.get('status', 'unknown')
     loop_detected = agent_meta.get('loop_detected_at')
     paused_at = agent_meta.get('paused_at')
-    
-    # Evaluate actual correctness based on outcomes (STRATEGIC calibration)
-    # This measures trajectory health: "Did agents with high confidence end up in good states?"
-    
-    # Check if decision was "proceed" (for outcome evaluation logic)
-    decision_was_proceed = decision == 'proceed'
-    
-    if decision_was_proceed:
-        # "Proceed" decision - check if agent got stuck
-        if status == 'paused' or loop_detected or paused_at:
-            return False  # Should have paused but didn't
-        elif status in ['active', 'waiting_input', 'archived']:
-            return True  # Agent continued successfully
-        else:
-            return None  # Can't evaluate
+    update_count = agent_meta.get('update_count', 0)
+
+    # Determine outcome quality on 0-1 scale
+    # This measures how well the agent performed, not just binary health
+    if status == 'paused' or loop_detected or paused_at:
+        # Agent got stuck - poor outcome
+        outcome_quality = 0.2
+    elif status == 'archived':
+        # Agent completed successfully - excellent outcome
+        outcome_quality = 0.95
+    elif status == 'active':
+        # Agent still working - good outcome (slightly discounted for uncertainty)
+        # More updates = more established = slightly higher quality
+        base_quality = 0.7
+        experience_bonus = min(0.15, update_count * 0.01)  # Up to +0.15 for experienced agents
+        outcome_quality = base_quality + experience_bonus
+    elif status == 'waiting_input':
+        # Agent waiting for user - moderate outcome
+        outcome_quality = 0.6
     else:
-        # "Pause" decision - check if it was appropriate
-        if risk_score > 0.6 or coherence < 0.4:
-            return True  # Pause was appropriate
-        elif risk_score < 0.4 and coherence > 0.5:
-            return False  # Pause was too conservative
-        else:
-            return None  # Can't evaluate
+        # Unknown status
+        return None
+
+    # CALIBRATION CHECK: Was confidence appropriate for the outcome?
+    #
+    # Well-calibrated confidence should correlate with outcome quality.
+    # A large gap indicates miscalibration:
+    # - confidence >> outcome_quality → overconfidence
+    # - confidence << outcome_quality → underconfidence
+
+    confidence_outcome_gap = abs(confidence - outcome_quality)
+
+    # Threshold for "miscalibrated" - calibration error > 0.35 is considered wrong
+    # This creates ~25-40% False rate depending on data distribution
+    MISCALIBRATION_THRESHOLD = 0.35
+
+    if confidence_outcome_gap > MISCALIBRATION_THRESHOLD:
+        # Large gap = miscalibrated confidence
+        direction = "overconfident" if confidence > outcome_quality else "underconfident"
+        logger.debug(
+            f"Miscalibrated: conf={confidence:.2f}, outcome={outcome_quality:.2f}, "
+            f"gap={confidence_outcome_gap:.2f} ({direction})"
+        )
+        return False
+    else:
+        # Confidence reasonably matched outcome
+        return True
 
 
 async def collect_ground_truth_automatically(
@@ -274,8 +313,8 @@ async def collect_ground_truth_automatically(
     metadata = {}
     try:
         import src.mcp_server_std as mcp_server
-        # Ensure latest metadata is loaded using configured backend (json/sqlite/auto)
-        mcp_server.load_metadata()
+        # Use async version since we're in an async context (avoids event loop conflicts)
+        await mcp_server.load_metadata_async()
         # Convert AgentMetadata objects to dicts (this module expects dict-like access)
         for aid, meta_obj in getattr(mcp_server, "agent_metadata", {}).items():
             try:

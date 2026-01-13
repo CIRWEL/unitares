@@ -254,14 +254,8 @@ async def apply_condition(parsed: ParsedCondition, agent_id: str, mcp_server) ->
         
         logger.info(f"Applied condition to agent '{agent_id}': {parsed.original}")
 
-        # Persist metadata after applying any condition (non-blocking)
-        try:
-            await mcp_server.schedule_metadata_save(force=True)
-        except Exception as e:
-            # Don't fail the condition application if persistence fails, but surface it
-            result["status"] = "applied_with_warning"
-            result["warning"] = f"Condition applied but could not persist metadata: {e}"
-            logger.warning(f"Could not persist dialectic condition for '{agent_id}': {e}", exc_info=True)
+        # Note: Dialectic conditions are stored in runtime cache and persisted
+        # via agent_storage when the agent's state is updated
         
     except Exception as e:
         result["status"] = "failed"

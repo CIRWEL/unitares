@@ -10,48 +10,50 @@ from .utils import error_response
 
 
 # Standard recovery patterns for common error types
+# Updated Dec 2025: API keys deprecated, UUID-based identity is now primary
 RECOVERY_PATTERNS = {
     "agent_not_found": {
-        "action": "Call get_agent_api_key first to register this agent_id",
-        "related_tools": ["get_agent_api_key", "list_agents"],
+        "action": "Call any tool to auto-create identity, then use identity() to name yourself",
+        "related_tools": ["identity", "list_agents"],
         "workflow": [
-            "1. Call get_agent_api_key with your agent_id to register",
-            "2. Save the returned API key securely",
-            "3. Then call this tool again with agent_id and api_key"
+            "1. Call process_agent_update() or any tool - identity auto-creates",
+            "2. Call identity(name='your_name') to set your display name",
+            "3. Then call this tool again"
         ]
     },
     "agent_not_registered": {
-        "action": "Call get_agent_api_key first to register this agent_id",
-        "related_tools": ["get_agent_api_key", "list_agents"],
+        "action": "Call any tool to auto-create identity, then use identity() to name yourself",
+        "related_tools": ["identity", "list_agents"],
         "workflow": [
-            "1. Call get_agent_api_key with your agent_id to register",
-            "2. Save the returned API key securely",
-            "3. Then call this tool again with agent_id and api_key"
+            "1. Call process_agent_update() or any tool - identity auto-creates",
+            "2. Call identity(name='your_name') to set your display name",
+            "3. Then call this tool again"
         ]
     },
     "authentication_failed": {
-        "action": "Verify your API key matches your agent_id",
-        "related_tools": ["get_agent_api_key", "bind_identity"],
+        "action": "Identity should auto-bind on first tool call",
+        "related_tools": ["identity", "health_check"],
         "workflow": [
-            "1. Get correct API key for your agent_id via get_agent_api_key",
-            "2. Optionally call bind_identity(agent_id, api_key) to auto-retrieve in future",
-            "3. Retry with correct key"
+            "1. Call identity() to check your current binding",
+            "2. If unbound, call any tool - identity auto-creates",
+            "3. Retry your original request"
         ]
     },
     "authentication_required": {
-        "action": "Provide api_key parameter or bind your identity",
-        "related_tools": ["get_agent_api_key", "bind_identity"],
+        "action": "Identity auto-binds on first tool call",
+        "related_tools": ["identity", "process_agent_update"],
         "workflow": [
-            "Option 1: Get API key via get_agent_api_key and include in request",
-            "Option 2: Call bind_identity(agent_id, api_key) once, then API key auto-retrieved from session"
+            "1. Call any tool - identity auto-binds from session",
+            "2. Use identity(name='your_name') to set your display name",
+            "3. Retry your original request"
         ]
     },
     "ownership_required": {
         "action": "You can only modify your own resources",
-        "related_tools": ["get_agent_api_key", "list_agents"],
+        "related_tools": ["identity", "list_agents"],
         "workflow": [
-            "1. Verify you're using the correct agent_id",
-            "2. Ensure your API key matches the agent_id that owns the resource",
+            "1. Call identity() to verify your bound identity",
+            "2. Ensure the resource belongs to your agent_uuid",
             "3. You cannot modify resources owned by other agents"
         ]
     },
@@ -108,6 +110,63 @@ RECOVERY_PATTERNS = {
             "1. Check if resource exists",
             "2. Verify resource ID format",
             "3. Use search/list tools to find correct ID"
+        ]
+    },
+    "not_connected": {
+        "action": "Check MCP server connection status",
+        "related_tools": ["get_connection_status", "health_check"],
+        "workflow": [
+            "1. Call get_connection_status() to verify connection",
+            "2. Check if MCP server is running",
+            "3. Verify MCP configuration in client settings",
+            "4. Retry your request"
+        ]
+    },
+    "missing_client_session_id": {
+        "action": "Include client_session_id in your tool call",
+        "related_tools": ["identity", "onboard"],
+        "workflow": [
+            "1. Call identity() to get your client_session_id",
+            "2. Include client_session_id in all future tool calls",
+            "3. For write operations, client_session_id is required"
+        ]
+    },
+    "session_mismatch": {
+        "action": "Verify your session identity matches",
+        "related_tools": ["identity", "get_connection_status"],
+        "workflow": [
+            "1. Call identity() to check your resolved identity",
+            "2. Ensure client_session_id matches your session",
+            "3. If mismatch persists, call onboard(force_new=true) to reset",
+            "4. Retry your request with correct client_session_id"
+        ]
+    },
+    "missing_parameter": {
+        "action": "Include the missing required parameter",
+        "related_tools": ["describe_tool", "list_tools"],
+        "workflow": [
+            "1. Check tool description with describe_tool(tool_name=...)",
+            "2. Add the missing parameter to your call",
+            "3. Retry your request"
+        ]
+    },
+    "invalid_parameter_type": {
+        "action": "Check parameter type and format",
+        "related_tools": ["describe_tool"],
+        "workflow": [
+            "1. Check parameter type with describe_tool(tool_name=...)",
+            "2. Ensure parameter matches expected type (string, number, array, etc.)",
+            "3. Retry with correct type"
+        ]
+    },
+    "permission_denied": {
+        "action": "Verify you have required permissions",
+        "related_tools": ["identity", "get_governance_metrics"],
+        "workflow": [
+            "1. Call identity() to verify your identity",
+            "2. Check if operation requires specific permissions",
+            "3. Some operations require registered agent (call onboard() first)",
+            "4. Retry after verifying permissions"
         ]
     }
 }
@@ -314,6 +373,163 @@ def system_error(
     )]
 
 
+def not_connected_error(
+    context: Optional[Dict[str, Any]] = None,
+    error_code: str = "NOT_CONNECTED"
+) -> Sequence[TextContent]:
+    """Standard error for MCP connection issues"""
+    return [error_response(
+        "MCP server connection not available",
+        error_code=error_code,
+        error_category="system_error",
+        details={"error_type": "not_connected"},
+        recovery=RECOVERY_PATTERNS["not_connected"],
+        context=context or {}
+    )]
+
+
+def missing_client_session_id_error(
+    operation: str = "this operation",
+    context: Optional[Dict[str, Any]] = None,
+    error_code: str = "MISSING_CLIENT_SESSION_ID"
+) -> Sequence[TextContent]:
+    """Standard error for missing client_session_id"""
+    return [error_response(
+        f"client_session_id required for {operation}",
+        error_code=error_code,
+        error_category="validation_error",
+        details={"error_type": "missing_client_session_id", "operation": operation},
+        recovery=RECOVERY_PATTERNS["missing_client_session_id"],
+        context=context or {}
+    )]
+
+
+def session_mismatch_error(
+    expected_id: str,
+    provided_id: Optional[str] = None,
+    context: Optional[Dict[str, Any]] = None,
+    error_code: str = "SESSION_MISMATCH"
+) -> Sequence[TextContent]:
+    """Standard error for session identity mismatch"""
+    message = f"Session identity mismatch. Expected: {expected_id[:8]}..."
+    if provided_id:
+        message += f", Provided: {provided_id[:8]}..."
+    
+    return [error_response(
+        message,
+        error_code=error_code,
+        error_category="auth_error",
+        details={
+            "error_type": "session_mismatch",
+            "expected_resolved_id": expected_id,
+            "provided_id": provided_id
+        },
+        recovery=RECOVERY_PATTERNS["session_mismatch"],
+        context=context or {}
+    )]
+
+
+def missing_parameter_error(
+    parameter_name: str,
+    tool_name: Optional[str] = None,
+    context: Optional[Dict[str, Any]] = None,
+    error_code: str = "MISSING_PARAMETER"
+) -> Sequence[TextContent]:
+    """Standard error for missing required parameter"""
+    message = f"Missing required parameter: '{parameter_name}'"
+    if tool_name:
+        message += f" for tool '{tool_name}'"
+    
+    # Enhance message with custom guidance if provided
+    if context and "custom_message" in context:
+        message += f". {context['custom_message']}"
+    
+    # Add examples for common tools
+    examples = {}
+    if tool_name == "leave_note":
+        examples = {
+            "example": 'leave_note(summary="Your note here")',
+            "aliases": "You can also use: 'note', 'text', 'content', 'message', 'insight', 'finding', 'learning'",
+            "quick_fix": "Add summary parameter: leave_note(summary='Your note text')"
+        }
+    elif tool_name == "store_knowledge_graph":
+        examples = {
+            "example": 'store_knowledge_graph(summary="Discovery description", tags=["tag1"])',
+            "quick_fix": "Add summary parameter: store_knowledge_graph(summary='Your discovery')"
+        }
+    
+    details = {
+        "error_type": "missing_parameter",
+        "parameter": parameter_name,
+        "tool_name": tool_name
+    }
+    if examples:
+        details["examples"] = examples
+    
+    return [error_response(
+        message,
+        error_code=error_code,
+        error_category="validation_error",
+        details=details,
+        recovery=RECOVERY_PATTERNS["missing_parameter"],
+        context=context or {}
+    )]
+
+
+def invalid_parameter_type_error(
+    parameter_name: str,
+    expected_type: str,
+    provided_type: str,
+    tool_name: Optional[str] = None,
+    context: Optional[Dict[str, Any]] = None,
+    error_code: str = "INVALID_PARAMETER_TYPE"
+) -> Sequence[TextContent]:
+    """Standard error for invalid parameter type"""
+    message = f"Parameter '{parameter_name}' must be {expected_type}, got {provided_type}"
+    if tool_name:
+        message += f" for tool '{tool_name}'"
+    
+    return [error_response(
+        message,
+        error_code=error_code,
+        error_category="validation_error",
+        details={
+            "error_type": "invalid_parameter_type",
+            "parameter": parameter_name,
+            "expected_type": expected_type,
+            "provided_type": provided_type,
+            "tool_name": tool_name
+        },
+        recovery=RECOVERY_PATTERNS["invalid_parameter_type"],
+        context=context or {}
+    )]
+
+
+def permission_denied_error(
+    operation: str,
+    required_role: Optional[str] = None,
+    context: Optional[Dict[str, Any]] = None,
+    error_code: str = "PERMISSION_DENIED"
+) -> Sequence[TextContent]:
+    """Standard error for permission denied"""
+    message = f"Permission denied for {operation}"
+    if required_role:
+        message += f". Required role: {required_role}"
+    
+    return [error_response(
+        message,
+        error_code=error_code,
+        error_category="auth_error",
+        details={
+            "error_type": "permission_denied",
+            "operation": operation,
+            "required_role": required_role
+        },
+        recovery=RECOVERY_PATTERNS["permission_denied"],
+        context=context or {}
+    )]
+
+
 def tool_not_found_error(
     tool_name: str,
     available_tools: list,
@@ -338,7 +554,7 @@ def tool_not_found_error(
 
     # Categorize tools for discovery
     common_tools = [t for t in available_tools if t in {
-        'process_agent_update', 'bind_identity', 'search_knowledge_graph',
+        'process_agent_update', 'status', 'search_knowledge_graph',
         'list_agents', 'health_check', 'list_tools', 'get_agent_api_key'
     }]
 

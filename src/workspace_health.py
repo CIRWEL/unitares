@@ -26,11 +26,12 @@ def check_mcp_status() -> Dict[str, Any]:
     """
     project_root = get_project_root()
     
-    # Standard MCP config locations
+    # Standard MCP config locations (check primary location first)
     cursor_config_paths = [
-        Path.home() / "Library/Application Support/Cursor/User/globalStorage/mcp.json",  # macOS
-        Path.home() / ".config/Cursor/User/globalStorage/mcp.json",  # Linux
-        Path(os.environ.get("APPDATA", "")) / "Cursor/User/globalStorage/mcp.json",  # Windows
+        Path.home() / ".cursor" / "mcp.json",  # Primary location (shown in Cursor UI)
+        Path.home() / "Library/Application Support/Cursor/User/globalStorage/mcp.json",  # macOS alternative
+        Path.home() / ".config/Cursor/User/globalStorage/mcp.json",  # Linux alternative
+        Path(os.environ.get("APPDATA", "")) / "Cursor/User/globalStorage/mcp.json",  # Windows alternative
     ]
     
     claude_config_paths = [

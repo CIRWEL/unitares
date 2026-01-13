@@ -23,6 +23,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 import requests
+import os
 
 # Default base URL for tests
 DEFAULT_BASE_URL = "http://127.0.0.1:8765"
@@ -31,6 +32,11 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8765"
 @pytest.fixture
 def base_url():
     """Provide base URL and skip if server not running"""
+    # These tests are integration tests against a live server.
+    # To avoid surprising failures when a dev server happens to be running locally,
+    # require an explicit opt-in.
+    if os.getenv("RUN_OPENAI_ENDPOINT_TESTS") != "1":
+        pytest.skip("OpenAI endpoint tests require RUN_OPENAI_ENDPOINT_TESTS=1")
     url = DEFAULT_BASE_URL
     try:
         response = requests.get(f"{url}/health", timeout=2)

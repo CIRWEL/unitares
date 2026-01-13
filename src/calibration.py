@@ -90,23 +90,28 @@ class CalibrationChecker:
             state_file = Path(__file__).parent.parent / "data" / "calibration_state.json"
         self.state_file = Path(state_file)
 
-        # SQLite backend (source of truth). JSON snapshots disabled by default.
-        self._backend = os.getenv("UNITARES_CALIBRATION_BACKEND", "sqlite").strip().lower()  # json|sqlite|auto
-        # Calibration DB path - uses consolidated governance.db
+        # Backend: postgres (recommended), sqlite (legacy), json (fallback), auto
+        self._backend = os.getenv("UNITARES_CALIBRATION_BACKEND", "sqlite").strip().lower()
+        # Calibration DB path - used for SQLite fallback
         self._db_path = Path(
             os.getenv("UNITARES_CALIBRATION_DB_PATH", str(Path(__file__).parent.parent / "data" / "governance.db"))
         )
-        # JSON snapshots disabled by default (SQLite is canonical). Set to "1" to enable for debugging.
+        # JSON snapshots disabled by default (DB is canonical). Set to "1" to enable for debugging.
         self._write_json_snapshot = os.getenv("UNITARES_CALIBRATION_WRITE_JSON_SNAPSHOT", "0").strip().lower() in (
             "1",
             "true",
             "yes",
         )
         self._db: CalibrationDB | None = None
+        self._pg_db = None  # PostgreSQL backend (lazy init)
 
-        # Resolve backend once (auto prefers sqlite if db exists)
-        if self._backend not in ("json", "sqlite"):
-            self._backend = "sqlite" if self._db_path.exists() else "json"
+        # Resolve backend once (auto prefers postgres if DB_BACKEND=postgres, else sqlite)
+        if self._backend not in ("json", "sqlite", "postgres"):
+            # Auto: use postgres if main DB is postgres, else sqlite
+            if os.getenv("DB_BACKEND", "").lower() == "postgres":
+                self._backend = "postgres"
+            else:
+                self._backend = "sqlite" if self._db_path.exists() else "json"
         
         # Initialize complexity bins (always needed)
         self.complexity_bins = [
@@ -120,9 +125,36 @@ class CalibrationChecker:
         self.load_state()
 
     def _get_db(self) -> CalibrationDB:
+        """Get SQLite backend (legacy)."""
         if self._db is None:
             self._db = CalibrationDB(self._db_path)
         return self._db
+
+    def _get_pg_db(self):
+        """Get PostgreSQL backend (lazy init)."""
+        if self._pg_db is None:
+            from src.db import get_db
+            self._pg_db = get_db()
+        return self._pg_db
+
+    def _run_async(self, async_fn, *args, **kwargs):
+        """Run async function from sync context. Always uses thread pool for safety."""
+        import asyncio
+        import concurrent.futures
+
+        def run_in_new_loop():
+            """Run async function in a fresh event loop (for thread execution)."""
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(async_fn(*args, **kwargs))
+            finally:
+                new_loop.close()
+
+        # Always use thread pool - safer in mixed sync/async environments
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(run_in_new_loop)
+            return future.result(timeout=10.0)
     
     def reset(self):
         """Reset calibration statistics"""
@@ -783,8 +815,20 @@ class CalibrationChecker:
 
             now = datetime.now().isoformat()
 
-            # SQLite backend (preferred for multi-client)
-            if self._backend == "sqlite":
+            # PostgreSQL backend (recommended)
+            if self._backend == "postgres":
+                async def _save(data):
+                    # Create fresh db instance for thread safety
+                    from src.db import get_db
+                    db = get_db()
+                    await db.init()
+                    try:
+                        return await db.update_calibration(data)
+                    finally:
+                        await db.close()
+                self._run_async(_save, state_data)
+            # SQLite backend (legacy)
+            elif self._backend == "sqlite":
                 self._get_db().save_state(state_data, updated_at_iso=now)
 
             # Optional JSON snapshot for backward compatibility / transparency
@@ -801,23 +845,45 @@ class CalibrationChecker:
         try:
             state_data = None
 
-            # Auto-migrate JSON -> SQLite if sqlite enabled and db missing.
-            if self._backend == "sqlite" and (not self._db_path.exists()) and self.state_file.exists():
+            # PostgreSQL backend (recommended)
+            if self._backend == "postgres":
                 try:
-                    with open(self.state_file, "r") as f:
-                        state_data = json.load(f)
-                    # Save into sqlite as canonical state
-                    self._get_db().save_state(state_data, updated_at_iso=datetime.now().isoformat())
-                except Exception:
+                    async def _load():
+                        # Create fresh db instance for thread safety
+                        from src.db import get_db
+                        db = get_db()
+                        await db.init()
+                        try:
+                            return await db.get_calibration()
+                        finally:
+                            await db.close()
+                    result = self._run_async(_load)
+                    if result and isinstance(result, dict):
+                        # PostgreSQL returns calibration state directly (bins, tactical_bins, etc.)
+                        # Filter out metadata fields that start with '_'
+                        state_data = {k: v for k, v in result.items() if not k.startswith('_')}
+                except Exception as e:
+                    print(f"Warning: PostgreSQL calibration load failed: {e}, trying fallback", file=sys.stderr)
                     state_data = None
 
-            if self._backend == "sqlite":
-                try:
-                    state_data = self._get_db().load_state()
-                except Exception:
-                    state_data = None
+            # SQLite backend (legacy) - also used as fallback
+            elif self._backend == "sqlite":
+                # Auto-migrate JSON -> SQLite if sqlite enabled and db missing.
+                if (not self._db_path.exists()) and self.state_file.exists():
+                    try:
+                        with open(self.state_file, "r") as f:
+                            state_data = json.load(f)
+                        # Save into sqlite as canonical state
+                        self._get_db().save_state(state_data, updated_at_iso=datetime.now().isoformat())
+                    except Exception:
+                        state_data = None
+                else:
+                    try:
+                        state_data = self._get_db().load_state()
+                    except Exception:
+                        state_data = None
 
-            # Fallback to JSON file if sqlite empty/unavailable
+            # Fallback to JSON file if db empty/unavailable
             if state_data is None:
                 if not self.state_file.exists():
                     self.reset()

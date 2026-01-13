@@ -124,19 +124,30 @@ def compute_dynamics(
     E, I, S, V = state.E, state.I, state.S, state.V
 
     # Compute derivatives
-    # E dynamics: coupling to I, damping by S, drift feedback
+    # E dynamics: coupling to I, E-S cross-coupling, drift feedback
+    # UNITARES v4.1 Eq. 7: Ė = α(I - E) - βₑES + γₑ‖Δη‖² + dₑ
     dE_dt = (
         params.alpha * (I - E)           # I → E flow
-        - params.beta_E * S              # S damping
+        - params.beta_E * E * S          # E-S cross-coupling (fixed: was missing E)
         + params.gamma_E * d_eta_sq      # Drift feedback
     )
 
     # I dynamics: S coupling, coherence boost, self-regulation
-    dI_dt = (
-        -params.k * S                    # S → I coupling
-        + params.beta_I * C              # Coherence boost
-        - params.gamma_I * I * (1 - I)   # Logistic self-regulation
-    )
+    # Forcing term A (isolated for clarity and future extensibility)
+    A = params.beta_I * C - params.k * S
+    
+    # Check dynamics mode (v4.1 logistic vs v4.2-P linear)
+    from .parameters import get_i_dynamics_mode
+    i_mode = get_i_dynamics_mode()
+    
+    if i_mode == "linear":
+        # v4.2-P: Linear damping prevents boundary saturation
+        # dI/dt = A - γ_I·I → stable equilibrium at I* = A/γ_I
+        dI_dt = A - params.gamma_I * I
+    else:
+        # v4.1: Logistic self-regulation (default)
+        # dI/dt = A - γ_I·I·(1-I) → can saturate to I=1 if A > γ/4
+        dI_dt = A - params.gamma_I * I * (1 - I)
 
     # S dynamics: decay, drift drive, coherence reduction, complexity drive, noise
     dS_dt = (
@@ -203,3 +214,220 @@ def step_state(
         noise_S=noise_S,
         complexity=complexity,
     )
+
+
+def compute_equilibrium(
+    params: DynamicsParams,
+    theta: Theta,
+    ethical_drift_norm_sq: float = 0.0,
+) -> State:
+    """
+    Compute equilibrium point where all derivatives are zero.
+
+    The UNITARES system with γᵢI(1-I) term has TWO stable equilibria:
+    - High equilibrium: I* ≈ 0.91 (healthy operation)
+    - Low equilibrium: I* ≈ 0.09 (collapsed state)
+
+    This function returns the HIGH equilibrium (desired operating point).
+
+    Args:
+        params: Dynamics parameters
+        theta: Control parameters
+        ethical_drift_norm_sq: ‖Δη‖² (default 0)
+
+    Returns:
+        Equilibrium state (high equilibrium)
+    """
+    import math
+
+    # At equilibrium with V* ≈ 0:
+    # C(0) = Cmax * 0.5 * (1 + tanh(0)) = Cmax/2
+    C_0 = params.Cmax / 2.0
+
+    # From Ṡ = 0: S* = (λ₁‖Δη‖² - λ₂C₀) / μ
+    lam1 = lambda1(theta, params)
+    lam2 = lambda2(theta, params)
+    S_star = max(0.0, (lam1 * ethical_drift_norm_sq - lam2 * C_0) / params.mu)
+
+    # From İ = 0 with S*: βᵢC₀ = γᵢI*(1-I*) + kS*
+    # Solve quadratic: γᵢI² - γᵢI + (kS* - βᵢC₀) = 0
+    a = params.gamma_I
+    b = -params.gamma_I
+    c = params.k * S_star - params.beta_I * C_0
+
+    discriminant = b**2 - 4*a*c
+    if discriminant >= 0 and a != 0:
+        # Take the higher root (high equilibrium)
+        I_star = (-b + math.sqrt(discriminant)) / (2*a)
+        I_star = max(params.I_min, min(params.I_max, I_star))
+    else:
+        I_star = 0.9  # Default to high equilibrium region
+
+    # From Ė = 0: E* ≈ I* (dominant term)
+    E_star = I_star
+
+    # V* ≈ 0 at equilibrium
+    V_star = 0.0
+
+    return State(E=E_star, I=I_star, S=S_star, V=V_star)
+
+
+def estimate_convergence(
+    current: State,
+    equilibrium: State,
+    params: DynamicsParams,
+    contraction_rate: float = 0.1,
+    target_fraction: float = 0.05,
+) -> dict:
+    """
+    Estimate time/updates to convergence.
+
+    Uses exponential bound from contraction theory:
+    ‖x(t) - x*‖ ≤ e^{-αt} ‖x(0) - x*‖
+
+    Args:
+        current: Current state
+        equilibrium: Target equilibrium
+        params: Dynamics parameters (for dt)
+        contraction_rate: α from contraction analysis (default 0.1)
+        target_fraction: Convergence threshold (default 0.05 = 95%)
+
+    Returns:
+        dict with distance, time_to_convergence, updates_to_convergence
+    """
+    import math
+
+    # Compute distance to equilibrium
+    distance = math.sqrt(
+        (current.E - equilibrium.E)**2 +
+        (current.I - equilibrium.I)**2 +
+        (current.S - equilibrium.S)**2 +
+        (current.V - equilibrium.V)**2
+    )
+
+    if distance < 1e-6:
+        return {
+            'distance': distance,
+            'time_to_convergence': 0.0,
+            'updates_to_convergence': 0,
+            'converged': True,
+        }
+
+    # Time to reach target_fraction: e^{-αt} = target_fraction
+    # t = -ln(target_fraction) / α
+    dt = 0.1  # Default time step
+    time_to_convergence = -math.log(target_fraction) / contraction_rate
+    updates_to_convergence = int(math.ceil(time_to_convergence / dt))
+
+    return {
+        'distance': distance,
+        'time_to_convergence': time_to_convergence,
+        'updates_to_convergence': updates_to_convergence,
+        'converged': False,
+    }
+
+
+def check_basin(state: State, threshold: float = 0.5) -> str:
+    """
+    Check which basin of attraction the state is in.
+
+    The bistable UNITARES system has two basins:
+    - 'high': I > threshold, converges to high equilibrium
+    - 'low': I < threshold, converges to low equilibrium
+    - 'boundary': I ≈ threshold, unstable region
+
+    Args:
+        state: Current state
+        threshold: Basin boundary (default 0.5)
+
+    Returns:
+        'high', 'low', or 'boundary'
+    """
+    margin = 0.05
+    if state.I > threshold + margin:
+        return 'high'
+    elif state.I < threshold - margin:
+        return 'low'
+    else:
+        return 'boundary'
+
+
+def compute_saturation_diagnostics(
+    state: State,
+    theta: Theta,
+    params: Optional[DynamicsParams] = None,
+) -> dict:
+    """
+    Compute I-channel saturation diagnostics.
+    
+    This is the "pressure gauge" for understanding boundary saturation behavior.
+    Critical for monitoring system stability and validating dynamics mode choice.
+    
+    Args:
+        state: Current UNITARES state
+        theta: Control parameters
+        params: Dynamics parameters (uses DEFAULT_PARAMS if None)
+    
+    Returns:
+        dict with:
+        - A: Forcing term (β_I·C - k·S)
+        - gamma_over_4: Maximum logistic damping (γ_I/4)
+        - sat_margin: A - γ_I/4 (positive = push-to-boundary in logistic mode)
+        - I_equilibrium_linear: Predicted equilibrium under linear damping (A/γ_I)
+        - I_equilibrium_logistic: Predicted equilibria under logistic (if they exist)
+        - dynamics_mode: Current mode (linear/logistic)
+        - will_saturate: Whether logistic mode will saturate to I=1
+    """
+    from .parameters import DEFAULT_PARAMS, get_i_dynamics_mode
+    from .coherence import coherence
+    
+    if params is None:
+        params = DEFAULT_PARAMS
+    
+    # Compute coherence
+    C = coherence(state.V, theta, params)
+    
+    # Forcing term (isolated input)
+    A = params.beta_I * C - params.k * state.S
+    
+    # Logistic damping maximum
+    gamma_over_4 = params.gamma_I / 4.0
+    
+    # Saturation margin (the "smoking gun" metric)
+    sat_margin = A - gamma_over_4
+    
+    # Linear equilibrium (always exists)
+    I_eq_linear = A / params.gamma_I if params.gamma_I > 0 else float('inf')
+    
+    # Logistic equilibria (may not exist if sat_margin > 0)
+    I_eq_logistic = []
+    if sat_margin <= 0 and params.gamma_I > 0:
+        # Quadratic: γ·I² - γ·I + (k·S - β·C) = 0
+        # Roots: I = (1 ± sqrt(1 - 4A/γ)) / 2
+        import math
+        discriminant = 1 - 4 * A / params.gamma_I
+        if discriminant >= 0:
+            sqrt_d = math.sqrt(discriminant)
+            I_low = (1 - sqrt_d) / 2
+            I_high = (1 + sqrt_d) / 2
+            if 0 <= I_low <= 1:
+                I_eq_logistic.append(('stable_low', I_low))
+            if 0 <= I_high <= 1:
+                I_eq_logistic.append(('unstable_high', I_high))
+    
+    dynamics_mode = get_i_dynamics_mode()
+    
+    return {
+        'A': A,
+        'C': C,
+        'S': state.S,
+        'gamma_I': params.gamma_I,
+        'gamma_over_4': gamma_over_4,
+        'sat_margin': sat_margin,
+        'I_current': state.I,
+        'I_equilibrium_linear': min(1.0, max(0.0, I_eq_linear)),  # Clipped to valid range
+        'I_equilibrium_logistic': I_eq_logistic,
+        'dynamics_mode': dynamics_mode,
+        'will_saturate': sat_margin > 0 and dynamics_mode == 'logistic',
+        'at_boundary': state.I >= params.I_max - 0.001,
+    }

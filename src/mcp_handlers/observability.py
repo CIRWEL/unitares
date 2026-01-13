@@ -215,6 +215,7 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
     # Get current agent's metrics
     monitor = mcp_server.get_or_create_monitor(agent_id)
     my_metrics = monitor.get_metrics()
+    my_meta = mcp_server.agent_metadata.get(agent_id)
     
     my_E = float(my_metrics.get('E', 0.7))
     my_I = float(my_metrics.get('I', 0.8))
@@ -222,6 +223,8 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
     my_coherence = float(my_metrics.get('coherence', 0.5))
     my_phi = my_metrics.get('phi', 0.0)
     my_verdict = my_metrics.get('verdict', 'caution')
+    my_regime = my_metrics.get('regime', 'nominal')
+    my_total_updates = my_meta.total_updates if my_meta else 0
     
     # Find similar agents (similar EISV values)
     similar_agents = []
@@ -315,7 +318,71 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
         "insights": []
     }
     
-    # Generate insights
+    # Generate pattern-based insights (group-level patterns)
+    pattern_insights = []
+    
+    # Check for common lifecycle stage
+    all_update_counts = [s["total_updates"] for s in top_similar] + [my_total_updates]
+    avg_updates = sum(all_update_counts) / len(all_update_counts) if all_update_counts else 0
+    if avg_updates <= 3:
+        pattern_insights.append(f"All similar agents are in early onboarding phase (avg {avg_updates:.0f} updates)")
+    elif avg_updates <= 10:
+        pattern_insights.append(f"Similar agents are in exploration phase (avg {avg_updates:.0f} updates)")
+    elif avg_updates <= 50:
+        pattern_insights.append(f"Similar agents are in active development phase (avg {avg_updates:.0f} updates)")
+    
+    # Check for common verdict
+    all_verdicts = [s["metrics"]["verdict"] for s in top_similar] + [my_verdict]
+    verdict_counts = {}
+    for v in all_verdicts:
+        verdict_counts[v] = verdict_counts.get(v, 0) + 1
+    most_common_verdict = max(verdict_counts.items(), key=lambda x: x[1])[0] if verdict_counts else None
+    if most_common_verdict and verdict_counts[most_common_verdict] == len(all_verdicts):
+        pattern_insights.append(f"All similar agents share '{most_common_verdict}' verdict - this is a common pattern")
+    
+    # Check for regime patterns (if regime available)
+    all_regimes = []
+    for similar in top_similar:
+        try:
+            other_monitor = mcp_server.get_or_create_monitor(similar["agent_id"])
+            other_metrics = other_monitor.get_metrics()
+            regime = other_metrics.get('regime', 'nominal')
+            all_regimes.append(regime)
+        except Exception:
+            pass
+    all_regimes.append(my_regime)
+    if all_regimes:
+        regime_counts = {}
+        for r in all_regimes:
+            regime_counts[r] = regime_counts.get(r, 0) + 1
+        most_common_regime = max(regime_counts.items(), key=lambda x: x[1])[0] if regime_counts else None
+        if most_common_regime and regime_counts[most_common_regime] == len(all_regimes) and most_common_regime != 'nominal':
+            pattern_insights.append(f"All similar agents are in {most_common_regime} regime")
+    
+    # Check for EISV pattern (high E, high I, low S = exploration/divergence)
+    all_E = [s["metrics"]["E"] for s in top_similar] + [my_E]
+    all_I = [s["metrics"]["I"] for s in top_similar] + [my_I]
+    all_S = [s["metrics"]["S"] for s in top_similar] + [my_S]
+    avg_E = sum(all_E) / len(all_E) if all_E else 0.7
+    avg_I = sum(all_I) / len(all_I) if all_I else 0.8
+    avg_S = sum(all_S) / len(all_S) if all_S else 0.2
+    if avg_E > 0.7 and avg_I > 0.7 and avg_S < 0.3:
+        pattern_insights.append("High Energy + High Integrity + Low Entropy pattern - productive exploration phase")
+    elif avg_E > 0.7 and avg_S > 0.5:
+        pattern_insights.append("High Energy + High Entropy pattern - active divergence/exploration")
+    elif avg_I > 0.8 and avg_S < 0.2:
+        pattern_insights.append("High Integrity + Low Entropy pattern - focused convergence")
+    
+    # Add pattern insights to response (as group-level insights object)
+    if pattern_insights:
+        comparison_data["insights"].append({
+            "type": "pattern",
+            "agent_id": None,  # Pattern insights are group-level, not agent-specific
+            "insights": pattern_insights,
+            "description": "Common patterns observed across all similar agents"
+        })
+    
+    # Generate individual comparison insights (differences from similar agents)
     for similar in top_similar:
         insights = []
         if similar["metrics"]["I"] > my_I + 0.05:
@@ -333,6 +400,46 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
                 "insights": insights,
                 "total_updates": similar["total_updates"]
             })
+
+    # If no insights triggered, return a deterministic, actionable fallback so callers
+    # don't see an empty list (which reads like a bug).
+    if not comparison_data["insights"]:
+        # Compute average deltas across the cohort to highlight the biggest gaps.
+        avg_delta_E = sum(s["differences"]["E"] for s in top_similar) / len(top_similar)
+        avg_delta_I = sum(s["differences"]["I"] for s in top_similar) / len(top_similar)
+        avg_delta_S = sum(s["differences"]["S"] for s in top_similar) / len(top_similar)
+        avg_delta_C = sum(s["differences"]["coherence"] for s in top_similar) / len(top_similar)
+
+        # Rank by absolute delta magnitude
+        deltas = [
+            ("E", avg_delta_E, "Energy"),
+            ("I", avg_delta_I, "Integrity"),
+            ("S", avg_delta_S, "Entropy"),
+            ("coherence", avg_delta_C, "Coherence"),
+        ]
+        deltas.sort(key=lambda x: abs(x[1]), reverse=True)
+
+        top = deltas[:2]
+        bullets = []
+        for key, delta, label in top:
+            if abs(delta) < 0.02:
+                continue
+            direction = "lower" if delta > 0 else "higher"
+            # delta is (peer - me), so delta>0 means I'm lower than peers
+            bullets.append(f"Your {label} is {direction} than similar agents on average (Δ≈{delta:+.2f})")
+
+        if not bullets:
+            bullets = [
+                "No strong metric deltas vs similar agents (all gaps below 0.02).",
+                "Try `compare_agents` with specific agent_ids or reduce similarity_threshold to widen the cohort."
+            ]
+
+        comparison_data["insights"].append({
+            "type": "summary",
+            "agent_id": None,
+            "insights": bullets,
+            "description": "Fallback insights (no threshold-triggered patterns detected)"
+        })
     
     comparison_data["eisv_labels"] = UNITARESMonitor.get_eisv_labels()
     
@@ -528,3 +635,7 @@ async def handle_aggregate_metrics(arguments: Dict[str, Any]) -> Sequence[TextCo
         "aggregate": aggregate_data,
         "eisv_labels": UNITARESMonitor.get_eisv_labels()
     })
+
+
+# REMOVED: handle_get_status - redundant with status alias → get_governance_metrics
+# Use status() or get_governance_metrics() instead

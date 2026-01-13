@@ -6,6 +6,7 @@ from typing import Dict, Any, Sequence, Tuple, Optional
 from mcp.types import TextContent
 import json
 import sys
+import asyncio
 from datetime import datetime, date
 from enum import Enum
 
@@ -32,13 +33,80 @@ _calibration_message_cache = {
 }
 
 
+def compute_agent_signature(
+    agent_id: Optional[str] = None,
+    arguments: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Centralized agent signature computation.
+    
+    Single source of truth for signature logic - called by both 
+    success_response() and error_response() to ensure consistency.
+    
+    Priority order:
+    1. Explicit agent_id parameter
+    2. Context agent_id (set at dispatch entry)
+    3. Session binding lookup
+    
+    Args:
+        agent_id: Explicit agent_id override
+        arguments: Tool arguments (for session lookup)
+        
+    Returns:
+        Dict with agent_uuid, label, bound, ts
+    """
+    try:
+        from .context import get_context_agent_id
+        from .shared import get_mcp_server
+        mcp_server = get_mcp_server()
+
+        # Priority 1: Explicit agent_id
+        # Priority 2: Context (set at dispatch entry using identity_v2)
+        # NOTE (Dec 2025): We no longer use legacy identity.get_bound_agent_id()
+        # The context agent_id is now set by identity_v2.resolve_session_identity()
+        # at dispatch entry, ensuring consistency across all tools.
+        context_bound_id = get_context_agent_id()
+        bound_id = agent_id or context_bound_id
+
+        # Debug at debug level (not info) to reduce noise
+        logger.debug(f"compute_agent_signature: agent_id={agent_id}, context={context_bound_id}, final={bound_id}")
+
+        if not bound_id:
+            return {"uuid": None}
+
+        # bound_id is AUTHORITATIVE (from identity_v2)
+        # Only look up metadata to get the label, NOT to override the UUID
+        agent_uuid = bound_id  # ALWAYS use bound_id as the UUID
+
+        # Try to get label and structured_id from metadata
+        display_label = None
+        structured_id = None
+        if bound_id in mcp_server.agent_metadata:
+            meta = mcp_server.agent_metadata[bound_id]
+            display_label = getattr(meta, 'label', None)
+            structured_id = getattr(meta, 'structured_id', None)
+
+        # Clean signature (v2.5.2) - minimal fields
+        signature = {"uuid": agent_uuid}
+        if structured_id:
+            signature["agent_id"] = structured_id
+        if display_label:
+            signature["display_name"] = display_label
+        return signature
+            
+    except Exception as e:
+        logger.debug(f"compute_agent_signature error: {e}")
+        return {"uuid": None}
+
+
 def error_response(
     message: str, 
     details: Optional[Dict[str, Any]] = None, 
     recovery: Optional[Dict[str, Any]] = None, 
     context: Optional[Dict[str, Any]] = None,
     error_code: Optional[str] = None,
-    error_category: Optional[str] = None
+    error_category: Optional[str] = None,
+    arguments: Optional[Dict[str, Any]] = None
 ) -> TextContent:
     """
     Create an error response with optional recovery guidance and system context.
@@ -70,7 +138,8 @@ def error_response(
     
     response = {
         "success": False,
-        "error": sanitized_message
+        "error": sanitized_message,
+        "server_time": datetime.now().isoformat()  # Time context for agents
     }
     
     # Add machine-readable error code if provided
@@ -102,9 +171,35 @@ def error_response(
     if context:
         response["context"] = context
     
+    # Add agent signature using centralized computation
+    response["agent_signature"] = compute_agent_signature(arguments=arguments)
+    
+    # FIX: Use _make_json_serializable to prevent JSON parsing errors
+    # This matches the pattern used in success_response() for consistency
+    try:
+        serializable_response = _make_json_serializable(response)
+        json_text = json.dumps(serializable_response, indent=2, ensure_ascii=False)
+    except (TypeError, ValueError) as e:
+        # Log serialization error but try to recover
+        logger.error(f"JSON serialization error in error_response: {e}", exc_info=True)
+        # Try one more time with default=str fallback
+        try:
+            serializable_response = _make_json_serializable(response)
+            json_text = json.dumps(serializable_response, indent=2, ensure_ascii=False, default=str)
+        except Exception as e2:
+            # Last resort: return minimal error response
+            logger.error(f"Failed to serialize error response even after conversion: {e2}", exc_info=True)
+            minimal_response = {
+                "success": False,
+                "error": sanitized_message,
+                "error_code": error_code or "SERIALIZATION_ERROR",
+                "server_time": datetime.now().isoformat()
+            }
+            json_text = json.dumps(minimal_response, ensure_ascii=False)
+    
     return TextContent(
         type="text",
-        text=json.dumps(response, indent=2)
+        text=json_text
     )
 
 
@@ -442,25 +537,57 @@ def get_calibration_feedback(include_complexity: bool = True) -> Dict[str, Any]:
     return calibration_feedback
 
 
-def success_response(data: Dict[str, Any]) -> Sequence[TextContent]:
+def success_response(data: Dict[str, Any], agent_id: str = None, arguments: Dict[str, Any] = None) -> Sequence[TextContent]:
     """
-    Create a success response.
-    
+    Create a success response with optional agent signature.
+
     Returns Sequence[TextContent] containing SuccessResponseDict.
-    """
-    """
-    Create a success response.
-    
+
     Args:
         data: Response data (will have "success": True added)
-        
+        agent_id: Optional explicit agent_id (if not provided, uses session binding)
+        arguments: Tool arguments (contains client_session_id for session lookup)
+                   - lite_response: If True, omits agent_signature for cleaner output
+
     Returns:
         Sequence of TextContent with success response
+
+    Agent Signature:
+        When a session-bound identity exists, responses include:
+        {
+            "agent_signature": {
+                "agent_id": "...",
+                "session_bound": true,
+                "ts": "2025-12-21T14:32:00Z"
+            }
+        }
+        This provides provenance/audit trail without polluting the main response.
+        Use lite_response=True to suppress this for cleaner output.
     """
     response = {
         "success": True,
+        "server_time": datetime.now().isoformat(),  # Time context for agents
         **data
     }
+
+    # UX FIX (Dec 2025): Echo resolved agent ID to help agents track their identity
+    # Removed resolved_uuid and resolved_client_session_id to reduce verbosity
+    # agent_signature contains full identity details when needed
+    from .context import get_context_agent_id
+    current_bound_id = get_context_agent_id()
+
+    if current_bound_id:
+        response["resolved_agent_id"] = current_bound_id
+
+    # UX FIX (Dec 2025): Support lite_response to reduce output verbosity
+    lite_response = (arguments or {}).get("lite_response", False)
+    
+    if lite_response:
+        # Skip agent_signature for cleaner output
+        pass
+    else:
+        # Add agent signature using centralized computation
+        response["agent_signature"] = compute_agent_signature(agent_id=agent_id, arguments=arguments)
     
     # Convert non-serializable types before JSON encoding
     # OPTIMIZATION: Use compact JSON (no indent) to speed up serialization and reduce size
@@ -502,77 +629,121 @@ def require_argument(arguments: Dict[str, Any], name: str,
     """
     Get required argument from arguments dict.
     
+    Uses standardized error taxonomy for better agent self-service debugging.
+    
     Args:
         arguments: Arguments dictionary
         name: Argument name
-        error_message: Custom error message (defaults to "{name} is required")
+        error_message: Custom error message (defaults to standardized missing parameter error)
         
     Returns:
         Tuple of (value, error_response). If value is None, error_response is provided.
     """
     value = arguments.get(name)
     if value is None:
-        msg = error_message or f"{name} is required"
-        return None, error_response(msg)
+        # Use standardized error taxonomy
+        from .error_helpers import missing_parameter_error
+        # Try to infer tool name from context if available
+        tool_name = arguments.get("_tool_name")  # Set by handlers if available
+        # Use custom error message if provided, otherwise use standard
+        if error_message:
+            # Enhance context with custom message
+            context = {"custom_message": error_message}
+            return None, missing_parameter_error(name, tool_name=tool_name, context=context)[0]
+        return None, missing_parameter_error(name, tool_name=tool_name)[0]
     return value, None
 
 
 def require_agent_id(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextContent]]:
     """
-    Get required agent_id from arguments and validate format + security checks.
+    Get or auto-generate agent_id - SIMPLIFIED: No more herding cats.
     
-    IDENTITY BINDING FALLBACK:
-    If agent_id not provided in arguments, checks for session-bound identity.
-    This enables agents to call tools without explicitly passing agent_id after
-    calling bind_identity() once.
-
+    RADICAL SIMPLIFICATION:
+    - If agent_id provided: use it (with basic safety validation)
+    - If session-bound: use that
+    - If neither: auto-generate a UUID-based ID
+    - No policy warnings, no test ID blocks, no arbitrary restrictions
+    - Only validates format (filesystem safety) and reserved names (security)
+    
+    CANONICAL ID CLARIFICATION (Dec 2025):
+    - Session-bound UUID is the canonical identifier
+    - Explicit agent_id parameter is optional and may cause confusion
+    - For write operations, session-bound identity is authoritative
+    
     Args:
         arguments: Arguments dictionary
 
     Returns:
-        Tuple of (agent_id, error_response). If agent_id is missing or invalid, error_response is provided.
+        Tuple of (agent_id, error_response). Error only for format/security issues.
     """
     agent_id = arguments.get("agent_id")
+    explicit_agent_id = agent_id  # Track if explicitly provided
     
-    # IDENTITY BINDING FALLBACK: Use session-bound identity if not explicitly provided
+    # FALLBACK 1: Check session-bound identity (via context, set by identity_v2 at dispatch)
     if not agent_id:
         try:
-            from .identity import get_bound_agent_id
-            # Use arguments-based lookup for consistent session resolution
-            bound_id = get_bound_agent_id(arguments=arguments)
+            from .context import get_context_agent_id
+            # Use context agent_id which was set at dispatch entry using identity_v2
+            bound_id = get_context_agent_id()
             if bound_id:
+                # CRITICAL (Dec 2025): Internal maps (monitors, metadata) are keyed by UUID.
+                # We MUST return the UUID here, NOT the cosmetic label.
                 agent_id = bound_id
-                # Inject into arguments so downstream code sees it
+                logger.debug(f"Using session-bound identity UUID: {agent_id}")
                 arguments["agent_id"] = agent_id
-                logger.debug(f"Using session-bound identity: {agent_id}")
-        except ImportError:
-            pass  # Identity module not available, continue with normal flow
         except Exception as e:
             logger.debug(f"Could not retrieve session-bound identity: {e}")
-            pass  # Don't fail if identity retrieval fails
     
+    # CANONICAL ID CLARIFICATION (Dec 2025): Warn if explicit agent_id doesn't match session
+    # This helps agents understand which ID is authoritative
+    if explicit_agent_id:
+        try:
+            from .context import get_context_agent_id
+            bound_uuid = get_context_agent_id()
+            if bound_uuid and explicit_agent_id != bound_uuid:
+                # If explicit_agent_id is a label/display_name that matches bound UUID,
+                # we still use the UUID for internal operations.
+                try:
+                    from .shared import get_mcp_server
+                    mcp_server = get_mcp_server()
+                    if bound_uuid in mcp_server.agent_metadata:
+                        meta = mcp_server.agent_metadata[bound_uuid]
+                        label = getattr(meta, 'label', None)
+                        structured_id = getattr(meta, 'structured_id', None)
+                        # If explicit_agent_id matches label or structured_id, switch to UUID
+                        if explicit_agent_id in (label, structured_id):
+                            logger.debug(f"Explicit agent_id '{explicit_agent_id}' matches label/structured_id, using UUID '{bound_uuid[:8]}...'")
+                            agent_id = bound_uuid
+                            arguments["agent_id"] = agent_id
+                        else:
+                            logger.debug(f"Explicit agent_id '{explicit_agent_id}' differs from session-bound UUID '{bound_uuid[:8]}...' - using session-bound UUID")
+                            # Use session-bound identity for consistency
+                            agent_id = bound_uuid
+                            arguments["agent_id"] = agent_id
+                except Exception:
+                    pass  # Ignore lookup errors, proceed with explicit agent_id
+        except Exception:
+            pass  # Ignore context errors, proceed with explicit agent_id
+    
+    # FALLBACK 2: Auto-generate if still missing (no more errors, just generate)
     if not agent_id:
-        return None, error_response(
-            "agent_id is required",
-            recovery={
-                "action": "Provide agent_id or call bind_identity first",
-                "workflow": [
-                    "Option 1: Pass agent_id explicitly in arguments",
-                    "Option 2: Call bind_identity(agent_id, api_key) to bind session identity",
-                    "After binding, agent_id is auto-injected via recall"
-                ]
-            }
-        )
-    
-    # Continue with validation (agent_id now guaranteed to exist)
+        import uuid
+        from datetime import datetime
+        # Generate: auto_{timestamp}_{short_uuid}
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        short_uuid = str(uuid.uuid4())[:8]
+        agent_id = f"auto_{timestamp}_{short_uuid}"
+        arguments["agent_id"] = agent_id
+        logger.info(f"Auto-generated agent_id: {agent_id}")
 
-    # Validate agent_id format (safety check for filesystem/URL issues)
+    # Only validate format (filesystem safety) and reserved names (security)
+    # NO policy warnings, NO test ID blocks, NO arbitrary restrictions
     from .validators import validate_agent_id_format
     validated_id, format_error = validate_agent_id_format(agent_id)
     if format_error:
         return None, format_error
 
-    # SECURITY: Check reserved names (Fix 2 from SECURITY_ADVISORY_AGENT_IDENTITY_20251212.md)
+    # SECURITY: Only block truly dangerous reserved names (system, admin, etc.)
     from .validators import validate_agent_id_reserved_names
     validated_id, reserved_error = validate_agent_id_reserved_names(validated_id)
     if reserved_error:
@@ -584,18 +755,24 @@ def require_agent_id(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextConte
 def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextContent]]:
     """
     Get required agent_id AND verify the agent is registered in the system.
-    
+
+    MEANINGFUL IDENTITY (v2.5.4, Dec 2025): Returns agent_id (model+date) for storage.
+    - agent_id (e.g., "Claude_Opus_4_20251227") is stored in KG - meaningful to agents and humans
+    - UUID is kept internal for session binding, never exposed in KG
+    - display_name provides friendly personalization
+    - Sets arguments["_agent_display"] = {agent_id, display_name, label}
+
     This is the PROACTIVE GATE that prevents unregistered agents from calling
     tools that require an existing agent, avoiding hangs and stale locks.
-    
+
     Args:
         arguments: Arguments dictionary
-        
+
     Returns:
-        Tuple of (agent_id, error_response). If agent_id is missing or not registered,
-        error_response is provided with onboarding guidance.
+        Tuple of (agent_id, error_response). Returns agent_id (model+date) for KG storage.
+        Display info is set in arguments["_agent_display"] = {agent_id, display_name, label}.
     """
-    # First check if agent_id is provided
+    # First check if agent_id is provided (auto-injects from session if missing)
     agent_id, error = require_agent_id(arguments)
     if error:
         return None, error
@@ -603,37 +780,143 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
     # Now check if agent is registered (exists in metadata)
     try:
         from .shared import get_mcp_server
+        from .context import get_context_agent_id
+        import uuid as uuid_module
+
         mcp_server = get_mcp_server()
+
+        # Ensure metadata is loaded (lazy load if needed)
+        # This is safe - only loads if not already loaded, doesn't overwrite in-memory changes
+        try:
+            ensure_metadata_loaded = getattr(mcp_server, 'ensure_metadata_loaded', None)
+            if ensure_metadata_loaded:
+                ensure_metadata_loaded()
+        except Exception as e:
+            logger.debug(f"Could not ensure metadata loaded: {e}")
+
+        # NOTE: Don't reload metadata here - it overwrites in-memory labels set during
+        # identity creation before they're persisted to disk (race condition).
+        # The in-memory metadata should already be up-to-date from the identity handlers.
+        # mcp_server.load_metadata()  # DISABLED: causes label loss
+
+        # Check if agent_id is a UUID or label
+        is_uuid = False
+        try:
+            # Try to parse as UUID
+            uuid_module.UUID(agent_id, version=4)
+            is_uuid = True
+        except (ValueError, AttributeError):
+            pass
         
-        # Reload metadata to ensure we have latest state
-        mcp_server.load_metadata()
+        # Check if agent exists in metadata (by UUID or by label)
+        agent_found = False
+        actual_uuid = None
         
-        if agent_id not in mcp_server.agent_metadata:
+        # Track identity info - agent_id (model+date) is the public identifier
+        structured_id = None  # model+date format like "Claude_Opus_4_20251227"
+        display_name = None   # user-chosen name
+        label = None          # nickname
+
+        if is_uuid:
+            # Direct UUID lookup
+            if agent_id in mcp_server.agent_metadata:
+                agent_found = True
+                actual_uuid = agent_id
+                meta = mcp_server.agent_metadata[agent_id]
+                structured_id = getattr(meta, 'structured_id', None)
+                display_name = getattr(meta, 'display_name', None) or getattr(meta, 'label', None)
+                label = getattr(meta, 'label', None)
+        else:
+            # Label lookup - search metadata for matching label
+            for uuid_key, meta in mcp_server.agent_metadata.items():
+                if getattr(meta, 'label', None) == agent_id:
+                    agent_found = True
+                    actual_uuid = uuid_key
+                    structured_id = getattr(meta, 'structured_id', None)
+                    display_name = getattr(meta, 'display_name', None) or getattr(meta, 'label', None)
+                    label = getattr(meta, 'label', None)
+                    break
+
+        # Also check session binding as fallback (for auto-created identities)
+        # Use context agent_id (set by identity_v2 at dispatch entry)
+        if not agent_found:
+            bound_uuid = get_context_agent_id()
+            if bound_uuid and bound_uuid in mcp_server.agent_metadata:
+                agent_found = True
+                actual_uuid = bound_uuid
+                meta = mcp_server.agent_metadata[bound_uuid]
+                structured_id = getattr(meta, 'structured_id', None)
+                display_name = getattr(meta, 'display_name', None) or getattr(meta, 'label', None)
+                label = getattr(meta, 'label', None)
+        
+        if not agent_found:
+            # Agent not found - provide helpful onboarding guidance with naming suggestions
+            from .naming_helpers import (
+                detect_interface_context,
+                generate_name_suggestions,
+                format_naming_guidance
+            )
+            
+            # Generate naming suggestions
+            context = detect_interface_context()
+            existing_names = [
+                getattr(m, 'label', None)
+                for m in mcp_server.agent_metadata.values()
+                if getattr(m, 'label', None)
+            ]
+            suggestions = generate_name_suggestions(
+                context=context,
+                existing_names=existing_names
+            )
+            naming_guidance = format_naming_guidance(suggestions=suggestions)
+            
             return None, error_response(
-                f"Agent '{agent_id}' is not registered. You must onboard first.",
+                f"Agent '{agent_id}' is not registered. Identity auto-creates on first tool call.",
                 recovery={
                     "error_type": "agent_not_registered",
-                    "action": "Call get_agent_api_key first to register this agent_id",
-                    "related_tools": ["get_agent_api_key", "list_agents", "list_tools"],
+                    "action": "Call onboard() first to create your identity, or call process_agent_update() to auto-create",
+                    "related_tools": ["onboard", "process_agent_update", "identity", "list_tools"],
                     "workflow": [
-                        "1. Call get_agent_api_key with your agent_id to register",
-                        "2. Save the returned API key securely",
-                        "3. Then call this tool again with agent_id and api_key"
+                        "1. Call onboard() - creates identity + gives you templates (recommended)",
+                        "   OR call process_agent_update() - identity auto-creates",
+                        "2. Save client_session_id from response",
+                        "3. Call identity(name='your_name') to name yourself",
+                        "4. Include client_session_id in all future calls",
+                        "5. Then call this tool again"
                     ],
-                    "onboarding_sequence": ["list_tools", "get_agent_api_key", "list_agents", "process_agent_update"]
+                    "naming_suggestions": naming_guidance,
+                    "onboarding_sequence": ["onboard", "identity", "process_agent_update", "list_tools"],
+                    "tip": "onboard() is the START HERE tool - it gives you everything you need in one call!"
                 }
             )
-        
-        return agent_id, None
+
+        # v2.5.4: Return authoritative UUID for internal operations.
+        # public_agent_id (model+date) is for meaningful storage in KG.
+        public_agent_id = structured_id or label or f"Agent_{actual_uuid[:8]}"
+        arguments["agent_id"] = public_agent_id  # For KG storage
+        arguments["_agent_display"] = {
+            "agent_id": public_agent_id,
+            "display_name": display_name or label or public_agent_id,
+            "label": label,
+        }
+        # authoritative identifier for internal maps
+        arguments["_agent_uuid"] = actual_uuid
+
+        return actual_uuid, None
         
     except Exception as e:
         # If we can't check registration, fail safe with guidance
         return None, error_response(
             f"Could not verify agent registration: {str(e)}",
             recovery={
-                "action": "System error checking agent registration. Try get_agent_api_key first.",
-                "related_tools": ["get_agent_api_key", "health_check"],
-                "workflow": ["1. Call health_check to verify system", "2. Call get_agent_api_key to register"]
+                "action": "System error checking agent registration. Try onboard() or health_check() first.",
+                "related_tools": ["onboard", "health_check", "identity"],
+                "workflow": [
+                    "1. Call health_check() to verify system is healthy",
+                    "2. Call onboard() to create your identity",
+                    "3. Save client_session_id and include it in future calls"
+                ],
+                "note": "Identity auto-creates on first tool call. Use onboard() for the best first-time experience."
             }
         )
 
@@ -731,75 +1014,220 @@ def print_metrics(agent_id: str, metrics: Dict[str, Any], title: str = "Metrics"
         print("-" * 60)
 
 
-def get_api_key_with_fallback(agent_id: str, arguments: Dict[str, Any]) -> Optional[str]:
+def verify_agent_ownership(agent_id: str, arguments: Dict[str, Any]) -> bool:
     """
-    Get API key for an agent using the full fallback chain.
-    
-    Fallback order:
-    1. arguments["api_key"] - explicit parameter
-    2. Session-bound identity (in-memory, with arguments)
-    3. Session-bound identity (in-memory, fallback without arguments)
-    4. Metadata's active_session_key (in-memory cache)
-    5. Metadata's active_session_key (SQLite persistence)
-    
-    This centralizes the auth fallback logic used across multiple handlers.
-    
-    Args:
-        agent_id: The agent to get API key for
-        arguments: Tool arguments dict (may contain api_key or client_session_id)
-        
-    Returns:
-        API key string if found, None otherwise
-    """
-    # 1. Check explicit parameter
-    api_key = arguments.get("api_key")
-    if api_key:
-        return api_key
-    
-    try:
-        from .identity import get_bound_agent_id, get_bound_api_key, _load_identity, _session_identities
-        from .shared import get_mcp_server
-        mcp_server = get_mcp_server()
-        
-        # 2. Session-bound identity (with arguments - for SSE mode)
-        bound_id = get_bound_agent_id(arguments=arguments)
-        if bound_id == agent_id:
-            bound_key = get_bound_api_key(arguments=arguments)
-            if bound_key:
-                logger.debug(f"API key retrieved via session binding (with args) for '{agent_id}'")
-                return bound_key
-        
-        # 3. Session-bound identity (without arguments - for stdio mode)
-        bound_id_fallback = get_bound_agent_id()
-        if bound_id_fallback == agent_id:
-            bound_key_fallback = get_bound_api_key()
-            if bound_key_fallback:
-                logger.debug(f"API key retrieved via session binding (fallback) for '{agent_id}'")
-                return bound_key_fallback
-        
-        # 4 & 5. Metadata's active_session_key (in-memory then SQLite)
-        agent_meta = mcp_server.agent_metadata.get(agent_id)
-        if agent_meta and getattr(agent_meta, 'active_session_key', None):
-            session_key = agent_meta.active_session_key
-            
-            # 4. Check in-memory cache
-            if session_key in _session_identities:
-                identity_rec = _session_identities[session_key]
-                if identity_rec.get("bound_agent_id") == agent_id and identity_rec.get("api_key"):
-                    logger.debug(f"API key retrieved via metadata session key (in-memory) for '{agent_id}'")
-                    return identity_rec["api_key"]
-            
-            # 5. Load from SQLite
-            persisted = _load_identity(session_key)
-            if persisted and persisted.get("bound_agent_id") == agent_id and persisted.get("api_key"):
-                # Re-cache for future calls
-                _session_identities[session_key] = persisted
-                logger.debug(f"API key retrieved via metadata session key (SQLite) for '{agent_id}'")
-                return persisted["api_key"]
-                
-    except Exception as e:
-        logger.debug(f"API key fallback chain failed: {e}")
-    
-    return None
+    Verify that the current session owns/is bound to the given agent_id.
 
+    Dec 2025: UUID-based auth replaces API keys. Session binding is authority.
+    If the session is bound to this agent_id (via UUID), the caller is authenticated.
+
+    Args:
+        agent_id: The agent to verify ownership of
+        arguments: Tool arguments dict (for session lookup)
+
+    Returns:
+        True if session is bound to this agent_id, False otherwise
+    """
+    try:
+        from .context import get_context_agent_id
+        from .shared import get_mcp_server
+
+        # Use context agent_id (set by identity_v2 at dispatch entry)
+        bound_id = get_context_agent_id()
+        if bound_id == agent_id:
+            return True
+
+        # Also accept if agent_id matches the agent_uuid of the bound agent
+        mcp_server = get_mcp_server()
+        if bound_id:
+            meta = mcp_server.agent_metadata.get(bound_id)
+            if meta and getattr(meta, 'agent_uuid', None) == agent_id:
+                return True
+
+        return False
+    except Exception as e:
+        logger.debug(f"verify_agent_ownership failed: {e}")
+        return False
+
+
+def generate_actionable_feedback(
+    metrics: Dict[str, Any],
+    interpreted_state: Optional[Dict[str, Any]] = None,
+    task_type: Optional[str] = None,
+    response_text: Optional[str] = None,
+    previous_coherence: Optional[float] = None,
+) -> list[str]:
+    """
+    Generate context-aware actionable feedback for agents.
+
+    Instead of generic threshold-based messages, this provides:
+    - Trend detection: Did coherence drop or was it always low?
+    - Task-specific advice: Different guidance for coding vs research vs debugging
+    - Pattern recognition: Detect struggles from response_text
+    - Specific actions: Concrete next steps, not vague suggestions
+
+    Args:
+        metrics: Current metrics dict with coherence, risk_score, regime, etc.
+        interpreted_state: Optional state interpretation (health, mode, basin)
+        task_type: Optional task type for context-aware advice
+        response_text: Optional agent's response for pattern detection
+        previous_coherence: Optional previous coherence value for trend detection
+
+    Returns:
+        List of actionable feedback strings
+    """
+    feedback = []
+
+    coherence = metrics.get('coherence')
+    risk_score = metrics.get('risk_score')
+    regime = metrics.get('regime', 'exploration').lower()
+    void_active = metrics.get('void_active', False)
+
+    # Extract interpreted state
+    health = interpreted_state.get('health', 'unknown') if interpreted_state else 'unknown'
+    mode = interpreted_state.get('mode', 'unknown') if interpreted_state else 'unknown'
+    basin = interpreted_state.get('basin', 'unknown') if interpreted_state else 'unknown'
+
+    # Normalize task_type
+    task = (task_type or 'mixed').lower()
+
+    # Check if this is first update (skip coherence feedback - 0.50 is just default)
+    updates = metrics.get('updates', 0)
+    is_first_update = updates <= 1
+
+    # --- Coherence Feedback (Context-Aware) ---
+    # Skip on first update - coherence 0.50 is just the starting default, not meaningful
+    if coherence is not None and not is_first_update:
+        # Detect trend
+        coherence_dropped = previous_coherence is not None and coherence < previous_coherence - 0.1
+        coherence_delta = previous_coherence - coherence if previous_coherence else None
+
+        if regime == "exploration":
+            # Low coherence is expected during exploration
+            if coherence < 0.3:
+                if coherence_dropped:
+                    feedback.append(
+                        f"Coherence dropped significantly ({coherence_delta:.2f}) during exploration. "
+                        "This may indicate you're trying too many directions at once. "
+                        "Try: Pick your most promising direction and explore it deeper before switching."
+                    )
+                else:
+                    feedback.append(
+                        "Very low coherence (<0.3) even for exploration phase. "
+                        "Consider: Note down your current hypotheses, then focus on testing one at a time."
+                    )
+        elif regime == "locked" or regime == "stable":
+            # High coherence expected
+            if coherence < 0.7:
+                if coherence_dropped:
+                    feedback.append(
+                        f"Unexpected coherence drop ({coherence_delta:.2f}) in stable regime. "
+                        "Something disrupted your flow. "
+                        "Check: Did requirements change? Did you encounter an unexpected edge case?"
+                    )
+                else:
+                    feedback.append(
+                        "Coherence below 0.7 in stable regime indicates drift. "
+                        "Action: Review your original plan and verify you're still aligned with the goal."
+                    )
+        else:
+            # Transition/Convergence
+            if coherence < 0.5:
+                # Task-specific advice based on allowed task types
+                if task == 'convergent':
+                    # Convergent tasks need focus - low coherence is a problem
+                    feedback.append(
+                        f"Low coherence ({coherence:.2f}) during convergent task. "
+                        "You should be focusing, but your state suggests divergence. "
+                        "Tip: Write down your solution in one sentence before continuing."
+                    )
+                elif task == 'divergent':
+                    # Divergent tasks are exploration - low coherence is less concerning
+                    if coherence < 0.35:
+                        feedback.append(
+                            f"Very low coherence ({coherence:.2f}) even for divergent work. "
+                            "Tip: Note your top 3 ideas, then explore the most promising one deeper."
+                        )
+                    # else: Low coherence during divergent work is normal, skip feedback
+                else:
+                    # Mixed or unknown
+                    feedback.append(
+                        f"Coherence at {coherence:.2f}. "
+                        "Tip: Pause and articulate your current goal in one sentence."
+                    )
+
+    # --- Risk Score Feedback ---
+    if risk_score is not None:
+        if risk_score > 0.7:
+            # High complexity - specific advice based on basin
+            if basin == 'void':
+                feedback.append(
+                    f"High complexity ({risk_score:.2f}) in void basin - energy/integrity mismatch. "
+                    "This often means working hard on the wrong thing. "
+                    "Check: Is this task still relevant to your original goal?"
+                )
+            else:
+                feedback.append(
+                    f"High complexity ({risk_score:.2f}) detected. "
+                    "Options: (1) Break task into smaller pieces, (2) Pause and document what you've learned, "
+                    "or (3) Ask for clarification if requirements are unclear."
+                )
+        elif risk_score > 0.5:
+            # Moderate - acknowledge without prescribing
+            if health == 'degraded':
+                feedback.append(
+                    f"Moderate complexity ({risk_score:.2f}) with degraded health. "
+                    "Consider a checkpoint: What would you tell someone taking over this task?"
+                )
+
+    # --- Void Detection ---
+    if void_active:
+        # Void means mismatch between energy and integrity
+        e = metrics.get('E', 0.5)
+        i = metrics.get('I', 0.5)
+
+        if e > i + 0.2:
+            feedback.append(
+                "Void detected: High energy but low integrity. "
+                "You're working hard but output quality may be suffering. "
+                "Suggestion: Slow down and review your recent work for errors."
+            )
+        elif i > e + 0.2:
+            feedback.append(
+                "Void detected: High integrity but low energy. "
+                "Output is clean but progress is slow. "
+                "Suggestion: Is something blocking you? Consider asking for help or taking a break."
+            )
+        else:
+            feedback.append(
+                "Void active - energy and integrity are misaligned. "
+                "Take a moment to assess: What's causing the disconnect?"
+            )
+
+    # --- Response Text Pattern Detection ---
+    if response_text:
+        text_lower = response_text.lower()
+
+        # Detect confusion patterns
+        confusion_patterns = [
+            ('not sure', "You mentioned uncertainty. That's valuable self-awareness. "),
+            ("don't understand", "You noted confusion. Consider rephrasing the problem. "),
+            ('struggling', "You mentioned struggling. Break the problem into smaller parts. "),
+            ('stuck', "You said you're stuck. Try explaining the problem to a rubber duck. "),
+        ]
+
+        for pattern, prefix in confusion_patterns:
+            if pattern in text_lower:
+                feedback.append(prefix + "What's the smallest next step you can take?")
+                break  # Only add one confusion-based feedback
+
+        # Detect overconfidence patterns
+        if any(p in text_lower for p in ['definitely', 'obviously', 'clearly', 'certainly']):
+            if coherence and coherence < 0.6:
+                feedback.append(
+                    "Your language suggests confidence, but metrics show uncertainty. "
+                    "Worth double-checking: Are you sure about your assumptions?"
+                )
+
+    return feedback
 

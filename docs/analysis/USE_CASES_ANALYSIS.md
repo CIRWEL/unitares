@@ -12,6 +12,62 @@ The Governance MCP system is a **thermodynamic-based multi-agent coordination an
 
 ---
 
+## Solo vs Multi-Agent Value Propositions
+
+### Solo Agent Use Case
+
+**What you get:**
+- EISV-based governance feedback (risk scoring, PROCEED/PAUSE actions)
+- Track your thermodynamic state evolution over time
+- Prevent cognitive overload via entropy and coherence monitoring
+- Simple CLI or MCP integration
+
+**When to use:**
+- Individual AI agent workflows
+- Personal productivity tracking
+- Learning thermodynamic self-awareness
+- Single-session task monitoring
+
+**Technical setup:**
+- CLI: `./scripts/governance_cli.sh "agent_id" "what you did" 0.5`
+- MCP: Configure SSE endpoint, call `process_agent_update`
+
+**Limitations:**
+- No knowledge sharing across agents
+- No peer review or dialectic sessions
+- Limited comparative insights
+
+### Multi-Agent Ensemble (10+ Agents)
+
+**What you get:**
+- **Thermodynamic ensemble model:** Coordinate 100+ agents as statistical mechanics particles
+- **Shared knowledge graph:** 11+ discoveries across 9+ agents with provenance tracking
+- **Dialectic peer review:** 41+ active review sessions for collaborative reasoning
+- **Emergence tracking:** Monitor collective behavior patterns
+- **Agent comparison:** See how agents differ in their thermodynamic profiles
+
+**When to use:**
+- Multi-agent software development teams
+- Long-running research with multiple sessions
+- Distributed AI workflows requiring coordination
+- Collaborative creative work
+- Agent marketplace/comparison
+
+**Technical setup:**
+- Single SSE server coordinates all agents: `python src/mcp_server_sse.py --port 8765`
+- Each agent connects to same endpoint: `{"url": "http://127.0.0.1:8765/sse"}`
+- Agents share discoveries via `store_discovery_graph`, coordinate via `compare_me_to_similar`
+
+**Unique capabilities:**
+- Knowledge accumulation across agent sessions
+- Avoid duplicate work via discovery search
+- Structured decision-making via dialectic framework
+- Track which agent worked on what
+
+**Production status:** Currently coordinating 385 agents (101 active) in production environment
+
+---
+
 ## System Capabilities (52 MCP Tools)
 
 ### 1. Agent Lifecycle Management (10 tools)

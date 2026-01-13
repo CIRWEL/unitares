@@ -79,6 +79,7 @@ class DiscoveryNode:
             "tags": self.tags,
             "severity": self.severity,
             "timestamp": self.timestamp,
+            "created_at": self.timestamp,  # Alias for timestamp (UX consistency)
             "status": self.status,
             "related_to": self.related_to,
             "references_files": self.references_files,
@@ -353,13 +354,13 @@ class KnowledgeGraph:
             candidate_ids &= agent_nodes
         
         if tags:
-            # Intersection of all tag sets (discoveries must have ALL tags)
+            # Union of tag sets (discoveries matching ANY tag)
             tag_sets = [self.by_tag.get(tag, set()) for tag in tags]
             if tag_sets:
                 if len(tag_sets) == 1:
                     candidate_ids &= tag_sets[0]
                 else:
-                    candidate_ids &= set.intersection(*tag_sets)
+                    candidate_ids &= set.union(*tag_sets)
         
         if type:
             candidate_ids &= self.by_type.get(type, set())
@@ -783,11 +784,27 @@ async def get_knowledge_graph() -> Any:
                 )
                 # Fall through to SQLite/JSON
 
+        # PostgreSQL FTS backend (unified with main database)
+        if backend == "postgres":
+            try:
+                from src.storage.knowledge_graph_postgres import KnowledgeGraphPostgres
+                _graph_instance = KnowledgeGraphPostgres()
+                await _graph_instance.load()
+                logger.info("Using PostgreSQL FTS knowledge graph backend")
+                return _graph_instance
+            except Exception as e:
+                logger.warning(
+                    f"PostgreSQL knowledge graph backend unavailable; falling back to SQLite: {e}",
+                    exc_info=True
+                )
+                # Fall through to SQLite/JSON
+
         # Prefer SQLite when requested (or when auto + DB exists).
         if backend in ("sqlite", "auto"):
             try:
                 project_root = Path(__file__).parent.parent
-                db_path = project_root / "data" / "knowledge.db"
+                # CRITICAL: Must match KnowledgeGraphDB default path (governance.db, not knowledge.db)
+                db_path = project_root / "data" / "governance.db"
                 json_path = project_root / "data" / "knowledge_graph.json"
 
                 # Auto-migrate once on first run:

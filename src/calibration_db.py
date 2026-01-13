@@ -1,9 +1,9 @@
 """
-SQLite Backend for Calibration State
+Calibration State Storage
 
-Goal:
-- Provide atomic, concurrent-safe persistence for calibration state under multi-client SSE.
-- Keep optional JSON snapshot (`data/calibration_state.json`) for backward compatibility / transparency.
+Provides backend-agnostic access to calibration state.
+Delegates to PostgreSQL (via get_db()) when DB_BACKEND=postgres,
+falls back to SQLite for backward compatibility.
 
 This stores the same state payload as CalibrationChecker.save_state():
 {
@@ -15,7 +15,9 @@ This stores the same state payload as CalibrationChecker.save_state():
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -103,3 +105,116 @@ class CalibrationDB:
             }
 
 
+# =========================================================================
+# Backend-Agnostic Async Wrappers
+# =========================================================================
+
+_calibration_db: Optional[CalibrationDB] = None
+_db_lock: Optional[asyncio.Lock] = None
+
+
+def _use_postgres() -> bool:
+    """Check if we should use PostgreSQL backend."""
+    return os.getenv("DB_BACKEND", "").lower() == "postgres"
+
+
+async def get_calibration_async() -> Dict[str, Any]:
+    """
+    Get calibration state from the appropriate backend.
+
+    Uses PostgreSQL via get_db() when DB_BACKEND=postgres,
+    falls back to SQLite otherwise.
+    """
+    if _use_postgres():
+        from src.db import get_db
+        db = get_db()
+        # Ensure initialized
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+        return await db.get_calibration()
+    else:
+        # SQLite fallback
+        global _calibration_db, _db_lock
+        if _db_lock is None:
+            _db_lock = asyncio.Lock()
+
+        async with _db_lock:
+            if _calibration_db is None:
+                from pathlib import Path
+                db_path = Path(os.getenv(
+                    "UNITARES_CALIBRATION_DB_PATH",
+                    str(Path(__file__).parent.parent / "data" / "governance.db")
+                ))
+                _calibration_db = CalibrationDB(db_path)
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _calibration_db.load_state) or {}
+
+
+async def update_calibration_async(state: Dict[str, Any]) -> bool:
+    """
+    Update calibration state in the appropriate backend.
+
+    Uses PostgreSQL via get_db() when DB_BACKEND=postgres,
+    falls back to SQLite otherwise.
+    """
+    if _use_postgres():
+        from src.db import get_db
+        db = get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+        return await db.update_calibration(state)
+    else:
+        # SQLite fallback
+        global _calibration_db, _db_lock
+        if _db_lock is None:
+            _db_lock = asyncio.Lock()
+
+        async with _db_lock:
+            if _calibration_db is None:
+                from pathlib import Path
+                db_path = Path(os.getenv(
+                    "UNITARES_CALIBRATION_DB_PATH",
+                    str(Path(__file__).parent.parent / "data" / "governance.db")
+                ))
+                _calibration_db = CalibrationDB(db_path)
+
+        from datetime import datetime
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: _calibration_db.save_state(state, datetime.now().isoformat())
+        )
+        return True
+
+
+async def calibration_health_check_async() -> Dict[str, Any]:
+    """
+    Health check for calibration storage backend.
+    """
+    if _use_postgres():
+        from src.db import get_db
+        db = get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+        health = await db.health_check()
+        # Add calibration-specific info
+        cal_data = await db.get_calibration()
+        health["has_calibration_data"] = bool(cal_data)
+        return health
+    else:
+        global _calibration_db, _db_lock
+        if _db_lock is None:
+            _db_lock = asyncio.Lock()
+
+        async with _db_lock:
+            if _calibration_db is None:
+                from pathlib import Path
+                db_path = Path(os.getenv(
+                    "UNITARES_CALIBRATION_DB_PATH",
+                    str(Path(__file__).parent.parent / "data" / "governance.db")
+                ))
+                _calibration_db = CalibrationDB(db_path)
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _calibration_db.health_check)

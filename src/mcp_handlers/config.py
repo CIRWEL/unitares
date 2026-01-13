@@ -37,27 +37,35 @@ async def handle_set_thresholds(arguments: Dict[str, Any]) -> Sequence[TextConte
     from src.runtime_config import set_thresholds, get_thresholds
     from src.audit_log import audit_logger
     
-    # SECURITY: Require authentication for threshold modification
+    # SECURITY: Require session ownership for threshold modification (UUID-based auth, Dec 2025)
     agent_id = arguments.get("agent_id")
-    api_key = arguments.get("api_key")
-    
-    if not agent_id or not api_key:
+    if not agent_id:
         return [error_response(
-            "Authentication required to modify thresholds. Provide agent_id and api_key.",
+            "agent_id required to modify thresholds.",
+            error_code="MISSING_PARAM",
             recovery={
-                "action": "Threshold modification requires authentication to prevent abuse",
-                "related_tools": ["get_thresholds"],
-                "workflow": "Contact system administrator if threshold changes are needed"
+                "action": "Provide agent_id parameter",
+                "related_tools": ["get_thresholds", "identity"]
             }
         )]
-    
-    # Verify authentication
+
     if agent_id not in mcp_server.agent_metadata:
         return agent_not_found_error(agent_id)
-    
+
+    from .utils import verify_agent_ownership
+    if not verify_agent_ownership(agent_id, arguments):
+        return [error_response(
+            "Authentication required to modify thresholds.",
+            error_code="AUTH_REQUIRED",
+            error_category="auth_error",
+            recovery={
+                "action": "Ensure your session is bound to this agent",
+                "related_tools": ["identity"],
+                "workflow": "Identity auto-binds on first tool call. Use identity() to check binding."
+            }
+        )]
+
     meta = mcp_server.agent_metadata[agent_id]
-    if meta.api_key != api_key:
-        return authentication_error(agent_id)
     
     # SECURITY: Admin-only threshold modification
     # Only allow threshold changes from admin agents or high-reputation agents

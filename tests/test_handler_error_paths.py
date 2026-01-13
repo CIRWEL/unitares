@@ -268,9 +268,12 @@ async def test_unknown_tool():
     print("\n=== Testing Unknown Tool ===")
     
     result = await dispatch_tool("unknown_tool_that_does_not_exist", {})
-    # Should return None for fallback to legacy handlers
-    assert result is None, "Unknown tool should return None for fallback"
-    print("✅ Unknown tool returns None for fallback")
+    # Unknown tool returns helpful error response (with suggestions)
+    assert result is not None and len(result) > 0, "Unknown tool should return error response"
+    response_data = json.loads(result[0].text)
+    assert response_data.get("success") is False, "Unknown tool should fail"
+    assert "not found" in (response_data.get("error", "").lower()), "Should mention tool not found"
+    print("✅ Unknown tool returns helpful error response")
 
 
 @pytest.mark.asyncio

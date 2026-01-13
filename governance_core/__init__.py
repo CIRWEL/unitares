@@ -15,6 +15,7 @@ from .dynamics import (
     DynamicsParams,
     compute_dynamics,
     step_state,
+    compute_saturation_diagnostics,
 )
 
 from .coherence import (
@@ -34,6 +35,7 @@ from .parameters import (
     DEFAULT_PARAMS,
     DEFAULT_WEIGHTS,
     DEFAULT_THETA,
+    get_i_dynamics_mode,
 )
 
 from .dynamics import DEFAULT_STATE
@@ -43,12 +45,22 @@ from .utils import (
     drift_norm,
 )
 
+from .ethical_drift import (
+    EthicalDriftVector,
+    AgentBaseline,
+    compute_ethical_drift,
+    get_agent_baseline,
+    clear_baseline,
+    get_all_baselines,
+)
+
 __all__ = [
     # Core state and dynamics
     'State',
     'DynamicsParams',
     'compute_dynamics',
     'step_state',
+    'compute_saturation_diagnostics',
 
     # Coherence functions
     'coherence',
@@ -66,10 +78,19 @@ __all__ = [
     'DEFAULT_WEIGHTS',
     'DEFAULT_THETA',
     'DEFAULT_STATE',
+    'get_i_dynamics_mode',
 
     # Utilities
     'clip',
     'drift_norm',
+
+    # Ethical Drift (concrete Δη)
+    'EthicalDriftVector',
+    'AgentBaseline',
+    'compute_ethical_drift',
+    'get_agent_baseline',
+    'clear_baseline',
+    'get_all_baselines',
 ]
 
-__version__ = '2.0.0'
+__version__ = '2.1.0'  # Added concrete ethical drift

@@ -95,6 +95,7 @@ Single source of truth = canonical MCP = less confusion = better governance.
 ---
 
 **Written by:** Claude Code (Dec 10, 2025)
+**Updated:** v2.5.1 (Dec 26, 2025) - Three-tier identity model (uuid/agent_id/display_name)
 **For:** Future Claude Code agents
 **Status:** This is the canonical approach - trust it!
 

@@ -1,0 +1,366 @@
+# MCP System Evolution: v1.0.0 → v2.5.4
+
+**Complete history of how the UNITARES Governance MCP system has evolved**
+
+---
+
+## Overview
+
+The MCP system has evolved from a simple governance monitor to a comprehensive multi-agent coordination platform with knowledge graphs, stability monitoring, and sophisticated identity management.
+
+**Timeline:**
+- **v1.0.0** (Nov 2025) - Initial release with basic governance
+- **v2.0.0** (Nov 2025) - Complete refactor with handler architecture
+- **v2.1.0** (Nov 2025) - Auto-healing infrastructure
+- **v2.2.0** (Nov 2025) - Knowledge graph system
+- **v2.3.0** (Dec 2025) - Decorator migration
+- **v2.4.0** (Dec 2025) - Simplified identity system
+- **v2.5.0** (Dec 2025) - HCK/CIRS stability monitoring
+- **v2.5.1** (Dec 2025) - Three-tier identity model
+- **v2.5.4** (Dec 2025) - Meaningful identity in knowledge graph
+
+---
+
+## v1.0.0 → v2.0.0: Foundation to Architecture
+
+### What Changed
+
+**Before (v1.0.0):**
+- Single-file MCP server with basic governance
+- Simple file-based state persistence
+- Basic decision logic (approve/revise/reject)
+- No agent lifecycle management
+- ~500 lines of code
+
+**After (v2.0.0):**
+- **Handler registry pattern** - Refactored from 1,700+ line elif chain to clean handler registry (~30 lines)
+- **29 organized handlers** - Categorized by function (core, config, observability, lifecycle, etc.)
+- **All 5 decision points implemented** - Complete UNITARES framework
+- **Modular architecture** - Separated concerns, testable components
+
+### Key Improvements
+
+1. **Code Organization**
+   ```
+   Before: src/mcp_server.py (1,700+ lines, monolithic)
+   After:  src/mcp_handlers/
+            ├── core.py
+            ├── config.py
+            ├── observability.py
+            ├── lifecycle.py
+            └── ...
+   ```
+
+2. **Decision Points**
+   - λ₁ → Sampling Parameters (linear transfer function)
+   - Risk Estimator (multi-factor scoring)
+   - Void Detection Threshold (adaptive: mean + 2σ)
+   - PI Controller (K_p=0.5, K_i=0.05)
+   - Decision Logic (risk-based)
+
+3. **Tool Count**
+   - v1.0.0: 4 tools
+   - v2.0.0: 29 tools
+
+---
+
+## v2.0.0 → v2.1.0: Reliability & Auto-Healing
+
+### What Changed
+
+**Added Auto-Healing Infrastructure:**
+
+1. **Enhanced State Locking**
+   - Automatic stale lock detection
+   - Smart lock cleanup (removes locks from crashed processes)
+   - Exponential backoff retry (3 attempts)
+   - Process health checking
+
+2. **Loop Detection & Prevention**
+   - Activity tracking (update timestamps, decision patterns)
+   - Pattern detection (infinite update loops)
+   - Automatic cooldown periods
+
+3. **Agent Hierarchy & Spawning**
+   - Parent/child tracking
+   - Multi-agent support
+   - API key authentication
+
+### Impact
+
+- **Cursor freeze issue fixed** - Auto-healing locks prevent contention
+- **Increased capacity** - MAX_KEEP_PROCESSES: 36 → 42
+- **Better reliability** - Self-recovering from crashes
+
+---
+
+## v2.1.0 → v2.2.0: Knowledge Graph Revolution
+
+### What Changed
+
+**Knowledge Graph System:**
+
+1. **Performance Improvements**
+   - **35,000x faster** - Store: 350ms → 0.01ms
+   - **3,500x faster** - Similarity search: 350ms → 0.1ms
+   - **O(indexes) queries** - Logarithmic scaling instead of O(n)
+
+2. **New Tools (6 tools)**
+   - `store_knowledge_graph` - Fast discovery storage
+   - `search_knowledge_graph` - Indexed queries
+   - `get_knowledge_graph` - Agent knowledge lookup
+   - `list_knowledge_graph` - Graph statistics
+   - `update_discovery_status_graph` - Status updates
+   - `find_similar_discoveries_graph` - Tag-based similarity
+
+3. **Architecture**
+   - In-memory graph with 5 indexes
+   - Async background persistence
+   - Claude Desktop compatible (non-blocking)
+
+### Impact
+
+- **Claude Desktop freezing fixed** - Non-blocking operations
+- **Context compression** - Indexed queries prevent large responses
+- **Scalability** - Handles 10,000+ discoveries efficiently
+
+---
+
+## v2.2.0 → v2.3.0: Decorator Migration
+
+### What Changed
+
+**100% Migration to Decorator Pattern:**
+
+- **All 43 tools migrated** to `@mcp_tool` decorator
+- **Automatic timeout protection** on all tools
+- **Self-documenting code** - Timeout values attached to functions
+- **Enhanced `list_tools`** - Includes timeout and category metadata
+
+### Key Improvements
+
+1. **Timeout Protection**
+   - Removed double timeout wrapping
+   - Each tool uses configured timeout
+   - `process_agent_update`: 30s → 60s timeout
+
+2. **Tool Metadata**
+   - Timeout values visible in `list_tools`
+   - Categories for better organization
+   - Better tool discovery
+
+---
+
+## v2.3.0 → v2.4.0: Identity Simplification
+
+### What Changed
+
+**Simplified Identity System:**
+
+1. **3-Path Architecture**
+   - Redis cache (fast path, < 1ms)
+   - PostgreSQL session lookup
+   - Create new agent
+
+2. **Database Enhancements**
+   - Added `label` column to `core.agents` table
+   - New PostgresBackend methods
+   - Label collision detection
+
+3. **UX Improvements**
+   - Auto-semantic search
+   - Pagination for discoveries
+   - Search hints
+
+### Impact
+
+- **Bug #3 fixed** - Identity binding inconsistencies resolved
+- **Cleaner code** - Reduced from 15+ code paths to 3
+- **Better UX** - More intuitive identity management
+
+---
+
+## v2.4.0 → v2.5.0: Stability Monitoring
+
+### What Changed
+
+**HCK/CIRS Stability Monitoring:**
+
+1. **HCK v3.0 - Reflexive Control**
+   - Update coherence ρ(t) - Measures E/I alignment
+   - Continuity Energy (CE) - State change rate tracking
+   - PI Gain Modulation - Prevents instability
+
+2. **CIRS v0.1 - Oscillation Detection**
+   - OscillationDetector - Tracks threshold crossings
+   - ResonanceDamper - Adjusts thresholds
+   - Response tiers: `proceed` / `soft_dampen` / `hard_block`
+
+3. **New State Fields**
+   - `rho_history`, `CE_history`, `current_rho`
+   - `oi_history`, `resonance_events`, `damping_applied_count`
+
+### Impact
+
+- **Better stability** - Detects and prevents oscillations
+- **Smarter control** - Adaptive thresholds based on resonance
+- **Safety tiers** - Graduated response system
+
+---
+
+## v2.5.0 → v2.5.1: Identity Refinement
+
+### What Changed
+
+**Three-Tier Identity Model:**
+
+1. **Identity Architecture**
+   - **UUID** (immutable) - Technical identifier
+   - **agent_id** (structured) - Auto-generated, stable
+   - **display_name** (nickname) - User-chosen, can change
+
+2. **Honest Initialization**
+   - **Before:** Fake `coherence=1.0, risk=0.0` for new agents
+   - **After:** `null` values until first check-in
+   - **Status:** `⚪ uninitialized` with clear messaging
+
+### Impact
+
+- **No more confusion** - Honest metrics from the start
+- **Better UX** - Clear "pending" state for new agents
+- **Migration support** - Pre-v2.5.0 agents get structured_id
+
+---
+
+## v2.5.1 → v2.5.4: Meaningful Identity
+
+### What Changed
+
+**Agent-Centric Identity in Knowledge Graph:**
+
+1. **Identity in KG**
+   - **Before:** UUID (e.g., `a1b2c3d4-...`) - meaningless
+   - **After:** `agent_id` (e.g., `Claude_Opus_4_20251227`) - meaningful
+
+2. **Four-Tier Identity Model**
+   - **UUID** - Internal only, never in KG
+   - **agent_id** - Model+date format, stored in KG
+   - **display_name** - User-chosen name
+   - **label** - Nickname (can change)
+
+### Impact
+
+- **Better readability** - KG queries return meaningful names
+- **Human-friendly** - Both agents and humans can understand IDs
+- **Cleaner separation** - Technical vs. semantic identity
+
+---
+
+## Architecture Evolution Summary
+
+### Code Organization
+
+```
+v1.0.0:  Single file (mcp_server.py)
+v2.0.0:  Handler registry (mcp_handlers/)
+v2.1.0:  Modular handlers + auto-healing
+v2.2.0:  Knowledge graph layer
+v2.3.0:  Decorator pattern (all tools)
+v2.4.0:  Simplified identity system
+v2.5.0:  Stability monitoring (HCK/CIRS)
+v2.5.4:  Meaningful identity in KG
+```
+
+### Tool Count Growth
+
+- **v1.0.0:** 4 tools
+- **v2.0.0:** 29 tools
+- **v2.1.0:** 29 tools (same, but better organized)
+- **v2.2.0:** 35 tools (+6 knowledge graph tools)
+- **v2.3.0:** 43 tools (+8 more tools)
+- **v2.4.0+:** 43 tools (refinements)
+
+### Performance Improvements
+
+- **Knowledge operations:** 35,000x faster
+- **Similarity search:** 3,500x faster
+- **Query performance:** O(indexes) instead of O(n)
+- **Identity lookup:** < 1ms with Redis cache
+
+### Reliability Improvements
+
+- **Auto-healing locks** - No manual intervention
+- **Loop detection** - Prevents infinite loops
+- **Process cleanup** - Automatic zombie detection
+- **Stale lock cleanup** - Self-recovering
+
+---
+
+## Key Design Principles That Emerged
+
+1. **Modularity** - Handler registry pattern
+2. **Performance** - Indexed queries, caching
+3. **Reliability** - Auto-healing, self-recovery
+4. **UX** - Honest initialization, meaningful IDs
+5. **Scalability** - O(indexes) algorithms, efficient data structures
+
+---
+
+## Current State (v2.5.4)
+
+### Core Features
+
+- ✅ Complete UNITARES framework (EISV dynamics)
+- ✅ HCK/CIRS stability monitoring
+- ✅ Knowledge graph system (35,000x faster)
+- ✅ Three-tier identity model
+- ✅ Auto-healing infrastructure
+- ✅ 43 MCP tools
+- ✅ Dual transport support (SSE + Streamable HTTP)
+
+### Architecture
+
+- **Handler-based** - Clean separation of concerns
+- **Decorator pattern** - Self-documenting, timeout-protected
+- **Indexed queries** - Logarithmic scaling
+- **Async operations** - Non-blocking I/O
+- **Multi-agent** - Parent/child tracking, spawning
+
+### Performance
+
+- **Knowledge store:** 0.01ms (was 350ms)
+- **Similarity search:** 0.1ms (was 350ms)
+- **Identity lookup:** < 1ms (Redis cache)
+- **Query performance:** O(indexes) not O(n)
+
+---
+
+## Future Evolution (Planned)
+
+### v2.6.0 (Planned)
+- Web-based dashboard for fleet monitoring
+- Real-time coherence visualization
+- Agent spawning UI
+- Performance profiling
+
+### Under Consideration
+- Graph-native queries (Cypher via Apache AGE)
+- Multi-instance coordination
+- Advanced analytics
+- Machine learning integration
+
+---
+
+## Lessons Learned
+
+1. **Start simple, iterate** - v1.0 was basic but functional
+2. **Modularity matters** - Handler registry made v2.0 possible
+3. **Performance is critical** - Knowledge graph was game-changing
+4. **UX matters** - Honest initialization prevents confusion
+5. **Reliability first** - Auto-healing prevents production issues
+
+---
+
+**Last Updated:** December 27, 2025  
+**Current Version:** v2.5.4  
+**Total Evolution:** 1.0.0 → 2.5.4 (15 versions)

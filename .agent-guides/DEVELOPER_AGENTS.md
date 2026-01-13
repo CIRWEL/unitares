@@ -1,0 +1,229 @@
+# Developer/Debugger Agent Guide
+
+**For agents modifying, debugging, or extending the governance system.**
+
+## Quick Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    MCP Server (mcp_server_sse.py)               │
+│  - SSE + Streamable HTTP transport                              │
+│  - 46 tools (11 essential, 22 common, 13 advanced)              │
+├─────────────────────────────────────────────────────────────────┤
+│                    Handlers (mcp_handlers/)                      │
+│  - core.py: process_agent_update, get_governance_metrics        │
+│  - identity_v2.py: identity (simplified 3-path architecture)    │
+│  - knowledge_graph.py: KG storage with agent_id attribution     │
+│  - admin.py: health_check, list_tools, etc.                     │
+├─────────────────────────────────────────────────────────────────┤
+│                    Identity Layer (v2.5.4)                       │
+│  - UUID: Internal session binding (never exposed in KG)         │
+│  - agent_id: Model+date format - stored in KG, visible to all   │
+│  - display_name: User-chosen name ("birth certificate")         │
+│  - label: Nickname (casual, can change)                         │
+├─────────────────────────────────────────────────────────────────┤
+│                    Database Layer                                │
+│  - PostgreSQL: identities, sessions, EISV state (primary)       │
+│  - SQLite: agent_metadata, audit logs (always present)          │
+│  - Dual-backend: for migration (set DB_BACKEND=dual)            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Key Files
+
+| Purpose | File |
+|---------|------|
+| Server entry | `src/mcp_server_sse.py` |
+| Tool dispatch | `src/mcp_handlers/__init__.py` |
+| Core governance | `src/mcp_handlers/core.py` |
+| Identity/session | `src/mcp_handlers/identity_v2.py` (v2.4.0+) |
+| Identity utilities | `src/mcp_handlers/utils.py` - `require_registered_agent()` |
+| Knowledge graph | `src/mcp_handlers/knowledge_graph.py` - `_resolve_agent_display()` |
+| KG storage | `src/storage/knowledge_graph_postgres.py` |
+| EISV dynamics | `src/governance_monitor.py`, `governance_core/` |
+| HCK/CIRS | `src/cirs.py` (v2.5.0+) - oscillation detection, resonance damping |
+| Database | `src/db/postgres_backend.py`, `src/db/dual_backend.py` |
+| Metadata store | `src/metadata_db.py` |
+
+## Common Debugging Tasks
+
+### 1. Check System Health
+```bash
+./scripts/mcp status
+# or
+curl http://localhost:8765/health | jq
+```
+
+### 2. View Server Logs
+```bash
+tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/sse_server_error.log
+```
+
+### 3. Restart Server
+```bash
+pkill -9 -f mcp_server
+launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
+```
+
+### 4. Check Database Counts
+```bash
+# SQLite metadata
+sqlite3 /Users/cirwel/projects/governance-mcp-v1/data/governance.db \
+  "SELECT COUNT(*) FROM agent_metadata;"
+
+# Postgres (via docker)
+docker exec unitares-postgres psql -U unitares -d governance \
+  -c "SELECT COUNT(*) FROM governance.identities;"
+```
+
+## Known Architectural Quirks
+
+### Dual Data Stores
+- **Postgres `identities`**: Main identity store (616 agents)
+- **SQLite `agent_metadata`**: Separate metadata/audit store (619 agents)
+- **They can drift!** Startup reconciliation syncs Postgres → SQLite
+
+### kwargs Unwrapping
+MCP transport passes kwargs as dict, not string. Both must be handled:
+```python
+if isinstance(kwargs, str):
+    kwargs = json.loads(kwargs)
+# kwargs is now always a dict
+```
+See `mcp_handlers/__init__.py:dispatch_tool()` for the fix.
+
+### Four-Tier Identity Model (v2.5.4)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Layer         │ Example                      │ Purpose          │
+├───────────────┼──────────────────────────────┼──────────────────┤
+│ UUID          │ a1b2c3d4-e5f6-...            │ Internal binding │
+│ agent_id      │ Claude_Opus_4_20251227       │ KG storage       │
+│ display_name  │ "Doc Writer"                 │ Birth certificate│
+│ label         │ "Opus"                       │ Casual nickname  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key principle:** Agents find meaningful names more useful than UUID strings.
+
+- **UUID**: Never exposed in KG - only used internally for session binding
+- **agent_id** (model+date): Stored in KG, visible to all agents - meaningful to both agents and humans
+- **display_name**: User-chosen via `identity(name="...")` - like a birth certificate
+- **label**: Casual nickname that can change anytime
+
+### Session Binding (v2.4.0+, fixed v2.5.0)
+- Session key auto-derived from SSE connection or stdio PID
+- Identity auto-creates on first tool call (no explicit registration)
+- Same session = same UUID (consistent identity)
+- `identity()` tool to check your UUID, `identity(name="...")` to set display_name
+- **v2.5.0 fix**: `onboard`/`identity` now cache in Redis so `identity_v2` finds the binding
+
+### Knowledge Graph Attribution (v2.5.4)
+- KG stores `agent_id` (model+date) instead of UUID
+- `require_registered_agent()` returns `agent_id` for KG storage
+- UUID kept internal via `_agent_uuid` for session binding only
+- `_resolve_agent_display()` in `knowledge_graph.py` resolves agent_id to display info
+- Display names included in KG query responses for human readability
+
+### HCK/CIRS (v2.5.0+)
+- **HCK v3.0**: Coherence ρ(t) via directional E/I alignment, Continuity Energy (CE), PI gain modulation
+- **CIRS v0.1**: Oscillation Index (OI) via EMA of threshold crossings, flip counting, resonance damping
+- `src/cirs.py` contains `OscillationDetector`, `ResonanceDamper`, `classify_response`
+- Three response tiers: `proceed`, `soft_dampen`, `hard_block`
+
+## Adding a New Tool
+
+1. **Define schema** in `src/tool_schemas.py`:
+```python
+{
+    "name": "my_new_tool",
+    "description": "What it does",
+    "tier": "common",  # essential, common, or advanced
+    "category": "admin",
+    "timeout": 10.0,
+    "inputSchema": {...}
+}
+```
+
+2. **Implement handler** in appropriate `mcp_handlers/*.py`:
+```python
+async def handle_my_new_tool(kwargs: dict, ctx: Context = None) -> dict:
+    # Implementation
+    return {"success": True, ...}
+```
+
+3. **Register in dispatch** (auto-registration handles this via `tool_schemas.py`)
+
+4. **Test**: Server auto-registers on restart
+
+## Anti-Proliferation Policy
+
+**DO NOT:**
+- Create new CLI scripts (use `./scripts/mcp`)
+- Add interpretation layers with custom thresholds
+- Duplicate functionality that exists
+
+**DO:**
+- Use existing tools and extend them
+- Check `validate_file_path()` before creating files
+- Document changes in knowledge graph via `leave_note()`
+
+## Recent Fixes (Dec 2025)
+
+| Date | Fix | Location |
+|------|-----|----------|
+| Dec 27 | **v2.5.4**: KG stores agent_id instead of UUID | `utils.py`, `knowledge_graph.py` |
+| Dec 27 | Four-tier identity (uuid/agent_id/display_name/label) | `utils.py:require_registered_agent()` |
+| Dec 27 | `_resolve_agent_display()` for human-readable KG output | `knowledge_graph.py` |
+| Dec 26 | Three-tier identity model (uuid/agent_id/display_name) | `identity.py`, `identity_v2.py`, `utils.py` |
+| Dec 26 | HCK v3.0 + CIRS v0.1 implementation | `src/cirs.py`, `governance_monitor.py` |
+| Dec 26 | Session binding Redis cache fix | `mcp_handlers/identity.py:1355,1559` |
+| Dec 25 | identity_v2.py - 3-path architecture | `mcp_handlers/identity_v2.py` |
+| Dec 25 | label column added to core.agents | `db/postgres_backend.py` |
+| Dec 25 | Bug #2 - attention_score → risk_score | `mcp_handlers/lifecycle.py:261` |
+| Dec 24 | kwargs unwrapping for MCP transport | `mcp_handlers/__init__.py` |
+| Dec 24 | Startup reconciliation Postgres→SQLite | `mcp_server_sse.py:939-1040` |
+
+## Where to Look When Things Break
+
+| Symptom | Check |
+|---------|-------|
+| "No valid session ID" | Session binding failed - check `identity_v2.py` |
+| Agent count mismatch | Drift between Postgres/SQLite - check health_check |
+| Tool not found | `tool_schemas.py`, handler registration |
+| EISV weird values | `governance_monitor.py`, thresholds config |
+| Coherence always 1.0 | No updates yet (default state) |
+| OI always 0 | Normal if metrics stable on one side of thresholds |
+| onboard → different agent | Redis cache miss - check `identity.py` Redis caching |
+| KG shows UUID instead of name | Legacy data - `_resolve_agent_display()` handles this |
+| agent_id missing in KG | Check `require_registered_agent()` in `utils.py` |
+| display_name not showing | Check `_agent_display` in arguments, metadata lookup |
+
+## Useful MCP Tools for Debugging
+
+```python
+health_check()           # System health
+get_server_info()        # PID, uptime, version
+debug_request_context()  # Session/transport info
+get_telemetry_metrics()  # Skip rates, confidence distribution
+detect_anomalies()       # Fleet-wide pattern detection
+```
+
+## Contributing Knowledge
+
+When you fix something, document it:
+```python
+leave_note(
+    note="Fixed X by doing Y. Root cause was Z.",
+    tags=["fix", "category"]
+)
+```
+
+Future agents will find it via `search_knowledge_graph()`.
+
+---
+
+**Written by:** Opus_4.5_CLI_20251223 (Dec 24, 2025)
+**Updated:** v2.5.4 (Dec 27, 2025) - Four-tier identity, KG stores agent_id instead of UUID
+**For:** Future developer/debugger agents

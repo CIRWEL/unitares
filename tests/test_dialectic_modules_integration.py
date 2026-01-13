@@ -173,23 +173,29 @@ async def test_dialectic_handler_integration():
 
 @pytest.mark.asyncio
 async def test_backward_compatibility():
-    """Test that backward compatibility is maintained"""
+    """Test that backward compatibility is maintained (updated for v2.5.1+ archived dialectic)"""
     print("Testing backward compatibility...")
     
     # Test that all expected functions are still accessible from main dialectic module
     from src.mcp_handlers import dialectic
     
-    # Check that key functions exist
-    assert hasattr(dialectic, 'handle_request_dialectic_review'), "handle_request_dialectic_review should exist"
-    assert hasattr(dialectic, 'handle_get_dialectic_session'), "handle_get_dialectic_session should exist"
-    assert hasattr(dialectic, 'handle_submit_thesis'), "handle_submit_thesis should exist"
+    # NOTE: Dialectic protocol handlers were archived in v2.5.1+ (Dec 2025)
+    # Only get_dialectic_session remains for viewing historical sessions
+    # The following handlers were removed: handle_request_dialectic_review, handle_submit_thesis, etc.
     
-    # Check that imported functions work
+    # Check that remaining handler exists
+    assert hasattr(dialectic, 'handle_get_dialectic_session'), "handle_get_dialectic_session should exist"
+    
+    # Check that imported utility functions work (these are still available)
     assert callable(dialectic.save_session), "save_session should be callable"
     assert callable(dialectic.execute_resolution), "execute_resolution should be callable"
     assert callable(dialectic.select_reviewer), "select_reviewer should be callable"
     
-    print("✅ Backward compatibility maintained")
+    # Verify archived handlers are NOT present (expected behavior)
+    assert not hasattr(dialectic, 'handle_request_dialectic_review'), "handle_request_dialectic_review was archived and should not exist"
+    assert not hasattr(dialectic, 'handle_submit_thesis'), "handle_submit_thesis was archived and should not exist"
+    
+    print("✅ Backward compatibility maintained (archived handlers correctly removed)")
 
 
 async def main():

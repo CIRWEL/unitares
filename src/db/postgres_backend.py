@@ -6,6 +6,7 @@ Async PostgreSQL backend using asyncpg with Apache AGE for graph queries.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -54,18 +55,150 @@ class PostgresBackend(DatabaseBackend):
         self._min_conn = int(os.environ.get("DB_POSTGRES_MIN_CONN", "2"))
         self._max_conn = int(os.environ.get("DB_POSTGRES_MAX_CONN", "10"))
         self._age_graph = os.environ.get("DB_AGE_GRAPH", "governance_graph")
+        self._init_lock = None  # Will be created on first use
+        self._last_pool_check = 0.0
+
+    async def _ensure_pool(self) -> asyncpg.Pool:
+        """
+        Ensure connection pool is available, recreating if necessary.
+
+        This provides automatic recovery from:
+        - Pool becoming None after close()
+        - Connection timeouts
+        - PostgreSQL restarts
+        """
+        import asyncio
+        import time
+
+        # Fast path: pool exists and is healthy
+        if self._pool is not None:
+            # Periodic health check (every 60s)
+            now = time.time()
+            if now - self._last_pool_check > 60:
+                try:
+                    async with self._pool.acquire(timeout=5) as conn:
+                        await conn.fetchval("SELECT 1")
+                    self._last_pool_check = now
+                except Exception as e:
+                    logger.warning(f"Pool health check failed, recreating: {e}")
+                    try:
+                        await self._pool.close()
+                    except Exception:
+                        pass
+                    self._pool = None
+
+        if self._pool is not None:
+            return self._pool
+
+        # Slow path: need to create pool
+        # Use lock to prevent multiple concurrent pool creations
+        if self._init_lock is None:
+            self._init_lock = asyncio.Lock()
+
+        async with self._init_lock:
+            # Double-check after acquiring lock
+            if self._pool is not None:
+                return self._pool
+
+            logger.info("Creating PostgreSQL connection pool...")
+            # Wrap pool creation in timeout to prevent infinite retry loop
+            # If PostgreSQL isn't running, fail fast (5 seconds) instead of retrying forever
+            try:
+                self._pool = await asyncio.wait_for(
+                    asyncpg.create_pool(
+                        self._db_url,
+                        min_size=self._min_conn,
+                        max_size=self._max_conn,
+                        command_timeout=30,
+                    ),
+                    timeout=5.0  # Fail fast if PostgreSQL isn't available
+                )
+            except asyncio.TimeoutError:
+                raise ConnectionError(
+                    f"PostgreSQL connection timeout after 5s. "
+                    f"Is PostgreSQL running on {self._db_url}? "
+                    f"Check: psql -d {self._db_url.split('/')[-1]}"
+                )
+            except Exception as e:
+                # Re-raise with clearer error message
+                raise ConnectionError(
+                    f"Failed to connect to PostgreSQL at {self._db_url}: {e}. "
+                    f"Is PostgreSQL running?"
+                ) from e
+            
+            self._last_pool_check = time.time()
+            logger.info("PostgreSQL connection pool created")
+            return self._pool
+
+    def acquire(self, timeout: float = None):
+        """
+        Get a connection from the pool with automatic recovery.
+
+        Usage:
+            async with self.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+
+        This wraps pool.acquire() and ensures the pool exists.
+        """
+        class _AcquireContext:
+            def __init__(ctx_self, backend, timeout):
+                ctx_self.backend = backend
+                ctx_self.timeout = timeout
+                ctx_self.conn = None
+
+            async def __aenter__(ctx_self):
+                pool = await ctx_self.backend._ensure_pool()
+                if ctx_self.timeout:
+                    ctx_self.conn = await pool.acquire(timeout=ctx_self.timeout)
+                else:
+                    ctx_self.conn = await pool.acquire()
+                return ctx_self.conn
+
+            async def __aexit__(ctx_self, exc_type, exc_val, exc_tb):
+                if ctx_self.conn and ctx_self.backend._pool:
+                    await ctx_self.backend._pool.release(ctx_self.conn)
+                return False
+
+        return _AcquireContext(self, timeout)
 
     async def init(self) -> None:
         """Initialize connection pool and verify schema."""
-        self._pool = await asyncpg.create_pool(
-            self._db_url,
-            min_size=self._min_conn,
-            max_size=self._max_conn,
-            command_timeout=30,
-        )
+        import asyncio
+        import time
+
+        # Initialize lock if not already created
+        if self._init_lock is None:
+            self._init_lock = asyncio.Lock()
+
+        # Wrap pool creation in timeout to prevent infinite retry loop
+        # If PostgreSQL isn't running, fail fast (5 seconds) instead of retrying forever
+        try:
+            self._pool = await asyncio.wait_for(
+                asyncpg.create_pool(
+                    self._db_url,
+                    min_size=self._min_conn,
+                    max_size=self._max_conn,
+                    command_timeout=30,
+                ),
+                timeout=5.0  # Fail fast if PostgreSQL isn't available
+            )
+        except asyncio.TimeoutError:
+            raise ConnectionError(
+                f"PostgreSQL connection timeout after 5s. "
+                f"Is PostgreSQL running on {self._db_url}? "
+                f"Check: psql -d {self._db_url.split('/')[-1]}"
+            )
+        except Exception as e:
+            # Re-raise with clearer error message
+            raise ConnectionError(
+                f"Failed to connect to PostgreSQL at {self._db_url}: {e}. "
+                f"Is PostgreSQL running?"
+            ) from e
+        
+        self._last_pool_check = time.time()
 
         # Verify schema exists
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             # Check core schema
             result = await conn.fetchval(
                 "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'core')"
@@ -94,7 +227,7 @@ class PostgresBackend(DatabaseBackend):
         if not self._pool:
             return {"status": "error", "error": "Pool not initialized"}
 
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             # Basic connectivity
             result = await conn.fetchval("SELECT 1")
 
@@ -140,7 +273,7 @@ class PostgresBackend(DatabaseBackend):
         metadata: Optional[Dict[str, Any]] = None,
         created_at: Optional[datetime] = None,
     ) -> int:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             identity_id = await conn.fetchval(
                 """
                 INSERT INTO core.identities (agent_id, api_key_hash, parent_agent_id, metadata, created_at)
@@ -176,7 +309,7 @@ class PostgresBackend(DatabaseBackend):
         This is required for foreign key references in dialectic_sessions.
         Returns True if successful.
         """
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             try:
                 await conn.execute(
                     """
@@ -185,6 +318,11 @@ class PostgresBackend(DatabaseBackend):
                         created_at, parent_agent_id, spawn_reason
                     ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, now()), $8, $9)
                     ON CONFLICT (id) DO UPDATE SET
+                        -- Only overwrite api_key if the existing value is empty and we have a non-empty one.
+                        api_key = CASE
+                            WHEN core.agents.api_key = '' AND EXCLUDED.api_key <> '' THEN EXCLUDED.api_key
+                            ELSE core.agents.api_key
+                        END,
                         status = EXCLUDED.status,
                         purpose = COALESCE(EXCLUDED.purpose, core.agents.purpose),
                         notes = COALESCE(EXCLUDED.notes, core.agents.notes),
@@ -216,11 +354,12 @@ class PostgresBackend(DatabaseBackend):
         tags: Optional[List[str]] = None,
         parent_agent_id: Optional[str] = None,
         spawn_reason: Optional[str] = None,
+        label: Optional[str] = None,
     ) -> bool:
         """
         Partial update of core.agents (does NOT modify api_key).
         """
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             try:
                 result = await conn.execute(
                     """
@@ -232,6 +371,7 @@ class PostgresBackend(DatabaseBackend):
                         tags = COALESCE($5, tags),
                         parent_agent_id = COALESCE($6, parent_agent_id),
                         spawn_reason = COALESCE($7, spawn_reason),
+                        label = COALESCE($8, label),
                         updated_at = now()
                     WHERE id = $1
                     """,
@@ -242,14 +382,65 @@ class PostgresBackend(DatabaseBackend):
                     tags,
                     parent_agent_id,
                     spawn_reason,
+                    label,
                 )
                 return "UPDATE 1" in result
             except Exception as e:
                 logger.error(f"Failed to update agent fields for {agent_id}: {e}")
                 return False
 
+    async def get_agent(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get agent record from core.agents.
+        Returns dict with agent fields or None if not found.
+        """
+        async with self.acquire() as conn:
+            try:
+                row = await conn.fetchrow(
+                    """
+                    SELECT id, api_key, status, purpose, notes, tags,
+                           created_at, updated_at, archived_at, parent_agent_id,
+                           spawn_reason, label
+                    FROM core.agents
+                    WHERE id = $1
+                    """,
+                    agent_id
+                )
+                if row:
+                    return dict(row)
+                return None
+            except Exception as e:
+                logger.error(f"Failed to get agent {agent_id}: {e}")
+                return None
+
+    async def get_agent_label(self, agent_id: str) -> Optional[str]:
+        """Get agent's display label from core.agents."""
+        async with self.acquire() as conn:
+            try:
+                row = await conn.fetchrow(
+                    "SELECT label FROM core.agents WHERE id = $1",
+                    agent_id
+                )
+                return row["label"] if row else None
+            except Exception as e:
+                logger.debug(f"Failed to get label for {agent_id}: {e}")
+                return None
+
+    async def find_agent_by_label(self, label: str) -> Optional[str]:
+        """Find agent UUID by label (for collision detection)."""
+        async with self.acquire() as conn:
+            try:
+                row = await conn.fetchrow(
+                    "SELECT id FROM core.agents WHERE label = $1",
+                    label
+                )
+                return str(row["id"]) if row else None
+            except Exception as e:
+                logger.debug(f"Failed to find agent by label {label}: {e}")
+                return None
+
     async def get_identity(self, agent_id: str) -> Optional[IdentityRecord]:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             row = await conn.fetchrow(
                 """
                 SELECT identity_id, agent_id, api_key_hash, created_at, updated_at,
@@ -264,7 +455,7 @@ class PostgresBackend(DatabaseBackend):
             return self._row_to_identity(row)
 
     async def get_identity_by_id(self, identity_id: int) -> Optional[IdentityRecord]:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             row = await conn.fetchrow(
                 """
                 SELECT identity_id, agent_id, api_key_hash, created_at, updated_at,
@@ -284,7 +475,7 @@ class PostgresBackend(DatabaseBackend):
         limit: int = 100,
         offset: int = 0,
     ) -> List[IdentityRecord]:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             if status:
                 rows = await conn.fetch(
                     """
@@ -316,7 +507,7 @@ class PostgresBackend(DatabaseBackend):
         status: str,
         disabled_at: Optional[datetime] = None,
     ) -> bool:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             result = await conn.execute(
                 """
                 UPDATE core.identities
@@ -333,7 +524,7 @@ class PostgresBackend(DatabaseBackend):
         metadata: Dict[str, Any],
         merge: bool = True,
     ) -> bool:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             if merge:
                 result = await conn.execute(
                     """
@@ -355,7 +546,7 @@ class PostgresBackend(DatabaseBackend):
             return "UPDATE 1" in result
 
     async def verify_api_key(self, agent_id: str, api_key: str) -> bool:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             result = await conn.fetchval(
                 """
                 SELECT core.verify_api_key($2, api_key_hash)
@@ -392,7 +583,7 @@ class PostgresBackend(DatabaseBackend):
         client_type: Optional[str] = None,
         client_info: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             try:
                 await conn.execute(
                     """
@@ -406,7 +597,7 @@ class PostgresBackend(DatabaseBackend):
                 return False
 
     async def get_session(self, session_id: str) -> Optional[SessionRecord]:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             row = await conn.fetchrow(
                 """
                 SELECT s.session_id, s.identity_id, i.agent_id, s.created_at, s.last_active,
@@ -422,11 +613,14 @@ class PostgresBackend(DatabaseBackend):
             return self._row_to_session(row)
 
     async def update_session_activity(self, session_id: str) -> bool:
-        async with self._pool.acquire() as conn:
+        from config.governance_config import GovernanceConfig
+        ttl_hours = GovernanceConfig.SESSION_TTL_HOURS
+        async with self.acquire() as conn:
             result = await conn.execute(
-                """
+                f"""
                 UPDATE core.sessions
-                SET last_active = now()
+                SET last_active = now(),
+                    expires_at = now() + interval '{ttl_hours} hours'
                 WHERE session_id = $1 AND is_active = TRUE
                 """,
                 session_id,
@@ -434,7 +628,7 @@ class PostgresBackend(DatabaseBackend):
             return "UPDATE 1" in result
 
     async def end_session(self, session_id: str) -> bool:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             result = await conn.execute(
                 """
                 UPDATE core.sessions
@@ -449,7 +643,7 @@ class PostgresBackend(DatabaseBackend):
         self,
         identity_id: int,
     ) -> List[SessionRecord]:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             rows = await conn.fetch(
                 """
                 SELECT s.session_id, s.identity_id, i.agent_id, s.created_at, s.last_active,
@@ -464,7 +658,7 @@ class PostgresBackend(DatabaseBackend):
             return [self._row_to_session(r) for r in rows]
 
     async def cleanup_expired_sessions(self) -> int:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             result = await conn.fetchval("SELECT core.cleanup_expired_sessions()")
             return result or 0
 
@@ -497,7 +691,7 @@ class PostgresBackend(DatabaseBackend):
         coherence: float,
         state_json: Optional[Dict[str, Any]] = None,
     ) -> int:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             state_id = await conn.fetchval(
                 """
                 INSERT INTO core.agent_state
@@ -514,7 +708,7 @@ class PostgresBackend(DatabaseBackend):
         self,
         identity_id: int,
     ) -> Optional[AgentStateRecord]:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             row = await conn.fetchrow(
                 """
                 SELECT s.state_id, s.identity_id, i.agent_id, s.recorded_at,
@@ -537,7 +731,7 @@ class PostgresBackend(DatabaseBackend):
         identity_id: int,
         limit: int = 100,
     ) -> List[AgentStateRecord]:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             rows = await conn.fetch(
                 """
                 SELECT s.state_id, s.identity_id, i.agent_id, s.recorded_at,
@@ -573,7 +767,7 @@ class PostgresBackend(DatabaseBackend):
     # =========================================================================
 
     async def append_audit_event(self, event: AuditEvent) -> bool:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             try:
                 # event_id must be passed as UUID object for asyncpg
                 # Handle invalid UUID strings gracefully by generating new UUID
@@ -640,7 +834,7 @@ class PostgresBackend(DatabaseBackend):
 
         params.append(limit)
 
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             rows = await conn.fetch(
                 f"""
                 SELECT ts, event_id, agent_id, session_id, event_type, confidence, payload, raw_hash
@@ -660,7 +854,7 @@ class PostgresBackend(DatabaseBackend):
         limit: int = 200,
     ) -> List[AuditEvent]:
         # Use pg_trgm for fuzzy search on payload
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             if agent_id:
                 rows = await conn.fetch(
                     """
@@ -702,7 +896,7 @@ class PostgresBackend(DatabaseBackend):
     # =========================================================================
 
     async def get_calibration(self) -> Dict[str, Any]:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT data, updated_at, version FROM core.calibration WHERE id = TRUE"
             )
@@ -716,7 +910,7 @@ class PostgresBackend(DatabaseBackend):
     async def update_calibration(self, data: Dict[str, Any]) -> bool:
         # Remove internal fields
         clean_data = {k: v for k, v in data.items() if not k.startswith("_")}
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             result = await conn.execute(
                 """
                 UPDATE core.calibration
@@ -733,7 +927,7 @@ class PostgresBackend(DatabaseBackend):
 
     async def graph_available(self) -> bool:
         """Check if AGE graph queries are available."""
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             try:
                 await conn.execute("LOAD 'age'")
                 return True
@@ -751,7 +945,7 @@ class PostgresBackend(DatabaseBackend):
         Parameters are validated and safely interpolated since AGE doesn't support
         parameterized Cypher queries ($1, $2 style).
         """
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             try:
                 await conn.execute("LOAD 'age'")
                 await conn.execute(f"SET search_path = ag_catalog, core, audit, public")
@@ -774,8 +968,14 @@ class PostgresBackend(DatabaseBackend):
                     # Parse agtype JSON
                     result = row["result"]
                     if isinstance(result, str):
+                        # Strip AGE type suffixes (::vertex, ::edge, ::agtype)
+                        clean_result = result
+                        for suffix in ("::vertex", "::edge", "::agtype"):
+                            if clean_result.endswith(suffix):
+                                clean_result = clean_result[:-len(suffix)]
+                                break
                         try:
-                            results.append(json.loads(result))
+                            results.append(json.loads(clean_result))
                         except json.JSONDecodeError:
                             results.append(result)
                     elif isinstance(result, (dict, list)):
@@ -809,8 +1009,13 @@ class PostgresBackend(DatabaseBackend):
                 escaped = value.replace("\\", "\\\\").replace("'", "\\'")
                 return f"'{escaped}'"
             return f"'{value}'"
-        elif isinstance(value, (list, dict)):
-            # JSON-encode complex types
+        elif isinstance(value, list):
+            # Convert to Cypher list syntax: ['a', 'b', 'c']
+            # Recursively sanitize each element
+            sanitized_elements = [self._sanitize_cypher_param(item) for item in value]
+            return f"[{', '.join(sanitized_elements)}]"
+        elif isinstance(value, dict):
+            # JSON-encode dicts (used for complex properties)
             json_str = json.dumps(value).replace("'", "\\'")
             return f"'{json_str}'"
         else:
@@ -830,7 +1035,7 @@ class PostgresBackend(DatabaseBackend):
         error_type: Optional[str] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             try:
                 await conn.execute(
                     """
@@ -877,7 +1082,7 @@ class PostgresBackend(DatabaseBackend):
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params.append(limit)
 
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             rows = await conn.fetch(
                 f"""
                 SELECT ts, usage_id, agent_id, session_id, tool_name, latency_ms, success, error_type, payload
@@ -921,8 +1126,29 @@ class PostgresBackend(DatabaseBackend):
         synthesis_round: Optional[int] = None,
         paused_agent_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             try:
+                # Ensure FK targets exist (core.dialectic_sessions.*_agent_id -> core.agents.id).
+                # We may not have access to the real api_key here; insert placeholder rows if missing.
+                # Later, normal agent creation/upsert will replace empty api_key values.
+                await conn.execute(
+                    """
+                    INSERT INTO core.agents (id, api_key)
+                    VALUES ($1, '')
+                    ON CONFLICT (id) DO NOTHING
+                    """,
+                    paused_agent_id,
+                )
+                if reviewer_agent_id:
+                    await conn.execute(
+                        """
+                        INSERT INTO core.agents (id, api_key)
+                        VALUES ($1, '')
+                        ON CONFLICT (id) DO NOTHING
+                        """,
+                        reviewer_agent_id,
+                    )
+
                 # Map to new schema: id, session_type, status, paused_agent_id, reviewer_agent_id, etc.
                 # Store extra fields in resolution JSONB for backward compatibility
                 resolution_data = {}
@@ -948,7 +1174,7 @@ class PostgresBackend(DatabaseBackend):
                 
                 await conn.execute("""
                     INSERT INTO core.dialectic_sessions (
-                        id, session_type, status, paused_agent_id, reviewer_agent_id,
+                        session_id, session_type, status, paused_agent_id, reviewer_agent_id,
                         created_at, updated_at, resolution
                     ) VALUES ($1, $2, $3, $4, $5, now(), now(), $6)
                 """,
@@ -966,18 +1192,19 @@ class PostgresBackend(DatabaseBackend):
                 raise
 
     async def get_dialectic_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        async with self._pool.acquire() as conn:
-            # Get session (using 'id' as primary key, but return as 'session_id' for compatibility)
+        async with self.acquire() as conn:
+            # Get session (using 'session_id' as primary key)
             row = await conn.fetchrow("""
-                SELECT * FROM core.dialectic_sessions WHERE id = $1
+                SELECT * FROM core.dialectic_sessions WHERE session_id = $1
             """, session_id)
             if not row:
                 return None
 
             session = dict(row)
             
-            # Map 'id' to 'session_id' for backward compatibility
-            session["session_id"] = session.pop("id", session_id)
+            # Ensure 'session_id' is present (it should already be there)
+            if "session_id" not in session:
+                session["session_id"] = session_id
             
             # Map 'status' to 'phase' for backward compatibility (status values match old phase values)
             if "status" in session:
@@ -1034,14 +1261,14 @@ class PostgresBackend(DatabaseBackend):
         agent_id: str,
         active_only: bool = True,
     ) -> Optional[Dict[str, Any]]:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             # Postgres schema uses lifecycle-ish states in `status` (no 'active' value).
             # "Active" sessions are the in-progress phases.
             if active_only:
                 pg_active_statuses = tuple(s for s in ACTIVE_DIALECTIC_STATUSES if s != "active")
                 status_filter = "AND status = ANY($2::text[])"
                 row = await conn.fetchrow(f"""
-                    SELECT id FROM core.dialectic_sessions
+                    SELECT session_id FROM core.dialectic_sessions
                     WHERE (paused_agent_id = $1 OR reviewer_agent_id = $1)
                     {status_filter}
                     ORDER BY created_at DESC
@@ -1050,14 +1277,14 @@ class PostgresBackend(DatabaseBackend):
             else:
                 status_filter = ""
                 row = await conn.fetchrow(f"""
-                    SELECT id FROM core.dialectic_sessions
+                    SELECT session_id FROM core.dialectic_sessions
                     WHERE (paused_agent_id = $1 OR reviewer_agent_id = $1)
                     {status_filter}
                     ORDER BY created_at DESC
                     LIMIT 1
                 """, agent_id)
             if row:
-                return await self.get_dialectic_session(row["id"])
+                return await self.get_dialectic_session(row["session_id"])
             return None
 
     async def get_all_active_dialectic_sessions_for_agent(
@@ -1065,10 +1292,10 @@ class PostgresBackend(DatabaseBackend):
         agent_id: str,
     ) -> List[Dict[str, Any]]:
         """Get all active sessions where agent is paused agent or reviewer."""
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             pg_active_statuses = tuple(s for s in ACTIVE_DIALECTIC_STATUSES if s != "active")
             rows = await conn.fetch("""
-                SELECT id FROM core.dialectic_sessions
+                SELECT session_id FROM core.dialectic_sessions
                 WHERE (paused_agent_id = $1 OR reviewer_agent_id = $1)
                 AND status = ANY($2::text[])
                 ORDER BY created_at DESC
@@ -1076,7 +1303,7 @@ class PostgresBackend(DatabaseBackend):
             
             sessions = []
             for row in rows:
-                session = await self.get_dialectic_session(row["id"])
+                session = await self.get_dialectic_session(row["session_id"])
                 if session:
                     sessions.append(session)
             return sessions
@@ -1086,7 +1313,7 @@ class PostgresBackend(DatabaseBackend):
         session_id: str,
         phase: str,
     ) -> bool:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             # Map 'phase' to 'status' (they're the same in new schema)
             result = await conn.execute("""
                 UPDATE core.dialectic_sessions
@@ -1100,7 +1327,7 @@ class PostgresBackend(DatabaseBackend):
         session_id: str,
         reviewer_agent_id: str,
     ) -> bool:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             result = await conn.execute("""
                 UPDATE core.dialectic_sessions
                 SET reviewer_agent_id = $1, updated_at = now()
@@ -1121,7 +1348,7 @@ class PostgresBackend(DatabaseBackend):
         agrees: Optional[bool] = None,
         signature: Optional[str] = None,
     ) -> int:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             message_id = await conn.fetchval("""
                 INSERT INTO core.dialectic_messages (
                     session_id, agent_id, message_type, timestamp,
@@ -1144,7 +1371,7 @@ class PostgresBackend(DatabaseBackend):
 
             # Update session timestamp
             await conn.execute("""
-                UPDATE core.dialectic_sessions SET updated_at = now() WHERE id = $1
+                UPDATE core.dialectic_sessions SET updated_at = now() WHERE session_id = $1
             """, session_id)
 
             return message_id
@@ -1155,11 +1382,11 @@ class PostgresBackend(DatabaseBackend):
         resolution: Dict[str, Any],
         status: str = "resolved",
     ) -> bool:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             result = await conn.execute("""
                 UPDATE core.dialectic_sessions
                 SET status = $1, resolution = $2, resolved_at = now(), updated_at = now()
-                WHERE id = $3
+                WHERE session_id = $3
             """,
                 status,
                 json.dumps(resolution),
@@ -1168,7 +1395,7 @@ class PostgresBackend(DatabaseBackend):
             return "UPDATE 1" in result
 
     async def is_agent_in_active_dialectic_session(self, agent_id: str) -> bool:
-        async with self._pool.acquire() as conn:
+        async with self.acquire() as conn:
             pg_active_statuses = tuple(s for s in ACTIVE_DIALECTIC_STATUSES if s != "active")
             result = await conn.fetchval("""
                 SELECT 1 FROM core.dialectic_sessions
@@ -1177,3 +1404,305 @@ class PostgresBackend(DatabaseBackend):
                 LIMIT 1
             """, agent_id, list(pg_active_statuses))
             return result is not None
+
+    async def get_pending_dialectic_sessions(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get dialectic sessions awaiting a reviewer (reviewer_agent_id IS NULL).
+
+        Used for pull-based discovery: agents check for pending reviews on status().
+
+        Returns:
+            List of pending sessions with basic info (session_id, paused_agent_id, reason, created_at)
+        """
+        async with self.acquire() as conn:
+            # Get sessions that are awaiting a reviewer (reviewer_agent_id IS NULL)
+            # Status must be 'pending' or 'thesis' (sessions that haven't progressed yet)
+            #
+            # NOTE: Schema uses `session_id` as primary key.
+            # Some schemas may not include `resolution` or `session_type`.
+            # We progressively degrade the SELECT to keep the feature non-fatal.
+            try:
+                rows = await conn.fetch("""
+                    SELECT session_id, paused_agent_id, session_type, status,
+                           created_at, resolution
+                    FROM core.dialectic_sessions
+                    WHERE reviewer_agent_id IS NULL
+                    AND status IN ('pending', 'thesis')
+                    ORDER BY created_at ASC
+                    LIMIT $1
+                """, limit)
+                id_key = "session_id"
+            except Exception as e:
+                # Fallback for schemas without all columns
+                try:
+                    rows = await conn.fetch("""
+                        SELECT session_id, paused_agent_id, status, created_at
+                        FROM core.dialectic_sessions
+                        WHERE reviewer_agent_id IS NULL
+                        AND status IN ('pending', 'thesis')
+                        ORDER BY created_at ASC
+                        LIMIT $1
+                    """, limit)
+                    id_key = "session_id"
+                except Exception:
+                    # Degrade: no resolution column
+                    try:
+                        rows = await conn.fetch("""
+                            SELECT session_id, paused_agent_id, session_type, status,
+                                   created_at
+                            FROM core.dialectic_sessions
+                            WHERE reviewer_agent_id IS NULL
+                            AND status IN ('pending', 'thesis')
+                            ORDER BY created_at ASC
+                            LIMIT $1
+                        """, limit)
+                        id_key = "session_id"
+                    except Exception:
+                        # Final fallback: minimal columns only
+                        rows = await conn.fetch("""
+                            SELECT session_id, paused_agent_id, status, created_at
+                            FROM core.dialectic_sessions
+                            WHERE reviewer_agent_id IS NULL
+                            AND status IN ('pending', 'thesis')
+                            ORDER BY created_at ASC
+                            LIMIT $1
+                        """, limit)
+                        id_key = "session_id"
+
+            sessions = []
+            for row in rows:
+                session = {
+                    "session_id": row[id_key],  # Normalize PK for compatibility
+                    "paused_agent_id": row["paused_agent_id"],
+                    "session_type": row.get("session_type"),
+                    "phase": row["status"],  # Map 'status' to 'phase' for compatibility
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                }
+                # Extract reason and other fields from resolution JSONB
+                resolution_val = row.get("resolution") if hasattr(row, "get") else None
+                if resolution_val:
+                    resolution = resolution_val
+                    if isinstance(resolution, str):
+                        resolution = json.loads(resolution)
+                    if isinstance(resolution, dict):
+                        # Extract reason if available
+                        if "reason" in resolution:
+                            session["reason"] = resolution["reason"]
+                        # Include other fields that might be useful
+                        if "discovery_id" in resolution:
+                            session["discovery_id"] = resolution["discovery_id"]
+                        if "dispute_type" in resolution:
+                            session["dispute_type"] = resolution["dispute_type"]
+                        if "topic" in resolution:
+                            session["topic"] = resolution["topic"]
+                sessions.append(session)
+
+            return sessions
+
+    # =========================================================================
+    # Knowledge Graph (PostgreSQL FTS)
+    # =========================================================================
+
+    async def kg_add_discovery(self, discovery) -> None:
+        """Add a discovery to the knowledge graph."""
+        from datetime import datetime as dt
+
+        async with self.acquire() as conn:
+            # Handle response_to
+            response_to_id = None
+            response_type = None
+            if hasattr(discovery, 'response_to') and discovery.response_to:
+                response_to_id = discovery.response_to.discovery_id
+                response_type = discovery.response_to.response_type
+
+            # Parse timestamp string to datetime
+            created_at = None
+            if hasattr(discovery, 'timestamp') and discovery.timestamp:
+                ts = discovery.timestamp
+                if isinstance(ts, str):
+                    # Try parsing ISO format
+                    try:
+                        created_at = dt.fromisoformat(ts.replace('Z', '+00:00'))
+                    except ValueError:
+                        created_at = dt.now()
+                elif isinstance(ts, dt):
+                    created_at = ts
+                else:
+                    created_at = dt.now()
+
+            await conn.execute("""
+                INSERT INTO knowledge.discoveries (
+                    id, agent_id, type, summary, details, tags, severity, status,
+                    references_files, related_to, response_to_id, response_type,
+                    provenance, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                ON CONFLICT (id) DO UPDATE SET
+                    summary = EXCLUDED.summary,
+                    details = EXCLUDED.details,
+                    tags = EXCLUDED.tags,
+                    status = EXCLUDED.status,
+                    updated_at = now()
+            """,
+                discovery.id,
+                discovery.agent_id,
+                discovery.type,
+                discovery.summary,
+                discovery.details or "",
+                discovery.tags or [],
+                discovery.severity or "low",
+                discovery.status or "open",
+                discovery.references_files or [],
+                discovery.related_to or [],
+                response_to_id,
+                response_type,
+                json.dumps(discovery.provenance) if discovery.provenance else None,
+                created_at,
+            )
+
+    async def kg_query(
+        self,
+        agent_id: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        type: Optional[str] = None,
+        severity: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Query discoveries with filters."""
+        async with self.acquire() as conn:
+            conditions = []
+            params = []
+            param_idx = 1
+
+            if agent_id:
+                conditions.append(f"agent_id = ${param_idx}")
+                params.append(agent_id)
+                param_idx += 1
+            if type:
+                conditions.append(f"type = ${param_idx}")
+                params.append(type)
+                param_idx += 1
+            if severity:
+                conditions.append(f"severity = ${param_idx}")
+                params.append(severity)
+                param_idx += 1
+            if status:
+                conditions.append(f"status = ${param_idx}")
+                params.append(status)
+                param_idx += 1
+            if tags:
+                conditions.append(f"tags && ${param_idx}")
+                params.append(tags)
+                param_idx += 1
+
+            where_clause = " AND ".join(conditions) if conditions else "1=1"
+            params.append(limit)
+
+            rows = await conn.fetch(f"""
+                SELECT * FROM knowledge.discoveries
+                WHERE {where_clause}
+                ORDER BY created_at DESC
+                LIMIT ${param_idx}
+            """, *params)
+
+            return [self._row_to_discovery_dict(row) for row in rows]
+
+    async def kg_full_text_search(
+        self,
+        query: str,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Full-text search using PostgreSQL tsvector."""
+        async with self.acquire() as conn:
+            # Use websearch_to_tsquery for natural language queries
+            rows = await conn.fetch("""
+                SELECT *, ts_rank(search_vector, websearch_to_tsquery('english', $1)) as rank
+                FROM knowledge.discoveries
+                WHERE search_vector @@ websearch_to_tsquery('english', $1)
+                ORDER BY rank DESC, created_at DESC
+                LIMIT $2
+            """, query, limit)
+
+            return [self._row_to_discovery_dict(row) for row in rows]
+
+    async def kg_find_similar(
+        self,
+        discovery_id: str,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Find similar discoveries by tag overlap."""
+        async with self.acquire() as conn:
+            # First get the source tags
+            source_row = await conn.fetchrow(
+                "SELECT tags FROM knowledge.discoveries WHERE id = $1",
+                discovery_id
+            )
+            if not source_row or not source_row['tags']:
+                return []
+
+            source_tags = source_row['tags']
+
+            # Find similar by tag overlap using array containment
+            rows = await conn.fetch("""
+                SELECT d.*,
+                       cardinality(ARRAY(SELECT unnest(d.tags) INTERSECT SELECT unnest($1::text[]))) as overlap
+                FROM knowledge.discoveries d
+                WHERE d.id != $2
+                  AND d.tags && $1::text[]
+                ORDER BY overlap DESC, created_at DESC
+                LIMIT $3
+            """, source_tags, discovery_id, limit)
+
+            return [self._row_to_discovery_dict(row) for row in rows]
+
+    async def kg_get_discovery(self, discovery_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single discovery by ID."""
+        async with self.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT * FROM knowledge.discoveries WHERE id = $1
+            """, discovery_id)
+
+            if row:
+                return self._row_to_discovery_dict(row)
+            return None
+
+    async def kg_update_status(
+        self,
+        discovery_id: str,
+        status: str,
+        resolved_at: Optional[str] = None,
+    ) -> bool:
+        """Update discovery status."""
+        async with self.acquire() as conn:
+            if resolved_at:
+                result = await conn.execute("""
+                    UPDATE knowledge.discoveries
+                    SET status = $1, resolved_at = $2, updated_at = now()
+                    WHERE id = $3
+                """, status, resolved_at, discovery_id)
+            else:
+                result = await conn.execute("""
+                    UPDATE knowledge.discoveries
+                    SET status = $1, updated_at = now()
+                    WHERE id = $2
+                """, status, discovery_id)
+            return "UPDATE 1" in result
+
+    def _row_to_discovery_dict(self, row) -> Dict[str, Any]:
+        """Convert a database row to discovery dict."""
+        d = dict(row)
+        # Convert timestamps to ISO strings
+        for ts_field in ['created_at', 'updated_at', 'resolved_at']:
+            if d.get(ts_field):
+                d[ts_field] = d[ts_field].isoformat()
+        # Map created_at to timestamp for compatibility
+        if 'created_at' in d:
+            d['timestamp'] = d['created_at']
+        # Parse provenance JSON
+        if d.get('provenance') and isinstance(d['provenance'], str):
+            d['provenance'] = json.loads(d['provenance'])
+        # Remove internal fields
+        d.pop('search_vector', None)
+        d.pop('rank', None)
+        d.pop('overlap', None)
+        return d

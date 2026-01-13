@@ -69,11 +69,20 @@ async def execute_resolution(session: DialecticSession, resolution: Resolution) 
             logger.warning(f"Failed to apply condition '{condition}': {e}", exc_info=True)
     
     # Resume the agent (if paused - skip if discovery dispute)
+    status_changed = False
     if meta.status == "paused":
         meta.status = "active"
         meta.paused_at = None
         meta.add_lifecycle_event("resumed", f"Resumed via dialectic synthesis: {resolution.root_cause}")
-    
+        status_changed = True
+
+        # PostgreSQL: Update status (single source of truth)
+        try:
+            from src import agent_storage
+            await agent_storage.update_agent(agent_id, status="active")
+        except Exception as e:
+            logger.debug(f"PostgreSQL status update failed: {e}")
+
     # If linked to discovery, update discovery status based on resolution
     discovery_updated = False
     if session.discovery_id:
@@ -117,11 +126,7 @@ async def execute_resolution(session: DialecticSession, resolution: Resolution) 
         except Exception as e:
             logger.warning(f"Could not update discovery {session.discovery_id}: {e}")
             # Don't fail resolution if discovery update fails
-    
-    # Schedule batched metadata save (non-blocking)
-    loop = asyncio.get_running_loop()
-    await mcp_server.schedule_metadata_save(force=False)
-    
+
     result = {
         "success": True,
         "agent_id": agent_id,

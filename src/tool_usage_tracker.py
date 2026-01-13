@@ -88,12 +88,12 @@ class ToolUsageTracker:
                        agent_id: Optional[str] = None) -> Dict:
         """
         Get usage statistics for tools.
-        
+
         Args:
             window_hours: Time window to analyze (default: 7 days)
             tool_name: Filter by specific tool
             agent_id: Filter by specific agent
-        
+
         Returns:
             Dict with usage statistics
         """
@@ -105,43 +105,43 @@ class ToolUsageTracker:
                 "tools": {},
                 "unused_tools": []
             }
-        
+
         cutoff_time = datetime.now() - timedelta(hours=window_hours)
-        
+
         tool_counts = {}
         tool_success_counts = {}
         tool_error_counts = {}
         agent_tool_counts = {}
         total_calls = 0
-        
+
         try:
             with open(self.log_file, 'r') as f:
                 for line in f:
                     try:
                         entry_dict = json.loads(line.strip())
                         entry_time = datetime.fromisoformat(entry_dict['timestamp'])
-                        
+
                         if entry_time < cutoff_time:
                             continue
-                        
+
                         tool = entry_dict['tool_name']
                         entry_agent_id = entry_dict.get('agent_id')
                         success = entry_dict.get('success', True)
-                        
+
                         # Filter out removed/deprecated tools
                         if tool in self.REMOVED_TOOLS:
                             continue
-                        
+
                         # Apply filters
                         if tool_name and tool != tool_name:
                             continue
                         if agent_id and entry_agent_id != agent_id:
                             continue
-                        
+
                         # Count usage
                         tool_counts[tool] = tool_counts.get(tool, 0) + 1
                         total_calls += 1
-                        
+
                         if success:
                             tool_success_counts[tool] = tool_success_counts.get(tool, 0) + 1
                         else:
@@ -149,7 +149,7 @@ class ToolUsageTracker:
                             error_type = entry_dict.get('error_type')
                             if error_type:
                                 tool_error_counts[f"{tool}:{error_type}"] = tool_error_counts.get(f"{tool}:{error_type}", 0) + 1
-                        
+
                         # Track per-agent usage
                         if entry_agent_id:
                             if entry_agent_id not in agent_tool_counts:
@@ -158,11 +158,12 @@ class ToolUsageTracker:
                     except (json.JSONDecodeError, KeyError):
                         continue
         except Exception as e:
+            logger.error(f"Error reading tool usage log: {e}")
             return {"error": str(e)}
-        
+
         # Sort tools by usage
         sorted_tools = sorted(tool_counts.items(), key=lambda x: x[1], reverse=True)
-        
+
         # Calculate success rates
         tool_stats = {}
         for tool, count in sorted_tools:

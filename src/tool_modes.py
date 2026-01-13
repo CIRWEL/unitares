@@ -19,39 +19,186 @@ TOOL_MODE = os.getenv("GOVERNANCE_TOOL_MODE", "full").lower()
 
 # Minimal mode: Essential tools + list_tools for discovery
 MINIMAL_MODE_TOOLS: Set[str] = {
-    "get_agent_api_key",      # Register/get API key (once)
+    "onboard",                # 🚀 Portal tool - call this FIRST (Dec 2025)
+    "identity",               # Check/set identity (auto-creates on first call)
     "process_agent_update",   # Log your work (ongoing)
-    "get_governance_metrics", # Check your status (as needed)
+    "get_governance_metrics", # Check your state (as needed)
     "list_tools",             # Discover available tools (bootstrap)
     "describe_tool",          # Pull full details for a specific tool (lazy schema)
 }
 
 # Core/essential tools for lite mode (optimized for local models)
+# THIS IS THE SINGLE SOURCE OF TRUTH - admin.py imports from here
 LITE_MODE_TOOLS: Set[str] = {
-    # Core governance (3 tools)
-    "process_agent_update",      # Log agent work
-    "get_governance_metrics",     # Check agent status
+    # Core governance
+    "process_agent_update",       # Log agent work
+    "get_governance_metrics",     # Check agent state
     "simulate_update",            # Test potential updates
 
-    # Identity/registration (2 tools)
-    "get_agent_api_key",         # Register new agents
-    "list_agents",               # View all agents
-    "bind_identity",             # Bind session to agent identity
-    "recall_identity",           # Recall session-bound identity
-    "quick_start",              # Streamlined onboarding (create/bind in one call)
+    # Identity (streamlined - Dec 2025)
+    "onboard",                    # 🚀 Portal tool - call this FIRST
+    "identity",                   # Primary identity tool (auto-creates on first call)
+    "list_agents",                # View all agents
 
-    # System health (3 tools)
-    "health_check",              # System status
-    "get_server_info",           # Server information
-    "list_tools",                # See available tools
-    "describe_tool",             # Pull full tool details on demand (reduces list bloat)
+    # System health
+    "health_check",               # System status
+    "get_server_info",            # Server information
+    "get_connection_status",      # Verify MCP connection and tool availability
+    "list_tools",                 # See available tools
+    "describe_tool",              # Pull full tool details on demand
+    "debug_request_context",      # Debug identity binding issues
 
-    # Data access (2 tools)
-    "get_system_history",        # View agent history
-    "export_to_file",            # Export data
+    # Data access
+    "get_system_history",         # View agent history
+    "export_to_file",             # Export data
+
+    # Knowledge graph (read + write)
+    "search_knowledge_graph",     # Search discoveries
+    "store_knowledge_graph",      # Record discoveries
+    "leave_note",                 # Quick notes
 }
 
-# Tool categories for selective loading
+# ============================================================================
+# TOOL_TIERS - Single source of truth for tier-based tool filtering
+# admin.py imports this directly to avoid duplication
+# ============================================================================
+TOOL_TIERS: dict[str, Set[str]] = {
+    "essential": {  # Tier 1: Core workflow tools (~10 tools)
+        "onboard",                # 🚀 Portal tool - call FIRST (Dec 2025)
+        "identity",               # Primary identity tool (auto-creates on first call)
+        "process_agent_update",   # Log agent work
+        "get_governance_metrics", # Check state without updating
+        "list_tools",             # Discover available tools
+        "describe_tool",          # Get full tool details
+        "list_agents",            # View all agents
+        "health_check",           # System status
+        "store_knowledge_graph",  # Record discoveries
+        "search_knowledge_graph", # Find discoveries
+        "leave_note",             # Quick notes
+    },
+    "common": {  # Tier 2: Regularly used tools
+        "update_discovery_status_graph",
+        "observe_agent",
+        "get_agent_metadata",
+        "get_server_info",
+        "list_knowledge_graph",
+        "get_discovery_details",
+        "get_telemetry_metrics",
+        "check_calibration",
+        "update_calibration_ground_truth",
+        "get_tool_usage_stats",
+        "detect_anomalies",
+        "aggregate_metrics",
+        "delete_agent",
+        "get_dialectic_session",
+        "mark_response_complete",
+        "compare_agents",
+        "get_workspace_health",
+        "archive_agent",
+        "get_system_history",
+        "get_thresholds",
+        "debug_request_context",
+        "get_connection_status",         # Verify MCP connection and tool availability
+        "get_lifecycle_stats",           # KG lifecycle stats (Dec 2025)
+    },
+    "advanced": {  # Tier 3: Rarely used tools
+        "cleanup_stale_locks",
+        "simulate_update",
+        "export_to_file",
+        "update_agent_metadata",
+        "archive_old_test_agents",
+        "direct_resume_if_safe",
+        "backfill_calibration_from_dialectic",
+        "reset_monitor",
+        "set_thresholds",
+        "validate_file_path",
+        "compare_me_to_similar",
+        "get_knowledge_graph",
+        "cleanup_knowledge_graph",       # KG lifecycle cleanup (Dec 2025)
+    }
+}
+
+# ============================================================================
+# TOOL_OPERATIONS - Read vs Write classification for agent clarity
+# read: Retrieves data without modifying state
+# write: Creates, updates, or deletes data
+# admin: System administration (may read or write internal state)
+# ============================================================================
+TOOL_OPERATIONS: dict[str, str] = {
+    # Identity & Onboarding
+    "onboard": "read",                    # Returns identity + templates (creates if new)
+    "identity": "read",                   # Returns identity (creates if new)
+
+    # Core Governance
+    "process_agent_update": "write",      # Updates agent state
+    "get_governance_metrics": "read",     # Returns metrics without updating
+    "simulate_update": "read",            # Dry-run, no state change
+
+    # Agent Lifecycle
+    "list_agents": "read",                # List all agents
+    "get_agent_metadata": "read",         # Get agent details
+    "update_agent_metadata": "write",     # Update tags/notes
+    "archive_agent": "write",             # Archive agent
+    "delete_agent": "write",              # Delete agent
+    "archive_old_test_agents": "write",   # Bulk archive
+    "mark_response_complete": "write",    # Update agent status
+    "direct_resume_if_safe": "write",     # Resume agent
+    "reset_monitor": "write",             # Reset agent state
+
+    # Configuration
+    "get_thresholds": "read",             # Get current thresholds
+    "set_thresholds": "write",            # Set threshold overrides
+
+    # Knowledge Graph
+    "store_knowledge_graph": "write",     # Store discovery
+    "search_knowledge_graph": "read",     # Search discoveries
+    "get_knowledge_graph": "read",        # Get agent's knowledge
+    "list_knowledge_graph": "read",       # List statistics
+    "get_discovery_details": "read",      # Get discovery details
+    "update_discovery_status_graph": "write",  # Update discovery status
+    "leave_note": "write",                # Store quick note
+    "cleanup_knowledge_graph": "write",   # Run lifecycle cleanup
+    "get_lifecycle_stats": "read",        # Get lifecycle statistics
+
+    # Observability
+    "observe_agent": "read",              # View agent state
+    "compare_agents": "read",             # Compare agents
+    "compare_me_to_similar": "read",      # Compare self to similar
+    "detect_anomalies": "read",           # Scan for anomalies
+    "aggregate_metrics": "read",          # Fleet overview
+
+    # Export
+    "get_system_history": "read",         # Get history inline
+    "export_to_file": "write",            # Write file to disk
+
+    # Calibration
+    "check_calibration": "read",          # Check calibration
+    "update_calibration_ground_truth": "write",  # Update calibration
+    "backfill_calibration_from_dialectic": "write",  # Backfill calibration
+
+    # Admin & Diagnostics
+    "health_check": "read",               # System status
+    "get_server_info": "read",            # Server info
+    "get_telemetry_metrics": "read",      # Telemetry data
+    "get_tool_usage_stats": "read",       # Tool usage stats
+    "get_workspace_health": "read",       # Workspace health
+    "list_tools": "read",                 # List available tools
+    "describe_tool": "read",              # Describe single tool
+    "cleanup_stale_locks": "admin",       # Clean up locks
+    "validate_file_path": "read",         # Validate path
+    "debug_request_context": "read",      # Debug context
+    "get_connection_status": "read",      # Verify MCP connection and tool availability
+
+    # Dialectic
+    "get_dialectic_session": "read",      # View session
+
+    # SSE-only
+    "get_connected_clients": "read",      # List connected clients
+    "get_connection_diagnostics": "read", # Connection diagnostics
+}
+
+
+# Tool categories for selective loading (excludes deprecated tools)
 TOOL_CATEGORIES = {
     "core": {
         "process_agent_update",
@@ -59,28 +206,23 @@ TOOL_CATEGORIES = {
         "simulate_update",
     },
     "identity": {
-        "bind_identity",
-        "recall_identity",
-        "quick_start",
-        "get_agent_api_key",
+        "onboard",                # Dec 2025: Portal tool - call FIRST
+        "identity",               # Dec 2025: Primary identity tool (auto-creates on first call)
         "list_agents",
         "get_agent_metadata",
     },
     "admin": {
         "health_check",
         "get_server_info",
+        "get_connection_status",
         "list_tools",
         "describe_tool",
-        "nudge_dialectic_session",
         "get_tool_usage_stats",
         "cleanup_stale_locks",
         "get_workspace_health",
         "check_calibration",
         "get_telemetry_metrics",
         "update_calibration_ground_truth",
-        "reset_monitor",
-        "validate_file_path",
-        "backfill_calibration_from_dialectic",
     },
     "export": {
         "get_system_history",
@@ -92,40 +234,29 @@ TOOL_CATEGORIES = {
     },
     "lifecycle": {
         "archive_agent",
-        "delete_agent",
         "update_agent_metadata",
-        "mark_response_complete",
-        "direct_resume_if_safe",
         "archive_old_test_agents",
     },
     "observability": {
         "observe_agent",
         "compare_agents",
-        "compare_me_to_similar",
         "detect_anomalies",
         "aggregate_metrics",
     },
     "knowledge": {
-        "store_knowledge_graph",
-        "search_knowledge_graph",
-        "get_knowledge_graph",
-        "list_knowledge_graph",
-        "find_similar_discoveries_graph",
-        "get_discovery_details",
-        "get_related_discoveries_graph",
-        "get_response_chain_graph",
-        "reply_to_question",
+        "store_knowledge_graph",   # Primary: add knowledge (handles responses via response_to)
+        "search_knowledge_graph",  # Primary: find knowledge (semantic search built-in)
+        "get_discovery_details",   # Drill into discovery (includes related/chain)
         "leave_note",
         "update_discovery_status_graph",
+        "cleanup_knowledge_graph",   # Lifecycle cleanup (Dec 2025)
+        "get_lifecycle_stats",       # Lifecycle statistics (Dec 2025)
     },
     "dialectic": {
-        "request_dialectic_review",
-        "request_exploration_session",
-        "submit_thesis",
-        "submit_antithesis",
-        "submit_synthesis",
-        "get_dialectic_session",
-        "nudge_dialectic_session",
+        "start_interactive_dialectic",   # Primary: start discussion
+        "resolve_interactive_dialectic", # Complete discussion
+        "list_pending_dialectics",       # See pending sessions
+        "get_dialectic_session",         # Check session status
     },
 }
 

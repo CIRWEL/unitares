@@ -1,0 +1,50 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.venv
+venv
+env
+
+# Data (will be mounted as volume)
+data/
+logs/
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Documentation (optional - can include if needed)
+# docs/
+
+# Tests
+tests/
+.pytest_cache
+coverage.xml
+htmlcov/
+
+# Archives
+archive/
+archives/
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store
+

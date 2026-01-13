@@ -41,7 +41,7 @@ If it crashes → launchd automatically restarts it (KeepAlive: true)
 
 Just use:
 ```bash
-./scripts/governance_cli.sh "agent_id" "work" 0.5
+./scripts/mcp log "agent_id" "work" 0.5
 ```
 
 ## Management Commands
@@ -159,6 +159,6 @@ If the server code changes:
 
 ---
 
-**Last Updated:** 2025-12-10
+**Last Updated:** 2025-12-26 (v2.5.1)
 **Service Status:** Active via launchd
 **Onboarding Impact:** Simplified - no manual server management needed

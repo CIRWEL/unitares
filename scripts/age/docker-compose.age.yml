@@ -1,6 +1,8 @@
 services:
   postgres-age:
-    image: apache/age:PG16_latest
+    # Custom image with AGE + pgvector for semantic search
+    # Build: docker build -t postgres-age-vector -f db/postgres/Dockerfile.age-vector .
+    image: postgres-age-vector:latest
     container_name: postgres-age
     environment:
       POSTGRES_PASSWORD: postgres
@@ -10,6 +12,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres-age-data:/var/lib/postgresql/data
+      - ../../db/postgres/init-extensions.sql:/docker-entrypoint-initdb.d/00-init-extensions.sql:ro
       - ../../db/postgres/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ../../db/postgres/partitions.sql:/docker-entrypoint-initdb.d/02-partitions.sql:ro
     healthcheck:
@@ -19,5 +22,21 @@ services:
       retries: 5
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    container_name: governance-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
 volumes:
   postgres-age-data:
+  redis-data:

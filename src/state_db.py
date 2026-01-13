@@ -1,23 +1,24 @@
 """
-SQLite Backend for Agent Governance State
+Agent Governance State Storage
 
-Replaces per-agent JSON files (data/agents/{agent_id}_state.json) with a single
-SQLite database for better concurrency, queryability, and reduced file count.
+Provides backend-agnostic access to agent governance state (EISV metrics).
+Delegates to PostgreSQL (via get_db()) when DB_BACKEND=postgres,
+falls back to SQLite for backward compatibility.
 
 Architecture:
-- Single SQLite database shared across all processes
-- WAL mode for concurrent read/write
+- PostgreSQL: Uses core.agent_state table with identity_id foreign key
+- SQLite: Single database shared across all processes with WAL mode
 - Core EISV values stored as columns for queryability
 - Full state stored as JSON for complete persistence
-- Backward compatible: can migrate existing JSON files
 """
 
+import asyncio
 import json
-import sqlite3
 import os
-from pathlib import Path
+import sqlite3
 from datetime import datetime
-from typing import Optional, Dict, Any
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from src.logging_utils import get_logger
 
@@ -343,12 +344,238 @@ class AgentStateDB:
 
 # Global instance (lazy initialization)
 _state_db: Optional[AgentStateDB] = None
+_db_lock: Optional[asyncio.Lock] = None
 
 
 def get_state_db() -> AgentStateDB:
-    """Get or create the global state database instance."""
+    """Get or create the global state database instance (sync API)."""
     global _state_db
     if _state_db is None:
         _state_db = AgentStateDB()
     return _state_db
 
+
+# =========================================================================
+# Backend-Agnostic Async Wrappers
+# =========================================================================
+
+def _use_postgres() -> bool:
+    """Check if we should use PostgreSQL backend."""
+    return os.getenv("DB_BACKEND", "").lower() == "postgres"
+
+
+async def _get_sqlite_db() -> AgentStateDB:
+    """Get or create SQLite state DB instance."""
+    global _state_db, _db_lock
+    if _db_lock is None:
+        _db_lock = asyncio.Lock()
+
+    async with _db_lock:
+        if _state_db is None:
+            _state_db = AgentStateDB()
+    return _state_db
+
+
+async def _get_identity_id(db, agent_id: str) -> Optional[int]:
+    """Get identity_id for an agent, creating one if needed."""
+    identity = await db.get_identity(agent_id)
+    if identity:
+        return identity.identity_id
+    # Create a minimal identity for this agent
+    return await db.upsert_identity(agent_id, api_key_hash="")
+
+
+async def save_state_async(agent_id: str, state_dict: Dict[str, Any]) -> bool:
+    """
+    Save agent state to the appropriate backend.
+
+    Uses PostgreSQL via get_db() when DB_BACKEND=postgres,
+    falls back to SQLite otherwise.
+    """
+    if _use_postgres():
+        from src.db import get_db
+        db = get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+
+        # Get or create identity_id
+        identity_id = await _get_identity_id(db, agent_id)
+        if identity_id is None:
+            logger.error(f"Failed to get identity_id for {agent_id}")
+            return False
+
+        # Extract EISV values
+        entropy = float(state_dict.get('E', 0.5))
+        integrity = float(state_dict.get('I', 1.0))
+        stability = float(state_dict.get('S', 0.2))
+        volatility = float(state_dict.get('V', 0.0))
+        coherence = float(state_dict.get('coherence', 1.0))
+        regime = str(state_dict.get('regime', 'DIVERGENCE'))
+
+        try:
+            await db.record_agent_state(
+                identity_id=identity_id,
+                entropy=entropy,
+                integrity=integrity,
+                stability_index=stability,
+                volatility=volatility,
+                regime=regime,
+                coherence=coherence,
+                state_json=state_dict,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save state for {agent_id}: {e}")
+            return False
+    else:
+        state_db = await _get_sqlite_db()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: state_db.save_state(agent_id, state_dict)
+        )
+
+
+async def load_state_async(agent_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Load agent state from the appropriate backend.
+
+    Uses PostgreSQL via get_db() when DB_BACKEND=postgres,
+    falls back to SQLite otherwise.
+    """
+    if _use_postgres():
+        from src.db import get_db
+        db = get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+
+        # Get identity_id
+        identity = await db.get_identity(agent_id)
+        if not identity:
+            return None
+
+        state_record = await db.get_latest_agent_state(identity.identity_id)
+        if state_record:
+            # Return the full state_json
+            return state_record.state_json
+        return None
+    else:
+        state_db = await _get_sqlite_db()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: state_db.load_state(agent_id)
+        )
+
+
+async def delete_state_async(agent_id: str) -> bool:
+    """
+    Delete agent state from the appropriate backend.
+
+    Note: PostgreSQL doesn't support deletion (append-only state history),
+    so this is a no-op for postgres backend.
+    """
+    if _use_postgres():
+        # PostgreSQL state history is append-only, no deletion
+        logger.debug(f"State deletion not supported in PostgreSQL (agent: {agent_id})")
+        return True
+    else:
+        state_db = await _get_sqlite_db()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: state_db.delete_state(agent_id)
+        )
+
+
+async def list_agents_async(
+    regime: Optional[str] = None,
+    min_coherence: Optional[float] = None,
+    max_coherence: Optional[float] = None,
+    limit: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """
+    List agents with optional filters.
+
+    Returns list of {agent_id, E, I, S, V, coherence, regime, update_count}
+    """
+    if _use_postgres():
+        from src.db import get_db
+        db = get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+
+        # Query identities and their latest states
+        identities = await db.list_identities(limit=limit or 100)
+        results = []
+        for identity in identities:
+            state = await db.get_latest_agent_state(identity.identity_id)
+            if state:
+                # Apply filters
+                if regime and state.regime != regime:
+                    continue
+                if min_coherence is not None and state.coherence < min_coherence:
+                    continue
+                if max_coherence is not None and state.coherence > max_coherence:
+                    continue
+
+                results.append({
+                    "agent_id": identity.agent_id,
+                    "E": state.entropy,
+                    "I": state.integrity,
+                    "S": state.stability_index,
+                    "V": state.volatility,
+                    "coherence": state.coherence,
+                    "regime": state.regime,
+                    "update_count": state.state_json.get("update_count", 0) if state.state_json else 0,
+                    "updated_at": state.recorded_at.isoformat() if state.recorded_at else None,
+                })
+        return results
+    else:
+        state_db = await _get_sqlite_db()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: state_db.list_agents(regime, min_coherence, max_coherence, limit)
+        )
+
+
+async def get_statistics_async() -> Dict[str, Any]:
+    """Get database statistics."""
+    if _use_postgres():
+        from src.db import get_db
+        db = get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+
+        health = await db.health_check()
+        return {
+            "backend": "postgres",
+            "total_agents": health.get("identity_count", 0),
+            "status": "healthy" if health.get("status") == "healthy" else "error",
+        }
+    else:
+        state_db = await _get_sqlite_db()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, state_db.get_statistics)
+
+
+async def state_health_check_async() -> Dict[str, Any]:
+    """Health check for state storage backend."""
+    if _use_postgres():
+        from src.db import get_db
+        db = get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+        health = await db.health_check()
+        health["component"] = "agent_state"
+        return health
+    else:
+        state_db = await _get_sqlite_db()
+        loop = asyncio.get_running_loop()
+        stats = await loop.run_in_executor(None, state_db.get_statistics)
+        return {
+            "backend": "sqlite",
+            "component": "agent_state",
+            **stats,
+        }
