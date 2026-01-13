@@ -111,6 +111,10 @@ class AgentMetadataDB:
                 conn.execute("ALTER TABLE agent_metadata ADD COLUMN session_bound_at TEXT;")
             if "purpose" not in existing_cols:
                 conn.execute("ALTER TABLE agent_metadata ADD COLUMN purpose TEXT;")
+            if "agent_uuid" not in existing_cols:
+                conn.execute("ALTER TABLE agent_metadata ADD COLUMN agent_uuid TEXT;")
+            if "label" not in existing_cols:
+                conn.execute("ALTER TABLE agent_metadata ADD COLUMN label TEXT;")
 
             # Record schema version
             conn.execute(
@@ -161,6 +165,8 @@ class AgentMetadataDB:
                     d.get("active_session_key"),
                     d.get("session_bound_at"),
                     d.get("purpose"),
+                    d.get("agent_uuid"),
+                    d.get("label"),
                 )
             )
 
@@ -176,7 +182,7 @@ class AgentMetadataDB:
                   loop_detected_at, loop_cooldown_until,
                   last_response_at, response_completed,
                   health_status, dialectic_conditions_json,
-                  active_session_key, session_bound_at, purpose
+                  active_session_key, session_bound_at, purpose, agent_uuid, label
                 ) VALUES (
                   ?, ?, ?, ?, ?, ?,
                   ?, ?, ?,
@@ -185,7 +191,7 @@ class AgentMetadataDB:
                   ?, ?,
                   ?, ?,
                   ?, ?,
-                  ?, ?, ?
+                  ?, ?, ?, ?, ?
                 )
                 ON CONFLICT(agent_id) DO UPDATE SET
                   status=excluded.status,
@@ -211,7 +217,9 @@ class AgentMetadataDB:
                   dialectic_conditions_json=excluded.dialectic_conditions_json,
                   active_session_key=excluded.active_session_key,
                   session_bound_at=excluded.session_bound_at,
-                  purpose=excluded.purpose;
+                  purpose=excluded.purpose,
+                  agent_uuid=excluded.agent_uuid,
+                  label=excluded.label;
                 """,
                 rows,
             )
@@ -250,6 +258,8 @@ class AgentMetadataDB:
                     "active_session_key": row["active_session_key"] if "active_session_key" in row.keys() else None,
                     "session_bound_at": row["session_bound_at"] if "session_bound_at" in row.keys() else None,
                     "purpose": row["purpose"] if "purpose" in row.keys() else None,
+                    "agent_uuid": row["agent_uuid"] if "agent_uuid" in row.keys() else None,
+                    "label": row["label"] if "label" in row.keys() else None,
                 }
             return out
 

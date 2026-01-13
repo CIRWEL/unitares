@@ -76,10 +76,13 @@ async def test_handler_registry():
     assert "status" in response_data, "Response should have status"
     print(f"✅ health_check handler works: status {response_data.get('status')}")
     
-    # Test unknown handler (should return None for fallback)
+    # Unknown handler now returns a helpful error response (with suggestions)
     result = await dispatch_tool("unknown_tool", {})
-    assert result is None, "Unknown tool should return None for fallback"
-    print("✅ Unknown handler correctly returns None for fallback")
+    assert result is not None and len(result) > 0, "Unknown tool should return error response"
+    response_data = json.loads(result[0].text)
+    assert response_data.get("success") is False, "Unknown tool should fail"
+    assert "not found" in (response_data.get("error", "").lower()), "Should mention tool not found"
+    print("✅ Unknown handler returns helpful error response")
     
     print("\n✅ All handler registry tests passed!")
 

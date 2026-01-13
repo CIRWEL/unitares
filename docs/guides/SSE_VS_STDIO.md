@@ -23,14 +23,13 @@ Both transports use the same underlying handlers, but register tools differently
 ### stdio Transport
 
 - **`list_tools()`**: All tools always available (tool mode filtering removed)
-  - stdio server: 49 tools
-  - SSE server: 50 tools (49 shared + 1 SSE-only: `get_connected_clients`)
-  - SSE server: 50 tools (49 shared + 1 SSE-only: `get_connected_clients`)
+  - stdio server: 45 tools
+  - SSE server: 46 tools (45 shared + 1 SSE-only: `get_connected_clients`)
 - **`call_tool()`**: Also filters by `TOOL_MODE` and client type (Claude Desktop exclusions)
 
 ### SSE Transport
 
-- **`list_tools()`**: Always exposes full tool set (49 tools)
+- **`list_tools()`**: Always exposes full tool set (45 tools)
   - FastMCP automatically exposes all `@mcp.tool` decorated functions
   - Intentional for multi-client scenarios where different clients may want different tool sets
 - **`call_tool()`**: Filters by `TOOL_MODE` and client type (matches stdio behavior)
@@ -39,7 +38,7 @@ Both transports use the same underlying handlers, but register tools differently
 
 ## Verified Parity
 
-✅ **All 48 handler tools** available in both transports  
+✅ **All 45 handler tools** available in both transports  
 ✅ **Same error handling** (proper JSON errors)  
 ✅ **Same authentication** (API key validation)  
 ✅ **Same data layer** (both persist to same files)  
@@ -116,7 +115,7 @@ Both transports use the same underlying handlers, but register tools differently
 Check `GOVERNANCE_TOOL_MODE` environment variable:
 - `minimal`: Only 3 essential tools
 - `lite`: 10 essential tools
-- `full`: All 48 tools (default)
+- `full`: All 45 tools (default)
 
 For SSE, tools are filtered at call time, not listing time. Check the error message for the specific reason.
 

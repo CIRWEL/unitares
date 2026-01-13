@@ -1,6 +1,5 @@
 -- PostgreSQL Schema for Governance MCP
 -- Version: 1.0.0
--- Date: 2025-12-14
 --
 -- Architecture:
 --   core.*   - Operational tables (identities, sessions, calibration, agent_state)
@@ -15,6 +14,7 @@
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;      -- gen_random_uuid(), crypt()
 CREATE EXTENSION IF NOT EXISTS pg_trgm;       -- Trigram similarity for FTS
+CREATE EXTENSION IF NOT EXISTS vector;        -- pgvector: Vector similarity search
 -- CREATE EXTENSION IF NOT EXISTS pg_cron;    -- Optional: scheduled partition management
 
 -- =============================================================================
@@ -232,6 +232,24 @@ CREATE TABLE IF NOT EXISTS core.dialectic_messages (
 CREATE INDEX IF NOT EXISTS idx_dialectic_messages_session ON core.dialectic_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_dialectic_messages_type ON core.dialectic_messages(message_type);
 CREATE INDEX IF NOT EXISTS idx_dialectic_messages_timestamp ON core.dialectic_messages(timestamp DESC);
+
+-- -----------------------------------------------------------------------------
+-- Discovery Embeddings (for semantic search via pgvector)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS core.discovery_embeddings (
+    discovery_id        TEXT PRIMARY KEY,
+    embedding           vector(384) NOT NULL,       -- all-MiniLM-L6-v2 outputs 384 dims
+    model_name          TEXT DEFAULT 'all-MiniLM-L6-v2',
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- HNSW index for fast cosine similarity search
+CREATE INDEX IF NOT EXISTS idx_discovery_embeddings_cosine
+    ON core.discovery_embeddings
+    USING hnsw (embedding vector_cosine_ops);
+
+COMMENT ON TABLE core.discovery_embeddings IS 'Vector embeddings for semantic search over knowledge graph discoveries';
 
 -- =============================================================================
 -- AUDIT SCHEMA - Time-Series Event Data (Partitioned)

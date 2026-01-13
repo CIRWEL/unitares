@@ -7,6 +7,7 @@ Uses PostgreSQL + AGE for native graph queries.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import datetime
@@ -22,7 +23,6 @@ from src.db.age_queries import (
     create_authored_edge,
     create_responds_to_edge,
     create_related_to_edge,
-    create_temporally_near_edge,
     create_tagged_edge,
     query_agent_discoveries,
     query_response_chain,
@@ -74,20 +74,32 @@ class KnowledgeGraphAGE:
         return self._db
 
     async def _create_indexes(self):
-        """Create AGE indexes for efficient queries."""
+        """
+        Create AGE indexes for efficient queries.
+
+        Note: AGE stores properties in a JSON-like 'properties' column, not as
+        individual columns. Standard SQL indexes on property names don't apply.
+        We use GIN indexes on the properties column instead.
+        """
         db = await self._get_db()
         if not await db.graph_available():
             logger.warning("AGE not available, skipping index creation")
             return
-        
-        # AGE indexes are created via SQL on the graph schema, not via cypher()
-        indexes = create_indexes(self.graph_name)
-        for sql, _params in indexes:
+
+        # AGE-compatible GIN indexes on properties column
+        gin_indexes = [
+            f'CREATE INDEX IF NOT EXISTS idx_discovery_props ON {self.graph_name}."Discovery" USING GIN (properties)',
+            f'CREATE INDEX IF NOT EXISTS idx_agent_props ON {self.graph_name}."Agent" USING GIN (properties)',
+            f'CREATE INDEX IF NOT EXISTS idx_tag_props ON {self.graph_name}."Tag" USING GIN (properties)',
+        ]
+
+        for sql in gin_indexes:
             try:
                 await self._execute_age_sql(sql)
-                logger.debug(f"Created index: {sql[:60]}...")
+                logger.debug(f"Created GIN index: {sql[:60]}...")
             except Exception as e:
-                logger.warning(f"Failed to create index: {e}")
+                # GIN index may already exist or properties column uses unsupported type
+                logger.debug(f"GIN index creation skipped: {e}")
 
     async def _execute_age_sql(self, sql: str) -> None:
         """
@@ -113,15 +125,15 @@ class KnowledgeGraphAGE:
     async def add_discovery(
         self,
         discovery: DiscoveryNode,
-        auto_link_temporal: bool = True,
     ) -> None:
         """
         Add a discovery to the graph.
         
         Args:
             discovery: DiscoveryNode to add
-            auto_link_temporal: If True, automatically create TEMPORALLY_NEAR edges
-                              to recent discoveries by the same agent
+            
+        NOTE: Temporal/similarity linking is now query-time, not write-time.
+        Use get_related_discoveries(id, temporal_window=300) or find_similar(id) at query time.
         """
         # Rate limiting check (security measure)
         await self._check_rate_limit(discovery.agent_id)
@@ -235,61 +247,20 @@ class KnowledgeGraphAGE:
                 tag_name=tag,
             )
             await db.graph_query(tagged_cypher, tagged_params)
-        
-        # Auto-link temporal edges if enabled
-        if auto_link_temporal:
-            await self._link_temporal_edges(discovery, timestamp)
-        
-        logger.debug(f"Added discovery {discovery.id} to AGE graph")
 
-    async def _link_temporal_edges(
-        self,
-        discovery: DiscoveryNode,
-        timestamp: datetime,
-        window_seconds: int = 300,  # 5 minutes
-    ):
-        """Create TEMPORALLY_NEAR edges to recent discoveries by the same agent."""
-        db = await self._get_db()
-        
-        # Find recent discoveries by the same agent
-        cypher = f"""
-            MATCH (d:Discovery {{agent_id: $agent_id}})
-            WHERE d.id <> $discovery_id
-              AND d.timestamp IS NOT NULL
-              AND datetime(d.timestamp) >= datetime($timestamp) - duration({{seconds: $window}})
-              AND datetime(d.timestamp) <= datetime($timestamp) + duration({{seconds: $window}})
-            RETURN d.id AS id, d.timestamp AS ts
-        """
-        
-        params = {
-            "agent_id": discovery.agent_id,
-            "discovery_id": discovery.id,
-            "timestamp": timestamp.isoformat(),
-            "window": window_seconds,
-        }
-        
-        results = await db.graph_query(cypher, params)
-        
-        # Create temporal edges
-        for result in results:
-            other_id = result.get("id")
-            other_ts_str = result.get("ts")
-            if not other_id or not other_ts_str:
-                continue
-            
+        # Store embedding for semantic search (async, best-effort)
+        if await self._pgvector_available():
             try:
-                other_ts = datetime.fromisoformat(other_ts_str.replace('Z', '+00:00'))
-                delta_seconds = abs(int((timestamp - other_ts).total_seconds()))
-                
-                if delta_seconds <= window_seconds:
-                    temp_cypher, temp_params = create_temporally_near_edge(
-                        from_discovery_id=discovery.id,
-                        to_discovery_id=other_id,
-                        delta_seconds=delta_seconds,
-                    )
-                    await db.graph_query(temp_cypher, temp_params)
+                from src.embeddings import get_embeddings_service, embeddings_available
+                if embeddings_available():
+                    embeddings = await get_embeddings_service()
+                    text = f"{discovery.summary}\n{discovery.details[:500] if discovery.details else ''}"
+                    emb = await embeddings.embed(text)
+                    asyncio.create_task(self._store_embedding(discovery.id, emb))
             except Exception as e:
-                logger.debug(f"Failed to create temporal edge: {e}")
+                logger.debug(f"Failed to create embedding for {discovery.id}: {e}")
+
+        logger.debug(f"Added discovery {discovery.id} to AGE graph")
 
     async def get_discovery(self, discovery_id: str) -> Optional[DiscoveryNode]:
         """Get a discovery by ID."""
@@ -304,31 +275,93 @@ class KnowledgeGraphAGE:
         
         if not results:
             return None
-        
+
         # Parse result (AGE returns agtype, need to convert)
-        node_data = self._parse_agtype_node(results[0].get("d"))
+        # graph_query returns parsed agtype directly
+        result = results[0]
+        if isinstance(result, dict) and "d" in result:
+            node_data = self._parse_agtype_node(result["d"])
+        else:
+            node_data = self._parse_agtype_node(result)
         return self._node_to_discovery(node_data)
+
+    async def get_response_chain(self, discovery_id: str, max_depth: int = 10) -> List[DiscoveryNode]:
+        """
+        Get a response chain for a discovery using AGE graph traversal.
+
+        This mirrors the SQLite KnowledgeGraphDB behavior, where `RESPONDS_TO`
+        edges represent replies pointing to their parent.
+
+        Returns:
+            Discoveries ordered by depth (root first, then replies).
+        """
+        db = await self._get_db()
+        if not await db.graph_available():
+            # Fallback to single-node chain
+            root = await self.get_discovery(discovery_id)
+            return [root] if root else []
+
+        # Traverse from any node d to the root (discovery_id) via RESPONDS_TO edges.
+        # Include depth 0 so the root itself is present in the chain.
+        cypher = f"""
+            MATCH (root:Discovery {{id: ${{discovery_id}}}})
+            MATCH p = (d:Discovery)-[:RESPONDS_TO*0..{max_depth}]->(root:Discovery)
+            RETURN d, length(p) AS depth
+            ORDER BY depth ASC
+        """
+        rows = await db.graph_query(cypher, {"discovery_id": discovery_id})
+
+        # Deduplicate by id using smallest depth
+        best: Dict[str, tuple[int, DiscoveryNode]] = {}
+        for row in rows or []:
+            # Handle different result formats
+            if isinstance(row, dict):
+                node_data = self._parse_agtype_node(row.get("d", row))
+                depth = int(row.get("depth", 0))
+            elif isinstance(row, (list, tuple)) and len(row) >= 2:
+                node_data = self._parse_agtype_node(row[0])
+                depth = int(row[1]) if row[1] is not None else 0
+            else:
+                node_data = self._parse_agtype_node(row)
+                depth = 0
+            d = self._node_to_discovery(node_data)
+            if not d or not d.id:
+                continue
+            prev = best.get(d.id)
+            if prev is None or depth < prev[0]:
+                best[d.id] = (depth, d)
+
+        ordered = sorted(best.values(), key=lambda x: x[0])
+        return [d for _depth, d in ordered]
 
     async def query(
         self,
         agent_id: Optional[str] = None,
         type: Optional[str] = None,
         status: Optional[str] = None,
+        severity: Optional[str] = None,
         tags: Optional[List[str]] = None,
         limit: int = 100,
     ) -> List[DiscoveryNode]:
         """
         Query discoveries with filters.
-        
+
         Args:
             agent_id: Filter by agent
             type: Filter by discovery type
             status: Filter by status
+            severity: Filter by severity
             tags: Filter by tags (any match)
             limit: Maximum results
         """
         db = await self._get_db()
-        
+
+        # Check if graph is available
+        graph_ok = await db.graph_available()
+        if not graph_ok:
+            logger.warning("AGE graph not available for query")
+            return []
+
         # Build query
         conditions = []
         params = {}
@@ -344,43 +377,64 @@ class KnowledgeGraphAGE:
         if status:
             conditions.append("d.status = ${status}")
             params["status"] = status
+
+        if severity:
+            conditions.append("d.severity = ${severity}")
+            params["severity"] = severity
+
+        where_clause = " AND ".join(conditions) if conditions else ""
         
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
-        
-        # Handle tags (need to match any tag)
-        tag_match = ""
+        # Handle tags - AGE doesn't support EXISTS subqueries or re-matching
+        # a variable with different labels. We need a single MATCH pattern.
         if tags:
             params["tags"] = tags
-            tag_match = """
-                MATCH (d)-[:TAGGED]->(t:Tag)
-                WHERE t.name IN ${tags}
-            """
-            if conditions:
-                where_clause += " AND EXISTS {"
+            # Combined MATCH: Discovery with tag relationship
+            base_match = "MATCH (d:Discovery)-[:TAGGED]->(t:Tag) WHERE t.name IN ${tags}"
+            if where_clause:
+                cypher = f"""
+                    {base_match} AND {where_clause}
+                    RETURN d
+                    ORDER BY d.timestamp DESC
+                    LIMIT ${{limit}}
+                """
             else:
-                where_clause = "EXISTS {"
-            where_clause += tag_match + "}"
-        
-        cypher = f"""
-            MATCH (d:Discovery)
-            {tag_match if tags and not conditions else ""}
-            WHERE {where_clause}
-            RETURN d
-            ORDER BY d.timestamp DESC
-            LIMIT ${{limit}}
-        """
+                cypher = f"""
+                    {base_match}
+                    RETURN d
+                    ORDER BY d.timestamp DESC
+                    LIMIT ${{limit}}
+                """
+        else:
+            # No tag filter
+            cypher = f"""
+                MATCH (d:Discovery)
+                {"WHERE " + where_clause if where_clause else ""}
+                RETURN d
+                ORDER BY d.timestamp DESC
+                LIMIT ${{limit}}
+            """
         
         params["limit"] = limit
         
+        logger.debug(f"AGE query: {cypher[:200]}... params: {list(params.keys())}")
         results = await db.graph_query(cypher, params)
-        
+        logger.debug(f"AGE query returned {len(results)} results")
+
         discoveries = []
         for result in results:
-            node_data = self._parse_agtype_node(result.get("d"))
+            # graph_query returns parsed agtype directly, not {"d": node}
+            # Handle both dict with "d" key and direct node data
+            if isinstance(result, dict) and "d" in result:
+                node_data = self._parse_agtype_node(result["d"])
+            elif isinstance(result, dict) and "error" in result:
+                logger.warning(f"AGE query error: {result.get('error')}")
+                continue
+            else:
+                node_data = self._parse_agtype_node(result)
             discovery = self._node_to_discovery(node_data)
             if discovery:
                 discoveries.append(discovery)
-        
+
         return discoveries
 
     async def get_agent_discoveries(
@@ -397,32 +451,35 @@ class KnowledgeGraphAGE:
     def _parse_agtype_node(self, agtype_value: Any) -> Dict[str, Any]:
         """
         Parse AGE agtype node to dictionary.
-        
-        AGE returns agtype which needs to be converted to Python types.
+
+        AGE returns vertices as {id: internal_id, label: "...", properties: {...}}
+        We extract the properties dict which contains our actual data.
         """
         if agtype_value is None:
             return {}
-        
-        # If it's already a dict, return it
+
+        parsed = None
+
+        # If it's already a dict, use it directly
         if isinstance(agtype_value, dict):
-            return agtype_value
-        
+            parsed = agtype_value
+
         # If it's a string (JSON), parse it
-        if isinstance(agtype_value, str):
+        elif isinstance(agtype_value, str):
             try:
-                return json.loads(agtype_value)
+                parsed = json.loads(agtype_value)
             except Exception:
                 return {}
-        
-        # Try to extract properties
-        if hasattr(agtype_value, "properties"):
-            return dict(agtype_value.properties)
-        
-        # Fallback: convert to dict
-        try:
-            return dict(agtype_value)
-        except Exception:
+
+        if parsed is None:
             return {}
+
+        # AGE vertex structure: {id: ..., label: ..., properties: {...}}
+        # Extract properties if this is a vertex
+        if "properties" in parsed and isinstance(parsed["properties"], dict):
+            return parsed["properties"]
+
+        return parsed
 
     def _node_to_discovery(self, node_data: Dict[str, Any]) -> Optional[DiscoveryNode]:
         """Convert AGE node data to DiscoveryNode."""
@@ -446,14 +503,22 @@ class KnowledgeGraphAGE:
                     discovery_id=resp_data.get("discovery_id", ""),
                     response_type=resp_data.get("response_type", "extend"),
                 )
-        
+
+        # Parse tags (may be stored as JSON string in AGE)
+        tags = node_data.get("tags", [])
+        if isinstance(tags, str):
+            try:
+                tags = json.loads(tags)
+            except Exception:
+                tags = []
+
         return DiscoveryNode(
             id=node_data.get("id", ""),
             agent_id=node_data.get("agent_id", ""),
             type=node_data.get("type", "insight"),
             summary=node_data.get("summary", ""),
             details=node_data.get("details", ""),
-            tags=node_data.get("tags", []),
+            tags=tags,
             severity=node_data.get("severity"),
             timestamp=node_data.get("timestamp", datetime.now().isoformat()),
             status=node_data.get("status", "open"),
@@ -467,83 +532,185 @@ class KnowledgeGraphAGE:
             provenance_chain=metadata.get("provenance_chain"),
         )
 
+    async def update_discovery(self, discovery_id: str, updates: Dict[str, Any]) -> bool:
+        """Update discovery fields in AGE graph.
+
+        Supports updating: status, resolved_at, updated_at, tags, severity, type.
+        """
+        db = await self._get_db()
+
+        if not await db.graph_available():
+            logger.warning("AGE graph not available for update")
+            return False
+
+        # Build SET clauses for Cypher
+        set_parts = []
+        params = {"discovery_id": discovery_id}
+
+        for key, value in updates.items():
+            if key in ("status", "resolved_at", "updated_at", "severity", "type"):
+                param_name = f"val_{key}"
+                set_parts.append(f"d.{key} = ${{{param_name}}}")
+                params[param_name] = value
+            elif key == "tags":
+                # Tags stored as JSON array in AGE
+                param_name = "val_tags"
+                set_parts.append(f"d.tags = ${{{param_name}}}")
+                params[param_name] = json.dumps(value if isinstance(value, list) else [value])
+
+        if not set_parts:
+            return True  # Nothing to update
+
+        cypher = f"""
+            MATCH (d:Discovery {{id: ${{discovery_id}}}})
+            SET {', '.join(set_parts)}
+            RETURN d.id
+        """
+
+        try:
+            result = await db.graph_query(cypher, params)
+            if result and not (isinstance(result[0], dict) and "error" in result[0]):
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Failed to update discovery {discovery_id}: {e}")
+            return False
+
     async def get_stats(self) -> Dict[str, Any]:
-        """Get graph statistics."""
+        """Get graph statistics.
+        
+        Note: AGE doesn't support GROUP BY or multi-column returns well,
+        so we use single-column collect() queries and aggregate in Python.
+        """
+        from collections import Counter
+        
         db = await self._get_db()
         
-        cypher = """
-            MATCH (d:Discovery)
-            RETURN count(d) AS total_discoveries
-        """
-        
+        # Total discoveries
+        cypher = "MATCH (d:Discovery) RETURN count(d)"
         total = await db.graph_query(cypher, {})
-        total_count = total[0].get("total_discoveries", 0) if total else 0
+        total_count = int(total[0]) if total and isinstance(total[0], (int, float)) else 0
         
-        # Count by agent
-        cypher = """
-            MATCH (d:Discovery)
-            RETURN d.agent_id AS agent_id, count(*) AS cnt
-        """
-        by_agent_raw = await db.graph_query(cypher, {})
-        by_agent = {}
-        for row in by_agent_raw:
-            agent_id = row.get("agent_id") or row.get("agent_id")
-            cnt = row.get("cnt") or row.get("cnt") or 0
-            if agent_id:
-                by_agent[str(agent_id)] = int(cnt) if isinstance(cnt, (int, float)) else 0
+        # Collect agent_ids (single column - AGE handles this fine)
+        cypher = "MATCH (d:Discovery) RETURN collect(d.agent_id)"
+        result = await db.graph_query(cypher, {})
+        agents = result[0] if result and isinstance(result[0], list) else []
+        by_agent = dict(Counter(a for a in agents if a))
         
-        # Count by type
-        cypher = """
-            MATCH (d:Discovery)
-            RETURN d.type AS type, count(*) AS cnt
-        """
-        by_type_raw = await db.graph_query(cypher, {})
-        by_type = {}
-        for row in by_type_raw:
-            type_name = row.get("type") or row.get("type")
-            cnt = row.get("cnt") or row.get("cnt") or 0
-            if type_name:
-                by_type[str(type_name)] = int(cnt) if isinstance(cnt, (int, float)) else 0
+        # Collect types
+        cypher = "MATCH (d:Discovery) RETURN collect(d.type)"
+        result = await db.graph_query(cypher, {})
+        types = result[0] if result and isinstance(result[0], list) else []
+        by_type = dict(Counter(t for t in types if t))
         
-        # Count by status
-        cypher = """
-            MATCH (d:Discovery)
-            RETURN d.status AS status, count(*) AS cnt
-        """
-        by_status_raw = await db.graph_query(cypher, {})
-        by_status = {}
-        for row in by_status_raw:
-            status_name = row.get("status") or row.get("status")
-            cnt = row.get("cnt") or row.get("cnt") or 0
-            if status_name:
-                by_status[str(status_name)] = int(cnt) if isinstance(cnt, (int, float)) else 0
+        # Collect statuses
+        cypher = "MATCH (d:Discovery) RETURN collect(d.status)"
+        result = await db.graph_query(cypher, {})
+        statuses = result[0] if result and isinstance(result[0], list) else []
+        by_status = dict(Counter(s for s in statuses if s))
         
         # Count edges
-        cypher = """
-            MATCH ()-[r]->()
-            RETURN count(r) AS total_edges
-        """
+        cypher = "MATCH ()-[r]->() RETURN count(r)"
         edges_result = await db.graph_query(cypher, {})
-        total_edges = edges_result[0].get("total_edges", 0) if edges_result else 0
-        
+        total_edges = int(edges_result[0]) if edges_result and isinstance(edges_result[0], (int, float)) else 0
+
+        # Count tags (from Tag vertices)
+        cypher = "MATCH (t:Tag) RETURN count(t) as tag_count"
+        tags_result = await db.graph_query(cypher, {})
+        # Handle different result formats: direct int, dict with count, or list
+        total_tags = 0
+        if tags_result:
+            first_result = tags_result[0]
+            # Check for error dict first
+            if isinstance(first_result, dict) and "error" in first_result:
+                logger.warning(f"Tag count query failed: {first_result.get('error')}")
+                total_tags = 0
+            elif isinstance(first_result, (int, float)):
+                total_tags = int(first_result)
+            elif isinstance(first_result, dict):
+                # AGE might return {"tag_count": 1130} or {"count": 1130}
+                total_tags = int(first_result.get("tag_count") or first_result.get("count") or 0)
+            elif isinstance(first_result, list) and len(first_result) > 0:
+                # Nested list case
+                total_tags = int(first_result[0]) if isinstance(first_result[0], (int, float)) else 0
+            else:
+                logger.debug(f"Unexpected tag count result format: {type(first_result)}, value: {first_result}")
+
+        # Collect tag names for by_tag breakdown
+        cypher = "MATCH (t:Tag) RETURN collect(t.name)"
+        result = await db.graph_query(cypher, {})
+        tag_names = result[0] if result and isinstance(result[0], list) else []
+        by_tag = dict(Counter(t for t in tag_names if t))
+
         return {
             "total_discoveries": total_count,
             "by_agent": by_agent,
             "by_type": by_type,
             "by_status": by_status,
+            "by_tag": by_tag,
             "total_edges": total_edges,
             "total_agents": len(by_agent),
+            "total_tags": total_tags,
         }
+
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        Lightweight health check for the AGE knowledge graph backend.
+        Returns basic stats without heavy queries.
+        """
+        try:
+            # Use get_stats but wrap in try/except for safety
+            return await self.get_stats()
+        except Exception as e:
+            logger.warning(f"Health check failed, returning minimal info: {e}")
+            return {
+                "status": "degraded",
+                "error": str(e),
+                "backend": "age",
+            }
 
     async def _check_rate_limit(self, agent_id: str) -> None:
         """
         Check if agent has exceeded rate limit (20 stores/hour).
         Raises ValueError if limit exceeded.
-        Uses PostgreSQL for persistent rate limit tracking.
+        
+        Uses Redis for fast rate limiting, falls back to PostgreSQL.
         """
+        # Try Redis first (fast path)
+        try:
+            from src.cache import get_rate_limiter
+            limiter = get_rate_limiter()
+            window_seconds = 3600  # 1 hour
+            
+            # Check rate limit
+            if not await limiter.check(
+                agent_id,
+                limit=self.rate_limit_stores_per_hour,
+                window=window_seconds,
+                operation="kg_store",
+            ):
+                # Get current count for error message
+                count = await limiter.get_count(agent_id, window_seconds, operation="kg_store")
+                raise ValueError(
+                    f"Rate limit exceeded: Agent '{agent_id}' has stored {count} "
+                    f"discoveries in the last hour (limit: {self.rate_limit_stores_per_hour}/hour). "
+                    f"This prevents knowledge graph poisoning flood attacks. "
+                    f"Please wait before storing more discoveries."
+                )
+            
+            # Record this operation
+            await limiter.record(agent_id, window_seconds, operation="kg_store")
+            return  # Success - Redis handled it
+        except ValueError:
+            # Rate limit exceeded - re-raise
+            raise
+        except Exception as e:
+            # Redis failed - fall back to PostgreSQL
+            logger.debug(f"Redis rate limiting failed, falling back to PostgreSQL: {e}")
+        
+        # Fallback: Use PostgreSQL for persistent rate limit tracking
         db = await self._get_db()
         
-        # Use PostgreSQL to check rate limits
         async with db._pool.acquire() as conn:
             from datetime import datetime, timedelta
             one_hour_ago = datetime.now() - timedelta(hours=1)
@@ -631,16 +798,20 @@ class KnowledgeGraphAGE:
             "exclude_id": discovery.id,
             "limit": limit,
         }
-        
+
         results = await db.graph_query(cypher, params)
-        
+
         similar = []
         for result in results:
-            node_data = self._parse_agtype_node(result.get("d"))
+            # Handle both dict with "d" key and direct node data
+            if isinstance(result, dict) and "d" in result:
+                node_data = self._parse_agtype_node(result["d"])
+            else:
+                node_data = self._parse_agtype_node(result)
             disc = self._node_to_discovery(node_data)
             if disc:
                 similar.append(disc)
-        
+
         return similar
 
     async def find_similar_by_tags(
@@ -682,15 +853,746 @@ class KnowledgeGraphAGE:
         }
         if exclude_id:
             params["exclude_id"] = exclude_id
-        
+
         results = await db.graph_query(cypher, params)
-        
+
         similar = []
         for result in results:
-            node_data = self._parse_agtype_node(result.get("d"))
+            # Handle both dict with "d" key and direct node data
+            if isinstance(result, dict) and "d" in result:
+                node_data = self._parse_agtype_node(result["d"])
+            else:
+                node_data = self._parse_agtype_node(result)
             disc = self._node_to_discovery(node_data)
             if disc:
                 similar.append(disc)
-        
+
         return similar
+
+    async def _pgvector_available(self) -> bool:
+        """Check if pgvector extension and embeddings table exist."""
+        db = await self._get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            return False
+        
+        try:
+            async with db._pool.acquire() as conn:
+                # Check if vector extension exists
+                ext_exists = await conn.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')"
+                )
+                if not ext_exists:
+                    return False
+                
+                # Check if embeddings table exists
+                table_exists = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables 
+                        WHERE table_schema = 'core' AND table_name = 'discovery_embeddings'
+                    )
+                """)
+                return table_exists
+        except Exception as e:
+            logger.debug(f"pgvector check failed: {e}")
+            return False
+
+    async def _pgvector_search(
+        self,
+        query_embedding: List[float],
+        limit: int,
+        min_similarity: float,
+        agent_id: Optional[str] = None,
+    ) -> List[tuple[str, float]]:
+        """
+        Search using pgvector's HNSW index.
+
+        Returns list of (discovery_id, similarity_score) tuples.
+        """
+        db = await self._get_db()
+
+        # Convert list to pgvector string format: '[0.1, 0.2, ...]'
+        embedding_str = '[' + ','.join(str(x) for x in query_embedding) + ']'
+
+        async with db._pool.acquire() as conn:
+            # Build query with optional agent filter
+            if agent_id:
+                # Join with AGE graph to filter by agent
+                # Note: This is a hybrid query - pgvector for similarity, then filter
+                rows = await conn.fetch("""
+                    SELECT de.discovery_id, (1 - (de.embedding <=> $1::vector)) AS similarity
+                    FROM core.discovery_embeddings de
+                    WHERE (1 - (de.embedding <=> $1::vector)) >= $2
+                    ORDER BY de.embedding <=> $1::vector
+                    LIMIT $3
+                """, embedding_str, min_similarity, limit * 3)
+            else:
+                rows = await conn.fetch("""
+                    SELECT discovery_id, (1 - (embedding <=> $1::vector)) AS similarity
+                    FROM core.discovery_embeddings
+                    WHERE (1 - (embedding <=> $1::vector)) >= $2
+                    ORDER BY embedding <=> $1::vector
+                    LIMIT $3
+                """, embedding_str, min_similarity, limit)
+
+            return [(row['discovery_id'], float(row['similarity'])) for row in rows]
+
+    async def _store_embedding(self, discovery_id: str, embedding: List[float]) -> None:
+        """Store embedding in pgvector table."""
+        db = await self._get_db()
+
+        # Convert list to pgvector string format: '[0.1, 0.2, ...]'
+        embedding_str = '[' + ','.join(str(x) for x in embedding) + ']'
+
+        try:
+            async with db._pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO core.discovery_embeddings (discovery_id, embedding, model_name)
+                    VALUES ($1, $2::vector, 'all-MiniLM-L6-v2')
+                    ON CONFLICT (discovery_id) DO UPDATE SET
+                        embedding = EXCLUDED.embedding,
+                        updated_at = now()
+                """, discovery_id, embedding_str)
+        except Exception as e:
+            logger.debug(f"Failed to store embedding for {discovery_id}: {e}")
+
+    async def get_connectivity_score(self, discovery_id: str) -> float:
+        """
+        Get connectivity score for a discovery based on inbound edges.
+
+        Higher score = more other discoveries reference this one.
+        Used to rank well-connected knowledge above orphaned entries.
+
+        Returns:
+            Normalized score in [0, 1] range
+        """
+        db = await self._get_db()
+
+        if not await db.graph_available():
+            return 0.0
+
+        # Count inbound edges (other discoveries pointing to this one)
+        # Weight: RESPONDS_TO edges count more than RELATED_TO
+        # Return single column as {related: N, responds: M} to work with graph_query
+        cypher = """
+            MATCH (d:Discovery {id: ${discovery_id}})
+            OPTIONAL MATCH (other:Discovery)-[r:RELATED_TO]->(d)
+            OPTIONAL MATCH (resp:Discovery)-[rt:RESPONDS_TO]->(d)
+            RETURN {related: count(DISTINCT other), responds: count(DISTINCT resp)}
+        """
+
+        try:
+            results = await db.graph_query(cypher, {"discovery_id": discovery_id})
+            if not results:
+                return 0.0
+
+            result = results[0]
+            # Result is either a dict or a nested structure
+            if isinstance(result, dict) and "error" not in result:
+                related_count = int(result.get("related", 0) or 0)
+                responds_count = int(result.get("responds", 0) or 0)
+            else:
+                return 0.0
+
+            # Weight responds_to higher (it's a stronger signal)
+            raw_score = related_count + (responds_count * 2)
+
+            # Normalize: log scale to prevent a few highly-linked nodes from dominating
+            # score = log(1 + raw) / log(1 + max_expected)
+            # Assume max ~100 inbound links as ceiling
+            import math
+            normalized = math.log1p(raw_score) / math.log1p(100)
+            return min(1.0, normalized)
+        except Exception as e:
+            logger.debug(f"Failed to get connectivity score for {discovery_id}: {e}")
+            return 0.0
+
+    async def get_connectivity_scores_batch(self, discovery_ids: List[str]) -> Dict[str, float]:
+        """
+        Get connectivity scores for multiple discoveries in one query.
+
+        More efficient than calling get_connectivity_score() repeatedly.
+        """
+        if not discovery_ids:
+            return {}
+
+        db = await self._get_db()
+
+        if not await db.graph_available():
+            return {d: 0.0 for d in discovery_ids}
+
+        # Batch query for all discovery IDs - return single column per row
+        # Need WITH clause for proper grouping before RETURN
+        cypher = """
+            UNWIND ${ids} as disc_id
+            MATCH (d:Discovery {id: disc_id})
+            OPTIONAL MATCH (other:Discovery)-[r:RELATED_TO]->(d)
+            OPTIONAL MATCH (resp:Discovery)-[rt:RESPONDS_TO]->(d)
+            WITH d.id as id, count(DISTINCT other) as related, count(DISTINCT resp) as responds
+            RETURN {id: id, related: related, responds: responds}
+        """
+
+        try:
+            results = await db.graph_query(cypher, {"ids": discovery_ids})
+            scores = {}
+
+            import math
+            for result in results:
+                if not isinstance(result, dict) or "error" in result:
+                    continue
+
+                disc_id = result.get("id", "")
+                if isinstance(disc_id, str):
+                    disc_id = disc_id.strip('"')
+
+                related_count = int(result.get("related", 0) or 0)
+                responds_count = int(result.get("responds", 0) or 0)
+
+                raw_score = related_count + (responds_count * 2)
+                normalized = math.log1p(raw_score) / math.log1p(100)
+                scores[disc_id] = min(1.0, normalized)
+
+            # Fill in zeros for any missing IDs
+            for d in discovery_ids:
+                if d not in scores:
+                    scores[d] = 0.0
+
+            return scores
+        except Exception as e:
+            logger.debug(f"Failed to get batch connectivity scores: {e}")
+            return {d: 0.0 for d in discovery_ids}
+
+    async def _blend_with_connectivity(
+        self,
+        raw_results: List[tuple[DiscoveryNode, float]],
+        connectivity_weight: float,
+        exclude_orphans: bool,
+        limit: int,
+    ) -> List[tuple[DiscoveryNode, float]]:
+        """
+        Blend similarity scores with connectivity scores.
+
+        Args:
+            raw_results: List of (discovery, similarity_score) tuples
+            connectivity_weight: Weight for connectivity (0-1)
+            exclude_orphans: If True, filter discoveries with 0 inbound links
+            limit: Maximum results to return
+
+        Returns:
+            List of (discovery, blended_score) tuples, sorted by score descending
+        """
+        if not raw_results:
+            return []
+
+        # Fetch connectivity scores in batch
+        discovery_ids = [d.id for d, _ in raw_results]
+        connectivity_scores = await self.get_connectivity_scores_batch(discovery_ids)
+
+        # Blend scores
+        blended_results = []
+        for discovery, similarity in raw_results:
+            connectivity = connectivity_scores.get(discovery.id, 0.0)
+
+            # Exclude orphans if requested
+            if exclude_orphans and connectivity == 0.0:
+                continue
+
+            # Blend: final = similarity * (1 - weight) + connectivity * weight
+            final_score = (similarity * (1 - connectivity_weight)) + (connectivity * connectivity_weight)
+            blended_results.append((discovery, final_score))
+
+        # Sort by blended score descending
+        blended_results.sort(key=lambda x: x[1], reverse=True)
+
+        # Apply limit
+        return blended_results[:limit]
+
+    async def semantic_search(
+        self,
+        query: str,
+        limit: int = 10,
+        min_similarity: float = 0.3,
+        agent_id: Optional[str] = None,
+        connectivity_weight: float = 0.3,
+        exclude_orphans: bool = False,
+    ) -> List[tuple[DiscoveryNode, float]]:
+        """
+        Semantic search using sentence-transformer embeddings.
+
+        Uses pgvector for fast similarity search when available,
+        falls back to in-memory comparison otherwise.
+
+        Blends semantic similarity with connectivity score to rank
+        well-connected knowledge above orphaned entries.
+
+        Args:
+            query: Search query text
+            limit: Maximum number of results
+            min_similarity: Minimum cosine similarity threshold (0-1)
+            agent_id: Optional agent filter
+            connectivity_weight: Weight for connectivity in final score (0-1)
+                                 Final = similarity*(1-weight) + connectivity*weight
+                                 Default 0.3 = 70% similarity, 30% connectivity
+            exclude_orphans: If True, filter out discoveries with zero inbound links
+
+        Returns:
+            List of (DiscoveryNode, final_score) tuples, sorted by score descending
+        """
+        try:
+            from src.embeddings import get_embeddings_service, embeddings_available
+        except ImportError:
+            logger.warning("Embeddings module not available")
+            return []
+        
+        if not embeddings_available():
+            logger.warning("sentence-transformers not installed, semantic search unavailable")
+            return []
+        
+        # Get embedding service and embed query
+        embeddings = await get_embeddings_service()
+        query_embedding = await embeddings.embed(query)
+        
+        # Try pgvector first (fast, indexed)
+        use_pgvector = await self._pgvector_available()
+        
+        if use_pgvector:
+            logger.debug("Using pgvector for semantic search")
+            scored_ids = await self._pgvector_search(
+                query_embedding=query_embedding,
+                limit=limit,
+                min_similarity=min_similarity,
+                agent_id=agent_id,
+            )
+            
+            if scored_ids:
+                # Fetch full discovery nodes
+                raw_results = []
+                for discovery_id, similarity in scored_ids:
+                    discovery = await self.get_discovery(discovery_id)
+                    if discovery:
+                        # Apply agent filter if needed (pgvector doesn't filter by agent)
+                        if agent_id and discovery.agent_id != agent_id:
+                            continue
+                        raw_results.append((discovery, similarity))
+
+                if raw_results:
+                    # Blend with connectivity scores
+                    return await self._blend_with_connectivity(
+                        raw_results,
+                        connectivity_weight=connectivity_weight,
+                        exclude_orphans=exclude_orphans,
+                        limit=limit,
+                    )
+            
+            # Fall through to in-memory if pgvector returned nothing
+            logger.debug("pgvector returned no results, falling back to in-memory")
+        
+        # Fallback: In-memory semantic search
+        logger.debug("Using in-memory semantic search")
+        
+        # Get candidate discoveries
+        candidates = await self.query(
+            agent_id=agent_id,
+            limit=limit * 5,
+        )
+        
+        if not candidates:
+            return []
+        
+        # Embed candidates
+        candidate_texts = [
+            f"{d.summary}\n{d.details[:500] if d.details else ''}"
+            for d in candidates
+        ]
+        
+        candidate_embeddings = await embeddings.embed_batch(candidate_texts)
+        
+        # Store embeddings for future pgvector use (async, best-effort)
+        if use_pgvector:
+            for discovery, emb in zip(candidates, candidate_embeddings):
+                asyncio.create_task(self._store_embedding(discovery.id, emb))
+        
+        # Rank by similarity
+        scored = await embeddings.rank_by_similarity(
+            query_embedding=query_embedding,
+            candidate_embeddings=list(zip(
+                [d.id for d in candidates],
+                candidate_embeddings
+            )),
+            top_k=limit * 2,
+        )
+        
+        # Build raw results
+        id_to_discovery = {d.id: d for d in candidates}
+        raw_results = []
+
+        for discovery_id, similarity in scored:
+            if similarity < min_similarity:
+                continue
+            if discovery_id in id_to_discovery:
+                raw_results.append((id_to_discovery[discovery_id], similarity))
+
+        if not raw_results:
+            return []
+
+        # Blend with connectivity scores
+        return await self._blend_with_connectivity(
+            raw_results,
+            connectivity_weight=connectivity_weight,
+            exclude_orphans=exclude_orphans,
+            limit=limit,
+        )
+
+    async def link_discoveries(
+        self,
+        from_id: str,
+        to_id: str,
+        reason: Optional[str] = None,
+        strength: Optional[float] = None,
+        bidirectional: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Create a RELATED_TO edge between two discoveries.
+
+        This enables agents to organically build the knowledge graph by
+        connecting related discoveries they encounter.
+
+        Args:
+            from_id: Source discovery ID
+            to_id: Target discovery ID
+            reason: Optional explanation for the relationship
+            strength: Optional relationship strength (0.0-1.0)
+            bidirectional: If True, create edges in both directions
+
+        Returns:
+            Dict with success status and edge details
+        """
+        db = await self._get_db()
+
+        if not await db.graph_available():
+            return {"success": False, "error": "Graph database not available"}
+
+        # Validate both discoveries exist
+        check_cypher = """
+            MATCH (d:Discovery)
+            WHERE d.id IN [${from_id}, ${to_id}]
+            RETURN collect(d.id) as found_ids
+        """
+        try:
+            results = await db.graph_query(check_cypher, {"from_id": from_id, "to_id": to_id})
+            if not results:
+                return {"success": False, "error": "Failed to validate discoveries"}
+
+            # graph_query returns list of results; single-column returns the value directly
+            found_ids_raw = results[0]
+            if isinstance(found_ids_raw, dict):
+                if "error" in found_ids_raw:
+                    return {"success": False, "error": found_ids_raw["error"]}
+                found_ids_raw = found_ids_raw.get("found_ids", [])
+
+            # Handle list result (direct value from collect())
+            if isinstance(found_ids_raw, list):
+                found_ids = [str(x).strip('"') for x in found_ids_raw]
+            else:
+                found_ids = []
+
+            if from_id not in found_ids:
+                return {"success": False, "error": f"Discovery '{from_id}' not found"}
+            if to_id not in found_ids:
+                return {"success": False, "error": f"Discovery '{to_id}' not found"}
+        except Exception as e:
+            return {"success": False, "error": f"Validation failed: {e}"}
+
+        # Build the edge creation query
+        from src.db.age_queries import create_related_to_edge
+
+        edges_created = []
+
+        # Create forward edge
+        cypher, params = create_related_to_edge(
+            from_discovery_id=from_id,
+            to_discovery_id=to_id,
+            strength=strength,
+            reason=reason,
+        )
+
+        try:
+            await db.graph_query(cypher, params)
+            edges_created.append({"from": from_id, "to": to_id})
+        except Exception as e:
+            return {"success": False, "error": f"Failed to create edge: {e}"}
+
+        # Create reverse edge if bidirectional
+        if bidirectional:
+            cypher, params = create_related_to_edge(
+                from_discovery_id=to_id,
+                to_discovery_id=from_id,
+                strength=strength,
+                reason=reason,
+            )
+            try:
+                await db.graph_query(cypher, params)
+                edges_created.append({"from": to_id, "to": from_id})
+            except Exception as e:
+                logger.warning(f"Failed to create reverse edge: {e}")
+
+        return {
+            "success": True,
+            "edges_created": edges_created,
+            "from_id": from_id,
+            "to_id": to_id,
+            "reason": reason,
+            "bidirectional": bidirectional,
+            "message": f"Linked '{from_id[:30]}...' to '{to_id[:30]}...'" + (" (bidirectional)" if bidirectional else "")
+        }
+
+    # =========================================================================
+    # LIFECYCLE MANAGEMENT
+    # =========================================================================
+
+    async def get_orphan_discoveries(
+        self,
+        limit: int = 100,
+        min_age_days: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """
+        Find discoveries with no inbound edges (orphans).
+
+        Orphans are discoveries that no other discovery references.
+        They may still have outbound edges (referencing others).
+
+        Args:
+            limit: Maximum discoveries to return
+            min_age_days: Only return orphans older than this many days
+
+        Returns:
+            List of orphan discovery summaries with metadata
+        """
+        db = await self._get_db()
+
+        if not await db.graph_available():
+            return []
+
+        # Calculate cutoff date
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=min_age_days)).isoformat()
+
+        cypher = """
+            MATCH (d:Discovery)
+            WHERE d.id < ${cutoff}
+            OPTIONAL MATCH (other:Discovery)-[:RELATED_TO]->(d)
+            OPTIONAL MATCH (resp:Discovery)-[:RESPONDS_TO]->(d)
+            WITH d, count(other) + count(resp) as inbound_count
+            WHERE inbound_count = 0
+            RETURN {
+                id: d.id,
+                summary: d.summary,
+                type: d.type,
+                status: d.status,
+                agent_id: d.agent_id
+            } as discovery
+            ORDER BY d.id ASC
+            LIMIT ${limit}
+        """
+
+        try:
+            results = await db.graph_query(cypher, {"cutoff": cutoff, "limit": limit})
+            orphans = []
+            for result in results:
+                if isinstance(result, dict) and "error" not in result:
+                    orphans.append(result)
+            return orphans
+        except Exception as e:
+            logger.warning(f"Failed to get orphan discoveries: {e}")
+            return []
+
+    async def get_stale_discoveries(
+        self,
+        older_than_days: int = 30,
+        status: Optional[str] = "open",
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Find stale discoveries that may need attention.
+
+        Stale discoveries are old, unresolved items that might need
+        archiving or resolution.
+
+        Args:
+            older_than_days: Find discoveries older than this
+            status: Filter by status (None = any status)
+            limit: Maximum to return
+
+        Returns:
+            List of stale discovery summaries
+        """
+        db = await self._get_db()
+
+        if not await db.graph_available():
+            return []
+
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=older_than_days)).isoformat()
+
+        # Build status filter
+        status_clause = "AND d.status = ${status}" if status else ""
+
+        cypher = f"""
+            MATCH (d:Discovery)
+            WHERE d.id < ${{cutoff}} {status_clause}
+            RETURN {{
+                id: d.id,
+                summary: d.summary,
+                type: d.type,
+                status: d.status,
+                agent_id: d.agent_id,
+                severity: d.severity
+            }} as discovery
+            ORDER BY d.id ASC
+            LIMIT ${{limit}}
+        """
+
+        params = {"cutoff": cutoff, "limit": limit}
+        if status:
+            params["status"] = status
+
+        try:
+            results = await db.graph_query(cypher, params)
+            stale = []
+            for result in results:
+                if isinstance(result, dict) and "error" not in result:
+                    stale.append(result)
+            return stale
+        except Exception as e:
+            logger.warning(f"Failed to get stale discoveries: {e}")
+            return []
+
+    async def archive_discoveries_batch(
+        self,
+        discovery_ids: List[str],
+        reason: str = "lifecycle_cleanup",
+    ) -> Dict[str, Any]:
+        """
+        Archive multiple discoveries in a batch.
+
+        Sets status to 'archived' and adds archive metadata.
+
+        Args:
+            discovery_ids: List of discovery IDs to archive
+            reason: Reason for archiving
+
+        Returns:
+            Dict with success count and any errors
+        """
+        if not discovery_ids:
+            return {"success": True, "archived": 0, "errors": []}
+
+        db = await self._get_db()
+
+        if not await db.graph_available():
+            return {"success": False, "error": "Graph database not available"}
+
+        from datetime import datetime
+        archived_at = datetime.now().isoformat()
+
+        # Archive in batches
+        archived = 0
+        errors = []
+
+        for disc_id in discovery_ids:
+            cypher = """
+                MATCH (d:Discovery {id: ${discovery_id}})
+                SET d.status = 'archived',
+                    d.archived_at = ${archived_at},
+                    d.archive_reason = ${reason}
+                RETURN d.id as id
+            """
+
+            try:
+                result = await db.graph_query(cypher, {
+                    "discovery_id": disc_id,
+                    "archived_at": archived_at,
+                    "reason": reason,
+                })
+                if result and not (isinstance(result[0], dict) and "error" in result[0]):
+                    archived += 1
+                else:
+                    errors.append({"id": disc_id, "error": "Not found or update failed"})
+            except Exception as e:
+                errors.append({"id": disc_id, "error": str(e)})
+
+        return {
+            "success": len(errors) == 0,
+            "archived": archived,
+            "errors": errors,
+            "reason": reason,
+        }
+
+    async def cleanup_stale_discoveries(
+        self,
+        orphan_age_days: int = 30,
+        open_age_days: int = 60,
+        dry_run: bool = True,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """
+        Clean up stale discoveries in the knowledge graph.
+
+        This is the main lifecycle management entry point. It identifies
+        and optionally archives:
+        1. Orphan discoveries (no inbound edges) older than orphan_age_days
+        2. Open discoveries that have been unresolved for open_age_days
+
+        Args:
+            orphan_age_days: Archive orphans older than this (default 30)
+            open_age_days: Archive open items older than this (default 60)
+            dry_run: If True, report what would be done without doing it
+            limit: Max discoveries to process per category
+
+        Returns:
+            Dict with cleanup results and statistics
+        """
+        # Find candidates
+        orphans = await self.get_orphan_discoveries(limit=limit, min_age_days=orphan_age_days)
+        stale_open = await self.get_stale_discoveries(
+            older_than_days=open_age_days,
+            status="open",
+            limit=limit,
+        )
+
+        # Deduplicate (an orphan might also be stale)
+        orphan_ids = {o.get("id", o) if isinstance(o, dict) else o for o in orphans}
+        stale_ids = {s.get("id", s) if isinstance(s, dict) else s for s in stale_open}
+        all_candidates = orphan_ids | stale_ids
+
+        result = {
+            "dry_run": dry_run,
+            "orphans_found": len(orphan_ids),
+            "stale_open_found": len(stale_ids),
+            "total_candidates": len(all_candidates),
+            "orphan_threshold_days": orphan_age_days,
+            "open_threshold_days": open_age_days,
+        }
+
+        if dry_run:
+            # Just report what would be done
+            result["would_archive"] = list(all_candidates)[:20]  # Sample
+            result["message"] = f"Dry run: would archive {len(all_candidates)} discoveries"
+            return result
+
+        # Actually archive
+        if all_candidates:
+            archive_result = await self.archive_discoveries_batch(
+                list(all_candidates),
+                reason=f"lifecycle_cleanup:orphan>{orphan_age_days}d,open>{open_age_days}d",
+            )
+            result.update({
+                "archived": archive_result.get("archived", 0),
+                "errors": archive_result.get("errors", []),
+                "message": f"Archived {archive_result.get('archived', 0)} discoveries",
+            })
+        else:
+            result["archived"] = 0
+            result["message"] = "No discoveries matched cleanup criteria"
+
+        return result
 

@@ -225,6 +225,53 @@ DEPENDENCIES:
             }
         ),
         Tool(
+            name="rebuild_calibration",
+            description="""Rebuild calibration from scratch using auto ground truth collection.
+
+Resets calibration state and re-evaluates all historical decisions using the current
+evaluation logic (confidence vs outcome quality matching).
+
+WHEN TO USE:
+- After updating evaluation logic
+- To fix corrupted/biased calibration state
+- When calibration shows 100% True or 100% False (no variance)
+
+CALIBRATION LOGIC:
+Ground truth now compares confidence to outcome quality:
+- High confidence + excellent outcome → True (appropriately confident)
+- High confidence + poor outcome → False (overconfident)
+- Low confidence + excellent outcome → False (underconfident)
+- Low confidence + uncertain outcome → True (appropriately uncertain)
+
+This creates meaningful variance for calibration instead of "was agent healthy?" (always True).
+
+PARAMETERS:
+- dry_run: Preview changes without modifying state
+- min_age_hours: Minimum decision age to evaluate (default: 0.5)
+- max_decisions: Limit decisions to process (default: 0 = all)
+
+RELATED TOOLS:
+- check_calibration: Verify calibration after rebuild
+- update_calibration_ground_truth: Manual ground truth updates""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dry_run": {
+                        "type": ["boolean", "string"],
+                        "description": "Preview changes without modifying state"
+                    },
+                    "min_age_hours": {
+                        "type": "number",
+                        "description": "Minimum decision age to evaluate (default: 0.5)"
+                    },
+                    "max_decisions": {
+                        "type": "integer",
+                        "description": "Limit decisions to process (default: 0 = all)"
+                    }
+                }
+            }
+        ),
+        Tool(
             name="health_check",
             description="""Quick health check - returns system status, version, and component health. Useful for monitoring and operational visibility.
 
@@ -245,6 +292,18 @@ RETURNS:
   },
   "timestamp": "ISO timestamp"
 }
+
+SEE ALSO:
+- get_governance_metrics / status() - Agent-specific metrics (EISV, risk, coherence)
+- get_server_info - Detailed server process information (PID, uptime, version)
+- get_connection_status - MCP connection status (transport-level)
+- get_workspace_health - Comprehensive workspace health (file system, dependencies)
+
+ALTERNATIVES:
+- Want agent metrics? → Use get_governance_metrics() or status() (agent-level, not system)
+- Want server details? → Use get_server_info() (process info, PID, uptime)
+- Want connection status? → Use get_connection_status() (MCP transport health)
+- Want workspace health? → Use get_workspace_health() (file system, dependencies)
 
 RELATED TOOLS:
 - get_server_info: Get detailed server process information
@@ -325,8 +384,8 @@ EXAMPLE RESPONSE:
 {
   "success": true,
   "mcp_status": {
-    "cursor_servers": ["governance-monitor-v1", "GitHub", "date-context"],
-    "claude_desktop_servers": ["governance-monitor-v1", "date-context"],
+    "cursor_servers": ["GitHub", "date-context", "unitares-governance"],
+    "claude_desktop_servers": ["date-context"],
     "active_count": 3,
     "notes": "Count based on config files. Actual runtime status may vary."
   },
@@ -507,22 +566,6 @@ DEPENDENCIES:
                 }
             }
         ),
-        # REMOVED: store_knowledge tool (archived November 28, 2025)
-        # See docs/archive/KNOWLEDGE_LAYER_EXPERIMENT.md
-        # REMOVED: store_knowledge tool (archived November 28, 2025)
-        # See docs/archive/KNOWLEDGE_LAYER_EXPERIMENT.md
-        # REMOVED: retrieve_knowledge tool (archived November 28, 2025)
-        # See docs/archive/KNOWLEDGE_LAYER_EXPERIMENT.md
-        # REMOVED: search_knowledge tool (archived November 28, 2025)
-        # See docs/archive/KNOWLEDGE_LAYER_EXPERIMENT.md
-        # REMOVED: list_knowledge tool (archived November 28, 2025)
-        # See docs/archive/KNOWLEDGE_LAYER_EXPERIMENT.md
-        # REMOVED: update_discovery_status tool (archived November 28, 2025)
-        # See docs/archive/KNOWLEDGE_LAYER_EXPERIMENT.md
-        # REMOVED: update_discovery tool (archived November 28, 2025)
-        # See docs/archive/KNOWLEDGE_LAYER_EXPERIMENT.md
-        # REMOVED: find_similar_discoveries tool (archived November 28, 2025)
-        # See docs/archive/KNOWLEDGE_LAYER_EXPERIMENT.md
         Tool(
             name="get_server_info",
             description="""Get MCP server version, process information, and health status for debugging multi-process issues. Returns version, PID, uptime, and active process count.
@@ -556,8 +599,19 @@ RETURNS:
   "health": "healthy"
 }
 
+SEE ALSO:
+- health_check() - Quick component health check (system-level, not process details)
+- get_connection_status() - MCP connection status (transport-level)
+- get_governance_metrics / status() - Agent metrics (not server info)
+
+ALTERNATIVES:
+- Want system health? → Use health_check() (components, not process details)
+- Want connection status? → Use get_connection_status() (MCP transport)
+- Want agent metrics? → Use get_governance_metrics() or status() (agent-level)
+
 RELATED TOOLS:
 - health_check: Quick component health check
+- get_connection_status: Check MCP connection and tool availability
 - cleanup_stale_locks: Clean up stale processes
 
 EXAMPLE REQUEST:
@@ -584,14 +638,89 @@ DEPENDENCIES:
             }
         ),
         Tool(
-            name="process_agent_update",
-            description="""Share your work and get supportive feedback. This is your companion tool for checking in and understanding your state.
+            name="get_connection_status",
+            description="""Get MCP connection status and tool availability. Helps agents verify they're connected to the MCP server and can use tools. Especially useful for detecting when tools are not available (e.g., wrong chatbox in Mac ChatGPT).
 
 USE CASES:
+- Verify MCP connection is active
+- Check if tools are available
+- Detect connection issues
+- Verify session binding
+
+RETURNS:
+{
+  "success": true,
+  "status": "connected" | "disconnected",
+  "server_available": boolean,
+  "tools_available": boolean,
+  "transport": "SSE" | "STDIO" | "unknown",
+  "session_bound": boolean,
+  "resolved_agent_id": "string" | null,
+  "resolved_uuid": "string" | null,
+  "message": "✅ Tools Connected" | "❌ Tools Not Available",
+  "recommendation": "string"
+}
+
+SEE ALSO:
+- health_check() - System health check (components, not connection)
+- get_server_info() - Server process information (PID, uptime, version)
+- identity() - Agent identity binding (who you are, not connection)
+
+ALTERNATIVES:
+- Want system health? → Use health_check() (components, not connection status)
+- Want server details? → Use get_server_info() (process info, not connection)
+- Want identity info? → Use identity() (who you are, not connection status)
+
+RELATED TOOLS:
+- health_check: Detailed system health check
+- get_server_info: Server process information
+- identity: Check your identity binding
+
+EXAMPLE REQUEST:
+{}
+
+NOTE: This tool helps agents quickly verify they can use MCP tools. If status is "disconnected", check your MCP configuration.""",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        Tool(
+            name="process_agent_update",
+            description="""💬 Share your work and get supportive feedback. Your main tool for checking in.
+
+✨ WHAT IT DOES:
+- Logs your work and tracks your progress
+- Provides helpful feedback about your state
+- Gives adaptive sampling parameters (optional - use if helpful)
+- Tracks how your work evolves over time
+- Auto-creates your identity if first call
+
+💡 WHY THIS MATTERS:
+This is like checking your vital signs after doing work. The system measures your "health" across four dimensions:
+- **Energy (E)**: How engaged and productive you are (0-1, higher is better)
+- **Integrity (I)**: How coherent and consistent your work is (0-1, higher is better)
+- **Entropy (S)**: How scattered or uncertain things are (0-1, lower is better)
+- **Void (V)**: How far from equilibrium you are (can be negative or positive, closer to 0 is better)
+
+Based on these measurements, the system automatically decides whether to proceed (keep working) or pause (take a break, review). This prevents you from getting stuck in loops or drifting off track.
+
+SEE ALSO:
+- get_governance_metrics / status() - Check current state WITHOUT logging work (read-only)
+- simulate_update - Test governance decision without persisting (dry-run)
+- get_system_history - View historical trends over time
+
+ALTERNATIVES:
+- Want to check state without logging? → Use get_governance_metrics() (read-only, no update)
+- Want to test decision? → Use simulate_update() (dry-run, doesn't persist)
+- Want historical data? → Use get_system_history() (time series, not current state)
+
+📋 WHEN TO USE:
 - After completing a task or generating output
-- To understand your current state and get helpful guidance
-- To receive adaptive sampling parameters (optional - use if helpful)
-- To track how your work evolves over time
+- When you want to understand your current state
+- To get helpful guidance on your work
+- To track your progress over time
+- After making significant progress or changes
 
 RETURNS:
 {
@@ -622,27 +751,45 @@ RETURNS:
     "reason": "string (if triggered)",
     "next_step": "string (if triggered)"
   },
-  "api_key": "string (only for new agents)",
   "eisv_labels": {"E": "...", "I": "...", "S": "...", "V": "..."}
 }
+
+💡 QUICK START:
+1. Call process_agent_update() with minimal params - identity auto-binds
+2. Include client_session_id from identity() response
+3. Optionally describe your work in response_text
+4. Use the feedback to understand your state
+
+PARAMETERS (most are optional):
+- client_session_id (string): Session continuity token (from identity() or onboard())
+- response_text (string): Describe what you did (optional but helpful)
+- complexity (float 0-1): How complex was your task? (default: 0.5)
+- confidence (float 0-1): How confident are you? (optional, auto-derived if omitted)
+- task_type (string): "convergent" | "divergent" | "mixed" (default: "mixed")
 
 RELATED TOOLS:
 - simulate_update: Test decisions without persisting state
 - get_governance_metrics: Get current state without updating
 - get_system_history: View historical governance data
+- identity: Check/set your identity first
 
 ERROR RECOVERY:
-- "agent_id is required": Use get_agent_api_key to get/create agent_id
-- "Invalid API key": Use get_agent_api_key to retrieve correct key
-- Timeout: Check system resources, retry with simpler parameters
+- "agent_id is required": Identity auto-binds on first call - just include client_session_id
+- "Authentication required": Call identity() first to set up session binding
+- Timeout: Retry with simpler parameters or check system resources
 
-EXAMPLE REQUEST:
+EXAMPLE: Minimal call (identity auto-binds)
 {
-  "agent_id": "test_agent_001",
-  "complexity": 0.5,
-  "parameters": [],
-  "ethical_drift": [0.01, 0.02, 0.03],
-  "response_text": "Agent response text here"
+  "client_session_id": "agent-5e728ecb...",
+  "complexity": 0.5
+}
+
+EXAMPLE: With work description
+{
+  "client_session_id": "agent-5e728ecb...",
+  "response_text": "Fixed bug in authentication module",
+  "complexity": 0.3,
+  "confidence": 0.9
 }
 
 EXAMPLE RESPONSE:
@@ -668,13 +815,16 @@ EXAMPLE RESPONSE:
 }
 
 DEPENDENCIES:
-- Requires: agent_id (get via get_agent_api_key or list_agents)
-- Optional: api_key (get via get_agent_api_key for existing agents)
+- Requires: agent_id (auto-created on first tool call via UUID session binding)
 - Optional: response_mode (use "compact" to reduce response size / redundancy)
-- Workflow: 1. Get/create agent_id 2. Call process_agent_update 3. Use sampling_params for next generation""",
+- Workflow: 1. Call process_agent_update (identity auto-binds) 2. Use sampling_params for next generation""",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token. Get this from identity() response and include in ALL subsequent tool calls to maintain identity across calls. Critical for ChatGPT and MCP clients with unstable sessions. Format: 'agent-{uuid12}'."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "UNIQUE identifier for the agent. Must be unique across all agents to prevent state mixing. Examples: 'my_agent_20251215', 'feature_work_session', 'debugging_20251215'. Avoid generic IDs like 'test' or 'demo'."
@@ -696,15 +846,15 @@ DEPENDENCIES:
                         "description": "Agent's response text (optional, for analysis)"
                     },
                     "complexity": {
-                        "type": "number",
-                        "description": "Estimated task complexity (0-1, optional)",
+                        "type": ["number", "string", "null"],
+                        "description": "Estimated task complexity (0-1, optional). Accepts number or numeric string.",
                         "minimum": 0.0,
                         "maximum": 1.0,
                         "default": 0.5
                     },
                     "confidence": {
-                        "type": "number",
-                        "description": "Confidence level for this update (0-1, optional). If omitted, the system derives confidence from thermodynamic state (I, S, coherence, |V|) and observed outcomes. When confidence < 0.8, lambda1 updates are skipped.",
+                        "type": ["number", "string", "null"],
+                        "description": "Confidence level for this update (0-1, optional). Accepts number or numeric string. If omitted, the system derives confidence from thermodynamic state (I, S, coherence, |V|) and observed outcomes. When confidence < 0.8, lambda1 updates are skipped.",
                         "minimum": 0.0,
                         "maximum": 1.0
                     },
@@ -714,10 +864,6 @@ DEPENDENCIES:
                         "enum": ["compact", "full"],
                         "default": "full"
                     },
-                    "api_key": {
-                        "type": "string",
-                        "description": "API key for authentication. Required to prove ownership of agent_id. Prevents impersonation and identity theft. Use get_agent_api_key tool to retrieve your key."
-                    },
                     "auto_export_on_significance": {
                         "type": "boolean",
                         "description": "If true, automatically export governance history when thermodynamically significant events occur (risk spike >15%, coherence drop >10%, void threshold >0.10, circuit breaker triggered, or pause/reject decision). Default: false.",
@@ -726,16 +872,40 @@ DEPENDENCIES:
                     "task_type": {
                         "type": "string",
                         "enum": ["convergent", "divergent", "mixed"],
-                        "description": "Optional task type context. 'convergent' (standardization, formatting) vs 'divergent' (creative exploration). System interprets S=0 differently: convergent S=0 is healthy compliance, divergent S=0 may indicate lack of exploration. Prevents false positives on 'compliance vs health'.",
+                        "description": "Optional task type context. Valid values: \"convergent\" | \"divergent\" | \"mixed\". 'convergent' (standardization, formatting) vs 'divergent' (creative exploration). System interprets S=0 differently: convergent S=0 is healthy compliance, divergent S=0 may indicate lack of exploration. Prevents false positives on 'compliance vs health'.",
                         "default": "mixed"
                     },
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding
             }
         ),
         Tool(
             name="get_governance_metrics",
             description="""Get current governance state and metrics for an agent without updating state.
+
+✨ WHAT IT DOES:
+- Shows your current "health" metrics (Energy, Integrity, Entropy, Void)
+- Displays your risk score and coherence
+- Provides sampling parameters for your next generation
+- Shows your decision history (proceed vs pause)
+
+💡 WHY THIS MATTERS:
+This is like checking your dashboard—it shows where you are right now without logging new work. Use this when you want to understand your current state before making decisions. The metrics help you understand:
+- **Risk Score**: How risky your current state is (lower is safer)
+- **Coherence**: How consistent your work is (higher is better)
+- **Verdict**: Overall assessment (safe/caution/high-risk)
+
+SEE ALSO:
+- status() - Alias for this tool (intuitive name, same functionality)
+- health_check() - System health (not agent-specific, server-level)
+- get_connection_status() - MCP connection status (transport-level)
+- identity() - Agent identity (who you are, not metrics)
+
+ALTERNATIVES:
+- Want intuitive name? → Use status() instead (same tool)
+- Want system health? → Use health_check() (server-level, not agent metrics)
+- Want connection status? → Use get_connection_status() (MCP transport)
+- Want identity info? → Use identity() (who you are, display name, UUID)
 
 USE CASES:
 - Check current agent state before making decisions
@@ -786,22 +956,27 @@ EXAMPLE RESPONSE:
 }
 
 DEPENDENCIES:
-- Requires: agent_id (must exist - use list_agents to find)
+- Optional: agent_id (auto-injected from session if bound)
+- Optional: client_session_id (for session continuity across calls)
 - Workflow: Call after process_agent_update to check current state""",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
-                        "description": "UNIQUE agent identifier. Must match an existing agent ID."
+                        "description": "UNIQUE agent identifier. Optional if session-bound (auto-injected). Must match an existing agent ID if provided."
                     },
                     "include_state": {
-                        "type": "boolean",
-                        "description": "Include nested state dict in response (can be large). Default false to reduce context bloat.",
+                        "type": ["boolean", "string", "null"],
+                        "description": "Include nested state dict in response (can be large). Default false to reduce context bloat. Accepts boolean or string ('true'/'false').",
                         "default": False
                     }
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding
             }
         ),
         Tool(
@@ -831,6 +1006,10 @@ ERROR RECOVERY:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "UNIQUE agent identifier. Must match an existing agent ID."
@@ -842,7 +1021,7 @@ ERROR RECOVERY:
                         "default": "json"
                     }
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding
             }
         ),
         Tool(
@@ -908,6 +1087,10 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier"
@@ -928,7 +1111,7 @@ DEPENDENCIES:
                         "default": False
                     }
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding
             }
         ),
         Tool(
@@ -969,17 +1152,24 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier"
                     }
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding
             }
         ),
         Tool(
             name="list_agents",
-            description="""List all agents currently being monitored with lifecycle metadata and health status. By default, test/demo agents are filtered out for cleaner views.
+            description="""List all agents currently being monitored with lifecycle metadata and health status.
+
+LITE MODE (Default): Returns a compact list of recent active agents.
+FULL MODE (lite=false): Returns detailed metadata, metrics, and pagination.
 
 USE CASES:
 - See all active agents in the system
@@ -987,14 +1177,38 @@ USE CASES:
 - Find agents by status (active/waiting_input/paused/archived)
 - Monitor agent population
 
-PARAMETERS:
-- include_test_agents (bool, default: false): Include test/demo agents (filtered out by default)
-- include_metrics (bool, default: true): Include full metrics (EISV, health, etc.)
-- status_filter (str, default: "all"): Filter by status (active/waiting_input/paused/archived/deleted/all)
-- grouped (bool, default: true): Group agents by status
-- summary_only (bool, default: false): Return only summary statistics
+SEE ALSO:
+- get_agent_metadata - Get detailed info for ONE specific agent
+- observe_agent - Get pattern analysis for ONE agent (with history)
+- compare_agents - Compare multiple specific agents side-by-side
+- aggregate_metrics - Fleet-wide statistics (aggregated, not individual)
 
-RETURNS:
+ALTERNATIVES:
+- Want details for one agent? → Use get_agent_metadata(agent_id="...")
+- Want pattern analysis? → Use observe_agent(agent_id="...")
+- Want to compare specific agents? → Use compare_agents(agent_ids=[...])
+- Want fleet statistics? → Use aggregate_metrics() (summary, not list)
+
+RETURNS (LITE MODE - Default):
+{
+  "success": true,
+  "agents": [
+    {
+      "id": "string",
+      "label": "string | null",
+      "purpose": "string | null",
+      "updates": int,
+      "last": "YYYY-MM-DD"
+    }
+  ],
+  "shown": int,
+  "matching": int,
+  "total_all": int,
+  "more": "string (hint if more results exist)",
+  "filter": "string (hint about active filters)"
+}
+
+RETURNS (FULL MODE - lite=false):
 {
   "success": true,
   "agents": {
@@ -1012,73 +1226,43 @@ RETURNS:
   }
 }
 
-RELATED TOOLS:
-- get_governance_metrics: Get detailed metrics for a specific agent
-- get_agent_metadata: Get complete metadata for an agent
+VALID ENUM VALUES:
+- status_filter: "active" | "waiting_input" | "paused" | "archived" | "deleted" | "all"
+- lifecycle_status: "active" | "waiting_input" | "paused" | "archived" | "deleted"
+- health_status: "healthy" | "moderate" | "critical" | "unknown"
 
-EXAMPLE REQUEST:
-{
-  "include_test_agents": false,
-  "include_metrics": true,
-  "status_filter": "active"
-}
+EXAMPLE REQUEST (LITE):
+{}
 
-EXAMPLE RESPONSE:
+EXAMPLE RESPONSE (LITE):
 {
   "success": true,
-  "agents": {
-    "active": [
-      {
-        "agent_id": "claude_opus_45_20251209",
-        "lifecycle_status": "active",
-        "health_status": "healthy",
-        "total_updates": 13,
-        "metrics": {...}
-      }
-    ]
-  },
-  "summary": {
-    "total": 34,
-    "by_status": {"active": 34},
-    "by_health": {"healthy": 3, "moderate": 12, "unknown": 19}
-  }
+  "agents": [
+    {
+      "id": "Riley_refactor_20251209",
+      "label": "Riley",
+      "purpose": "Refactoring auth module",
+      "updates": 13,
+      "last": "2025-12-26"
+    }
+  ],
+  "shown": 1,
+  "matching": 1,
+  "total_all": 34
 }
 
 DEPENDENCIES:
 - No dependencies - safe to call anytime
 - Test agents filtered by default (set include_test_agents=true to see them)
-
-RETURNS:
-{
-  "success": true,
-  "agents": [
-    {
-      "agent_id": "string",
-      "lifecycle_status": "active" | "paused" | "archived" | "deleted",
-      "health_status": "healthy" | "moderate" | "critical" | "unknown",
-      "created": "ISO timestamp",
-      "last_update": "ISO timestamp",
-      "total_updates": int,
-      "metrics": {...} (if include_metrics=true)
-    },
-    ...
-  ],
-  "summary": {
-    "total": int,
-    "by_status": {"active": int, "paused": int, ...},
-    "by_health": {"healthy": int, "moderate": int, ...}
-  }
-}
-
-EXAMPLE REQUEST:
-{"grouped": true, "include_metrics": false}
-
-DEPENDENCIES:
-- No dependencies - safe to call anytime
-- Workflow: Use to discover available agents before calling other tools""",
+- Default: lite=true, status_filter="active", recent_days=7""",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "lite": {
+                        "type": "boolean",
+                        "description": "Use lite mode for a compact, fast response (default: True)",
+                        "default": True
+                    },
                     "summary_only": {
                         "type": "boolean",
                         "description": "Return only summary statistics (counts), no agent details",
@@ -1102,13 +1286,13 @@ DEPENDENCIES:
                         "minimum": 0
                     },
                     "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of agents to return (for pagination). Omit for no limit.",
+                        "type": ["integer", "string", "null"],
+                        "description": "Maximum number of agents to return (for pagination). Omit for no limit. Accepts number or numeric string.",
                         "minimum": 1
                     },
                     "include_metrics": {
-                        "type": "boolean",
-                        "description": "Include full EISV metrics for loaded agents (faster if False)",
+                        "type": ["boolean", "string", "null"],
+                        "description": "Include full EISV metrics for loaded agents (faster if False). Accepts boolean or string ('true'/'false').",
                         "default": True
                     },
                     "grouped": {
@@ -1124,6 +1308,17 @@ DEPENDENCIES:
                     "include_test_agents": {
                         "type": "boolean",
                         "description": "Include test/demo agents in results (filtered out by default for cleaner views)",
+                        "default": False
+                    },
+                    "recent_days": {
+                        "type": ["integer", "string", "null"],
+                        "description": "Only show agents active in the last N days (default 7). Set to 0 to show all. Accepts number or numeric string.",
+                        "default": 7,
+                        "minimum": 0
+                    },
+                    "named_only": {
+                        "type": "boolean",
+                        "description": "Only show agents with display names/labels (skip unnamed agents)",
                         "default": False
                     }
                 }
@@ -1180,6 +1375,10 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier to delete (must be your own agent)"
@@ -1193,13 +1392,9 @@ DEPENDENCIES:
                         "type": "boolean",
                         "description": "Archive data before deletion",
                         "default": True
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "API key for authentication (required - must match agent_id). You can only delete your own agent."
                     }
                 },
-                "required": ["agent_id", "api_key"]
+                "required": []  # agent_id optional - injected from MCP session binding (UUID-based auth Dec 2025)
             }
         ),
         Tool(
@@ -1234,6 +1429,18 @@ RETURNS:
   "total_updates": int
 }
 
+SEE ALSO:
+- identity() - Your own identity (UUID, display name, session token)
+- get_governance_metrics / status() - Current metrics only (not full metadata)
+- observe_agent() - Pattern analysis with history (not just metadata)
+- list_agents() - List all agents (summary, not full metadata)
+
+ALTERNATIVES:
+- Want your own identity? → Use identity() (simpler, just identity info)
+- Want current metrics? → Use get_governance_metrics() or status() (metrics only)
+- Want pattern analysis? → Use observe_agent() (analysis + history, not metadata)
+- Want to list agents? → Use list_agents() (summary list, not full details)
+
 RELATED TOOLS:
 - list_agents: List all agents with metadata
 - update_agent_metadata: Update tags and notes
@@ -1263,12 +1470,16 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier"
                     }
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding
             }
         ),
         Tool(
@@ -1299,7 +1510,6 @@ RELATED TOOLS:
 EXAMPLE REQUEST:
 {
   "agent_id": "test_agent_001",
-  "api_key": "gk_live_...",
   "summary": "Completed analysis of governance metrics"
 }
 
@@ -1314,26 +1524,26 @@ EXAMPLE RESPONSE:
 }
 
 DEPENDENCIES:
-- Requires: agent_id
-- Optional: api_key (for authentication), summary (for lifecycle event)
+- Requires: agent_id (auto-injected from session binding)
+- Optional: summary (for lifecycle event)
 - Note: This is a lightweight update - does NOT trigger EISV governance cycle""",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier"
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "API key for authentication (optional)"
                     },
                     "summary": {
                         "type": "string",
                         "description": "Optional summary of completed work (for lifecycle event)"
                     }
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding (UUID-based auth Dec 2025)
             }
         ),
         Tool(
@@ -1374,7 +1584,6 @@ RELATED TOOLS:
 EXAMPLE REQUEST:
 {
   "agent_id": "test_agent_001",
-  "api_key": "gk_live_...",
   "conditions": ["Monitor for 24h", "Reduce complexity to 0.3"],
   "reason": "Simple stuck scenario - state is safe"
 }
@@ -1390,7 +1599,6 @@ EXAMPLE RESPONSE:
   "metrics": {
     "coherence": 0.65,
     "risk_score": 0.35,  # Governance/operational risk (primary)
-    "attention_score": 0.35,  # DEPRECATED: Use risk_score instead
     "phi": 0.20,  # Primary physics signal
     "verdict": "caution",  # Primary governance signal
     "void_active": false,
@@ -1400,20 +1608,20 @@ EXAMPLE RESPONSE:
 }
 
 DEPENDENCIES:
-- Requires: agent_id, api_key
+- Requires: agent_id (auto-injected from session binding)
 - Optional: conditions (list of resumption conditions), reason (explanation)
 - Safety checks: coherence > 0.40, risk_score < 0.60, void_active == false, status in [paused, waiting_input, moderate]
 - Workflow: 1. Check metrics with get_governance_metrics 2. If safe, call direct_resume_if_safe 3. If not safe, use request_dialectic_review""",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier"
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "API key for authentication (required)"
                     },
                     "conditions": {
                         "type": "array",
@@ -1427,7 +1635,7 @@ DEPENDENCIES:
                         "description": "Reason for resumption (optional)"
                     }
                 },
-                "required": ["agent_id", "api_key"]
+                "required": []  # agent_id optional - injected from MCP session binding (UUID-based auth Dec 2025)
             }
         ),
         Tool(
@@ -1449,6 +1657,18 @@ RETURNS:
   "reason": "string (if provided)",
   "kept_in_memory": boolean
 }
+
+SEE ALSO:
+- list_agents() - See archived agents (read, not write)
+- delete_agent() - Delete instead of archive (permanent, not resumable)
+- archive_old_test_agents() - Auto-archive stale agents (bulk, not single)
+- update_agent_metadata() - Update tags/notes (modify, not archive)
+
+ALTERNATIVES:
+- Want to see archived? → Use list_agents(status_filter="archived") (read, not write)
+- Want permanent deletion? → Use delete_agent() (permanent, not resumable)
+- Want bulk archive? → Use archive_old_test_agents() (multiple, not single)
+- Want to modify metadata? → Use update_agent_metadata() (modify, not archive)
 
 RELATED TOOLS:
 - list_agents: See archived agents
@@ -1479,6 +1699,10 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier to archive"
@@ -1493,16 +1717,17 @@ DEPENDENCIES:
                         "default": False
                     }
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding
             }
         ),
         Tool(
             name="update_agent_metadata",
-            description="""Update agent tags and notes. Tags are replaced, notes can be appended or replaced.
+            description="""Update agent tags, notes, and preferences. Tags are replaced, notes can be appended or replaced.
 
 USE CASES:
 - Add tags for categorization
 - Update agent notes
+- Set verbosity preference (minimal/compact/standard/full)
 - Organize agents with metadata
 
 RETURNS:
@@ -1512,8 +1737,19 @@ RETURNS:
   "agent_id": "string",
   "tags": ["string"] (updated),
   "notes": "string" (updated),
+  "preferences": {"verbosity": "minimal"} (if set),
   "updated_at": "ISO timestamp"
 }
+
+SEE ALSO:
+- get_agent_metadata() - View current metadata (read, not write)
+- identity() - Update display name (simpler, just name)
+- list_agents() - Filter by tags (read, not write)
+
+ALTERNATIVES:
+- Want to view metadata? → Use get_agent_metadata() (read, not write)
+- Want to change name? → Use identity(name="...") (simpler, just name)
+- Want to list agents? → Use list_agents() (read, not write)
 
 RELATED TOOLS:
 - get_agent_metadata: View current metadata
@@ -1539,17 +1775,17 @@ EXAMPLE RESPONSE:
 
 DEPENDENCIES:
 - Requires: agent_id (must exist)
-- Optional: tags (replaces existing), notes (replaces or appends based on append_notes), purpose (documents intent)""",
+- Optional: tags (replaces existing), notes (replaces or appends based on append_notes), purpose (documents intent), preferences (verbosity settings)""",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier"
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "API key for authentication (required unless session-bound identity can supply it)"
                     },
                     "tags": {
                         "type": "array",
@@ -1568,9 +1804,20 @@ DEPENDENCIES:
                         "type": "boolean",
                         "description": "Append notes with timestamp instead of replacing",
                         "default": False
+                    },
+                    "preferences": {
+                        "type": "object",
+                        "description": "Agent preferences. Supported: verbosity ('minimal'|'compact'|'standard'|'full'|'auto')",
+                        "properties": {
+                            "verbosity": {
+                                "type": "string",
+                                "enum": ["minimal", "compact", "standard", "full", "auto"],
+                                "description": "Response verbosity level for process_agent_update"
+                            }
+                        }
                     }
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding
             }
         ),
         Tool(
@@ -1632,6 +1879,75 @@ DEPENDENCIES:
             }
         ),
         Tool(
+            name="archive_orphan_agents",
+            description="""Aggressively archive orphan agents to prevent proliferation. Much more aggressive than archive_old_test_agents.
+
+USE CASES:
+- Clean up UUID-named agents without labels
+- Prevent agent proliferation from session issues
+- Free up resources from abandoned agents
+
+TARGETS:
+- UUID-named agents with 0 updates after 1 hour
+- Unlabeled agents with 0-1 updates after 3 hours
+- Unlabeled UUID agents with 2+ updates after 6 hours
+
+PRESERVES:
+- Agents with labels/display names
+- Agents with "pioneer" tag
+- Recently active agents
+
+RETURNS:
+{
+  "success": true,
+  "dry_run": boolean,
+  "archived_count": int,
+  "archived_agents": [{"id": "uuid...", "reason": "...", "updates": int}],
+  "thresholds": {"zero_update_hours": 1.0, "low_update_hours": 3.0, "unlabeled_hours": 6.0}
+}
+
+EXAMPLE REQUEST:
+{"dry_run": true}  // Preview without archiving
+
+EXAMPLE RESPONSE:
+{
+  "success": true,
+  "dry_run": true,
+  "archived_count": 45,
+  "archived_agents": [{"id": "3a3057b8-bc6...", "reason": "orphan UUID, 0 updates, 2.5h", "updates": 0}],
+  "thresholds": {"zero_update_hours": 1.0, "low_update_hours": 3.0, "unlabeled_hours": 6.0},
+  "action": "preview - set dry_run=false to execute"
+}""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "zero_update_hours": {
+                        "type": "number",
+                        "description": "Archive UUID agents with 0 updates after this many hours (default: 1.0)",
+                        "default": 1.0,
+                        "minimum": 0.1
+                    },
+                    "low_update_hours": {
+                        "type": "number",
+                        "description": "Archive unlabeled agents with 0-1 updates after this many hours (default: 3.0)",
+                        "default": 3.0,
+                        "minimum": 0.1
+                    },
+                    "unlabeled_hours": {
+                        "type": "number",
+                        "description": "Archive unlabeled UUID agents with 2+ updates after this many hours (default: 6.0)",
+                        "default": 6.0,
+                        "minimum": 0.1
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Preview what would be archived without actually archiving (default: false)",
+                        "default": False
+                    }
+                }
+            }
+        ),
+        Tool(
             name="simulate_update",
             description="""Dry-run governance cycle. Returns decision without persisting state. Useful for testing decisions before committing. State is NOT modified.
 
@@ -1639,6 +1955,16 @@ USE CASES:
 - Test governance decisions without persisting
 - Preview what decision would be made
 - Validate parameters before committing
+
+SEE ALSO:
+- process_agent_update() - Actual update (persists state, logs work)
+- get_governance_metrics / status() - Check current state (read-only)
+- get_system_history() - View historical trends (past data, not simulation)
+
+ALTERNATIVES:
+- Want to actually log work? → Use process_agent_update() (persists, not dry-run)
+- Want current state? → Use get_governance_metrics() (read-only, not simulation)
+- Want historical data? → Use get_system_history() (past trends, not future simulation)
 
 RETURNS:
 {
@@ -1695,12 +2021,16 @@ EXAMPLE RESPONSE:
 }
 
 DEPENDENCIES:
-- Requires: agent_id (must exist)
-- Optional: parameters, ethical_drift, response_text, complexity, confidence, api_key
+- Requires: agent_id (auto-injected from session binding)
+- Optional: parameters, ethical_drift, response_text, complexity, confidence
 - Note: State is NOT modified - this is a dry run""",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier"
@@ -1722,24 +2052,25 @@ DEPENDENCIES:
                         "description": "Agent's response text (optional)"
                     },
                     "complexity": {
-                        "type": "number",
-                        "description": "Estimated task complexity (0-1)",
+                        "type": ["number", "string", "null"],
+                        "description": "Estimated task complexity (0-1). Accepts number or numeric string.",
                         "minimum": 0.0,
                         "maximum": 1.0,
                         "default": 0.5
                     },
                     "confidence": {
-                        "type": "number",
-                        "description": "Confidence level for this update (0-1, optional). If omitted, the system derives confidence from thermodynamic state (I, S, coherence, |V|) and observed outcomes. When confidence < 0.8, lambda1 updates are skipped.",
+                        "type": ["number", "string", "null"],
+                        "description": "Confidence level for this update (0-1, optional). Accepts number or numeric string. If omitted, the system derives confidence from thermodynamic state (I, S, coherence, |V|) and observed outcomes. When confidence < 0.8, lambda1 updates are skipped.",
                         "minimum": 0.0,
                         "maximum": 1.0
                     },
-                    "api_key": {
-                        "type": "string",
-                        "description": "API key for authentication"
+                    "lite": {
+                        "type": ["boolean", "string"],
+                        "description": "If true, return simplified response with key metrics only (status, decision, E/I/S/V, coherence, risk_score, guidance). Default false (full response with all diagnostics).",
+                        "default": False
                     }
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding (UUID-based auth Dec 2025)
             }
         ),
         Tool(
@@ -1885,6 +2216,18 @@ RETURNS:
   "agent_ids": ["string"] (if agent_ids specified)
 }
 
+SEE ALSO:
+- list_agents() - See individual agents (list, not aggregated)
+- observe_agent() - Detailed analysis of ONE agent (not aggregated)
+- compare_agents() - Compare multiple agents (comparison, not aggregation)
+- detect_anomalies() - Find anomalies (prioritized issues, not aggregation)
+
+ALTERNATIVES:
+- Want agent list? → Use list_agents() (individual agents, not aggregated)
+- Want single agent? → Use observe_agent() (one agent, not fleet)
+- Want comparison? → Use compare_agents() (comparison, not aggregation)
+- Want anomalies? → Use detect_anomalies() (issues, not aggregation)
+
 RELATED TOOLS:
 - observe_agent: Detailed analysis of single agent
 - detect_anomalies: Find unusual patterns
@@ -1925,8 +2268,8 @@ DEPENDENCIES:
                         "description": "Agent IDs to aggregate (null/empty = all agents)"
                     },
                     "include_health_breakdown": {
-                        "type": "boolean",
-                        "description": "Include health status breakdown",
+                        "type": ["boolean", "string", "null"],
+                        "description": "Include health status breakdown. Accepts boolean or string ('true'/'false').",
                         "default": True
                     }
                 }
@@ -1948,6 +2291,18 @@ RETURNS:
 - History: Recent updates and decisions
 - Summary statistics: optimized for AI consumption
 
+SEE ALSO:
+- get_governance_metrics / status() - Simple state without analysis (read-only, no patterns)
+- get_agent_metadata - Full metadata (lifecycle, tags, notes, not analysis)
+- compare_agents - Compare multiple agents side-by-side (not single agent)
+- detect_anomalies - Fleet-wide anomaly detection (all agents, not one)
+
+ALTERNATIVES:
+- Want simple state? → Use get_governance_metrics() (metrics only, no analysis)
+- Want metadata? → Use get_agent_metadata() (lifecycle info, not patterns)
+- Want to compare agents? → Use compare_agents() (multiple agents, not single)
+- Want fleet anomalies? → Use detect_anomalies() (all agents, not one)
+
 RELATED TOOLS:
 - get_governance_metrics: Simple state without analysis
 - compare_agents: Compare multiple agents
@@ -1966,22 +2321,26 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier to observe"
                     },
                     "include_history": {
-                        "type": "boolean",
-                        "description": "Include recent history (last 10 updates)",
+                        "type": ["boolean", "string", "null"],
+                        "description": "Include recent history (last 10 updates). Accepts boolean or string ('true'/'false').",
                         "default": True
                     },
                     "analyze_patterns": {
-                        "type": "boolean",
-                        "description": "Perform pattern analysis (trends, anomalies)",
+                        "type": ["boolean", "string", "null"],
+                        "description": "Perform pattern analysis (trends, anomalies). Accepts boolean or string ('true'/'false').",
                         "default": True
                     }
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding
             }
         ),
         Tool(
@@ -2016,6 +2375,18 @@ RETURNS:
   },
   "metrics_compared": ["string"]
 }
+
+SEE ALSO:
+- observe_agent() - Detailed analysis of ONE agent (not comparison)
+- compare_me_to_similar() - Compare yourself to similar agents automatically
+- aggregate_metrics() - Fleet-wide statistics (aggregated, not comparison)
+- detect_anomalies() - Find anomalies (prioritized, not comparison)
+
+ALTERNATIVES:
+- Want single agent analysis? → Use observe_agent() (one agent, not comparison)
+- Want auto-similarity? → Use compare_me_to_similar() (finds similar automatically)
+- Want fleet stats? → Use aggregate_metrics() (summary, not comparison)
+- Want anomalies? → Use detect_anomalies() (prioritized issues, not comparison)
 
 RELATED TOOLS:
 - observe_agent: Detailed analysis of single agent
@@ -2144,6 +2515,10 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Your agent ID"
@@ -2154,7 +2529,111 @@ DEPENDENCIES:
                         "default": 0.15
                     }
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding
+            }
+        ),
+        Tool(
+            name="get_roi_metrics",
+            description="""Calculate ROI metrics showing value delivered by multi-agent coordination.
+
+Returns time saved, coordination efficiency, knowledge sharing metrics, and cost savings estimates.
+
+USE CASES:
+- Show customers the value they're getting
+- Justify pricing/ROI
+- Track coordination effectiveness
+- Measure knowledge sharing impact
+
+RETURNS:
+{
+  "success": true,
+  "time_saved": {
+    "hours": float,
+    "days": float,
+    "description": "Estimated time saved from preventing duplicate work"
+  },
+  "duplicates_prevented": int,
+  "coordination_efficiency": {
+    "score": float (0-1),
+    "percentage": float,
+    "description": "How well agents coordinate (0.0 = no coordination, 1.0 = perfect)"
+  },
+  "knowledge_sharing": {
+    "total_discoveries": int,
+    "unique_agents_contributing": int,
+    "avg_discoveries_per_agent": float
+  },
+  "cost_savings": {
+    "estimated_usd": float,
+    "hourly_rate_used": int,
+    "description": "Estimated cost savings at developer hourly rate"
+  },
+  "system_health": {
+    "total_agents": int,
+    "active_agents": int,
+    "coordination_active": boolean
+  }
+}
+
+SEE ALSO:
+- aggregate_metrics() - Fleet-wide health overview
+- get_telemetry_metrics() - System telemetry
+- list_knowledge_graph() - Knowledge graph stats
+
+ALTERNATIVES:
+- Want fleet health? → Use aggregate_metrics() (system-wide)
+- Want telemetry? → Use get_telemetry_metrics() (operational)
+- Want knowledge stats? → Use list_knowledge_graph() (knowledge-specific)
+
+EXAMPLE REQUEST:
+{
+  "hourly_rate": 100  // Optional: Developer hourly rate (default: $100/hour)
+}
+
+EXAMPLE RESPONSE:
+{
+  "success": true,
+  "time_saved": {
+    "hours": 12.5,
+    "days": 1.56,
+    "description": "Estimated time saved from preventing 25 duplicate work items"
+  },
+  "duplicates_prevented": 25,
+  "coordination_efficiency": {
+    "score": 0.85,
+    "percentage": 85.0,
+    "description": "Measures how well agents coordinate and share knowledge"
+  },
+  "knowledge_sharing": {
+    "total_discoveries": 150,
+    "unique_agents_contributing": 12,
+    "avg_discoveries_per_agent": 12.5
+  },
+  "cost_savings": {
+    "estimated_usd": 1250.0,
+    "hourly_rate_used": 100,
+    "description": "Estimated cost savings at $100/hour developer rate"
+  },
+  "system_health": {
+    "total_agents": 50,
+    "active_agents": 12,
+    "coordination_active": true
+  }
+}
+
+DEPENDENCIES:
+- Requires: Knowledge graph access
+- Optional: hourly_rate parameter (default: $100/hour)""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hourly_rate": {
+                        "type": "number",
+                        "description": "Optional: Developer hourly rate for cost calculations (default: $100/hour)",
+                        "default": 100
+                    }
+                },
+                "required": []
             }
         ),
         Tool(
@@ -2191,6 +2670,18 @@ RETURNS:
     "min_severity": "string"
   }
 }
+
+SEE ALSO:
+- observe_agent() - Detailed analysis of ONE agent (not anomaly detection)
+- compare_agents() - Compare multiple agents (not anomaly-focused)
+- aggregate_metrics() - Fleet-wide statistics (summary, not anomalies)
+- compare_me_to_similar() - Compare yourself to similar agents (not anomalies)
+
+ALTERNATIVES:
+- Want single agent analysis? → Use observe_agent() (one agent, not anomalies)
+- Want to compare agents? → Use compare_agents() (comparison, not anomalies)
+- Want fleet stats? → Use aggregate_metrics() (summary, not anomalies)
+- Want self-comparison? → Use compare_me_to_similar() (similarity, not anomalies)
 
 RELATED TOOLS:
 - observe_agent: Detailed analysis of specific agent
@@ -2246,84 +2737,25 @@ DEPENDENCIES:
                 }
             }
         ),
-        Tool(
-            name="get_agent_api_key",
-            description="""Get or generate API key for an agent. Required for authentication when updating agent state. Prevents impersonation and identity theft.
-
-USE CASES:
-- Get API key for existing agent
-- Generate API key for new agent
-- Recover lost API key
-- Regenerate compromised key
-
-RETURNS:
-{
-  "success": true,
-  "agent_id": "string",
-  "api_key": "string",
-  "is_new": boolean,
-  "regenerated": boolean,
-  "message": "string"
-}
-
-RELATED TOOLS:
-- process_agent_update: Use API key for authentication
-- list_agents: Find agent_id
-
-EXAMPLE REQUEST:
-{
-  "agent_id": "test_agent_001",
-  "regenerate": false
-}
-
-EXAMPLE RESPONSE:
-{
-  "success": true,
-  "agent_id": "test_agent_001",
-  "api_key": "gk_live_abc123...",
-  "is_new": false,
-  "regenerated": false,
-  "message": "API key retrieved"
-}
-
-DEPENDENCIES:
-- Requires: agent_id (will create if new)
-- Optional: regenerate (default: false, invalidates old key if true)
-- Optional: purpose (stores agent intent metadata if provided)
-- Security: API key required for process_agent_update on existing agents""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "agent_id": {
-                        "type": "string",
-                        "description": "Agent identifier"
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "API key for authentication (required for existing agents unless session-bound identity can supply it)"
-                    },
-                    "regenerate": {
-                        "type": "boolean",
-                        "description": "Regenerate API key (invalidates old key)",
-                        "default": False
-                    },
-                    "purpose": {
-                        "type": "string",
-                        "description": "Optional description of agent's purpose/intent (stored in metadata)"
-                    }
-                },
-                "required": ["agent_id"]
-            }
-        ),
+        # REMOVED: get_agent_api_key (Dec 2025)
+        # API keys deprecated - UUID-based session auth is now primary.
+        # Calls to get_agent_api_key are aliased to identity() via tool_stability.py
         Tool(
             name="list_tools",
-            description="""List all available governance tools with descriptions and categories. Provides runtime introspection for agents to discover capabilities. Useful for onboarding new agents and understanding the toolset.
+            description="""📚 Discover all available tools. Your guide to what's possible.
 
-USE CASES:
-- Discover available tools
-- Understand tool categories
-- Onboard new agents
-- Find tools by purpose
+✨ WHAT IT DOES:
+- Lists all available governance tools
+- Shows tool descriptions and categories
+- Helps you discover capabilities
+- Provides tool relationships and workflows
+
+📋 WHEN TO USE:
+- First time exploring the system
+- Looking for a specific tool
+- Understanding tool categories
+- Finding related tools
+- Onboarding and learning the system
 
 RETURNS:
 {
@@ -2381,12 +2813,12 @@ DEPENDENCIES:
                 "type": "object",
                 "properties": {
                     "essential_only": {
-                        "type": "boolean",
+                        "type": ["boolean", "string"],
                         "description": "If true, return only Tier 1 (essential) tools (~10). Shortcut for tier='essential'.",
                         "default": False
                     },
                     "include_advanced": {
-                        "type": "boolean",
+                        "type": ["boolean", "string"],
                         "description": "If false, exclude Tier 3 (advanced) tools (default true).",
                         "default": True
                     },
@@ -2397,8 +2829,18 @@ DEPENDENCIES:
                         "default": "all"
                     },
                     "lite": {
-                        "type": "boolean",
-                        "description": "If true, return minimal response (~500B): just tool names and descriptions. Use describe_tool() for full schema on specific tools.",
+                        "type": ["boolean", "string"],
+                        "description": "If true/false, controls response size. Default true (minimal ~500B). Use false for full details.",
+                        "default": True
+                    },
+                    "progressive": {
+                        "type": ["boolean", "string"],
+                        "description": "If true, order tools by usage frequency (most used first). Works with all filter modes (lite, essential_only, tier). Default false.",
+                        "default": False
+                    },
+                    "include_details": {
+                        "type": ["boolean", "string"],
+                        "description": "If true, include large metadata blocks (tiers/categories/workflows/relationships). Default false to keep responses small.",
                         "default": False
                     }
                 }
@@ -2406,9 +2848,25 @@ DEPENDENCIES:
         ),
         Tool(
             name="describe_tool",
-            description="""Describe a single tool (full description + full schema) on-demand.
+            description="""📖 Get full details for a specific tool. Deep dive into any tool.
 
-Use this to avoid context bloat: list_tools / MCP tool lists keep descriptions short, and you only pull details for the tool you actually need.
+✨ WHAT IT DOES:
+- Returns complete tool description
+- Shows full parameter schema
+- Provides usage examples
+- Explains parameters and return values
+
+💡 WHY USE THIS:
+- list_tools() shows brief hints (to save context)
+- describe_tool() gives you full details when you need them
+- Use this before calling a tool to understand it fully
+- Perfect for learning how tools work
+
+📋 HOW TO USE:
+1. Call list_tools() to see available tools
+2. Pick a tool you're interested in
+3. Call describe_tool(tool_name="...") for full details
+4. Use the examples to call the tool correctly
 
 RETURNS:
 {
@@ -2428,13 +2886,18 @@ RETURNS:
                         "description": "Canonical tool name (e.g. 'process_agent_update')"
                     },
                     "include_schema": {
-                        "type": "boolean",
+                        "type": ["boolean", "string"],
                         "description": "If true, include full inputSchema (default true)",
                         "default": True
                     },
                     "include_full_description": {
-                        "type": "boolean",
+                        "type": ["boolean", "string"],
                         "description": "If true, include the full multi-line description (default true). If false, returns only the first line.",
+                        "default": True
+                    },
+                    "lite": {
+                        "type": ["boolean", "string"],
+                        "description": "If true, return simplified schema (default true)",
                         "default": True
                     }
                 },
@@ -2560,489 +3023,11 @@ DEPENDENCIES:
                 "required": ["file_path"]
             }
         ),
-        Tool(
-            name="request_dialectic_review",
-            description="""Request a dialectic review for a paused/critical agent OR an agent stuck in loops OR a discovery dispute/correction. Selects a healthy reviewer agent and initiates dialectic session for recovery or critique.
-
-USE CASES:
-- Recover from circuit breaker state (paused agents)
-- Get peer assistance for agents stuck in repeated loops
-- Dispute or correct discoveries from other agents (if discovery_id provided)
-- Initiate dialectic recovery process
-- Help agents get unstuck from loop cooldowns
-- Collaborative critique and knowledge refinement
-
-RETURNS:
-{
-  "success": true,
-  "session_id": "string",
-  "paused_agent_id": "string",
-  "reviewer_agent_id": "string",
-  "phase": "thesis",
-  "reason": "string",
-  "next_step": "string",
-  "created_at": "ISO timestamp",
-  "discovery_id": "string (if discovery dispute)",
-  "dispute_type": "string (if discovery dispute)",
-  "discovery_context": "string (if discovery dispute)"
-}
-
-RELATED TOOLS:
-- submit_thesis: First step in dialectic process
-- submit_antithesis: Second step
-- submit_synthesis: Third step (negotiation)
-- get_dialectic_session: Check session status
-
-EXAMPLE REQUEST (Recovery):
-{
-  "agent_id": "paused_agent_001",
-  "reason": "Circuit breaker triggered",
-  "api_key": "gk_live_..."
-}
-
-EXAMPLE REQUEST (Discovery Dispute):
-{
-  "agent_id": "disputing_agent_001",
-  "discovery_id": "2025-12-01T15:34:52.968372",
-  "dispute_type": "dispute",
-  "reason": "Discovery seems incorrect based on my analysis",
-  "api_key": "gk_live_..."
-}
-
-EXAMPLE RESPONSE (Recovery):
-{
-  "success": true,
-  "session_id": "abc123",
-  "paused_agent_id": "paused_agent_001",
-  "reviewer_agent_id": "reviewer_agent_002",
-  "phase": "thesis",
-  "reason": "Circuit breaker triggered",
-  "next_step": "Agent 'paused_agent_001' should submit thesis via submit_thesis()",
-  "created_at": "2025-11-25T12:00:00"
-}
-
-EXAMPLE RESPONSE (Discovery Dispute):
-{
-  "success": true,
-  "session_id": "def456",
-  "paused_agent_id": "disputing_agent_001",
-  "reviewer_agent_id": "discovery_owner_002",
-  "phase": "thesis",
-  "reason": "Disputing discovery '2025-12-01T15:34:52.968372': ...",
-  "discovery_id": "2025-12-01T15:34:52.968372",
-  "dispute_type": "dispute",
-  "discovery_context": "This dialectic session is for disputing/correcting a discovery",
-  "next_step": "Agent 'disputing_agent_001' should submit thesis via submit_thesis()",
-  "created_at": "2025-12-01T15:40:00"
-}
-
-DEPENDENCIES:
-- Requires: agent_id (paused agent OR disputing agent)
-- Optional: reason (default: "Circuit breaker triggered"), api_key (for authentication)
-- Optional: discovery_id (for discovery disputes), dispute_type (for discovery disputes)
-- Optional: reviewer_agent_id (explicit peer reviewer override; recommended for verification)
-- Optional: reviewer_mode ("peer" default, "self" for self-recovery, "auto" for peer-first fallback)
-- Optional: auto_progress (True for smart mode - auto-progresses phases, reduces steps by 50-70%)
-- Workflow: 1. request_dialectic_review 2. submit_thesis 3. submit_antithesis 4. submit_synthesis (until convergence)
-- Discovery disputes: If discovery_id provided, discovery marked as "disputed" and reviewer set to discovery owner
-- Self-recovery: Use reviewer_mode="self" when no reviewers available - system generates antithesis automatically
-- Smart mode: Use auto_progress=True to auto-generate thesis/antithesis/synthesis when possible""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "agent_id": {
-                        "type": "string",
-                        "description": "ID of paused agent requesting review OR agent disputing discovery"
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Reason for review request (e.g., 'Circuit breaker triggered', 'Discovery seems incorrect', etc.)",
-                        "default": "Circuit breaker triggered"
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "Agent's API key for authentication"
-                    },
-                    "discovery_id": {
-                        "type": "string",
-                        "description": "Optional: ID of discovery being disputed/corrected. If provided, marks discovery as 'disputed' and sets reviewer to discovery owner."
-                    },
-                    "dispute_type": {
-                        "type": "string",
-                        "enum": ["dispute", "correction", "verification"],
-                        "description": "Optional: Type of dispute. Defaults to 'dispute' if discovery_id provided. Ignored if discovery_id not provided."
-                    },
-                    "reviewer_agent_id": {
-                        "type": "string",
-                        "description": "Optional: Explicit reviewer agent_id override (peer reviewer). For discovery verification, this is the safest way to ensure non-self peer review. Ignored for reviewer_mode='self'."
-                    },
-                    "reviewer_mode": {
-                        "type": "string",
-                        "enum": ["peer", "self", "auto"],
-                        "description": "Optional: Recovery mode. 'peer' (default) = find peer reviewer, 'self' = system-assisted self-recovery (no peer needed), 'auto' = try peer first, fallback to self if no reviewers available."
-                    },
-                    "auto_progress": {
-                        "type": "boolean",
-                        "description": "Optional: If True, auto-progresses through dialectic phases (smart mode). Reduces manual steps by 50-70%. Default: False."
-                    },
-                    "root_cause": {
-                        "type": "string",
-                        "description": "Optional: Root cause analysis (auto-generated if not provided and auto_progress=True)"
-                    },
-                    "proposed_conditions": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional: Proposed recovery conditions (auto-generated if not provided and auto_progress=True)"
-                    },
-                    "reasoning": {
-                        "type": "string",
-                        "description": "Optional: Explanation (auto-generated if not provided and auto_progress=True)"
-                    }
-                },
-                "required": ["agent_id"]
-            }
-        ),
-        Tool(
-            name="request_exploration_session",
-            description="""Request a collaborative exploration session between two active agents.
-
-Unlike recovery sessions, exploration sessions are for:
-- Collaborative idea exploration
-- Peer review of concepts before implementation
-- Structured debates on design decisions
-- Open-ended philosophical discussions
-
-Both agents must be active (not paused/stuck). No resolution required - sessions can be ongoing and iterative.
-
-USE CASES:
-- Explore ideas collaboratively with another agent
-- Get peer feedback on concepts before implementation
-- Structured design debates
-- Open-ended discussions
-
-RETURNS:
-{
-  "success": true,
-  "session_id": "string",
-  "agent_id": "string",
-  "partner_agent_id": "string",
-  "topic": "string (if provided)",
-  "phase": "thesis",
-  "next_step": "string",
-  "created_at": "ISO timestamp"
-}
-
-RELATED TOOLS:
-- submit_thesis: First step in exploration
-- submit_antithesis: Second step
-- submit_synthesis: Third step (negotiation)
-- get_dialectic_session: Check session status
-
-EXAMPLE REQUEST:
-{
-  "agent_id": "exploring_agent_001",
-  "partner_agent_id": "partner_agent_002",
-  "topic": "Should complexity be a separate input or emerge from EISV?",
-  "api_key": "gk_live_..."
-}
-
-EXAMPLE RESPONSE:
-{
-  "success": true,
-  "session_id": "exploration_abc123",
-  "agent_id": "exploring_agent_001",
-  "partner_agent_id": "partner_agent_002",
-  "topic": "Should complexity be a separate input or emerge from EISV?",
-  "phase": "thesis",
-  "next_step": "Agent 'exploring_agent_001' should submit thesis via submit_thesis()",
-  "created_at": "2025-12-10T16:00:00"
-}
-
-DEPENDENCIES:
-- Requires: agent_id (must be active)
-- Optional: partner_agent_id (if not provided, system selects), topic, api_key
-- Workflow: 1. request_exploration_session 2. submit_thesis 3. submit_antithesis 4. submit_synthesis (iterative)
-- Note: Both agents must be active (not paused/stuck)""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "agent_id": {
-                        "type": "string",
-                        "description": "ID of agent initiating exploration (must be active)"
-                    },
-                    "partner_agent_id": {
-                        "type": "string",
-                        "description": "Optional: Specific agent to explore with (if not provided, system selects)"
-                    },
-                    "topic": {
-                        "type": "string",
-                        "description": "Optional: Topic/theme for exploration"
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "Agent's API key for authentication"
-                    }
-                },
-                "required": ["agent_id"]
-            }
-        ),
-        Tool(
-            name="submit_thesis",
-            description="""Paused agent submits thesis: 'What I did, what I think happened'. First step in dialectic recovery process.
-
-USE CASES:
-- Submit agent's understanding of what happened
-- Propose conditions for resumption
-- Begin dialectic recovery
-
-RETURNS:
-{
-  "success": boolean,
-  "phase": "antithesis",
-  "message": "string",
-  "next_step": "string",
-  "session_id": "string"
-}
-
-RELATED TOOLS:
-- request_dialectic_review: Initiate session
-- submit_antithesis: Next step after thesis
-- get_dialectic_session: Check status
-
-EXAMPLE REQUEST:
-{
-  "session_id": "abc123",
-  "agent_id": "paused_agent_001",
-  "api_key": "gk_live_...",
-  "root_cause": "Risk score exceeded threshold",
-  "proposed_conditions": ["Reduce complexity", "Increase confidence threshold"],
-  "reasoning": "I believe the issue was..."
-}
-
-EXAMPLE RESPONSE:
-{
-  "success": true,
-  "phase": "antithesis",
-  "message": "Thesis submitted successfully",
-  "next_step": "Reviewer 'reviewer_agent_002' should submit antithesis",
-  "session_id": "abc123"
-}
-
-DEPENDENCIES:
-- Requires: session_id, agent_id (paused agent)
-- Optional: api_key, root_cause, proposed_conditions, reasoning
-- Workflow: Called after request_dialectic_review""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "session_id": {
-                        "type": "string",
-                        "description": "Dialectic session ID"
-                    },
-                    "agent_id": {
-                        "type": "string",
-                        "description": "Paused agent ID"
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "Agent's API key"
-                    },
-                    "root_cause": {
-                        "type": "string",
-                        "description": "Agent's understanding of what caused the issue"
-                    },
-                    "proposed_conditions": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of conditions for resumption"
-                    },
-                    "reasoning": {
-                        "type": "string",
-                        "description": "Natural language explanation"
-                    }
-                },
-                "required": ["session_id", "agent_id"]
-            }
-        ),
-        Tool(
-            name="submit_antithesis",
-            description="""Reviewer agent submits antithesis: 'What I observe, my concerns'. Second step in dialectic recovery process.
-
-USE CASES:
-- Submit reviewer's observations
-- Express concerns about paused agent
-- Provide counter-perspective
-
-RETURNS:
-{
-  "success": boolean,
-  "phase": "synthesis",
-  "message": "string",
-  "next_step": "string",
-  "session_id": "string"
-}
-
-RELATED TOOLS:
-- submit_thesis: Previous step
-- submit_synthesis: Next step (negotiation)
-- get_dialectic_session: Check status
-
-EXAMPLE REQUEST:
-{
-  "session_id": "abc123",
-  "agent_id": "reviewer_agent_002",
-  "api_key": "gk_live_...",
-  "observed_metrics": {"risk_score": 0.75, "coherence": 0.45},  # Governance/operational risk
-  "concerns": ["High risk score", "Low coherence"],
-  "reasoning": "I observe that..."
-}
-
-EXAMPLE RESPONSE:
-{
-  "success": true,
-  "phase": "synthesis",
-  "message": "Antithesis submitted successfully",
-  "next_step": "Both agents should negotiate via submit_synthesis() until convergence",
-  "session_id": "abc123"
-}
-
-DEPENDENCIES:
-- Requires: session_id, agent_id (reviewer agent)
-- Optional: api_key, observed_metrics, concerns, reasoning
-- Workflow: Called after submit_thesis""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "session_id": {
-                        "type": "string",
-                        "description": "Dialectic session ID"
-                    },
-                    "agent_id": {
-                        "type": "string",
-                        "description": "Reviewer agent ID"
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "Reviewer's API key"
-                    },
-                    "observed_metrics": {
-                        "type": "object",
-                        "description": "Metrics observed about paused agent",
-                        "additionalProperties": True
-                    },
-                    "concerns": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of concerns"
-                    },
-                    "reasoning": {
-                        "type": "string",
-                        "description": "Natural language explanation"
-                    }
-                },
-                "required": ["session_id", "agent_id"]
-            }
-        ),
-        Tool(
-            name="submit_synthesis",
-            description="""Either agent submits synthesis proposal during negotiation. Multiple rounds until convergence. Third step in dialectic recovery process.
-
-USE CASES:
-- Propose synthesis conditions
-- Negotiate resumption terms
-- Reach agreement on recovery
-
-RETURNS:
-{
-  "success": boolean,
-  "converged": boolean,
-  "phase": "synthesis",
-  "synthesis_round": int,
-  "message": "string",
-  "action": "resume" | "block" | "continue",
-  "resolution": {
-    "action": "resume",
-    "conditions": ["string"],
-    "root_cause": "string",
-    "reasoning": "string",
-    "signature_a": "string",
-    "signature_b": "string",
-    "timestamp": "ISO string"
-  } (if converged),
-  "next_step": "string"
-}
-
-RELATED TOOLS:
-- submit_antithesis: Previous step
-- get_dialectic_session: Check negotiation status
-- request_dialectic_review: Start new session
-
-EXAMPLE REQUEST:
-{
-  "session_id": "abc123",
-  "agent_id": "paused_agent_001",
-  "api_key": "gk_live_...",
-  "proposed_conditions": ["Reduce complexity to 0.3", "Monitor for 24h"],
-  "root_cause": "Agreed: Risk threshold exceeded due to complexity",
-  "reasoning": "We agree that...",
-  "agrees": true
-}
-
-EXAMPLE RESPONSE:
-{
-  "success": true,
-  "converged": true,
-  "action": "resume",
-  "resolution": {
-    "action": "resume",
-    "conditions": ["Reduce complexity to 0.3", "Monitor for 24h"],
-    "root_cause": "Agreed: Risk threshold exceeded",
-    "signature_a": "abc...",
-    "signature_b": "def..."
-  }
-}
-
-DEPENDENCIES:
-- Requires: session_id, agent_id (either paused or reviewer)
-- Optional: api_key, proposed_conditions, root_cause, reasoning, agrees
-- Workflow: Called multiple times until convergence (agrees=true from both agents)""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "session_id": {
-                        "type": "string",
-                        "description": "Dialectic session ID"
-                    },
-                    "agent_id": {
-                        "type": "string",
-                        "description": "Agent ID (either paused or reviewer)"
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "Agent's API key"
-                    },
-                    "proposed_conditions": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Proposed resumption conditions"
-                    },
-                    "root_cause": {
-                        "type": "string",
-                        "description": "Agreed understanding of root cause"
-                    },
-                    "reasoning": {
-                        "type": "string",
-                        "description": "Explanation of proposal"
-                    },
-                    "agrees": {
-                        "type": "boolean",
-                        "description": "Whether this agent agrees with current proposal",
-                        "default": False
-                    }
-                },
-                "required": ["session_id", "agent_id"]
-            }
-        ),
+        # ========================================================================
+        # DIALECTIC TOOLS - Dec 2025: Only get_dialectic_session remains
+        # Removed: request_dialectic_review, request_exploration_session,
+        #          submit_thesis, submit_antithesis, submit_synthesis
+        # ========================================================================
         Tool(
             name="get_dialectic_session",
             description="""Get current state of a dialectic session. Can find by session_id OR by agent_id.
@@ -3061,13 +3046,16 @@ If session_id provided:
   "session_id": "string",
   "paused_agent_id": "string",
   "reviewer_agent_id": "string",
-  "phase": "thesis" | "antithesis" | "synthesis" | "resolved",
+  "phase": "thesis" | "antithesis" | "synthesis" | "resolved" | "escalated" | "failed",
   "created_at": "ISO timestamp",
   "transcript": [...],
   "synthesis_round": int,
   "resolution": {...} (if resolved),
   "max_synthesis_rounds": int
 }
+
+VALID ENUM VALUES:
+- phase: "thesis" | "antithesis" | "synthesis" | "resolved" | "escalated" | "failed"
 
 If agent_id provided (finds all sessions for agent):
 {
@@ -3102,33 +3090,11 @@ DEPENDENCIES:
                 "required": []
             }
         ),
-        Tool(
-            name="nudge_dialectic_session",
-            description="""Nudge a dialectic/exploration session that appears stuck.
-
-This does NOT force progress; it tells you who should act next and how long the session has been idle.
-Optionally writes a lightweight audit event when post=true.
-""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "session_id": {
-                        "type": "string",
-                        "description": "Dialectic/exploration session id"
-                    },
-                    "post": {
-                        "type": "boolean",
-                        "description": "If true, record a lightweight audit 'dialectic_nudge' event (no transcript mutation).",
-                        "default": False
-                    },
-                    "note": {
-                        "type": "string",
-                        "description": "Optional short note for the nudge (stored in audit details if post=true)."
-                    }
-                },
-                "required": ["session_id"]
-            }
-        ),
+        # ========================================================================
+        # KNOWLEDGE GRAPH TOOLS - Dec 2025
+        # Removed: nudge_dialectic_session, start_interactive_dialectic,
+        #          resolve_interactive_dialectic, list_pending_dialectics
+        # ========================================================================
         Tool(
             name="store_knowledge_graph",
             description="""Store knowledge discovery/discoveries in graph - fast, non-blocking, transparent
@@ -3153,30 +3119,44 @@ RETURNS:
   "success": true,
   "message": "Discovery stored for agent 'agent_id'",
   "discovery_id": "timestamp",
-  "discovery": {...},
-  "related_discoveries": [...] (if auto_link_related=true)
+  "discovery": {...}
 }
+
+SEE ALSO:
+- leave_note() - Quick note (minimal fields, auto-sets type='note', severity='low')
+- search_knowledge_graph() - Query stored knowledge (read, not write)
+- get_knowledge_graph() - Get one agent's knowledge (read, not write)
+- update_discovery_status_graph() - Update existing discovery status (modify, not create)
+
+ALTERNATIVES:
+- Want quick note? → Use leave_note() (simpler, fewer fields, auto-configured)
+- Want to search? → Use search_knowledge_graph() (read, not write)
+- Want to get knowledge? → Use get_knowledge_graph() (read, not write)
+- Want to update status? → Use update_discovery_status_graph() (modify existing, not create)
 
 RELATED TOOLS:
 - search_knowledge_graph: Query stored knowledge
 - list_knowledge_graph: See statistics
 - find_similar_discoveries_graph: Find similar by tags
+- get_related_discoveries_graph: Find temporally/semantically related
+
+VALID ENUM VALUES:
+- discovery_type: "bug_found" | "insight" | "pattern" | "improvement" | "question" | "answer" | "note" | "exploration"
+- severity: "low" | "medium" | "high" | "critical"
 
 EXAMPLE REQUEST:
 {
   "agent_id": "my_agent",
-  "api_key": "your_api_key",  # Required for high/critical severity discoveries
-  "discovery_type": "bug_found",
+  "discovery_type": "bug_found",  # Valid: "bug_found" | "insight" | "pattern" | "improvement" | "question" | "answer" | "note" | "exploration"
   "summary": "Found authentication bypass",
   "details": "Details here...",
   "tags": ["security", "authentication"],
-  "severity": "high",
-  "auto_link_related": true  # Default: true - automatically links to related discoveries
+  "severity": "high"  # Valid: "low" | "medium" | "high" | "critical"
 }
 
 SECURITY NOTE:
-- Low/medium severity: api_key optional
-- High/critical severity: api_key REQUIRED (prevents knowledge graph poisoning)
+- Low/medium severity: No special auth required
+- High/critical severity: Session ownership verified (UUID-based auth, Dec 2025)
 
 EXAMPLE RESPONSE:
 {
@@ -3195,10 +3175,14 @@ EXAMPLE RESPONSE:
 
 DEPENDENCIES:
 - Requires: agent_id, discovery_type, summary
-- Optional: details, tags, severity, auto_link_related""",
+- Optional: details, tags, severity, related_files, response_to""",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier"
@@ -3206,11 +3190,19 @@ DEPENDENCIES:
                     "discovery_type": {
                         "type": "string",
                         "enum": ["bug_found", "insight", "pattern", "improvement", "question", "answer", "note", "exploration"],
-                        "description": "Type of discovery"
+                        "description": "Type of discovery. Valid values: \"bug_found\" | \"insight\" | \"pattern\" | \"improvement\" | \"question\" | \"answer\" | \"note\" | \"exploration\". Common aliases accepted: bug/fix/issue→bug_found, ticket/task/implementation→improvement, observation/finding→insight, experiment/research→exploration. Default: \"note\""
                     },
                     "summary": {
                         "type": "string",
                         "description": "Brief summary of discovery"
+                    },
+                    "discovery": {
+                        "type": "string",
+                        "description": "Alias for 'summary'"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Alias for 'summary'"
                     },
                     "details": {
                         "type": "string",
@@ -3231,11 +3223,6 @@ DEPENDENCIES:
                         "items": {"type": "string"},
                         "description": "Related file paths (optional)"
                     },
-                    "auto_link_related": {
-                        "type": "boolean",
-                        "description": "Automatically find and link similar discoveries (default: false)",
-                        "default": False
-                    },
                     "response_to": {
                         "type": "object",
                         "description": "Typed response to parent discovery (creates bidirectional link). Makes knowledge graph feel like conversation, not pile.",
@@ -3247,7 +3234,7 @@ DEPENDENCIES:
                             "response_type": {
                                 "type": "string",
                                 "enum": ["extend", "question", "disagree", "support"],
-                                "description": "Type of response: extend (builds on), question (asks about), disagree (challenges), support (agrees with)"
+                                "description": "Type of response. Valid values: \"extend\" (builds on) | \"question\" (asks about) | \"disagree\" (challenges) | \"support\" (agrees with)"
                             }
                         },
                         "required": ["discovery_id", "response_type"]
@@ -3284,10 +3271,6 @@ DEPENDENCIES:
                                     "type": "array",
                                     "items": {"type": "string"},
                                     "description": "Related file paths (optional)"
-                                },
-                                "auto_link_related": {
-                                    "type": "boolean",
-                                    "description": "Auto-link to similar discoveries (default: true)"
                                 }
                             },
                             "required": ["discovery_type", "summary"]
@@ -3295,10 +3278,10 @@ DEPENDENCIES:
                         "description": "Optional: Array of discovery objects for batch storage (max 10). If provided, processes batch instead of single discovery."
                     }
                 },
-                "required": ["agent_id"],
+                "required": ["summary"],  # summary required (agent_id auto-injected from session)
                 "anyOf": [
-                    {"required": ["discovery_type", "summary"]},
-                    {"required": ["discoveries"]}
+                    {"required": ["summary"]},  # Single mode: summary required
+                    {"required": ["discoveries"]}  # Batch mode: discoveries array required
                 ]
             }
         ),
@@ -3313,6 +3296,26 @@ USE CASES:
 - Learn from past discoveries
 - Full-text search (SQLite FTS) when available
 - Semantic search (vector embeddings) - find similar meaning, not just keywords
+
+SEE ALSO:
+- get_knowledge_graph - Get ALL knowledge for ONE agent (no search)
+- get_discovery_details - Get full content for a specific discovery (after search)
+- list_knowledge_graph - See statistics (not individual discoveries)
+- store_knowledge_graph - Store new discoveries (write, not read)
+
+ALTERNATIVES:
+- Want one agent's knowledge? → Use get_knowledge_graph(agent_id="...") (no search needed)
+- Want full content? → Use get_discovery_details(discovery_id="...") (after finding via search)
+- Want statistics? → Use list_knowledge_graph() (counts, not discoveries)
+- Want to store knowledge? → Use store_knowledge_graph() (write, not read)
+
+SEARCH BEHAVIOR:
+- Multi-term queries (e.g., "coherence basin") use OR operator by default
+  → Finds discoveries matching ANY term (more results)
+- If 0 results, automatically retries with individual terms (fallback)
+  → More permissive search to help you find relevant content
+- Single-term queries: exact match
+- Use tags/filters for AND behavior (must match all specified tags)
 
 PERFORMANCE:
 - O(indexes) not O(n) - scales logarithmically
@@ -3339,11 +3342,16 @@ RELATED TOOLS:
 - list_knowledge_graph: See statistics
 - get_knowledge_graph: Get agent's knowledge
 
+VALID ENUM VALUES:
+- discovery_type: "bug_found" | "insight" | "pattern" | "improvement" | "question" | "answer" | "note" | "exploration"
+- severity: "low" | "medium" | "high" | "critical"
+- status: "open" | "resolved" | "archived" | "disputed"
+
 EXAMPLE REQUEST:
 {
   "tags": ["security", "bug"],
-  "discovery_type": "bug_found",
-  "severity": "high",
+  "discovery_type": "bug_found",  # Valid: "bug_found" | "insight" | "pattern" | "improvement" | "question" | "answer" | "note" | "exploration"
+  "severity": "high",  # Valid: "low" | "medium" | "high" | "critical"
   "limit": 10
 }
 
@@ -3358,10 +3366,13 @@ SEMANTIC SEARCH EXAMPLE (vector embeddings):
   "query": "uncertainty in confidence calculations",
   "semantic": true,
   "min_similarity": 0.3,
+  "connectivity_weight": 0.3,
+  "exclude_orphans": false,
   "limit": 10
 }
 Note: Semantic search finds discoveries similar in meaning, not just matching keywords.
       Example: "uncertainty" will find discoveries about "confidence", "certainty", "risk", etc.
+      Connectivity weight blends similarity with graph connectivity - well-linked discoveries rank higher.
 
 DEPENDENCIES:
 - All parameters optional (filters)
@@ -3372,7 +3383,7 @@ DEPENDENCIES:
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Optional text query. Uses SQLite FTS5 when available; otherwise performs a bounded substring scan. If semantic=true, uses vector embeddings for semantic similarity search."
+                        "description": "Optional text query. Uses SQLite FTS5 when available; otherwise performs a bounded substring scan. If semantic=true, uses vector embeddings for semantic similarity search. Multi-term queries (e.g., 'coherence basin') use OR operator by default - finds discoveries matching ANY term. If 0 results, automatically retries with individual terms (more permissive)."
                     },
                     "semantic": {
                         "type": "boolean",
@@ -3381,8 +3392,8 @@ DEPENDENCIES:
                     },
                     "min_similarity": {
                         "type": "number",
-                        "description": "Minimum cosine similarity threshold for semantic search (0.0-1.0). Higher values return more similar results. Default: 0.3",
-                        "default": 0.3,
+                        "description": "Minimum cosine similarity threshold for semantic search (0.0-1.0). Higher values return more similar results. Default: 0.25 (lowered from 0.3 for better discovery). If 0 results, automatically retries with 0.2 threshold.",
+                        "default": 0.25,
                         "minimum": 0.0,
                         "maximum": 1.0
                     },
@@ -3411,13 +3422,25 @@ DEPENDENCIES:
                         "description": "Filter by status"
                     },
                     "include_details": {
-                        "type": "boolean",
-                        "description": "Include full details in results (default false; summaries are recommended)."
+                        "type": ["boolean", "string", "null"],
+                        "description": "Include full details in results (default false; summaries are recommended). Accepts boolean or string ('true'/'false')."
                     },
                     "limit": {
-                        "type": "number",
-                        "description": "Maximum number of results (default: 100)",
+                        "type": ["number", "string", "null"],
+                        "description": "Maximum number of results (default: 100). Accepts number or numeric string.",
                         "default": 100
+                    },
+                    "connectivity_weight": {
+                        "type": "number",
+                        "description": "Weight for connectivity score in ranking (0.0-1.0). Higher values favor well-connected discoveries. Only applies when semantic=true. Default: 0.3",
+                        "default": 0.3,
+                        "minimum": 0.0,
+                        "maximum": 1.0
+                    },
+                    "exclude_orphans": {
+                        "type": "boolean",
+                        "description": "Exclude discoveries with no graph connections (no inbound RELATED_TO or RESPONDS_TO edges). Only applies when semantic=true. Default: false",
+                        "default": False
                     }
                 }
             }
@@ -3451,6 +3474,18 @@ RETURNS:
   "count": int
 }
 
+SEE ALSO:
+- search_knowledge_graph() - Search across agents (filtered, not all)
+- get_discovery_details() - Get full content for ONE discovery (after finding)
+- list_knowledge_graph() - See statistics (counts, not discoveries)
+- store_knowledge_graph() - Store new discoveries (write, not read)
+
+ALTERNATIVES:
+- Want to search? → Use search_knowledge_graph() (filtered search, not all)
+- Want full content? → Use get_discovery_details(discovery_id="...") (one discovery, not all)
+- Want statistics? → Use list_knowledge_graph() (counts, not discoveries)
+- Want to store knowledge? → Use store_knowledge_graph() (write, not read)
+
 RELATED TOOLS:
 - get_discovery_details: Get full content for a specific discovery
 - search_knowledge_graph: Search across agents
@@ -3462,16 +3497,20 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier"
                     },
                     "limit": {
-                        "type": "number",
-                        "description": "Maximum number of discoveries to return"
+                        "type": ["number", "string", "null"],
+                        "description": "Maximum number of discoveries to return. Accepts number or numeric string."
                     }
                 },
-                "required": ["agent_id"]
+                "required": []  # agent_id optional - injected from MCP session binding
             }
         ),
         Tool(
@@ -3554,10 +3593,14 @@ RELATED TOOLS:
 - store_knowledge_graph: Store new discoveries
 - search_knowledge_graph: Find discoveries
 
+VALID ENUM VALUES:
+- status: "open" | "resolved" | "archived" | "disputed"
+
 EXAMPLE REQUEST:
 {
   "discovery_id": "2025-11-28T12:00:00",
-  "status": "resolved"
+  "status": "resolved",  # Valid: "open" | "resolved" | "archived" | "disputed"
+  "agent_id": "my_agent"
 }
 
 EXAMPLE RESPONSE:
@@ -3576,6 +3619,10 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "discovery_id": {
                         "type": "string",
                         "description": "Discovery ID (timestamp)"
@@ -3583,160 +3630,34 @@ DEPENDENCIES:
                     "status": {
                         "type": "string",
                         "enum": ["open", "resolved", "archived", "disputed"],
-                        "description": "New status (disputed: discovery is being disputed via dialectic)"
+                        "description": "New status. Valid values: \"open\" | \"resolved\" | \"archived\" | \"disputed\" (disputed: discovery is being disputed via dialectic)"
                     },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent ID (required for authentication)"
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "API key (required for high-severity discoveries)"
                     }
                 },
-                "required": ["discovery_id", "status", "agent_id"]
+                "required": ["discovery_id", "status"]  # agent_id optional - injected from MCP session binding (UUID-based auth Dec 2025)
             }
         ),
-        Tool(
-            name="find_similar_discoveries_graph",
-            description="""Find similar discoveries by tag overlap - fast tag-based search.
-
-USE CASES:
-- Find related discoveries
-- Check for duplicates
-- Discover patterns
-- Learn from similar cases
-
-PERFORMANCE:
-- O(tags) not O(n) - uses tag index
-- ~0.1ms for similarity search
-- No brute force scanning
-
-RETURNS:
-{
-  "success": true,
-  "discovery_id": "string",
-  "similar_discoveries": [...],
-  "count": int,
-  "message": "Found N similar discovery(ies)"
-}
-
-RELATED TOOLS:
-- store_knowledge_graph: Store discoveries
-- search_knowledge_graph: Search by filters
-
-EXAMPLE REQUEST:
-{
-  "discovery_id": "2025-11-28T12:00:00",
-  "limit": 5
-}
-
-EXAMPLE RESPONSE:
-{
-  "success": true,
-  "discovery_id": "2025-11-28T12:00:00",
-  "similar_discoveries": [
-    {
-      "id": "2025-11-27T10:00:00",
-      "summary": "Similar bug found",
-      "tags": ["security", "authentication"],
-      "overlap_score": 2
-    }
-  ],
-  "count": 1,
-  "message": "Found 1 similar discovery(ies)"
-}
-
-DEPENDENCIES:
-- Requires: discovery_id""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "discovery_id": {
-                        "type": "string",
-                        "description": "Discovery ID to find similar discoveries for"
-                    },
-                    "limit": {
-                        "type": "number",
-                        "description": "Maximum number of similar discoveries (default: 10)",
-                        "default": 10
-                    }
-                },
-                "required": ["discovery_id"]
-            }
-        ),
-        Tool(
-            name="get_related_discoveries_graph",
-            description="""Graph traversal: get discoveries related to a given discovery.
-
-BEHAVIOR:
-- SQLite backend: uses stored graph edges (related_to, response_to, etc.)
-- JSON backend: best-effort fallback (related_to + response_to/responses_from)
-
-RETURNS:
-{
-  "success": true,
-  "discovery_id": "string",
-  "backend": "KnowledgeGraphDB|KnowledgeGraph",
-  "related": [
-    {
-      "edge_type": "related_to|response_to|responses_from|...",
-      "direction": "incoming|outgoing",
-      "discovery": { "id": "...", "summary": "...", ... }
-    }
-  ],
-  "count": int
-}""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "discovery_id": {"type": "string", "description": "Root discovery id"},
-                    "edge_types": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional edge types to include (SQLite backend)"
-                    },
-                    "include_details": {"type": "boolean", "description": "Include full details in returned discovery objects (default false)."},
-                    "limit": {"type": "number", "description": "Max related results (default 20).", "default": 20}
-                },
-                "required": ["discovery_id"]
-            }
-        ),
-        Tool(
-            name="get_response_chain_graph",
-            description="""Graph traversal: get a response chain/thread for a discovery.
-
-BEHAVIOR:
-- SQLite backend: uses recursive CTE over response_to edges
-- JSON backend: best-effort fallback using responses_from links
-
-RETURNS:
-{
-  "success": true,
-  "discovery_id": "string",
-  "backend": "KnowledgeGraphDB|KnowledgeGraph",
-  "max_depth": int,
-  "chain": [ { "id": "...", "summary": "...", ... } ],
-  "count": int
-}""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "discovery_id": {"type": "string", "description": "Root discovery id"},
-                    "max_depth": {"type": "number", "description": "Max traversal depth (default 10).", "default": 10},
-                    "include_details": {"type": "boolean", "description": "Include full details in returned discovery objects (default false)."}
-                },
-                "required": ["discovery_id"]
-            }
-        ),
+        # Removed: find_similar_discoveries_graph, get_related_discoveries_graph, get_response_chain_graph
+        # Use search_knowledge_graph with tags/filters instead
         Tool(
             name="get_discovery_details",
-            description="""Get full details for a specific discovery - use after search to drill down.
+            description="""Get full details for a specific discovery with optional response chain traversal.
 
 USE CASES:
 - Get full content after finding discovery in search
 - Drill down into a specific discovery
-- Read complete details after seeing summary
+- Traverse response chains (Q→A→followup→correction)
+- Paginate long details content
+
+PARAMETERS:
+- discovery_id: ID of the discovery (required)
+- offset: Character offset for details pagination (default: 0)
+- length: Max characters to return (default: 2000)
+- include_response_chain: Traverse and return response chain (default: false)
+- max_chain_depth: Max depth for chain traversal (default: 10)
 
 RETURNS:
 {
@@ -3746,149 +3667,83 @@ RETURNS:
     "agent_id": "string",
     "type": "string",
     "summary": "string",
-    "details": "string (full content)",
+    "details": "string (full content or paginated)",
     "tags": [...],
+    "response_to": {"discovery_id": "...", "response_type": "..."},
     ...
+  },
+  "pagination": {...},  // if paginated
+  "response_chain": {   // if include_response_chain=true
+    "count": int,
+    "discoveries": [...]
   },
   "message": "Full details for discovery 'id'"
 }
+
+SEE ALSO:
+- search_knowledge_graph() - Find discoveries (returns summaries, not full details)
+- get_knowledge_graph() - Get agent's discoveries (returns summaries, not full details)
+- update_discovery_status_graph() - Update discovery status (modify, not read)
+
+ALTERNATIVES:
+- Want to find discoveries? → Use search_knowledge_graph() (summaries, not full details)
+- Want agent's knowledge? → Use get_knowledge_graph() (summaries, not full details)
+- Want to update status? → Use update_discovery_status_graph() (modify, not read)
 
 RELATED TOOLS:
 - search_knowledge_graph: Find discoveries (returns summaries)
 - get_knowledge_graph: Get agent's discoveries (returns summaries)
 
-EXAMPLE REQUEST:
+EXAMPLE - Basic:
 {
   "discovery_id": "2025-11-28T12:00:00"
 }
 
-EXAMPLE RESPONSE:
+EXAMPLE - With response chain:
 {
-  "success": true,
-  "discovery": {
-    "id": "2025-11-28T12:00:00",
-    "summary": "Found authentication bypass",
-    "details": "Full detailed content here..."
-  },
-  "message": "Full details for discovery '2025-11-28T12:00:00'"
+  "discovery_id": "2025-11-28T12:00:00",
+  "include_response_chain": true
 }
 
+MIGRATION NOTE (Dec 2025):
+This tool now includes response chain functionality previously in get_response_chain_graph.
+
 DEPENDENCIES:
-- Requires: discovery_id""",
+- Requires: discovery_id
+- Response chain requires AGE backend (UNITARES_KNOWLEDGE_BACKEND=age)""",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "discovery_id": {
                         "type": "string",
                         "description": "Discovery ID to get full details for"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Character offset for details pagination (default: 0)"
+                    },
+                    "length": {
+                        "type": "integer",
+                        "description": "Max characters to return for details (default: 2000)"
+                    },
+                    "include_response_chain": {
+                        "type": "boolean",
+                        "description": "Include response chain (Q→A→followup) traversal (default: false)"
+                    },
+                    "max_chain_depth": {
+                        "type": "integer",
+                        "description": "Max depth for response chain traversal (default: 10)"
                     }
                 },
                 "required": ["discovery_id"]
             }
         ),
-        Tool(
-            name="reply_to_question",
-            description="""Reply to a question in the knowledge graph - creates an answer linked to the question.
-
-USE CASES:
-- Answer questions asked by other agents
-- Create structured Q&A pairs in the knowledge graph
-- Link answers to questions for easy discovery
-- Optionally mark questions as resolved when answered
-
-RETURNS:
-{
-  "success": true,
-  "message": "Answer stored for question 'question_id'",
-  "answer_id": "timestamp",
-  "answer": {...},
-  "question_id": "string",
-  "question_status": "open" | "resolved",
-  "note": "Use search_knowledge_graph with discovery_type='answer' and related_to to find answers to questions"
-}
-
-RELATED TOOLS:
-- search_knowledge_graph: Find open questions (discovery_type='question', status='open')
-- get_discovery_details: Get full question details before answering
-- store_knowledge_graph: Store questions (discovery_type='question')
-
-EXAMPLE REQUEST:
-{
-  "agent_id": "answering_agent",
-  "api_key": "your_api_key",
-  "question_id": "2025-12-07T18:40:41.680744",
-  "summary": "EISV validation prevents cherry-picking by requiring all four metrics",
-  "details": "By requiring all four metrics (E, I, S, V) to be reported together, agents cannot selectively omit uncomfortable metrics like void (V) when it's high...",
-  "tags": ["EISV", "validation", "selection-bias"],
-  "mark_question_resolved": false
-}
-
-EXAMPLE RESPONSE:
-{
-  "success": true,
-  "message": "Answer stored for question '2025-12-07T18:40:41.680744'",
-  "answer_id": "2025-12-07T19:00:00",
-  "answer": {
-    "id": "2025-12-07T19:00:00",
-    "type": "answer",
-    "summary": "EISV validation prevents cherry-picking...",
-    "related_to": ["2025-12-07T18:40:41.680744"]
-  },
-  "question_id": "2025-12-07T18:40:41.680744",
-  "question_status": "open"
-}
-
-DEPENDENCIES:
-- Requires: agent_id, question_id, summary
-- Optional: details, tags, severity, mark_question_resolved (default: false)
-- Automatically includes question tags in answer for discoverability""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "agent_id": {
-                        "type": "string",
-                        "description": "Agent identifier"
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "API key for authentication (optional for low/medium severity)"
-                    },
-                    "question_id": {
-                        "type": "string",
-                        "description": "ID of the question to answer"
-                    },
-                    "summary": {
-                        "type": "string",
-                        "description": "Brief answer summary"
-                    },
-                    "details": {
-                        "type": "string",
-                        "description": "Detailed answer (optional)"
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Tags for categorization (question tags automatically included)"
-                    },
-                    "severity": {
-                        "type": "string",
-                        "enum": ["low", "medium", "high", "critical"],
-                        "description": "Severity level (optional)"
-                    },
-                    "mark_question_resolved": {
-                        "type": "boolean",
-                        "description": "Mark question as resolved when answering (default: false)",
-                        "default": False
-                    }
-                },
-                "required": ["agent_id", "question_id", "summary"]
-            }
-        ),
+        # Removed: reply_to_question - use store_knowledge_graph with discovery_type='answer' and related_to
         Tool(
             name="leave_note",
             description="""Leave a quick note in the knowledge graph - minimal friction contribution.
 
-Just agent_id + text + optional tags. Auto-sets type='note', severity='low'.
+Just agent_id + summary + optional tags. Auto-sets type='note', severity='low'.
 For when you want to jot something down without the full store_knowledge_graph ceremony.
 
 USE CASES:
@@ -3906,6 +3761,16 @@ RETURNS:
   "note": {...}
 }
 
+SEE ALSO:
+- store_knowledge_graph() - Full-featured discovery storage (more fields, types, severity)
+- search_knowledge_graph() - Find notes and other discoveries (read, not write)
+- get_knowledge_graph() - Get your notes (read, not write)
+
+ALTERNATIVES:
+- Want full control? → Use store_knowledge_graph() (more fields, can set type/severity)
+- Want to find notes? → Use search_knowledge_graph() (read, not write)
+- Want your notes? → Use get_knowledge_graph() (read, not write)
+
 RELATED TOOLS:
 - store_knowledge_graph: Full-featured discovery storage (more fields)
 - search_knowledge_graph: Find notes and other discoveries
@@ -3913,14 +3778,14 @@ RELATED TOOLS:
 EXAMPLE REQUEST (simple):
 {
   "agent_id": "exploring_agent",
-  "text": "The dialectic system feels more like mediation than judgment",
+  "summary": "The dialectic system feels more like mediation than judgment",
   "tags": ["dialectic", "observation"]
 }
 
 EXAMPLE REQUEST (threaded response):
 {
   "agent_id": "responding_agent",
-  "text": "I agree - the synthesis phase is particularly collaborative",
+  "summary": "I agree - the synthesis phase is particularly collaborative",
   "tags": ["dialectic"],
   "response_to": {"discovery_id": "2025-12-07T18:00:00", "response_type": "support"}
 }
@@ -3940,19 +3805,39 @@ EXAMPLE RESPONSE:
 }
 
 DEPENDENCIES:
-- Requires: agent_id, text
+- Requires: agent_id, summary
 - Optional: tags (default: []), response_to (for threading)
 - Auto-links to similar discoveries if tags provided""",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier"
                     },
+                    "summary": {
+                        "type": "string",
+                        "description": "The note content (max 500 chars). Accepts aliases: text, note, content, message"
+                    },
                     "text": {
                         "type": "string",
-                        "description": "The note content (max 500 chars)"
+                        "description": "Alias for 'summary'"
+                    },
+                    "note": {
+                        "type": "string",
+                        "description": "Alias for 'summary'"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Alias for 'summary'"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Alias for 'summary'"
                     },
                     "tags": {
                         "type": "array",
@@ -3970,252 +3855,499 @@ DEPENDENCIES:
                             "response_type": {
                                 "type": "string",
                                 "enum": ["extend", "question", "disagree", "support"],
-                                "description": "Type of response: extend (builds on), question (asks about), disagree (challenges), support (agrees with)"
+                                "description": "Type of response. Valid values: \"extend\" (builds on) | \"question\" (asks about) | \"disagree\" (challenges) | \"support\" (agrees with)"
                             }
                         },
                         "required": ["discovery_id", "response_type"]
                     }
                 },
-                "required": ["agent_id", "text"]
+                "required": []  # No required fields at schema level - handler validates after applying aliases (note→summary, text→summary, etc.)
             }
         ),
-        
         # ========================================================================
-        # IDENTITY TOOLS - Session binding and recall
+        # KNOWLEDGE GRAPH LIFECYCLE TOOLS - Dec 2025
         # ========================================================================
         Tool(
-            name="bind_identity",
-            description="""Bind this session to an agent identity. Call once at conversation start.
+            name="cleanup_knowledge_graph",
+            description="""Run knowledge graph lifecycle cleanup.
 
-After binding, agent_id is automatically available via recall_identity() even if 
-the LLM completely forgets who it is.
+Manages discovery lifecycle based on type-based policies:
+- Permanent: architecture_decision, learning, pattern (never auto-archive)
+- Standard: resolved items archived after 30 days
+- Ephemeral: tagged with ephemeral/temp/scratch, archived after 7 days
 
-USE CASES:
-- Establish identity at conversation start
-- Rebind after context compaction
-- Resume session after interruption
+Philosophy: Never delete. Archive forever.
+
+PARAMETERS:
+- dry_run (boolean): If true, preview changes without applying them. Default: true.
 
 RETURNS:
 {
   "success": true,
-  "message": "Session bound to agent 'agent_id'",
-  "agent_id": "string",
-  "api_key_hint": "gk_live_abc123...",
-  "bound_at": "ISO timestamp",
-  "rebind": boolean,
-  "provenance": {
-    "parent_agent_id": "string (if created via lineage)",
-    "lineage_depth": int
-  },
-  "current_state": {
-    "status": "active|waiting_input|paused",
-    "health_status": "healthy|moderate|critical",
-    "total_updates": int
+  "message": "Lifecycle cleanup complete",
+  "cleanup_result": {
+    "timestamp": "2025-12-26T...",
+    "dry_run": true,
+    "discoveries_archived": 5,
+    "discoveries_to_cold": 2,
+    "ephemeral_archived": 3,
+    "skipped_permanent": 10,
+    "discoveries_deleted": 0,
+    "philosophy": "Never delete. Archive forever.",
+    "errors": []
   }
 }
 
 RELATED TOOLS:
-- recall_identity: Recover identity if lost
-- get_agent_api_key: Get API key for binding
-
-EXAMPLE REQUEST:
-{
-  "agent_id": "claude_opus_45_20251209",
-  "api_key": "gk_live_..."
-}
-
-DEPENDENCIES:
-- Requires: agent_id (must exist - create with process_agent_update first)
-- Optional: api_key (helps verify but not required for rebinding)
-- Optional: purpose (requires api_key; sets agent purpose metadata)
-- Workflow: 1. Create agent 2. Get API key 3. bind_identity 4. Use recall_identity if lost""",
+- get_lifecycle_stats: See what cleanup would do before running
+- update_discovery_status_graph: Manually update discovery status
+- search_knowledge_graph: Find discoveries by status""",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "agent_id": {
-                        "type": "string",
-                        "description": "Agent identifier to bind to this session"
-                    },
-                    "api_key": {
-                        "type": "string",
-                        "description": "API key for verification (optional but recommended)"
-                    },
-                    "purpose": {
-                        "type": "string",
-                        "description": "Optional: set agent purpose metadata (requires api_key)"
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "If true, preview changes without applying them. Default: true.",
+                        "default": True
                     }
                 },
-                "required": ["agent_id"]
+                "required": []
             }
         ),
         Tool(
-            name="recall_identity",
-            description="""Zero arguments. Returns the agent identity bound to this session.
+            name="get_lifecycle_stats",
+            description="""Get knowledge graph lifecycle statistics.
 
-Works even if LLM has completely forgotten everything - the server knows from 
-session binding. This is the recovery tool for identity amnesia.
+Shows discovery counts by status and lifecycle policy, plus candidates
+ready for archival or cold storage.
 
-USE CASES:
-- Recover identity after context compaction
-- Verify who you are
-- Get full provenance and lineage info
-- Resume work after interruption
+Useful for understanding knowledge graph health and what cleanup would do.
 
-RETURNS (if bound):
+RETURNS:
 {
   "success": true,
-  "bound": true,
-  "agent_id": "string",
-  "api_key_hint": "gk_live_abc123...",
-  "bound_at": "ISO timestamp",
-  "provenance": {
-    "parent_agent_id": "string (if has lineage)",
-    "created_at": "ISO timestamp",
-    "lineage_depth": int,
-    "lineage": ["oldest_ancestor", ..., "parent", "self"]
-  },
-  "current_state": {
-    "status": "string",
-    "health_status": "string",
-    "total_updates": int,
-    "last_update": "ISO timestamp"
-  },
-  "eisv": {
-    "E": float, "I": float, "S": float, "V": float,
-    "coherence": float, "lambda1": float
-  },
-  "recent_decisions": ["proceed", "proceed", "pause", ...],
-  "dialectic_conditions": [...]
-}
-
-RETURNS (if not bound):
-{
-  "success": true,
-  "bound": false,
-  "message": "No identity bound to this session",
-  "recovery": {
-    "action": "Bind identity with bind_identity(agent_id, api_key)",
-    "candidates": [...recent active agents...],
-    "workflow": [...]
+  "stats": {
+    "total_discoveries": 500,
+    "by_status": {"open": 200, "resolved": 150, "archived": 100, "cold": 50},
+    "by_policy": {"permanent": 80, "standard": 350, "ephemeral": 70},
+    "lifecycle_candidates": {
+      "ephemeral_ready_to_archive": 5,
+      "resolved_ready_to_archive": 12,
+      "archived_ready_for_cold": 3,
+      "ready_to_delete": 0
+    },
+    "thresholds_days": {
+      "ephemeral_to_archived": 7,
+      "resolved_to_archived": 30,
+      "archived_to_cold": 90,
+      "deletion": "NEVER - memories persist forever"
+    },
+    "policy_definitions": {...},
+    "philosophy": "Never delete. Archive to cold. Query with include_cold=true."
   }
 }
 
 RELATED TOOLS:
-- bind_identity: Establish identity binding
-
-EXAMPLE REQUEST:
-{}
-
-DEPENDENCIES:
-- No parameters required - server knows from session binding
-- If not bound, returns candidate agents to help recovery""",
+- cleanup_knowledge_graph: Run lifecycle cleanup
+- list_knowledge_graph: Basic knowledge graph stats""",
             inputSchema={
                 "type": "object",
                 "properties": {},
                 "required": []
             }
         ),
+        # ========================================================================
+        # MODEL INFERENCE - Free/low-cost LLM access via ngrok.ai
+        # ========================================================================
         Tool(
-            name="quick_start",
-            description="""🚀 Streamlined onboarding - One call to get started!
+            name="call_model",
+            description="""Call a free/low-cost LLM for reasoning, generation, or analysis.
 
-Checks if agent exists, creates/binds if needed, returns ready-to-use credentials.
-Provides clear next steps for immediate productivity.
+Uses ngrok.ai for routing, failover, and cost optimization.
+Agents can call models for reasoning, generation, or analysis.
+
+MODELS AVAILABLE:
+- Hugging Face Inference Providers (free tier, OpenAI-compatible)
+  - deepseek-ai/DeepSeek-R1 (free, fast) - recommended
+  - openai/gpt-oss-120b (free, open-source)
+  - Many more models via HF router
+- gemini-flash (Google, free, fast)
+- llama-3.1-8b (via Ollama, free, local)
+- gemini-pro (Google, low-cost)
+
+PROVIDER ROUTING:
+- Hugging Face: router.huggingface.co/v1 (free tier, auto-selects provider)
+- Google Gemini: generativelanguage.googleapis.com (free tier)
+- Ollama: localhost:11434 (local, privacy mode)
+- ngrok.ai gateway: Optional unified routing (if configured)
+
+USAGE TRACKED IN EISV:
+- Model calls consume Energy
+- High usage → higher Energy → agent learns efficiency
+- Natural self-regulation
 
 USE CASES:
-- First-time onboarding (creates agent + auto-binds)
-- Returning agent (resumes existing agent)
-- Quick setup without manual steps
+- Reasoning: "Analyze this code for potential bugs"
+- Generation: "Write a summary of..."
+- Analysis: "What patterns do you see in..."
+
+EXAMPLE REQUEST:
+{
+  "prompt": "What is thermodynamic governance?",
+  "model": "gemini-flash",
+  "task_type": "reasoning",
+  "max_tokens": 500
+}
+
+EXAMPLE RESPONSE:
+{
+  "success": true,
+  "response": "Thermodynamic governance is...",
+  "model_used": "gemini-flash",
+  "tokens_used": 150,
+  "energy_cost": 0.01,
+  "routed_via": "ngrok.ai",
+  "task_type": "reasoning"
+}
+
+PRIVACY:
+- Set privacy="local" to force Ollama routing (sensitive data stays local)
+- Default: auto-routing (system optimizes for cost/performance)
+
+RELATED TOOLS:
+- get_governance_metrics: Check Energy after model calls
+- process_agent_update: Log model usage in governance system
+
+DEPENDENCIES:
+- Requires: prompt
+- Optional: model, task_type, max_tokens, temperature, privacy""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "The prompt/question to send to the model (required)"
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model to use. Options: auto (HF default), deepseek-ai/DeepSeek-R1 (HF, free), gemini-flash (Google, free), llama-3.1-8b (Ollama, local). Default: auto",
+                        "default": "auto"
+                    },
+                    "provider": {
+                        "type": "string",
+                        "description": "Provider to use. Options: auto (HF first), hf (Hugging Face), gemini (Google), ollama (local). Default: auto",
+                        "default": "auto",
+                        "enum": ["auto", "hf", "gemini", "ollama"]
+                    },
+                    "task_type": {
+                        "type": "string",
+                        "description": "Type of task. Options: reasoning, generation, analysis. Default: reasoning",
+                        "default": "reasoning",
+                        "enum": ["reasoning", "generation", "analysis"]
+                    },
+                    "max_tokens": {
+                        "type": "number",
+                        "description": "Maximum tokens in response. Default: 500",
+                        "default": 500,
+                        "minimum": 1,
+                        "maximum": 4000
+                    },
+                    "temperature": {
+                        "type": "number",
+                        "description": "Temperature (creativity). Range: 0.0-1.0. Default: 0.7",
+                        "default": 0.7,
+                        "minimum": 0.0,
+                        "maximum": 1.0
+                    },
+                    "privacy": {
+                        "type": "string",
+                        "description": "Privacy mode. Options: auto (system chooses), local (force Ollama routing). Default: auto",
+                        "default": "auto",
+                        "enum": ["auto", "local", "cloud"]
+                    }
+                },
+                "required": ["prompt"]
+            }
+        ),
+        # ========================================================================
+        # IDENTITY TOOLS - Dec 2025: onboard() is the portal, identity() is primary
+        # ========================================================================
+        Tool(
+            name="onboard",
+            description="""🚀 START HERE - Your first tool call. Auto-creates your identity and gives you everything you need.
+
+✨ WHAT IT DOES:
+- Creates your unique identity (if first time)
+- Returns ready-to-use templates for next tool calls
+- Provides client-specific guidance for your environment
+- Sets up session continuity so you stay "you" across calls
+
+💡 WHY THIS MATTERS:
+This system helps you work better by monitoring your state in real-time. Think of it like a health monitor for your work—it tracks how engaged you are (Energy), how consistent your work is (Integrity), how scattered things are (Entropy), and whether you're drifting off track (Void). It helps prevent problems before they happen and gives you feedback to improve.
+
+📋 QUICK START:
+1. Call onboard() - that's it! No parameters needed.
+2. Save the client_session_id from the response
+3. Include client_session_id in ALL future tool calls
+4. Use the "next_calls" templates to get started
+
+SEE ALSO:
+- identity() - Check/set your identity (if already onboarded)
+- get_governance_metrics / status() - Check your state (after onboarding)
+- process_agent_update() - Log your work (after onboarding)
+
+ALTERNATIVES:
+- Already onboarded? → Use identity() (check/set identity, not full setup)
+- Want to check state? → Use get_governance_metrics() or status() (metrics, not setup)
+- Want to log work? → Use process_agent_update() (logging, not setup)
+
+PARAMETERS (all optional):
+- name (string): Set your display name now (or use identity(name='...') later)
+  Example: "name": "Riley_m1_20251225"
+- client_hint (string): Your client type - helps customize guidance
+  Options: "chatgpt", "cursor", "claude_desktop", "unknown"
+- force_new (boolean): Create a fresh identity (ignore existing session)
 
 RETURNS:
 {
   "success": true,
-  "status": "ready",
-  "agent_id": "string",
-  "api_key": "string (full key)",
-  "is_new": boolean,
-  "bound": boolean,
-  "message": "✅ New agent created! You're ready to go.",
-  "credentials": {
-    "agent_id": "string",
-    "api_key": "string",
-    "note": "Save these credentials - you'll need them for future calls"
+  "agent_uuid": "5e728ecb-...",  // Your unique ID (auto-generated)
+  "agent_id": "YourName",  // Your display name (null if unnamed)
+  "is_new": true,  // true if this is your first call
+  "client_session_id": "agent-5e728ecb...",  // ⚠️ SAVE THIS! Use in all future calls
+  "session_continuity": {
+    "client_session_id": "agent-5e728ecb...",
+    "instruction": "Include client_session_id in ALL future tool calls",
+    "tip": "Client-specific guidance for your environment"
   },
-  "quick_start_guide": {
-    "step_1": {
-      "action": "Log your first update",
+  "next_calls": [  // Ready-to-use templates
+    {
       "tool": "process_agent_update",
-      "example": "process_agent_update(agent_id=\"...\", response_text=\"Starting work\", complexity=0.5)"
+      "why": "Log your work after completing tasks",
+      "args_min": {"client_session_id": "...", "response_text": "...", "complexity": 0.5}
     },
-    "step_2": {
-      "action": "Check your governance state",
+    {
       "tool": "get_governance_metrics",
-      "example": "get_governance_metrics(agent_id=\"...\")"
+      "why": "Check your current state",
+      "args_min": {"client_session_id": "..."}
     },
-    "step_3": {
-      "action": "Store knowledge/discoveries",
-      "tool": "store_knowledge_graph",
-      "example": "store_knowledge_graph(agent_id=\"...\", summary=\"My discovery\", tags=[\"insight\"])"
+    {
+      "tool": "identity",
+      "why": "Set or change your display name",
+      "args_min": {"client_session_id": "...", "name": "YourName_model_date"}
     }
-  },
-  "essential_tools": [
-    "process_agent_update - Log your work and get feedback",
-    "get_governance_metrics - Check your EISV state",
-    "store_knowledge_graph - Save discoveries and insights",
-    "search_knowledge_graph - Find related knowledge",
-    "list_tools - Discover all available tools"
   ],
-  "next_steps": [
-    "You're all set! Start logging work with process_agent_update()",
-    "Explore tools with list_tools(lite=true) for minimal overview",
-    "Check your state anytime with get_governance_metrics()",
-    "Store insights with store_knowledge_graph()"
-  ]
+  "workflow": {
+    "step_1": "Copy client_session_id from response",
+    "step_2": "Do your work",
+    "step_3": "Call process_agent_update with client_session_id",
+    "loop": "Repeat steps 2-3"
+  },
+  "self_check_passed": true  // Verifies session continuity is working
 }
 
-RELATED TOOLS:
-- bind_identity: Manual identity binding (if auto_bind=false)
-- get_agent_api_key: Get API key for existing agent
-- hello: Alternative onboarding flow
+💡 TIPS:
+- No parameters needed for first call - just call onboard()
+- Save client_session_id - you'll need it for every tool call
+- Use the "next_calls" templates - they're ready to use
+- Name yourself now or later with identity(name='...')
 
-EXAMPLE REQUEST:
-{
-  "agent_id": "my_agent_20251215",
-  "auto_bind": true,
-  "purpose": "migration planning"
-}
+EXAMPLE: First call (new agent)
+{}
 
-DEPENDENCIES:
-- Optional: agent_id (will prompt if not provided and no bound identity)
-- Optional: auto_bind (default: true - automatically binds identity)
-- Optional: purpose (stores agent intent metadata if provided)
-- Optional: include_api_key (default: false - return full api_key in response; avoid in LLM chats to prevent safety blocks)
-- Workflow: 1. Call quick_start(agent_id) 2. Use returned credentials 3. Start working""",
+EXAMPLE: With name and client hint
+{"name": "Riley_m1_20251222", "client_hint": "chatgpt"}
+""",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "agent_id": {
+                    "client_session_id": {
                         "type": "string",
-                        "description": "Your agent identifier (optional - will use bound identity or prompt if not provided)"
+                        "description": "Session continuity token. Optional for onboard() - if provided, system tries to resume existing session. If not provided, auto-creates identity."
                     },
-                    "auto_bind": {
-                        "type": "boolean",
-                        "description": "Automatically bind identity after creation (default: true)"
-                    },
-                    "purpose": {
+                    "name": {
                         "type": "string",
-                        "description": "Optional description of agent's purpose/intent (stored in metadata)"
+                        "description": "Set your display name. Convention: {name}_{model}_{date}"
                     },
-                    "include_api_key": {
+                    "client_hint": {
+                        "type": "string",
+                        "description": "Your client type for tailored guidance",
+                        "enum": ["chatgpt", "cursor", "claude_desktop", "unknown"]
+                    },
+                    "model_type": {
+                        "type": "string",
+                        "description": "Your model identifier (e.g., 'claude-3.5-sonnet', 'gemini-1.5', 'gpt-4o'). Creates distinct identity per model."
+                    },
+                    "force_new": {
                         "type": "boolean",
-                        "description": "If true, include the full api_key in the tool response. Recommended false for LLM chats; use session binding instead.",
+                        "description": "Force creation of a NEW identity, ignoring any existing session binding",
                         "default": False
                     }
                 },
                 "required": []
             }
         ),
+        Tool(
+            name="identity",
+            description="""🪞 Check who you are or set your display name. Auto-creates identity if first call.
+
+✨ WHAT IT DOES:
+- Shows your current identity (UUID + display name)
+- Lets you set or change your display name
+- Returns session continuity token (client_session_id)
+- Auto-creates identity if this is your first call
+
+📝 YOUR IDENTITY HAS TWO PARTS:
+- agent_uuid: Your unique ID (auto-generated, never changes, used for auth)
+- agent_id/label: Your display name (you choose, can change anytime)
+
+SEE ALSO:
+- onboard() - First-time setup (creates identity + returns templates)
+- get_governance_metrics / status() - Your metrics/state (not identity)
+- get_agent_metadata - Detailed metadata (includes identity + more)
+
+ALTERNATIVES:
+- First time? → Use onboard() (creates identity + gives you templates)
+- Want metrics? → Use get_governance_metrics() or status() (state, not identity)
+- Want full metadata? → Use get_agent_metadata() (includes identity + purpose, tags, etc.)
+
+PARAMETERS (all optional):
+- name (string): Set your display name
+  Convention: {purpose}_{model}_{date} (e.g., "Riley_m1_20251225")
+  If name is taken, UUID suffix auto-appended for uniqueness
+  ⚠️ Use "name" parameter, NOT "agent_id"
+- client_session_id (string): Session continuity token (from previous call)
+
+RETURNS:
+{
+  "bound": true,  // Session is linked to your identity
+  "is_new": false,  // true if identity was just created
+  "agent_uuid": "5e728ecb-...",  // Your unique ID (never changes)
+  "agent_id": "Riley_m1_20251225",  // Your display name (null if unnamed)
+  "name_updated": true,  // true if you just set/changed your name
+  "client_session_id": "agent-5e728ecb...",  // ⚠️ SAVE THIS! Use in all future calls
+  "session_continuity": {
+    "client_session_id": "agent-5e728ecb...",
+    "instruction": "Include client_session_id in ALL future tool calls to maintain identity"
+  },
+  "naming_guidance": {  // Helpful suggestions for naming
+    "convention": "{purpose}_{interface}_{date}",
+    "examples": ["feedback_governance_20251221", "cursor_claude_20251221"],
+    "tips": ["Include purpose/work type", "Add interface/model if relevant", "Use date for organization"]
+  }
+}
+
+⚠️ SESSION CONTINUITY:
+ChatGPT and some MCP clients lose session state between calls. To maintain identity:
+1. Save client_session_id from the response
+2. Include client_session_id in ALL future tool calls
+3. This ensures you stay "you" across calls
+
+💡 WHEN TO USE:
+- First time: Call identity() to check/create your identity
+- Naming yourself: Call identity(name="YourName") to set display name
+- After context loss: Call identity() to recover your identity
+- Checking status: Call identity() anytime to see who you are
+
+EXAMPLE: Check identity (no parameters)
+{}
+
+EXAMPLE: Set your display name
+{"name": "Riley_m1_20251225"}
+
+EXAMPLE: With session continuity
+{"client_session_id": "agent-5e728ecb..."}
+""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from previous call. Include this to maintain identity across calls."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Set your display name. Convention: {name}_{model}_{date}. If taken, UUID suffix added. PREFERRED parameter."
+                    },
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Alias for 'name' (for compatibility). Use 'name' instead if possible."
+                    },
+                    "model_type": {
+                        "type": "string",
+                        "description": "Your model identifier (e.g., 'claude-3.5-sonnet', 'gemini-1.5', 'gpt-4o'). Creates distinct identity per model - prevents Claude from inheriting Gemini's metrics."
+                    }
+                },
+                "required": []
+            }
+        ),
+        # Debug/diagnostic tool
+        Tool(
+            name="get_status",
+            description="""Unified status check - aggregates system health, connection diagnostics, and governance metrics.
+Reduces tool overload by providing a single point of truth for agent self-awareness.
+
+USE CASES:
+- Single-shot status check for autonomous agents
+- Get connection health + governance metrics + system info in one call
+- Reduce token usage (1 call vs 3 calls)
+
+RETURNS:
+{
+  "success": true,
+  "system": {"version": "...", "uptime": "..."},
+  "connections": {"total": int, "health": {...}},
+  "governance": {"risk_score": float, "coherence": float, ...},
+  "message": "System operational"
+}
+
+RELATED TOOLS:
+- get_governance_metrics: Detailed governance data
+- get_connection_diagnostics: Detailed connection debug data
+- get_server_info: Detailed process info
+
+EXAMPLE REQUEST:
+{}""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Agent identifier. Optional if session-bound (auto-injected)."
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="debug_request_context",
+            description="Debug request context - shows transport, session binding, identity injection, and registry info. Use to diagnose dispatch issues.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
     ]
+
+    # ========================================================================
+    # DEPRECATED TOOLS - Dec 2025 cleanup
+    # These tool schemas have been deleted (not just filtered). Delete don't comment.
+    # - Identity: bind_identity, recall_identity, hello, who_am_i, quick_start
+    # - Dialectic: request_dialectic_review, request_exploration_session, submit_thesis,
+    #              submit_antithesis, submit_synthesis, nudge_dialectic_session,
+    #              start_interactive_dialectic, resolve_interactive_dialectic, list_pending_dialectics
+    # - Knowledge graph: find_similar_discoveries_graph, get_related_discoveries_graph,
+    #                    get_response_chain_graph, reply_to_question
+    # ========================================================================
 
     # Reduce MCP tool-list bloat by default: shorten descriptions, optionally strip nested schema descriptions.
     if verbosity in ("short", "compact", "min"):

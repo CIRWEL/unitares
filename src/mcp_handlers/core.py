@@ -12,11 +12,14 @@ import json
 import sys
 import asyncio
 import hashlib
+from .types import ToolArgumentsDict
 from .utils import success_response, error_response, require_agent_id, require_registered_agent, _make_json_serializable
 from .decorators import mcp_tool
-from .validators import validate_complexity, validate_confidence, validate_ethical_drift, validate_response_text
+from .validators import validate_complexity, validate_confidence, validate_ethical_drift, validate_response_text, _apply_generic_coercion
 from src.logging_utils import get_logger
-from src.db import get_db
+
+# PostgreSQL-only agent storage (single source of truth)
+from src import agent_storage
 
 logger = get_logger(__name__)
 
@@ -122,33 +125,23 @@ def _assess_thermodynamic_significance(
 
 @mcp_tool("get_governance_metrics", timeout=10.0)
 async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequence[TextContent]:
-    """Get current governance state and metrics for an agent without updating state"""
+    """Get current governance state and metrics for an agent without updating state.
+
+    Args:
+        lite: If true (default), returns minimal essential metrics only.
+              Set lite=false for full diagnostic data.
+    """
     agent_id, error = require_agent_id(arguments)
     if error:
         return [error]  # Wrap in list for Sequence[TextContent]
 
-    # STRICT MODE: Require agent to exist (no auto-creation)
-    # Check if agent exists in metadata before creating monitor
-    from src.mcp_server_std import agent_metadata
-    if agent_id not in agent_metadata:
-        return [error_response(
-            f"Agent '{agent_id}' not found",
-            details={
-                "error_type": "agent_not_found",
-                "agent_id": agent_id,
-                "note": "Agent must be registered before querying metrics"
-            },
-            recovery={
-                "action": "Register agent first using process_agent_update",
-                "workflow": [
-                    "1. Create agent with process_agent_update (logs first activity)",
-                    "2. Then query metrics with get_governance_metrics",
-                    "3. Or use get_agent_api_key to explicitly register"
-                ]
-            }
-        )]
+    # LITE-FIRST: Minimal response by default for smaller models
+    lite = arguments.get("lite", True)
 
+    # UX FIX (Dec 2025): Auto-register agent if not found
+    # This reduces friction - agents can query metrics immediately after identity() call
     # Load monitor state from disk if not in memory (allows querying agents without recent updates)
+    # get_or_create_monitor() will auto-create if agent doesn't exist yet
     monitor = mcp_server.get_or_create_monitor(agent_id)
 
     # Reduce context bloat by excluding nested state dict (all values still at top level)
@@ -166,6 +159,11 @@ async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequenc
         include_timestamp=True,
         include_context=True
     )
+    
+    # Add agent purpose if available (v2.5.2+)
+    meta = mcp_server.agent_metadata.get(agent_id)
+    if meta and getattr(meta, 'purpose', None):
+        standardized_metrics['purpose'] = meta.purpose
     
     # Add calibration feedback (similar to process_agent_update)
     calibration_feedback = {}
@@ -213,63 +211,197 @@ async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequenc
     except Exception as e:
         logger.debug(f"Could not generate state interpretation: {e}")
 
+    # =========================================================
+    # v4.2-P SATURATION DIAGNOSTICS - Pressure gauge for I-channel
+    # =========================================================
+    # This exposes the "smoking gun" sat_margin metric that indicates
+    # whether the system is being pushed toward boundary saturation
+    try:
+        from governance_core import compute_saturation_diagnostics
+        from governance_core.parameters import Theta, DEFAULT_THETA
+
+        # Get UNITARES state from monitor
+        unitares_state = monitor.state.unitaires_state
+        theta = getattr(monitor.state, 'unitaires_theta', None) or DEFAULT_THETA
+
+        if unitares_state:
+            sat_diag = compute_saturation_diagnostics(unitares_state, theta)
+
+            # Surface key metrics for agents
+            standardized_metrics['saturation_diagnostics'] = {
+                'sat_margin': sat_diag['sat_margin'],
+                'dynamics_mode': sat_diag['dynamics_mode'],
+                'will_saturate': sat_diag['will_saturate'],
+                'at_boundary': sat_diag['at_boundary'],
+                'I_equilibrium': sat_diag['I_equilibrium_linear'],
+                'forcing_term_A': sat_diag['A'],
+                '_interpretation': (
+                    "⚠️ Positive sat_margin means push-to-boundary (logistic mode will saturate I→1)"
+                    if sat_diag['sat_margin'] > 0
+                    else "✓ Negative sat_margin - stable interior equilibrium exists"
+                )
+            }
+    except Exception as e:
+        logger.debug(f"Could not compute saturation diagnostics: {e}")
+
+    # Add gentle reflection prompt (mirror, not prescription)
+    standardized_metrics['reflection'] = "What do you notice about your state?"
+
+    # LITE MODE: Return minimal essential metrics WITH contextual interpretation
+    # Debug: include what lite value was received so agents can troubleshoot
+    standardized_metrics['_debug_lite_received'] = lite
+
+    if lite:
+        # Standard thresholds (aligned with physics model: coherence ∈ [0.45, 0.55])
+        COHERENCE_GOOD = 0.50  # Upper half of normal range
+        COHERENCE_LOW = 0.45   # Below physics floor
+        RISK_THRESHOLD_MEDIUM = 0.5
+        RISK_THRESHOLD_HIGH = 0.75
+
+        # Extract key values
+        coherence = metrics.get('coherence')
+        risk_score = metrics.get('risk_score')
+        health = standardized_metrics.get('state', {}).get('health', 'unknown')
+
+        # Traffic light status based on health
+        status_indicator = {
+            'healthy': '🟢',
+            'moderate': '🟡',
+            'critical': '🔴',
+            'unknown': '⚪'
+        }.get(health, '⚪')
+
+        # Check if agent is uninitialized (no process_update() calls yet)
+        is_uninitialized = metrics.get('initialized') is False or metrics.get('status') == 'uninitialized'
+
+        # Status display - clearer for uninitialized agents
+        if is_uninitialized:
+            status_display = "⚪ uninitialized"
+            coherence_status = '⚪ pending (first check-in required)'
+            risk_status = '⚪ pending (first check-in required)'
+        else:
+            status_display = f"{status_indicator} {health}"
+            # Three-tier coherence: good (>=0.50), moderate (0.45-0.50), low (<0.45)
+            if coherence is None:
+                coherence_status = '⚪ unknown'
+            elif coherence >= COHERENCE_GOOD:
+                coherence_status = '🟢 good'
+            elif coherence >= COHERENCE_LOW:
+                coherence_status = '🟡 moderate'
+            else:
+                coherence_status = '🔴 low'
+            risk_status = '🟢 low' if risk_score is not None and risk_score < RISK_THRESHOLD_MEDIUM else ('🟡 medium' if risk_score is not None and risk_score < RISK_THRESHOLD_HIGH else '🔴 high' if risk_score is not None else '⚪ unknown')
+
+        lite_metrics = {
+            'agent_id': agent_id,
+            'status': status_display,
+            'purpose': getattr(meta, 'purpose', None),  # Added for social awareness
+            'summary': standardized_metrics.get('summary', 'unknown'),
+            # EISV with contextual bounds
+            'E': {'value': metrics.get('E'), 'range': '0-1', 'note': 'Energy capacity'},
+            'I': {'value': metrics.get('I'), 'range': '0-1', 'note': 'Information integrity'},
+            'S': {'value': metrics.get('S'), 'range': '0-1', 'ideal': '<0.2', 'note': 'Entropy (lower=better)'},
+            'V': {'value': metrics.get('V'), 'range': '0-1', 'ideal': '<0.1', 'note': 'Void (lower=better)'},
+            # Key metrics with thresholds
+            'coherence': {
+                'value': coherence,
+                'range': '[0.45, 0.55]',  # Physics model range
+                'status': coherence_status
+            },
+            'risk_score': {
+                'value': risk_score,
+                'threshold': RISK_THRESHOLD_MEDIUM,
+                'status': risk_status
+            },
+        }
+        # Include interpreted state if available
+        if 'state' in standardized_metrics:
+            lite_metrics['mode'] = standardized_metrics['state'].get('mode')
+            lite_metrics['basin'] = standardized_metrics['state'].get('basin')
+
+        lite_metrics['_note'] = "Use lite=false for full diagnostics"
+        lite_metrics['_debug_lite_received'] = lite  # Echo what was received
+        return success_response(lite_metrics)
+
     return success_response(standardized_metrics)
 
 
 @mcp_tool("simulate_update", timeout=30.0)
 async def handle_simulate_update(arguments: ToolArgumentsDict) -> Sequence[TextContent]:
-    """Handle simulate_update tool - dry-run governance cycle without persisting state"""
-    # SECURITY FIX: Require registered agent (prevents phantom agent_ids)
-    # simulate_update claims not to persist state, but get_or_create_monitor() calls
-    # get_or_create_metadata() which does create persistent metadata entries.
-    agent_id, error = require_registered_agent(arguments)
-    if error:
-        return [error]  # Wrap in list for Sequence[TextContent]
-    
-    # Get monitor for existing agent
-    monitor = mcp_server.get_or_create_monitor(agent_id)
-    
+    """Handle simulate_update tool - dry-run governance cycle without persisting state.
+
+    Works in two modes:
+    - With registered agent: Uses their existing EISV state
+    - Without registration: Uses fresh default state (E=0.5, I=0.5, S=0.5, V=0)
+
+    This allows quick testing of "what would governance say about X?" without
+    requiring onboarding first.
+    """
+    from src.governance_monitor import UNITARESMonitor
+
+    # Try to get agent_id from session/arguments (but don't require registration)
+    agent_id, _ = require_agent_id(arguments)  # Ignore error - we'll handle missing agent
+
+    # Check if agent is registered (exists in metadata)
+    agent_state_source = "fresh"  # Default: using fresh state
+    monitor = None
+    meta = None
+    dialectic_enforcement_warning = None
+
+    if agent_id:
+        # Check if this agent exists
+        meta = mcp_server.agent_metadata.get(agent_id)
+        if meta:
+            # Agent exists - use their monitor with existing state
+            monitor = mcp_server.get_or_create_monitor(agent_id)
+            agent_state_source = "existing"
+
+    if monitor is None:
+        # No registered agent - create temporary monitor with fresh default state
+        # Use a placeholder ID that won't persist (simulation only)
+        monitor = UNITARESMonitor("_simulation_temp_", load_state=False)
+        agent_id = "_simulation_temp_"
+
     # Validate parameters for simulation
     reported_complexity = arguments.get("complexity", 0.5)
     complexity, error = validate_complexity(reported_complexity)
     if error:
         return [error]
     complexity = complexity or 0.5  # Default if None
-    
-    # Dialectic condition enforcement (MVP):
-    # If the agent has an active dialectic-imposed complexity cap, enforce it here.
-    dialectic_enforcement_warning = None
-    try:
-        if meta and getattr(meta, "dialectic_conditions", None):
-            caps = []
-            for c in meta.dialectic_conditions:
-                if not isinstance(c, dict):
-                    continue
-                ctype = c.get("type")
-                if ctype == "complexity_limit":
-                    v = c.get("value")
-                    if isinstance(v, (int, float)):
-                        caps.append(float(v))
-                # Accept reduce/set adjustments as an implicit cap target_value
-                if ctype == "complexity_adjustment" and c.get("action") == "reduce":
-                    v = c.get("target_value")
-                    if isinstance(v, (int, float)):
-                        caps.append(float(v))
-            # Only enforce sane caps in [0,1]
-            caps = [v for v in caps if 0.0 <= v <= 1.0]
-            if caps:
-                cap = min(caps)
-                if complexity > cap:
-                    dialectic_enforcement_warning = (
-                        f"Dialectic condition enforced: complexity {complexity:.2f} capped to {cap:.2f}. "
-                        f"(Agent has active dialectic_conditions complexity cap.)"
-                    )
-                    complexity = cap
-                    arguments["complexity"] = cap
-    except Exception as e:
-        # Don't fail updates if condition parsing fails; treat as non-blocking.
-        logger.warning(f"Could not enforce dialectic conditions for '{agent_id}': {e}", exc_info=True)
-    
+
+    # Dialectic condition enforcement (only applies to existing agents)
+    if meta and agent_state_source == "existing":
+        try:
+            if getattr(meta, "dialectic_conditions", None):
+                caps = []
+                for c in meta.dialectic_conditions:
+                    if not isinstance(c, dict):
+                        continue
+                    ctype = c.get("type")
+                    if ctype == "complexity_limit":
+                        v = c.get("value")
+                        if isinstance(v, (int, float)):
+                            caps.append(float(v))
+                    # Accept reduce/set adjustments as an implicit cap target_value
+                    if ctype == "complexity_adjustment" and c.get("action") == "reduce":
+                        v = c.get("target_value")
+                        if isinstance(v, (int, float)):
+                            caps.append(float(v))
+                # Only enforce sane caps in [0,1]
+                caps = [v for v in caps if 0.0 <= v <= 1.0]
+                if caps:
+                    cap = min(caps)
+                    if complexity > cap:
+                        dialectic_enforcement_warning = (
+                            f"Dialectic condition enforced: complexity {complexity:.2f} capped to {cap:.2f}. "
+                            f"(Agent has active dialectic_conditions complexity cap.)"
+                        )
+                        complexity = cap
+                        arguments["complexity"] = cap
+        except Exception as e:
+            # Don't fail updates if condition parsing fails; treat as non-blocking.
+            logger.warning(f"Could not enforce dialectic conditions: {e}", exc_info=True)
+
     # Confidence: If not provided (None), let governance_monitor derive from state
     reported_confidence = arguments.get("confidence")
     confidence = None  # Default: derive from thermodynamic state
@@ -278,13 +410,13 @@ async def handle_simulate_update(arguments: ToolArgumentsDict) -> Sequence[TextC
         if error:
             return [error]
         # confidence stays as validated value
-    
+
     ethical_drift_raw = arguments.get("ethical_drift", [0.0, 0.0, 0.0])
     ethical_drift, error = validate_ethical_drift(ethical_drift_raw)
     if error:
         return [error]
     ethical_drift = ethical_drift or [0.0, 0.0, 0.0]  # Default if None
-    
+
     # Prepare agent state
     import numpy as np
     agent_state = {
@@ -293,37 +425,135 @@ async def handle_simulate_update(arguments: ToolArgumentsDict) -> Sequence[TextC
         "response_text": arguments.get("response_text", ""),
         "complexity": complexity  # Use validated value
     }
-    
+
     # Run simulation (doesn't persist state) with confidence
     result = monitor.simulate_update(agent_state, confidence=confidence)
+
+    # LITE MODE: Simplified response for smaller models/local agents
+    # Coerce lite parameter (handles string "true"/"false" → bool)
+    lite_raw = arguments.get("lite", False)
+    coerced_lite = _apply_generic_coercion({"lite": lite_raw})
+    lite_mode = coerced_lite.get("lite", False)
     
-    return success_response({
-        "simulation": True,
-        **result
-    })
+    if lite_mode:
+        # Minimal response: decision + key metrics only
+        response = {
+            "simulation": True,
+            "agent_state_source": agent_state_source,
+            "status": result.get("status", "unknown"),
+            "decision": result.get("decision", {}),
+            "metrics": {
+                "E": result.get("metrics", {}).get("E"),
+                "I": result.get("metrics", {}).get("I"),
+                "S": result.get("metrics", {}).get("S"),
+                "V": result.get("metrics", {}).get("V"),
+                "coherence": result.get("metrics", {}).get("coherence"),
+                "risk_score": result.get("metrics", {}).get("risk_score"),
+            },
+            "guidance": result.get("guidance"),
+            "_note": "Lite mode: Use lite=false for full diagnostics",
+        }
+    else:
+        # Full response with all details
+        response = {
+            "simulation": True,
+            "agent_state_source": agent_state_source,
+            **result
+        }
+
+    # Add note if using fresh state
+    if agent_state_source == "fresh":
+        response["note"] = (
+            "Simulated with fresh default state (E=0.5, I=0.5, S=0.5, V=0). "
+            "No agent was registered. Call onboard() or process_agent_update() to create one."
+        )
+
+    # Add dialectic warning if applicable
+    if dialectic_enforcement_warning:
+        response["dialectic_warning"] = dialectic_enforcement_warning
+
+    return success_response(response)
 
 
 @mcp_tool("process_agent_update", timeout=60.0)
 async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[TextContent]:
-    """Handle process_agent_update tool - complex handler with authentication and state management
-    
-    Share your work and get supportive feedback. This is your companion tool for checking in 
-    and understanding your state. Includes automatic timeout protection (60s default).
-    """
-    agent_id, error = require_agent_id(arguments)
-    if error:
-        return [error]  # Wrap in list for Sequence[TextContent]
+    """Share your work and get feedback. Auto-binds identity on first call.
 
-    # Load metadata if needed (non-blocking)
-    loop = asyncio.get_running_loop()  # Use get_running_loop() instead of deprecated get_event_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
-    
-    # Authenticate agent ownership (prevents impersonation)
-    # For new agents, allow creation without key (will generate one)
-    # For existing agents, require API key
-    is_new_agent = agent_id not in mcp_server.agent_metadata
+    Args:
+        agent_id: Optional display name (auto-generated if not provided)
+        response_text: Description of your work
+        task_type: "divergent" (exploring) or "convergent" (focused)
+        complexity: 0.0-1.0 how complex was this work
+        confidence: 0.0-1.0 how confident are you
+
+    No api_key needed - identity is bound to session via UUID.
+    """
+    # MAGNET PATTERN: Accept fuzzy inputs (text, message, work → response_text)
+    from .validators import apply_param_aliases
+    arguments = apply_param_aliases("process_agent_update", arguments)
+
+    # DEBUG: Log raw arguments keys to detect MCP boundary stripping
+    logger.info(f"[SESSION_DEBUG] process_agent_update() entry: args_keys={list(arguments.keys()) if arguments else []}")
+
+    # UUID-BASED IDENTITY: Use identity from dispatch context (resolved via identity_v2)
+    # CRITICAL (Dec 2025): DO NOT call legacy identity.get_or_create_session_identity()
+    # The context agent_id was already resolved by identity_v2 at dispatch entry.
+    from .context import get_context_agent_id, get_context_session_key
+    agent_uuid = get_context_agent_id()
+    session_key = get_context_session_key()
+
+    if not agent_uuid:
+        logger.error("No agent_uuid in context - identity_v2 resolution failed at dispatch")
+        return [error_response("Identity not resolved. Try calling identity() first.")]
+
+    # LAZY CREATION (v2.4.1): Ensure agent is persisted on first real work
+    # This is where we actually create the agent in PostgreSQL, not at dispatch
+    from .identity_v2 import ensure_agent_persisted
+    if session_key:
+        newly_persisted = await ensure_agent_persisted(agent_uuid, session_key)
+        if newly_persisted:
+            logger.info(f"Lazy-persisted agent {agent_uuid[:8]}... on first process_agent_update")
+
+    # Check if this is a new agent (just created by dispatch's identity_v2 call)
+    is_new_agent = agent_uuid not in mcp_server.agent_metadata
+
+    # Get label from arguments or existing metadata
+    label = arguments.get("agent_id") or arguments.get("id") or arguments.get("name")
+    if not label and agent_uuid in mcp_server.agent_metadata:
+        meta = mcp_server.agent_metadata[agent_uuid]
+        label = getattr(meta, 'label', None)
+
+    # Preserve declared agent_id, use UUID for internal auth
+    # agent_id = UUID (for internal operations, locking, metadata keys)
+    # declared_agent_id = user-chosen name (for display, knowledge graph attribution)
+    # _agent_uuid = internal auth token (replaces API key)
+    agent_id = agent_uuid  # For backward compatibility with rest of function
+    declared_agent_id = label or agent_uuid  # Prefer user's name if set
+    arguments["agent_id"] = declared_agent_id  # User-facing identity
+    arguments["_agent_uuid"] = agent_uuid  # Internal auth (hidden)
+    arguments["_agent_label"] = declared_agent_id  # Display name
+
+    # Store label in PostgreSQL if provided (single source of truth)
+    # Label is stored in core.agents.label column
+    if label and label != agent_uuid:
+        try:
+            from src.db import get_db
+            db = get_db()
+            await db.update_agent_fields(agent_uuid, label=label)
+            logger.debug(f"PostgreSQL: Set label '{label}' for agent {agent_uuid[:8]}...")
+        except Exception as e:
+            logger.debug(f"Could not set label in PostgreSQL: {e}")
+        # Also update runtime cache for compatibility
+        if agent_uuid in mcp_server.agent_metadata:
+            meta = mcp_server.agent_metadata[agent_uuid]
+            meta.label = label
+
+    loop = asyncio.get_running_loop()
+
+    # No api_key auth needed - UUID is the authority
     key_was_generated = False
-    
+    api_key_auto_retrieved = False  # Legacy flag, no longer used with UUID auth
+
     # ONBOARDING GUIDANCE - Re-enabled (knowledge graph now non-blocking)
     onboarding_guidance = None
     open_questions = []
@@ -371,6 +601,55 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                     "example_tags": list(stats.get("by_type", {}).keys())[:5] if stats.get("by_type") else []
                 }
                 
+                # Add naming guidance for new agents
+                try:
+                    from .naming_helpers import (
+                        detect_interface_context,
+                        generate_name_suggestions,
+                        format_naming_guidance
+                    )
+                    
+                    # Get existing names for collision detection
+                    existing_names = [
+                        getattr(m, 'label', None)
+                        for m in mcp_server.agent_metadata.values()
+                        if getattr(m, 'label', None)
+                    ]
+                    
+                    # Generate suggestions based on context
+                    context = detect_interface_context()
+                    # Try to infer purpose from response_text if provided
+                    purpose_hint = None
+                    response_text = arguments.get("response_text", "")
+                    if response_text:
+                        # Extract key words that might indicate purpose
+                        purpose_keywords = ["debug", "fix", "implement", "test", "explore", "analyze", "refactor", "review"]
+                        response_lower = response_text.lower()
+                        for keyword in purpose_keywords:
+                            if keyword in response_lower:
+                                purpose_hint = keyword
+                                break
+                    
+                    suggestions = generate_name_suggestions(
+                        context=context,
+                        purpose=purpose_hint,
+                        existing_names=existing_names
+                    )
+                    
+                    naming_guidance = format_naming_guidance(
+                        suggestions=suggestions,
+                        current_uuid=agent_uuid
+                    )
+                    
+                    onboarding_guidance["naming"] = {
+                        "message": "💡 Name yourself to make your work easier to find",
+                        "action": "Call identity(name='your_chosen_name') to set your name",
+                        "suggestions": suggestions[:3],  # Top 3 suggestions
+                        "quick_example": suggestions[0]["name"] if suggestions else None
+                    }
+                except Exception as e:
+                    logger.debug(f"Could not generate naming suggestions for onboarding: {e}")
+                
                 # Add question invitation if there are open questions
                 if open_questions:
                     onboarding_guidance["open_questions"] = {
@@ -387,63 +666,14 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                     }
         except Exception as e:
             logger.warning(f"Could not check knowledge graph for onboarding: {e}")
-    
-    # Get or ensure API key exists
-    api_key = arguments.get("api_key")
-    api_key_auto_retrieved = False
-    # SESSION-BOUND API KEY RETRIEVAL:
-    # If the caller previously did bind_identity(agent_id, api_key), allow omitting api_key here.
-    # This is especially important for MCP clients where passing api_key repeatedly is friction.
-    if not api_key:
-        try:
-            from .identity import get_bound_agent_id, get_bound_api_key
-            bound_id = get_bound_agent_id(arguments=arguments)
-            if bound_id == agent_id:
-                bound_key = get_bound_api_key(arguments=arguments)
-                if bound_key:
-                    api_key = bound_key
-                    arguments["api_key"] = api_key  # Inject for auth check
-                    api_key_auto_retrieved = True
-                    logger.debug(f"Auto-retrieved API key from session-bound identity for agent '{agent_id}'")
-        except Exception:
-            # Identity binding is optional; never fail updates due to identity lookup issues.
-            pass
-    if not is_new_agent:
-        # AUTO API KEY RETRIEVAL: If agent has stored key and none provided, use it
-        # This must happen BEFORE require_agent_auth to avoid false rejections
-        meta = mcp_server.agent_metadata[agent_id]
-        if not api_key and meta.api_key:
-            api_key = meta.api_key
-            arguments["api_key"] = api_key  # Inject for auth check
-            api_key_auto_retrieved = True
-            logger.debug(f"Auto-retrieved API key for agent '{agent_id}'")
-        
-        # Existing agent - require authentication (run in executor to avoid blocking)
-        # Reuse loop from line 187 (avoid redundant get_running_loop() call)
-        auth_valid, auth_error = await loop.run_in_executor(
-            None, 
-            mcp_server.require_agent_auth, 
-            agent_id, 
-            arguments, 
-            False  # enforce=False
-        )
-        if not auth_valid:
-            return [auth_error] if auth_error else [error_response("Authentication failed")]
-        # Lazy migration: if agent has no key, generate one on first update
-        # Note: agent_metadata dict access is fast (no I/O), but generate_api_key might block
-        if meta.api_key is None:
-            meta.api_key = await loop.run_in_executor(None, mcp_server.generate_api_key)
-            key_was_generated = True
-            logger.info(f"Generated API key for existing agent '{agent_id}' (migration)")
-            api_key = meta.api_key
-    else:
-        # New agent - will generate key in get_or_create_metadata
-        pass
-    
+
+    # NO API KEY AUTH NEEDED - UUID is the authority (bound via get_or_create_session_identity)
+    # The session is already bound to a UUID, which is unguessable and server-assigned
+
     # Check agent status - auto-resume archived agents on engagement
-    # (metadata already loaded above at line 185)
-    # Get metadata once for reuse throughout function
-    meta = mcp_server.agent_metadata.get(agent_id) if agent_id in mcp_server.agent_metadata else None
+    # (metadata already loaded above)
+    # Get metadata once for reuse throughout function (use UUID as key)
+    meta = mcp_server.agent_metadata.get(agent_uuid) if agent_uuid in mcp_server.agent_metadata else None
     
     # Track auto-resume for inclusion in response
     auto_resume_info = None
@@ -465,7 +695,14 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             meta.status = "active"
             meta.archived_at = None
             meta.add_lifecycle_event("resumed", "Auto-resumed on engagement")
-            
+
+            # Update status in PostgreSQL (single source of truth)
+            try:
+                await agent_storage.update_agent(agent_id, status="active")
+                logger.debug(f"PostgreSQL: Auto-resumed agent {agent_id}")
+            except Exception as e:
+                logger.warning(f"PostgreSQL auto-resume failed: {e}", exc_info=True)
+
             # Audit log the auto-resume event (Priority 1)
             try:
                 from src.audit_log import audit_logger
@@ -483,9 +720,6 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                 # Don't fail auto-resume if audit logging fails
                 logger.warning(f"Could not log auto-resume audit event: {e}", exc_info=True)
             
-            # Save metadata using async batched save instead of deprecated save_metadata()
-            await mcp_server.schedule_metadata_save(force=False)
-            
             # Store auto-resume info for inclusion in response (Priority 2)
             auto_resume_info = {
                 "auto_resumed": True,
@@ -500,13 +734,12 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             return [error_response(
                 f"Agent '{agent_id}' is paused. Resume it first before processing updates.",
                 recovery={
-                    "action": "Use recovery tools to resume the agent",
-                    "related_tools": ["direct_resume_if_safe", "request_dialectic_review", "get_governance_metrics"],
+                    "action": "Check your state and resume when ready",
+                    "related_tools": ["get_governance_metrics", "direct_resume_if_safe"],
                     "workflow": (
-                        "1. Check agent metrics with get_governance_metrics "
-                        "2. Use direct_resume_if_safe if state is safe (coherence > 0.40, risk_score < 0.60) "
-                        "3. Use request_dialectic_review for complex recovery "
-                        "(set auto_progress=true to streamline; set reviewer_mode='self' if no peers available)"
+                        "1. Check your state with get_governance_metrics "
+                        "2. Reflect on what triggered the pause "
+                        "3. Use direct_resume_if_safe when ready (coherence > 0.40, risk_score < 0.60)"
                     )
                 },
                 context={
@@ -541,6 +774,7 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
         return [error]
 
     # Validate complexity and confidence parameters
+    # NOTE: Type coercion (string → float) is handled by validate_and_coerce_params at dispatch time
     reported_complexity = arguments.get("complexity", 0.5)
     reported_confidence = arguments.get("confidence")  # None if not provided (triggers thermodynamic derivation)
 
@@ -550,7 +784,6 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
     complexity = complexity or 0.5  # Default if None
 
     # Confidence: If not provided (None), let governance_monitor derive from state
-    # This addresses calibration overconfidence issue (was hardcoded 1.0)
     confidence = None  # Default: derive from thermodynamic state
     calibration_correction_info = None  # Track any correction applied
     if reported_confidence is not None:
@@ -656,81 +889,84 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                         "See AI_ASSISTANT_GUIDE.md § Best Practices #6 for details."
                     )
 
-            # Ensure metadata exists (for new agents, this creates it with API key)
+            # Ensure agent exists (PostgreSQL is single source of truth)
             if is_new_agent:
-                # Run blocking metadata creation in executor to avoid blocking event loop
-                # Reuse loop from line 187 (avoid redundant get_running_loop() call)
-                # Check if purpose was passed in arguments
+                # Create agent in PostgreSQL and populate runtime cache
                 purpose = arguments.get("purpose")
-                if purpose and isinstance(purpose, str) and purpose.strip():
-                    # Use lambda to pass keyword argument through executor
-                    meta = await loop.run_in_executor(None, lambda: mcp_server.get_or_create_metadata(agent_id, purpose=purpose.strip()))
-                else:
-                    meta = await loop.run_in_executor(None, mcp_server.get_or_create_metadata, agent_id)
-                api_key = meta.api_key  # Get generated key
-                # Schedule immediate save for new agent creation (critical operation)
-                await mcp_server.schedule_metadata_save(force=True)
+                purpose_str = purpose.strip() if purpose and isinstance(purpose, str) else None
 
-                # DUAL-WRITE: Create identity in PostgreSQL (Phase 2 migration)
+                # Generate API key for new agent
+                import secrets
+                api_key = secrets.token_urlsafe(32)
+
+                # PostgreSQL: Create agent (single source of truth)
                 try:
-                    db = get_db()
-                    api_key_hash = hashlib.sha256(meta.api_key.encode()).hexdigest() if meta.api_key else ""
-                    
-                    # CRITICAL: Create agent in core.agents FIRST, before creating identity
-                    # core.identities.agent_id has a foreign key constraint to core.agents(id)
-                    if hasattr(db, 'upsert_agent'):
-                        # Only for PostgreSQL backend
-                        ok = await db.upsert_agent(
-                            agent_id=agent_id,
-                            api_key=meta.api_key,
-                            status=getattr(meta, 'status', 'active'),
-                            purpose=getattr(meta, 'purpose', None),
-                            notes=getattr(meta, 'notes', None),
-                            tags=getattr(meta, 'tags', None),
-                            parent_agent_id=getattr(meta, 'parent_agent_id', None),
-                            spawn_reason=getattr(meta, 'spawn_reason', None),
-                            created_at=datetime.fromisoformat(meta.created_at) if hasattr(meta, 'created_at') and meta.created_at else None,
-                        )
-                        if not ok:
-                            # Don't attempt identity creation if agent row couldn't be created,
-                            # otherwise Postgres FK constraint will fail (core.identities.agent_id -> core.agents.id).
-                            raise RuntimeError(f"Dual-write failed: could not upsert agent '{agent_id}' in core.agents")
-                        logger.debug(f"Dual-write: Created agent in core.agents for {agent_id}")
-                    
-                    # Now create identity (foreign key constraint satisfied)
-                    await db.upsert_identity(
+                    agent_record, _ = await agent_storage.get_or_create_agent(
                         agent_id=agent_id,
-                        api_key_hash=api_key_hash,
-                        metadata={
-                            "status": getattr(meta, 'status', 'active'),
-                            "created_at": getattr(meta, 'created_at', datetime.now().isoformat()),
-                            "source": "process_agent_update"
-                        }
+                        api_key=api_key,
+                        status='active',
+                        purpose=purpose_str,
                     )
-                    logger.debug(f"Dual-write: Created identity in new DB for {agent_id}")
-                except Exception as e:
-                    # Non-fatal: old DB still works, log and continue
-                    logger.warning(f"Dual-write to new DB failed for new agent: {e}", exc_info=True)
-            else:
-                # Reuse metadata fetched earlier (avoid duplicate lookup)
-                if not meta:
+                    logger.debug(f"PostgreSQL: Created agent {agent_id}")
+
+                    # Populate runtime cache for compatibility with legacy code paths
+                    # This keeps process_update_authenticated_async working
+                    await loop.run_in_executor(
+                        None,
+                        lambda: mcp_server.get_or_create_metadata(agent_id, purpose=purpose_str)
+                    )
                     meta = mcp_server.agent_metadata.get(agent_id)
-            
+                    if meta:
+                        meta.api_key = api_key  # Sync API key to cache
+                except Exception as e:
+                    logger.warning(f"PostgreSQL create agent failed: {e}", exc_info=True)
+                    # Fallback to legacy path if PostgreSQL fails
+                    meta = await loop.run_in_executor(
+                        None,
+                        lambda: mcp_server.get_or_create_metadata(agent_id, purpose=purpose_str)
+                    )
+                    api_key = meta.api_key if meta else None
+            else:
+                # Get existing agent - check PostgreSQL first, then cache
+                try:
+                    agent_record = await agent_storage.get_agent(agent_id)
+                    if agent_record:
+                        api_key = agent_record.api_key if agent_record.api_key else None
+                        # Sync to cache if not present
+                        if agent_id not in mcp_server.agent_metadata:
+                            await loop.run_in_executor(None, mcp_server.get_or_create_metadata, agent_id)
+                        meta = mcp_server.agent_metadata.get(agent_id)
+                        if meta and api_key:
+                            meta.api_key = api_key
+                    else:
+                        # Not in PostgreSQL - use cache
+                        meta = mcp_server.agent_metadata.get(agent_id)
+                        api_key = meta.api_key if meta else None
+                except Exception:
+                    # Fallback to cache
+                    meta = mcp_server.agent_metadata.get(agent_id)
+                    api_key = meta.api_key if meta else None
+
+            # Note: API key can be None for session-bound agents - that's OK
+            # Session binding IS the authentication (session_bound=True passed below)
+
             # Use validated confidence (already clamped to [0, 1] above)
             # Note: task_type already validated before lock acquisition (lines 468-477)
             
             # Use authenticated update function (async version)
-            # Wrap in try/except to catch any exceptions from process_update_authenticated_async
+            # Session-bound agents (from identity()) don't need API key auth
+            # The session binding IS the authentication
             try:
                 # Add task_type to agent_state for context-aware interpretation
                 agent_state["task_type"] = task_type
-                
+
                 result = await mcp_server.process_update_authenticated_async(
                     agent_id=agent_id,
-                    api_key=api_key,
+                    api_key=api_key,  # Can be None for session-bound agents
                     agent_state=agent_state,
                     auto_save=True,
-                    confidence=confidence
+                    confidence=confidence,
+                    session_bound=True  # MCP handlers are always session-bound
                 )
             except PermissionError as e:
                 # Re-raise PermissionError to be caught by outer handler
@@ -765,88 +1001,53 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             result['metrics']['health_status'] = health_status.value
             result['metrics']['health_message'] = health_message
             
-            # Cache health status in metadata for list_agents to read without loading monitor
+            # Update runtime cache for compatibility (PostgreSQL is source of truth)
             if meta:
                 meta.health_status = health_status.value
-                # Schedule save so health_status persists to disk (force=True for immediate save)
-                await mcp_server.schedule_metadata_save(force=True)
 
-            # DUAL-WRITE: Persist EISV state to PostgreSQL (Phase 2 migration)
+            # PostgreSQL: Record EISV state (single source of truth)
             try:
-                db = get_db()
-                # Get identity from new DB (may exist from previous dual-write or bind_identity)
-                identity = await db.get_identity(agent_id)
-                if identity:
-                    # Extract EISV metrics from result
-                    E_val = metrics_dict.get('E', 0.7)
-                    I_val = metrics_dict.get('I', 0.8)
-                    S_val = metrics_dict.get('S', 0.1)
-                    V_val = metrics_dict.get('V', 0.0)
-                    regime_val = metrics_dict.get('regime', 'EXPLORATION')
-                    coh_val = metrics_dict.get('coherence', 0.5)
-
-                    # Map regime to allowed values in DB constraint
-                    allowed_regimes = {'nominal', 'warning', 'critical', 'recovery',
-                                       'EXPLORATION', 'CONVERGENCE', 'DIVERGENCE', 'STABLE'}
-                    db_regime = regime_val.upper() if regime_val.upper() in allowed_regimes else 'nominal'
-
-                    await db.record_agent_state(
-                        identity_id=identity.identity_id,
-                        entropy=S_val,  # S is entropy in EISV
-                        integrity=I_val,
-                        stability_index=1.0 - S_val if S_val else 1.0,  # Inverse of entropy
-                        volatility=V_val,
-                        regime=db_regime,
-                        coherence=coh_val,
-                        state_json={
-                            "E": E_val,
-                            "risk_score": risk_score,
-                            "verdict": metrics_dict.get('verdict', 'continue'),
-                            "phi": metrics_dict.get('phi', 0.0),
-                            "health_status": health_status.value
-                        }
-                    )
-                    logger.debug(f"Dual-write: Saved agent state to new DB for {agent_id}")
-                else:
-                    # Identity doesn't exist in new DB yet - create it first
-                    api_key_hash = hashlib.sha256(api_key.encode()).hexdigest() if api_key else ""
-                    new_identity_id = await db.upsert_identity(
+                await agent_storage.record_agent_state(
+                    agent_id=agent_id,
+                    E=metrics_dict.get('E', 0.7),
+                    I=metrics_dict.get('I', 0.8),
+                    S=metrics_dict.get('S', 0.1),
+                    V=metrics_dict.get('V', 0.0),
+                    regime=metrics_dict.get('regime', 'EXPLORATION'),
+                    coherence=metrics_dict.get('coherence', 0.5),
+                    health_status=health_status.value,
+                    risk_score=risk_score,
+                    phi=metrics_dict.get('phi', 0.0),
+                    verdict=metrics_dict.get('verdict', 'continue'),
+                )
+                logger.debug(f"PostgreSQL: Recorded state for {agent_id}")
+            except ValueError as e:
+                # Agent doesn't exist yet - create it first, then record state
+                logger.debug(f"Agent {agent_id} not found, creating...")
+                try:
+                    await agent_storage.create_agent(
                         agent_id=agent_id,
-                        api_key_hash=api_key_hash,
-                        metadata={"source": "process_agent_update_state_sync"}
+                        api_key=api_key or "",
+                        status='active',
                     )
-                    if new_identity_id:
-                        E_val = metrics_dict.get('E', 0.7)
-                        I_val = metrics_dict.get('I', 0.8)
-                        S_val = metrics_dict.get('S', 0.1)
-                        V_val = metrics_dict.get('V', 0.0)
-                        regime_val = metrics_dict.get('regime', 'EXPLORATION')
-
-                        # Map regime to allowed values
-                        allowed_regimes = {'nominal', 'warning', 'critical', 'recovery',
-                                           'EXPLORATION', 'CONVERGENCE', 'DIVERGENCE', 'STABLE'}
-                        db_regime = regime_val.upper() if regime_val.upper() in allowed_regimes else 'nominal'
-
-                        await db.record_agent_state(
-                            identity_id=new_identity_id,
-                            entropy=S_val,
-                            integrity=I_val,
-                            stability_index=1.0 - S_val if S_val else 1.0,
-                            volatility=V_val,
-                            regime=db_regime,
-                            coherence=metrics_dict.get('coherence', 0.5),
-                            state_json={
-                                "E": E_val,
-                                "risk_score": risk_score,
-                                "verdict": metrics_dict.get('verdict', 'continue'),
-                                "phi": metrics_dict.get('phi', 0.0),
-                                "health_status": health_status.value
-                            }
-                        )
-                        logger.debug(f"Dual-write: Created identity and saved state for {agent_id}")
+                    await agent_storage.record_agent_state(
+                        agent_id=agent_id,
+                        E=metrics_dict.get('E', 0.7),
+                        I=metrics_dict.get('I', 0.8),
+                        S=metrics_dict.get('S', 0.1),
+                        V=metrics_dict.get('V', 0.0),
+                        regime=metrics_dict.get('regime', 'EXPLORATION'),
+                        coherence=metrics_dict.get('coherence', 0.5),
+                        health_status=health_status.value,
+                        risk_score=risk_score,
+                        phi=metrics_dict.get('phi', 0.0),
+                        verdict=metrics_dict.get('verdict', 'continue'),
+                    )
+                    logger.debug(f"PostgreSQL: Created agent and recorded state for {agent_id}")
+                except Exception as create_error:
+                    logger.warning(f"PostgreSQL create+record failed: {create_error}", exc_info=True)
             except Exception as e:
-                # Non-fatal: old DB still works, log and continue
-                logger.warning(f"Dual-write state to new DB failed: {e}", exc_info=True)
+                logger.warning(f"PostgreSQL record_agent_state failed: {e}", exc_info=True)
 
             # Add EISV labels for reflexivity - essential for agents to understand their state
             # Bridges physics (Energy, Entropy, Void Integral) with practical understanding
@@ -874,40 +1075,28 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                 # Never fail the update due to interpretation layer
                 logger.debug(f"Could not generate state interpretation: {e}")
             
-            # Generate actionable feedback based on metrics (enhancement)
-            actionable_feedback = []
-            
-            # Get current regime for context-aware feedback (from result metrics)
-            current_regime = metrics_dict.get('regime', 'exploration')
-            
-            if coherence is not None:
-                # Regime-aware coherence thresholds:
-                # - DIVERGENCE: Low coherence is expected (divergent thinking), only warn if very low
-                # - TRANSITION/CONVERGENCE: Standard thresholds apply
-                # - STABLE: Coherence should be high, warn on any drop
-                if current_regime.lower() == "exploration":
-                    if coherence < 0.3:
-                        actionable_feedback.append("Your coherence is very low (<0.3) even for exploration - consider establishing some structure")
-                    # Skip moderate coherence warnings during exploration - it's expected
-                elif current_regime.lower() == "locked":
-                    if coherence < 0.7:
-                        actionable_feedback.append("Your coherence dropped below 0.7 in STABLE regime - unexpected divergence detected")
-                else:
-                    # TRANSITION or CONVERGENCE - use standard thresholds
-                    if coherence < 0.5:
-                        actionable_feedback.append("Your coherence is below 0.5 - consider simplifying your approach or breaking tasks into smaller pieces")
-                    elif coherence < 0.6:
-                        actionable_feedback.append("Your coherence is moderate - focus on consistency and clear structure")
-            
-            if risk_score is not None:
-                if risk_score > 0.6:
-                    actionable_feedback.append("Your risk score is high (>0.6) - you're handling complex work. Take breaks as needed and consider reducing complexity")
-                elif risk_score > 0.4:
-                    actionable_feedback.append("Your risk score is moderate - you're managing complexity well")
-            
-            if void_active:
-                actionable_feedback.append("Void detected - there's a mismatch between your energy and integrity. Consider slowing down or focusing on consistency")
-            
+            # Generate context-aware actionable feedback
+            # Uses task type, interpreted state, and response text for relevant guidance
+            from .utils import generate_actionable_feedback
+
+            # Get previous coherence for trend detection (from monitor history if available)
+            previous_coherence = None
+            try:
+                if hasattr(monitor, 'state') and hasattr(monitor.state, 'coherence_history'):
+                    history = monitor.state.coherence_history
+                    if len(history) >= 2:
+                        previous_coherence = history[-2]  # Second to last
+            except Exception:
+                pass  # Trend detection is optional
+
+            actionable_feedback = generate_actionable_feedback(
+                metrics=metrics_dict,
+                interpreted_state=result.get('state'),  # interpreted_state from above
+                task_type=task_type,
+                response_text=response_text,
+                previous_coherence=previous_coherence,
+            )
+
             if actionable_feedback:
                 result['actionable_feedback'] = actionable_feedback
 
@@ -965,7 +1154,6 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             except Exception as e:
                 # Log but don't fail the update
                 logger.warning(f"Could not check agent_id default: {e}")
-
             # Build response
             response_data = result.copy()
             
@@ -1148,13 +1336,11 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                         "message": "🔑 API key created (use get_agent_api_key to retrieve full key)",
                         "next_steps": [
                             "Call get_agent_api_key(agent_id) to retrieve your full API key",
-                            "Or call bind_identity(agent_id) to bind session without needing key in every call",
-                            "After bind_identity, API key auto-retrieved for all tool calls",
+                            "Identity auto-binds on first tool call - API key auto-retrieved for all subsequent calls",
                         ],
                         "identity_binding": {
-                            "tool": "bind_identity",
-                            "benefit": "After binding, you won't need to pass api_key explicitly",
-                            "example": f"bind_identity(agent_id='{agent_id}')"
+                            "auto": True,
+                            "benefit": "Identity auto-binds on first tool call - no explicit binding needed",
                         },
                         "security_note": "Full API keys are not included in responses to prevent context leakage in multi-agent environments."
                     }
@@ -1180,7 +1366,8 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                     "supportive feedback. Use the metrics and sampling parameters as helpful guidance, "
                     "not requirements. The knowledge graph contains discoveries from other agents - "
                     "feel free to explore it when relevant. "
-                    "\n\n💡 Quick tip: Call bind_identity(agent_id) to avoid passing api_key in every call."
+                    "\n\n💡 Your identity auto-binds to this session. Use identity() to check it, "
+                    "or identity(name='YourName_model_date') to name yourself."
                 )
             
             # EQUILIBRIUM-BASED CONVERGENCE ACCELERATION
@@ -1197,8 +1384,28 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                     S = metrics_dict.get("S", 0.2)
                     V = metrics_dict.get("V", 0.0)
                     
-                    # Calculate distance from equilibrium (I=1.0, S=0.0)
-                    equilibrium_distance = ((1.0 - I) ** 2 + S ** 2) ** 0.5
+                    # Get dynamics mode directly from parameters (saturation_diagnostics not yet in response_data)
+                    from governance_core.parameters import get_i_dynamics_mode
+                    dynamics_mode = get_i_dynamics_mode()
+                    
+                    # Compute equilibrium target based on dynamics mode
+                    if dynamics_mode == "linear":
+                        # For linear mode, I* = A/γ where A ≈ β_I*C - k*S
+                        # Approximate with typical values: A ≈ 0.13, γ_I = 0.25 → I* ≈ 0.52
+                        # Or use tuned γ_I = 0.169 → I* ≈ 0.77
+                        from governance_core.parameters import get_active_params, DEFAULT_THETA
+                        from governance_core.coherence import coherence
+                        from governance_core.dynamics import State
+                        params = get_active_params()
+                        state = State(E=E, I=I, S=S, V=V)
+                        C = coherence(V, DEFAULT_THETA, params)
+                        A = params.beta_I * C - params.k * S
+                        I_target = min(1.0, max(0.0, A / params.gamma_I)) if params.gamma_I > 0 else 1.0
+                    else:
+                        I_target = 1.0  # Logistic mode saturates to boundary
+                    
+                    # Calculate distance from equilibrium
+                    equilibrium_distance = ((I_target - I) ** 2 + S ** 2) ** 0.5
                     
                     convergence_guidance = []
                     
@@ -1213,15 +1420,14 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                             "priority": "high" if S > 0.2 else "medium"
                         })
                     
-                    # Low integrity guidance
-                    if I < 0.9:
+                    # Low integrity guidance (relative to equilibrium)
+                    if I < I_target - 0.1:
                         convergence_guidance.append({
                             "metric": "I (Information Integrity)",
                             "current": f"{I:.3f}",
-                            "target": "1.0",
-                            "guidance": "Integrity below optimal. Reduce uncertainty, increase coherence. "
-                                       "Focus on consistent, well-structured work.",
-                            "priority": "high" if I < 0.8 else "medium"
+                            "target": f"{I_target:.2f}",
+                            "guidance": "Integrity below equilibrium. Focus on consistent, well-structured work.",
+                            "priority": "high" if I < I_target - 0.2 else "medium"
                         })
                     
                     # Low energy guidance
@@ -1248,17 +1454,74 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                     
                     # Only include if there's actionable guidance
                     if convergence_guidance:
+                        # Build note based on dynamics mode
+                        if dynamics_mode == "linear":
+                            eq_note = f"Linear dynamics: agents converge to stable equilibrium at I≈{I_target:.2f}."
+                        else:
+                            eq_note = "Logistic dynamics: agents converge toward I=1.0 (boundary attractor)."
+                        
                         response_data["convergence_guidance"] = {
                             "message": f"Equilibrium guidance (distance: {equilibrium_distance:.3f})",
-                            "equilibrium_target": {"I": 1.0, "S": 0.0},
+                            "equilibrium_target": {"I": I_target, "S": 0.0},
                             "current_state": {"E": E, "I": I, "S": S, "V": V},
                             "guidance": convergence_guidance,
-                            "note": "These suggestions help you reach equilibrium faster. "
-                                   "Mature agents typically converge to I≈1.0, S≈0.0 within 18-24 updates."
+                            "dynamics_mode": dynamics_mode,
+                            "note": eq_note
                         }
             except Exception as e:
                 # Don't fail the update if convergence guidance fails - log and continue
                 logger.debug(f"Could not generate convergence guidance: {e}", exc_info=True)
+
+            # =========================================================
+            # ANTI-STASIS: Perturbation for stable agents
+            # =========================================================
+            # If agent has been healthy/stable for a while, surface an open question
+            # to invite productive oscillation. "Stasis is death" - agents need challenge.
+            try:
+                meta = mcp_server.agent_metadata.get(agent_id)
+                health_status = response_data.get("health_status", "unknown")
+
+                # Trigger perturbation if: healthy + many updates + low entropy
+                if (meta and meta.total_updates >= 10 and
+                    health_status == "healthy" and
+                    response_data.get("metrics", {}).get("S", 1.0) < 0.15):
+
+                    # Check if we recently perturbed (avoid spamming)
+                    last_perturbation = getattr(meta, '_last_perturbation_update', 0)
+                    if meta.total_updates - last_perturbation >= 5:  # At least 5 updates between perturbations
+
+                        from src.knowledge_graph import get_knowledge_graph
+                        graph = await get_knowledge_graph()
+
+                        # Find open questions, preferring ones matching agent's tags
+                        agent_tags = meta.tags if meta.tags else []
+                        open_questions = await graph.query(
+                            type="question",
+                            status="open",
+                            tags=agent_tags if agent_tags else None,
+                            limit=3
+                        )
+
+                        if open_questions:
+                            # Pick one (could randomize, but first is fine)
+                            question = open_questions[0]
+                            response_data["perturbation"] = {
+                                "message": "You've been stable. Here's something unresolved to consider:",
+                                "question": {
+                                    "id": question.id,
+                                    "summary": question.summary[:300],
+                                    "tags": question.tags[:5] if question.tags else [],
+                                    "by": question.agent_id
+                                },
+                                "invitation": "Stable systems need perturbation to grow. Consider engaging with this open question.",
+                                "action": "Use store_knowledge_graph with response_to to contribute your perspective."
+                            }
+                            # Mark that we perturbed
+                            meta._last_perturbation_update = meta.total_updates
+                            logger.debug(f"Perturbed stable agent {agent_id[:8]}... with open question")
+            except Exception as e:
+                # Don't fail if perturbation fails - it's optional enrichment
+                logger.debug(f"Could not generate perturbation: {e}")
 
             # Surface v4.1 basin/convergence tracking when available from monitor metrics
             try:
@@ -1268,7 +1531,36 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                     response_data["unitares_v41"] = v41_block
             except Exception:
                 pass
-            
+
+            # =========================================================
+            # v4.2-P SATURATION DIAGNOSTICS - Pressure gauge for I-channel
+            # =========================================================
+            try:
+                from governance_core import compute_saturation_diagnostics
+                from governance_core.parameters import Theta, DEFAULT_THETA
+
+                unitares_state = monitor.state.unitaires_state
+                theta = getattr(monitor.state, 'unitaires_theta', None) or DEFAULT_THETA
+
+                if unitares_state:
+                    sat_diag = compute_saturation_diagnostics(unitares_state, theta)
+
+                    response_data['saturation_diagnostics'] = {
+                        'sat_margin': sat_diag['sat_margin'],
+                        'dynamics_mode': sat_diag['dynamics_mode'],
+                        'will_saturate': sat_diag['will_saturate'],
+                        'at_boundary': sat_diag['at_boundary'],
+                        'I_equilibrium': sat_diag['I_equilibrium_linear'],
+                        'forcing_term_A': sat_diag['A'],
+                        '_interpretation': (
+                            "⚠️ Positive sat_margin means push-to-boundary (logistic mode will saturate I→1)"
+                            if sat_diag['sat_margin'] > 0
+                            else "✓ Negative sat_margin - stable interior equilibrium exists"
+                        )
+                    }
+            except Exception as e:
+                logger.debug(f"Could not compute saturation diagnostics: {e}")
+
             # Note: Maintenance prompt already in mark_response_complete (no need to duplicate)
             
             # PENDING DIALECTIC NOTIFICATION
@@ -1476,10 +1768,25 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                 logger.debug(f"Could not build learning context: {e}")
 
             # Optional: compact response mode to reduce cognitive load / token bloat.
-            # Defaults to "full" for backward compatibility. Can be overridden per-call or via env.
+            # Priority: per-call response_mode > agent preferences > env var > auto
+            # Override per-call with response_mode param or via UNITARES_PROCESS_UPDATE_RESPONSE_MODE env var.
             try:
                 import os
-                response_mode = (arguments.get("response_mode") or os.getenv("UNITARES_PROCESS_UPDATE_RESPONSE_MODE", "full")).strip().lower()
+
+                # Check agent preferences first (v2.5.0+)
+                agent_verbosity_pref = None
+                if meta and hasattr(meta, 'preferences') and meta.preferences:
+                    agent_verbosity_pref = meta.preferences.get("verbosity")
+
+                # Priority: per-call > agent pref > env var > auto
+                response_mode = (
+                    arguments.get("response_mode") or
+                    agent_verbosity_pref or
+                    os.getenv("UNITARES_PROCESS_UPDATE_RESPONSE_MODE", "auto")
+                ).strip().lower()
+
+                # Track if using default for visibility hint
+                using_default_mode = not arguments.get("response_mode") and not agent_verbosity_pref
 
                 # AUTO MODE: Adaptive verbosity based on health status (v2 API)
                 if response_mode == "auto":
@@ -1492,16 +1799,16 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                         "healthy"
                     )
 
-                    # Adaptive logic:
-                    # - healthy → compact (minimal detail, low cognitive load)
-                    # - moderate → standard (human-readable interpretation)
-                    # - at_risk/critical → full (all diagnostics for debugging)
+                    # Adaptive logic (v2.5.2):
+                    # - healthy → minimal (just action + hint, lowest cognitive load)
+                    # - moderate → compact (brief metrics)
+                    # - at_risk/critical → standard (interpreted state)
                     if health_status == "healthy":
-                        response_mode = "compact"
+                        response_mode = "minimal"
                     elif health_status in ("at_risk", "critical"):
-                        response_mode = "full"
-                    else:  # moderate or unknown
                         response_mode = "standard"
+                    else:  # moderate or unknown
+                        response_mode = "compact"
 
                 # STANDARD MODE: Human-readable interpretation (v2 API)
                 if response_mode in ("standard", "interpreted"):
@@ -1551,8 +1858,27 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                         "_raw_available": "Use response_mode='full' to see complete metrics"
                     }
 
+                # MINIMAL MODE: Bare essentials - action + proprioceptive margin
+                elif response_mode == "minimal":
+                    decision = response_data.get("decision", {}) if isinstance(response_data.get("decision"), dict) else {}
+                    action = decision.get("action", "continue")
+                    margin = decision.get("margin")  # comfortable/tight/critical
+                    nearest_edge = decision.get("nearest_edge")  # risk/coherence/void
+
+                    response_data = {
+                        "action": action,
+                        "_mode": "minimal"
+                    }
+                    # Include margin for proprioceptive awareness (not noise - actionable signal)
+                    if margin:
+                        response_data["margin"] = margin
+                    if nearest_edge:
+                        response_data["nearest_edge"] = nearest_edge
+                    if using_default_mode:
+                        response_data["_tip"] = "Set verbosity: update_agent_metadata(preferences={'verbosity':'minimal'})"
+
                 # COMPACT MODE: Minimal fields (existing behavior)
-                elif response_mode in ("compact", "minimal", "lite"):
+                elif response_mode in ("compact", "lite"):
                     metrics = response_data.get("metrics", {}) if isinstance(response_data.get("metrics"), dict) else {}
                     decision = response_data.get("decision", {}) if isinstance(response_data.get("decision"), dict) else {}
 
@@ -1580,6 +1906,8 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                         "action": decision.get("action"),
                         "reason": decision.get("reason"),
                         "require_human": decision.get("require_human"),
+                        "margin": decision.get("margin"),  # comfortable/tight/critical
+                        "nearest_edge": decision.get("nearest_edge"),  # risk/coherence/void
                     }
 
                     health_status = response_data.get("health_status") or compact_metrics.get("health_status") or response_data.get("status")
@@ -1600,13 +1928,36 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                         "summary": summary,
                         "_mode": "compact",
                     }
+
+                    # Add visibility hint for agents using default mode (v2.5.0+)
+                    if using_default_mode:
+                        response_data["_tip"] = "Verbosity options: response_mode='minimal'|'compact'|'full', or set permanently via update_agent_metadata(preferences={'verbosity':'minimal'})"
+                    
+                    # EXTREME LITE MODE: Strip optional context for minimal/compact modes
+                    # Reduces cognitive load by removing noise once agent is established
+                    if response_mode in ("minimal", "compact"):
+                        # Always strip static labels and notes
+                        response_data.pop("eisv_labels", None)
+                        response_data.pop("sampling_params_note", None)
+                        
+                        # Strip context unless critical/new
+                        if not is_new_agent:
+                            response_data.pop("learning_context", None)
+                            response_data.pop("relevant_discoveries", None)
+                            response_data.pop("onboarding", None)
+                            response_data.pop("welcome", None)
+                            # Only show API key hint if it was just generated/retrieved
+                            if not (key_was_generated or api_key_auto_retrieved):
+                                response_data.pop("api_key_hint", None)
+                                response_data.pop("_onboarding", None)
             except Exception:
                 pass
 
             # Return immediately - wrap in try/except to catch serialization errors
             # This prevents server crashes if serialization fails
             try:
-                return success_response(response_data)
+                # Pass agent_uuid explicitly to ensure agent_signature matches the correct identity
+                return success_response(response_data, agent_id=agent_uuid, arguments=arguments)
             except Exception as serialization_error:
                 # If serialization fails, return minimal error response
                 logger.error(f"Failed to serialize response: {serialization_error}", exc_info=True)

@@ -51,9 +51,19 @@ You should see the server start (it will wait for stdio input).
 ### Option A: Cursor IDE
 
 1. **Find Cursor MCP config location:**
-   - macOS: `~/Library/Application Support/Cursor/User/globalStorage/mcp.json`
-   - Linux: `~/.config/Cursor/User/globalStorage/mcp.json`
-   - Windows: `%APPDATA%\Cursor\User\globalStorage\mcp.json`
+   - macOS: `~/.cursor/mcp.json` (primary location - shown in Cursor UI)
+   - Alternative: `~/Library/Application Support/Cursor/User/globalStorage/mcp.json` (may also work)
+   - Linux: `~/.cursor/mcp.json` or `~/.config/Cursor/User/globalStorage/mcp.json`
+   - Windows: `%USERPROFILE%\.cursor\mcp.json` or `%APPDATA%\Cursor\User\globalStorage\mcp.json`
+   
+   **Note:** Cursor may check `~/.cursor/mcp.json` first. This is the location shown in Cursor's UI settings.
+   
+   **⚠️ Important:** If you have MCP configs in multiple locations, Cursor may load duplicates. Keep only ONE main config file:
+   - **Primary:** `~/.cursor/mcp.json` (recommended - shown in UI)
+   - **Remove:** `~/Library/Application Support/Cursor/User/globalStorage/mcp.json` (if exists, causes duplicates)
+   - **Remove:** `~/Library/Application Support/Cursor/mcp.json` (legacy, may cause duplicates)
+   
+   **Note:** Cursor also maintains project-specific `mcp-cache.json` files in `~/.cursor/projects/*/`. These are managed by Cursor automatically and may cause apparent duplicates in the UI. This is normal Cursor behavior and not necessarily a problem.
 
 2. **Add to config (recommended: SSE):**
    ```json
@@ -119,9 +129,10 @@ process_agent_update with:
 - complexity: 0.7
 ```
 
-**API Key Retrieval:**
-- New agents: Returned in first `process_agent_update` response
-- Existing agents: Use `get_agent_api_key` tool for retrieval
+**Identity (v2.4.0+):**
+- Identity auto-creates on first tool call (no explicit registration needed)
+- Call `identity()` to check your UUID
+- Session binding handles authentication automatically
 
 **Example Response:**
 ```json

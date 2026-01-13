@@ -192,48 +192,27 @@ def create_related_to_edge(
     if reason:
         props["reason"] = reason
     
-    if props:
-        props_str = " {" + ", ".join(f"{k}: ${k}" for k in props.keys()) + "}"
-    else:
-        props_str = ""
-    
     params = {
         "from_id": from_discovery_id,
         "to_id": to_discovery_id,
         **props,
     }
     
+    # Build props string with parameter placeholders
+    # Note: f-string with double braces {{}} preserves literal ${param_name} for regex replacement
+    if props:
+        props_items = ", ".join(f"{k}: ${{{k}}}" for k in props.keys())
+        props_str = f" {{{props_items}}}"
+    else:
+        props_str = ""
+    
+    # Use f-string here because we need to interpolate props_str
+    # Double braces {{}} escape to literal braces, preserving ${param_name} placeholders
+    # This is equivalent to raw strings but allows dynamic props_str interpolation
     cypher = f"""
         MATCH (d1:Discovery {{id: ${{from_id}}}})
         MATCH (d2:Discovery {{id: ${{to_id}}}})
         MERGE (d1)-[r:RELATED_TO{props_str}]->(d2)
-        RETURN r
-    """
-    
-    return cypher, params
-
-
-def create_temporally_near_edge(
-    from_discovery_id: str,
-    to_discovery_id: str,
-    delta_seconds: int,
-) -> tuple[str, Dict[str, Any]]:
-    """
-    Build Cypher query to create TEMPORALLY_NEAR edge.
-    
-    Returns:
-        (cypher_query, params_dict)
-    """
-    params = {
-        "from_id": from_discovery_id,
-        "to_id": to_discovery_id,
-        "delta_seconds": delta_seconds,
-    }
-    
-    cypher = """
-        MATCH (d1:Discovery {id: ${from_id}})
-        MATCH (d2:Discovery {id: ${to_id}})
-        MERGE (d1)-[r:TEMPORALLY_NEAR {delta_seconds: ${delta_seconds}}]->(d2)
         RETURN r
     """
     
@@ -386,6 +365,9 @@ def query_agent_discoveries(
     
     where_clause = " AND ".join(conditions)
     
+    # Add limit to params (required for parameterized query)
+    params["limit"] = limit
+    
     cypher = f"""
         MATCH (d:Discovery)
         WHERE {where_clause}
@@ -400,30 +382,34 @@ def query_agent_discoveries(
 def create_indexes(graph_name: str = "governance_graph") -> List[tuple[str, Dict[str, Any]]]:
     """
     Build SQL statements to create indexes on the AGE graph schema.
-    
+
+    Note: AGE stores label names with mixed case in quoted form, so we must
+    quote them here (e.g., "Discovery" not Discovery) to match the actual
+    relation names like governance_graph."Discovery".
+
     Returns:
         List of (sql_statement, params_dict) tuples
     """
     indexes = [
-        # Discovery indexes
-        (f"CREATE INDEX IF NOT EXISTS idx_discovery_agent ON {graph_name}.Discovery(agent_id)", {}),
-        (f"CREATE INDEX IF NOT EXISTS idx_discovery_type ON {graph_name}.Discovery(type)", {}),
-        (f"CREATE INDEX IF NOT EXISTS idx_discovery_timestamp ON {graph_name}.Discovery(timestamp)", {}),
-        (f"CREATE INDEX IF NOT EXISTS idx_discovery_severity ON {graph_name}.Discovery(severity)", {}),
-        (f"CREATE INDEX IF NOT EXISTS idx_discovery_status ON {graph_name}.Discovery(status)", {}),
-        
+        # Discovery indexes (quoted to match AGE's mixed-case labels)
+        (f'CREATE INDEX IF NOT EXISTS idx_discovery_agent ON {graph_name}."Discovery"(agent_id)', {}),
+        (f'CREATE INDEX IF NOT EXISTS idx_discovery_type ON {graph_name}."Discovery"(type)', {}),
+        (f'CREATE INDEX IF NOT EXISTS idx_discovery_timestamp ON {graph_name}."Discovery"(timestamp)', {}),
+        (f'CREATE INDEX IF NOT EXISTS idx_discovery_severity ON {graph_name}."Discovery"(severity)', {}),
+        (f'CREATE INDEX IF NOT EXISTS idx_discovery_status ON {graph_name}."Discovery"(status)', {}),
+
         # EISV indexes (for self_observation type)
-        (f"CREATE INDEX IF NOT EXISTS idx_eisv_e ON {graph_name}.Discovery(eisv_e) WHERE type = 'self_observation'", {}),
-        (f"CREATE INDEX IF NOT EXISTS idx_eisv_s ON {graph_name}.Discovery(eisv_s) WHERE type = 'self_observation'", {}),
-        (f"CREATE INDEX IF NOT EXISTS idx_eisv_v ON {graph_name}.Discovery(eisv_v) WHERE type = 'self_observation'", {}),
-        
+        (f'CREATE INDEX IF NOT EXISTS idx_eisv_e ON {graph_name}."Discovery"(eisv_e) WHERE type = \'self_observation\'', {}),
+        (f'CREATE INDEX IF NOT EXISTS idx_eisv_s ON {graph_name}."Discovery"(eisv_s) WHERE type = \'self_observation\'', {}),
+        (f'CREATE INDEX IF NOT EXISTS idx_eisv_v ON {graph_name}."Discovery"(eisv_v) WHERE type = \'self_observation\'', {}),
+
         # Agent indexes
-        (f"CREATE INDEX IF NOT EXISTS idx_agent_id ON {graph_name}.Agent(id)", {}),
-        (f"CREATE INDEX IF NOT EXISTS idx_agent_status ON {graph_name}.Agent(status)", {}),
-        
+        (f'CREATE INDEX IF NOT EXISTS idx_agent_id ON {graph_name}."Agent"(id)', {}),
+        (f'CREATE INDEX IF NOT EXISTS idx_agent_status ON {graph_name}."Agent"(status)', {}),
+
         # Tag indexes
-        (f"CREATE INDEX IF NOT EXISTS idx_tag_name ON {graph_name}.Tag(name)", {}),
+        (f'CREATE INDEX IF NOT EXISTS idx_tag_name ON {graph_name}."Tag"(name)', {}),
     ]
-    
+
     return indexes
 

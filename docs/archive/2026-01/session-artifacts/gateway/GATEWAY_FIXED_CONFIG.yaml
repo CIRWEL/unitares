@@ -1,0 +1,14 @@
+on_http_request:
+  - actions:
+      - type: ai-gateway
+        config:
+          providers:
+            - id: "huggingface"
+              base_url: "https://router.huggingface.co/v1"
+              api_keys:
+                - value: "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"
+              models:
+                - id: "deepseek-ai/DeepSeek-R1"
+                - id: "deepseek-ai/DeepSeek-R1:fastest"
+                - id: "openai/gpt-oss-120b"
+

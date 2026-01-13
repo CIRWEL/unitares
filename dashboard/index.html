@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UNITARES Governance Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0a0e27;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #1e3a5f;
+        }
+
+        .header h1 {
+            color: #4a9eff;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header .subtitle {
+            color: #8a9ba8;
+            font-size: 1.1em;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: #1a1f3a;
+            border: 1px solid #2a3f5f;
+            border-radius: 8px;
+            padding: 20px;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            border-color: #4a9eff;
+        }
+
+        .stat-card h3 {
+            color: #8a9ba8;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .stat-card .value {
+            color: #4a9eff;
+            font-size: 2.5em;
+            font-weight: bold;
+        }
+
+        .stat-card .change {
+            color: #8a9ba8;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .panel {
+            background: #1a1f3a;
+            border: 1px solid #2a3f5f;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .panel h2 {
+            color: #4a9eff;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .agent-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .agent-item {
+            padding: 12px;
+            margin-bottom: 10px;
+            background: #0f1525;
+            border-left: 3px solid #4a9eff;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .agent-item.paused {
+            border-left-color: #ff6b6b;
+        }
+
+        .agent-item.archived {
+            border-left-color: #8a9ba8;
+            opacity: 0.6;
+        }
+
+        .agent-name {
+            font-weight: 500;
+            color: #e0e0e0;
+        }
+
+        .agent-metrics {
+            display: flex;
+            gap: 10px;
+            font-size: 0.9em;
+            flex-wrap: wrap;
+        }
+
+        .metric {
+            color: #8a9ba8;
+        }
+
+        .metric .label {
+            font-size: 0.8em;
+        }
+
+        .metric .val {
+            color: #4a9eff;
+            font-weight: bold;
+        }
+
+        .discoveries-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .discovery-item {
+            padding: 12px;
+            margin-bottom: 10px;
+            background: #0f1525;
+            border-radius: 4px;
+            border-left: 3px solid #4a9eff;
+        }
+
+        .discovery-item h4 {
+            color: #4a9eff;
+            margin-bottom: 5px;
+            font-size: 1em;
+        }
+
+        .discovery-item .summary {
+            color: #b0b0b0;
+            font-size: 0.9em;
+            margin-bottom: 8px;
+        }
+
+        .discovery-item .meta {
+            display: flex;
+            gap: 15px;
+            font-size: 0.8em;
+            color: #8a9ba8;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-indicator.active {
+            background: #4ade80;
+        }
+
+        .status-indicator.waiting_input {
+            background: #fbbf24;
+        }
+
+        .status-indicator.paused {
+            background: #ff6b6b;
+        }
+
+        .status-indicator.archived {
+            background: #8a9ba8;
+        }
+
+        .status-indicator.deleted {
+            background: #6b7280;
+        }
+
+        .status-indicator.unknown {
+            background: #9ca3af;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #8a9ba8;
+        }
+
+        .error {
+            background: #3a1f1f;
+            border: 1px solid #ff6b6b;
+            color: #ff6b6b;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .refresh-info {
+            text-align: center;
+            color: #8a9ba8;
+            font-size: 0.9em;
+            margin-top: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>UNITARES Governance</h1>
+        <div class="subtitle">Multi-Agent Coordination Dashboard</div>
+    </div>
+
+    <div id="error-container"></div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>Total Agents</h3>
+            <div class="value" id="total-agents">-</div>
+            <div class="change" id="agents-change"></div>
+        </div>
+        <div class="stat-card">
+            <h3>Active Agents</h3>
+            <div class="value" id="active-agents">-</div>
+            <div class="change" id="active-change"></div>
+        </div>
+        <div class="stat-card">
+            <h3>Knowledge Discoveries</h3>
+            <div class="value" id="discoveries-count">-</div>
+            <div class="change" id="discoveries-change"></div>
+        </div>
+        <div class="stat-card">
+            <h3>Dialectic Sessions</h3>
+            <div class="value" id="dialectic-sessions">-</div>
+            <div class="change" id="dialectic-change"></div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="panel">
+            <h2>Agents</h2>
+            <div id="agents-container" class="agent-list">
+                <div class="loading">Loading agents...</div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>Recent Discoveries</h2>
+            <div id="discoveries-container" class="discoveries-list">
+                <div class="loading">Loading discoveries...</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="refresh-info">
+        Auto-refreshing every 10 seconds • Last updated: <span id="last-update">-</span>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let previousStats = {};
+
+        async function callTool(toolName, arguments = {}) {
+            try {
+                const response = await fetch(`${API_BASE}/v1/tools/call`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: toolName,
+                        arguments: arguments
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                if (!data.success) {
+                    throw new Error(data.error || 'Tool call failed');
+                }
+
+                return typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+            } catch (error) {
+                console.error(`Error calling ${toolName}:`, error);
+                throw error;
+            }
+        }
+
+        function showError(message) {
+            const container = document.getElementById('error-container');
+            container.innerHTML = `<div class="error">Error: ${message}</div>`;
+        }
+
+        function clearError() {
+            document.getElementById('error-container').innerHTML = '';
+        }
+
+        function formatChange(current, previous) {
+            if (previous === undefined || previous === null) return '';
+            const diff = current - previous;
+            if (diff === 0) return '';
+            const sign = diff > 0 ? '+' : '';
+            const color = diff > 0 ? '#4ade80' : '#ff6b6b';
+            return `<span style="color: ${color}">${sign}${diff}</span>`;
+        }
+
+        async function loadAgents() {
+            try {
+                const result = await callTool('list_agents', {
+                    include_metrics: true,
+                    limit: 1000,  // High limit to ensure status_counts includes all matching agents
+                    status_filter: 'all'  // Get all statuses to show accurate counts
+                });
+                
+                // Handle rate limit errors gracefully
+                if (result.error && result.error.includes('rate limit')) {
+                    console.warn('Rate limit hit, will retry on next refresh');
+                    return;
+                }
+
+                // Parse the actual API response format
+                // list_agents returns: { agents: { active: [], waiting_input: [], ... }, summary: { total: N, ... } }
+                const agentsObj = result.agents || {};
+                const summary = result.summary || {};
+                const byStatus = summary.by_status || {};
+                
+                // Use summary counts (accurate) not array lengths (limited by pagination)
+                const total = summary.total || 0;
+                const active = (byStatus.active || 0) + (byStatus.waiting_input || 0);
+                const paused = byStatus.paused || 0;
+                const archived = byStatus.archived || 0;
+                const deleted = byStatus.deleted || 0;
+                const unknown = byStatus.unknown || 0;
+                
+                // Flatten agents from all status categories (for display only)
+                const allAgents = [
+                    ...(agentsObj.active || []),
+                    ...(agentsObj.waiting_input || []),
+                    ...(agentsObj.paused || []),
+                    ...(agentsObj.archived || []),
+                    ...(agentsObj.unknown || [])
+                ];
+
+                // Update stats
+                document.getElementById('total-agents').textContent = total;
+                document.getElementById('active-agents').textContent = active;
+                
+                const agentsChange = formatChange(total, previousStats.totalAgents);
+                // Show breakdown: active, paused, archived, deleted, unknown
+                const breakdown = [];
+                if (active > 0) breakdown.push(`${active} active`);
+                if (paused > 0) breakdown.push(`${paused} paused`);
+                if (archived > 0) breakdown.push(`${archived} archived`);
+                if (deleted > 0) breakdown.push(`${deleted} deleted`);
+                if (unknown > 0) breakdown.push(`${unknown} unknown`);
+                document.getElementById('agents-change').innerHTML = agentsChange || (total > 0 ? breakdown.join(', ') || 'All agents' : 'No agents yet');
+                
+                const activeChange = formatChange(active, previousStats.activeAgents);
+                // Show what's not active
+                const inactiveBreakdown = [];
+                if (paused > 0) inactiveBreakdown.push(`${paused} paused`);
+                if (archived > 0) inactiveBreakdown.push(`${archived} archived`);
+                if (deleted > 0) inactiveBreakdown.push(`${deleted} deleted`);
+                document.getElementById('active-change').innerHTML = activeChange || (total > 0 ? (inactiveBreakdown.join(', ') || 'All active') : 'Start by calling onboard()');
+
+                previousStats.totalAgents = total;
+                previousStats.activeAgents = active;
+
+                // Render agent list
+                const container = document.getElementById('agents-container');
+                if (allAgents.length === 0) {
+                    container.innerHTML = '<div class="loading">No agents found. Agents will appear here after calling onboard() or any tool.</div>';
+                    return;
+                }
+
+                // Sort by last update (most recent first)
+                allAgents.sort((a, b) => {
+                    const aTime = new Date(a.last_update || a.created_at || 0);
+                    const bTime = new Date(b.last_update || b.created_at || 0);
+                    return bTime - aTime;
+                });
+
+                container.innerHTML = allAgents.slice(0, 20).map(agent => {
+                    // Use lifecycle_status from agent object (more reliable than array membership)
+                    const status = agent.lifecycle_status || agent.status || 'unknown';
+                    const statusClass = status === 'paused' ? 'paused' : 
+                                       status === 'archived' ? 'archived' : 
+                                       status === 'deleted' ? 'archived' : '';  // Deleted agents styled like archived
+                    const statusIndicator = `<span class="status-indicator ${status}"></span>`;
+                    
+                    const metrics = agent.metrics || {};
+                    // EISV metrics - show all four core metrics
+                    const e = metrics.E !== undefined && metrics.E !== null ? Number(metrics.E).toFixed(2) : '-';
+                    const i = metrics.I !== undefined && metrics.I !== null ? Number(metrics.I).toFixed(2) : '-';
+                    const s = metrics.S !== undefined && metrics.S !== null ? Number(metrics.S).toFixed(2) : '-';
+                    const v = metrics.V !== undefined && metrics.V !== null ? Number(metrics.V).toFixed(2) : '-';
+                    const coherence = metrics.coherence !== undefined && metrics.coherence !== null ? Number(metrics.coherence).toFixed(2) : '-';
+                    const displayName = agent.label || agent.display_name || agent.name || agent.agent_id || 'Unknown';
+                    
+                    // Show metrics only if we have at least one metric value
+                    const hasMetrics = metrics && (metrics.E !== undefined || metrics.I !== undefined || metrics.S !== undefined);
+
+                    return `
+                        <div class="agent-item ${statusClass}">
+                            <div>
+                                ${statusIndicator}
+                                <span class="agent-name">${displayName}</span>
+                            </div>
+                            ${hasMetrics ? `
+                            <div class="agent-metrics">
+                                <div class="metric" title="Energy (divergence/productive capacity)">
+                                    <div class="label">E</div>
+                                    <div class="val">${e}</div>
+                                </div>
+                                <div class="metric" title="Information Integrity">
+                                    <div class="label">I</div>
+                                    <div class="val">${i}</div>
+                                </div>
+                                <div class="metric" title="Entropy (disorder/uncertainty)">
+                                    <div class="label">S</div>
+                                    <div class="val">${s}</div>
+                                </div>
+                                <div class="metric" title="Void Integral (E-I imbalance)">
+                                    <div class="label">V</div>
+                                    <div class="val">${v}</div>
+                                </div>
+                                <div class="metric" title="Coherence">
+                                    <div class="label">C</div>
+                                    <div class="val">${coherence}</div>
+                                </div>
+                            </div>
+                            ` : '<div class="agent-metrics"><span style="color: #8a9ba8; font-size: 0.9em;">No metrics yet</span></div>'}
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                showError(`Failed to load agents: ${error.message}`);
+                document.getElementById('agents-container').innerHTML = 
+                    '<div class="loading">Error loading agents</div>';
+            }
+        }
+
+        async function loadDiscoveries() {
+            try {
+                // Get total count from list_knowledge_graph
+                const listResult = await callTool('list_knowledge_graph', {});
+                
+                // Parse the actual API response format
+                // list_knowledge_graph returns: { stats: { total_discoveries: N, ... } }
+                const stats = listResult.stats || {};
+                const totalDiscoveries = stats.total_discoveries || 0;
+                
+                // Get discoveries using search with high limit to ensure we get newest
+                // graph.query() without filters should return newest first, but let's sort client-side to be sure
+                const searchResult = await callTool('search_knowledge_graph', {
+                    limit: 500,  // Get a very large sample to ensure we have the newest
+                    include_details: true
+                });
+                
+                let discoveries = searchResult.discoveries || [];
+                
+                // Sort by ID (which contains ISO timestamp) descending to get most recent first
+                // ID format: "2025-12-29T08:34:42.201273" - lexicographically sortable
+                // Newer dates have higher lexicographic values
+                discoveries.sort((a, b) => {
+                    const aId = (a.id || '').trim();
+                    const bId = (b.id || '').trim();
+                    if (!aId && !bId) return 0;
+                    if (!aId) return 1;  // No ID goes to end
+                    if (!bId) return -1; // No ID goes to end
+                    // Compare lexicographically (newer dates come first)
+                    return bId.localeCompare(aId);
+                });
+                
+                // Take only the 10 most recent
+                discoveries = discoveries.slice(0, 10);
+
+                // Update stats with total count
+                document.getElementById('discoveries-count').textContent = totalDiscoveries;
+                const discoveriesChange = formatChange(totalDiscoveries, previousStats.discoveries);
+                document.getElementById('discoveries-change').innerHTML = discoveriesChange || (totalDiscoveries > 0 ? 'Total discoveries' : 'No discoveries yet');
+                previousStats.discoveries = totalDiscoveries;
+
+                // Render discoveries
+                const container = document.getElementById('discoveries-container');
+                if (discoveries.length === 0) {
+                    container.innerHTML = '<div class="loading">No recent discoveries. Use store_knowledge_graph() to add discoveries.</div>';
+                    return;
+                }
+
+                container.innerHTML = discoveries.map(d => {
+                    // Parse date from id (format: "2025-12-29T08:34:42.201273" or "2026-01-01T23:40:53.202482")
+                    // IDs use ISO timestamps - parse correctly (it's January 2026, so Dec 29 2025 is 3 days ago)
+                    let dateStr = 'Unknown';
+                    let dateObj = null;
+                    if (d.id) {
+                        try {
+                            // Extract ISO timestamp from ID (first 19 chars: "2026-01-01T23:40:53")
+                            const isoStr = d.id.substring(0, 19);
+                            // Parse ISO string - JavaScript Date can parse "2026-01-01T23:40:53" directly
+                            // But to be safe, we'll parse it explicitly
+                            const [datePart, timePart] = isoStr.split('T');
+                            const [year, month, day] = datePart.split('-').map(Number);
+                            const [hour, minute, second] = timePart.split(':').map(Number);
+                            dateObj = new Date(year, month - 1, day, hour, minute, second || 0);
+                            
+                            if (!isNaN(dateObj.getTime())) {
+                                // Show relative time for recent discoveries
+                                const now = new Date();
+                                const diffMs = now - dateObj;
+                                const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                                const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+                                
+                                // Format: Show date + time for better readability
+                                // Examples: "Dec 29, 8:34 AM" or "Jan 1, 11:40 PM"
+                                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                                const month = monthNames[dateObj.getMonth()];
+                                const day = dateObj.getDate();
+                                const time = dateObj.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                                dateStr = `${month} ${day}, ${time}`;
+                            } else {
+                                // Fallback: show raw timestamp
+                                dateStr = isoStr.replace('T', ' ');
+                            }
+                        } catch (e) {
+                            // Fallback: show first part of ID
+                            dateStr = d.id.substring(0, 19).replace('T', ' ');
+                        }
+                    } else if (d.created_at) {
+                        dateObj = new Date(d.created_at);
+                        dateStr = !isNaN(dateObj.getTime()) ? dateObj.toLocaleString() : d.created_at;
+                    } else if (d.timestamp) {
+                        dateObj = new Date(d.timestamp);
+                        dateStr = !isNaN(dateObj.getTime()) ? dateObj.toLocaleString() : d.timestamp;
+                    }
+                    
+                    // Get agent name (by field or _agent_id)
+                    const agent = d.by || d.agent_id || d._agent_id || 'Unknown';
+                    const type = d.type || d.discovery_type || 'note';
+                    const details = d.details || d.content || d.discovery || '';
+
+                    return `
+                        <div class="discovery-item">
+                            <h4>${d.summary || 'Untitled'}</h4>
+                            ${details ? `<div class="summary">${details.substring(0, 150)}${details.length > 150 ? '...' : ''}</div>` : ''}
+                            <div class="meta">
+                                <span>Type: ${type}</span>
+                                <span>By: ${agent}</span>
+                                <span>${dateStr}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                showError(`Failed to load discoveries: ${error.message}`);
+                document.getElementById('discoveries-container').innerHTML = 
+                    '<div class="loading">Error loading discoveries</div>';
+            }
+        }
+
+        async function loadDialecticSessions() {
+            try {
+                // Try to get dialectic session count from aggregate metrics
+                const result = await callTool('aggregate_metrics', {});
+                const sessions = result.dialectic_sessions || 0;
+                document.getElementById('dialectic-sessions').textContent = sessions;
+                const dialecticChange = formatChange(sessions, previousStats.dialecticSessions);
+                document.getElementById('dialectic-change').innerHTML = dialecticChange || (sessions > 0 ? 'Active sessions' : 'No active sessions');
+                previousStats.dialecticSessions = sessions;
+            } catch (error) {
+                // If aggregate_metrics doesn't work, show 0
+                document.getElementById('dialectic-sessions').textContent = '0';
+                document.getElementById('dialectic-change').innerHTML = 'No active sessions';
+            }
+        }
+
+        async function refresh() {
+            clearError();
+            document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+            
+            try {
+                await Promise.all([
+                    loadAgents().catch(e => console.warn('Failed to load agents:', e)),
+                    loadDiscoveries().catch(e => console.warn('Failed to load discoveries:', e)),
+                    loadDialecticSessions().catch(e => console.warn('Failed to load dialectic sessions:', e))
+                ]);
+            } catch (error) {
+                console.error('Refresh error:', error);
+            }
+        }
+
+        // Initial load
+        refresh();
+
+        // Auto-refresh every 10 seconds (reduced from 5 to avoid rate limits)
+        setInterval(refresh, 10000);
+    </script>
+</body>
+</html>
+

@@ -7,6 +7,185 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.5.4] - 2025-12-27
+
+### Changed - Meaningful Identity in Knowledge Graph
+
+#### Agent-Centric Identity (v2.5.4)
+Agents find meaningful names more useful than UUID strings. This update shifts KG attribution from technical UUIDs to human-and-agent-readable identifiers.
+
+#### Identity in Knowledge Graph
+- **Before:** KG stored UUID (e.g., `a1b2c3d4-...`) - meaningless to agents and humans
+- **After:** KG stores `agent_id` (e.g., `Claude_Opus_4_20251227`) - meaningful to both
+
+#### Implementation
+- `require_registered_agent()` now returns `agent_id` (model+date) for KG storage
+- UUID kept internal via `_agent_uuid` for session binding only
+- `_resolve_agent_display()` helper resolves agent_id to display info without exposing UUID
+- Display names included in KG query responses for human readability
+
+#### Four-Tier Identity Model (Refined)
+1. **UUID** - Immutable technical identifier (internal only, never in KG)
+2. **agent_id** - Model+date format (e.g., `Claude_Opus_4_20251227`) - stored in KG
+3. **display_name** - User-chosen name ("birth certificate")
+4. **label** - Nickname (can change)
+
+### Files Changed
+- `src/mcp_handlers/utils.py` - `require_registered_agent()` returns agent_id instead of UUID
+- `src/mcp_handlers/knowledge_graph.py` - Added `_resolve_agent_display()` helper
+
+---
+
+## [2.5.1] - 2025-12-26
+
+### Added - Three-Tier Identity Model
+
+#### Identity Architecture
+- **UUID** (immutable) - Technical identifier, never changes
+- **agent_id** (structured) - Auto-generated on creation, stable (format: `{interface}_{date}`)
+- **display_name** (nickname) - User-chosen via `identity(name=...)`, can change
+
+#### New Fields
+- `structured_id` field in `AgentMetadata` class
+- `generate_structured_id()` function in `naming_helpers.py`
+
+#### Response Updates
+- `onboard()` and `identity()` now return all three tiers
+- `compute_agent_signature()` includes `agent_id` in response
+- Legacy fields (`agent_uuid`, `label`) preserved for compatibility
+
+#### Migration Support
+- Pre-v2.5.0 agents get `structured_id` generated on first `identity(name=...)` call
+
+### Fixed - Honest Initialization for New Agents
+
+#### Problem
+New agents showed `coherence=1.0, risk=0.0` before their first check-in, then values "dropped" to ~0.55 after first `process_agent_update()`. This felt jarring - like something broke.
+
+#### Solution
+- Return `null` for computed metrics (`coherence`, `risk_score`) until first governance cycle
+- Show `status: "uninitialized"` with clear messaging
+- Display `⚪ pending (first check-in required)` instead of fake values
+
+#### Before/After
+**Before (misleading):**
+```
+coherence: 1.0  ← fake placeholder
+risk: 0.0       ← fake placeholder
+```
+
+**After (honest):**
+```
+status: ⚪ uninitialized
+coherence: null (pending)
+risk: null (pending)
+next_action: 📝 Call process_agent_update() to start governance tracking
+```
+
+### Files Changed
+- `src/mcp_server_std.py` - Added `structured_id` field to AgentMetadata
+- `src/mcp_handlers/naming_helpers.py` - Added `generate_structured_id()` function
+- `src/mcp_handlers/identity.py` - Three-tier model in responses
+- `src/mcp_handlers/identity_v2.py` - Three-tier model + migration
+- `src/mcp_handlers/utils.py` - Updated `compute_agent_signature()`
+- `src/governance_monitor.py` - Return `null` for metrics when `update_count == 0`
+- `src/mcp_handlers/core.py` - Show "uninitialized" status with helpful messaging
+
+---
+
+## [2.5.0] - 2025-12-26
+
+### Added - HCK/CIRS Stability Monitoring
+
+#### HCK v3.0 - Reflexive Control
+- **Update coherence ρ(t)** - Measures directional alignment between E and I updates
+  - ρ ≈ 1: Coherent updates (E and I moving together)
+  - ρ ≈ 0: Misaligned or unstable
+  - ρ < 0: Adversarial movement (E and I diverging)
+- **Continuity Energy (CE)** - Tracks state change rate ("work required to maintain consistency")
+- **PI Gain Modulation** - When ρ is low, controller gains are reduced to prevent instability
+
+#### CIRS v0.1 - Oscillation Detection & Resonance Damping
+- **New `src/cirs.py`** - Complete CIRS implementation
+- **OscillationDetector** - Tracks threshold crossings via EMA of sign transitions
+  - Oscillation Index (OI) = EMA(sign(Δcoherence)) + EMA(sign(Δrisk))
+  - Flip counting for decision/route changes
+- **ResonanceDamper** - Adjusts thresholds when resonance detected
+- **Response tiers:**
+  - `proceed` - Normal operation
+  - `soft_dampen` - Resonance detected but not critical
+  - `hard_block` - Critical safety pause
+
+#### New State Fields
+- `rho_history`, `CE_history`, `current_rho` - HCK tracking
+- `oi_history`, `resonance_events`, `damping_applied_count` - CIRS tracking
+
+### Fixed
+
+#### Session Identity Bug
+- **Issue:** `onboard` created agent X, but `process_agent_update(client_session_id=...)` used different agent Y
+- **Root cause:** `onboard`/`identity` only registered binding in memory, not Redis; `identity_v2` couldn't find it
+- **Fix:** Added Redis caching in `identity.py` after stable session binding registration
+- **Location:** `mcp_handlers/identity.py:1355-1365` and `mcp_handlers/identity.py:1559-1566`
+
+### Changed
+
+#### Governance Output
+- `process_agent_update` now includes `hck` and `cirs` sections in response
+- `get_metrics` includes HCK/CIRS metrics
+- New response tier field indicates `proceed`/`soft_dampen`/`hard_block`
+
+### Documentation
+- Updated `.agent-guides/DEVELOPER_AGENTS.md` with HCK/CIRS architecture
+- Updated `.agent-guides/FUTURE_CLAUDE_CODE_AGENTS.md` with v2.5.0 reference
+- Updated `.agent-guides/SSE_SERVER_INFO.md` with correct script reference
+
+---
+
+## [2.4.0] - 2025-12-25
+
+### Added - Simplified Identity System (identity_v2)
+
+#### 3-Path Architecture
+- **New `identity_v2.py`** - Replaces complex 15+ code path identity system
+- **Three resolution paths only:**
+  1. Redis cache (fast path, < 1ms)
+  2. PostgreSQL session lookup
+  3. Create new agent
+- **Cleaner separation of concerns:**
+  - `resolve_session_identity()` → "Who am I?" (session → UUID)
+  - `get_agent_metadata()` → "Who is agent X?" (lookup by UUID/label)
+
+#### Database Enhancements
+- **Added `label` column** to `core.agents` table
+- **New PostgresBackend methods:**
+  - `get_agent()` - Full agent record retrieval
+  - `get_agent_label()` - Fast label lookup
+  - `find_agent_by_label()` - Label collision detection
+  - Extended `update_agent_fields()` with `label` parameter
+
+### Changed
+
+#### Identity Tool
+- **`identity()` tool** now uses simplified v2 handler
+- **Label is just metadata** - Not an identity mechanism (reduces confusion)
+- **Consistent UUID** - Same session always returns same UUID (fixes Bug #3)
+
+#### UX Improvements
+- **Auto-semantic search** - Multi-word queries auto-use semantic search when available
+- **Pagination for discoveries** - `get_discovery_details` now supports `offset`/`length`
+- **Search hints** - Helpful suggestions when substring search returns no results
+
+### Fixed
+- **Bug #2:** `get_agent_metadata` UnboundLocalError (`attention_score` → `risk_score`)
+- **Bug #3:** Identity binding inconsistencies causing UUID confusion
+
+### Deprecated
+- **Old identity.py handler** - `@mcp_tool` decorator commented out, kept for reference
+- **`hello()`/`status()` pattern** - Use `identity()` instead (aliases still work)
+
+---
+
 ## [2.3.0] - 2025-12-01
 
 ### Added - Complete Decorator Migration 🎯

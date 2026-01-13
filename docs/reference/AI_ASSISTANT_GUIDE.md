@@ -465,13 +465,12 @@ list_tools(tier="all")
 - Try: Take a 5-minute break, review your recent work
 - If still confident: Use self-recovery with explanation
 
-### "My API key isn't working"
+### "Identity issues" (v2.4.0+)
 ```python
-# Retrieve your key
-result = call_tool("get_agent_api_key", {
-    "agent_id": "your_id"
-})
-api_key = result["api_key"]
+# Check your identity (auto-creates if new)
+result = call_tool("identity", {})
+agent_uuid = result["agent_uuid"]
+# Identity auto-binds per session - no API keys needed
 ```
 
 ### "I don't have MCP access"

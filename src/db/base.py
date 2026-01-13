@@ -158,6 +158,27 @@ class DatabaseBackend(ABC):
         pass
 
     @abstractmethod
+    async def upsert_agent(
+        self,
+        agent_id: str,
+        api_key: str,
+        status: str = "active",
+        purpose: Optional[str] = None,
+        notes: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        parent_agent_id: Optional[str] = None,
+        spawn_reason: Optional[str] = None,
+        created_at: Optional[datetime] = None,
+    ) -> bool:
+        """
+        Create or update an agent in core.agents table.
+        
+        This is required for foreign key references in dialectic_sessions.
+        Returns True if successful.
+        """
+        pass
+
+    @abstractmethod
     async def update_agent_fields(
         self,
         agent_id: str,
@@ -168,6 +189,7 @@ class DatabaseBackend(ABC):
         tags: Optional[List[str]] = None,
         parent_agent_id: Optional[str] = None,
         spawn_reason: Optional[str] = None,
+        label: Optional[str] = None,
     ) -> bool:
         """
         Update selected fields on core.agents WITHOUT touching api_key.
@@ -180,6 +202,16 @@ class DatabaseBackend(ABC):
     @abstractmethod
     async def verify_api_key(self, agent_id: str, api_key: str) -> bool:
         """Verify API key for an identity."""
+        pass
+
+    @abstractmethod
+    async def get_agent_label(self, agent_id: str) -> Optional[str]:
+        """Get agent's display label."""
+        pass
+
+    @abstractmethod
+    async def find_agent_by_label(self, label: str) -> Optional[str]:
+        """Find agent UUID by label (for collision detection)."""
         pass
 
     # =========================================================================
@@ -452,3 +484,19 @@ class DatabaseBackend(ABC):
     async def is_agent_in_active_dialectic_session(self, agent_id: str) -> bool:
         """Check if agent is in an active session (as paused or reviewer)."""
         pass
+
+    async def get_pending_dialectic_sessions(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get dialectic sessions awaiting a reviewer (reviewer_agent_id IS NULL).
+
+        Used for pull-based discovery: agents check for pending reviews on status().
+        This enables human-in-the-loop and async review without requiring persistent agent pools.
+
+        Default implementation returns empty list (SQLite doesn't support this).
+        PostgreSQL backend overrides with actual query.
+
+        Returns:
+            List of session dicts with: session_id, paused_agent_id, session_type,
+            phase, created_at, reason (if available)
+        """
+        return []

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.unitares.governance-mcp</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>/Users/cirwel/projects/governance-mcp-v1/src/mcp_server_sse.py</string>
+        <string>--port</string>
+        <string>8767</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/cirwel/projects/governance-mcp-v1</string>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <true/>
+    
+    <key>StandardOutPath</key>
+    <string>/Users/cirwel/projects/governance-mcp-v1/data/logs/sse_server.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/cirwel/projects/governance-mcp-v1/data/logs/sse_server_error.log</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>/Users/cirwel/projects/governance-mcp-v1</string>
+        <key>DB_BACKEND</key>
+        <string>postgres</string>
+        <key>DB_POSTGRES_URL</key>
+        <string>postgresql://postgres:postgres@localhost:5432/governance</string>
+    </dict>
+</dict>
+</plist>

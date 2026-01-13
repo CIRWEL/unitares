@@ -34,24 +34,32 @@ class HealthThresholds:
     coherence_healthy_min: float = 0.52   # Achievable, top ~20% of agents (V ≈ 0.05)
     coherence_moderate_min: float = 0.48  # Below mean but acceptable (V ≈ -0.02)
     
+    # Coherence critical threshold (aligned with governance_monitor.py)
+    coherence_critical_threshold: float = 0.40
+
     def get_health_status(
-        self, 
+        self,
         risk_score: Optional[float] = None,
         coherence: Optional[float] = None,
         void_active: bool = False
     ) -> Tuple[HealthStatus, str]:
         """
         Determine health status from metrics.
-        
+
         Priority:
         1. void_active -> CRITICAL
-        2. risk_score -> HEALTHY/MODERATE/CRITICAL
-        3. coherence -> HEALTHY/MODERATE/CRITICAL (fallback)
+        2. coherence < 0.40 -> CRITICAL (Dec 2025: aligned with process_update)
+        3. risk_score -> HEALTHY/MODERATE/CRITICAL
+        4. coherence -> HEALTHY/MODERATE/CRITICAL (fallback)
         """
         # Void state always critical
         if void_active:
             return HealthStatus.CRITICAL, "Void state active - system instability detected"
-        
+
+        # Coherence critical check (aligned with process_update - Dec 2025)
+        if coherence is not None and coherence < self.coherence_critical_threshold:
+            return HealthStatus.CRITICAL, f"Low coherence ({coherence:.2f}) - below critical threshold"
+
         # Use attention_score (renamed from risk_score) if available
         if risk_score is not None:
             if risk_score < self.risk_healthy_max:

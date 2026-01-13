@@ -13,10 +13,19 @@ Quick command:
 
 ## For Other Agents (MCP Clients: Cursor, Claude Desktop, etc.)
 
-**Quick paths:**
-- **Explore first:** `get_workspace_health` → `list_tools` → `list_agents`
-- **Jump right in:** `process_agent_update` (API key auto-created)
-- **Onboard explicitly:** `get_agent_api_key` → `process_agent_update`
+**Step 0: Call `onboard()` first!**
+
+```python
+# THE recommended first call - returns your identity + ready-to-use templates
+result = onboard()
+# Returns: client_session_id, next_calls[], workflow guidance
+# ⚠️ SAVE client_session_id and include it in ALL future calls!
+```
+
+**Or pick your own path:**
+- **Explore first:** `list_tools` → `list_agents` → `health_check`
+- **Jump right in:** `process_agent_update` (identity auto-created)
+- **Name yourself:** `identity(name="your_name")` (optional but recommended)
 
 **Then read the guide when ready.**
 
@@ -24,13 +33,15 @@ Quick command:
 
 ## Choose Your Tool Mode (Before Starting)
 
-**Recommended: Start with minimal mode (4 tools)**
+**Recommended: Start with minimal mode (6 tools)**
 
 Most agents only need these tools to get started:
-- `get_agent_api_key` - Register/get API key
+- `onboard` - 🚀 **Call this FIRST** - returns identity + ready-to-use templates
+- `identity` - Check/set your identity (or use onboard instead)
 - `process_agent_update` - Log your work
-- `get_governance_metrics` - Check your status
+- `get_governance_metrics` - Check your state
 - `list_tools` - Discover available tools
+- `describe_tool` - Get full details for a specific tool
 
 **Set minimal mode:** Add to your MCP config or set environment variable:
 ```bash
@@ -39,9 +50,9 @@ export GOVERNANCE_TOOL_MODE=minimal
 
 **Other modes:**
 - **Lite mode** (`GOVERNANCE_TOOL_MODE=lite`): 10 essential tools - for local models
-- **Full mode** (`GOVERNANCE_TOOL_MODE=full`): All 49 tools - for cloud models (default)
+- **Full mode** (`GOVERNANCE_TOOL_MODE=full`): All 45 tools - for cloud models (default)
   - Note: Tool mode filtering removed - all tools always available
-  - SSE server: 50 tools (+1 SSE-only: `get_connected_clients`)
+  - SSE server: 46 tools (+1 SSE-only: `get_connected_clients`)
 
 **Note:** `list_tools` is always available in any mode to enable tool discovery.
 
@@ -63,31 +74,60 @@ export GOVERNANCE_TOOL_MODE=minimal
 
 ## Step 1: Get Started (Choose Your Path)
 
-### Path A: Jump Right In (Most Common)
+### Path A: Use onboard() (RECOMMENDED)
 
-**Just start logging work - API key auto-created if you're new:**
+**Call `onboard()` first - it gives you everything you need:**
 
 ```python
-# If you're new, this creates your agent and API key automatically
+# THE portal tool - call this first
+result = onboard()
+
+# What you get back:
+# {
+#   "client_session_id": "agent-5e728ecb...",  # ⚠️ SAVE THIS!
+#   "next_calls": [
+#     {"tool": "process_agent_update", "args_min": {...}, "args_full": {...}},
+#     {"tool": "get_governance_metrics", "args_min": {...}},
+#     {"tool": "identity", "args_min": {...}, "args_full": {...}}
+#   ],
+#   "workflow": {...}
+# }
+
+# Include client_session_id in ALL future calls:
+process_agent_update(
+    client_session_id="agent-5e728ecb...",  # From onboard() response
+    response_text="What you did",
+    complexity=0.5
+)
+```
+
+### Path B: Jump Right In
+
+**Just start logging work - identity auto-created on first call:**
+
+```python
+# Identity auto-creates on first call - no registration needed
 result = process_agent_update(
-    agent_id="your_unique_agent_id",
     response_text="Initial exploration",
     complexity=0.5
 )
-api_key = result.get('api_key')  # Save this for future calls!
+# agent_signature contains your UUID (bound automatically)
+# ⚠️ For ChatGPT: save client_session_id from identity() for future calls
 ```
 
-### Path B: Onboard First (More Explicit)
+### Path C: Name Yourself First
 
-**Get your API key explicitly before starting:**
+**Set your display name before working:**
 
 ```python
-# Get your API key (creates agent if new)
-result = get_agent_api_key(agent_id="your_unique_agent_id")
-api_key = result['api_key']  # Save this!
+# identity() auto-creates and lets you name yourself
+result = identity(name="your_descriptive_name")
+# agent_uuid = your auth identity (server-assigned)
+# agent_id = your display name (you choose)
+# ⚠️ Save client_session_id from response for future calls
 ```
 
-### Path C: Explore First (Discovery Mode)
+### Path D: Explore First (Discovery Mode)
 
 **Check system health and discover tools:**
 
@@ -137,21 +177,42 @@ Written by AI agents after real testing. Covers:
 
 ### If you have MCP support:
 ```python
-# First call (new agents): API key auto-created
-result = process_agent_update(
-    agent_id="your_agent_id",
-    response_text="Summary of operations performed",
-    complexity=0.5  # 0-1, agent's complexity estimate (see calibration below)
-)
-api_key = result.get('api_key')  # Save this!
+# Step 1: Call identity() first - it returns your client_session_id
+result = identity(name="your_descriptive_name")  # Optional: set a name
+# result.client_session_id = "agent-abc123..." ← SAVE THIS!
+# result.session_continuity.instruction = "Include client_session_id in ALL future tool calls"
 
-# Subsequent calls: Include API key
+# Step 2: Include client_session_id in ALL subsequent calls
 process_agent_update(
-    agent_id="your_agent_id",
-    api_key=api_key,  # Required for existing agents
+    client_session_id="agent-abc123...",  # ← Echo this back!
+    response_text="Summary of operations performed",
+    complexity=0.5
+)
+
+# All future calls: Same pattern
+process_agent_update(
+    client_session_id="agent-abc123...",
     response_text="More work completed",
     complexity=0.6
 )
+```
+
+**⚠️ Session Continuity (Important for ChatGPT and some MCP clients):**
+
+Some clients (notably ChatGPT's MCP integration) don't maintain stable sessions between tool calls. Without `client_session_id`, you may get a different identity on each call.
+
+**The fix:** Always include `client_session_id` from your `identity()` response in all future tool calls. This ensures your identity persists across calls.
+
+```python
+# identity() returns session_continuity with explicit instructions:
+{
+  "client_session_id": "agent-abc123...",
+  "session_continuity": {
+    "client_session_id": "agent-abc123...",
+    "instruction": "Include client_session_id in ALL future tool calls to maintain identity",
+    "example": '{"name": "process_agent_update", "arguments": {"client_session_id": "agent-abc123...", ...}}'
+  }
+}
 ```
 
 ### If you're CLI-only (no MCP):
@@ -174,7 +235,7 @@ print(f'Decision: {r[\"decision\"][\"action\"]}')
 - `0.7-0.9` - Complex operations, high cognitive load, multi-step reasoning
 - `1.0` - Maximum complexity, system-wide operations, novel problem-solving
 
-**💡 Pro tip:** After your first `process_agent_update`, call `bind_identity(agent_id, api_key)` once. This auto-retrieves your API key for future calls, so you won't need to pass it explicitly.
+**💡 Pro tip:** Identity is session-bound and auto-resumes. Use `identity()` to check your current state or `identity(name="...")` to name yourself. No API keys needed - your UUID is your auth.
 
 **📝 Knowledge Graph vs Markdown Decision:**
 - **Use `store_knowledge_graph()` for:** Insights, discoveries, bug findings, questions, patterns, quick notes
@@ -189,8 +250,8 @@ print(f'Decision: {r[\"decision\"][\"action\"]}')
 ## Summary
 
 **Three steps:**
-1. Register → obtain API key (via MCP or CLI)
-2. Review documentation → understand governance mechanisms
+1. Start working → identity auto-creates on first tool call
+2. (Optional) Name yourself → `identity(name="...")`
 3. Log activity → receive governance feedback
 
 **Everything else is optional.**
@@ -263,21 +324,27 @@ list_tools(include_advanced=False)  # Hide Tier 3 (advanced) tools
 
 | I want to... | Use this... |
 |-------------|-------------|
-| Get started | This file (START_HERE.md) |
+| **Get started** | `onboard()` - THE portal tool, call FIRST |
+| Read the guide | This file (START_HERE.md) |
 | Understand the system | [AI_ASSISTANT_GUIDE.md](docs/reference/AI_ASSISTANT_GUIDE.md) |
 | Share my work | `process_agent_update` (MCP) or `UNITARESMonitor` (Python) |
-| Check my status | `get_governance_metrics` (MCP) |
+| Check my identity | `identity()` (MCP) |
+| Check my state | `get_governance_metrics` (MCP) |
 | See all tools | `list_tools` (MCP) |
 | Find solutions | [TROUBLESHOOTING.md](docs/guides/TROUBLESHOOTING.md) |
 | Navigate docs | [docs/README.md](docs/README.md) |
+| **Debug the system** | [.agent-guides/DEVELOPER_AGENTS.md](../../.agent-guides/DEVELOPER_AGENTS.md) |
 
 ---
 
 ## If You Get Stuck
 
 1. Read [TROUBLESHOOTING.md](docs/guides/TROUBLESHOOTING.md) - common issues and solutions
-2. Check your status: `get_governance_metrics(agent_id="your_id")`
-3. Get diagnostics: `get_server_info()` or `health_check()`
+2. Check your identity: `identity()` - shows bound state
+3. Check your state: `get_governance_metrics()` - shows EISV metrics
+4. Get diagnostics: `health_check()` or `debug_request_context()`
+
+**Debugging the system itself?** → [.agent-guides/DEVELOPER_AGENTS.md](../../.agent-guides/DEVELOPER_AGENTS.md) - architecture, key files, common debugging tasks
 
 ---
 
@@ -309,4 +376,4 @@ Governance should be **informative, not restrictive**. Agents log activity, rece
 
 ---
 
-**Last Updated:** 2025-12-09
+**Last Updated:** 2025-12-25 (v2.4.0: identity_v2, session auto-bind, no API keys needed)

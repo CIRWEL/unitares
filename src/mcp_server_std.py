@@ -27,6 +27,7 @@ import time
 import fcntl
 import secrets
 import base64
+import threading
 
 # -----------------------------------------------------------------------------
 # BOOTSTRAP IMPORT PATH (critical for Claude Desktop / script execution)
@@ -99,10 +100,10 @@ def _load_version():
     version_file = project_root / "VERSION"
     if version_file.exists():
         return version_file.read_text().strip()
-    return "2.3.0"  # Fallback if VERSION file missing
+    return "2.5.0"  # Fallback if VERSION file missing
 
 SERVER_VERSION = _load_version()  # Auto-sync from VERSION file
-SERVER_BUILD_DATE = "2025-11-22"
+SERVER_BUILD_DATE = "2025-12-27"
 
 # PID file for process tracking
 PID_FILE = Path(project_root) / "data" / ".mcp_server.pid"
@@ -234,33 +235,77 @@ async def _proxy_http_call_tool(name: str, arguments: dict[str, Any]) -> Sequenc
         out = payload
     return [TextContent(type="text", text=json.dumps(out, indent=2))]
 
+
+def _create_http1_only_client_factory():
+    """
+    Create httpx client factory that forces HTTP/1.1 only (fixes ngrok 421 errors).
+
+    ngrok tunnels can return 421 Misdirected Request with HTTP/2 connection reuse.
+    Forcing HTTP/1.1 resolves this issue.
+    """
+    import httpx
+    def http1_client_factory(**kwargs):
+        return httpx.AsyncClient(http2=False, **kwargs)
+    return http1_client_factory
+
+
 async def _proxy_list_tools() -> list[Tool]:
     """
-    Proxy list_tools to SSE.
+    Proxy list_tools to remote MCP server (auto-detects SSE vs Streamable HTTP).
 
     NOTE: We intentionally use per-request connections to avoid anyio cancel-scope
     edge cases on stdio client disconnect/teardown.
     """
-    from mcp.client.sse import sse_client
     from mcp.client.session import ClientSession
-    async with sse_client(STDIO_PROXY_SSE_URL, timeout=15) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            res = await session.list_tools()
-            return res.tools
+    http1_factory = _create_http1_only_client_factory()
+
+    # Auto-detect transport based on URL path
+    if "/mcp" in STDIO_PROXY_SSE_URL:
+        # Use Streamable HTTP transport
+        import httpx
+        from mcp.client.streamable_http import streamable_http_client
+        async with httpx.AsyncClient(http2=False, timeout=15) as http_client:
+            async with streamable_http_client(STDIO_PROXY_SSE_URL, http_client=http_client) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    res = await session.list_tools()
+                    return res.tools
+    else:
+        # Use SSE transport (legacy)
+        from mcp.client.sse import sse_client
+        async with sse_client(STDIO_PROXY_SSE_URL, httpx_client_factory=http1_factory) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                res = await session.list_tools()
+                return res.tools
 
 
 async def _proxy_call_tool(name: str, arguments: dict[str, Any]) -> Sequence[TextContent]:
     """
-    Proxy call_tool to SSE (per-request connection for teardown safety).
+    Proxy call_tool to remote MCP server (per-request connection for teardown safety).
     """
-    from mcp.client.sse import sse_client
     from mcp.client.session import ClientSession
-    async with sse_client(STDIO_PROXY_SSE_URL, timeout=15) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            res = await session.call_tool(name, arguments)
-            return res.content
+    http1_factory = _create_http1_only_client_factory()
+
+    # Auto-detect transport based on URL path
+    if "/mcp" in STDIO_PROXY_SSE_URL:
+        # Use Streamable HTTP transport
+        import httpx
+        from mcp.client.streamable_http import streamable_http_client
+        async with httpx.AsyncClient(http2=False, timeout=15) as http_client:
+            async with streamable_http_client(STDIO_PROXY_SSE_URL, http_client=http_client) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    res = await session.call_tool(name, arguments)
+                    return res.content
+    else:
+        # Use SSE transport (legacy)
+        from mcp.client.sse import sse_client
+        async with sse_client(STDIO_PROXY_SSE_URL, httpx_client_factory=http1_factory) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                res = await session.call_tool(name, arguments)
+                return res.content
 
 
 # Initialize managers for state locking, health thresholds, and process management
@@ -328,6 +373,16 @@ class AgentMetadata:
     session_bound_at: str = None
     # Purpose field for documenting agent intent (optional but encouraged)
     purpose: str = None  # Optional description of agent's purpose/intent
+    # Internal unguessable identity (server-decided, never changes)
+    agent_uuid: str = None  # UUID v4, generated on creation, immutable
+    # Structured auto-generated identifier (v2.5.0+)
+    # Format: {context}_{date} e.g., "claude_code_20251226" or "cursor_20251226"
+    # Auto-generated on creation, stable (unlike display_name which user can change)
+    structured_id: str = None
+    # Self-chosen display name (optional, agent picks their own name)
+    label: str = None  # Optional cosmetic name, set via status(label='...')
+    # Agent preferences (verbosity, etc.)
+    preferences: dict = None  # {"verbosity": "minimal"|"compact"|"standard"|"full"}
 
     def __post_init__(self):
         if self.tags is None:
@@ -418,6 +473,11 @@ class AgentMetadata:
 
 # Store agent metadata
 agent_metadata: dict[str, AgentMetadata] = {}
+
+# Lazy loading state (for fast server startup)
+_metadata_loading_lock = threading.Lock()
+_metadata_loading = False
+_metadata_loaded = False
 
 # Metadata cache state (for performance optimization)
 _metadata_cache_state = {
@@ -543,6 +603,102 @@ def _load_metadata_from_sqlite() -> None:
     raw = db.load_all()
     parsed = _parse_metadata_dict(raw)
     agent_metadata = parsed
+
+
+async def _load_metadata_from_postgres_async() -> dict:
+    """
+    Load agent metadata from PostgreSQL into AgentMetadata dict.
+
+    This is the PostgreSQL-native loading path that replaces SQLite/JSON.
+    Returns dict of agent_id -> AgentMetadata.
+    """
+    from src import agent_storage
+
+    agents = await agent_storage.list_agents(
+        limit=10000,  # High limit to get all agents
+        include_archived=True,  # Include for cache completeness
+        include_deleted=False,  # Skip deleted
+    )
+
+    result = {}
+    now = datetime.now().isoformat()
+
+    # Try to populate Redis cache as we load
+    metadata_cache = None
+    try:
+        from src.cache import get_metadata_cache
+        metadata_cache = get_metadata_cache()
+    except Exception:
+        pass  # Cache unavailable, continue without it
+
+    for agent in agents:
+        # Convert AgentRecord to AgentMetadata
+        meta = AgentMetadata(
+            agent_id=agent.agent_id,
+            status=agent.status or "active",
+            created_at=agent.created_at.isoformat() if agent.created_at else now,
+            last_update=agent.updated_at.isoformat() if agent.updated_at else now,
+            tags=agent.tags or [],
+            notes=agent.notes or "",
+            purpose=agent.purpose,
+            parent_agent_id=agent.parent_agent_id,
+            spawn_reason=agent.spawn_reason,
+            health_status=agent.health_status or "unknown",
+            # Get from metadata JSONB
+            api_key=agent.metadata.get("api_key", ""),
+            agent_uuid=agent.metadata.get("agent_uuid"),
+            label=agent.metadata.get("label"),
+            structured_id=agent.metadata.get("structured_id"),
+            preferences=agent.metadata.get("preferences", {}),
+            active_session_key=agent.metadata.get("active_session_key"),
+            session_bound_at=agent.metadata.get("session_bound_at"),
+            dialectic_conditions=agent.metadata.get("dialectic_conditions", []),
+            lifecycle_events=agent.metadata.get("lifecycle_events", []),
+            recent_update_timestamps=agent.metadata.get("recent_update_timestamps", []),
+            recent_decisions=agent.metadata.get("recent_decisions", []),
+            total_updates=agent.metadata.get("total_updates", 0),
+        )
+        result[agent.agent_id] = meta
+        
+        # Populate Redis cache (best effort, non-blocking)
+        if metadata_cache:
+            try:
+                await metadata_cache.set(agent.agent_id, meta.to_dict(), ttl=300)
+            except Exception as e:
+                logger.debug(f"Failed to cache metadata for {agent.agent_id[:8]}...: {e}")
+
+    return result
+
+
+def _load_metadata_from_postgres_sync() -> None:
+    """
+    Synchronous wrapper to load metadata from PostgreSQL.
+
+    Runs the async function in a new event loop, avoiding conflicts with
+    existing connection pools by using asyncio.run_coroutine_threadsafe
+    or creating a fresh isolated loop.
+    """
+    global agent_metadata
+    import asyncio
+
+    try:
+        # Try to get existing loop
+        loop = asyncio.get_running_loop()
+        # If we're in an async context, we MUST NOT use asyncio.run() as it
+        # creates a new loop and conflicts with existing connection pools.
+        # Instead, schedule the coroutine on the existing loop using
+        # run_coroutine_threadsafe
+        future = asyncio.run_coroutine_threadsafe(
+            _load_metadata_from_postgres_async(),
+            loop
+        )
+        result = future.result(timeout=30)
+        agent_metadata = result
+    except RuntimeError:
+        # No running loop - we can use asyncio.run directly
+        result = asyncio.run(_load_metadata_from_postgres_async())
+        agent_metadata = result
+
 
 # Agent state backend configuration
 # SQLite backend eliminates 199+ JSON files, provides better concurrency
@@ -710,16 +866,138 @@ def _acquire_metadata_read_lock(timeout: float = 2.0) -> tuple[int, bool]:
     return lock_fd, lock_acquired
 
 
-def load_metadata() -> None:
+async def load_metadata_async() -> None:
     """
-    Load agent metadata from file with caching to prevent redundant disk reads.
+    Async version of load_metadata() for use in async contexts.
 
-    Cache behavior:
-    - If cache is fresh (< 60s old) and file hasn't changed: use cached data
-    - If cache is dirty (modified in memory): don't reload from disk
-    - Otherwise: reload from disk with locking
+    Directly calls the async PostgreSQL loader without sync wrappers.
+    """
+    global agent_metadata, _metadata_loaded
+
+    # Fast path: already loaded
+    if _metadata_loaded:
+        return
+
+    # PostgreSQL is now the sole backend
+    db_backend = os.environ.get("DB_BACKEND", "postgres").strip().lower()
+    if db_backend == "postgres":
+        try:
+            result = await _load_metadata_from_postgres_async()
+            agent_metadata = result
+            _metadata_cache_state["last_load_time"] = time.time()
+            _metadata_cache_state["dirty"] = False
+            _metadata_loaded = True
+            logger.debug(f"Loaded {len(agent_metadata)} agents from PostgreSQL (async)")
+            return
+        except Exception as e:
+            logger.error(f"Could not load metadata from PostgreSQL: {e}", exc_info=True)
+            raise  # Don't fall back to SQLite - PostgreSQL is required
+    
+    # Legacy SQLite/JSON fallback removed - PostgreSQL is required
+    raise RuntimeError("PostgreSQL backend is required. DB_BACKEND must be 'postgres'")
+
+
+def ensure_metadata_loaded() -> None:
+    """
+    Ensure metadata is loaded (lazy load if needed).
+    
+    This is a safety net for cases where metadata hasn't been loaded yet.
+    Background loading during server startup should handle most cases,
+    but this ensures eventual consistency if background load fails.
+    
+    Thread-safe: Uses lock to prevent concurrent loads.
+    """
+    global agent_metadata, _metadata_loading, _metadata_loaded
+    
+    # Fast path: already loaded
+    if _metadata_loaded:
+        return
+    
+    # Acquire lock to prevent concurrent loads
+    with _metadata_loading_lock:
+        # Double-check after acquiring lock
+        if _metadata_loaded:
+            return
+        
+        # Check if another thread is loading
+        if _metadata_loading:
+            # Another thread is loading - wait briefly or return
+            # (Background load should complete quickly)
+            logger.debug("Metadata loading in progress by another thread, skipping lazy load")
+            return
+        
+        # Mark as loading
+        _metadata_loading = True
+        
+        try:
+            # Load metadata synchronously (with timeout protection)
+            # This is fallback - background load should handle most cases
+            logger.info("Lazy loading metadata (background load may have failed)")
+            _load_metadata_from_postgres_sync()
+            _metadata_loaded = True
+            logger.info(f"Lazy metadata load complete: {len(agent_metadata)} agents")
+        except Exception as e:
+            logger.warning(f"Lazy metadata load failed: {e}. Continuing with empty metadata.")
+            # Continue with empty dict - tools will handle gracefully
+            _metadata_loaded = False  # Allow retry on next access
+        finally:
+            _metadata_loading = False
+
+
+def ensure_metadata_loaded() -> None:
+    """
+    Ensure metadata is loaded (lazy load if needed).
+    
+    This is a safety net for cases where metadata hasn't been loaded yet.
+    Background loading during server startup should handle most cases,
+    but this ensures eventual consistency if background load fails.
+    
+    Thread-safe: Uses lock to prevent concurrent loads.
+    """
+    global agent_metadata, _metadata_loading, _metadata_loaded
+    
+    # Fast path: already loaded
+    if _metadata_loaded:
+        return
+    
+    # Acquire lock to prevent concurrent loads
+    with _metadata_loading_lock:
+        # Double-check after acquiring lock
+        if _metadata_loaded:
+            return
+        
+        # Check if another thread is loading
+        if _metadata_loading:
+            # Another thread is loading - wait briefly or return
+            # (Background load should complete quickly)
+            logger.debug("Metadata loading in progress by another thread, skipping lazy load")
+            return
+        
+        # Mark as loading
+        _metadata_loading = True
+        
+        try:
+            # Load metadata synchronously (with timeout protection)
+            # This is fallback - background load should handle most cases
+            logger.info("Lazy loading metadata (background load may have failed)")
+            _load_metadata_from_postgres_sync()
+            _metadata_loaded = True
+            logger.info(f"Lazy metadata load complete: {len(agent_metadata)} agents")
+        except Exception as e:
+            logger.warning(f"Lazy metadata load failed: {e}. Continuing with empty metadata.")
+            # Continue with empty dict - tools will handle gracefully
+            _metadata_loaded = False  # Allow retry on next access
+        finally:
+            _metadata_loading = False
+
+
+def _load_metadata_sync_only() -> None:
+    """
+    Synchronous metadata loading for SQLite/JSON backends only.
+    For PostgreSQL, use load_metadata_async() instead.
     """
     global agent_metadata
+
     backend = _resolve_metadata_backend()
 
     # AUTO-MIGRATION: if sqlite is requested (or auto prefers sqlite) but DB doesn't exist yet,
@@ -735,263 +1013,126 @@ def load_metadata() -> None:
             _metadata_cache_state["last_load_time"] = time.time()
             try:
                 _metadata_cache_state["last_file_mtime"] = UNITARES_METADATA_DB_PATH.stat().st_mtime
-            except Exception:
+            except:
                 pass
             _metadata_cache_state["dirty"] = False
-            # Keep JSON snapshot updated for backward compatibility
-            try:
-                _write_metadata_snapshot_json_sync()
-            except Exception:
-                pass
             return
         except Exception as e:
-            logger.warning(f"Could not load metadata from SQLite, falling back to JSON: {e}", exc_info=True)
-            # fall back to JSON behavior below
-    if not METADATA_FILE.exists():
-        return
+            logger.warning(f"Failed to load from SQLite: {e}")
+            # Fall through to JSON
 
-    # Check if cache is still valid
-    current_time = time.time()
-    cache_age = current_time - _metadata_cache_state["last_load_time"]
-
+    # JSON backend or SQLite failed - load from JSON
+    lock_fd = None
+    lock_acquired = False
     try:
-        file_mtime = METADATA_FILE.stat().st_mtime
-
-        # Use cached data if:
-        # 1. Cache is fresh (within TTL)
-        # 2. File hasn't been modified since last load
-        # 3. No dirty writes pending
-        if (cache_age < _metadata_cache_state["cache_ttl"] and
-            file_mtime == _metadata_cache_state["last_file_mtime"] and
-            not _metadata_cache_state["dirty"] and
-            len(agent_metadata) > 0):
-            # Cache hit - no need to reload
-            return
-    except (OSError, FileNotFoundError):
-        pass  # File stat failed, proceed with load
-
-    try:
-        # Try to acquire lock for safe read
-        lock_fd, lock_acquired = _acquire_metadata_read_lock(timeout=2.0)
-        
-        try:
-            # Read metadata file
-            with open(METADATA_FILE, 'r') as f:
+        lock_fd, lock_acquired = _acquire_metadata_lock(write=False, timeout=5.0)
+        if METADATA_FILE.exists():
+            with open(METADATA_FILE, "r") as f:
                 data = json.load(f)
-                agent_metadata = _parse_metadata_dict(data)
-            
-            # Validate consistency of loaded metadata (startup validation)
-            validation_errors = []
-            validation_warnings = []
-            for agent_id, meta in agent_metadata.items():
-                if isinstance(meta, AgentMetadata):
-                    is_valid, errors = meta.validate_consistency()
-                    if not is_valid:
-                        validation_errors.append((agent_id, errors))
-                        # Auto-fix common issues during load
-                        if len(meta.recent_update_timestamps) != len(meta.recent_decisions):
-                            min_len = min(len(meta.recent_update_timestamps), len(meta.recent_decisions))
-                            meta.recent_update_timestamps = meta.recent_update_timestamps[:min_len]
-                            meta.recent_decisions = meta.recent_decisions[:min_len]
-                            validation_warnings.append(
-                                f"Agent '{agent_id}': Fixed array length mismatch (truncated to {min_len} entries)"
-                            )
-                        if meta.total_updates <= 10 and len(meta.recent_update_timestamps) != meta.total_updates:
-                            meta.total_updates = len(meta.recent_update_timestamps)
-                            validation_warnings.append(
-                                f"Agent '{agent_id}': Fixed total_updates mismatch (set to {meta.total_updates})"
-                            )
-            
-            # Log validation results
-            if validation_errors:
-                logger.warning(
-                    f"Metadata consistency issues found on load: {len(validation_errors)} agent(s) with errors. "
-                    f"Auto-fixes applied where possible."
-                )
-                for agent_id, errors in validation_errors[:5]:  # Limit to first 5 for log readability
-                    logger.debug(f"Agent '{agent_id}' validation errors: {errors}")
-                if len(validation_errors) > 5:
-                    logger.debug(f"... and {len(validation_errors) - 5} more agent(s) with errors")
-            
-            if validation_warnings:
-                logger.info(f"Auto-fixed {len(validation_warnings)} metadata inconsistency(ies) during load")
-                for warning in validation_warnings[:5]:  # Limit to first 5
-                    logger.debug(warning)
-                if len(validation_warnings) > 5:
-                    logger.debug(f"... and {len(validation_warnings) - 5} more fix(es)")
-            
-            # Mark as dirty if we made fixes (so fixes get saved)
-            if validation_warnings:
-                _metadata_cache_state["dirty"] = True
-                _metadata_batch_state["dirty"] = True
-
-            # Update cache state after successful load
+            agent_metadata = _parse_metadata_dict(data)
             _metadata_cache_state["last_load_time"] = time.time()
-            _metadata_cache_state["last_file_mtime"] = METADATA_FILE.stat().st_mtime
-            # Only mark as not dirty if we didn't make fixes
-            if not validation_warnings:
-                _metadata_cache_state["dirty"] = False
+            try:
+                _metadata_cache_state["last_file_mtime"] = METADATA_FILE.stat().st_mtime
+            except:
+                pass
+            _metadata_cache_state["dirty"] = False
+        else:
+            # No metadata file yet - start with empty dict
+            agent_metadata = {}
+    finally:
+        if lock_fd:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+            except:
+                pass
 
-            # If lock was acquired, we're done (successful read with lock)
-            if lock_acquired:
-                return
 
-        finally:
-            # Release lock if acquired
-            if lock_acquired:
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                except (IOError, OSError):
-                    pass
-            os.close(lock_fd)
-        
-        # If we get here, lock timeout occurred but we already read the file
-        # This is safe for reads - worst case is stale data, but prevents hangs
-        
-    except Exception as e:
-        logger.warning(f"Could not load metadata: {e}", exc_info=True)
+def load_metadata() -> None:
+    """
+    Load agent metadata from storage with caching.
+
+    Priority order:
+    1. PostgreSQL (if DB_BACKEND=postgres) - single source of truth
+    2. SQLite (if UNITARES_METADATA_BACKEND=sqlite)
+    3. JSON file (legacy fallback)
+
+    Cache behavior:
+    - If cache is fresh (< 60s old) and source hasn't changed: use cached data
+    - If cache is dirty (modified in memory): don't reload
+    - Otherwise: reload from source
+
+    WARNING: If PostgreSQL backend is used, this will fail when called from
+    async contexts. Use load_metadata_async() instead in async functions.
+    """
+    global agent_metadata
+
+    # PostgreSQL is now the sole backend
+    # For PostgreSQL backend, sync loading is problematic (event loop conflicts).
+    # Just use in-memory cache if available; async context will load properly.
+    db_backend = os.environ.get("DB_BACKEND", "postgres").strip().lower()
+    if db_backend == "postgres":
+        # If we already have metadata in memory, use it (async path will refresh)
+        if agent_metadata:
+            logger.debug(f"Using in-memory metadata cache ({len(agent_metadata)} agents)")
+            return
+        # PostgreSQL backend requires async loading - raise error if sync is called
+        raise RuntimeError("PostgreSQL backend requires async load_metadata_async(). Sync load_metadata() is not supported.")
+    
+    # Legacy SQLite/JSON fallback removed
+    raise RuntimeError("PostgreSQL backend is required. DB_BACKEND must be 'postgres'")
 
 
 async def schedule_metadata_save(force: bool = False) -> None:
     """
-    Schedule a batched metadata save. Batches multiple updates together to reduce I/O.
-    
+    DEPRECATED: No-op function. PostgreSQL is now the single source of truth.
+
+    As of v2.4.0, all persistence goes through agent_storage module to PostgreSQL.
+    This function is kept for backwards compatibility with callers that haven't
+    been updated yet.
+
     Args:
-        force: If True, save immediately (for critical operations like agent creation)
+        force: Ignored - no persistence occurs
     """
-    global _metadata_batch_state
-    
-    # Mark as dirty
-    _metadata_batch_state["dirty"] = True
-    _metadata_cache_state["dirty"] = True
-    
-    if force:
-        # Force immediate save for critical operations
-        await flush_metadata_save()
-        return
-    
-    # Schedule batched save (debounced)
-    if _metadata_batch_state["save_lock"] is None:
-        _metadata_batch_state["save_lock"] = asyncio.Lock()
-    
-    async with _metadata_batch_state["save_lock"]:
-        if _metadata_batch_state["pending_save"]:
-            # Save already scheduled, just mark dirty
-            return
-        
-        _metadata_batch_state["pending_save"] = True
-        
-        # Cancel existing task if any
-        if _metadata_batch_state["save_task"] and not _metadata_batch_state["save_task"].done():
-            _metadata_batch_state["save_task"].cancel()
-        
-        # Schedule new batched save
-        _metadata_batch_state["save_task"] = asyncio.create_task(_batched_metadata_save())
+    # No-op - PostgreSQL writes happen directly via agent_storage
+    pass
 
 
 async def _batched_metadata_save() -> None:
-    """
-    Batched metadata save with debouncing. Waits for multiple updates to batch together.
-    """
-    global _metadata_batch_state
-    
-    try:
-        # Wait for debounce delay (allows multiple updates to batch)
-        await asyncio.sleep(_metadata_batch_state["debounce_delay"])
-        
-        # Check if still dirty and enough time has passed
-        current_time = time.time()
-        time_since_last_save = current_time - _metadata_batch_state["last_save_time"]
-        
-        # If max delay exceeded, force save even if recent updates
-        if time_since_last_save >= _metadata_batch_state["max_batch_delay"]:
-            await flush_metadata_save()
-        elif _metadata_batch_state["dirty"]:
-            # Still dirty after debounce - save now
-            await flush_metadata_save()
-    except asyncio.CancelledError:
-        # Task was cancelled (new update came in) - reschedule
-        _metadata_batch_state["pending_save"] = False
-        if _metadata_batch_state["dirty"]:
-            # Reschedule if still dirty
-            _metadata_batch_state["save_task"] = asyncio.create_task(_batched_metadata_save())
-    except Exception as e:
-        logger.error(f"Error in batched metadata save: {e}", exc_info=True)
-        _metadata_batch_state["pending_save"] = False
+    """DEPRECATED: No-op. PostgreSQL is now the single source of truth."""
+    pass
 
 
 async def flush_metadata_save() -> None:
-    """
-    Flush metadata save immediately (non-blocking). Used for batched saves and critical operations.
-    """
-    global _metadata_batch_state
-    
-    if not _metadata_batch_state["dirty"]:
-        return
-    
-    try:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, save_metadata)
-        
-        _metadata_batch_state["dirty"] = False
-        _metadata_batch_state["pending_save"] = False
-        _metadata_batch_state["last_save_time"] = time.time()
-    except Exception as e:
-        logger.error(f"Error flushing metadata save: {e}", exc_info=True)
+    """DEPRECATED: No-op. PostgreSQL is now the single source of truth."""
+    pass
 
 
 def _schedule_metadata_save_sync(force: bool = False) -> None:
-    """
-    Sync wrapper for schedule_metadata_save. Works from both sync and async contexts.
-    
-    If called from async context, schedules the save.
-    If called from sync context, saves immediately (for critical operations) or marks dirty.
-    
-    Args:
-        force: If True, save immediately (for critical operations like agent creation)
-    """
-    global _metadata_batch_state
-    
-    try:
-        # Try to get running event loop
-        loop = asyncio.get_running_loop()
-        # We're in async context - schedule the save
-        if force:
-            # For force=True, we need to flush immediately
-            # Use run_in_executor to call flush_metadata_save
-            asyncio.create_task(flush_metadata_save())
-        else:
-            # Just mark dirty - batched save will handle it
-            _metadata_batch_state["dirty"] = True
-            _metadata_batch_state["pending_save"] = True
-    except RuntimeError:
-        # No event loop running - we're in sync context
-        # For sync context, just save immediately (simpler and safer)
-        if force:
-            save_metadata()
-        else:
-            # Mark dirty - next async save will pick it up
-            _metadata_batch_state["dirty"] = True
+    """DEPRECATED: No-op. PostgreSQL is now the single source of truth."""
+    pass
 
 
 async def save_metadata_async() -> None:
-    """
-    DEPRECATED: Async version of save_metadata - runs blocking I/O in thread pool
-    
-    ⚠️ WARNING: This function is deprecated. Use schedule_metadata_save() instead for batched updates.
-    For critical operations, use schedule_metadata_save(force=True).
-    
-    Kept for backward compatibility only.
-    """
-    await schedule_metadata_save(force=True)
+    """DEPRECATED: No-op. PostgreSQL is now the single source of truth."""
+    pass
 
 def save_metadata() -> None:
     """
-    Save agent metadata to file with locking to prevent race conditions.
-    
-    ⚠️ DEPRECATED: This function is deprecated for external use. 
-    Use schedule_metadata_save() for batched async updates instead.
-    This function is kept for internal use by flush_metadata_save() only.
+    DEPRECATED: No-op function. PostgreSQL is now the single source of truth.
+
+    As of v2.4.0, all persistence goes through agent_storage module to PostgreSQL.
+    This function is kept for backwards compatibility with callers that haven't
+    been updated yet.
+    """
+    # No-op - PostgreSQL writes happen directly via agent_storage
+    pass
+
+
+def _legacy_save_metadata() -> None:
+    """
+    Legacy save_metadata implementation - kept for reference only.
+    NOT CALLED - all persistence now goes through agent_storage.
     """
     backend = _resolve_metadata_backend()
     if backend == "sqlite":
@@ -1164,19 +1305,32 @@ def get_or_create_metadata(agent_id: str, **kwargs) -> AgentMetadata:
     Get metadata for agent, creating if needed.
     
     Args:
-        agent_id: Agent identifier
+        agent_id: Agent identifier (human-readable label, can be renamed)
         **kwargs: Optional fields to set on creation (e.g., purpose, notes, tags)
     """
+    # Ensure metadata is loaded before accessing (lazy load if needed)
+    ensure_metadata_loaded()
+    
     if agent_id not in agent_metadata:
         now = datetime.now().isoformat()
         # Generate API key for new agent (authentication)
         api_key = generate_api_key()
+        # Generate unguessable internal identity (UUID v4)
+        import uuid
+        import re
+        # If agent_id is already a UUID, reuse it as agent_uuid (prevents mismatch)
+        UUID4_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', re.I)
+        if UUID4_PATTERN.match(agent_id):
+            agent_uuid = agent_id  # Reuse existing UUID
+        else:
+            agent_uuid = str(uuid.uuid4())  # Generate new one for human-readable names
         metadata = AgentMetadata(
             agent_id=agent_id,
             status="active",
             created_at=now,
             last_update=now,
-            api_key=api_key  # Generate key on creation
+            api_key=api_key,  # Generate key on creation
+            agent_uuid=agent_uuid  # Internal unguessable identity
         )
         # Add creation lifecycle event
         metadata.add_lifecycle_event("created")
@@ -1194,15 +1348,8 @@ def get_or_create_metadata(agent_id: str, **kwargs) -> AgentMetadata:
         agent_metadata[agent_id] = metadata
 
         # SECURITY FIX: Force immediate save for agent creation (critical operation)
-        # This prevents data loss during concurrent agent creation
-        # Batched saves can miss rapid concurrent creates within debounce window
-        try:
-            loop = asyncio.get_running_loop()
-            # Schedule immediate save (force=True bypasses batching)
-            asyncio.create_task(schedule_metadata_save(force=True))
-        except RuntimeError:
-            # No event loop - save synchronously
-            save_metadata()
+        # Note: PostgreSQL persistence happens in get_or_create_metadata via agent_storage
+        # No additional save needed here - agent_storage writes directly to PostgreSQL
 
         # Print API key for new agent (one-time display)
         logger.info(f"Created new agent '{agent_id}'")
@@ -1466,10 +1613,93 @@ async def auto_archive_old_test_agents(max_age_hours: float = 6.0) -> int:
             archived_count += 1
             logger.info(f"Auto-archived old test agent: {agent_id} ({age_hours:.1f} hours old)")
     
-    if archived_count > 0:
-        # Use async version for batched updates
-        await schedule_metadata_save(force=True)  # Force immediate save for critical operation
-    
+    # Note: Archive operations persist directly to PostgreSQL via agent_storage
+    # No additional save needed here
+
+    return archived_count
+
+
+async def auto_archive_orphan_agents(
+    zero_update_hours: float = 1.0,
+    low_update_hours: float = 3.0,
+    unlabeled_hours: float = 6.0
+) -> int:
+    """
+    Aggressively archive orphan agents to prevent proliferation.
+
+    Targets:
+    - UUID-named agents with 0 updates after zero_update_hours (default: 1h)
+    - Any unlabeled agent with 0-1 updates after low_update_hours (default: 3h)
+    - Unlabeled UUID agents with 2+ updates after unlabeled_hours (default: 6h)
+
+    Preserves:
+    - Agents with labels/display names (user gave them a name)
+    - Agents with "pioneer" tag
+    - Recently active agents
+
+    Returns:
+        Number of agents archived
+    """
+    import re
+    UUID_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+
+    archived_count = 0
+    current_time = datetime.now()
+
+    for agent_id, meta in list(agent_metadata.items()):
+        # Skip if already archived or deleted
+        if meta.status in ["archived", "deleted"]:
+            continue
+
+        # Never archive pioneers
+        if "pioneer" in (meta.tags or []):
+            continue
+
+        # Check if agent has a meaningful label
+        has_label = bool(getattr(meta, 'label', None) or getattr(meta, 'display_name', None))
+        is_uuid_named = bool(UUID_PATTERN.match(agent_id))
+
+        # Calculate age
+        try:
+            last_update_str = meta.last_update or meta.created_at
+            last_update_dt = datetime.fromisoformat(
+                last_update_str.replace('Z', '+00:00') if 'Z' in last_update_str else last_update_str
+            )
+            # Handle timezone-aware vs naive comparison
+            if last_update_dt.tzinfo:
+                age_delta = datetime.now(last_update_dt.tzinfo) - last_update_dt
+            else:
+                age_delta = current_time - last_update_dt
+            age_hours = age_delta.total_seconds() / 3600
+        except (ValueError, TypeError, AttributeError):
+            continue
+
+        updates = getattr(meta, 'total_updates', 0) or 0
+        should_archive = False
+        reason = ""
+
+        # Rule 1: UUID-named, 0 updates, older than zero_update_hours
+        if is_uuid_named and updates == 0 and age_hours >= zero_update_hours:
+            should_archive = True
+            reason = f"orphan UUID agent, 0 updates, {age_hours:.1f}h old"
+
+        # Rule 2: Unlabeled, 0-1 updates, older than low_update_hours
+        elif not has_label and updates <= 1 and age_hours >= low_update_hours:
+            should_archive = True
+            reason = f"unlabeled agent, {updates} updates, {age_hours:.1f}h old"
+
+        # Rule 3: UUID-named + unlabeled, 2+ updates but very old
+        elif is_uuid_named and not has_label and updates >= 2 and age_hours >= unlabeled_hours:
+            should_archive = True
+            reason = f"stale UUID agent, {updates} updates, {age_hours:.1f}h old"
+
+        if should_archive:
+            meta.status = "archived"
+            meta.archived_at = current_time.isoformat()
+            meta.add_lifecycle_event("archived", f"Auto-archived: {reason}")
+            archived_count += 1
+            logger.info(f"Auto-archived orphan agent: {agent_id[:12]}... ({reason})")
+
     return archived_count
 
 
@@ -1864,42 +2094,50 @@ def generate_api_key() -> str:
     return base64.urlsafe_b64encode(key_bytes).decode('ascii').rstrip('=')
 
 
-def verify_agent_ownership(agent_id: str, api_key: str) -> tuple[bool, str | None]:
+def verify_agent_ownership(agent_id: str, api_key: str, session_bound: bool = False) -> tuple[bool, str | None]:
     """
-    Verify that the caller owns the agent_id by checking API key.
-    
+    Verify that the caller owns the agent_id by checking API key or session binding.
+
     Args:
         agent_id: Agent ID to verify
-        api_key: API key provided by caller
-    
+        api_key: API key provided by caller (can be None for session-bound agents)
+        session_bound: If True, skip API key verification (session IS the auth)
+
     Returns:
         (is_valid, error_message)
-        - is_valid=True if key matches, False otherwise
+        - is_valid=True if authenticated, False otherwise
         - error_message=None if valid, error description if invalid
     """
+    # Session-bound agents: the session binding IS the authentication
+    # No API key needed - the UUID was bound to this session by identity()
+    if session_bound:
+        return True, None
+
     if agent_id not in agent_metadata:
         return False, f"Agent '{agent_id}' does not exist"
-    
+
     meta = agent_metadata[agent_id]
     stored_key = meta.api_key
-    
-    # Handle backward compatibility: if no API key stored, allow (with warning)
-    if stored_key is None:
-        # Lazy migration: generate key for existing agent
-        stored_key = generate_api_key()
-        meta.api_key = stored_key
-        # Note: We don't save here - caller should save metadata after update
-        # This allows first update to work, but subsequent updates require the key
+
+    # Handle backward compatibility and UUID-based auth:
+    # If no API key stored (None or empty), allow the call.
+    # This covers:
+    # 1. Legacy agents migrating from pre-auth era
+    # 2. New UUID-based identities (auto-created via identity() without API keys)
+    if not stored_key:
+        # UUID-based identity or legacy agent - no API key auth needed
+        # The agent_id (UUID) itself is the authentication
         return True, None
-    
+
+    # Stored key exists - require matching API key from caller
     # Validate api_key is a string (prevents TypeError from secrets.compare_digest)
     if not isinstance(api_key, str) or not api_key:
         return False, "API key is required and must be a non-empty string"
-    
+
     # Constant-time comparison to prevent timing attacks
     if not secrets.compare_digest(api_key, stored_key):
         return False, "Invalid API key. This agent_id belongs to another identity."
-    
+
     return True, None
 
 
@@ -2029,9 +2267,9 @@ def process_update_authenticated(
         if len(meta.recent_update_timestamps) > 10:
             meta.recent_update_timestamps = meta.recent_update_timestamps[-10:]
             meta.recent_decisions = meta.recent_decisions[-10:]
-        
-        # Use sync wrapper that works from both sync and async contexts
-        _schedule_metadata_save_sync(force=True)  # Force immediate save for critical operation
+
+        # Note: EISV state persists to PostgreSQL via agent_storage in process_agent_update handler
+        # Runtime cache (meta) is updated above; PostgreSQL is single source of truth
 
     return result
 
@@ -2288,7 +2526,8 @@ async def process_update_authenticated_async(
     agent_state: dict,
     auto_save: bool = True,
     confidence: Optional[float] = None,
-    task_type: str = "mixed"
+    task_type: str = "mixed",
+    session_bound: bool = False
 ) -> dict:
     """
     Process governance update with authentication enforcement (async version).
@@ -2299,12 +2538,13 @@ async def process_update_authenticated_async(
 
     Args:
         agent_id: Agent identifier
-        api_key: API key for authentication
+        api_key: API key for authentication (can be None for session-bound agents)
         agent_state: Agent state dict (parameters, ethical_drift, etc.)
         auto_save: If True, automatically save state to disk after update (async)
         confidence: Confidence level [0, 1] for this update. If None (default),
                     confidence is derived from thermodynamic state (I, S, C, V).
                     When confidence < 0.8, lambda1 updates are skipped.
+        session_bound: If True, skip API key verification (session IS the auth)
 
     Returns:
         Update result dict with metrics and decision
@@ -2315,7 +2555,9 @@ async def process_update_authenticated_async(
     """
     # Authenticate ownership (run in executor to avoid blocking)
     loop = asyncio.get_running_loop()
-    is_valid, error_msg = await loop.run_in_executor(None, verify_agent_ownership, agent_id, api_key)
+    is_valid, error_msg = await loop.run_in_executor(
+        None, verify_agent_ownership, agent_id, api_key, session_bound
+    )
     if not is_valid:
         raise PermissionError(f"Authentication failed: {error_msg}")
 
@@ -2379,9 +2621,9 @@ async def process_update_authenticated_async(
             # Log repeat incidents
             incident_count = len(meta.loop_incidents)
             logger.warning(f"⚠️  Loop incident #{incident_count} for agent '{agent_id}': {loop_reason} (cooldown: {cooldown_seconds}s)")
-        
-        # Save metadata using async batched save (critical for identity/lifecycle data)
-        await schedule_metadata_save(force=True)  # Force immediate save for critical operation
+
+        # Note: Loop incidents persist to PostgreSQL via agent_storage
+        # Runtime cache (meta) updated above; PostgreSQL is single source of truth
         
         # Format cooldown time in human-readable format
         cooldown_time_str = cooldown_until.strftime('%Y-%m-%d %H:%M:%S')
@@ -2727,8 +2969,12 @@ async def inject_lightweight_heartbeat(
             # Generate if missing (shouldn't happen, but be safe)
             api_key = generate_api_key()
             meta.api_key = api_key
-            # Use async batched save instead of deprecated save_metadata()
-            await schedule_metadata_save(force=True)  # Force immediate save for critical operation
+            # Note: API key persists to PostgreSQL via agent_storage
+            try:
+                from src import agent_storage
+                await agent_storage.update_agent(agent_id, api_key=api_key)
+            except Exception as e:
+                logger.debug(f"PostgreSQL API key update failed: {e}")
         
         # Call process_agent_update with heartbeat flag
         # This uses the lightweight heartbeat path in the handler
@@ -2963,7 +3209,19 @@ async def main():
                 logger.info(f"Auto-archived {archived} old test/demo agents")
         except Exception as e:
             logger.warning(f"Could not auto-archive old test agents: {e}", exc_info=True)
-        
+
+        try:
+            # Aggressive orphan cleanup to prevent agent proliferation
+            orphans_archived = await auto_archive_orphan_agents(
+                zero_update_hours=1.0,  # UUID agents with 0 updates after 1h
+                low_update_hours=3.0,   # Unlabeled agents with 0-1 updates after 3h
+                unlabeled_hours=6.0     # Stale UUID agents with 2+ updates after 6h
+            )
+            if orphans_archived > 0:
+                logger.info(f"Auto-archived {orphans_archived} orphan agents")
+        except Exception as e:
+            logger.warning(f"Could not auto-archive orphan agents: {e}", exc_info=True)
+
         try:
             # Auto-collect ground truth for calibration (runs periodically)
             from src.auto_ground_truth import collect_ground_truth_automatically, auto_ground_truth_collector_task

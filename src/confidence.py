@@ -104,13 +104,25 @@ def derive_confidence(
             'entropy_penalty': float(entropy_penalty),
         }
     
-    # === COMBINE: observed outcomes + EISV uncertainty-aware confidence ===
+    # === COMBINE: EISV-only confidence for calibration consistency ===
+    #
+    # NOTE (Dec 2025): Previously blended tool_confidence with eisv_confidence.
+    # This caused calibration inversion: high tool success → high confidence,
+    # but trajectory_health (from phi/EISV) remained low → bins showed
+    # high confidence with low health.
+    #
+    # FIX: Use EISV-only confidence. Tool success is still tracked in metadata
+    # for observability but doesn't affect confidence used for calibration.
+    # This ensures confidence and trajectory_health are derived from the same
+    # source (EISV state) and should correlate properly.
+    #
+    final_confidence = eisv_confidence
+    metadata['source'] = 'eisv_only'
+
+    # Tool stats still recorded for transparency but not used in confidence
     if metadata.get('tool_stats'):
-        final_confidence = (0.55 * tool_confidence) + (0.45 * eisv_confidence)
-    else:
-        # No tool data - honest uncertainty
-        final_confidence = eisv_confidence
-        metadata['source'] = 'eisv_only'
+        metadata['tool_confidence_excluded'] = tool_confidence
+        metadata['exclusion_reason'] = 'Tool success decoupled from trajectory health - using EISV-only for calibration consistency'
     
     # Bound confidence to avoid pathological extremes.
     # NOTE: We intentionally avoid 1.0 in derived mode; perfect certainty is not available here.

@@ -43,6 +43,15 @@ import json
 import traceback
 import uuid
 
+# Load environment variables from ~/.env.mcp
+try:
+    from dotenv import load_dotenv
+    env_path = Path.home() / ".env.mcp"
+    if env_path.exists():
+        load_dotenv(env_path)
+except ImportError:
+    pass
+
 # Prometheus metrics
 from prometheus_client import Counter, Gauge, Histogram, REGISTRY, generate_latest, CONTENT_TYPE_LATEST
 
@@ -63,6 +72,7 @@ CURRENT_PID = os.getpid()
 # when multiple clients reconnect simultaneously after a server restart
 SERVER_READY = False
 SERVER_STARTUP_TIME = None
+SERVER_START_TIME = time.time()  # Track server start time for uptime metric
 
 # ============================================================================
 # Prometheus Metrics Definitions
@@ -131,6 +141,31 @@ SERVER_INFO = Gauge(
     'unitares_server_info',
     'Server version info',
     ['version']
+)
+
+# Server uptime and health metrics
+SERVER_UPTIME = Gauge(
+    'unitares_server_uptime_seconds',
+    'Server uptime in seconds'
+)
+
+SERVER_ERRORS_TOTAL = Counter(
+    'unitares_server_errors_total',
+    'Total server errors',
+    ['error_type']  # database, tool_call, connection, etc.
+)
+
+REQUEST_DURATION = Histogram(
+    'unitares_request_duration_seconds',
+    'HTTP request duration',
+    ['method', 'endpoint'],
+    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0)
+)
+
+REQUEST_TOTAL = Counter(
+    'unitares_requests_total',
+    'Total HTTP requests',
+    ['method', 'endpoint', 'status_code']
 )
 
 # Try to import MCP SDK
@@ -484,20 +519,37 @@ def _session_id_from_ctx(ctx: Context | None) -> str | None:
     """
     Resolve a stable per-client session identifier for identity binding.
 
-    Prefer FastMCP's Context.client_id when available. If absent, attempt to
-    read the Starlette request state set by ConnectionTrackingMiddleware.
+    Priority order:
+    1. MCP session ID from mcp-session-id header (implicit, protocol-level)
+    2. FastMCP's Context.client_id (OAuth-based)
+    3. Starlette request state from ConnectionTrackingMiddleware
     """
+    # 1. Try MCP session ID from contextvar (set by ASGI wrapper from header)
+    try:
+        from src.mcp_handlers.context import get_mcp_session_id
+        mcp_sid = get_mcp_session_id()
+        if mcp_sid:
+            return f"mcp:{mcp_sid}"
+    except Exception:
+        pass
+
     if ctx is None:
         return None
+
+    # 2. Try Starlette request state (Our fingerprinting logic from middleware)
+    try:
+        req = ctx.request_context.request
+        if req is not None:
+            client_id = getattr(req.state, "governance_client_id", None)
+            if client_id:
+                return client_id
+    except Exception:
+        pass
+
+    # 3. Try FastMCP's Context.client_id (Fallback)
     try:
         if ctx.client_id:
             return ctx.client_id
-    except Exception:
-        pass
-    try:
-        req = ctx.request_context.request
-        if req is not None and hasattr(req, "state") and hasattr(req.state, "governance_client_id"):
-            return getattr(req.state, "governance_client_id")
     except Exception:
         pass
     return None
@@ -512,7 +564,7 @@ def _load_version():
     version_file = project_root / "VERSION"
     if version_file.exists():
         return version_file.read_text().strip()
-    return "2.3.0"
+    return "2.5.0"  # Fallback if VERSION file missing
 
 SERVER_VERSION = _load_version()
 
@@ -521,9 +573,27 @@ SERVER_VERSION = _load_version()
 # FastMCP Server Setup
 # ============================================================================
 
+# Import transport security settings for network access
+from mcp.server.transport_security import TransportSecuritySettings
+
 # Create the FastMCP server
+# NOTE: host="0.0.0.0" disables auto DNS rebinding protection (needed for network access from Pi)
+# We explicitly configure allowed_hosts to include local network IPs
 mcp = FastMCP(
     name="governance-monitor-v1",
+    host="0.0.0.0",  # Bind to all interfaces
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[
+            "127.0.0.1:*", "localhost:*", "[::1]:*",  # Localhost
+            "192.168.1.164:*",  # Mac IP on local network
+            "unitares.ngrok.io",  # Ngrok tunnel
+        ],
+        allowed_origins=[
+            "http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*",
+            "http://192.168.1.164:*", "https://unitares.ngrok.io",
+        ],
+    ),
 )
 
 
@@ -567,6 +637,7 @@ def get_tool_wrapper(tool_name: str):
             # But log warning for visibility
         async def wrapper(**kwargs):
             start_time = time.time()
+            logger.info(f"[TOOL_WRAPPER] {tool_name}: called with keys={list(kwargs.keys())}")
             try:
                 # Dispatch to existing handler (which has @mcp_tool timeout protection)
                 result = await dispatch_tool(tool_name, kwargs)
@@ -618,470 +689,169 @@ def get_tool_wrapper(tool_name: str):
 
 
 # ============================================================================
-# Register Core Tools with FastMCP
+# AUTO-REGISTRATION SYSTEM
 # ============================================================================
+# Instead of manually decorating each tool, we auto-register from tool_schemas.py
+# This prevents tools from getting out of sync between schemas and SSE server.
 
-# Health & Admin tools
-@tool_no_schema(description="🚀 SIMPLEST ONBOARDING - hello() shows last active, hello(agent_id='name') to register/resume")
-async def hello(agent_id: str = None, api_key: str = None) -> dict:
-    """hello() asks 'is this you?', hello(agent_id='name', api_key='key') resumes that agent."""
-    args = {}
-    if agent_id:
-        args["agent_id"] = agent_id
-    if api_key:
-        args["api_key"] = api_key
-    return await get_tool_wrapper("hello")(**args) if args else await get_tool_wrapper("hello")()
+# Tools that need session injection from FastMCP Context
+# These tools get client_session_id injected from the SSE connection
+TOOLS_NEEDING_SESSION_INJECTION = {
+    "onboard",
+    "identity",
+    "process_agent_update",
+    "get_governance_metrics",
+    "store_knowledge_graph",
+    "search_knowledge_graph",
+    "leave_note",
+    "observe_agent",
+    "get_agent_metadata",
+    "update_agent_metadata",
+    "archive_agent",
+    "delete_agent",
+    "get_system_history",
+    "export_to_file",
+    "mark_response_complete",
+    "direct_resume_if_safe",
+    "update_discovery_status_graph",
+    "get_discovery_details",
+    "get_dialectic_session",
+    "get_knowledge_graph",
+    "compare_me_to_similar",
+}
 
-@tool_no_schema(description="🔍 IDENTITY RECOVERY - Find yourself after session restart. No args needed.")
-async def who_am_i() -> dict:
-    """Lost? This shows recent agents with rich context so you can recognize yourself."""
-    return await get_tool_wrapper("who_am_i")()
+def auto_register_all_tools():
+    """
+    Auto-register all tools from tool_schemas.py with typed signatures.
 
-@tool_no_schema(description="Quick health check - returns system status, version, and component health")
-async def health_check() -> dict:
-    return await get_tool_wrapper("health_check")()
+    This generates wrappers with explicit parameter signatures from JSON schemas,
+    allowing FastMCP to infer correct schemas without kwargs wrapping.
+    
+    Benefits:
+    - Claude.ai sends parameters directly (no kwargs wrapper needed)
+    - CLI's kwargs wrapping still works (dispatch_tool unwraps)
+    - Proper client autocomplete from typed signatures
+    
+    Just add the tool to:
+    1. tool_schemas.py (definition)
+    2. mcp_handlers/*.py (implementation with @mcp_tool)
 
-@tool_no_schema(description="Get MCP server version, process info, and health status")
-async def get_server_info() -> dict:
-    return await get_tool_wrapper("get_server_info")()
+    The SSE server will automatically pick it up.
+    """
+    from src.tool_schemas import get_tool_definitions
+    from src.mcp_handlers.wrapper_generator import create_typed_wrapper
 
-@tool_no_schema(description="Get comprehensive workspace health status")
-async def get_workspace_health() -> dict:
-    return await get_tool_wrapper("get_workspace_health")()
+    tools = get_tool_definitions()
+    registered_count = 0
 
-@tool_no_schema(description="List all available governance tools with descriptions and categories")
-async def list_tools(
-    essential_only: bool = False,
-    include_advanced: bool = True,
-    tier: str = "all",
-    lite: bool = False,
-) -> dict:
-    return await get_tool_wrapper("list_tools")(
-        essential_only=essential_only,
-        include_advanced=include_advanced,
-        tier=tier,
-        lite=lite,
-    )
+    for tool in tools:
+        tool_name = tool.name
+        description = tool.description.split("\n")[0] if tool.description else f"Tool: {tool_name}"
+        input_schema = getattr(tool, 'inputSchema', {}) or {}
+        inject_session = tool_name in TOOLS_NEEDING_SESSION_INJECTION
 
+        try:
+            # Create typed wrapper with explicit parameter signature
+            wrapper = create_typed_wrapper(
+                tool_name=tool_name,
+                input_schema=input_schema,
+                get_handler=get_tool_wrapper,
+                inject_session=inject_session,
+                session_extractor=_session_id_from_ctx,
+            )
 
-@tool_no_schema(description="Describe a single tool (full description + full schema) on demand")
-async def describe_tool(
-    tool_name: str,
-    include_schema: bool = True,
-    include_full_description: bool = True,
-    lite: bool = True,
-) -> str:
-    return await get_tool_wrapper("describe_tool")(
-        tool_name=tool_name,
-        include_schema=include_schema,
-        include_full_description=include_full_description,
-        lite=lite,
-    )
+            # Register with FastMCP - it will infer schema from signature
+            mcp.tool(description=description, structured_output=False)(wrapper)
+            registered_count += 1
+            
+        except Exception as e:
+            logger.warning(f"Failed to auto-register tool {tool_name}: {e}")
 
-@tool_no_schema(description="🚀 Streamlined onboarding - One call to get started! Checks if agent exists, creates/binds if needed, returns ready-to-use credentials.")
-async def quick_start(
-    agent_id: str = None,
-    auto_bind: bool = True,
-    purpose: str = None,
-    include_api_key: bool = False,
-) -> dict:
-    """quick_start(agent_id, purpose) - Streamlined onboarding with auto-creation and binding"""
-    args = {
-        "agent_id": agent_id,
-        "auto_bind": auto_bind,
+    logger.info(f"[AUTO_REGISTER] Registered {registered_count} tools with typed signatures")
+    return registered_count
+
+# Call auto-registration
+auto_register_all_tools()
+
+# ============================================================================
+# LEGACY MANUAL REGISTRATIONS (kept for reference, will be removed)
+# ============================================================================
+# The auto_register_all_tools() above handles all tools.
+# These manual registrations below are now redundant but kept temporarily
+# for any tools with special handling not captured above.
+
+# NOTE: hello/who_am_i removed Dec 2025 - identity auto-binds on first tool call
+# Use identity(name='...') for self-naming
+
+# REMOVED: All manual @tool_no_schema decorators
+# Tools are now auto-registered from tool_schemas.py
+
+# ============================================================================
+# SPECIAL HANDLERS (tools with custom SSE-only logic)
+# ============================================================================
+# These tools have special logic that can't be auto-generated
+
+@tool_no_schema(description="Debug request context - shows transport, session binding, identity injection, and registry info")
+async def debug_request_context(ctx: Context = None) -> dict:
+    """Diagnostic tool to debug dispatch path and identity injection."""
+    import hashlib
+    from datetime import datetime
+
+    session_id = _session_id_from_ctx(ctx)
+
+    # Check session binding
+    bound_agent_id = None
+    session_bound = False
+    try:
+        from mcp_handlers.identity import get_bound_agent_id
+        bound_agent_id = get_bound_agent_id(arguments={"client_session_id": session_id} if session_id else {})
+        session_bound = bool(bound_agent_id)
+    except Exception as e:
+        bound_agent_id = f"error: {e}"
+
+    # Get tool registry info
+    tool_count = len(_tool_wrappers_cache)
+    tool_names = sorted(_tool_wrappers_cache.keys())[:10]  # First 10 for brevity
+    registry_hash = hashlib.md5(",".join(sorted(_tool_wrappers_cache.keys())).encode()).hexdigest()[:8]
+
+    # Get validator info
+    validator_version = "unknown"
+    try:
+        from mcp_handlers.validators import VALIDATOR_VERSION
+        validator_version = VALIDATOR_VERSION
+    except ImportError:
+        validator_version = "1.0.0"  # Default if not defined
+
+    return {
+        "success": True,
+        "timestamp": datetime.now().isoformat(),
+        "transport": "sse",  # This tool only exists in SSE server
+        "session": {
+            "session_id_present": bool(session_id),
+            "session_id_preview": session_id[:16] + "..." if session_id and len(session_id) > 16 else session_id,
+            "bound": session_bound,
+            "bound_agent_id": bound_agent_id if session_bound else None,
+        },
+        "identity_injection": {
+            "enabled": True,
+            "injection_point": "dispatch_tool (before validation)",
+            "auto_create_enabled": True,
+        },
+        "tool_registry": {
+            "count": tool_count,
+            "sample_tools": tool_names,
+            "registry_hash": registry_hash,
+        },
+        "validator": {
+            "version": validator_version,
+        },
+        "server": {
+            "version": SERVER_VERSION,
+        },
     }
-    if purpose:
-        args["purpose"] = purpose
-    if include_api_key:
-        args["include_api_key"] = True
-    return await get_tool_wrapper("quick_start")(**args)
+# NOTE: All tools are now auto-registered via auto_register_all_tools() above.
+# Only SSE-specific tools (that don't exist in tool_schemas.py) need manual registration below.
 
-
-# Core Governance tools
-@tool_no_schema(description="Share your work and get supportive feedback. Main governance update tool.")
-async def process_agent_update(
-    agent_id: str,
-    api_key: str = None,
-    complexity: float = 0.5,
-    parameters: list = None,
-    ethical_drift: list = None,
-    response_text: str = None,
-    confidence: Optional[float] = None,
-    task_type: str = "mixed",
-    auto_export_on_significance: bool = False,
-    response_mode: str = "full",
-) -> str:
-    args = {
-        "agent_id": agent_id,
-        "complexity": complexity,
-        "parameters": parameters or [],
-        "ethical_drift": ethical_drift or [0, 0, 0],
-        "task_type": task_type,
-        "auto_export_on_significance": auto_export_on_significance,
-        "response_mode": response_mode,
-    }
-    # IMPORTANT: If confidence is omitted, allow the governance monitor to derive it
-    # from thermodynamic state. Do not default to 1.0 (overconfidence bug).
-    if confidence is not None:
-        args["confidence"] = confidence
-    if api_key:
-        args["api_key"] = api_key
-    if response_text:
-        args["response_text"] = response_text
-    return await get_tool_wrapper("process_agent_update")(**args)
-
-@tool_no_schema(description="Get current governance state and metrics for an agent without updating state")
-async def get_governance_metrics(agent_id: str, include_state: bool = False) -> str:
-    return await get_tool_wrapper("get_governance_metrics")(agent_id=agent_id, include_state=include_state)
-
-@tool_no_schema(description="Dry-run governance cycle. Returns decision without persisting state.")
-async def simulate_update(
-    agent_id: str,
-    api_key: str = None,
-    complexity: float = 0.5,
-    parameters: list = None,
-    ethical_drift: list = None,
-    response_text: str = None,
-    confidence: Optional[float] = None
-) -> str:
-    args = {
-        "agent_id": agent_id,
-        "complexity": complexity,
-        "parameters": parameters or [],
-        "ethical_drift": ethical_drift or [0, 0, 0]
-    }
-    if confidence is not None:
-        args["confidence"] = confidence
-    if api_key:
-        args["api_key"] = api_key
-    if response_text:
-        args["response_text"] = response_text
-    return await get_tool_wrapper("simulate_update")(**args)
-
-# Agent Lifecycle tools
-@tool_no_schema(description="List all agents currently being monitored with lifecycle metadata and health status. By default, test/demo agents are filtered out for cleaner views.")
-async def list_agents(
-    status_filter: str = "all",
-    include_metrics: bool = True,
-    loaded_only: bool = False,
-    grouped: bool = True,
-    summary_only: bool = False,
-    standardized: bool = True,
-    include_test_agents: bool = False,
-    offset: int = 0,
-    limit: int = None
-) -> str:
-    args = {
-        "status_filter": status_filter,
-        "include_metrics": include_metrics,
-        "loaded_only": loaded_only,
-        "grouped": grouped,
-        "summary_only": summary_only,
-        "standardized": standardized,
-        "include_test_agents": include_test_agents,
-        "offset": offset
-    }
-    if limit is not None:
-        args["limit"] = limit
-    return await get_tool_wrapper("list_agents")(**args)
-
-@tool_no_schema(description="Get or generate API key for an agent")
-async def get_agent_api_key(agent_id: str, regenerate: bool = False, api_key: str = None, ctx: Context = None) -> str:
-    session_id = _session_id_from_ctx(ctx)
-    args: Dict[str, Any] = {"agent_id": agent_id, "regenerate": regenerate}
-    if api_key is not None:
-        args["api_key"] = api_key
-    if session_id:
-        args["client_session_id"] = session_id
-    return await get_tool_wrapper("get_agent_api_key")(**args)
-
-@tool_no_schema(description="Bind this session to an agent identity (SSE-safe; scoped per connected client)")
-async def bind_identity(agent_id: str, api_key: str | None = None, ctx: Context = None) -> str:
-    session_id = _session_id_from_ctx(ctx)
-    args: Dict[str, Any] = {"agent_id": agent_id}
-    if api_key is not None:
-        args["api_key"] = api_key
-    if session_id:
-        # Avoid collision with dialectic session_id arguments used by submit_* tools.
-        args["client_session_id"] = session_id
-    return await get_tool_wrapper("bind_identity")(**args)
-
-@tool_no_schema(description="Recall identity bound to this session (SSE-safe; scoped per connected client)")
-async def recall_identity(ctx: Context = None) -> str:
-    session_id = _session_id_from_ctx(ctx)
-    args: Dict[str, Any] = {}
-    if session_id:
-        args["client_session_id"] = session_id
-    return await get_tool_wrapper("recall_identity")(**args)
-
-@tool_no_schema(description="Get complete metadata for an agent")
-async def get_agent_metadata(agent_id: str) -> str:
-    return await get_tool_wrapper("get_agent_metadata")(agent_id=agent_id)
-
-
-# Knowledge Graph tools
-@tool_no_schema(description="Store knowledge discovery/discoveries in graph - single or batch (max 10) - fast, non-blocking, transparent")
-async def store_knowledge_graph(
-    agent_id: str,
-    # Single-discovery mode (original)
-    discovery_type: str = None,
-    summary: str = None,
-    details: str = None,
-    tags: list = None,
-    severity: str = None,
-    related_files: list = None,
-    auto_link_related: bool = False,
-    response_to: dict = None,
-    # Batch mode
-    discoveries: list = None,
-    api_key: str = None
-) -> str:
-    # Batch mode: pass through discoveries array exactly as provided
-    if discoveries is not None:
-        args = {"agent_id": agent_id, "discoveries": discoveries}
-        if api_key:
-            args["api_key"] = api_key
-        return await get_tool_wrapper("store_knowledge_graph")(**args)
-
-    # Single mode: keep backward compatibility with prior signature
-    args = {"agent_id": agent_id, "auto_link_related": auto_link_related}
-    if discovery_type is not None:
-        args["discovery_type"] = discovery_type
-    if summary is not None:
-        args["summary"] = summary
-    if details:
-        args["details"] = details
-    if tags:
-        args["tags"] = tags
-    if severity:
-        args["severity"] = severity
-    if related_files:
-        args["related_files"] = related_files
-    if response_to:
-        args["response_to"] = response_to
-    if api_key:
-        args["api_key"] = api_key
-    return await get_tool_wrapper("store_knowledge_graph")(**args)
-
-@tool_no_schema(description="Search knowledge graph - indexed filters, optional full-text query when SQLite backend is active")
-async def search_knowledge_graph(
-    agent_id: str = None,
-    tags: list = None,
-    query: str = None,
-    discovery_type: str = None,
-    severity: str = None,
-    status: str = None,
-    include_details: bool = False,
-    limit: int = 100,
-    semantic: bool = False,
-    min_similarity: float = 0.3
-) -> str:
-    args = {"limit": limit, "include_details": include_details}
-    if agent_id:
-        args["agent_id"] = agent_id
-    if tags:
-        args["tags"] = tags
-    if query:
-        args["query"] = query
-    if discovery_type:
-        args["discovery_type"] = discovery_type
-    if severity:
-        args["severity"] = severity
-    if status:
-        args["status"] = status
-    if semantic:
-        args["semantic"] = semantic
-        args["min_similarity"] = min_similarity
-    return await get_tool_wrapper("search_knowledge_graph")(**args)
-
-@tool_no_schema(description="Get full details for a specific discovery")
-async def get_discovery_details(discovery_id: str) -> str:
-    return await get_tool_wrapper("get_discovery_details")(discovery_id=discovery_id)
-
-@tool_no_schema(description="Graph traversal: get discoveries related to a given discovery (edges if SQLite; best-effort fallback if JSON)")
-async def get_related_discoveries_graph(
-    discovery_id: str,
-    edge_types: list = None,
-    include_details: bool = False,
-    limit: int = 20
-) -> str:
-    args = {"discovery_id": discovery_id, "include_details": include_details, "limit": limit}
-    if edge_types:
-        args["edge_types"] = edge_types
-    return await get_tool_wrapper("get_related_discoveries_graph")(**args)
-
-@tool_no_schema(description="Graph traversal: get response chain for a discovery (SQLite recursive CTE; best-effort fallback if JSON)")
-async def get_response_chain_graph(
-    discovery_id: str,
-    max_depth: int = 10,
-    include_details: bool = False
-) -> str:
-    args = {"discovery_id": discovery_id, "max_depth": max_depth, "include_details": include_details}
-    return await get_tool_wrapper("get_response_chain_graph")(**args)
-
-@tool_no_schema(description="List knowledge graph statistics")
-async def list_knowledge_graph() -> str:
-    return await get_tool_wrapper("list_knowledge_graph")()
-
-@tool_no_schema(description="Leave a quick note in the knowledge graph")
-async def leave_note(agent_id: str, text: str, tags: list = None, response_to: dict = None) -> str:
-    args = {"agent_id": agent_id, "text": text}
-    if tags:
-        args["tags"] = tags
-    if response_to:
-        args["response_to"] = response_to
-    return await get_tool_wrapper("leave_note")(**args)
-
-
-# Dialectic tools (for multi-agent recovery)
-@tool_no_schema(description="Request a dialectic review for a paused/critical agent")
-async def request_dialectic_review(
-    agent_id: str,
-    api_key: str = None,
-    reason: str = "Circuit breaker triggered",
-    discovery_id: str = None,
-    dispute_type: str = None,
-    reviewer_agent_id: str = None,
-    auto_progress: bool = False,
-    reviewer_mode: str = "peer",
-    root_cause: str = None,
-    proposed_conditions: list = None,
-    reasoning: str = None,
-    ctx: Context = None,
-) -> str:
-    args = {"agent_id": agent_id, "reason": reason, "auto_progress": auto_progress, "reviewer_mode": reviewer_mode}
-    session_id = _session_id_from_ctx(ctx)
-    if session_id:
-        args["client_session_id"] = session_id
-    if api_key:
-        args["api_key"] = api_key
-    if discovery_id:
-        args["discovery_id"] = discovery_id
-    if dispute_type:
-        args["dispute_type"] = dispute_type
-    if reviewer_agent_id:
-        args["reviewer_agent_id"] = reviewer_agent_id
-    if root_cause:
-        args["root_cause"] = root_cause
-    if proposed_conditions:
-        args["proposed_conditions"] = proposed_conditions
-    if reasoning:
-        args["reasoning"] = reasoning
-    return await get_tool_wrapper("request_dialectic_review")(**args)
-
-@tool_no_schema(description="Request a collaborative exploration session between two active agents")
-async def request_exploration_session(
-    agent_id: str,
-    api_key: str = None,
-    partner_agent_id: str = None,
-    topic: str = None,
-    ctx: Context = None,
-) -> str:
-    args = {"agent_id": agent_id}
-    session_id = _session_id_from_ctx(ctx)
-    if session_id:
-        args["client_session_id"] = session_id
-    if api_key:
-        args["api_key"] = api_key
-    if partner_agent_id:
-        args["partner_agent_id"] = partner_agent_id
-    if topic:
-        args["topic"] = topic
-    return await get_tool_wrapper("request_exploration_session")(**args)
-
-@tool_no_schema(description="Paused agent submits thesis in dialectic recovery")
-async def submit_thesis(
-    session_id: str,
-    agent_id: str,
-    api_key: str = None,
-    root_cause: str = None,
-    proposed_conditions: list = None,
-    reasoning: str = None,
-    ctx: Context = None,
-) -> str:
-    args = {"session_id": session_id, "agent_id": agent_id}
-    client_session_id = _session_id_from_ctx(ctx)
-    if client_session_id:
-        args["client_session_id"] = client_session_id
-    if api_key:
-        args["api_key"] = api_key
-    if root_cause:
-        args["root_cause"] = root_cause
-    if proposed_conditions:
-        args["proposed_conditions"] = proposed_conditions
-    if reasoning:
-        args["reasoning"] = reasoning
-    return await get_tool_wrapper("submit_thesis")(**args)
-
-@tool_no_schema(description="Reviewer agent submits antithesis in dialectic recovery")
-async def submit_antithesis(
-    session_id: str,
-    agent_id: str,
-    api_key: str = None,
-    observed_metrics: dict = None,
-    concerns: list = None,
-    reasoning: str = None,
-    ctx: Context = None,
-) -> str:
-    args = {"session_id": session_id, "agent_id": agent_id}
-    client_session_id = _session_id_from_ctx(ctx)
-    if client_session_id:
-        args["client_session_id"] = client_session_id
-    if api_key:
-        args["api_key"] = api_key
-    if observed_metrics:
-        args["observed_metrics"] = observed_metrics
-    if concerns:
-        args["concerns"] = concerns
-    if reasoning:
-        args["reasoning"] = reasoning
-    return await get_tool_wrapper("submit_antithesis")(**args)
-
-@tool_no_schema(description="Either agent submits synthesis proposal during negotiation")
-async def submit_synthesis(
-    session_id: str,
-    agent_id: str,
-    api_key: str = None,
-    proposed_conditions: list = None,
-    root_cause: str = None,
-    reasoning: str = None,
-    agrees: bool = False,
-    ctx: Context = None,
-) -> str:
-    args = {"session_id": session_id, "agent_id": agent_id, "agrees": agrees}
-    client_session_id = _session_id_from_ctx(ctx)
-    if client_session_id:
-        args["client_session_id"] = client_session_id
-    if api_key:
-        args["api_key"] = api_key
-    if proposed_conditions:
-        args["proposed_conditions"] = proposed_conditions
-    if root_cause:
-        args["root_cause"] = root_cause
-    if reasoning:
-        args["reasoning"] = reasoning
-    return await get_tool_wrapper("submit_synthesis")(**args)
-
-@tool_no_schema(description="Get current state of a dialectic session")
-async def get_dialectic_session(session_id: str = None, agent_id: str = None, check_timeout: bool = True) -> str:
-    args = {"check_timeout": check_timeout}
-    if session_id:
-        args["session_id"] = session_id
-    if agent_id:
-        args["agent_id"] = agent_id
-    return await get_tool_wrapper("get_dialectic_session")(**args)
-
-@tool_no_schema(description="Nudge a dialectic/exploration session that appears stuck (reports next actor + idle time; optional audit event)")
-async def nudge_dialectic_session(session_id: str, post: bool = False, note: str = None, agent_id: str = None, ctx: Context = None) -> str:
-    args = {"session_id": session_id, "post": post}
-    session_key = _session_id_from_ctx(ctx)
-    if session_key:
-        args["client_session_id"] = session_key
-    if note:
-        args["note"] = note
-    if agent_id:
-        args["agent_id"] = agent_id
-    return await get_tool_wrapper("nudge_dialectic_session")(**args)
 
 # ============================================================================
 # SSE-Specific Tools (Multi-Agent Awareness)
@@ -1193,286 +963,119 @@ def _generate_connection_recommendations(diagnostics: Dict[str, Any]) -> list:
     return recommendations
 
 
-# Observability tools
-@tool_no_schema(description="Observe another agent's governance state with pattern analysis")
-async def observe_agent(
-    agent_id: str,
-    include_history: bool = True,
-    analyze_patterns: bool = True
-) -> str:
-    return await get_tool_wrapper("observe_agent")(
-        agent_id=agent_id,
-        include_history=include_history,
-        analyze_patterns=analyze_patterns
-    )
-
-@tool_no_schema(description="Compare governance patterns across multiple agents")
-async def compare_agents(agent_ids: list, compare_metrics: list = None) -> str:
-    args = {"agent_ids": agent_ids}
-    if compare_metrics:
-        args["compare_metrics"] = compare_metrics
-    return await get_tool_wrapper("compare_agents")(**args)
-
-@tool_no_schema(description="Compare yourself to similar agents automatically")
-async def compare_me_to_similar(agent_id: str, similarity_threshold: float = 0.15) -> str:
-    args = {"agent_id": agent_id, "similarity_threshold": similarity_threshold}
-    return await get_tool_wrapper("compare_me_to_similar")(**args)
-
-@tool_no_schema(description="Get fleet-level health overview")
-async def aggregate_metrics(agent_ids: list = None, include_health_breakdown: bool = True) -> str:
-    args = {"include_health_breakdown": include_health_breakdown}
-    if agent_ids:
-        args["agent_ids"] = agent_ids
-    return await get_tool_wrapper("aggregate_metrics")(**args)
-
-@tool_no_schema(description="Get comprehensive telemetry metrics")
-async def get_telemetry_metrics(
-    agent_id: str = None,
-    window_hours: float = 24,
-    include_calibration: bool = False,
-) -> str:
-    args = {"window_hours": window_hours, "include_calibration": include_calibration}
-    if agent_id:
-        args["agent_id"] = agent_id
-    return await get_tool_wrapper("get_telemetry_metrics")(**args)
-
-
-# Config tools
-@tool_no_schema(description="Get current governance threshold configuration")
-async def get_thresholds() -> str:
-    return await get_tool_wrapper("get_thresholds")()
-
-@tool_no_schema(description="Set runtime threshold overrides")
-async def set_thresholds(thresholds: dict, agent_id: str = None, api_key: str = None, validate: bool = True) -> str:
-    args = {"thresholds": thresholds, "validate": validate}
-    if agent_id:
-        args["agent_id"] = agent_id
-    if api_key:
-        args["api_key"] = api_key
-    return await get_tool_wrapper("set_thresholds")(**args)
-
-
 # ============================================================================
-# Remaining Tools (Full Feature Parity with stdio server)
+# Startup Reconciliation: Postgres → SQLite Metadata
 # ============================================================================
 
-# Calibration tools
-@tool_no_schema(description="Check calibration of confidence estimates (trajectory/consensus proxy by default)")
-async def check_calibration() -> str:
-    return await get_tool_wrapper("check_calibration")()
+async def _reconcile_postgres_to_metadata(db) -> Dict[str, Any]:
+    """
+    Reconcile Postgres identities to SQLite agent_metadata on startup.
 
-@tool_no_schema(description="Record external truth signal for calibration (optional; use only when you have one)")
-async def update_calibration_ground_truth(
-    actual_correct: bool,
-    confidence: float = None,
-    predicted_correct: bool = None,
-    timestamp: str = None,
-    agent_id: str = None
-) -> str:
-    args = {"actual_correct": actual_correct}
-    if confidence is not None:
-        args["confidence"] = confidence
-    if predicted_correct is not None:
-        args["predicted_correct"] = predicted_correct
-    if timestamp:
-        args["timestamp"] = timestamp
-    if agent_id:
-        args["agent_id"] = agent_id
-    return await get_tool_wrapper("update_calibration_ground_truth")(**args)
+    Finds identities in Postgres that don't exist in SQLite metadata and
+    creates minimal metadata entries for them. This catches drift from:
+    - state_db creating identities without metadata
+    - Failed async metadata saves
+    - Direct Postgres operations
 
-# Lifecycle tools (remaining)
-@tool_no_schema(description="Update agent tags and notes")
-async def update_agent_metadata(
-    agent_id: str,
-    tags: list = None,
-    notes: str = None,
-    append_notes: bool = False,
-    api_key: str = None
-) -> str:
-    args = {"agent_id": agent_id, "append_notes": append_notes}
-    if tags:
-        args["tags"] = tags
-    if notes:
-        args["notes"] = notes
-    if api_key:
-        args["api_key"] = api_key
-    return await get_tool_wrapper("update_agent_metadata")(**args)
+    Returns:
+        Dict with reconciliation statistics
+    """
+    from src.metadata_db import AgentMetadataDB
+    from datetime import datetime
 
-@tool_no_schema(description="Archive an agent for long-term storage")
-async def archive_agent(agent_id: str, reason: str = None, keep_in_memory: bool = False, api_key: str = None, ctx: Context = None) -> str:
-    session_id = _session_id_from_ctx(ctx)
-    args: Dict[str, Any] = {"agent_id": agent_id, "keep_in_memory": keep_in_memory}
-    if reason:
-        args["reason"] = reason
-    if api_key is not None:
-        args["api_key"] = api_key
-    if session_id:
-        args["client_session_id"] = session_id
-    return await get_tool_wrapper("archive_agent")(**args)
-
-@tool_no_schema(description="Delete an agent and archive its data")
-async def delete_agent(agent_id: str, confirm: bool = False, backup_first: bool = True, api_key: str = None) -> str:
-    args = {"agent_id": agent_id, "confirm": confirm, "backup_first": backup_first}
-    if api_key:
-        args["api_key"] = api_key
-    return await get_tool_wrapper("delete_agent")(**args)
-
-@tool_no_schema(description="Archive old test/demo agents that haven't been updated recently")
-async def archive_old_test_agents(max_age_hours: float = 6, max_age_days: float = None) -> str:
-    args = {"max_age_hours": max_age_hours}
-    if max_age_days is not None:
-        args["max_age_days"] = max_age_days
-    return await get_tool_wrapper("archive_old_test_agents")(**args)
-
-@tool_no_schema(description="Mark agent as having completed response, waiting for input")
-async def mark_response_complete(agent_id: str, api_key: str = None, summary: str = None) -> str:
-    args = {"agent_id": agent_id}
-    if api_key:
-        args["api_key"] = api_key
-    if summary:
-        args["summary"] = summary
-    return await get_tool_wrapper("mark_response_complete")(**args)
-
-@tool_no_schema(description="Direct resume without dialectic if agent state is safe")
-async def direct_resume_if_safe(
-    agent_id: str,
-    api_key: str,
-    conditions: list = None,
-    reason: str = None
-) -> str:
-    args = {"agent_id": agent_id, "api_key": api_key}
-    if conditions:
-        args["conditions"] = conditions
-    if reason:
-        args["reason"] = reason
-    return await get_tool_wrapper("direct_resume_if_safe")(**args)
-
-# Export tools
-@tool_no_schema(description="Export complete governance history for an agent")
-async def get_system_history(agent_id: str, format: str = "json") -> str:
-    return await get_tool_wrapper("get_system_history")(agent_id=agent_id, format=format)
-
-@tool_no_schema(description="Export governance history to a file")
-async def export_to_file(
-    agent_id: str,
-    format: str = "json",
-    filename: str = None,
-    complete_package: bool = False
-) -> str:
-    args = {"agent_id": agent_id, "format": format, "complete_package": complete_package}
-    if filename:
-        args["filename"] = filename
-    return await get_tool_wrapper("export_to_file")(**args)
-
-# Admin tools (remaining)
-@tool_no_schema(description="Reset governance state for an agent")
-async def reset_monitor(agent_id: str) -> str:
-    return await get_tool_wrapper("reset_monitor")(agent_id=agent_id)
-
-@tool_no_schema(description="Clean up stale lock files")
-async def cleanup_stale_locks(max_age_seconds: float = 300, dry_run: bool = False) -> str:
-    return await get_tool_wrapper("cleanup_stale_locks")(
-        max_age_seconds=max_age_seconds, dry_run=dry_run
-    )
-
-@tool_no_schema(description="Validate file path against markdown proliferation policy")
-async def validate_file_path(file_path: str) -> str:
-    return await get_tool_wrapper("validate_file_path")(file_path=file_path)
-
-@tool_no_schema(description="Backfill calibration data from dialectic protocol history")
-async def backfill_calibration_from_dialectic(
-    lookback_days: int = 30,
-    min_confidence: float = 0.5,
-    dry_run: bool = False
-) -> str:
-    return await get_tool_wrapper("backfill_calibration_from_dialectic")(
-        lookback_days=lookback_days,
-        min_confidence=min_confidence,
-        dry_run=dry_run
-    )
-
-@tool_no_schema(description="Get tool usage statistics")
-async def get_tool_usage_stats(
-    window_hours: float = 168,
-    tool_name: str | None = None,
-    agent_id: str | None = None
-) -> str:
-    args = {"window_hours": window_hours}
-    if tool_name:
-        args["tool_name"] = tool_name
-    if agent_id:
-        args["agent_id"] = agent_id
-    return await get_tool_wrapper("get_tool_usage_stats")(**args)
-
-# Anomaly detection
-@tool_no_schema(description="Detect anomalies across agents")
-async def detect_anomalies(
-    agent_ids: list = None,
-    anomaly_types: list = None,
-    min_severity: str = "medium"
-) -> str:
-    args = {"min_severity": min_severity}
-    if agent_ids:
-        args["agent_ids"] = agent_ids
-    if anomaly_types:
-        args["anomaly_types"] = anomaly_types
-    return await get_tool_wrapper("detect_anomalies")(**args)
-
-# Knowledge graph (remaining)
-@tool_no_schema(description="Get all knowledge for an agent")
-async def get_knowledge_graph(agent_id: str, limit: int = None, include_details: bool = False) -> str:
-    args = {"agent_id": agent_id, "include_details": include_details}
-    if limit:
-        args["limit"] = limit
-    return await get_tool_wrapper("get_knowledge_graph")(**args)
-
-@tool_no_schema(description="Update discovery status")
-async def update_discovery_status_graph(discovery_id: str, status: str, agent_id: str = None, api_key: str = None) -> str:
-    args = {"discovery_id": discovery_id, "status": status}
-    if agent_id:
-        args["agent_id"] = agent_id
-    if api_key:
-        args["api_key"] = api_key
-    return await get_tool_wrapper("update_discovery_status_graph")(**args)
-
-@tool_no_schema(description="Find similar discoveries by tag overlap")
-async def find_similar_discoveries_graph(discovery_id: str, limit: int = 10) -> str:
-    return await get_tool_wrapper("find_similar_discoveries_graph")(
-        discovery_id=discovery_id, limit=limit
-    )
-
-@tool_no_schema(description="Reply to a question in the knowledge graph")
-async def reply_to_question(
-    agent_id: str,
-    question_id: str,
-    summary: str,
-    api_key: str = None,
-    details: str = None,
-    tags: list = None,
-    severity: str = None,
-    mark_question_resolved: bool = False
-) -> str:
-    args = {
-        "agent_id": agent_id,
-        "question_id": question_id,
-        "summary": summary,
-        "mark_question_resolved": mark_question_resolved
+    result = {
+        "success": True,
+        "postgres_count": 0,
+        "metadata_count": 0,
+        "missing_in_metadata": 0,
+        "synced": 0,
+        "failed": 0,
     }
-    if api_key:
-        args["api_key"] = api_key
-    if details:
-        args["details"] = details
-    if tags:
-        args["tags"] = tags
-    if severity:
-        args["severity"] = severity
-    return await get_tool_wrapper("reply_to_question")(**args)
+
+    try:
+        # Check if we have Postgres backend
+        health = await db.health_check()
+        if health.get("backend") == "sqlite":
+            logger.debug("Reconciliation skipped: SQLite-only mode")
+            return result
+
+        # Get all Postgres identities
+        postgres_identities = await db.list_identities(limit=10000)
+        postgres_ids = {i.agent_id for i in postgres_identities}
+        result["postgres_count"] = len(postgres_ids)
+
+        # Get all SQLite metadata agent_ids
+        metadata_db = AgentMetadataDB(Path(project_root) / "data" / "governance.db")
+        existing_metadata = metadata_db.load_all()
+        metadata_ids = set(existing_metadata.keys())
+        result["metadata_count"] = len(metadata_ids)
+
+        # Find missing
+        missing_in_metadata = postgres_ids - metadata_ids
+        result["missing_in_metadata"] = len(missing_in_metadata)
+
+        if not missing_in_metadata:
+            logger.info("Startup reconciliation: Postgres and metadata are in sync")
+            return result
+
+        logger.info(
+            f"Startup reconciliation: Found {len(missing_in_metadata)} identities "
+            f"in Postgres missing from metadata"
+        )
+
+        # Create minimal metadata for missing agents
+        now = datetime.utcnow().isoformat()
+        new_metadata = {}
+        for agent_id in missing_in_metadata:
+            # Find the identity to get created_at
+            identity = await db.get_identity(agent_id)
+            created = identity.created_at.isoformat() if identity and identity.created_at else now
+
+            new_metadata[agent_id] = {
+                "agent_id": agent_id,
+                "agent_uuid": agent_id,
+                "label": None,
+                "status": "active",
+                "created_at": created,
+                "last_update": created,
+                "version": "v1.0",
+                "total_updates": 0,
+                "tags": [],
+                "notes": "[Reconciled from Postgres on startup]",
+                "lifecycle_events": [
+                    {"event": "reconciled", "timestamp": now, "reason": "missing_from_metadata"}
+                ],
+                "health_status": "unknown",
+                "api_key": "",
+            }
+
+        # Upsert to metadata
+        try:
+            metadata_db.upsert_many(new_metadata)
+            result["synced"] = len(new_metadata)
+            logger.info(
+                f"Startup reconciliation: Synced {len(new_metadata)} agents "
+                f"from Postgres to metadata"
+            )
+        except Exception as e:
+            logger.error(f"Failed to sync metadata: {e}")
+            result["failed"] = len(new_metadata)
+            result["success"] = False
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Reconciliation error: {e}")
+        result["success"] = False
+        result["error"] = str(e)
+        return result
+
 
 # ============================================================================
 # Server Entry Point
 # ============================================================================
 
-DEFAULT_HOST = "127.0.0.1"
+DEFAULT_HOST = "0.0.0.0"  # Changed from 127.0.0.1 to allow network access (ngrok, etc.)
 DEFAULT_PORT = 8765
 
 def parse_args():
@@ -1483,7 +1086,7 @@ def parse_args():
     parser.add_argument(
         "--host", 
         default=DEFAULT_HOST,
-        help=f"Host to bind to (default: {DEFAULT_HOST})"
+        help=f"Host to bind to (default: {DEFAULT_HOST}, use 127.0.0.1 for localhost-only)"
     )
     parser.add_argument(
         "--port", 
@@ -1499,7 +1102,7 @@ def parse_args():
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Force start: clean up any stale lock files"
+        help="Force start: clean up any stale lock files and PID files"
     )
     return parser.parse_args()
 
@@ -1655,13 +1258,32 @@ async def main():
     """Main entry point for SSE server."""
     args = parse_args()
 
-    # --force: Explicitly clean up lock file before starting
-    if args.force and SSE_LOCK_FILE.exists():
-        logger.info(f"--force: Removing lock file {SSE_LOCK_FILE}")
+    # --force: Explicitly clean up lock file and PID file before starting
+    if args.force:
+        logger.info("--force: Cleaning up stale lock and PID files")
         try:
-            SSE_LOCK_FILE.unlink()
+            if SSE_LOCK_FILE.exists():
+                SSE_LOCK_FILE.unlink()
+                logger.info(f"Removed lock file: {SSE_LOCK_FILE}")
         except Exception as e:
             logger.warning(f"Could not remove lock file: {e}")
+        try:
+            if SSE_PID_FILE.exists():
+                # Check if PID is actually running before removing
+                try:
+                    with open(SSE_PID_FILE, 'r') as f:
+                        old_pid = int(f.read().strip())
+                    if not is_process_alive(old_pid):
+                        SSE_PID_FILE.unlink()
+                        logger.info(f"Removed stale PID file: {SSE_PID_FILE} (PID {old_pid} not running)")
+                    else:
+                        logger.warning(f"PID file exists for running process {old_pid}, will terminate it")
+                except (ValueError, IOError):
+                    # Invalid PID file, safe to remove
+                    SSE_PID_FILE.unlink()
+                    logger.info(f"Removed invalid PID file: {SSE_PID_FILE}")
+        except Exception as e:
+            logger.warning(f"Could not remove PID file: {e}")
 
     # Process deduplication: Check for and kill existing SSE processes
     killed = cleanup_existing_sse_processes()
@@ -1703,6 +1325,14 @@ async def main():
         logger.error(f"Failed to initialize database: {e}")
         print(f"\n❌ Database initialization failed: {e}", file=sys.stderr)
         sys.exit(1)
+
+    # PostgreSQL is now the sole backend - reconciliation no longer needed
+    # SQLite metadata is legacy and not being written to
+    logger.debug("PostgreSQL-only backend: skipping SQLite reconciliation (deprecated)")
+    # try:
+    #     await _reconcile_postgres_to_metadata(db)
+    # except Exception as e:
+    #     logger.warning(f"Startup reconciliation failed (non-fatal): {e}")
 
     # Register cleanup handlers
     def cleanup():
@@ -1750,7 +1380,7 @@ async def main():
     try:
         import uvicorn
         from starlette.routing import Route
-        from starlette.responses import JSONResponse
+        from starlette.responses import JSONResponse, Response
         from starlette.middleware.cors import CORSMiddleware
         
         # Get the Starlette app from FastMCP (SSE transport)
@@ -1763,10 +1393,13 @@ async def main():
             from mcp.server.streamable_http import StreamableHTTPServerTransport
             
             # Create session manager for Streamable HTTP
+            # NOTE: stateless=True allows any client to connect without session management
+            # But we still capture mcp-session-id header when present for implicit identity binding
+            # This is a hybrid approach: stateless for compatibility, but identity-aware when possible
             _streamable_session_manager = StreamableHTTPSessionManager(
                 app=mcp._mcp_server,  # Access the underlying MCP server
                 json_response=False,  # Use SSE streams (default, more efficient)
-                stateless=False,      # Track sessions for resumability
+                stateless=True,       # Allow stateless for compatibility (we handle identity separately)
             )
             
             HAS_STREAMABLE_HTTP = True
@@ -1858,13 +1491,21 @@ async def main():
                     return
 
                 # Generate base id (stable per SSE connection, unique per HTTP request)
-                base_id = headers.get("x-client-id")
+                # Prioritize explicit client identity headers
+                base_id = headers.get("x-client-id") or headers.get("x-mcp-client-id")
+                
                 if not base_id:
+                    # Fallback: Disambiguate by IP + User-Agent to handle shared tunnels (ngrok)
                     client = scope.get("client")
-                    if client and len(client) >= 2:
-                        base_id = f"{client[0]}:{client[1]}"
-                    else:
-                        base_id = "unknown"
+                    client_ip = client[0] if (client and len(client) >= 1) else "unknown"
+                    
+                    # Use User-Agent to separate different client types (Claude vs Gemini vs Cursor)
+                    ua = headers.get("user-agent", "unknown")
+                    
+                    # Create a simple stable fingerprint from the User-Agent
+                    import hashlib
+                    ua_fingerprint = hashlib.md5(ua.encode()).hexdigest()[:6]
+                    base_id = f"{client_ip}:{ua_fingerprint}"
 
                 if is_sse:
                     client_id = base_id
@@ -1885,6 +1526,14 @@ async def main():
                         "path": path,
                         "user_agent": headers.get("user-agent", "unknown"),
                     })
+
+                # PROPAGATE IDENTITY via contextvars for tool handlers
+                from src.mcp_handlers.context import set_session_context, reset_session_context
+                context_token = set_session_context(
+                    session_key=client_id,
+                    client_session_id=headers.get("x-client-id"),
+                    user_agent=headers.get("user-agent")
+                )
 
                 disconnected = False
 
@@ -1936,23 +1585,12 @@ async def main():
                         raise
 
                 try:
-                    await self.app(scope, wrapped_receive, wrapped_send)
-                    # Update activity after successful completion (for non-streaming responses)
-                    if is_sse and not disconnected:
-                        try:
-                            await connection_tracker.update_activity(client_id)
-                        except Exception:
-                            pass
-                except Exception as e:
-                    # If SSE request errors, ensure connection is cleared.
-                    logger.debug(f"Error handling request for {client_id}: {e}")
-                    if is_sse and not disconnected:
-                        try:
-                            await connection_tracker.remove_connection(client_id)
-                        except Exception:
-                            pass
-                    raise
+                    return await self.app(scope, wrapped_receive, wrapped_send)
                 finally:
+                    # Reset contextvars to prevent leakage
+                    if 'context_token' in locals():
+                        reset_session_context(context_token)
+                    
                     # Only remove non-SSE connections (HTTP REST endpoints)
                     if not is_sse:
                         await connection_tracker.remove_connection(client_id)
@@ -2067,7 +1705,120 @@ async def main():
         
         # Start auto calibration task (non-blocking)
         asyncio.create_task(startup_auto_calibration())
+
+        # === Background task: Metadata loading (non-blocking) ===
+        async def background_metadata_load():
+            """Load metadata in background after server starts accepting connections."""
+            # Small delay to let server start accepting connections first
+            await asyncio.sleep(0.5)
+            
+            try:
+                from src.mcp_server_std import load_metadata_async
+                await load_metadata_async()
+                logger.info("[STARTUP] Background metadata load complete")
+            except Exception as e:
+                logger.warning(f"[STARTUP] Background metadata load failed: {e}. Lazy loading will handle on first access.")
+                # Non-fatal - lazy loading will handle if needed
+
+        asyncio.create_task(background_metadata_load())
+
+        # === Background task: Orphan agent cleanup ===
+        async def startup_orphan_cleanup():
+            """Aggressively clean up orphan agents to prevent proliferation."""
+            await asyncio.sleep(2.0)  # Wait for server initialization
+
+            try:
+                from src.mcp_handlers.lifecycle import handle_archive_orphan_agents
+                result = await handle_archive_orphan_agents({
+                    "zero_update_hours": 1.0,
+                    "low_update_hours": 3.0,
+                    "unlabeled_hours": 6.0,
+                    "dry_run": False
+                })
+                # Extract count from response
+                if result and len(result) > 0:
+                    import json
+                    try:
+                        data = json.loads(result[0].text)
+                        if data.get("archived_count", 0) > 0:
+                            logger.info(f"[STARTUP] Orphan cleanup: archived {data['archived_count']} agents")
+                    except:
+                        pass
+            except Exception as e:
+                logger.warning(f"Could not run orphan cleanup: {e}", exc_info=True)
+
+        asyncio.create_task(startup_orphan_cleanup())
+
+        # === Background task: Automatic stuck agent recovery ===
+        async def stuck_agent_recovery_task():
+            """
+            Automatically detect and recover stuck agents every 5 minutes.
+            
+            Uses proprioceptive margin + timeout to detect stuck agents, then
+            automatically recovers safe ones (coherence > 0.40, risk < 0.60).
+            """
+            # Wait for server initialization
+            await asyncio.sleep(10.0)  # Give server time to start
+            
+            interval_minutes = 5.0
+            interval_seconds = interval_minutes * 60
+            
+            logger.info(f"[STUCK_AGENT_RECOVERY] Starting automatic recovery (runs every {interval_minutes} minutes)")
+            
+            while True:
+                try:
+                    await asyncio.sleep(interval_seconds)
+                    
+                    # Detect and auto-recover stuck agents
+                    from src.mcp_handlers.lifecycle import handle_detect_stuck_agents
+                    
+                    # Call with auto_recover=True to automatically recover safe agents
+                    result = await handle_detect_stuck_agents({
+                        "max_age_minutes": 30.0,
+                        "critical_margin_timeout_minutes": 5.0,
+                        "tight_margin_timeout_minutes": 15.0,
+                        "auto_recover": True
+                    })
+                    
+                    # Parse result (it's a Sequence[TextContent] with JSON content)
+                    if result and len(result) > 0:
+                        import json
+                        try:
+                            # Extract text from TextContent
+                            from mcp.types import TextContent
+                            result_text = result[0].text if isinstance(result[0], TextContent) else str(result[0])
+                            
+                            # Parse JSON response
+                            if result_text.strip().startswith('{'):
+                                result_data = json.loads(result_text)
+                                stuck_agents = result_data.get('stuck_agents', [])
+                                recovered = result_data.get('recovered', [])
+                                
+                                if len(stuck_agents) > 0 or len(recovered) > 0:
+                                    logger.info(
+                                        f"[STUCK_AGENT_RECOVERY] Detected {len(stuck_agents)} stuck agent(s), "
+                                        f"recovered {len(recovered)} safe agent(s)"
+                                    )
+                                    # Log details for recovered agents
+                                    for rec in recovered:
+                                        logger.debug(
+                                            f"[STUCK_AGENT_RECOVERY] Recovered agent {rec.get('agent_id', 'unknown')[:8]}... "
+                                            f"(reason: {rec.get('reason', 'unknown')})"
+                                        )
+                        except (json.JSONDecodeError, AttributeError, KeyError) as e:
+                            logger.debug(f"[STUCK_AGENT_RECOVERY] Could not parse result: {e}")
+                    
+                except asyncio.CancelledError:
+                    logger.info("[STUCK_AGENT_RECOVERY] Task cancelled")
+                    break
+                except Exception as e:
+                    logger.warning(f"[STUCK_AGENT_RECOVERY] Error in recovery task: {e}", exc_info=True)
+                    # Continue running even if one iteration fails
+                    await asyncio.sleep(60.0)  # Wait 1 minute before retrying
         
+        # Start stuck agent recovery task (non-blocking)
+        asyncio.create_task(stuck_agent_recovery_task())
+
         # === Server warmup task ===
         # Prevents "request before initialization" errors when multiple clients
         # reconnect simultaneously after a server restart
@@ -2107,9 +1858,13 @@ async def main():
         def _extract_client_session_id(request) -> str:
             """
             Stable per-client session id for HTTP callers.
-            - Prefer explicit header X-Session-ID
+            - Prefer explicit header X-Session-ID (agents should echo this back)
             - Fall back to ConnectionTrackingMiddleware id if present
-            - Otherwise use remote addr + user-agent (best-effort)
+            - Otherwise generate a unique session ID per request chain
+
+            Note: Without X-Session-ID, each request gets a new session. This is
+            intentional - it prevents different agents/users from sharing identity
+            just because they come from the same IP (e.g., all ChatGPT users).
             """
             sid = request.headers.get("X-Session-ID") or request.headers.get("x-session-id")
             if sid:
@@ -2119,12 +1874,15 @@ async def main():
                     return str(getattr(request.state, "governance_client_id"))
             except Exception:
                 pass
+            # Generate unique session ID - agents must echo back client_session_id
+            # from onboard() response to maintain identity across calls
+            import uuid
+            unique_id = str(uuid.uuid4())[:12]
             try:
                 host = request.client.host if request.client else "unknown"
-                ua = request.headers.get("user-agent", "unknown")
-                return f"http:{host}:{ua}"
+                return f"http:{host}:{unique_id}"
             except Exception:
-                return "http:unknown"
+                return f"http:unknown:{unique_id}"
         
         async def http_list_tools(request):
             """List all tools in OpenAI-compatible format"""
@@ -2248,10 +2006,78 @@ async def main():
                     return JSONResponse({"name": tool_name, "result": result_data, "success": True})
                 
                 # Inject stable client session for identity binding (avoid collision with dialectic session_id)
+                client_session_id = None
                 if isinstance(arguments, dict) and "client_session_id" not in arguments:
-                    arguments["client_session_id"] = _extract_client_session_id(request)
+                    client_session_id = _extract_client_session_id(request)
+                    arguments["client_session_id"] = client_session_id
+                elif isinstance(arguments, dict):
+                    client_session_id = arguments.get("client_session_id")
 
-                result = await dispatch_tool(tool_name, arguments)
+                # CLI/GPT identity: Inject agent_id from X-Agent-Id header if provided
+                # This allows stateless clients (Claude Code, GPT, Cursor REST) to maintain identity
+                x_agent_id = None
+                if isinstance(arguments, dict) and "agent_id" not in arguments:
+                    x_agent_id = request.headers.get("x-agent-id") or request.headers.get("X-Agent-Id")
+                    if x_agent_id:
+                        arguments["agent_id"] = x_agent_id
+
+                # AUTO-DETECT CLIENT TYPE and MODEL TYPE from User-Agent for better auto-naming
+                # This ensures agent_id becomes "cursor_20251226" instead of "mcp_20251226"
+                # Also detects model type to prevent identity collision between different models
+                if isinstance(arguments, dict):
+                    ua = (request.headers.get("user-agent") or "").lower()
+                    
+                    # Detect client type
+                    if "client_hint" not in arguments:
+                        detected_client = None
+                        if "cursor" in ua:
+                            detected_client = "cursor"
+                        elif "claude" in ua or "anthropic" in ua:
+                            detected_client = "claude_desktop"
+                        elif "chatgpt" in ua or "openai" in ua:
+                            detected_client = "chatgpt"
+                        elif "vscode" in ua or "visual studio code" in ua:
+                            detected_client = "vscode"
+
+                        if detected_client:
+                            arguments["client_hint"] = detected_client
+                            logger.debug(f"[HTTP] Auto-detected client_hint={detected_client} from UA")
+                    
+                    # Detect model type to prevent identity collision
+                    if "model_type" not in arguments:
+                        detected_model = None
+                        # Check for model identifiers in User-Agent
+                        if "composer" in ua or "cursor.*composer" in ua:
+                            detected_model = "composer"
+                        elif "chatgpt" in ua or "gpt-4" in ua or "gpt-3" in ua:
+                            detected_model = "chatgpt"
+                        elif "claude" in ua:
+                            detected_model = "claude"
+                        elif "gemini" in ua:
+                            detected_model = "gemini"
+                        
+                        # Also check X-Model header if available
+                        if not detected_model:
+                            model_header = request.headers.get("x-model") or request.headers.get("X-Model")
+                            if model_header:
+                                detected_model = model_header.lower()
+                        
+                        if detected_model:
+                            arguments["model_type"] = detected_model
+                            logger.debug(f"[HTTP] Auto-detected model_type={detected_model} from headers")
+
+                # SET SESSION CONTEXT for contextvars-based identity lookup
+                # This allows success_response() and status() to find binding without arguments
+                from src.mcp_handlers.context import set_session_context, reset_session_context
+                context_token = set_session_context(
+                    session_key=client_session_id,
+                    client_session_id=client_session_id,
+                    agent_id=x_agent_id or (arguments.get("agent_id") if isinstance(arguments, dict) else None),
+                )
+                try:
+                    result = await dispatch_tool(tool_name, arguments)
+                finally:
+                    reset_session_context(context_token)
                 
                 # CRITICAL FIX: Ensure we always return a valid JSONResponse with non-empty body
                 # Empty responses cause Starlette middleware AssertionError (http.response.start vs http.response.body)
@@ -2339,12 +2165,35 @@ async def main():
                 }, status_code=500)
         
         async def http_health(request):
-            """Health check endpoint"""
+            """Health check endpoint with uptime and monitoring info"""
             if not _check_http_auth(request):
                 return _http_unauthorized()
+            
+            # Calculate uptime
+            uptime_seconds = time.time() - SERVER_START_TIME
+            uptime_hours = uptime_seconds / 3600
+            uptime_days = uptime_hours / 24
+            
+            # Format uptime string
+            if uptime_days >= 1:
+                uptime_str = f"{int(uptime_days)}d {int((uptime_hours % 24))}h {int((uptime_seconds % 3600) / 60)}m"
+            elif uptime_hours >= 1:
+                uptime_str = f"{int(uptime_hours)}h {int((uptime_seconds % 3600) / 60)}m {int(uptime_seconds % 60)}s"
+            else:
+                uptime_str = f"{int(uptime_seconds / 60)}m {int(uptime_seconds % 60)}s"
+            
             return JSONResponse({
                 "status": "ok" if SERVER_READY else "warming_up",
                 "version": SERVER_VERSION,
+                "uptime": {
+                    "seconds": int(uptime_seconds),
+                    "formatted": uptime_str,
+                    "started_at": datetime.fromtimestamp(SERVER_START_TIME).isoformat() if SERVER_START_TIME else None
+                },
+                "connections": {
+                    "active": connection_tracker.count,
+                    "healthy": sum(1 for c in connection_tracker.connections.values() if c.get("health_status") == "healthy")
+                },
                 "transports": {
                     "sse": "/sse (legacy, stable)",
                     "streamable_http": "/mcp (new, with resumability)" if HAS_STREAMABLE_HTTP else "not available"
@@ -2354,6 +2203,7 @@ async def main():
                     "call_tool": "POST /v1/tools/call",
                     "health": "GET /health",
                     "metrics": "GET /metrics",
+                    "dashboard": "GET /dashboard",
                     "sse_probe": "GET /sse?probe=true (quick connectivity test)"
                 },
                 "auth": {
@@ -2362,6 +2212,10 @@ async def main():
                 },
                 "session": {
                     "header": "X-Session-ID (recommended for stable identity binding)"
+                },
+                "identity": {
+                    "header": "X-Agent-Id",
+                    "description": "CLI/GPT identity - pass your agent name to maintain identity across REST requests"
                 },
                 "note": "Use /sse for legacy MCP clients, /mcp for new Streamable HTTP clients (Cursor 0.43+)"
             })
@@ -2377,6 +2231,10 @@ async def main():
                 # Update gauges with current values before generating output
                 # Server info (static, set once)
                 SERVER_INFO.labels(version=SERVER_VERSION).set(1)
+                
+                # Server uptime
+                uptime_seconds = time.time() - SERVER_START_TIME
+                SERVER_UPTIME.set(uptime_seconds)
 
                 # Connection metrics
                 CONNECTIONS_ACTIVE.set(connection_tracker.count)
@@ -2385,7 +2243,8 @@ async def main():
                 try:
                     from src.mcp_handlers.shared import get_mcp_server
                     mcp_server = get_mcp_server()
-                    mcp_server.load_metadata()
+                    # Use async version to avoid race condition with PostgreSQL connection pool
+                    await mcp_server.load_metadata_async()
 
                     # Count by status (waiting_input and active are separate statuses)
                     status_counts = {"active": 0, "paused": 0, "archived": 0, "waiting_input": 0, "deleted": 0}
@@ -2441,7 +2300,23 @@ async def main():
                     "details": str(e)
                 }, status_code=500)
         
+        # Dashboard endpoint
+        async def http_dashboard(request):
+            """Serve the web dashboard"""
+            dashboard_path = Path(__file__).parent.parent / "dashboard" / "index.html"
+            if dashboard_path.exists():
+                return Response(
+                    content=dashboard_path.read_text(),
+                    media_type="text/html"
+                )
+            return JSONResponse({
+                "error": "Dashboard not found",
+                "path": str(dashboard_path)
+            }, status_code=404)
+        
         # Register HTTP endpoints
+        app.routes.append(Route("/dashboard", http_dashboard, methods=["GET"]))
+        app.routes.append(Route("/", http_dashboard, methods=["GET"]))  # Root also serves dashboard
         app.routes.append(Route("/v1/tools", http_list_tools, methods=["GET"]))
         app.routes.append(Route("/v1/tools/call", http_call_tool, methods=["POST"]))
         app.routes.append(Route("/health", http_health, methods=["GET"]))
@@ -2476,29 +2351,107 @@ async def main():
             # Start the session manager as a background task
             streamable_task = asyncio.create_task(start_streamable_http())
             
-            async def streamable_mcp_handler(request):
-                """Handle Streamable HTTP MCP requests at /mcp."""
+            # Create a pure ASGI app for /mcp that wraps the session manager
+            # Using Mount with an ASGI app avoids Starlette's Route handler wrapper
+            # which expects a Response to be returned (causing NoneType callable error)
+            async def streamable_mcp_asgi(scope, receive, send):
+                """ASGI app for Streamable HTTP MCP at /mcp."""
+                # Only handle HTTP requests
+                if scope.get("type") != "http":
+                    return
+
                 if not _streamable_running:
-                    return JSONResponse({
+                    # Return 503 if not ready
+                    response = JSONResponse({
                         "error": "Streamable HTTP transport not ready",
                         "hint": "Try again in a moment"
                     }, status_code=503)
+                    await response(scope, receive, send)
+                    return
+
+                # AUTO-DETECT CLIENT TYPE from User-Agent for better auto-naming
+                # CAPTURE MCP SESSION ID for implicit identity binding
+                # Use contextvars so tool handlers can access it
+                client_hint_token = None
+                mcp_session_token = None
                 try:
-                    # Delegate to the session manager
-                    await _streamable_session_manager.handle_request(
-                        request.scope,
-                        request.receive,
-                        request._send
+                    from starlette.datastructures import Headers
+                    from src.mcp_handlers.context import (
+                        detect_client_from_user_agent, set_transport_client_hint, reset_transport_client_hint,
+                        set_mcp_session_id, reset_mcp_session_id
                     )
+                    headers = Headers(scope=scope)
+
+                    # Capture mcp-session-id header for implicit identity binding
+                    mcp_sid = headers.get("mcp-session-id")
+                    if mcp_sid:
+                        mcp_session_token = set_mcp_session_id(mcp_sid)
+                        logger.debug(f"[/mcp] Captured mcp-session-id={mcp_sid[:16]}...")
+
+                    # FINGERPRINTING: Disambiguate by IP + User-Agent for shared tunnels
+                    # This must match logic in ConnectionTrackingMiddleware
+                    client = scope.get("client")
+                    client_ip = client[0] if (client and len(client) >= 1) else "unknown"
+                    ua = headers.get("user-agent", "unknown")
+                    import hashlib
+                    ua_fingerprint = hashlib.md5(ua.encode()).hexdigest()[:6]
+                    client_id = headers.get("x-client-id") or headers.get("x-mcp-client-id") or f"{client_ip}:{ua_fingerprint}"
+                    
+                    # Set in scope state so downstream _session_id_from_ctx can find it
+                    state = scope.setdefault("state", {})
+                    state["governance_client_id"] = client_id
+                    logger.debug(f"[/mcp] Identity: {client_id}")
+
+                    # PROPAGATE IDENTITY via contextvars
+                    from src.mcp_handlers.context import set_session_context, reset_session_context
+                    session_context_token = set_session_context(
+                        session_key=client_id,
+                        client_session_id=headers.get("x-client-id"),
+                        user_agent=ua
+                    )
+
+                    # Detect client type from User-Agent
+                    detected_client = detect_client_from_user_agent(ua)
+                    if detected_client:
+                        client_hint_token = set_transport_client_hint(detected_client)
+                        logger.debug(f"[/mcp] Detected client_hint={detected_client} from UA")
+                except Exception as e:
+                    logger.debug(f"[/mcp] Could not capture context: {e}")
+
+                try:
+                    # Delegate to the session manager - it handles ASGI directly
+                    await _streamable_session_manager.handle_request(scope, receive, send)
                 except Exception as e:
                     logger.error(f"Streamable HTTP error: {e}", exc_info=True)
-                    return JSONResponse({
+                    response = JSONResponse({
                         "error": "Streamable HTTP transport error",
                         "details": str(e)
                     }, status_code=500)
-            
-            # Register the /mcp route for all methods (GET for SSE stream, POST for messages, DELETE for disconnect)
-            app.routes.append(Route("/mcp", streamable_mcp_handler, methods=["GET", "POST", "DELETE"]))
+                    await response(scope, receive, send)
+                finally:
+                    # Reset contextvars
+                    if 'session_context_token' in locals() and session_context_token is not None:
+                        try:
+                            from src.mcp_handlers.context import reset_session_context
+                            reset_session_context(session_context_token)
+                        except Exception:
+                            pass
+                    if mcp_session_token is not None:
+                        try:
+                            from src.mcp_handlers.context import reset_mcp_session_id
+                            reset_mcp_session_id(mcp_session_token)
+                        except Exception:
+                            pass
+                    if client_hint_token is not None:
+                        try:
+                            from src.mcp_handlers.context import reset_transport_client_hint
+                            reset_transport_client_hint(client_hint_token)
+                        except Exception:
+                            pass
+
+            # Mount as ASGI app instead of Route handler (avoids NoneType callable error)
+            from starlette.routing import Mount
+            app.routes.append(Mount("/mcp", app=streamable_mcp_asgi))
             logger.info("Registered /mcp endpoint for Streamable HTTP transport")
 
         # Optional CORS for browser-based clients
@@ -2528,18 +2481,12 @@ async def main():
             limit_concurrency=100,  # Max concurrent connections
             limit_max_requests=1000,  # Max requests per worker before restart
             timeout_keep_alive=5,  # Keep-alive timeout (seconds)
-            timeout_graceful_shutdown=10  # Graceful shutdown timeout
+            timeout_graceful_shutdown=10,  # Graceful shutdown timeout
+            forwarded_allow_ips="*",  # Trust proxy headers (ngrok, etc.) - fixes 421 errors
+            proxy_headers=True  # Process X-Forwarded-* headers
         )
         server = uvicorn.Server(config)
-        try:
-            await server.serve()
-        finally:
-            # Cancel background cleanup task on shutdown
-            cleanup_task.cancel()
-            try:
-                await cleanup_task
-            except asyncio.CancelledError:
-                pass
+        await server.serve()
         
     except ImportError:
         print("Error: uvicorn not installed. Install with: pip install uvicorn", file=sys.stderr)

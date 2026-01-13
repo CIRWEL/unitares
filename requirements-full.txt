@@ -19,12 +19,24 @@ psutil>=5.9.0
 aiofiles>=23.2.1
 orjson>=3.9.0
 
+# Metrics and monitoring
+prometheus-client>=0.19.0
+
 # PostgreSQL + AGE support (optional - for production deployment)
 asyncpg>=0.29.0
+
+# Redis cache support (optional - for distributed session cache + locking)
+redis>=5.0.0
+
+# Semantic search support (optional - for knowledge graph semantic queries)
+sentence-transformers>=2.2.0
 
 # Testing and coverage (optional but included for convenience)
 pytest>=7.4.0
 pytest-cov>=4.1.0
 pytest-asyncio>=0.21.0
+
+# Environment variable loading
+python-dotenv>=1.0.0
 
 

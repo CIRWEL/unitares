@@ -30,6 +30,12 @@ from src.audit_log import audit_logger
 from src.calibration import calibration_checker
 from src.runtime_config import get_effective_threshold
 
+# Import dual-log architecture for grounded EISV inputs (Patent: Dual-Log Architecture)
+from src.dual_log import ContinuityLayer, RestorativeBalanceMonitor
+
+# Import drift telemetry for empirical data collection (Patent: De-abstracted Δη)
+from src.drift_telemetry import record_drift
+
 # Import UNITARES Phase-3 engine from governance_core (v2.0)
 # Core dynamics are now in governance_core module
 from src._imports import ensure_project_root, ensure_unitaires_server_path
@@ -45,8 +51,13 @@ from governance_core import (
     step_state, coherence,
     lambda1 as lambda1_from_theta,
     phi_objective, verdict_from_phi,
-    DynamicsParams, DEFAULT_PARAMS
+    DynamicsParams, DEFAULT_PARAMS,
+    # Concrete ethical drift (Δη) - measurable components
+    EthicalDriftVector, AgentBaseline, compute_ethical_drift, get_agent_baseline,
 )
+
+# UNITARES params profile selection (optional v4.1 alignment)
+from governance_core.parameters import get_active_params, get_params_profile_name
 
 # Import analysis/optimization functions from unitaires_core
 # These are research tools, not core dynamics
@@ -58,19 +69,140 @@ from unitaires_core import (
 # Import extracted modules
 from src.governance_state import GovernanceState
 from src.confidence import derive_confidence
+from src.cirs import (
+    OscillationDetector, ResonanceDamper, OscillationState,
+    classify_response, CIRS_DEFAULTS, HCK_DEFAULTS
+)
 
 
 class UNITARESMonitor:
     """
     UNITARES v1.0 Governance Monitor
-    
+
     Implements complete thermodynamic governance with:
     - 4D state evolution (E, I, S, V)
     - Risk estimation from agent behavior
     - Adaptive λ₁ via PI controller
     - Void detection with adaptive thresholds
     - Decision logic (approve/reflect/reject)
+    - HCK v3.0: Update coherence ρ(t) and gain modulation
+    - CIRS v0.1: Oscillation detection and resonance damping
     """
+
+    # =================================================================
+    # HCK v3.0: Update Coherence and Continuity Energy
+    # =================================================================
+
+    @staticmethod
+    def compute_update_coherence(delta_E: float, delta_I: float,
+                                  epsilon: float = 1e-8) -> float:
+        """
+        Compute update coherence ρ(t) per HCK v3.0.
+
+        Measures directional alignment between E and I updates.
+
+        Interpretation:
+        - ρ ≈ 1: Coherent updates (E and I moving together)
+        - ρ ≈ 0: Misaligned or unstable
+        - ρ < 0: Adversarial movement (E and I diverging)
+
+        Args:
+            delta_E: Change in Energy since last update
+            delta_I: Change in Information Integrity since last update
+            epsilon: Small value to prevent division by zero
+
+        Returns:
+            float in [-1, 1]: Update coherence value
+        """
+        norm_E = abs(delta_E) + epsilon
+        norm_I = abs(delta_I) + epsilon
+
+        # Normalized product gives directional alignment
+        rho = (delta_E * delta_I) / (norm_E * norm_I)
+
+        return float(max(-1.0, min(1.0, rho)))
+
+    @staticmethod
+    def compute_continuity_energy(state_history: List[Dict],
+                                   window: int = 10,
+                                   alpha_state: float = 0.6,
+                                   alpha_decision: float = 0.4) -> float:
+        """
+        Compute Continuity Energy CE(t) per HCK v3.0.
+
+        CE tracks how much the system state is changing - the "work required
+        to maintain consistency as system evolves."
+
+        Interpretation:
+        - High CE: Major state changes requiring stabilization
+        - Low CE: Stable operation
+
+        Args:
+            state_history: List of recent state snapshots with E, I, S, V, route keys
+            window: Number of recent states to consider
+            alpha_state: Weight for EISV state changes (default 0.6)
+            alpha_decision: Weight for decision/route changes (default 0.4)
+
+        Returns:
+            CE value (non-negative float)
+        """
+        if len(state_history) < 2:
+            return 0.0
+
+        recent = state_history[-window:] if len(state_history) > window else state_history
+
+        # State change component: sum of absolute EISV deltas
+        state_deltas = []
+        for i in range(1, len(recent)):
+            prev, curr = recent[i-1], recent[i]
+            delta = (
+                abs(curr.get('E', 0) - prev.get('E', 0)) +
+                abs(curr.get('I', 0) - prev.get('I', 0)) +
+                abs(curr.get('S', 0) - prev.get('S', 0)) +
+                abs(curr.get('V', 0) - prev.get('V', 0))
+            )
+            state_deltas.append(delta)
+
+        avg_state_delta = sum(state_deltas) / len(state_deltas) if state_deltas else 0.0
+
+        # Decision change component: count route/decision flips
+        decision_changes = 0
+        for i in range(1, len(recent)):
+            prev_route = recent[i-1].get('route') or recent[i-1].get('decision')
+            curr_route = recent[i].get('route') or recent[i].get('decision')
+            if prev_route and curr_route and prev_route != curr_route:
+                decision_changes += 1
+
+        decision_change_rate = decision_changes / (len(recent) - 1) if len(recent) > 1 else 0.0
+
+        # Weighted combination
+        CE = alpha_state * avg_state_delta + alpha_decision * decision_change_rate
+
+        return float(CE)
+
+    @staticmethod
+    def modulate_gains(K_p: float, K_i: float, rho: float,
+                       min_factor: float = 0.5) -> Tuple[float, float]:
+        """
+        Adjust PI gains based on update coherence per HCK v3.0.
+
+        When ρ(t) is low (misaligned updates), reduce controller aggressiveness
+        to prevent instability.
+
+        Args:
+            K_p: Base proportional gain
+            K_i: Base integral gain
+            rho: Update coherence [-1, 1]
+            min_factor: Minimum gain multiplier (default 0.5)
+
+        Returns:
+            (K_p_adjusted, K_i_adjusted)
+        """
+        # Map rho from [-1, 1] to [min_factor, 1.0]
+        # rho=1 → factor=1.0, rho=0 → factor=0.75, rho=-1 → factor=0.5
+        coherence_factor = max(min_factor, (rho + 1) / 2)
+
+        return K_p * coherence_factor, K_i * coherence_factor
     
     def __init__(self, agent_id: str, load_state: bool = True):
         """
@@ -89,6 +221,35 @@ class UNITARESMonitor:
         
         # Initialize last_update timestamp (needed for simulate_update)
         self.last_update = datetime.now()
+        
+        # Initialize dual-log architecture for grounded EISV inputs
+        # ContinuityLayer compares operational (server-derived) vs reflective (agent-reported)
+        # to produce grounded complexity, divergence metrics, and EISV inputs
+        self.continuity_layer = ContinuityLayer(agent_id=agent_id, redis_client=None)
+        self.restorative_monitor = RestorativeBalanceMonitor(agent_id=agent_id, redis_client=None)
+        self._last_continuity_metrics = None
+        self._last_restorative_status = None
+        self._last_drift_vector = None  # Concrete ethical drift (Δη)
+
+        # HCK v3.0: Track previous E and I for update coherence ρ(t) computation
+        self._prev_E: Optional[float] = None
+        self._prev_I: Optional[float] = None
+
+        # CIRS v0.1: Initialize oscillation detector and resonance damper
+        self.oscillation_detector = OscillationDetector(
+            window=CIRS_DEFAULTS['window'],
+            ema_lambda=CIRS_DEFAULTS['ema_lambda'],
+            oi_threshold=CIRS_DEFAULTS['oi_threshold'],
+            flip_threshold=CIRS_DEFAULTS['flip_threshold']
+        )
+        self.resonance_damper = ResonanceDamper(
+            kappa_r=CIRS_DEFAULTS['kappa_r'],
+            delta_tau=CIRS_DEFAULTS['delta_tau'],
+            tau_bounds=CIRS_DEFAULTS['tau_bounds'],
+            beta_bounds=CIRS_DEFAULTS['beta_bounds']
+        )
+        self._last_oscillation_state: Optional[OscillationState] = None
+        self._gains_modulated: bool = False  # Track if gains were modulated this cycle
         
         # Try to load persisted state if requested
         if load_state:
@@ -375,13 +536,17 @@ class UNITARESMonitor:
         self.prev_parameters = parameters.copy() if len(parameters) > 0 else None
 
         # Use governance_core step_state() to evolve state (CANONICAL DYNAMICS)
+        # Params are profile-selectable (default vs v4.1 paper-aligned) via:
+        # - UNITARES_PARAMS_PROFILE=default|v41
+        # - UNITARES_PARAMS_JSON='{"beta_I": 0.05, ...}'
+        active_params = get_active_params()
         self.state.unitaires_state = step_state(
             state=self.state.unitaires_state,
             theta=self.state.unitaires_theta,
             delta_eta=delta_eta,
             dt=dt,
             noise_S=0.0,  # Can add noise if needed
-            params=DEFAULT_PARAMS,
+            params=active_params,
             complexity=complexity  # Complexity now affects S dynamics
         )
 
@@ -391,9 +556,12 @@ class UNITARESMonitor:
             # Maintain epistemic humility: "I could be wrong about something I can't see"
             self.state.unitaires_state.S = 0.001
 
+        # V bounds safeguard: Void must stay in [0, 1] range (fixes negative V bug)
+        self.state.unitaires_state.V = max(0.0, min(1.0, self.state.unitaires_state.V))
+
         # Update coherence from governance_core coherence function (pure thermodynamic)
         # Removed param_coherence blend - using pure C(V) signal for honest calibration
-        C_V = coherence(self.state.V, self.state.unitaires_theta, DEFAULT_PARAMS)
+        C_V = coherence(self.state.V, self.state.unitaires_theta, active_params)
         self.state.coherence = C_V
         self.state.coherence = np.clip(self.state.coherence, 0.0, 1.0)
 
@@ -443,6 +611,49 @@ class UNITARESMonitor:
                 f"system will naturally transition when state changes"
             )
 
+        # =================================================================
+        # HCK v3.0: Compute and store update coherence ρ(t) and CE
+        # =================================================================
+        # Compute ρ(t) from E and I deltas
+        if self._prev_E is not None and self._prev_I is not None:
+            delta_E = float(self.state.E) - self._prev_E
+            delta_I = float(self.state.I) - self._prev_I
+            rho = self.compute_update_coherence(delta_E, delta_I)
+        else:
+            rho = 0.0  # First update, no previous state
+
+        # Update prev values for next iteration
+        self._prev_E = float(self.state.E)
+        self._prev_I = float(self.state.I)
+
+        # Store ρ(t) in state
+        self.state.current_rho = rho
+        if not hasattr(self.state, 'rho_history'):
+            self.state.rho_history = []
+        self.state.rho_history.append(rho)
+
+        # Compute Continuity Energy CE from state history snapshots
+        # Build state snapshot list for CE computation
+        state_snapshots = []
+        history_len = min(10, len(self.state.E_history))
+        for i in range(-history_len, 0):
+            try:
+                snapshot = {
+                    'E': self.state.E_history[i],
+                    'I': self.state.I_history[i],
+                    'S': self.state.S_history[i],
+                    'V': self.state.V_history[i],
+                    'decision': self.state.decision_history[i] if i < len(self.state.decision_history) else None
+                }
+                state_snapshots.append(snapshot)
+            except IndexError:
+                pass
+
+        CE = self.compute_continuity_energy(state_snapshots)
+        if not hasattr(self.state, 'CE_history'):
+            self.state.CE_history = []
+        self.state.CE_history.append(CE)
+
         # Trim history to window
         if len(self.state.E_history) > config.HISTORY_WINDOW:
             self.state.E_history = self.state.E_history[-config.HISTORY_WINDOW:]
@@ -460,6 +671,13 @@ class UNITARESMonitor:
             self.state.timestamp_history = self.state.timestamp_history[-config.HISTORY_WINDOW:]
         if len(self.state.lambda1_history) > config.HISTORY_WINDOW:
             self.state.lambda1_history = self.state.lambda1_history[-config.HISTORY_WINDOW:]
+        # HCK/CIRS history trimming
+        if hasattr(self.state, 'rho_history') and len(self.state.rho_history) > config.HISTORY_WINDOW:
+            self.state.rho_history = self.state.rho_history[-config.HISTORY_WINDOW:]
+        if hasattr(self.state, 'CE_history') and len(self.state.CE_history) > config.HISTORY_WINDOW:
+            self.state.CE_history = self.state.CE_history[-config.HISTORY_WINDOW:]
+        if hasattr(self.state, 'oi_history') and len(self.state.oi_history) > config.HISTORY_WINDOW:
+            self.state.oi_history = self.state.oi_history[-config.HISTORY_WINDOW:]
 
         # Validate state after update (STRICT MODE - Issue #1 fix)
         is_valid, errors = self.state.validate()
@@ -548,40 +766,68 @@ class UNITARESMonitor:
     def update_lambda1(self) -> float:
         """
         Updates λ₁ using PI controller based on void frequency and coherence targets.
-        
+
         Uses PI controller to adapt lambda1 to maintain:
         - Target void frequency: 2% (TARGET_VOID_FREQ)
         - Target coherence: 55% (TARGET_COHERENCE, matches physics ceiling V=0.1)
-        
+
+        HCK v3.0: When update coherence ρ(t) is low (misaligned E/I updates),
+        PI gains are modulated to reduce controller aggressiveness and prevent instability.
+
         Updates theta.eta1 to reflect new lambda1 value.
-        
+
         Returns updated λ₁ value.
         """
         # Calculate current metrics
         void_freq_current = self._calculate_void_frequency()
         coherence_current = self.state.coherence
-        
+
         # Get current lambda1
         lambda1_current = self.state.lambda1
-        
+
         # Get PI controller integral state (initialize if needed)
         if not hasattr(self.state, 'pi_integral'):
             self.state.pi_integral = 0.0
-        
-        # Use PI controller to update lambda1
-        new_lambda1, new_integral = config.pi_update(
-            lambda1_current=lambda1_current,
-            void_freq_current=void_freq_current,
-            void_freq_target=config.TARGET_VOID_FREQ,
-            coherence_current=coherence_current,
-            coherence_target=config.TARGET_COHERENCE,
-            integral_state=self.state.pi_integral,
-            dt=1.0
+
+        # HCK v3.0: Modulate PI gains based on update coherence ρ(t)
+        # When ρ is low (E and I moving in opposite directions), reduce aggressiveness
+        rho = getattr(self.state, 'current_rho', 0.0)
+        base_K_p = config.PI_KP
+        base_K_i = config.PI_KI
+        K_p_adj, K_i_adj = self.modulate_gains(base_K_p, base_K_i, rho)
+
+        # Track if gains were modulated
+        self._gains_modulated = (K_p_adj != base_K_p or K_i_adj != base_K_i)
+
+        # Manual PI calculation with modulated gains (instead of using config.pi_update)
+        # This allows us to use the adjusted gains
+        error_void = config.TARGET_VOID_FREQ - void_freq_current
+        error_coherence = coherence_current - config.TARGET_COHERENCE
+
+        # Proportional term (weighted combination)
+        P = K_p_adj * (0.7 * error_void + 0.3 * error_coherence)
+
+        # Integral term (only void frequency, with anti-windup)
+        self.state.pi_integral += error_void * 1.0  # dt = 1.0
+        self.state.pi_integral = np.clip(
+            self.state.pi_integral,
+            -config.PI_INTEGRAL_MAX,
+            config.PI_INTEGRAL_MAX
         )
-        
-        # Update integral state
-        self.state.pi_integral = new_integral
-        
+        I = K_i_adj * self.state.pi_integral
+
+        # Control signal
+        delta_lambda = P + I
+
+        # Update λ₁
+        new_lambda1 = lambda1_current + delta_lambda
+        new_lambda1 = np.clip(
+            new_lambda1,
+            config.LAMBDA1_MIN,
+            config.LAMBDA1_MAX
+        )
+        # Note: pi_integral is already updated above with anti-windup
+
         # Map new lambda1 back to theta.eta1
         # Inverse mapping: lambda1 [LAMBDA1_MIN, LAMBDA1_MAX] → eta1 [0.1, 0.5]
         lambda1_range = config.LAMBDA1_MAX - config.LAMBDA1_MIN
@@ -612,12 +858,15 @@ class UNITARESMonitor:
         
         # Log significant changes
         if abs(updated_lambda1 - lambda1_current) > 0.01:
+            gain_info = ""
+            if self._gains_modulated:
+                gain_info = f", ρ={rho:.3f}, gains_modulated=True"
             logger.info(
                 f"PI Controller λ₁ update: {lambda1_current:.4f} → {updated_lambda1:.4f} "
                 f"(void_freq={void_freq_current:.3f}, coherence={coherence_current:.3f}, "
-                f"η1={old_theta.eta1:.3f}→{new_eta1:.3f})"
+                f"η1={old_theta.eta1:.3f}→{new_eta1:.3f}{gain_info})"
             )
-        
+
         return updated_lambda1
     
     def estimate_risk(self, agent_state: Dict, score_result: Dict = None) -> float:
@@ -731,6 +980,14 @@ class UNITARESMonitor:
         
         Returns decision dict with action and reason (fully autonomous, no human-in-the-loop).
         """
+        # Compute margin for proprioceptive feedback
+        margin_info = config.compute_proprioceptive_margin(
+            risk_score=risk_score,
+            coherence=self.state.coherence,
+            void_active=self.state.void_active,
+            void_value=self.state.V
+        )
+        
         # Use UNITARES verdict to influence decision if available
         if unitares_verdict == "high-risk":
             # Override: high-risk verdict -> reject (check if critical)
@@ -746,7 +1003,9 @@ class UNITARESMonitor:
                 'action': 'pause',
                 'reason': f'UNITARES high-risk verdict (risk_score={risk_score:.2f}) - safety pause suggested',
                 'guidance': 'This is a safety check, not a failure. The system detected high ethical risk and is protecting you from potential issues. Consider simplifying your approach.',
-                'critical': is_critical
+                'critical': is_critical,
+                'margin': 'critical',
+                'nearest_edge': 'risk'
             }
         elif unitares_verdict == "caution":
             # Caution verdict: proceed with guidance
@@ -758,21 +1017,25 @@ class UNITARESMonitor:
                     'reason': f'Proceeding mindfully (risk: {risk_score:.2f})',
                     'guidance': 'Navigating complexity. Worth a moment of reflection.',
                     'critical': False,
-                    'verdict_context': 'aware'  # Reframe "caution" as "aware" when proceeding
+                    'verdict_context': 'aware',  # Reframe "caution" as "aware" when proceeding
+                    'margin': margin_info['margin'],
+                    'nearest_edge': margin_info['nearest_edge']
                 }
             else:
                 # Medium/high risk + caution -> use standard decision (likely proceed with guidance or pause)
                 return config.make_decision(
                     risk_score=risk_score,
                     coherence=self.state.coherence,
-                    void_active=self.state.void_active
+                    void_active=self.state.void_active,
+                    void_value=self.state.V
                 )
         else:
             # Safe verdict or no verdict: use standard decision logic
             return config.make_decision(
                 risk_score=risk_score,
                 coherence=self.state.coherence,
-                void_active=self.state.void_active
+                void_active=self.state.void_active,
+                void_value=self.state.V
             )
     
     def simulate_update(self, agent_state: Dict, confidence: Optional[float] = None) -> Dict:
@@ -873,8 +1136,96 @@ class UNITARESMonitor:
         # Update timestamp
         self.last_update = datetime.now()
 
-        # Step 1: Update thermodynamic state FIRST (so we have current state for confidence derivation)
-        self.update_dynamics(agent_state)
+        # === DUAL-LOG GROUNDING (Patent: Dual-Log Architecture) ===
+        # Process through continuity layer to get grounded metrics.
+        # This compares operational (server-derived) vs reflective (agent-reported)
+        # to produce grounded complexity that feeds into EISV dynamics.
+        response_text = agent_state.get('response_text', '')
+        self_complexity = agent_state.get('complexity')
+        self_confidence = confidence  # May be None at this point
+        client_session_id = agent_state.get('client_session_id', '')
+        
+        continuity_metrics = self.continuity_layer.process_update(
+            response_text=response_text,
+            self_complexity=self_complexity,
+            self_confidence=self_confidence,
+            client_session_id=client_session_id,
+            task_type=task_type,
+        )
+        
+        # Store for response and downstream use
+        self._last_continuity_metrics = continuity_metrics
+        
+        # Check restorative balance (detect overload)
+        self.restorative_monitor.record(continuity_metrics)
+        restorative_status = self.restorative_monitor.check()
+        self._last_restorative_status = restorative_status
+        
+        # Use GROUNDED complexity instead of self-reported
+        grounded_agent_state = agent_state.copy()
+        grounded_agent_state['complexity'] = continuity_metrics.derived_complexity
+
+        # Log grounding if significant divergence
+        if continuity_metrics.complexity_divergence > 0.2:
+            logger.info(
+                f"Dual-log grounding for {self.agent_id}: "
+                f"self={self_complexity}, derived={continuity_metrics.derived_complexity:.3f}, "
+                f"divergence={continuity_metrics.complexity_divergence:.3f}"
+            )
+
+        # === CONCRETE ETHICAL DRIFT (Patent: De-abstracted Δη) ===
+        # Compute Δη from MEASURABLE signals, not abstract concepts.
+        # This makes ethical drift empirically verifiable.
+        agent_baseline = get_agent_baseline(self.agent_id)
+
+        # Get calibration error from calibration system if available
+        calibration_error = None
+        try:
+            cal_status = calibration_checker.check()
+            if cal_status.get('calibrated') and cal_status.get('total_samples', 0) > 10:
+                # Use trajectory health deviation from 50% baseline
+                # Well-calibrated system should show ~50% success rate on challenging predictions
+                trajectory_health = cal_status.get('trajectory_health', 0.5)
+                if trajectory_health is not None:
+                    # Convert percentage to 0-1 and measure deviation from 0.5 (ideal)
+                    calibration_error = abs((trajectory_health / 100.0) - 0.5) * 2  # Scale to [0, 1]
+        except Exception:
+            pass  # Calibration not available, will use fallback
+
+        # Get current coherence for deviation calculation
+        active_params = get_active_params()
+        current_coherence = coherence(self.state.V, self.state.unitaires_theta, active_params)
+
+        # Compute concrete drift vector
+        drift_vector = compute_ethical_drift(
+            agent_id=self.agent_id,
+            baseline=agent_baseline,
+            current_coherence=current_coherence,
+            current_confidence=self_confidence if self_confidence is not None else 0.6,
+            complexity_divergence=continuity_metrics.complexity_divergence,
+            calibration_error=calibration_error,
+            decision=None,  # Will be updated after decision is made
+        )
+
+        # Store for later access and time-series logging
+        self._last_drift_vector = drift_vector
+
+        # Convert to list format for dynamics engine
+        grounded_agent_state['ethical_drift'] = drift_vector.to_list()
+
+        # Log drift if significant
+        if drift_vector.norm > 0.3:
+            logger.info(
+                f"Ethical drift for {self.agent_id}: "
+                f"||Δη||={drift_vector.norm:.3f} "
+                f"[cal={drift_vector.calibration_deviation:.3f}, "
+                f"cpx={drift_vector.complexity_divergence:.3f}, "
+                f"coh={drift_vector.coherence_deviation:.3f}, "
+                f"stab={drift_vector.stability_deviation:.3f}]"
+            )
+
+        # Step 1: Update thermodynamic state with GROUNDED inputs
+        self.update_dynamics(grounded_agent_state)
 
         # Step 1b: Confidence handling - OBSERVE what happened, don't ask for reports
         # The system already tracks tool outcomes. Just look.
@@ -993,7 +1344,64 @@ class UNITARESMonitor:
                     "adjusted_risk": risk_score,
                     "adjustment": "increased"
                 }
-        
+
+        # =================================================================
+        # CIRS v0.1: Oscillation detection and resonance damping
+        # =================================================================
+        # Update oscillation detector with current state
+        oscillation_state = self.oscillation_detector.update(
+            coherence=float(self.state.coherence),
+            risk=float(risk_score),
+            route=unitares_verdict,  # Use verdict as route proxy
+            threshold_coherence=config.COHERENCE_CRITICAL_THRESHOLD,
+            threshold_risk=config.RISK_REVISE_THRESHOLD
+        )
+        self._last_oscillation_state = oscillation_state
+
+        # Track OI in history
+        if not hasattr(self.state, 'oi_history'):
+            self.state.oi_history = []
+        self.state.oi_history.append(oscillation_state.oi)
+
+        # Apply resonance damping if needed
+        damping_result = None
+        if oscillation_state.resonant:
+            # Increment resonance event counter
+            if not hasattr(self.state, 'resonance_events'):
+                self.state.resonance_events = 0
+            self.state.resonance_events += 1
+
+            # Apply damping (threshold adjustment)
+            damping_result = self.resonance_damper.apply_damping(
+                current_coherence=float(self.state.coherence),
+                current_risk=float(risk_score),
+                tau=config.COHERENCE_CRITICAL_THRESHOLD,
+                beta=config.RISK_REVISE_THRESHOLD,
+                oscillation_state=oscillation_state
+            )
+
+            if damping_result.damping_applied:
+                if not hasattr(self.state, 'damping_applied_count'):
+                    self.state.damping_applied_count = 0
+                self.state.damping_applied_count += 1
+
+                logger.info(
+                    f"CIRS resonance damping for {self.agent_id}: "
+                    f"OI={oscillation_state.oi:.3f}, flips={oscillation_state.flips}, "
+                    f"trigger={oscillation_state.trigger}"
+                )
+
+        # Classify response tier (proceed/soft_dampen/hard_block)
+        response_tier = classify_response(
+            coherence=float(self.state.coherence),
+            risk=float(risk_score),
+            tau=config.COHERENCE_CRITICAL_THRESHOLD,
+            beta=config.RISK_REVISE_THRESHOLD,
+            tau_low=CIRS_DEFAULTS['tau_low'],
+            beta_high=CIRS_DEFAULTS['beta_high'],
+            oscillation_state=oscillation_state
+        )
+
         # Step 5: Make decision (using UNITARES verdict)
         decision = self.make_decision(risk_score, unitares_verdict=unitares_verdict)
         
@@ -1021,35 +1429,33 @@ class UNITARESMonitor:
         )
         
         # Record for TACTICAL calibration (per-decision, fixed at decision time)
-        # Tactical measures: "Was this specific decision correct at the time?"
-        # We evaluate if the decision matched the actual state (void, coherence, risk)
-        # This is fixed at decision time and never updated retroactively
+        #
+        # NOTE (Dec 2025): Previous logic checked if decision matched state, which was
+        # tautological (decision IS based on state → always 100% "correct").
+        #
+        # NEW LOGIC: Tactical calibration measures if CONFIDENCE matched OUTCOME.
+        # - High confidence (>=0.6) should predict healthy state (low risk)
+        # - Low confidence (<0.4) should predict unhealthy state (high risk)
+        # - This gives real calibration signal: "When I was confident, was I right?"
+        #
         decision_action = decision['action']
-        void_active = self.state.void_active  # Already computed in update_dynamics
-        coherence_critical = self.state.coherence < config.COHERENCE_CRITICAL_THRESHOLD
-        
-        # Check if we're in a critical state (any reason to pause)
-        # Decision logic: pause if void_active OR coherence_critical OR risk_score >= RISK_REVISE_THRESHOLD
-        # We need risk_score to properly evaluate - get it from the decision context or state
-        risk_critical = risk_score >= config.RISK_REVISE_THRESHOLD
-        in_critical_state = void_active or coherence_critical or risk_critical
-        
-        # Heuristic for immediate outcome:
-        # - "proceed" decision is tactically correct if we're NOT in critical state
-        #   (proceeding when safe is correct)
-        # - "pause" decision is tactically correct if we're IN critical state
-        #   (pausing when unsafe is correct)
-        # This matches the actual decision logic in config.make_decision()
-        if decision_action == 'proceed':
-            immediate_outcome = not in_critical_state
-        elif decision_action == 'pause':
-            immediate_outcome = in_critical_state
+
+        # Outcome based on trajectory health (same signal as strategic calibration)
+        # Using risk_score < 0.4 as "healthy" threshold
+        state_was_healthy = risk_score < 0.4
+
+        # Tactical correctness: Did confidence predict the health outcome?
+        # - If confident (>=0.6) and state was healthy → correct
+        # - If confident (>=0.6) and state was NOT healthy → incorrect (overconfident)
+        # - If not confident (<0.6) and state was NOT healthy → correct
+        # - If not confident (<0.6) and state was healthy → incorrect (underconfident)
+        #
+        # This creates real variance in the calibration data.
+        if confidence >= 0.6:
+            immediate_outcome = state_was_healthy
         else:
-            # Unknown decision type - default to False (conservative)
-            # This shouldn't happen in normal operation, but handle gracefully
-            logger.warning(f"Unknown decision action '{decision_action}' - skipping tactical calibration")
-            immediate_outcome = False
-        
+            immediate_outcome = not state_was_healthy
+
         if decision_action in ('proceed', 'pause'):  # Only record known decision types
             calibration_checker.record_tactical_decision(
                 confidence=confidence,
@@ -1142,6 +1548,89 @@ class UNITARESMonitor:
         if task_type_adjustment:
             result['task_type_adjustment'] = task_type_adjustment
         
+        # Add dual-log continuity metrics (grounded EISV inputs)
+        if self._last_continuity_metrics:
+            cm = self._last_continuity_metrics
+            result['continuity'] = {
+                'derived_complexity': cm.derived_complexity,
+                'self_reported_complexity': cm.self_complexity,
+                'complexity_divergence': cm.complexity_divergence,
+                'overconfidence_signal': cm.overconfidence_signal,
+                'underconfidence_signal': cm.underconfidence_signal,
+                'E_input': cm.E_input,
+                'I_input': cm.I_input,
+                'S_input': cm.S_input,
+                'calibration_weight': cm.calibration_weight,
+            }
+        
+        # Add restorative balance status if needed
+        if self._last_restorative_status and self._last_restorative_status.needs_restoration:
+            rs = self._last_restorative_status
+            result['restorative'] = {
+                'needs_restoration': rs.needs_restoration,
+                'reason': rs.reason,
+                'suggested_cooldown_seconds': rs.suggested_cooldown_seconds,
+                'activity_rate': rs.activity_rate,
+                'cumulative_divergence': rs.cumulative_divergence,
+            }
+            result['guidance'] = (
+                f"Consider slowing down: {rs.reason}. "
+                f"Suggested cooldown: {rs.suggested_cooldown_seconds}s"
+            )
+
+        # =================================================================
+        # Concrete Ethical Drift (Patent: De-abstracted Δη)
+        # =================================================================
+        if self._last_drift_vector:
+            dv = self._last_drift_vector
+            result['ethical_drift'] = {
+                'calibration_deviation': dv.calibration_deviation,
+                'complexity_divergence': dv.complexity_divergence,
+                'coherence_deviation': dv.coherence_deviation,
+                'stability_deviation': dv.stability_deviation,
+                'norm': dv.norm,
+                'norm_squared': dv.norm_squared,
+            }
+
+            # Record telemetry for empirical analysis
+            try:
+                record_drift(
+                    drift_vector=dv,
+                    agent_id=self.agent_id,
+                    update_count=self.state.update_count,
+                    baseline=get_agent_baseline(self.agent_id),
+                    decision=decision['action'],
+                    confidence=confidence,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to record drift telemetry: {e}")
+
+        # =================================================================
+        # HCK v3.0 / CIRS v0.1: Add reflexive control and resonance metrics
+        # =================================================================
+        result['hck'] = {
+            'rho': float(getattr(self.state, 'current_rho', 0.0)),
+            'CE': float(self.state.CE_history[-1]) if hasattr(self.state, 'CE_history') and self.state.CE_history else 0.0,
+            'gains_modulated': getattr(self, '_gains_modulated', False)
+        }
+
+        result['cirs'] = {
+            'oi': float(oscillation_state.oi),
+            'flips': int(oscillation_state.flips),
+            'resonant': bool(oscillation_state.resonant),
+            'trigger': oscillation_state.trigger,
+            'response_tier': response_tier,
+            'resonance_events': int(getattr(self.state, 'resonance_events', 0)),
+            'damping_applied_count': int(getattr(self.state, 'damping_applied_count', 0))
+        }
+
+        # Add damping details if applied this cycle
+        if damping_result and damping_result.damping_applied:
+            result['cirs']['damping'] = {
+                'd_tau': damping_result.adjustments.get('d_tau', 0),
+                'd_beta': damping_result.adjustments.get('d_beta', 0)
+            }
+
         return result
     
     def get_metrics(self, include_state: bool = True) -> Dict:
@@ -1229,6 +1718,10 @@ class UNITARESMonitor:
         # Get regime with fallback for backward compatibility (old state files may not have regime)
         regime = getattr(self.state, 'regime', 'divergence')
         
+        # Honest initialization: return None for computed metrics when no updates yet
+        # This avoids the jarring "coherence dropped from 1.0 to 0.55" UX issue
+        is_uninitialized = self.state.update_count == 0
+
         result = {
             'agent_id': self.agent_id,
             # EISV metrics at top level for consistency with process_update()
@@ -1236,16 +1729,17 @@ class UNITARESMonitor:
             'I': float(self.state.I),
             'S': float(self.state.S),
             'V': float(self.state.V),
-            'coherence': float(self.state.coherence),
+            'coherence': None if is_uninitialized else float(self.state.coherence),
             'lambda1': float(self.state.lambda1),
             'regime': str(regime),  # Operational regime: DIVERGENCE | TRANSITION | CONVERGENCE | STABLE
-            'status': status,
+            'status': 'uninitialized' if is_uninitialized else status,
+            'initialized': not is_uninitialized,  # Explicit flag: False until first process_update()
             'sampling_params': config.lambda_to_params(self.state.lambda1),
             'history_size': len(self.state.V_history),
-            'current_risk': current_risk,  # Recent trend (mean of last 10) - USED FOR HEALTH STATUS
-            'mean_risk': mean_risk,  # Overall mean (all-time average) - for historical context only
-            'risk_score': risk_score_value,  # Governance/operational risk (smoothed trend, same as current_risk)
-            'latest_risk_score': latest_risk_score,  # Point-in-time value from last update - matches process_agent_update
+            'current_risk': None if is_uninitialized else current_risk,
+            'mean_risk': None if is_uninitialized else mean_risk,
+            'risk_score': None if is_uninitialized else risk_score_value,
+            'latest_risk_score': None if is_uninitialized else latest_risk_score,
             'phi': float(phi),  # Primary physics signal: Φ objective function
             'verdict': verdict,  # Primary governance signal: safe/caution/high-risk
             'void_active': bool(self.state.void_active),
@@ -1259,11 +1753,99 @@ class UNITARESMonitor:
                 'notes': stability_result['notes']
             }
         }
+
+        # =============================================================
+        # UNITARES v4.1 basin + convergence tracking (lightweight)
+        # =============================================================
+        profile = get_params_profile_name()
+
+        # Basin boundary warning (bistability around I≈0.5 in v4.1)
+        I = float(self.state.I)
+        basin = "unknown"
+        basin_warning = None
+        if profile == "v41":
+            if I < 0.45:
+                basin = "low"
+                basin_warning = "LOW basin: high risk of collapse equilibrium (I well below ~0.5 boundary)"
+            elif I < 0.55:
+                basin = "boundary"
+                basin_warning = "Near basin boundary (~I=0.5): small shocks can flip equilibrium"
+            else:
+                basin = "high"
+
+        # Convergence estimate: distance to target equilibrium (paper-aligned vs legacy)
+        # Note: S has an epistemic floor (S>=0.001) in the runtime.
+        S = float(self.state.S)
+        if profile == "v41":
+            I_target = 0.91
+            S_target = 0.001
+            E_target = 0.91
+        else:
+            # Legacy “equilibrium” guidance used in MCP docs/tooling
+            I_target = 1.0
+            S_target = 0.0
+            E_target = 0.7
+
+        # Euclidean distance in (I,S) plane (matches convergence guidance in core handler)
+        eq_dist = float(((I_target - I) ** 2 + (S - S_target) ** 2) ** 0.5)
+
+        # Rough contraction-based estimate using α≈0.1 (paper) and dt (config.DT)
+        # This is intentionally a heuristic; exact convergence depends on theta, drift, and complexity.
+        dt = float(getattr(config, "DT", 0.1))
+        alpha = 0.1
+        contraction = max(1e-6, 1.0 - alpha * dt)
+        eps = 0.02  # “close enough” threshold for guidance purposes
+        est_updates = None
+        if eq_dist > 0 and contraction < 1.0:
+            try:
+                import math
+                est_updates = int(math.ceil(max(0.0, math.log(eps / eq_dist) / math.log(contraction))))
+            except Exception:
+                est_updates = None
+
+        result["unitares_v41"] = {
+            "params_profile": profile,
+            "basin": basin,
+            "basin_warning": basin_warning,
+            "equilibrium": {
+                "I_target": I_target,
+                "S_target": S_target,
+                "E_target": E_target,
+            },
+            "convergence": {
+                "equilibrium_distance": eq_dist,
+                "estimated_updates_to_eps": est_updates,
+                "eps": eps,
+                "note": "Heuristic estimate (assumes contraction rate α≈0.1 and dt=config.DT).",
+            },
+        }
         
         # Include nested state dict only if requested (reduces context bloat)
         if include_state:
             result['state'] = self.state.to_dict()
-        
+
+        # =================================================================
+        # HCK v3.0 / CIRS v0.1: Reflexive control and resonance metrics
+        # =================================================================
+        result['hck'] = {
+            'rho': float(getattr(self.state, 'current_rho', 0.0)),
+            'CE': float(self.state.CE_history[-1]) if hasattr(self.state, 'CE_history') and self.state.CE_history else 0.0,
+            'rho_history_len': len(getattr(self.state, 'rho_history', [])),
+            'CE_history_len': len(getattr(self.state, 'CE_history', []))
+        }
+
+        # Get last oscillation state if available
+        last_osc = getattr(self, '_last_oscillation_state', None)
+        result['cirs'] = {
+            'oi': float(last_osc.oi) if last_osc else 0.0,
+            'flips': int(last_osc.flips) if last_osc else 0,
+            'resonant': bool(last_osc.resonant) if last_osc else False,
+            'trigger': last_osc.trigger if last_osc else None,
+            'resonance_events': int(getattr(self.state, 'resonance_events', 0)),
+            'damping_applied_count': int(getattr(self.state, 'damping_applied_count', 0)),
+            'oi_history_len': len(getattr(self.state, 'oi_history', []))
+        }
+
         return result
 
     @staticmethod

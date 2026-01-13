@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Dict, Tuple, Optional, List
 import numpy as np
 import re
+import os
 
 
 @dataclass
@@ -53,9 +54,17 @@ class GovernanceConfig:
     # =================================================================
     
     # Phi-to-risk mapping thresholds (configurable)
-    PHI_SAFE_THRESHOLD = 0.3      # phi >= 0.3: safe -> low risk
+    # Recalibrated Dec 2025: 0.3 was too strict - typical healthy state (E=0.7, I=0.8, S=0.2)
+    # gives phi=0.15, which was always "caution". Lowered to match realistic expectations.
+    PHI_SAFE_THRESHOLD = 0.15     # phi >= 0.15: safe -> low risk (typical healthy state)
     PHI_CAUTION_THRESHOLD = 0.0   # phi >= 0.0: caution -> medium risk
     # phi < 0.0: high-risk -> high risk
+    
+    # Session TTL (Time To Live) - configurable via environment variable
+    # Default: 24 hours (86400 seconds)
+    # Set SESSION_TTL_HOURS environment variable to override (e.g., 168 for 7 days)
+    SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "24"))
+    SESSION_TTL_SECONDS = SESSION_TTL_HOURS * 3600
     
     @staticmethod
     def derive_complexity(response_text: str, 
@@ -479,9 +488,113 @@ class GovernanceConfig:
     KNOWLEDGE_QUERY_DEFAULT_LIMIT = 20  # Default limit for knowledge queries (reduced from 100 to prevent context bloat)
     
     @staticmethod
+    def compute_proprioceptive_margin(
+        risk_score: float,
+        coherence: float,
+        void_active: bool,
+        void_value: float = 0.0
+    ) -> Dict[str, any]:
+        """
+        Compute proprioceptive margin - how close agent is to decision boundaries.
+        
+        This implements the "viability envelope" concept: agents need to know where they
+        are relative to their limits, not just absolute numbers. This is proprioception
+        as felt experience, not telemetry data.
+        
+        Returns margin level and nearest edge:
+        - "comfortable": Well within limits, proceed freely
+        - "tight": Near an edge, be aware
+        - "critical": At boundary, stop or adjust
+        
+        Args:
+            risk_score: Current risk score [0, 1]
+            coherence: Current coherence [0, 1]
+            void_active: Whether void state is active
+            void_value: Current void value (for distance calculation)
+        
+        Returns:
+            {
+                'margin': 'comfortable' | 'tight' | 'critical',
+                'nearest_edge': str | None,  # 'risk', 'coherence', 'void', or None
+                'distance_to_edge': float,    # Distance to nearest threshold [0, 1]
+                'details': {
+                    'risk_margin': float,      # Distance to risk threshold
+                    'coherence_margin': float,  # Distance to coherence threshold
+                    'void_margin': float       # Distance to void threshold
+                }
+            }
+        """
+        # Get thresholds
+        risk_approve = GovernanceConfig.RISK_APPROVE_THRESHOLD  # 0.35
+        risk_revise = GovernanceConfig.RISK_REVISE_THRESHOLD    # 0.60
+        risk_reject = GovernanceConfig.RISK_REJECT_THRESHOLD    # 0.70
+        coherence_critical = GovernanceConfig.COHERENCE_CRITICAL_THRESHOLD  # 0.40
+        void_threshold = GovernanceConfig.VOID_THRESHOLD_INITIAL  # 0.15
+        
+        # Compute margins (distance to thresholds)
+        # For risk: lower is better, so margin = threshold - current
+        # For coherence: higher is better, so margin = current - threshold
+        # For void: lower is better, so margin = threshold - abs(current)
+        
+        risk_margin = risk_revise - risk_score  # Distance to pause threshold
+        coherence_margin = coherence - coherence_critical  # Distance to critical threshold
+        void_margin = void_threshold - abs(void_value) if not void_active else -1.0  # Already past threshold
+        
+        # Find nearest edge (smallest margin)
+        margins = {
+            'risk': risk_margin,
+            'coherence': coherence_margin,
+            'void': void_margin
+        }
+        
+        # Filter out negative margins (already past threshold)
+        valid_margins = {k: v for k, v in margins.items() if v >= 0}
+        
+        if not valid_margins:
+            # Already past all thresholds - critical
+            nearest_edge = min(margins.items(), key=lambda x: abs(x[1]))[0]
+            return {
+                'margin': 'critical',
+                'nearest_edge': nearest_edge,
+                'distance_to_edge': 0.0,
+                'details': {
+                    'risk_margin': risk_margin,
+                    'coherence_margin': coherence_margin,
+                    'void_margin': void_margin
+                }
+            }
+        
+        nearest_edge = min(valid_margins.items(), key=lambda x: x[1])[0]
+        distance_to_edge = valid_margins[nearest_edge]
+        
+        # Determine margin level based on distance
+        # comfortable: > 0.15 away from any threshold
+        # tight: 0.05-0.15 away from threshold
+        # critical: < 0.05 away from threshold
+        
+        if distance_to_edge > 0.15:
+            margin_level = 'comfortable'
+        elif distance_to_edge > 0.05:
+            margin_level = 'tight'
+        else:
+            margin_level = 'critical'
+        
+        return {
+            'margin': margin_level,
+            'nearest_edge': nearest_edge if margin_level != 'comfortable' else None,
+            'distance_to_edge': distance_to_edge,
+            'details': {
+                'risk_margin': risk_margin,
+                'coherence_margin': coherence_margin,
+                'void_margin': void_margin
+            }
+        }
+    
+    @staticmethod
     def make_decision(risk_score: float,
                      coherence: float,
-                     void_active: bool) -> Dict[str, any]:
+                     void_active: bool,
+                     void_value: float = 0.0) -> Dict[str, any]:
         """
         Makes autonomous governance decision using two-tier system: proceed/pause.
         
@@ -499,15 +612,27 @@ class GovernanceConfig:
             {
                 'action': 'proceed' | 'pause',
                 'reason': str,
-                'guidance': str | None  # Optional guidance for proceed decisions
+                'guidance': str | None,  # Optional guidance for proceed decisions
+                'margin': 'comfortable' | 'tight' | 'critical',  # Proprioceptive margin
+                'nearest_edge': str | None  # Which threshold is nearest
             }
         """
+        # Compute proprioceptive margin (viability envelope)
+        margin_info = GovernanceConfig.compute_proprioceptive_margin(
+            risk_score=risk_score,
+            coherence=coherence,
+            void_active=void_active,
+            void_value=void_value
+        )
+        
         # Critical safety checks first - always pause
         if void_active:
             return {
                 'action': 'pause',
                 'reason': 'Energy-integrity imbalance detected - time to recalibrate',
-                'guidance': 'System needs a moment to stabilize. Take a break or shift focus.'
+                'guidance': 'System needs a moment to stabilize. Take a break or shift focus.',
+                'margin': 'critical',
+                'nearest_edge': 'void'
             }
 
         # Use runtime override for coherence threshold if available
@@ -518,7 +643,9 @@ class GovernanceConfig:
             return {
                 'action': 'pause',
                 'reason': f'Coherence needs attention ({coherence:.2f}) - moment to regroup',
-                'guidance': 'Things are getting fragmented. Simplify, refocus, or take a breather.'
+                'guidance': 'Things are getting fragmented. Simplify, refocus, or take a breather.',
+                'margin': 'critical',
+                'nearest_edge': 'coherence'
             }
         
         # Risk-based decisions (use runtime overrides if available)
@@ -528,27 +655,44 @@ class GovernanceConfig:
         effective_revise_threshold = get_effective_threshold("risk_revise_threshold")
         
         # Two-tier system: proceed or pause
+        # Include margin info in all decisions
         # Low attention: proceed without guidance
         if risk_score < effective_approve_threshold:
+            margin_to_pause = effective_revise_threshold - risk_score
             return {
                 'action': 'proceed',
-                'reason': f'Smooth sailing - you\'re in flow (complexity: {risk_score:.2f})',
-                'guidance': None  # No guidance needed for low attention
+                'reason': f'Low complexity ({risk_score:.1%}) - healthy operating range',
+                'guidance': f'{margin_to_pause:.0%} margin to PAUSE threshold ({effective_revise_threshold:.0%})',
+                'margin': margin_info['margin'],
+                'nearest_edge': margin_info['nearest_edge']
             }
 
         # Medium attention: proceed with guidance
         if risk_score < effective_revise_threshold:
+            margin_to_pause = effective_revise_threshold - risk_score
+            margin_pct = (margin_to_pause / effective_revise_threshold) * 100
+
+            # Concrete guidance based on margin
+            if margin_pct < 20:  # < 20% margin (close to threshold)
+                guidance = f'{margin_pct:.0f}% margin to PAUSE - avoid increasing complexity'
+            else:
+                guidance = f'{margin_pct:.0f}% margin to PAUSE - maintain current complexity'
+
             return {
                 'action': 'proceed',
-                'reason': f'On track - navigating complexity mindfully (load: {risk_score:.2f})',
-                'guidance': 'You\'re handling complex work well. Take a breath if needed.'
+                'reason': f'Moderate complexity ({risk_score:.1%}) - PAUSE threshold: {effective_revise_threshold:.0%}',
+                'guidance': guidance,
+                'margin': margin_info['margin'],
+                'nearest_edge': margin_info['nearest_edge']
             }
 
         # High attention: pause
         return {
             'action': 'pause',
-            'reason': f'Complexity is building ({risk_score:.2f}) - let\'s pause and regroup',
-            'guidance': 'This is a helpful pause, not a judgment. Consider breaking this into smaller steps, or take a different approach.'
+            'reason': f'Complexity threshold reached ({risk_score:.1%} ≥ {effective_revise_threshold:.0%})',
+            'guidance': f'Pause suggested: simplify approach, break into smaller steps, or take a break. Coherence: {coherence:.2f} (critical: {effective_coherence_threshold:.2f})',
+            'margin': margin_info['margin'],
+            'nearest_edge': margin_info['nearest_edge']
         }
     
     # =================================================================

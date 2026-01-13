@@ -581,11 +581,12 @@ class KnowledgeGraphDB:
         conditions = []
         params = []
 
-        # Join tags if filtering by tags
+        # Join tags if filtering by tags (OR-default)
         if tags:
-            for i, tag in enumerate(tags):
-                query += f" JOIN discovery_tags t{i} ON d.id = t{i}.discovery_id AND t{i}.tag = ?"
-                params.append(tag)
+            query += " JOIN discovery_tags t ON d.id = t.discovery_id"
+            placeholders = ",".join("?" * len(tags))
+            conditions.append(f"t.tag IN ({placeholders})")
+            params.extend(tags)
 
         if agent_id:
             conditions.append("d.agent_id = ?")
@@ -775,12 +776,24 @@ class KnowledgeGraphDB:
         """
         Search discoveries using full-text search.
         Supports FTS5 query syntax (AND, OR, NOT, phrases, etc.)
+
+        UX FIX (Dec 2025): Default to OR for multi-term queries.
+        FTS5 defaults to AND, but natural language queries expect OR behavior.
+        "EISV basin phi" should find docs with ANY of those terms, not ALL.
         """
         # NOTE: Many callers provide natural language queries that may include quotes/apostrophes.
         # Raw FTS5 syntax is brittle (e.g., unbalanced quotes cause "fts5: syntax error").
         # We do a best-effort fallback: if raw query fails, retry with a safely-quoted phrase.
         conn = self._get_conn()
         cursor = conn.cursor()
+
+        # UX FIX: Convert to OR by default unless query already has FTS operators
+        processed_query = query
+        if query and not any(op in query.upper() for op in [' AND ', ' OR ', ' NOT ', '"']):
+            # Split on whitespace, join with OR for broader matching
+            terms = query.split()
+            if len(terms) > 1:
+                processed_query = ' OR '.join(terms)
 
         sql = """
             SELECT d.* FROM discoveries d
@@ -790,7 +803,7 @@ class KnowledgeGraphDB:
             LIMIT ?
         """
         try:
-            cursor.execute(sql, (query, limit))
+            cursor.execute(sql, (processed_query, limit))
         except Exception:
             # Retry: treat as a literal phrase. Double quotes are FTS phrase delimiters.
             # Escape embedded quotes by doubling them.

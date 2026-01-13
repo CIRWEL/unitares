@@ -5,6 +5,11 @@
 #   ./scripts/start_sse_server.sh [--port PORT] [--host HOST]
 #
 # Default: http://127.0.0.1:8765/sse
+#
+# Key Environment Variables (set in .env):
+#   DB_BACKEND=postgres           - Database backend
+#   UNITARES_I_DYNAMICS=linear    - v4.2-P: Prevents I-channel boundary saturation
+#   UNITARES_KNOWLEDGE_BACKEND=age - Apache AGE graph backend
 
 set -e
 
@@ -12,6 +17,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$PROJECT_ROOT"
+
+# Load environment from .env if it exists
+# Uses set -a to auto-export and handles comments safely
+if [ -f ".env" ]; then
+    set -a
+    while IFS='=' read -r key value; do
+        # Skip comments and empty lines
+        [[ "$key" =~ ^#.*$ ]] && continue
+        [[ -z "$key" ]] && continue
+        # Remove leading/trailing whitespace from key
+        key=$(echo "$key" | xargs)
+        [[ -z "$key" ]] && continue
+        # Export the variable
+        export "$key=$value"
+    done < .env
+    set +a
+fi
 
 # Check for Python
 PYTHON="${PYTHON:-python3}"

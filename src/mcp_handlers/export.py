@@ -33,11 +33,18 @@ async def handle_get_system_history(arguments: Dict[str, Any]) -> Sequence[TextC
     # Load monitor state from disk if not in memory (consistent with get_governance_metrics)
     monitor = mcp_server.get_or_create_monitor(agent_id)
     
-    history = monitor.export_history(format=format_type)
+    history_data = monitor.export_history(format=format_type)
+    
+    # If JSON format, parse it back to a dict to avoid double-encoding in success_response
+    if format_type == "json":
+        try:
+            history_data = json.loads(history_data)
+        except Exception as e:
+            logger.warning(f"Could not parse history JSON: {e}")
     
     return success_response({
         "format": format_type,
-        "history": history
+        "history": history_data
     })
 
 

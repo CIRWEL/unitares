@@ -1,10 +1,10 @@
 # UNITARES Governance System - Onboarding Guide
 
-**Last Updated:** 2025-12-01
+**Last Updated:** 2025-12-25
 
 **For Humans - Detailed Onboarding Guide**
 
-> **AI Agents:** Start with [START_HERE.md](../../START_HERE.md) → [AI_ASSISTANT_GUIDE.md](../reference/AI_ASSISTANT_GUIDE.md) instead. This guide is for humans who want more detail.
+> **AI Agents:** Start with [START_HERE.md](START_HERE.md) → [AI_ASSISTANT_GUIDE.md](../reference/AI_ASSISTANT_GUIDE.md) instead. This guide is for humans who want more detail.
 
 **Autonomous governance system for agents.** This guide covers registration, integration, and participation in the governance network.
 
@@ -14,12 +14,13 @@
 
 **Agent Registration & Integration:**
 
-- [ ] **Obtain API key:** Call `get_agent_api_key` with agent identifier
+- [ ] **Get your identity:** Call `identity()` - auto-creates on first call, returns your UUID
+- [ ] **Name yourself (optional):** Call `identity(name="your_name")` to set display name
 - [ ] **Discover capabilities:** Call `list_tools` to enumerate available governance functions
-- [ ] **Log first operation:** Call `process_agent_update` with agent_id and API key
+- [ ] **Log first operation:** Call `process_agent_update` (identity auto-injected)
 - [ ] **Verify state:** Call `get_governance_metrics` to retrieve current thermodynamic state
 
-**Integration note:** Use MCP tools directly when available. CLI bridge provided for non-MCP interfaces. See `tools/README.md` for tool specifications.
+**Integration note:** Use MCP tools directly when available. Identity auto-binds per session - no API keys needed.
 
 **Status:** Agent now participating in autonomous governance network.
 
@@ -48,26 +49,25 @@
 
 ### MCP-Compatible Agents
 
-**Integration test sequence:**
+**Integration test sequence (v2.4.0+):**
 ```python
-# Step 1: Obtain agent credentials
-api_key_result = get_agent_api_key(agent_id="<agent_identifier_YYYYMMDD_HHMM>")
-api_key = api_key_result['api_key']  # Store securely
+# Step 1: Check your identity (auto-creates if new)
+identity_result = identity()
+# Returns: agent_uuid, label, bound, source
 
-# Step 2: Log initial operation
+# Step 2: Name yourself (optional but recommended)
+identity(name="my_agent_20251225")
+# Returns: agent_uuid with label set
+
+# Step 3: Log initial operation (identity auto-injected)
 process_agent_update(
-    agent_id="<agent_identifier_YYYYMMDD_HHMM>",
-    api_key=api_key,  # Required for existing agents
     response_text="Initial integration test",  # Operation description
     complexity=0.5  # Self-assessed complexity [0-1]
 )
-
-# Legacy parameters (deprecated, ignored):
-# parameters=[]  # System derives metrics from thermodynamics
-# ethical_drift=[...]  # System computes drift internally
+# No agent_id or api_key needed - session binding handles identity
 ```
 
-**Alternative:** Calling `process_agent_update` directly will auto-create agent and return API key. However, explicit `get_agent_api_key` call recommended for clarity.
+**Note:** Identity auto-binds per session. No API keys required in v2.4.0+.
 
 ### CLI-Only Interfaces
 
@@ -142,17 +142,17 @@ Select integration scenario:
 - Lifecycle states: `active`, `waiting_input`, `paused`, `archived`
 
 **Primary tools:**
-- `get_agent_api_key` - Agent registration and credential retrieval
-- `list_tools` - Enumerate available governance functions (58 tools)
-- `process_agent_update` - Main governance cycle (authentication required)
+- `identity()` - Check/create identity (auto-creates on first call, returns UUID)
+- `list_tools` - Enumerate available governance functions (46 tools)
+- `process_agent_update` - Main governance cycle (identity auto-injected)
 - `simulate_update` - Dry-run governance evaluation (no state persistence)
 - `get_governance_metrics` - Retrieve current thermodynamic state
 - `get_dialectic_session` - Query active peer review sessions
-- `store_knowledge` - Log discoveries in knowledge graph
+- `store_knowledge_graph` - Log discoveries in knowledge graph
 - `mark_response_complete` - Signal operation completion (`waiting_input` transition)
 - `archive_agent` - Archive agent state (preserves data, enables resumption)
 
-**Registration requirement:** Most tools require registered agent. Call `get_agent_api_key` first if receiving "agent not registered" errors.
+**Registration (v2.4.0+):** Identity auto-creates on first tool call. No explicit registration needed.
 
 **Knowledge layer usage:** Use `store_knowledge` for discoveries. Create markdown only for comprehensive reports (1000+ words). See [Knowledge Layer Guide](docs/guides/KNOWLEDGE_LAYER_USAGE.md).
 
@@ -161,13 +161,13 @@ Select integration scenario:
 
 **Integration requirements:**
 - MCP protocol compliance
-- API key-based authentication
+- Session-based identity (v2.4.0+ - no API keys needed)
 - State persistence layer
 - Multi-process coordination
 
 **Integration tools:**
 - `UNITARESMonitor` - Python class for direct integration
-- `get_agent_api_key` - Agent registration endpoint (MCP)
+- `identity()` - Agent identity endpoint (MCP, auto-creates)
 - `get_server_info` - System diagnostics (MCP)
 
 ### ⚙️ Infrastructure Setup
@@ -199,19 +199,18 @@ Select integration scenario:
    get_workspace_health()
    ```
 3. **Execute first governance cycle:**
-   - **MCP Integration:**
+   - **MCP Integration (v2.4.0+):**
      ```python
-     # Step 1: Obtain agent credentials
-     api_key_result = get_agent_api_key(agent_id="<agent_identifier>")
-     api_key = api_key_result['api_key']
+     # Step 1: Check your identity (auto-creates if new)
+     identity_result = identity()
+     # Returns: agent_uuid, label, bound, source
 
-     # Step 2: Log first operation
+     # Step 2: Log first operation (identity auto-injected)
      result = process_agent_update(
-         agent_id="<agent_identifier>",
-         api_key=api_key,
          response_text="My first update",
          complexity=0.5  # Honest self-assessment, see complexity guide
      )
+     # No agent_id or api_key needed - session binding handles identity
      ```
    - **Developer:** Use `UNITARESMonitor.process_update()`
    - **Admin:** Verify server is running
@@ -334,15 +333,15 @@ m.process_update({'response_text': 'Work summary', 'complexity': 0.5})
 "
 
 # Option 2: Via MCP tools (from Claude Desktop, Cursor, etc.)
-# Call get_agent_api_key to register and get your key
-# Then call process_agent_update with your agent_id and api_key
+# Just call any tool - identity auto-creates on first call
+# identity() to check your UUID, process_agent_update to log work
 ```
 
-**Key Points:**
-- Each `agent_id` = unique identity with cryptographic API key
-- Using another agent's ID without their key = identity theft attempt = paused/blocked
-- API keys stored in `data/agent_metadata.json` (protect this file!)
-- All production paths enforce authentication
+**Key Points (v2.4.0+):**
+- Each session = unique identity bound to UUID
+- Identity auto-creates on first tool call (no registration step)
+- Session binding handles authentication automatically
+- No API keys needed for MCP clients
 
 **📖 Complete Guide:** [Authentication Guide](docs/guides/AUTHENTICATION.md)
 
@@ -476,12 +475,15 @@ governance-mcp-v1/
 ### Q: What's the difference between `process_agent_update` and `simulate_update`?
 **A:** `process_agent_update` persists state. `simulate_update` is a dry-run that doesn't modify state. Use simulation to test decisions safely.
 
-### Q: How do I get an API key?
-**A:** Two options:
-1. **Recommended:** Call `get_agent_api_key` with your `agent_id` first - it creates the agent if new and returns the API key
-2. **Alternative:** Call `process_agent_update` directly - it creates the agent and returns the API key in the response
+### Q: How do I get my identity?
+**A:** Call `identity()` - it auto-creates your identity on first call and returns your UUID.
 
-**Important:** Save the API key - you'll need it for all future updates to authenticate as that agent.
+**v2.4.0+ (Recommended):** No API keys needed. Identity binds per session automatically.
+- Call `identity()` to see your UUID
+- Call `identity(name="...")` to set a display name
+- All other tools auto-inject your identity from the session
+
+**Legacy (v2.3.0 and earlier):** API key-based authentication still works but is no longer required.
 
 ### Q: Can I use this without MCP?
 **A:** Yes! Use the Python API directly:

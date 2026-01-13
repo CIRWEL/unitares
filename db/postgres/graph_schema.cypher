@@ -1,6 +1,5 @@
 -- Apache AGE Graph Schema for Knowledge Graph
 -- Version: 1.0.0
--- Date: 2025-12-15
 --
 -- This file sets up the AGE graph structure for discoveries, agents, and relationships.
 -- Run after: 1) schema.sql (PostgreSQL tables)  2) AGE extension installed

@@ -1,0 +1,37 @@
+# PostgreSQL with Apache AGE + pgvector
+# Combines graph queries (AGE) with vector similarity search (pgvector)
+#
+# Build:
+#   docker build -t postgres-age-vector -f db/postgres/Dockerfile.age-vector .
+#
+# Run:
+#   docker run -d --name postgres-age-vector \
+#     -p 5432:5432 \
+#     -e POSTGRES_PASSWORD=postgres \
+#     -v pgdata:/var/lib/postgresql/data \
+#     postgres-age-vector
+
+FROM apache/age:latest
+
+# Install build dependencies for pgvector
+USER root
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    postgresql-server-dev-17 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build and install pgvector
+# Use OPTFLAGS="" to avoid SIMD instructions that may cause "Illegal instruction" on some CPUs
+RUN cd /tmp && \
+    git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git && \
+    cd pgvector && \
+    make OPTFLAGS="" && \
+    make install && \
+    cd / && rm -rf /tmp/pgvector
+
+# Switch back to postgres user
+USER postgres
+
+# Add initialization script to create extensions
+COPY --chown=postgres:postgres db/postgres/init-extensions.sql /docker-entrypoint-initdb.d/00-init-extensions.sql

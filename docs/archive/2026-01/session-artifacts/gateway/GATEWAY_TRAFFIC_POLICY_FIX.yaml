@@ -1,0 +1,25 @@
+on_http_request:
+  # Only apply AI Gateway to /v1/chat/completions (AI endpoints)
+  # Let /mcp and other endpoints pass through to backend
+  - match: |
+      req.URL.Path == "/v1/chat/completions" || 
+      req.URL.Path == "/v1/completions" ||
+      req.URL.Path == "/v1/embeddings"
+    actions:
+      - type: ai-gateway
+        config:
+          providers:
+            - id: "huggingface"
+              base_url: "https://router.huggingface.co/v1"
+              api_keys:
+                - value: "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"
+              models:
+                - id: "deepseek-ai/DeepSeek-R1"
+                - id: "deepseek-ai/DeepSeek-R1:fastest"
+                - id: "openai/gpt-oss-120b"
+  # Default: pass through all other requests (including /mcp) to backend
+  - actions:
+      - type: proxy
+        config:
+          backend_url: "http://localhost:8765"
+

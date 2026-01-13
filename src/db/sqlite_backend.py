@@ -366,6 +366,24 @@ class SQLiteBackend(DatabaseBackend):
         stored = row[0]
         return stored == api_key or stored == hashlib.sha256(api_key.encode()).hexdigest()
 
+    async def upsert_agent(
+        self,
+        agent_id: str,
+        api_key: str,
+        status: str = "active",
+        purpose: Optional[str] = None,
+        notes: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        parent_agent_id: Optional[str] = None,
+        spawn_reason: Optional[str] = None,
+        created_at: Optional[datetime] = None,
+    ) -> bool:
+        """
+        SQLite backend has no core.agents table; agent fields live in agent_metadata/metadata_json.
+        No-op to satisfy the unified interface used by PostgreSQL migrations.
+        """
+        return True
+
     async def update_agent_fields(
         self,
         agent_id: str,
@@ -376,12 +394,86 @@ class SQLiteBackend(DatabaseBackend):
         tags: Optional[List[str]] = None,
         parent_agent_id: Optional[str] = None,
         spawn_reason: Optional[str] = None,
+        label: Optional[str] = None,
     ) -> bool:
         """
-        SQLite backend has no core.agents table; agent fields live in agent_metadata/metadata_json.
-        No-op to satisfy the unified interface used by PostgreSQL migrations.
+        Update agent metadata in SQLite.
         """
-        return True
+        conn = self._get_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        
+        # Build update for main columns
+        updates = ["updated_at = ?"]
+        params = [now]
+        
+        if status:
+            updates.append("status = ?")
+            params.append(status)
+        if parent_agent_id:
+            updates.append("parent_agent_id = ?")
+            params.append(parent_agent_id)
+        if spawn_reason:
+            updates.append("spawn_reason = ?")
+            params.append(spawn_reason)
+        if tags:
+            updates.append("tags_json = ?")
+            params.append(json.dumps(tags))
+            
+        # Update metadata_json for fields that don't have columns
+        meta_updates = {}
+        if purpose:
+            meta_updates["purpose"] = purpose
+        if notes:
+            meta_updates["notes"] = notes
+        if label:
+            meta_updates["label"] = label
+            
+        if meta_updates:
+            updates.append("metadata_json = json_patch(metadata_json, ?)")
+            params.append(json.dumps(meta_updates))
+            
+        params.append(agent_id)
+        query = f"UPDATE agent_metadata SET {', '.join(updates)} WHERE agent_id = ?"
+        
+        cursor = conn.execute(query, tuple(params))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    async def get_agent_label(self, agent_id: str) -> Optional[str]:
+        """Get agent's display label from metadata_json."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT metadata_json FROM agent_metadata WHERE agent_id = ?",
+            (agent_id,),
+        ).fetchone()
+        
+        if row and row["metadata_json"]:
+            meta = json.loads(row["metadata_json"])
+            return meta.get("label")
+        return None
+
+    async def find_agent_by_label(self, label: str) -> Optional[str]:
+        """Find agent UUID by label in metadata_json."""
+        conn = self._get_conn()
+        # Note: SQLite json_extract or ->> can be used if available, 
+        # but for compatibility we might need to scan if it's an old SQLite.
+        # Most modern ones have it.
+        try:
+            row = conn.execute(
+                "SELECT agent_id FROM agent_metadata WHERE json_extract(metadata_json, '$.label') = ?",
+                (label,),
+            ).fetchone()
+            if row:
+                return row["agent_id"]
+        except sqlite3.OperationalError:
+            # Fallback for old SQLite without JSON support: scan (expensive but rare)
+            rows = conn.execute("SELECT agent_id, metadata_json FROM agent_metadata").fetchall()
+            for r in rows:
+                if r["metadata_json"]:
+                    meta = json.loads(r["metadata_json"])
+                    if meta.get("label") == label:
+                        return r["agent_id"]
+        return None
 
     def _row_to_identity(self, row) -> IdentityRecord:
         created = datetime.fromisoformat(row["created_at"]) if row["created_at"] else datetime.now(timezone.utc)
@@ -459,11 +551,14 @@ class SQLiteBackend(DatabaseBackend):
         return self._row_to_session(row)
 
     async def update_session_activity(self, session_id: str) -> bool:
+        from config.governance_config import GovernanceConfig
+        ttl_hours = GovernanceConfig.SESSION_TTL_HOURS
         conn = self._get_conn()
         now = datetime.now(timezone.utc).isoformat()
+        expires = (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat()
         cursor = conn.execute(
-            "UPDATE session_identities SET last_active = ? WHERE session_id = ? AND is_active = 1",
-            (now, session_id),
+            "UPDATE session_identities SET last_active = ?, expires_at = ? WHERE session_id = ? AND is_active = 1",
+            (now, expires, session_id),
         )
         conn.commit()
         return cursor.rowcount > 0
@@ -1002,3 +1097,14 @@ class SQLiteBackend(DatabaseBackend):
         """Check if agent is in active dialectic session - delegates to existing dialectic_db."""
         from src.dialectic_db import is_agent_in_active_session_async
         return await is_agent_in_active_session_async(agent_id)
+
+    async def get_pending_dialectic_sessions(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get dialectic sessions awaiting a reviewer (reviewer_agent_id IS NULL).
+
+        SQLite delegates to existing dialectic_db.py which doesn't track this.
+        Returns empty list - pull-based discovery is PostgreSQL-only feature.
+        """
+        # SQLite's dialectic support is via old dialectic_db.py which doesn't
+        # have a method for this. PostgreSQL-only feature for now.
+        return []

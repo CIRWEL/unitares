@@ -12,7 +12,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable, TypeVar
+
+T = TypeVar("T")
 
 from .base import (
     DatabaseBackend,
@@ -25,6 +27,47 @@ from .sqlite_backend import SQLiteBackend
 from .postgres_backend import PostgresBackend
 
 logger = logging.getLogger(__name__)
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 0.1  # seconds
+
+
+async def _retry_async(
+    coro_factory: Callable[[], Any],
+    op_name: str,
+    max_retries: int = MAX_RETRIES,
+    backoff_base: float = RETRY_BACKOFF_BASE,
+) -> Any:
+    """
+    Retry an async operation with exponential backoff.
+
+    Args:
+        coro_factory: A callable that returns a new coroutine each call
+        op_name: Name of the operation for logging
+        max_retries: Maximum number of retry attempts
+        backoff_base: Base delay in seconds (doubles each retry)
+
+    Returns:
+        Result of the coroutine, or None if all retries failed
+    """
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            return await coro_factory()
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                delay = backoff_base * (2 ** attempt)
+                logger.warning(
+                    f"Retry {attempt + 1}/{max_retries} for {op_name} after {delay:.2f}s: {e}"
+                )
+                await asyncio.sleep(delay)
+            else:
+                logger.error(
+                    f"All {max_retries} retries failed for {op_name}: {e}"
+                )
+    return None
 
 
 class DualWriteBackend(DatabaseBackend):
@@ -41,14 +84,30 @@ class DualWriteBackend(DatabaseBackend):
         self._postgres = PostgresBackend()
         self._postgres_available = False
 
-    async def init(self) -> None:
-        """Initialize both backends."""
+    async def init(self, run_sync: bool = True) -> None:
+        """
+        Initialize both backends.
+
+        Args:
+            run_sync: If True (default), run SQLite→PostgreSQL sync after init
+        """
         await self._sqlite.init()
 
         try:
             await self._postgres.init()
             self._postgres_available = True
             logger.info("Dual-write: PostgreSQL backend initialized")
+
+            # Run sync to catch any drift from previous failed writes
+            if run_sync:
+                sync_result = await self.sync_sqlite_to_postgres()
+                if sync_result.get("synced", 0) > 0:
+                    logger.info(
+                        f"Dual-write: Synced {sync_result['synced']} agents from SQLite to PostgreSQL"
+                    )
+                elif sync_result.get("missing_in_postgres", 0) == 0:
+                    logger.info("Dual-write: Backends are in sync")
+
         except Exception as e:
             logger.warning(f"Dual-write: PostgreSQL unavailable, SQLite-only mode: {e}")
             self._postgres_available = False
@@ -81,6 +140,104 @@ class DualWriteBackend(DatabaseBackend):
         }
 
     # =========================================================================
+    # SYNC: Reconcile SQLite → PostgreSQL
+    # =========================================================================
+
+    async def sync_sqlite_to_postgres(self, dry_run: bool = False) -> Dict[str, Any]:
+        """
+        Reconcile agents from SQLite to PostgreSQL on startup.
+
+        Finds agents that exist in SQLite but not in PostgreSQL and syncs them.
+        This catches any drift caused by failed dual-writes.
+
+        Args:
+            dry_run: If True, only report what would be synced without making changes
+
+        Returns:
+            Dict with sync statistics
+        """
+        if not self._postgres_available:
+            return {
+                "success": False,
+                "error": "PostgreSQL not available",
+                "synced": 0,
+                "missing": 0,
+            }
+
+        try:
+            # Get all identities from SQLite
+            sqlite_identities = await self._sqlite.list_identities(limit=10000)
+            sqlite_agent_ids = {i.agent_id for i in sqlite_identities}
+
+            # Get all identities from PostgreSQL
+            postgres_identities = await self._postgres.list_identities(limit=10000)
+            postgres_agent_ids = {i.agent_id for i in postgres_identities}
+
+            # Find missing in PostgreSQL
+            missing_in_postgres = sqlite_agent_ids - postgres_agent_ids
+            # Find missing in SQLite (for reporting)
+            missing_in_sqlite = postgres_agent_ids - sqlite_agent_ids
+
+            synced_count = 0
+            failed_count = 0
+            failed_agents = []
+
+            if not dry_run and missing_in_postgres:
+                logger.info(
+                    f"Sync: Found {len(missing_in_postgres)} agents missing in PostgreSQL"
+                )
+
+                for agent_id in missing_in_postgres:
+                    # Get full identity from SQLite
+                    identity = await self._sqlite.get_identity(agent_id)
+                    if identity:
+                        try:
+                            await self._postgres.upsert_identity(
+                                agent_id=identity.agent_id,
+                                api_key_hash=identity.api_key_hash,
+                                parent_agent_id=identity.parent_agent_id,
+                                metadata=identity.metadata,
+                                created_at=identity.created_at,
+                            )
+                            synced_count += 1
+                        except Exception as e:
+                            logger.error(f"Sync failed for {agent_id}: {e}")
+                            failed_count += 1
+                            failed_agents.append(agent_id)
+
+            result = {
+                "success": True,
+                "dry_run": dry_run,
+                "sqlite_count": len(sqlite_agent_ids),
+                "postgres_count": len(postgres_agent_ids),
+                "missing_in_postgres": len(missing_in_postgres),
+                "missing_in_sqlite": len(missing_in_sqlite),
+                "synced": synced_count,
+                "failed": failed_count,
+            }
+
+            if missing_in_postgres and dry_run:
+                result["would_sync"] = list(missing_in_postgres)[:20]  # First 20 for preview
+
+            if failed_agents:
+                result["failed_agents"] = failed_agents
+
+            if missing_in_sqlite:
+                result["orphaned_in_postgres"] = list(missing_in_sqlite)[:10]
+
+            logger.info(f"Sync complete: {result}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Sync failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "synced": 0,
+                "missing": 0,
+            }
+
+    # =========================================================================
     # HELPER: Dual-write with error handling
     # =========================================================================
 
@@ -95,6 +252,15 @@ class DualWriteBackend(DatabaseBackend):
                 await postgres_coro
             except Exception as e:
                 logger.error(f"Dual-write {op_name} failed on PostgreSQL: {e}")
+        else:
+            # Important: callers pass already-created coroutine objects.
+            # If Postgres is unavailable, we must explicitly close the unused coroutine
+            # to avoid "coroutine was never awaited" warnings and resource leaks.
+            try:
+                if hasattr(postgres_coro, "close"):
+                    postgres_coro.close()
+            except Exception:
+                pass
 
         return result
 
@@ -171,19 +337,20 @@ class DualWriteBackend(DatabaseBackend):
     ) -> bool:
         """
         Create or update an agent in core.agents table (PostgreSQL only).
-        
+
         This is required for foreign key references in dialectic_sessions.
         SQLite doesn't have this table, so we only write to PostgreSQL.
+        Uses retry logic to handle transient failures.
         """
         if self._postgres_available:
-            try:
-                return await self._postgres.upsert_agent(
+            result = await _retry_async(
+                lambda: self._postgres.upsert_agent(
                     agent_id, api_key, status, purpose, notes, tags,
                     parent_agent_id, spawn_reason, created_at
-                )
-            except Exception as e:
-                logger.error(f"Dual-write upsert_agent failed on PostgreSQL: {e}")
-                return False
+                ),
+                f"upsert_agent({agent_id})",
+            )
+            return result if result is not None else False
         return False
 
     async def update_agent_fields(
@@ -196,13 +363,15 @@ class DualWriteBackend(DatabaseBackend):
         tags: Optional[List[str]] = None,
         parent_agent_id: Optional[str] = None,
         spawn_reason: Optional[str] = None,
+        label: Optional[str] = None,
     ) -> bool:
         """
         Partial update of core.agents (PostgreSQL only). SQLite has no core.agents table.
+        Uses retry logic to handle transient failures.
         """
         if self._postgres_available:
-            try:
-                return await self._postgres.update_agent_fields(
+            result = await _retry_async(
+                lambda: self._postgres.update_agent_fields(
                     agent_id,
                     status=status,
                     purpose=purpose,
@@ -210,10 +379,11 @@ class DualWriteBackend(DatabaseBackend):
                     tags=tags,
                     parent_agent_id=parent_agent_id,
                     spawn_reason=spawn_reason,
-                )
-            except Exception as e:
-                logger.error(f"Dual-write update_agent_fields failed on PostgreSQL: {e}")
-                return False
+                    label=label,
+                ),
+                f"update_agent_fields({agent_id})",
+            )
+            return result if result is not None else False
         return False
 
     # =========================================================================
@@ -511,3 +681,17 @@ class DualWriteBackend(DatabaseBackend):
 
     async def is_agent_in_active_dialectic_session(self, agent_id: str) -> bool:
         return await self._sqlite.is_agent_in_active_dialectic_session(agent_id)
+
+    async def get_pending_dialectic_sessions(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get dialectic sessions awaiting a reviewer.
+
+        PostgreSQL-only feature (SQLite doesn't have dialectic tables).
+        Used for pull-based discovery: agents check for pending reviews on login.
+        """
+        if self._postgres_available:
+            try:
+                return await self._postgres.get_pending_dialectic_sessions(limit)
+            except Exception as e:
+                logger.warning(f"PostgreSQL get_pending_dialectic_sessions failed: {e}")
+        return []

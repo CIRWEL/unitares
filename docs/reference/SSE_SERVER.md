@@ -83,7 +83,7 @@ launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
 
 | Aspect | stdio | SSE |
 |--------|-------|-----|
-| **Tool listing** | All 49 tools (tool mode filtering removed) | All 50 tools (49 shared + 1 SSE-only: `get_connected_clients`) |
+| **Tool listing** | All 45 tools (tool mode filtering removed) | All 46 tools (45 shared + 1 SSE-only: `get_connected_clients`) |
 | **Tool calls** | Filters by `TOOL_MODE` | Filters by `TOOL_MODE` (same as stdio) |
 
 **Why the difference?**

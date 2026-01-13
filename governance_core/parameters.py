@@ -9,6 +9,8 @@ bounds, and default configurations.
 
 from __future__ import annotations
 from dataclasses import dataclass
+import json
+import os
 from typing import ClassVar
 
 
@@ -24,7 +26,7 @@ class DynamicsParams:
     """
 
     # E dynamics
-    alpha: float = 0.4           # I → E coupling strength
+    alpha: float = 0.42          # I → E coupling strength (the answer)
     beta_E: float = 0.1          # S damping on E
     gamma_E: float = 0.05        # Drift feedback to E (enabled with conservative value)
 
@@ -99,6 +101,81 @@ class Weights:
 DEFAULT_PARAMS: DynamicsParams = DynamicsParams()
 DEFAULT_THETA: Theta = Theta(C1=1.0, eta1=0.3)
 DEFAULT_WEIGHTS: Weights = Weights()
+
+# UNITARES v4.1 paper-aligned parameters (opt-in)
+#
+# IMPORTANT: This is intentionally NOT the default, because beta_I=0.05 is a
+# significant behavior change from the current operational value 0.3.
+V41_PARAMS: DynamicsParams = DynamicsParams(
+    alpha=0.5,
+    beta_I=0.05,
+    gamma_I=0.3,
+)
+
+# UNITARES v4.2-P linear damping parameters
+# Replaces logistic I(1-I) with linear I to prevent boundary saturation
+# gamma_I tuned for I* ≈ 0.80 equilibrium with typical A ≈ 0.135
+V42P_PARAMS: DynamicsParams = DynamicsParams(
+    gamma_I=0.169,  # Tuned for I* = A/gamma_I ≈ 0.80
+)
+
+
+def get_i_dynamics_mode() -> str:
+    """
+    Returns the I-channel dynamics mode.
+    
+    Supported:
+    - UNITARES_I_DYNAMICS=logistic (default, v4.1 style: -γ_I·I·(1-I))
+    - UNITARES_I_DYNAMICS=linear (v4.2-P style: -γ_I·I)
+    
+    Linear mode prevents boundary saturation and guarantees stable interior equilibrium.
+    """
+    return os.getenv("UNITARES_I_DYNAMICS", "logistic").strip().lower()
+
+
+def get_params_profile_name() -> str:
+    """
+    Returns the active parameters profile name.
+
+    Supported:
+    - UNITARES_PARAMS_PROFILE=default (default)
+    - UNITARES_PARAMS_PROFILE=v41
+    """
+    return os.getenv("UNITARES_PARAMS_PROFILE", "default").strip().lower()
+
+
+def get_active_params() -> DynamicsParams:
+    """
+    Returns the active dynamics parameters.
+
+    Resolution order:
+    1) UNITARES_PARAMS_JSON (full/partial override as JSON object)
+    2) UNITARES_PARAMS_PROFILE (default|v41)
+    """
+    profile = get_params_profile_name()
+    base = V41_PARAMS if profile == "v41" else DEFAULT_PARAMS
+
+    raw = os.getenv("UNITARES_PARAMS_JSON")
+    if not raw:
+        return base
+
+    try:
+        overrides = json.loads(raw)
+    except Exception:
+        # Invalid JSON: ignore override (defensive)
+        return base
+
+    # Apply only known fields
+    d = base.__dict__.copy()
+    if isinstance(overrides, dict):
+        for k, v in overrides.items():
+            if k in d and v is not None:
+                d[k] = v
+    try:
+        return DynamicsParams(**d)
+    except Exception:
+        # If overrides make the dataclass invalid, fall back to base
+        return base
 
 # Default initial state
 # This is imported from dynamics.py to avoid circular imports

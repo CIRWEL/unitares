@@ -11,6 +11,6 @@
 mcp>=1.24.0
 
 # Governance system core math
-numpy>=1.24.0
+numpy>=1.24.0,<3.0.0
 
 
