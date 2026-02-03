@@ -1,6 +1,6 @@
 # UNITARES Documentation
 
-**Last Updated:** 2026-02-01
+**Last Updated:** 2026-02-03
 
 ---
 
@@ -20,21 +20,10 @@
 |-------|-------------|
 | [GETTING_STARTED_SIMPLE](guides/GETTING_STARTED_SIMPLE.md) | Fastest path - 3 tools |
 | [QUICK_REFERENCE](guides/QUICK_REFERENCE.md) | One-page cheat sheet |
-| [ESSENTIAL_TOOLS](guides/ESSENTIAL_TOOLS.md) | Tool tiers (80/20 breakdown) |
+| [START_HERE](guides/START_HERE.md) | Full onboarding guide |
 | [DEPLOYMENT](guides/DEPLOYMENT.md) | Installation & setup |
 | [MCP_SETUP](guides/MCP_SETUP.md) | MCP client configuration |
 | [TROUBLESHOOTING](guides/TROUBLESHOOTING.md) | Common issues & fixes |
-
----
-
-## Guide Categories
-
-| Directory | Contents |
-|-----------|----------|
-| [guides/](guides/) | Essential guides (16 files) |
-| [guides/cli/](guides/cli/) | CLI tools, scripts, shell integration |
-| [guides/advanced/](guides/advanced/) | Multi-agent, ngrok, thresholds, identity |
-| [guides/integrations/](guides/integrations/) | HuggingFace, OAuth, external services |
 
 ---
 

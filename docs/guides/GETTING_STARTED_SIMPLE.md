@@ -76,8 +76,8 @@ get_governance_metrics()
 Keep calling `process_agent_update()` periodically. That's enough.
 
 ### Option 2: Learn More
-- Read [UNITARES_LITE.md](UNITARES_LITE.md) for deeper understanding
-- Read [ESSENTIAL_TOOLS.md](ESSENTIAL_TOOLS.md) for tool overview
+- Read [START_HERE.md](START_HERE.md) for deeper understanding
+- Read [QUICK_REFERENCE.md](QUICK_REFERENCE.md) for tool overview
 - Explore other tools when curious
 
 ### Option 3: Explore the Dashboard
@@ -163,15 +163,15 @@ python3 scripts/unitares_lite.py update "What you did" complexity=0.5
 python3 scripts/unitares_lite.py metrics
 ```
 
-See [QUICK_START_CLI.md](QUICK_START_CLI.md) for details.
+See [QUICK_REFERENCE.md](QUICK_REFERENCE.md) for details.
 
 ---
 
 ## Need Help?
 
-- **Confused?** → Read [UNITARES_LITE.md](UNITARES_LITE.md)
-- **Want more tools?** → Read [ESSENTIAL_TOOLS.md](ESSENTIAL_TOOLS.md)
+- **Confused?** → Read [START_HERE.md](START_HERE.md)
 - **Quick reference?** → [QUICK_REFERENCE.md](QUICK_REFERENCE.md) (one-page cheat sheet)
+- **Setup issues?** → [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 - **Stuck?** → Use `request_dialectic_review()`
 - **Questions?** → Search the knowledge graph: `search_knowledge_graph(query="your question")`
 

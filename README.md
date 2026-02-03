@@ -231,11 +231,7 @@ The thermodynamic framing isn't metaphor - it's a design choice that makes gover
 
 ## Author
 
-Built by Kenny Wang ([@CIRWEL](https://github.com/CIRWEL)) - 25-year professional musician turned AI systems builder.
-
-Background in precision work (orchestral performance), pattern recognition, and self-directed learning. No CS degree, just building.
-
-Also building [Lumen](https://github.com/CIRWEL/anima-mcp) - an embodied AI creature with real sensors and persistent identity.
+Built by [@CIRWEL](https://github.com/CIRWEL). Also building [Lumen/anima-mcp](https://github.com/CIRWEL/anima-mcp).
 
 ---
 
