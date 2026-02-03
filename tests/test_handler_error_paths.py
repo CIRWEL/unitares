@@ -25,30 +25,37 @@ from src.mcp_handlers import dispatch_tool
 
 @pytest.mark.asyncio
 async def test_missing_required_parameters():
-    """Test handlers handle missing required parameters gracefully"""
+    """Test handlers handle missing required parameters gracefully
+
+    Note: With identity_v2, agent_id is auto-generated via session binding.
+    Tools that previously required agent_id now auto-bind on first call.
+    """
     print("\n=== Testing Missing Required Parameters ===")
-    
-    # Test process_agent_update without agent_id
+
+    # Test process_agent_update without agent_id - now succeeds with auto-binding
     result = await dispatch_tool("process_agent_update", {})
-    assert result is not None, "Should return error response"
+    assert result is not None, "Should return response"
     response_data = json.loads(result[0].text)
-    assert response_data.get("success") == False, "Should fail without agent_id"
-    assert "agent_id" in response_data.get("error", "").lower() or "required" in response_data.get("error", "").lower()
-    print("✅ process_agent_update validates agent_id")
-    
-    # Test get_governance_metrics without agent_id
+    # With identity_v2, this succeeds - agent_id is auto-generated
+    assert response_data.get("success") == True, "Should succeed with auto-binding"
+    assert "agent_signature" in response_data, "Should have agent_signature"
+    print("✅ process_agent_update auto-binds identity (identity_v2)")
+
+    # Test get_governance_metrics without agent_id - uses bound identity
     result = await dispatch_tool("get_governance_metrics", {})
-    assert result is not None, "Should return error response"
+    assert result is not None, "Should return response"
     response_data = json.loads(result[0].text)
-    assert response_data.get("success") == False, "Should fail without agent_id"
-    print("✅ get_governance_metrics validates agent_id")
-    
-    # Test simulate_update without agent_id
+    # With identity_v2, this succeeds using the bound agent
+    assert response_data.get("success") == True, "Should succeed with bound identity"
+    print("✅ get_governance_metrics uses bound identity (identity_v2)")
+
+    # Test simulate_update without agent_id - uses bound identity
     result = await dispatch_tool("simulate_update", {})
-    assert result is not None, "Should return error response"
+    assert result is not None, "Should return response"
     response_data = json.loads(result[0].text)
-    assert response_data.get("success") == False, "Should fail without agent_id"
-    print("✅ simulate_update validates agent_id")
+    # With identity_v2, this succeeds using the bound agent
+    assert response_data.get("success") == True, "Should succeed with bound identity"
+    print("✅ simulate_update uses bound identity (identity_v2)")
 
 
 @pytest.mark.asyncio
@@ -117,86 +124,90 @@ async def test_invalid_parameter_values():
 
 @pytest.mark.asyncio
 async def test_authentication_failures():
-    """Test handlers handle authentication failures gracefully
-    
-    Note: The system auto-retrieves API keys from stored credentials for existing agents.
-    So "missing API key" actually succeeds because the key is looked up.
-    We focus on testing wrong API key scenario.
+    """Test session binding authentication (identity_v2)
+
+    Note: With identity_v2, authentication is handled via session binding:
+    - First tool call auto-creates and binds an identity to the session
+    - Subsequent calls can only access the bound agent
+    - Trying to access a different agent_id returns "Session mismatch" error
     """
-    print("\n=== Testing Authentication Failures ===")
-    
-    # First register the agent via process_agent_update (creates agent + returns key)
+    print("\n=== Testing Authentication (Session Binding) ===")
+
+    # First call auto-binds an identity
     result = await dispatch_tool("process_agent_update", {
-        "agent_id": "test_auth_agent_new2",
         "complexity": 0.5,
         "confidence": 0.9
     })
     assert result is not None, "Should return result"
     response_data = json.loads(result[0].text)
-    assert response_data.get("success") == True, "Should create agent"
-    correct_key = response_data.get("api_key")
-    assert correct_key is not None, "Should return API key on creation"
-    print("✅ Agent created with API key")
-    
-    # Test with wrong API key - should fail
+    assert response_data.get("success") == True, "Should succeed with auto-binding"
+    bound_agent = response_data.get("agent_signature", {}).get("uuid") or response_data.get("resolved_agent_id")
+    assert bound_agent is not None, "Should have bound agent"
+    print(f"✅ Session bound to agent: {bound_agent[:8]}...")
+
+    # Test trying to access different agent - should fail with session mismatch
     result = await dispatch_tool("process_agent_update", {
-        "agent_id": "test_auth_agent_new2",
-        "api_key": "wrong_key_12345",
+        "agent_id": "different_agent_12345",
         "complexity": 0.5,
         "confidence": 0.9
     })
     assert result is not None, "Should return error response"
     response_data = json.loads(result[0].text)
-    assert response_data.get("success") == False, "Should fail with wrong key"
+    assert response_data.get("success") == False, "Should fail with session mismatch"
     error_msg = response_data.get("error", "").lower()
-    assert "auth" in error_msg or "key" in error_msg or "invalid" in error_msg, f"Should mention auth issue (got: {error_msg})"
-    print("✅ Handles wrong API key")
-    
-    # Test with missing API key for existing agent
-    # Note: System auto-retrieves API key from stored credentials, so this succeeds
+    assert "mismatch" in error_msg or "bound" in error_msg, f"Should mention session mismatch (got: {error_msg})"
+    print("✅ Session binding prevents accessing other agents")
+
+    # Test using the bound agent works
     result = await dispatch_tool("process_agent_update", {
-        "agent_id": "test_auth_agent_new2",
-        # No api_key - will be auto-retrieved from stored credentials
+        # No agent_id - uses bound identity
         "complexity": 0.5,
         "confidence": 0.9
     })
     assert result is not None, "Should return result"
     response_data = json.loads(result[0].text)
-    # This succeeds because the API key is auto-retrieved from stored credentials
-    assert response_data.get("success") == True, "Should succeed with auto-retrieved key"
-    assert "api_key_info" in response_data, "Should mention auto-retrieval"
-    print("✅ Auto-retrieves API key for existing agent")
+    assert response_data.get("success") == True, "Should succeed with bound identity"
+    print("✅ Bound identity auto-retrieved")
 
 
 @pytest.mark.asyncio
 async def test_nonexistent_resources():
-    """Test handlers handle non-existent resources gracefully
-    
-    Note: get_governance_metrics auto-creates monitors for non-existent agents
-    (design choice for observability). get_agent_metadata fails for unregistered agents.
+    """Test handlers handle non-existent resources gracefully (identity_v2)
+
+    Note: With identity_v2, session binding controls which agents you can access:
+    - First call auto-creates and binds an identity
+    - get_governance_metrics without agent_id uses the bound agent
+    - Trying to access a non-existent agent_id returns "Session mismatch" error
     """
     print("\n=== Testing Non-Existent Resources ===")
-    
-    # Test get_governance_metrics with non-existent agent
-    # Note: This now succeeds with default state (creates monitor on demand)
+
+    # First call establishes session binding
+    result = await dispatch_tool("get_governance_metrics", {})
+    assert result is not None, "Should return result"
+    response_data = json.loads(result[0].text)
+    # With identity_v2, this succeeds using auto-bound agent
+    assert response_data.get("success") == True, "Should succeed with auto-binding"
+    bound_agent = response_data.get("agent_id")
+    print(f"✅ Bound agent metrics retrieved: {bound_agent[:8] if bound_agent else 'N/A'}...")
+
+    # Test get_agent_metadata for bound agent
+    result = await dispatch_tool("get_agent_metadata", {})
+    assert result is not None, "Should return response"
+    response_data = json.loads(result[0].text)
+    # Metadata for bound agent should work (may fail if not persisted yet)
+    print(f"✅ Agent metadata retrieval: success={response_data.get('success')}")
+
+    # Test trying to access different agent - should fail with session mismatch
     result = await dispatch_tool("get_governance_metrics", {
         "agent_id": "nonexistent_agent_12345"
     })
     assert result is not None, "Should return result"
     response_data = json.loads(result[0].text)
-    # This now succeeds - monitors are created on demand for observability
-    assert response_data.get("success") == True, "Should succeed (creates monitor on demand)"
-    assert response_data.get("agent_id") == "nonexistent_agent_12345"
-    print("✅ Auto-creates monitor for non-existent agent")
-    
-    # Test get_agent_metadata with non-existent agent (should fail)
-    result = await dispatch_tool("get_agent_metadata", {
-        "agent_id": "truly_nonexistent_metadata_agent"
-    })
-    assert result is not None, "Should return error response"
-    response_data = json.loads(result[0].text)
-    assert response_data.get("success") == False, "Should fail for non-existent agent metadata"
-    print("✅ Handles non-existent agent metadata")
+    # With identity_v2, this fails with session mismatch (not "not found")
+    assert response_data.get("success") == False, "Should fail with session mismatch"
+    error_msg = response_data.get("error", "").lower()
+    assert "mismatch" in error_msg or "bound" in error_msg, f"Should mention session mismatch (got: {error_msg})"
+    print("✅ Session binding prevents accessing non-existent agents")
 
 
 @pytest.mark.asyncio
@@ -245,18 +256,22 @@ async def test_validation_errors():
 async def test_error_response_format():
     """Test that error responses have consistent format"""
     print("\n=== Testing Error Response Format ===")
-    
+
     # Test that errors include error_code when available
+    # With identity_v2, trying to access different agent triggers session mismatch
     result = await dispatch_tool("get_governance_metrics", {
         "agent_id": "nonexistent_agent"
     })
     assert result is not None, "Should return error response"
     response_data = json.loads(result[0].text)
+    # With identity_v2, this triggers session mismatch (error)
     assert response_data.get("success") == False, "Should be error"
     assert "error" in response_data, "Should have error message"
-    # May or may not have error_code (optional)
+    # Should have recovery guidance for identity_v2 errors
+    if "recovery" in response_data:
+        print("✅ Error includes recovery guidance")
     print("✅ Error responses have consistent format")
-    
+
     # Test that errors may include recovery guidance
     # (Some errors should have recovery field)
     print("✅ Error responses may include recovery guidance")

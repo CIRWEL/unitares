@@ -71,12 +71,16 @@ python src/mcp_server_std.py
 
 ## MCP Configuration
 
+> **IMPORTANT: Trailing slash required!** URLs must end with `/mcp/` (not `/mcp`).
+> Without the trailing slash, you'll get a 307 redirect that most MCP clients don't follow.
+
 **Cursor / Claude Desktop (Streamable HTTP - recommended):**
 ```json
 {
   "mcpServers": {
     "unitares": {
-      "url": "http://localhost:8765/mcp"
+      "type": "http",
+      "url": "http://localhost:8767/mcp/"
     }
   }
 }
@@ -87,7 +91,8 @@ python src/mcp_server_std.py
 {
   "mcpServers": {
     "unitares": {
-      "url": "https://unitares.ngrok.io/mcp",
+      "type": "http",
+      "url": "https://unitares.ngrok.io/mcp/",
       "headers": {
         "Authorization": "Basic <base64-credentials>"
       }
@@ -102,7 +107,7 @@ python src/mcp_server_std.py
   "mcpServers": {
     "unitares": {
       "type": "sse",
-      "url": "http://localhost:8765/sse"
+      "url": "http://localhost:8767/sse"
     }
   }
 }

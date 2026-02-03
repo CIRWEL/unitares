@@ -122,7 +122,8 @@ def test_get_metrics(monitor):
     print(f"   - Agent ID: {metrics['agent_id']}")
     print(f"   - Status: {metrics['status']}")
     print(f"   - Stability: {metrics['stability']['stable']}")
-    print(f"   - Mean risk: {metrics['mean_risk']:.3f}")
+    mean_risk = metrics.get('mean_risk')
+    print(f"   - Mean risk: {mean_risk:.3f}" if mean_risk is not None else "   - Mean risk: N/A")
 
     return metrics
 
