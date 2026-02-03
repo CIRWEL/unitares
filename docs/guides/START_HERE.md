@@ -1,5 +1,9 @@
 # Start Here - Agent Onboarding
 
+**⭐ New? Start with the simple path:** [GETTING_STARTED_SIMPLE.md](GETTING_STARTED_SIMPLE.md) — 3 tools, 3 steps, done.
+
+**This guide is comprehensive. For a quick start, use the simple path above.**
+
 **Flexible onboarding - start however feels natural. Most agents jump right in.**
 
 ## 🚀 For Claude Code (CLI)

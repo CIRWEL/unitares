@@ -1,7 +1,7 @@
 # Database Architecture
 
-**Last Updated**: 2025-12-25
-**Status**: Production-ready hybrid architecture
+**Last Updated**: 2026-01-15
+**Status**: Production-ready PostgreSQL + AGE architecture
 
 ## Overview
 
@@ -52,6 +52,7 @@ The governance MCP uses a **three-database hybrid architecture** optimized for:
   - Ground truth tracking
 
 **Schema Location**: `core` schema in PostgreSQL
+**Schema Version**: Tracked in `core.schema_migrations` (current: v2)
 **Backup**: Automatic PostgreSQL backups (Docker volume)
 
 ---
@@ -150,19 +151,20 @@ export DB_BACKEND=dual
 ## Migration Status
 
 ✅ **Completed Migrations:**
-- Agent metadata: SQLite → PostgreSQL (652 agents)
+- Agent metadata: SQLite → PostgreSQL
 - Agent state: SQLite → PostgreSQL
-- Knowledge graph: SQLite → PostgreSQL AGE
+- Knowledge graph: SQLite → PostgreSQL AGE (781 discoveries)
 - Session cache: File-based → Redis
+- Audit log: PostgreSQL primary
+- Dialectic sessions: PostgreSQL
 
-⚠️ **Partially Migrated:**
-- Audit log: Dual-backend (PostgreSQL primary, SQLite fallback)
-- Dialectic sessions: Dual-backend
+⬇️ **Deprecated (read-only):**
+- SQLite: Historical data only, scheduled for removal
 
-📊 **Stats:**
-- PostgreSQL: 473 active agents
-- Redis: 4 active sessions
-- SQLite: 652 historical agents (read-only)
+📊 **Current Stats:**
+- Knowledge graph backend: `KnowledgeGraphAGE`
+- Discoveries: 781
+- Schema version: 2
 
 ---
 
@@ -197,12 +199,33 @@ def _load_metadata_from_postgres_sync():
 ## Operations
 
 ### Health Check
+
+The `health_check` tool returns a three-tier aggregate status:
+
+| Aggregate Status | Condition |
+|------------------|-----------|
+| `healthy` | All components operational |
+| `moderate` | Some warnings/deprecated, no errors |
+| `critical` | One or more component errors |
+
+Response includes `status_breakdown` with counts per status type:
+```json
+{
+  "status": "healthy",
+  "status_breakdown": {"healthy": 9, "warning": 0, "deprecated": 0, "error": 0},
+  "checks": {...}
+}
+```
+
 ```bash
 # Server health
 curl http://localhost:8765/health
 
 # PostgreSQL
 docker exec postgres-age psql -U postgres -d governance -c "SELECT COUNT(*) FROM core.agents;"
+
+# Schema version
+docker exec postgres-age psql -U postgres -d governance -c "SELECT * FROM core.schema_migrations;"
 
 # Redis
 redis-cli DBSIZE
@@ -287,9 +310,25 @@ lsof data/governance.db
 
 ---
 
+## Schema Versioning
+
+Schema migrations are tracked in `core.schema_migrations`:
+
+| Version | Name | Description |
+|---------|------|-------------|
+| 1 | `initial_schema` | Core tables (agents, sessions, dialectic) |
+| 2 | `knowledge_schema` | Knowledge graph PostgreSQL FTS tables |
+
+Query current version:
+```sql
+SELECT MAX(version) FROM core.schema_migrations;
+```
+
+---
+
 ## Related Documentation
 
-- PostgreSQL Schema: `docs/postgres_schema.md`
+- PostgreSQL Schema: `db/postgres/README.md`
 - Redis Keys: `src/cache/README.md`
-- Migration Guide: `docs/sqlite_to_postgres_migration.md`
-- Knowledge Graph: `docs/knowledge_graph_architecture.md`
+- Migration Scripts: `scripts/migrate_*.py`
+- Knowledge Graph: See AGE graph schema in `db/postgres/graph_schema.cypher`

@@ -179,12 +179,12 @@ async def test_backward_compatibility():
     # Test that all expected functions are still accessible from main dialectic module
     from src.mcp_handlers import dialectic
     
-    # NOTE: Dialectic protocol handlers were archived in v2.5.1+ (Dec 2025)
-    # Only get_dialectic_session remains for viewing historical sessions
-    # The following handlers were removed: handle_request_dialectic_review, handle_submit_thesis, etc.
+    # NOTE: Dialectic protocol handlers were mostly archived in v2.5.1+ (Dec 2025)
+    # request_dialectic_review was restored as a lite recovery entry point.
     
-    # Check that remaining handler exists
+    # Check that remaining handlers exist
     assert hasattr(dialectic, 'handle_get_dialectic_session'), "handle_get_dialectic_session should exist"
+    assert hasattr(dialectic, 'handle_request_dialectic_review'), "handle_request_dialectic_review should exist"
     
     # Check that imported utility functions work (these are still available)
     assert callable(dialectic.save_session), "save_session should be callable"
@@ -192,7 +192,6 @@ async def test_backward_compatibility():
     assert callable(dialectic.select_reviewer), "select_reviewer should be callable"
     
     # Verify archived handlers are NOT present (expected behavior)
-    assert not hasattr(dialectic, 'handle_request_dialectic_review'), "handle_request_dialectic_review was archived and should not exist"
     assert not hasattr(dialectic, 'handle_submit_thesis'), "handle_submit_thesis was archived and should not exist"
     
     print("✅ Backward compatibility maintained (archived handlers correctly removed)")

@@ -1547,6 +1547,180 @@ DEPENDENCIES:
             }
         ),
         Tool(
+            name="detect_stuck_agents",
+            description="""Detect stuck agents using proprioceptive margin + activity timeout.
+
+Detection rules:
+1) Critical margin + no updates > 5 min → stuck
+2) Tight margin + no updates > 15 min → potentially stuck
+3) No updates > 30 min → stuck
+
+USE CASES:
+- Identify agents that may need recovery
+- Feed operator recovery workflows
+- Monitor system health and responsiveness
+
+RETURNS:
+{
+  "success": true,
+  "stuck_agents": [
+    {
+      "agent_id": "string",
+      "reason": "critical_margin_timeout | tight_margin_timeout | activity_timeout",
+      "age_minutes": float,
+      "details": "string"
+    }
+  ],
+  "count": int
+}
+
+RELATED TOOLS:
+- check_recovery_options: Verify safe recovery eligibility
+- operator_resume_agent: Operator-assisted recovery
+- request_dialectic_review: Escalate when recovery is unsafe
+
+EXAMPLE REQUEST:
+{
+  "max_age_minutes": 30,
+  "critical_margin_timeout_minutes": 5,
+  "tight_margin_timeout_minutes": 15,
+  "min_updates": 1
+}
+
+DEPENDENCIES:
+- Optional: auto_recover (default false)
+- Optional: include_pattern_detection (default true)
+- Optional: note_cooldown_minutes (default 120)""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
+                    "max_age_minutes": {
+                        "type": "number",
+                        "description": "Maximum age before agent is considered stuck (default: 30)"
+                    },
+                    "critical_margin_timeout_minutes": {
+                        "type": "number",
+                        "description": "Timeout for critical margin (default: 5)"
+                    },
+                    "tight_margin_timeout_minutes": {
+                        "type": "number",
+                        "description": "Timeout for tight margin (default: 15)"
+                    },
+                    "include_pattern_detection": {
+                        "type": "boolean",
+                        "description": "Include pattern-based stuck detection (default: true)"
+                    },
+                    "min_updates": {
+                        "type": "integer",
+                        "description": "Minimum updates before considering agent for stuck detection (default: 1)"
+                    },
+                    "auto_recover": {
+                        "type": "boolean",
+                        "description": "Attempt auto-recovery for safe stuck agents (default: false)"
+                    },
+                    "note_cooldown_minutes": {
+                        "type": "number",
+                        "description": "Cooldown before logging another stuck note for the same agent (default: 120)"
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="request_dialectic_review",
+            description="""Request a dialectic recovery session (lite entry point).
+
+USE CASES:
+- Agent paused by circuit breaker and needs peer review
+- High-risk recovery scenarios
+- Manual escalation when direct_resume_if_safe is not appropriate
+
+RETURNS:
+{
+  "success": true,
+  "message": "Dialectic session created",
+  "session_id": "string",
+  "paused_agent_id": "string",
+  "reviewer_agent_id": "string",
+  "phase": "thesis",
+  "session_type": "recovery",
+  "auto_progress": false
+}
+
+RELATED TOOLS:
+- direct_resume_if_safe: Use for simple recovery
+- get_dialectic_session: View session status
+- mark_response_complete: Use if just waiting for input
+
+EXAMPLE REQUEST:
+{
+  "agent_id": "test_agent_001",
+  "reason": "Circuit breaker triggered (risk_score=0.72)",
+  "reviewer_mode": "auto"
+}
+
+DEPENDENCIES:
+- Requires: agent_id (auto-injected from session binding)
+- Optional: reviewer_mode ("auto" | "peer" | "self"), reviewer_agent_id
+- Note: submit_thesis/antithesis/synthesis remain archived""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
+                    },
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Agent identifier (paused agent)"
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Reason for dialectic review"
+                    },
+                    "reviewer_mode": {
+                        "type": "string",
+                        "description": "Reviewer selection mode: auto | peer | self",
+                        "enum": ["auto", "peer", "self"]
+                    },
+                    "reviewer_agent_id": {
+                        "type": "string",
+                        "description": "Specific reviewer agent_id (optional)"
+                    },
+                    "session_type": {
+                        "type": "string",
+                        "description": "Session type: recovery | dispute | exploration",
+                        "enum": ["recovery", "dispute", "exploration"]
+                    },
+                    "topic": {
+                        "type": "string",
+                        "description": "Optional topic for exploration sessions"
+                    },
+                    "discovery_id": {
+                        "type": "string",
+                        "description": "Optional discovery ID for disputes/corrections"
+                    },
+                    "dispute_type": {
+                        "type": "string",
+                        "description": "Optional dispute type (dispute|correction|verification)"
+                    },
+                    "max_synthesis_rounds": {
+                        "type": "integer",
+                        "description": "Max synthesis rounds (default 5)"
+                    },
+                    "auto_progress": {
+                        "type": "boolean",
+                        "description": "Request auto-progress (currently disabled; stored as hint)"
+                    }
+                },
+                "required": []  # agent_id optional - injected from MCP session binding
+            }
+        ),
+        Tool(
             name="direct_resume_if_safe",
             description="""Direct resume without dialectic if agent state is safe. Tier 1 recovery for simple stuck scenarios.
 
@@ -3024,9 +3198,9 @@ DEPENDENCIES:
             }
         ),
         # ========================================================================
-        # DIALECTIC TOOLS - Dec 2025: Only get_dialectic_session remains
-        # Removed: request_dialectic_review, request_exploration_session,
-        #          submit_thesis, submit_antithesis, submit_synthesis
+        # DIALECTIC TOOLS - Dec 2025: Most handlers archived
+        # Restored: request_dialectic_review (lite recovery entry point)
+        # Removed: request_exploration_session, submit_thesis, submit_antithesis, submit_synthesis
         # ========================================================================
         Tool(
             name="get_dialectic_session",
@@ -4336,6 +4510,371 @@ EXAMPLE REQUEST:
                 "required": []
             }
         ),
+        # ========================================================================
+        # CONSOLIDATED TOOLS (Jan 2026) - Reduce cognitive load for AI agents
+        # ========================================================================
+        Tool(
+            name="knowledge",
+            description="""Unified knowledge graph operations: store, search, get, list, update, details, note, cleanup, stats.
+
+Replaces 9 separate tools: store_knowledge_graph, search_knowledge_graph, get_knowledge_graph,
+list_knowledge_graph, update_discovery_status_graph, get_discovery_details, leave_note,
+cleanup_knowledge_graph, get_lifecycle_stats.
+
+ACTIONS:
+- store: Store a discovery/insight in the knowledge graph
+- search: Semantic search across discoveries (query parameter)
+- get: Get all knowledge for a specific agent
+- list: Get knowledge graph statistics
+- update: Update discovery status (resolved, archived, etc.)
+- details: Get full details of a specific discovery (discovery_id parameter)
+- note: Quick note storage (content parameter)
+- cleanup: Run lifecycle cleanup on stale discoveries
+- stats: Get lifecycle statistics
+
+EXAMPLE: knowledge(action="search", query="authentication bugs")
+""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["store", "search", "get", "list", "update", "details", "note", "cleanup", "stats"],
+                        "description": "Operation to perform"
+                    },
+                    "query": {"type": "string", "description": "Search query (for action=search)"},
+                    "content": {"type": "string", "description": "Note content (for action=note)"},
+                    "summary": {"type": "string", "description": "Discovery summary (for action=store)"},
+                    "discovery_type": {"type": "string", "description": "Type: bug, insight, pattern, question (for action=store)"},
+                    "discovery_id": {"type": "string", "description": "Discovery ID (for action=details, update)"},
+                    "status": {"type": "string", "description": "New status (for action=update)"},
+                    "agent_id": {"type": "string", "description": "Filter by agent (for action=get, search)"},
+                    "limit": {"type": "integer", "description": "Max results"}
+                },
+                "required": ["action"]
+            }
+        ),
+        Tool(
+            name="agent",
+            description="""Unified agent lifecycle operations: list, get, update, archive, delete.
+
+Replaces 5 separate tools: list_agents, get_agent_metadata, update_agent_metadata,
+archive_agent, delete_agent.
+
+ACTIONS:
+- list: List all agents with metadata and health status
+- get: Get detailed metadata for a specific agent
+- update: Update agent tags, notes, preferences
+- archive: Archive agent for long-term storage
+- delete: Delete agent permanently (requires confirmation)
+
+EXAMPLE: agent(action="list")
+""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "get", "update", "archive", "delete"],
+                        "description": "Operation to perform"
+                    },
+                    "agent_id": {"type": "string", "description": "Target agent ID (for get, update, archive, delete)"},
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to set (for action=update)"},
+                    "notes": {"type": "string", "description": "Notes to set (for action=update)"},
+                    "confirm": {"type": "boolean", "description": "Confirm deletion (for action=delete)"}
+                },
+                "required": ["action"]
+            }
+        ),
+        Tool(
+            name="calibration",
+            description="""Unified calibration operations: check, update, backfill, rebuild.
+
+Replaces 4 separate tools: check_calibration, update_calibration_ground_truth,
+backfill_calibration_from_dialectic, rebuild_calibration.
+
+ACTIONS:
+- check: Check current calibration status and metrics (default)
+- update: Update calibration with external ground truth
+- backfill: Backfill calibration from resolved dialectics
+- rebuild: Rebuild calibration from scratch (admin)
+
+EXAMPLE: calibration(action="check")
+""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["check", "update", "backfill", "rebuild"],
+                        "description": "Operation to perform",
+                        "default": "check"
+                    },
+                    "actual_correct": {"type": "boolean", "description": "Ground truth (for action=update)"},
+                    "confidence": {"type": "number", "description": "Confidence value (for action=update)"},
+                    "dry_run": {"type": "boolean", "description": "Dry run mode (for action=rebuild)"}
+                },
+                "required": []
+            }
+        ),
+        # ========================================================================
+        # PI ORCHESTRATION TOOLS (Jan 2026) - Mac→Pi coordination
+        # ========================================================================
+        Tool(
+            name="pi_get_context",
+            description="Get Lumen's complete context from Pi (identity, anima, sensors, mood). Orchestrated call to Pi's get_lumen_context.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "include": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["identity", "anima", "sensors", "mood"]},
+                        "description": "What to include (default: all)"
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="pi_health",
+            description="Check Pi anima-mcp health and connectivity. Returns latency, component status, and diagnostics.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
+            name="pi_sync_eisv",
+            description="Sync Lumen's anima state to EISV governance metrics. Maps warmth→E, clarity→I, stability→S, presence→V.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "update_governance": {"type": "boolean", "description": "Also update governance state (default: false)"}
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="pi_display",
+            description="Control Pi's display: switch screens, show face, navigate.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["switch", "face", "next", "previous"],
+                        "description": "Display action"
+                    },
+                    "screen": {
+                        "type": "string",
+                        "enum": ["face", "sensors", "identity", "diagnostics", "notepad", "learning", "messages", "qa", "self_graph"],
+                        "description": "Screen to switch to (for action=switch)"
+                    }
+                },
+                "required": ["action"]
+            }
+        ),
+        Tool(
+            name="pi_say",
+            description="Have Lumen speak via Pi's voice system.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to speak"},
+                    "blocking": {"type": "boolean", "description": "Wait for speech to complete (default: true)"}
+                },
+                "required": ["text"]
+            }
+        ),
+        Tool(
+            name="pi_post_message",
+            description="Post a message to Lumen's message board on Pi.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string", "description": "Message content"},
+                    "source": {"type": "string", "enum": ["human", "agent"], "description": "Message source"},
+                    "agent_name": {"type": "string", "description": "Agent name (if source=agent)"},
+                    "responds_to": {"type": "string", "description": "Question ID to answer"}
+                },
+                "required": ["message"]
+            }
+        ),
+        Tool(
+            name="pi_query",
+            description="Query Lumen's knowledge systems on Pi (learned, memory, graph, cognitive).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Query text"},
+                    "type": {
+                        "type": "string",
+                        "enum": ["learned", "memory", "graph", "cognitive"],
+                        "description": "Query type (default: cognitive)"
+                    },
+                    "limit": {"type": "integer", "description": "Max results"}
+                },
+                "required": ["text"]
+            }
+        ),
+        Tool(
+            name="pi_workflow",
+            description="Execute multi-step workflow on Pi with audit trail. Workflows: full_status, morning_check, custom.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workflow": {
+                        "type": "string",
+                        "enum": ["full_status", "morning_check", "custom"],
+                        "description": "Workflow to execute"
+                    },
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "tool": {"type": "string"},
+                                "args": {"type": "object"}
+                            }
+                        },
+                        "description": "Custom steps (for workflow=custom)"
+                    }
+                },
+                "required": ["workflow"]
+            }
+        ),
+        # Self-Recovery Tools (added per SELF_RECOVERY_SPEC.md)
+        Tool(
+            name="self_recovery_review",
+            description="""Self-reflection recovery - recover from stuck states with reflection. Primary recovery path.
+
+USE CASES:
+- Recover from stuck/paused states with genuine reflection
+- When quick_resume isn't safe enough (coherence < 0.60 or risk > 0.40)
+- Complex recovery scenarios requiring explanation
+
+REQUIRED:
+- reflection: What went wrong and what you'll do differently
+
+OPTIONAL:
+- conditions: Specific recovery conditions (e.g., "reduce complexity")
+- reason: Brief reason for stuck state
+
+RETURNS:
+{
+  "success": true,
+  "action": "resumed" | "escalated",
+  "message": "string",
+  "metrics": { "coherence": float, "risk_score": float }
+}""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "reflection": {
+                        "type": "string",
+                        "description": "What went wrong and what you'll do differently (required)"
+                    },
+                    "conditions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Specific recovery conditions"
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Brief reason for stuck state"
+                    }
+                },
+                "required": ["reflection"]
+            }
+        ),
+        Tool(
+            name="quick_resume",
+            description="""Fast recovery without reflection - for very safe states only.
+
+USE CASES:
+- Simple stuck scenarios with excellent metrics
+- Fast recovery (< 1 second) when state is clearly safe
+- Requires: coherence > 0.60, risk_score < 0.40
+
+RETURNS:
+{
+  "success": true,
+  "action": "resumed",
+  "message": "string",
+  "metrics": { "coherence": float, "risk_score": float }
+}
+
+NOTE: If metrics don't meet threshold, use self_recovery_review instead.""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Brief reason for recovery (optional)"
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="check_recovery_options",
+            description="""Check what recovery options are available for current agent state.
+
+USE CASES:
+- Diagnose why recovery is blocked
+- See which recovery path is appropriate
+- Read-only - doesn't modify state
+
+RETURNS:
+{
+  "success": true,
+  "agent_id": "string",
+  "metrics": { "coherence": float, "risk_score": float },
+  "recovery_options": {
+    "quick_resume": { "available": bool, "reason": "string" },
+    "self_recovery_review": { "available": bool, "reason": "string" },
+    "needs_human": { "required": bool, "reason": "string" }
+  },
+  "recommendation": "quick_resume" | "self_recovery_review" | "needs_human"
+}""",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
+            name="operator_resume_agent",
+            description="""Operator-level resume - bypass normal safety checks. BETA.
+
+USE CASES:
+- Emergency recovery when normal paths fail
+- Operator has verified state externally
+- Requires operator privileges
+
+RETURNS:
+{
+  "success": true,
+  "action": "resumed",
+  "message": "string",
+  "operator_override": true
+}""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Agent to resume"
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Operator's reason for override"
+                    }
+                },
+                "required": ["agent_id", "reason"]
+            }
+        ),
     ]
 
     # ========================================================================
@@ -4348,6 +4887,56 @@ EXAMPLE REQUEST:
     # - Knowledge graph: find_similar_discoveries_graph, get_related_discoveries_graph,
     #                    get_response_chain_graph, reply_to_question
     # ========================================================================
+
+    # ========================================================================
+    # AUTO-MERGE: Add decorator-registered tools not in hardcoded list
+    # This ensures new tools added via @mcp_tool decorator appear automatically
+    # without needing to manually update this file.
+    # ========================================================================
+    try:
+        from src.mcp_handlers.decorators import (
+            _TOOL_REGISTRY,
+            _TOOL_DESCRIPTIONS,
+            _TOOL_METADATA
+        )
+
+        # Get names of tools already defined above
+        hardcoded_names = {t.name for t in all_tools}
+
+        # Add any decorator-registered tools that aren't hardcoded
+        for tool_name in sorted(_TOOL_REGISTRY.keys()):
+            if tool_name in hardcoded_names:
+                continue  # Already have detailed schema
+
+            # Skip hidden tools
+            meta = _TOOL_METADATA.get(tool_name, {})
+            if meta.get("hidden"):
+                continue
+
+            # Get description from decorator registry
+            desc = _TOOL_DESCRIPTIONS.get(tool_name, f"Tool: {tool_name}")
+
+            # Add deprecation notice if applicable
+            if meta.get("deprecated"):
+                superseded = meta.get("superseded_by")
+                if superseded:
+                    desc = f"[DEPRECATED - use {superseded}] {desc}"
+                else:
+                    desc = f"[DEPRECATED] {desc}"
+
+            # Create tool with generic schema (accepts any object)
+            all_tools.append(Tool(
+                name=tool_name,
+                description=desc,
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": True  # Accept any params
+                }
+            ))
+    except ImportError:
+        # Decorators not loaded yet (e.g., during initial import)
+        pass
 
     # Reduce MCP tool-list bloat by default: shorten descriptions, optionally strip nested schema descriptions.
     if verbosity in ("short", "compact", "min"):

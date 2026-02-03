@@ -166,6 +166,20 @@ CREATE INDEX IF NOT EXISTS idx_agent_state_identity_time ON core.agent_state(ide
 CREATE INDEX IF NOT EXISTS idx_agent_state_regime ON core.agent_state(regime) WHERE regime != 'nominal';
 
 -- -----------------------------------------------------------------------------
+-- Schema Migrations (track applied migrations)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS core.schema_migrations (
+    version             INTEGER PRIMARY KEY,
+    name                TEXT NOT NULL,
+    applied_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Insert initial migration marker
+INSERT INTO core.schema_migrations (version, name, applied_at)
+VALUES (1, 'initial_schema', NOW())
+ON CONFLICT (version) DO NOTHING;
+
+-- -----------------------------------------------------------------------------
 -- Calibration (single-row config)
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS core.calibration (

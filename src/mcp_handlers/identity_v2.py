@@ -1469,6 +1469,22 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         "date_context": _get_date_context(),
     }
 
+    # Add tool mode info so agents know what subset they're seeing
+    try:
+        from src.tool_modes import TOOL_MODE, get_tools_for_mode
+        from src.tool_schemas import get_tool_definitions
+        all_tools = get_tool_definitions()
+        mode_tools = get_tools_for_mode(TOOL_MODE)
+        result["tool_mode"] = {
+            "current_mode": TOOL_MODE,
+            "visible_tools": len(mode_tools),
+            "total_tools": len(all_tools),
+            "available_modes": ["minimal", "lite", "full"],
+            "tip": f"You're seeing {len(mode_tools)}/{len(all_tools)} tools in '{TOOL_MODE}' mode. Use list_tools() for discovery, or ask for ?mode=full if you need more."
+        }
+    except Exception as e:
+        logger.debug(f"Could not add tool_mode info: {e}")
+
     # Add workflow guidance for new agents
     if is_new or force_new:
         result.update({

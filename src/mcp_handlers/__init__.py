@@ -40,6 +40,7 @@ from .lifecycle import (
     # handle_get_agent_api_key REMOVED Dec 2025 - aliased to identity()
     handle_mark_response_complete,
     handle_direct_resume_if_safe,
+    handle_self_recovery_review,  # Added per SELF_RECOVERY_SPEC.md
     handle_detect_stuck_agents,
     handle_ping_agent,
 )
@@ -77,6 +78,13 @@ from .knowledge_graph import (
 )
 # Dialectic - Only get_dialectic_session remains (Dec 2025)
 from .dialectic import handle_get_dialectic_session
+# Self-Recovery - Simplified recovery without external reviewers (Jan 2026)
+# Note: handle_self_recovery_review moved to lifecycle.py per SELF_RECOVERY_SPEC.md
+from .self_recovery import (
+    handle_quick_resume,
+    handle_check_recovery_options,
+    handle_operator_resume_agent,
+)
 # Identity - v2 simplified (Dec 2025, 3-path architecture)
 from .identity_v2 import (
     handle_identity_adapter as handle_identity,
@@ -86,6 +94,37 @@ from .identity_v2 import (
 from .model_inference import handle_call_model
 # ROI Metrics - Customer value tracking
 from .roi_metrics import handle_get_roi_metrics
+# Pi Orchestration - Mac→Pi coordination (Jan 2026)
+from .pi_orchestration import (
+    handle_pi_get_context,
+    handle_pi_health,
+    handle_pi_sync_eisv,
+    handle_pi_display,
+    handle_pi_say,
+    handle_pi_post_message,
+    handle_pi_query,
+    handle_pi_workflow,
+    # Background tasks
+    eisv_sync_task,
+    sync_eisv_once,
+)
+# Consolidated tools - reduces cognitive load for agents (Jan 2026)
+from .consolidated import (
+    handle_knowledge,
+    handle_agent,
+    handle_calibration,
+)
+# CIRS Protocol - Multi-agent resonance layer (Feb 2026)
+# See: UARG Whitepaper for protocol specification
+from .cirs_protocol import (
+    handle_void_alert,
+    handle_state_announce,
+    handle_coherence_report,
+    handle_boundary_contract,
+    handle_governance_action,
+    maybe_emit_void_alert,  # Hook for process_agent_update
+    auto_emit_state_announce,  # Hook for process_agent_update
+)
 # Pi sensor tools removed Dec 2025 - building separate lightweight Pi MCP
 # Keep helper functions from identity.py (used by dispatch_tool)
 from .identity import (

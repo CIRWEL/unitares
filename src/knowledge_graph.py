@@ -751,23 +751,35 @@ async def get_knowledge_graph() -> Any:
     """
     Get global knowledge graph instance (singleton).
 
-    Backend selection:
-    - UNITARES_KNOWLEDGE_BACKEND=age    -> force AGE (PostgreSQL + Apache AGE) backend
-    - UNITARES_KNOWLEDGE_BACKEND=sqlite -> force SQLite backend
-    - UNITARES_KNOWLEDGE_BACKEND=json   -> force JSON backend
-    - UNITARES_KNOWLEDGE_BACKEND=auto   -> use SQLite if `data/knowledge.db` exists, else JSON
+    Backend selection (priority order):
+    1. UNITARES_KNOWLEDGE_BACKEND env var (explicit override)
+       - age    -> force AGE (PostgreSQL + Apache AGE) backend
+       - postgres -> force PostgreSQL FTS backend
+       - sqlite -> force SQLite backend
+       - json   -> force JSON backend
+       - auto   -> see below
+    2. DB_BACKEND env var (implicit selection when UNITARES_KNOWLEDGE_BACKEND=auto)
+       - postgres -> use PostgreSQL FTS backend (consolidates all data in PostgreSQL)
+       - otherwise -> use SQLite if `data/governance.db` exists, else JSON
     """
     global _graph_instance, _graph_lock
-    
+
     # Create lock lazily in the current event loop (fixes import-time binding issue)
     if _graph_lock is None:
         _graph_lock = asyncio.Lock()
-    
+
     async with _graph_lock:
         if _graph_instance is not None:
             return _graph_instance
 
         backend = os.getenv("UNITARES_KNOWLEDGE_BACKEND", "auto").strip().lower()
+        db_backend = os.getenv("DB_BACKEND", "postgres").strip().lower()
+
+        # If auto and main database is PostgreSQL, use PostgreSQL for knowledge graph too
+        # This consolidates all data in a single database for simpler operations
+        if backend == "auto" and db_backend == "postgres":
+            backend = "postgres"
+            logger.info("Auto-selecting PostgreSQL knowledge backend (DB_BACKEND=postgres)")
 
         # AGE backend (PostgreSQL + Apache AGE)
         if backend == "age":

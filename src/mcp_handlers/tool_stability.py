@@ -173,13 +173,17 @@ _TOOL_ALIASES: Dict[str, ToolAlias] = {
     ),
     # NOTE: who_am_i is NOT aliased - it has its own handler in admin.py
 
-    # Dialectic tools - all point to get_dialectic_session (the only active one)
-    "request_dialectic_review": ToolAlias(
-        old_name="request_dialectic_review",
-        new_name="get_dialectic_session",
-        reason="consolidated",
-        migration_note="Use get_dialectic_session() to view/manage dialectic sessions"
+    # Recovery tools - consolidated recovery hierarchy (Jan 2026)
+    # direct_resume_if_safe is deprecated in favor of clearer recovery paths
+    "direct_resume_if_safe": ToolAlias(
+        old_name="direct_resume_if_safe",
+        new_name="quick_resume",  # Default to quick_resume, but suggest self_recovery_review if thresholds not met
+        reason="deprecated",
+        deprecated_since=datetime(2026, 1, 29),
+        migration_note="Use quick_resume() if coherence > 0.60 and risk < 0.40, otherwise use self_recovery_review(reflection='...')"
     ),
+    
+    # Dialectic tools - legacy creation remains archived (except request_dialectic_review restored)
     "request_exploration_session": ToolAlias(
         old_name="request_exploration_session",
         new_name="get_dialectic_session",
@@ -260,6 +264,9 @@ _TOOL_STABILITY: Dict[str, ToolStability] = {
     "health_check": ToolStability.STABLE,
     "list_tools": ToolStability.STABLE,
     "describe_tool": ToolStability.STABLE,
+    "self_recovery_review": ToolStability.STABLE,  # Primary recovery path
+    "quick_resume": ToolStability.STABLE,  # Fast recovery path
+    "check_recovery_options": ToolStability.STABLE,  # Diagnostic tool
 
     # BETA: Mostly stable, minor changes possible
     "get_dialectic_session": ToolStability.BETA,  # Only active dialectic tool
@@ -268,6 +275,11 @@ _TOOL_STABILITY: Dict[str, ToolStability] = {
     "archive_agent": ToolStability.BETA,
     "update_discovery_status_graph": ToolStability.BETA,
     "leave_note": ToolStability.BETA,
+    "operator_resume_agent": ToolStability.BETA,  # Operator tool
+    
+    # DEPRECATED: Will be removed in v2.0
+    "direct_resume_if_safe": ToolStability.EXPERIMENTAL,  # Deprecated - use quick_resume or self_recovery_review
+    "request_dialectic_review": ToolStability.EXPERIMENTAL,  # Deprecated - use self_recovery_review
 
     # EXPERIMENTAL: WIP, may change/break
     "simulate_update": ToolStability.EXPERIMENTAL,

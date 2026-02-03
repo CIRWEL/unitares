@@ -592,6 +592,7 @@ mcp = FastMCP(
         allowed_origins=[
             "http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*",
             "http://192.168.1.164:*", "https://unitares.ngrok.io",
+            "null", "*",  # Allow file:// access (origin is opaque 'null') and wildcards
         ],
     ),
 )
@@ -712,6 +713,7 @@ TOOLS_NEEDING_SESSION_INJECTION = {
     "get_system_history",
     "export_to_file",
     "mark_response_complete",
+    "request_dialectic_review",
     "direct_resume_if_safe",
     "update_discovery_status_graph",
     "get_discovery_details",
@@ -1777,7 +1779,9 @@ async def main():
                         "max_age_minutes": 30.0,
                         "critical_margin_timeout_minutes": 5.0,
                         "tight_margin_timeout_minutes": 15.0,
-                        "auto_recover": True
+                        "auto_recover": True,
+                        "min_updates": 1,
+                        "note_cooldown_minutes": 120.0
                     })
                     
                     # Parse result (it's a Sequence[TextContent] with JSON content)
@@ -1818,6 +1822,33 @@ async def main():
         
         # Start stuck agent recovery task (non-blocking)
         asyncio.create_task(stuck_agent_recovery_task())
+
+        # === Background task: Periodic EISV sync (Pi→Mac) ===
+        async def startup_eisv_sync():
+            """Start periodic EISV synchronization from Pi to Mac."""
+            await asyncio.sleep(5.0)  # Wait for server and SSH tunnel
+
+            try:
+                from src.mcp_handlers.pi_orchestration import eisv_sync_task, sync_eisv_once
+
+                # Run initial sync at startup
+                result = await sync_eisv_once(update_governance=False)
+                if result.get("success"):
+                    eisv = result.get("eisv", {})
+                    logger.info(
+                        f"[EISV_SYNC] Initial sync: E={eisv.get('E', 0):.2f} "
+                        f"I={eisv.get('I', 0):.2f} S={eisv.get('S', 0):.2f} V={eisv.get('V', 0):.2f}"
+                    )
+                else:
+                    logger.warning(f"[EISV_SYNC] Initial sync failed: {result.get('error')} (will retry in background)")
+
+                # Start periodic background task (syncs every 5 minutes)
+                asyncio.create_task(eisv_sync_task(interval_minutes=5.0))
+                logger.info("[EISV_SYNC] Started periodic sync (runs every 5 minutes)")
+            except Exception as e:
+                logger.warning(f"[EISV_SYNC] Could not start sync task: {e}", exc_info=True)
+
+        asyncio.create_task(startup_eisv_sync())
 
         # === Server warmup task ===
         # Prevents "request before initialization" errors when multiple clients
@@ -1885,16 +1916,28 @@ async def main():
                 return f"http:unknown:{unique_id}"
         
         async def http_list_tools(request):
-            """List all tools in OpenAI-compatible format"""
+            """List all tools in OpenAI-compatible format
+
+            Query params:
+                mode: Tool mode filter - "minimal", "lite", "full" (default from GOVERNANCE_TOOL_MODE env)
+            """
             try:
                 if not _check_http_auth(request):
                     return _http_unauthorized()
                 from src.tool_schemas import get_tool_definitions
-                
+                from src.tool_modes import TOOL_MODE, should_include_tool
+
+                # Get mode from query param or env default
+                query_mode = request.query_params.get("mode", TOOL_MODE)
+
                 # get_tool_definitions() is synchronous, no await needed
                 mcp_tools = get_tool_definitions()
+
+                # Filter tools by mode
+                filtered_tools = [t for t in mcp_tools if should_include_tool(t.name, mode=query_mode)]
+
                 openai_tools = []
-                for tool in mcp_tools:
+                for tool in filtered_tools:
                     description = tool.description.split("\n")[0] if tool.description else f"Tool: {tool.name}"
                     openai_tools.append({
                         "type": "function",
@@ -1907,7 +1950,9 @@ async def main():
                 return JSONResponse({
                     "tools": openai_tools,
                     "count": len(openai_tools),
-                    "note": f"All {len(mcp_tools)} tools available (tool mode filtering removed)"
+                    "mode": query_mode,
+                    "total_available": len(mcp_tools),
+                    "note": f"Showing {len(filtered_tools)}/{len(mcp_tools)} tools in '{query_mode}' mode. Use ?mode=full for all."
                 })
             except Exception as e:
                 logger.error(f"Error listing tools: {e}", exc_info=True)

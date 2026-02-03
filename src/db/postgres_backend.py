@@ -52,8 +52,10 @@ class PostgresBackend(DatabaseBackend):
 
         self._pool: Optional[asyncpg.Pool] = None
         self._db_url = os.environ.get("DB_POSTGRES_URL", "postgresql://postgres:postgres@localhost:5432/governance")
-        self._min_conn = int(os.environ.get("DB_POSTGRES_MIN_CONN", "2"))
-        self._max_conn = int(os.environ.get("DB_POSTGRES_MAX_CONN", "10"))
+        # Increased default pool size to handle concurrent requests
+        # Can be overridden with DB_POSTGRES_MIN_CONN and DB_POSTGRES_MAX_CONN
+        self._min_conn = int(os.environ.get("DB_POSTGRES_MIN_CONN", "5"))
+        self._max_conn = int(os.environ.get("DB_POSTGRES_MAX_CONN", "25"))
         self._age_graph = os.environ.get("DB_AGE_GRAPH", "governance_graph")
         self._init_lock = None  # Will be created on first use
         self._last_pool_check = 0.0
@@ -79,6 +81,15 @@ class PostgresBackend(DatabaseBackend):
                     async with self._pool.acquire(timeout=5) as conn:
                         await conn.fetchval("SELECT 1")
                     self._last_pool_check = now
+                    
+                    # Check pool size and warn if getting full
+                    pool_size = self._pool.get_size()
+                    pool_max = self._pool.get_max_size()
+                    if pool_size >= pool_max * 0.9:  # 90% full
+                        logger.warning(
+                            f"Connection pool nearly full: {pool_size}/{pool_max}. "
+                            f"Consider increasing DB_POSTGRES_MAX_CONN or checking for connection leaks."
+                        )
                 except Exception as e:
                     logger.warning(f"Pool health check failed, recreating: {e}")
                     try:
@@ -110,6 +121,8 @@ class PostgresBackend(DatabaseBackend):
                         min_size=self._min_conn,
                         max_size=self._max_conn,
                         command_timeout=30,
+                        max_inactive_connection_lifetime=300,  # Close idle connections after 5 minutes
+                        max_queries=50000,  # Recycle connections after 50k queries
                     ),
                     timeout=5.0  # Fail fast if PostgreSQL isn't available
                 )
@@ -148,15 +161,26 @@ class PostgresBackend(DatabaseBackend):
 
             async def __aenter__(ctx_self):
                 pool = await ctx_self.backend._ensure_pool()
-                if ctx_self.timeout:
-                    ctx_self.conn = await pool.acquire(timeout=ctx_self.timeout)
-                else:
-                    ctx_self.conn = await pool.acquire()
-                return ctx_self.conn
+                try:
+                    # Use timeout to prevent hanging (default 10s)
+                    acquire_timeout = ctx_self.timeout or 10.0
+                    ctx_self.conn = await pool.acquire(timeout=acquire_timeout)
+                    return ctx_self.conn
+                except asyncio.TimeoutError:
+                    logger.error(f"Connection pool timeout after {acquire_timeout}s. Pool size: {pool.get_size()}, free: {pool.get_idle_size()}")
+                    raise ConnectionError(
+                        f"PostgreSQL connection pool exhausted. "
+                        f"Current pool: {pool.get_size()}/{pool.get_max_size()}. "
+                        f"Try increasing DB_POSTGRES_MAX_CONN or check for connection leaks."
+                    )
 
             async def __aexit__(ctx_self, exc_type, exc_val, exc_tb):
                 if ctx_self.conn and ctx_self.backend._pool:
-                    await ctx_self.backend._pool.release(ctx_self.conn)
+                    try:
+                        await ctx_self.backend._pool.release(ctx_self.conn)
+                    except Exception as e:
+                        logger.warning(f"Error releasing connection: {e}")
+                ctx_self.conn = None
                 return False
 
         return _AcquireContext(self, timeout)
@@ -179,6 +203,8 @@ class PostgresBackend(DatabaseBackend):
                     min_size=self._min_conn,
                     max_size=self._max_conn,
                     command_timeout=30,
+                    max_inactive_connection_lifetime=300,  # Close idle connections after 5 minutes
+                    max_queries=50000,  # Recycle connections after 50k queries
                 ),
                 timeout=5.0  # Fail fast if PostgreSQL isn't available
             )
@@ -231,10 +257,10 @@ class PostgresBackend(DatabaseBackend):
             # Basic connectivity
             result = await conn.fetchval("SELECT 1")
 
-            # Schema version
-            version = await conn.fetchval(
-                "SELECT data->>'version' FROM core.calibration WHERE id = TRUE"
-            )
+            # Schema version (from migrations table)
+            version = await conn.fetchval("""
+                SELECT MAX(version) FROM core.schema_migrations
+            """)
 
             # Counts
             identity_count = await conn.fetchval("SELECT COUNT(*) FROM core.identities")

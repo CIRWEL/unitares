@@ -14,8 +14,8 @@ Client-specific exclusions:
 from typing import Set
 import os
 
-# Read tool mode from environment (default: full)
-TOOL_MODE = os.getenv("GOVERNANCE_TOOL_MODE", "full").lower()
+# Read tool mode from environment (default: lite for reduced cognitive load)
+TOOL_MODE = os.getenv("GOVERNANCE_TOOL_MODE", "lite").lower()
 
 # Minimal mode: Essential tools + list_tools for discovery
 MINIMAL_MODE_TOOLS: Set[str] = {
@@ -56,6 +56,55 @@ LITE_MODE_TOOLS: Set[str] = {
     "search_knowledge_graph",     # Search discoveries
     "store_knowledge_graph",      # Record discoveries
     "leave_note",                 # Quick notes
+}
+
+# Operator read-only mode: Observability and detection tools for central operator agent
+# Used by operator agent for monitoring, stuck detection, and reporting (Phase 1)
+OPERATOR_READONLY_MODE_TOOLS: Set[str] = {
+    # Core observability
+    "list_agents",                # View all agents
+    "get_agent_metadata",         # Get agent details
+    "observe_agent",              # View agent state
+    "detect_stuck_agents",        # Essential: detect stuck agents
+    
+    # Governance metrics
+    "get_governance_metrics",     # Check agent state
+    "detect_anomalies",           # Anomaly detection
+    "get_telemetry_metrics",      # System telemetry
+    
+    # Knowledge graph (read-only)
+    "search_knowledge_graph",     # Search discoveries
+    "get_discovery_details",      # Get discovery details
+    "list_knowledge_graph",       # Overview statistics
+    "get_lifecycle_stats",        # KG lifecycle metrics
+    
+    # System health
+    "health_check",               # System status
+    "get_workspace_health",       # Workspace health
+    "get_tool_usage_stats",       # Tool usage statistics
+    
+    # Identity (for operator itself)
+    "identity",                   # Check/set operator identity
+    "onboard",                    # Operator onboarding
+    
+    # Discovery tools (always available)
+    "list_tools",                 # See available tools
+    "describe_tool",              # Get tool details
+}
+
+# Operator recovery mode: Adds recovery capabilities for stuck agents (Phase 2-3)
+# Jan 2026: Extends readonly mode with cross-agent recovery tools
+OPERATOR_RECOVERY_MODE_TOOLS: Set[str] = OPERATOR_READONLY_MODE_TOOLS | {
+    # Recovery tools
+    "operator_resume_agent",      # Resume stuck agents (operator-only)
+    "check_recovery_options",     # Check if agent is recoverable
+    
+    # Knowledge graph write (for audit trail)
+    "store_knowledge_graph",      # Log interventions
+    "leave_note",                 # Quick notes
+    
+    # Agent lifecycle (limited)
+    "mark_response_complete",     # Mark agents as waiting_input
 }
 
 # ============================================================================
@@ -108,6 +157,7 @@ TOOL_TIERS: dict[str, Set[str]] = {
         "update_agent_metadata",
         "archive_old_test_agents",
         "direct_resume_if_safe",
+        "request_dialectic_review",
         "backfill_calibration_from_dialectic",
         "reset_monitor",
         "set_thresholds",
@@ -143,6 +193,7 @@ TOOL_OPERATIONS: dict[str, str] = {
     "archive_old_test_agents": "write",   # Bulk archive
     "mark_response_complete": "write",    # Update agent status
     "direct_resume_if_safe": "write",     # Resume agent
+    "request_dialectic_review": "write",  # Start dialectic recovery
     "reset_monitor": "write",             # Reset agent state
 
     # Configuration
@@ -266,7 +317,7 @@ def get_tools_for_mode(mode: str = "full") -> Set[str]:
     Get tool set for specified mode
 
     Args:
-        mode: "minimal", "lite", "full", or category name (e.g., "core", "admin")
+        mode: "minimal", "lite", "full", "operator_readonly", or category name (e.g., "core", "admin")
 
     Returns:
         Set of tool names to include
@@ -276,6 +327,12 @@ def get_tools_for_mode(mode: str = "full") -> Set[str]:
     
     if mode == "lite":
         return LITE_MODE_TOOLS.copy()
+    
+    if mode == "operator_readonly":
+        return OPERATOR_READONLY_MODE_TOOLS.copy()
+
+    if mode == "operator_recovery":
+        return OPERATOR_RECOVERY_MODE_TOOLS.copy()
 
     if mode == "full":
         # IMPORTANT: Full mode must include *all* tools defined in the schema, not just

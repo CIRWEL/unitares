@@ -5,8 +5,11 @@ This directory contains the schema and setup files for migrating to PostgreSQL w
 ## Files
 
 - `schema.sql` - PostgreSQL relational schema (agents, sessions, dialectic, etc.)
+- `knowledge_schema.sql` - Knowledge graph relational tables (PostgreSQL FTS fallback)
 - `graph_schema.cypher` - AGE graph schema documentation and setup
+- `embeddings_schema.sql` - pgvector embeddings for semantic search
 - `partitions.sql` - (Optional) Partition management for audit tables
+- `migrations/` - Schema versioning migrations
 
 ## Setup Instructions
 
@@ -76,14 +79,32 @@ This repo standardizes on the AGE graph name **`governance_graph`**.
 - **Why**: the Postgres backend uses `DB_AGE_GRAPH` (defaulting to `governance_graph`) when calling `cypher(...)`.
 - **Rule**: if you create a different graph name locally, set `DB_AGE_GRAPH` accordingly or graph queries will fail.
 
-### 4.2 Optional: choose the Knowledge Graph backend
+### 4.2 Knowledge Graph Backend Selection
 
-The main runtime DB backend is controlled by `DB_BACKEND`, but the **knowledge graph** also supports a backend override:
+The main runtime DB backend is controlled by `DB_BACKEND`, but the **knowledge graph** also supports backend override via `UNITARES_KNOWLEDGE_BACKEND`:
+
+| Backend | Value | Description |
+|---------|-------|-------------|
+| **AGE** (recommended) | `age` | PostgreSQL + Apache AGE graph database |
+| **PostgreSQL FTS** | `postgres` | Native PostgreSQL with tsvector full-text search |
+| **SQLite** (legacy) | `sqlite` | Original SQLite FTS5 backend |
+| **Auto** (default) | `auto` | Selects `age` if available, falls back to `postgres` if `DB_BACKEND=postgres` |
 
 ```bash
-# Force AGE knowledge graph backend (PostgreSQL + Apache AGE)
+# Recommended: Use AGE for graph operations
 export UNITARES_KNOWLEDGE_BACKEND=age
+
+# Alternative: PostgreSQL FTS (no AGE dependency)
+export UNITARES_KNOWLEDGE_BACKEND=postgres
+
+# Auto-select based on DB_BACKEND setting
+export UNITARES_KNOWLEDGE_BACKEND=auto
 ```
+
+**Note:** When `UNITARES_KNOWLEDGE_BACKEND=auto` (default), the system will:
+1. Try AGE if `age` module is available
+2. Fall back to PostgreSQL FTS if `DB_BACKEND=postgres`
+3. Fall back to SQLite otherwise
 
 ### 5. Run Migration
 
@@ -95,6 +116,20 @@ python scripts/migrate_to_postgres_age.py --dry-run
 python scripts/migrate_to_postgres_age.py
 ```
 
+### 5.1 Knowledge Graph Migration (SQLite to PostgreSQL)
+
+If you have existing knowledge graph data in SQLite (`data/governance.db`):
+
+```bash
+# Preview what will be migrated
+python scripts/migrate_knowledge_to_postgres.py --dry-run
+
+# Run migration
+python scripts/migrate_knowledge_to_postgres.py --batch-size 100
+```
+
+This migrates discoveries, tags, and edges from SQLite to the PostgreSQL knowledge schema.
+
 ## Schema Overview
 
 ### Relational Tables (core schema)
@@ -103,6 +138,15 @@ python scripts/migrate_to_postgres_age.py
 - `core.agent_sessions` - Session bindings (fast lookup)
 - `core.dialectic_sessions` - Dialectic recovery sessions
 - `core.identities` - (Legacy) Identity records for backward compatibility
+- `core.schema_migrations` - Schema version tracking
+
+### Knowledge Schema (knowledge schema)
+
+When using PostgreSQL FTS backend (`UNITARES_KNOWLEDGE_BACKEND=postgres`):
+
+- `knowledge.discoveries` - Knowledge discoveries with native tsvector FTS
+- `knowledge.discovery_tags` - Normalized tag storage
+- `knowledge.discovery_edges` - Graph-like edges (related_to, response_to)
 
 ### Graph (AGE)
 
@@ -137,13 +181,40 @@ psql $DB_POSTGRES_URL -c "SELECT name, installed_version FROM pg_available_exten
 psql $DB_POSTGRES_URL -c "SELECT graphid, name FROM ag_catalog.ag_graph WHERE name='governance_graph'"
 ```
 
+## Schema Versioning
+
+Schema versions are tracked in `core.schema_migrations`:
+
+```sql
+SELECT version, name, applied_at FROM core.schema_migrations ORDER BY version;
+```
+
+| Version | Migration | Description |
+|---------|-----------|-------------|
+| 1 | `initial_schema` | Core tables (agents, sessions, dialectic) |
+| 2 | `knowledge_schema` | Knowledge graph tables for PostgreSQL FTS |
+
+The health check returns `schema_version` from this table.
+
+## Health Check Status
+
+The `/health_check` tool returns a three-tier aggregate status:
+
+| Status | Condition |
+|--------|-----------|
+| `healthy` | All components report healthy |
+| `moderate` | Some components have warnings/deprecated status, but no errors |
+| `critical` | One or more components report error |
+
+The response includes a `status_breakdown` field showing counts per status type.
+
 ## Migration Phases
 
 1. **Phase 1**: PostgreSQL tables for agents, sessions (keep JSON/SQLite for discoveries)
 2. **Phase 2**: Install AGE, create graph, dual-write discoveries
 3. **Phase 3**: Backfill historical discoveries to graph
 4. **Phase 4**: Cut over reads to AGE
-5. **Phase 5**: Deprecate JSON/SQLite
+5. **Phase 5**: Deprecate JSON/SQLite (current state)
 
 ## Troubleshooting
 

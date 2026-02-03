@@ -1,7 +1,7 @@
 # Dashboard Setup Guide
 
 **Created:** December 30, 2025  
-**Last Updated:** December 30, 2025  
+**Last Updated:** January 15, 2026  
 **Status:** Active
 
 ---
@@ -13,37 +13,42 @@ The web dashboard is automatically available when the MCP server is running.
 ### Access the Dashboard
 
 1. **Start the server:**
+
    ```bash
    python src/mcp_server_sse.py --port 8765
    ```
 
 2. **Open in browser:**
-   - Local: http://127.0.0.1:8765/dashboard
-   - Root: http://127.0.0.1:8765/
-   - Via ngrok: https://unitares.ngrok.io/dashboard
+
+   - Local: [http://127.0.0.1:8765/dashboard](http://127.0.0.1:8765/dashboard)
+   - Root: [http://127.0.0.1:8765/](http://127.0.0.1:8765/)
+   - Via ngrok: [https://unitares.ngrok.io/dashboard](https://unitares.ngrok.io/dashboard)
 
 ### What You'll See
 
 - **Stats Cards:** Total agents, active agents, discoveries, dialectic sessions
 - **Agent List:** Top 20 most recently active agents with EISV metrics
 - **Recent Discoveries:** Latest knowledge graph entries
-- **Auto-refresh:** Updates every 5 seconds
+- **Auto-refresh:** Updates every 10 seconds
 
 ## Features
 
 ### Real-Time Metrics
+
 - Total agent count
 - Active vs paused/archived breakdown
 - Knowledge graph discovery count
 - Dialectic session activity
 
 ### Agent Monitoring
+
 - Agent ID and display name
 - EISV metrics (Energy, Integrity, Coherence)
 - Status indicators (active/paused/archived)
 - Last update timestamp
 
 ### Knowledge Graph
+
 - Recent discoveries with summaries
 - Discovery type and agent attribution
 - Timestamps
@@ -51,6 +56,7 @@ The web dashboard is automatically available when the MCP server is running.
 ## Customization
 
 Edit `dashboard/index.html` to:
+
 - Change refresh interval (search for `setInterval`)
 - Modify displayed metrics
 - Adjust colors/styling
@@ -61,11 +67,13 @@ Edit `dashboard/index.html` to:
 ### Dashboard Not Loading
 
 1. **Check server is running:**
+
    ```bash
    curl http://127.0.0.1:8765/health
    ```
 
 2. **Check dashboard file exists:**
+
    ```bash
    ls dashboard/index.html
    ```
@@ -75,6 +83,7 @@ Edit `dashboard/index.html` to:
 ### API Errors
 
 The dashboard uses `/v1/tools/call` endpoint. If you see API errors:
+
 - Verify server is running
 - Check authentication (if HTTP_API_TOKEN is set)
 - Check browser network tab for failed requests
@@ -114,4 +123,3 @@ The dashboard uses `/v1/tools/call` endpoint. If you see API errors:
 ---
 
 **Status:** MVP Complete - Ready for demos
-

@@ -24,7 +24,7 @@ from src.dialectic_protocol import (
     Resolution,
     calculate_authority_score
 )
-from .utils import success_response, error_response
+from .utils import success_response, error_response, require_registered_agent
 from .decorators import mcp_tool
 from src.logging_utils import get_logger
 import sys
@@ -96,11 +96,11 @@ except ImportError:
 
 
 # ==============================================================================
-# NOTE: Most dialectic handlers removed (Dec 2025)
+# NOTE: Dialectic handlers (Dec 2025)
 # ==============================================================================
-# Removed: request_dialectic_review, request_exploration_session, 
-#          submit_thesis, submit_antithesis, submit_synthesis,
-#          nudge_dialectic_session, handle_self_recovery
+# Restored: request_dialectic_review (lite entry point for recovery)
+# Still removed: request_exploration_session, submit_thesis, submit_antithesis,
+#                submit_synthesis, nudge_dialectic_session, handle_self_recovery
 # Only get_dialectic_session remains for viewing existing sessions.
 # ==============================================================================
 
@@ -141,6 +141,184 @@ async def check_reviewer_stuck(session: DialecticSession) -> bool:
     except (ValueError, TypeError, AttributeError):
         # Can't parse timestamp or session has no created_at - assume stuck
         return True
+
+
+@mcp_tool("request_dialectic_review", timeout=10.0)
+async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Create a dialectic recovery session.
+
+    This is a lightweight entry point restored for recovery workflows.
+    It sets up the session and persists it, but does not auto-progress the protocol.
+    """
+    # Require a registered agent and use authoritative UUID for internal IDs
+    agent_id, error = require_registered_agent(arguments)
+    if error:
+        return [error]
+
+    agent_uuid = arguments.get("_agent_uuid") or agent_id
+
+    # SECURITY: Verify ownership via session binding (UUID-based auth, Dec 2025)
+    from .utils import verify_agent_ownership
+    if not verify_agent_ownership(agent_uuid, arguments):
+        return [error_response(
+            "Authentication required. You can only request recovery for your own agent.",
+            error_code="AUTH_REQUIRED",
+            error_category="auth_error",
+            recovery={
+                "action": "Ensure your session is bound to this agent",
+                "related_tools": ["identity"],
+                "workflow": "Identity auto-binds on first tool call. Use identity() to check binding."
+            },
+            arguments=arguments
+        )]
+
+    meta = mcp_server.agent_metadata.get(agent_uuid)
+    if not meta:
+        return [error_response(
+            f"Agent '{agent_uuid}' not found.",
+            error_code="AGENT_NOT_FOUND",
+            error_category="validation_error",
+            recovery={
+                "action": "Call identity() or process_agent_update() to register.",
+                "related_tools": ["identity", "process_agent_update"]
+            },
+            arguments=arguments
+        )]
+
+    # Skip if agent is waiting for input (not stuck)
+    if meta.status == "waiting_input":
+        return success_response({
+            "success": True,
+            "skipped": True,
+            "reason": "Agent is waiting_input; not stuck",
+            "agent_id": agent_uuid,
+            "status": meta.status,
+            "recommendation": "No dialectic needed. Use process_agent_update() when new work starts."
+        })
+
+    # Prevent duplicate sessions
+    if await is_agent_in_active_session(agent_uuid):
+        return [error_response(
+            "Agent already has an active dialectic session.",
+            error_code="SESSION_EXISTS",
+            error_category="validation_error",
+            recovery={
+                "action": "Use get_dialectic_session() to view the active session",
+                "related_tools": ["get_dialectic_session"]
+            },
+            arguments=arguments
+        )]
+
+    reason = arguments.get("reason", "Dialectic recovery requested")
+    session_type = arguments.get("session_type", "recovery")
+    discovery_id = arguments.get("discovery_id")
+    dispute_type = arguments.get("dispute_type")
+    topic = arguments.get("topic")
+    reviewer_mode = arguments.get("reviewer_mode", "auto")
+    reviewer_agent_id = arguments.get("reviewer_agent_id")
+    max_synthesis_rounds = arguments.get("max_synthesis_rounds", 5)
+    auto_progress = bool(arguments.get("auto_progress", False))
+
+    # Capture paused agent state snapshot if available
+    paused_agent_state = {}
+    try:
+        monitor = getattr(mcp_server, "monitors", {}).get(agent_uuid)
+        if monitor and hasattr(monitor, "state") and hasattr(monitor.state, "to_dict"):
+            paused_agent_state = monitor.state.to_dict()
+    except Exception:
+        paused_agent_state = {}
+
+    # Reviewer selection
+    if reviewer_mode == "self":
+        reviewer_agent_id = agent_uuid
+    elif reviewer_agent_id:
+        if reviewer_agent_id not in mcp_server.agent_metadata:
+            return [error_response(
+                f"Reviewer agent '{reviewer_agent_id}' not found.",
+                error_code="REVIEWER_NOT_FOUND",
+                error_category="validation_error",
+                recovery={
+                    "action": "Pick a valid reviewer or use reviewer_mode='auto'",
+                    "related_tools": ["list_agents"]
+                },
+                arguments=arguments
+            )]
+    else:
+        reviewer_agent_id = await select_reviewer(
+            paused_agent_id=agent_uuid,
+            metadata=mcp_server.agent_metadata,
+            paused_agent_state=paused_agent_state,
+            paused_agent_tags=getattr(meta, "tags", []),
+            exclude_agent_ids=None
+        )
+        if reviewer_agent_id is None:
+            if reviewer_mode in ("auto", "self"):
+                reviewer_agent_id = agent_uuid
+            else:
+                return [error_response(
+                    "No eligible reviewer available.",
+                    error_code="NO_REVIEWER",
+                    error_category="validation_error",
+                    recovery={
+                        "action": "Try reviewer_mode='auto' (self fallback) or wait for a healthy reviewer",
+                        "related_tools": ["list_agents"]
+                    },
+                    arguments=arguments
+                )]
+
+    # Create session
+    session = DialecticSession(
+        paused_agent_id=agent_uuid,
+        reviewer_agent_id=reviewer_agent_id,
+        paused_agent_state=paused_agent_state,
+        discovery_id=discovery_id,
+        dispute_type=dispute_type,
+        session_type=session_type,
+        topic=topic,
+        max_synthesis_rounds=int(max_synthesis_rounds or 5),
+    )
+
+    # Persist to SQLite/Postgres (source of truth) and JSON snapshot
+    try:
+        await sqlite_create_session(
+            session_id=session.session_id,
+            paused_agent_id=session.paused_agent_id,
+            reviewer_agent_id=session.reviewer_agent_id,
+            reason=reason,
+            discovery_id=discovery_id,
+            dispute_type=dispute_type,
+            session_type=session_type,
+            topic=topic,
+            max_synthesis_rounds=session.max_synthesis_rounds,
+            synthesis_round=session.synthesis_round,
+            paused_agent_state=paused_agent_state,
+        )
+    except Exception as e:
+        logger.warning(f"SQLite/PG dialectic session create failed: {e}")
+
+    try:
+        await save_session(session)
+    except Exception as e:
+        logger.warning(f"Failed to save dialectic session snapshot: {e}")
+
+    # Cache in-memory for quick access
+    ACTIVE_SESSIONS[session.session_id] = session
+
+    if auto_progress:
+        logger.info("auto_progress requested for dialectic review, but auto progression is not enabled.")
+
+    return success_response({
+        "success": True,
+        "message": "Dialectic session created",
+        "session_id": session.session_id,
+        "paused_agent_id": session.paused_agent_id,
+        "reviewer_agent_id": session.reviewer_agent_id,
+        "phase": session.phase.value,
+        "session_type": session.session_type,
+        "auto_progress": False,
+        "note": "Dialectic auto-progress is disabled; submit_thesis/antithesis/synthesis remain archived."
+    })
 
 @mcp_tool("get_dialectic_session", timeout=10.0, rate_limit_exempt=True)
 async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[TextContent]:

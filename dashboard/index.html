@@ -1,10 +1,32 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>UNITARES Governance Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
     <style>
+        :root {
+            --bg-color: #0d0d12;
+            --card-bg: #1a1a23;
+            --panel-bg: #1a1a23;
+            --border-color: #333;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0b0;
+            --accent-cyan: #00ffff;
+            --accent-purple: #bb86fc;
+            --accent-green: #03dac6;
+            --accent-orange: #cf6679;
+            --accent-yellow: #f5d77a;
+            --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -12,237 +34,594 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: #0a0e27;
-            color: #e0e0e0;
-            padding: 20px;
+            font-family: var(--font-family);
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            padding: 40px;
+            line-height: 1.5;
         }
 
+        /* Header Styling */
         .header {
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 40px;
             padding-bottom: 20px;
-            border-bottom: 2px solid #1e3a5f;
+            border-bottom: 1px solid var(--border-color);
         }
 
         .header h1 {
-            color: #4a9eff;
-            font-size: 2.5em;
+            font-size: 2.5rem;
+            font-weight: 700;
             margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
 
         .header .subtitle {
-            color: #8a9ba8;
-            font-size: 1.1em;
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            font-weight: 300;
         }
 
+        /* Toolbar */
+        .toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin: 0 auto 30px;
+            max-width: 1200px;
+            background: rgba(26, 26, 35, 0.5);
+            padding: 15px;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            backdrop-filter: blur(10px);
+        }
+
+        .toolbar-group {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .toolbar-button {
+            background: linear-gradient(135deg, #2a2a35, #3a3a45);
+            border: 1px solid #444;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .toolbar-button:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+            transform: translateY(-1px);
+        }
+
+        .toolbar-toggle {
+            color: var(--text-secondary);
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+
+        .toolbar-toggle input[type="checkbox"] {
+            accent-color: var(--accent-cyan);
+        }
+
+        .toolbar-status {
+            color: var(--text-secondary);
+            font-size: 0.85em;
+            font-family: var(--font-mono);
+        }
+
+        /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
             gap: 20px;
             margin-bottom: 30px;
+            max-width: 1200px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         .stat-card {
-            background: #1a1f3a;
-            border: 1px solid #2a3f5f;
-            border-radius: 8px;
-            padding: 20px;
-            transition: transform 0.2s, border-color 0.2s;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 25px;
+            transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
         }
 
         .stat-card:hover {
-            transform: translateY(-2px);
-            border-color: #4a9eff;
+            transform: translateY(-3px);
+            border-color: var(--accent-cyan);
+            box-shadow: 0 8px 15px rgba(0, 0, 0, 0.4);
         }
 
         .stat-card h3 {
-            color: #8a9ba8;
-            font-size: 0.9em;
+            color: var(--text-secondary);
+            font-size: 0.85em;
             text-transform: uppercase;
             letter-spacing: 1px;
             margin-bottom: 10px;
+            font-weight: 600;
         }
 
         .stat-card .value {
-            color: #4a9eff;
-            font-size: 2.5em;
-            font-weight: bold;
+            color: var(--text-primary);
+            font-size: 2.2em;
+            font-weight: 700;
+            font-family: var(--font-mono);
         }
 
         .stat-card .change {
-            color: #8a9ba8;
             font-size: 0.9em;
             margin-top: 5px;
+            font-family: var(--font-mono);
         }
 
+        /* Main Content Layout */
         .main-content {
             display: grid;
             grid-template-columns: 2fr 1fr;
-            gap: 20px;
+            gap: 25px;
             margin-bottom: 30px;
+            max-width: 1200px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
+        /* Panels */
         .panel {
-            background: #1a1f3a;
-            border: 1px solid #2a3f5f;
-            border-radius: 8px;
-            padding: 20px;
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            max-height: 800px;
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 15px;
         }
 
         .panel h2 {
-            color: #4a9eff;
-            margin-bottom: 15px;
-            font-size: 1.3em;
+            color: var(--accent-cyan);
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin: 0;
         }
 
-        .agent-list {
-            max-height: 400px;
-            overflow-y: auto;
-        }
-
-        .agent-item {
-            padding: 12px;
-            margin-bottom: 10px;
-            background: #0f1525;
-            border-left: 3px solid #4a9eff;
-            border-radius: 4px;
+        /* Controls */
+        .panel-controls {
             display: flex;
-            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
             align-items: center;
         }
 
+        .panel-controls input[type="text"],
+        .panel-controls select {
+            background: #0f1525;
+            border: 1px solid var(--border-color);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: var(--font-family);
+            font-size: 0.9em;
+        }
+
+        .panel-controls input[type="text"]:focus,
+        .panel-controls select:focus {
+            border-color: var(--accent-cyan);
+            outline: none;
+        }
+
+        .panel-button {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.85em;
+        }
+
+        .panel-button:hover {
+            border-color: var(--text-primary);
+            color: var(--text-primary);
+        }
+
+        /* Lists */
+        .agent-list,
+        .discoveries-list {
+            overflow-y: auto;
+            padding-right: 5px;
+            /* Scrollbar styling */
+            scrollbar-width: thin;
+            scrollbar-color: var(--border-color) transparent;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background-color: var(--border-color);
+            border-radius: 3px;
+        }
+
+        /* Agent Items */
+        .agent-item {
+            background: #0f1525;
+            border: 1px solid var(--border-color);
+            border-left: 3px solid var(--accent-cyan);
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 12px;
+            transition: transform 0.2s;
+        }
+
+        .agent-item:hover {
+            transform: translateX(2px);
+            border-color: #555;
+            border-left-color: var(--accent-cyan);
+        }
+
         .agent-item.paused {
-            border-left-color: #ff6b6b;
+            border-left-color: var(--accent-orange);
         }
 
         .agent-item.archived {
-            border-left-color: #8a9ba8;
-            opacity: 0.6;
+            border-left-color: var(--text-secondary);
+            opacity: 0.7;
         }
 
         .agent-name {
-            font-weight: 500;
-            color: #e0e0e0;
+            font-weight: 600;
+            color: var(--text-primary);
+            font-size: 1.05em;
         }
 
-        .agent-metrics {
+        .agent-title {
             display: flex;
+            align-items: center;
             gap: 10px;
-            font-size: 0.9em;
+            margin-bottom: 8px;
             flex-wrap: wrap;
         }
 
+        .agent-subtitle {
+            color: var(--text-secondary);
+            font-size: 0.85em;
+            margin-left: 20px;
+        }
+
+        /* Status Chips */
+        .status-chip {
+            font-size: 0.7em;
+            padding: 3px 8px;
+            border-radius: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 600;
+            border: none;
+            background: #2a2a35;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        .status-chip.active {
+            background: rgba(3, 218, 198, 0.15);
+            color: var(--accent-green);
+        }
+
+        .status-chip.waiting_input {
+            background: rgba(245, 215, 122, 0.15);
+            color: var(--accent-yellow);
+        }
+
+        .status-chip.paused {
+            background: rgba(207, 102, 121, 0.15);
+            color: var(--accent-orange);
+        }
+
+        /* Metrics */
+        .agent-metrics {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #222;
+            display: flex;
+            gap: 15px;
+        }
+
         .metric {
-            color: #8a9ba8;
+            flex: 1;
         }
 
         .metric .label {
-            font-size: 0.8em;
+            font-size: 0.7em;
+            color: var(--text-secondary);
+            margin-bottom: 2px;
         }
 
         .metric .val {
-            color: #4a9eff;
-            font-weight: bold;
+            font-size: 0.9em;
+            font-family: var(--font-mono);
+            color: var(--text-primary);
         }
 
-        .discoveries-list {
-            max-height: 400px;
-            overflow-y: auto;
+        .metric-bar {
+            height: 3px;
+            background: #222;
+            border-radius: 2px;
+            margin-top: 4px;
+            overflow: hidden;
         }
 
+        .metric-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+        }
+
+        .metric.e .metric-bar-fill {
+            background: var(--accent-purple);
+        }
+
+        .metric.i .metric-bar-fill {
+            background: var(--accent-green);
+        }
+
+        .metric.s .metric-bar-fill {
+            background: var(--accent-yellow);
+        }
+
+        .metric.v .metric-bar-fill {
+            background: var(--accent-orange);
+        }
+
+        .metric.c .metric-bar-fill {
+            background: var(--accent-cyan);
+        }
+
+
+        /* Discoveries */
         .discovery-item {
-            padding: 12px;
-            margin-bottom: 10px;
             background: #0f1525;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 12px;
+        }
+
+        .discovery-type {
+            font-size: 0.7em;
+            padding: 2px 8px;
             border-radius: 4px;
-            border-left: 3px solid #4a9eff;
+            background: #222;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            border: 1px solid transparent;
+        }
+
+        .discovery-type.insight {
+            color: var(--accent-green);
+            border-color: rgba(3, 218, 198, 0.3);
+        }
+
+        .discovery-type.pattern {
+            color: var(--accent-purple);
+            border-color: rgba(187, 134, 252, 0.3);
+        }
+
+        .discovery-type.bug_found {
+            color: var(--accent-orange);
+            border-color: rgba(207, 102, 121, 0.3);
         }
 
         .discovery-item h4 {
-            color: #4a9eff;
-            margin-bottom: 5px;
-            font-size: 1em;
+            margin: 8px 0;
+            color: var(--text-primary);
+            font-weight: 500;
         }
 
         .discovery-item .summary {
-            color: #b0b0b0;
+            color: var(--text-secondary);
             font-size: 0.9em;
-            margin-bottom: 8px;
+            line-height: 1.5;
         }
 
         .discovery-item .meta {
-            display: flex;
-            gap: 15px;
+            margin-top: 8px;
             font-size: 0.8em;
-            color: #8a9ba8;
+            color: #666;
         }
 
+        /* Banner */
+        .banner {
+            background: rgba(207, 102, 121, 0.2);
+            border: 1px solid var(--accent-orange);
+            color: #ffcccc;
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+            margin-bottom: 20px;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .banner.hidden {
+            display: none;
+        }
+
+        /* Error Display */
+        .error {
+            background: rgba(207, 102, 121, 0.2);
+            border: 1px solid var(--accent-orange);
+            color: #ffcccc;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            max-width: 1200px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* Loading State */
+        .loading {
+            color: var(--text-secondary);
+            text-align: center;
+            padding: 40px 20px;
+            font-style: italic;
+        }
+
+        /* Filter Info */
+        .filter-info {
+            color: var(--text-secondary);
+            font-size: 0.85em;
+            margin-bottom: 10px;
+            padding: 8px 0;
+        }
+
+        /* Highlight for Search */
+        .highlight {
+            background: rgba(0, 255, 255, 0.3);
+            color: var(--text-primary);
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        /* Refresh Info */
+        .refresh-info {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.9em;
+            margin-top: 20px;
+            padding: 15px;
+            max-width: 1200px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* Discoveries Meta Line */
+        .discoveries-meta-line {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .meta-item {
+            color: var(--text-secondary);
+            font-size: 0.8em;
+        }
+
+        /* Status Indicator */
         .status-indicator {
             display: inline-block;
-            width: 10px;
-            height: 10px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
             margin-right: 8px;
-        }
-
-        .status-indicator.active {
-            background: #4ade80;
-        }
-
-        .status-indicator.waiting_input {
-            background: #fbbf24;
+            background: var(--accent-green);
         }
 
         .status-indicator.paused {
-            background: #ff6b6b;
+            background: var(--accent-orange);
         }
 
-        .status-indicator.archived {
-            background: #8a9ba8;
-        }
-
+        .status-indicator.archived,
         .status-indicator.deleted {
-            background: #6b7280;
+            background: var(--text-secondary);
         }
 
-        .status-indicator.unknown {
-            background: #9ca3af;
+        .status-indicator.waiting_input {
+            background: var(--accent-yellow);
         }
 
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #8a9ba8;
+        /* Agent Actions */
+        .agent-actions {
+            margin-left: auto;
         }
 
-        .error {
-            background: #3a1f1f;
-            border: 1px solid #ff6b6b;
-            color: #ff6b6b;
-            padding: 15px;
+        .agent-action {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 4px 8px;
             border-radius: 4px;
-            margin-bottom: 20px;
+            cursor: pointer;
+            font-size: 0.75em;
+            transition: all 0.2s;
         }
 
-        .refresh-info {
-            text-align: center;
-            color: #8a9ba8;
-            font-size: 0.9em;
-            margin-top: 20px;
+        .agent-action:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
         }
 
-        @media (max-width: 768px) {
+        /* Agent Meta */
+        .agent-meta {
+            flex: 1;
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
             .main-content {
                 grid-template-columns: 1fr;
             }
         }
     </style>
 </head>
+
 <body>
     <div class="header">
         <h1>UNITARES Governance</h1>
         <div class="subtitle">Multi-Agent Coordination Dashboard</div>
+    </div>
+
+    <div id="connection-banner" class="banner hidden"></div>
+
+    <div class="toolbar">
+        <div class="toolbar-group">
+            <button id="refresh-now" class="toolbar-button" type="button">Refresh now</button>
+            <label class="toolbar-toggle">
+                <input id="pause-refresh" type="checkbox">
+                Pause auto-refresh
+            </label>
+        </div>
+        <div class="toolbar-status">
+            <span id="refresh-status">Auto-refresh every 10 seconds</span> • Last updated: <span
+                id="last-update">-</span>
+        </div>
     </div>
 
     <div id="error-container"></div>
@@ -272,14 +651,61 @@
 
     <div class="main-content">
         <div class="panel">
-            <h2>Agents</h2>
+            <div class="panel-header">
+                <h2>Agents</h2>
+                <div class="panel-controls">
+                    <input id="agent-search" type="text" placeholder="Search agents">
+                    <select id="agent-status-filter">
+                        <option value="all">All statuses</option>
+                        <option value="active">Active</option>
+                        <option value="waiting_input">Waiting input</option>
+                        <option value="paused">Paused</option>
+                        <option value="archived">Archived</option>
+                        <option value="deleted">Deleted</option>
+                        <option value="unknown">Unknown</option>
+                    </select>
+                    <label>
+                        <input id="agent-metrics-only" type="checkbox">
+                        Metrics only
+                    </label>
+                    <button id="agent-clear-filters" class="panel-button" type="button">Clear</button>
+                </div>
+            </div>
+            <div id="agents-filter-info" class="filter-info"></div>
+            <div id="agents-status-legend" class="filter-info"></div>
             <div id="agents-container" class="agent-list">
                 <div class="loading">Loading agents...</div>
             </div>
         </div>
 
         <div class="panel">
-            <h2>Recent Discoveries</h2>
+            <div class="panel-header">
+                <h2>Recent Discoveries</h2>
+                <div class="panel-controls">
+                    <input id="discovery-search" type="text" placeholder="Search discoveries">
+                    <select id="discovery-type-filter">
+                        <option value="all">All types</option>
+                        <option value="insight">Insight</option>
+                        <option value="improvement">Improvement</option>
+                        <option value="bug_found">Bug found</option>
+                        <option value="pattern">Pattern</option>
+                        <option value="question">Question</option>
+                        <option value="answer">Answer</option>
+                        <option value="analysis">Analysis</option>
+                        <option value="note">Note</option>
+                        <option value="exploration">Exploration</option>
+                    </select>
+                    <select id="discovery-time-filter">
+                        <option value="all">All time</option>
+                        <option value="24h">Last 24h</option>
+                        <option value="7d">Last 7 days</option>
+                        <option value="30d">Last 30 days</option>
+                    </select>
+                    <button id="discovery-clear-filters" class="panel-button" type="button">Clear</button>
+                </div>
+            </div>
+            <div id="discoveries-filter-info" class="filter-info"></div>
+            <div id="discoveries-type-legend" class="filter-info"></div>
             <div id="discoveries-container" class="discoveries-list">
                 <div class="loading">Loading discoveries...</div>
             </div>
@@ -287,37 +713,87 @@
     </div>
 
     <div class="refresh-info">
-        Auto-refreshing every 10 seconds • Last updated: <span id="last-update">-</span>
+        Tip: use search and filters to narrow results quickly.
     </div>
 
     <script>
-        const API_BASE = window.location.origin;
+        // Use relative URLs so dashboard works both locally and via ngrok
+        const API_BASE = window.location.origin; // Automatically uses current origin (localhost:8767 or ngrok URL)
+        const REFRESH_INTERVAL_MS = 10000;
         let previousStats = {};
+        let cachedAgents = [];
+        let cachedDiscoveries = [];
+        let autoRefreshPaused = false;
+        let refreshFailures = 0;
+        const maxRefreshFailures = 2;
 
         async function callTool(toolName, arguments = {}) {
             try {
+                const headers = {
+                    'Content-Type': 'application/json',
+                };
+                
+                // Add authentication if API token is available (from localStorage or URL param)
+                const apiToken = localStorage.getItem('unitares_api_token') || 
+                                 new URLSearchParams(window.location.search).get('token');
+                if (apiToken) {
+                    headers['Authorization'] = `Bearer ${apiToken}`;
+                }
+                
                 const response = await fetch(`${API_BASE}/v1/tools/call`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: headers,
                     body: JSON.stringify({
                         name: toolName,
                         arguments: arguments
-                    })
+                    }),
+                    signal: AbortSignal.timeout(30000) // 30 second timeout
                 });
 
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    const errorText = await response.text().catch(() => response.statusText);
+                    let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                    
+                    // Parse error details if available
+                    try {
+                        const errorData = JSON.parse(errorText);
+                        if (errorData.error) {
+                            errorMessage = errorData.error;
+                        }
+                    } catch {
+                        // Not JSON, use text as-is
+                    }
+                    
+                    if (response.status === 401) {
+                        errorMessage = 'Authentication required. If the server uses HTTP_API_TOKEN, add ?token=YOUR_TOKEN to the URL or set localStorage.unitares_api_token';
+                    } else if (response.status === 503 || response.status === 429) {
+                        errorMessage = 'Server overloaded or rate limited. Please try again in a moment.';
+                    }
+                    throw new Error(errorMessage);
                 }
 
                 const data = await response.json();
-                if (!data.success) {
-                    throw new Error(data.error || 'Tool call failed');
+                
+                // Check for error in response even if HTTP 200
+                if (data.success === false || data.error) {
+                    const errorMsg = data.error || data.message || 'Tool call failed';
+                    // Don't throw for connection errors - let caller handle gracefully
+                    if (errorMsg.includes('too many clients') || errorMsg.includes('connection pool') || errorMsg.includes('fetch failed')) {
+                        throw new Error(`Database connection issue: ${errorMsg}`);
+                    }
+                    throw new Error(errorMsg);
                 }
 
                 return typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
             } catch (error) {
+                // Handle timeout
+                if (error.name === 'TimeoutError' || error.name === 'AbortError') {
+                    throw new Error(`Request timeout after 30s. The server may be overloaded.`);
+                }
+                // Handle network errors
+                if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                    throw new Error(`Network error: Cannot reach server at ${API_BASE}. Is the server running?`);
+                }
                 console.error(`Error calling ${toolName}:`, error);
                 throw error;
             }
@@ -341,6 +817,521 @@
             return `<span style="color: ${color}">${sign}${diff}</span>`;
         }
 
+        function escapeHtml(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function highlightMatch(text, term) {
+            if (!term) {
+                return escapeHtml(text);
+            }
+            const safeText = String(text || '');
+            const safeTerm = String(term || '').trim();
+            if (!safeTerm) {
+                return escapeHtml(safeText);
+            }
+            const escapedTerm = safeTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(escapedTerm, 'ig');
+            let result = '';
+            let lastIndex = 0;
+            let match;
+            while ((match = regex.exec(safeText)) !== null) {
+                result += escapeHtml(safeText.slice(lastIndex, match.index));
+                result += `<mark class="highlight">${escapeHtml(match[0])}</mark>`;
+                lastIndex = match.index + match[0].length;
+            }
+            result += escapeHtml(safeText.slice(lastIndex));
+            return result;
+        }
+
+        function copyToClipboard(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                return navigator.clipboard.writeText(text);
+            }
+
+            return new Promise((resolve, reject) => {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                try {
+                    const success = document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    if (success) {
+                        resolve();
+                    } else {
+                        reject(new Error('Copy failed'));
+                    }
+                } catch (error) {
+                    document.body.removeChild(textarea);
+                    reject(error);
+                }
+            });
+        }
+
+        function updateConnectionBanner(hasError) {
+            const banner = document.getElementById('connection-banner');
+            if (!banner) return;
+            if (hasError) {
+                refreshFailures += 1;
+            } else {
+                refreshFailures = 0;
+            }
+
+            if (refreshFailures >= maxRefreshFailures) {
+                banner.textContent = 'Connection issues detected. Check server status or network.';
+                banner.classList.remove('hidden');
+            } else {
+                banner.classList.add('hidden');
+            }
+        }
+
+        function updateRefreshStatus() {
+            const status = document.getElementById('refresh-status');
+            if (!status) return;
+            status.textContent = autoRefreshPaused
+                ? 'Auto-refresh paused'
+                : `Auto-refresh every ${Math.round(REFRESH_INTERVAL_MS / 1000)} seconds`;
+        }
+
+        function getAgentStatus(agent) {
+            return agent.lifecycle_status || agent.status || 'unknown';
+        }
+
+        function getAgentDisplayName(agent) {
+            return agent.label || agent.display_name || agent.name || agent.agent_id || 'Unknown';
+        }
+
+        function agentHasMetrics(agent) {
+            const metrics = agent.metrics || {};
+            return metrics && (metrics.E !== undefined || metrics.I !== undefined || metrics.S !== undefined);
+        }
+
+        function formatStatusLabel(status) {
+            const normalized = String(status || 'unknown').toLowerCase();
+            const labels = {
+                active: 'Active',
+                waiting_input: 'Waiting',
+                paused: 'Paused',
+                archived: 'Archived',
+                deleted: 'Deleted',
+                unknown: 'Unknown'
+            };
+            return labels[normalized] || normalized.replace(/_/g, ' ');
+        }
+
+        function formatTimestamp(timestamp) {
+            if (!timestamp) return null;
+            const date = new Date(timestamp);
+            if (isNaN(date.getTime())) return null;
+            return date.toLocaleString();
+        }
+
+        function formatRelativeTime(timestampMs) {
+            if (!timestampMs) return null;
+            const diffMs = Date.now() - timestampMs;
+            if (diffMs <= 0) return 'just now';
+            const seconds = Math.floor(diffMs / 1000);
+            if (seconds < 60) return `${seconds}s ago`;
+            const minutes = Math.floor(seconds / 60);
+            if (minutes < 60) return `${minutes}m ago`;
+            const hours = Math.floor(minutes / 60);
+            if (hours < 24) return `${hours}h ago`;
+            const days = Math.floor(hours / 24);
+            if (days < 7) return `${days}d ago`;
+            const weeks = Math.floor(days / 7);
+            if (weeks < 5) return `${weeks}w ago`;
+            const months = Math.floor(days / 30);
+            if (months < 12) return `${months}mo ago`;
+            const years = Math.floor(days / 365);
+            return `${years}y ago`;
+        }
+
+        function formatAgentTimestamp(agent) {
+            const lastUpdateDate = agent.last_update ? new Date(agent.last_update) : null;
+            if (lastUpdateDate && !isNaN(lastUpdateDate.getTime())) {
+                const lastUpdate = lastUpdateDate.toLocaleString();
+                const relative = formatRelativeTime(lastUpdateDate.getTime());
+                return relative ? `Updated ${lastUpdate} (${relative})` : `Updated ${lastUpdate}`;
+            }
+            const createdDate = agent.created_at ? new Date(agent.created_at) : null;
+            if (createdDate && !isNaN(createdDate.getTime())) {
+                const created = createdDate.toLocaleString();
+                const relative = formatRelativeTime(createdDate.getTime());
+                return relative ? `Created ${created} (${relative})` : `Created ${created}`;
+            }
+            return null;
+        }
+
+        function updateStatusLegend(statusCounts) {
+            const container = document.getElementById('agents-status-legend');
+            if (!container) return;
+            if (!statusCounts) {
+                container.textContent = '';
+                return;
+            }
+
+            const entries = [
+                { key: 'active', label: 'Active', count: statusCounts.active || 0 },
+                { key: 'waiting_input', label: 'Waiting', count: statusCounts.waiting_input || 0 },
+                { key: 'paused', label: 'Paused', count: statusCounts.paused || 0 },
+                { key: 'archived', label: 'Archived', count: statusCounts.archived || 0 },
+                { key: 'deleted', label: 'Deleted', count: statusCounts.deleted || 0 },
+                { key: 'unknown', label: 'Unknown', count: statusCounts.unknown || 0 }
+            ];
+
+            const chips = entries
+                .filter(entry => entry.count > 0)
+                .map(entry => `<button class="status-chip ${entry.key}" data-status="${entry.key}" type="button">${entry.label} ${entry.count}</button>`)
+                .join(' ');
+
+            container.innerHTML = chips || '';
+        }
+
+        function updateAgentFilterInfo(filteredCount) {
+            const info = document.getElementById('agents-filter-info');
+            if (!info) return;
+            const total = cachedAgents.length;
+            if (!total) {
+                info.textContent = '';
+                return;
+            }
+            if (filteredCount === 0) {
+                info.textContent = `No agents match filters (${total} loaded)`;
+                return;
+            }
+            const showingCount = Math.min(filteredCount, 20);
+            info.textContent = `Showing ${showingCount} of ${filteredCount} filtered (${total} loaded)`;
+        }
+
+        function renderAgentsList(agents, searchTerm = '') {
+            const container = document.getElementById('agents-container');
+            if (cachedAgents.length === 0) {
+                container.innerHTML = '<div class="loading">No agents found. Agents will appear here after calling onboard() or any tool.</div>';
+                updateAgentFilterInfo(0);
+                return;
+            }
+
+            if (agents.length === 0) {
+                container.innerHTML = '<div class="loading">No agents match the current filters.</div>';
+                updateAgentFilterInfo(0);
+                return;
+            }
+
+            updateAgentFilterInfo(agents.length);
+            container.innerHTML = agents.slice(0, 20).map(agent => {
+                // Use lifecycle_status from agent object (more reliable than array membership)
+                const status = getAgentStatus(agent);
+                const statusClass = status === 'paused' ? 'paused' :
+                    status === 'archived' ? 'archived' :
+                        status === 'deleted' ? 'archived' : '';  // Deleted agents styled like archived
+                const statusIndicator = `<span class="status-indicator ${status}"></span>`;
+                const statusLabel = escapeHtml(formatStatusLabel(status));
+
+                const metrics = agent.metrics || {};
+                const eValue = metrics.E !== undefined && metrics.E !== null ? Number(metrics.E) : null;
+                const iValue = metrics.I !== undefined && metrics.I !== null ? Number(metrics.I) : null;
+                const sValue = metrics.S !== undefined && metrics.S !== null ? Number(metrics.S) : null;
+                const vValue = metrics.V !== undefined && metrics.V !== null ? Number(metrics.V) : null;
+                const cValue = metrics.coherence !== undefined && metrics.coherence !== null ? Number(metrics.coherence) : null;
+                // EISV metrics - show all four core metrics
+                const e = eValue !== null && !Number.isNaN(eValue) ? eValue.toFixed(2) : '-';
+                const i = iValue !== null && !Number.isNaN(iValue) ? iValue.toFixed(2) : '-';
+                const s = sValue !== null && !Number.isNaN(sValue) ? sValue.toFixed(2) : '-';
+                const v = vValue !== null && !Number.isNaN(vValue) ? vValue.toFixed(2) : '-';
+                const coherence = cValue !== null && !Number.isNaN(cValue) ? cValue.toFixed(2) : '-';
+                const clampPercent = value => {
+                    if (value === null || Number.isNaN(value)) return 0;
+                    return Math.max(0, Math.min(100, value * 100));
+                };
+                const ePct = clampPercent(eValue);
+                const iPct = clampPercent(iValue);
+                const sPct = clampPercent(sValue);
+                const vPct = clampPercent(vValue);
+                const cPct = clampPercent(cValue);
+                const displayName = getAgentDisplayName(agent);
+                const agentId = agent.agent_id || '';
+                const timestampLabel = formatAgentTimestamp(agent);
+                const nameHtml = highlightMatch(displayName, searchTerm);
+                const idHtml = searchTerm ? highlightMatch(agentId, searchTerm) : escapeHtml(agentId);
+                const subtitleParts = [];
+                if (timestampLabel) {
+                    subtitleParts.push(escapeHtml(timestampLabel));
+                }
+                if (agentId) {
+                    subtitleParts.push(`ID ${idHtml}`);
+                }
+                const subtitleHtml = subtitleParts.length ? `<div class="agent-subtitle">${subtitleParts.join(' • ')}</div>` : '';
+                const actionsHtml = agentId
+                    ? `<div class="agent-actions"><button class="agent-action" type="button" data-action="copy-id" data-agent-id="${escapeHtml(agentId)}">Copy ID</button></div>`
+                    : '';
+
+                // Show metrics only if we have at least one metric value
+                const hasMetrics = agentHasMetrics(agent);
+
+                return `
+                    <div class="agent-item ${statusClass}">
+                        <div class="agent-meta">
+                            <div class="agent-title">
+                                ${statusIndicator}
+                                <span class="agent-name">${nameHtml}</span>
+                                <span class="status-chip ${status}">${statusLabel}</span>
+                                ${actionsHtml}
+                            </div>
+                            ${subtitleHtml}
+                        </div>
+                        ${hasMetrics ? `
+                            <div class="agent-metrics">
+                                <div class="metric e" title="Energy (divergence/productive capacity)">
+                                    <div class="label">E</div>
+                                    <div class="val">${e}</div>
+                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${ePct}%"></div></div>
+                                </div>
+                                <div class="metric i" title="Information Integrity">
+                                    <div class="label">I</div>
+                                    <div class="val">${i}</div>
+                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${iPct}%"></div></div>
+                                </div>
+                                <div class="metric s" title="Entropy (disorder/uncertainty)">
+                                    <div class="label">S</div>
+                                    <div class="val">${s}</div>
+                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${sPct}%"></div></div>
+                                </div>
+                                <div class="metric v" title="Void Integral (E-I imbalance)">
+                                    <div class="label">V</div>
+                                    <div class="val">${v}</div>
+                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${vPct}%"></div></div>
+                                </div>
+                                <div class="metric c" title="Coherence">
+                                    <div class="label">C</div>
+                                    <div class="val">${coherence}</div>
+                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${cPct}%"></div></div>
+                                </div>
+                            </div>
+                        ` : '<div class="agent-metrics"><span style="color: #8a9ba8; font-size: 0.9em;">No metrics yet</span></div>'}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function applyAgentFilters() {
+            const searchInput = document.getElementById('agent-search');
+            const statusFilterInput = document.getElementById('agent-status-filter');
+            const metricsOnlyInput = document.getElementById('agent-metrics-only');
+
+            const searchTerm = searchInput ? searchInput.value.trim().toLowerCase() : '';
+            const statusFilter = statusFilterInput ? statusFilterInput.value : 'all';
+            const metricsOnly = metricsOnlyInput ? metricsOnlyInput.checked : false;
+
+            const filteredAgents = cachedAgents.filter(agent => {
+                const status = getAgentStatus(agent);
+                if (statusFilter !== 'all' && status !== statusFilter) {
+                    return false;
+                }
+
+                if (metricsOnly && !agentHasMetrics(agent)) {
+                    return false;
+                }
+
+                if (searchTerm) {
+                    const displayName = getAgentDisplayName(agent);
+                    const agentId = agent.agent_id || '';
+                    const haystack = `${displayName} ${agentId}`.toLowerCase();
+                    if (!haystack.includes(searchTerm)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+
+            renderAgentsList(filteredAgents, searchTerm);
+        }
+
+        function clearAgentFilters() {
+            const searchInput = document.getElementById('agent-search');
+            const statusFilterInput = document.getElementById('agent-status-filter');
+            const metricsOnlyInput = document.getElementById('agent-metrics-only');
+            if (searchInput) searchInput.value = '';
+            if (statusFilterInput) statusFilterInput.value = 'all';
+            if (metricsOnlyInput) metricsOnlyInput.checked = false;
+            applyAgentFilters();
+        }
+
+        function normalizeDiscoveryType(type) {
+            if (!type) return 'note';
+            return String(type).trim().toLowerCase();
+        }
+
+        function formatDiscoveryType(type) {
+            const value = normalizeDiscoveryType(type);
+            const labelMap = {
+                bug_found: 'Bug',
+                improvement: 'Improvement',
+                insight: 'Insight',
+                pattern: 'Pattern',
+                question: 'Question',
+                answer: 'Answer',
+                note: 'Note',
+                exploration: 'Exploration',
+                analysis: 'Analysis'
+            };
+            return labelMap[value] || value.replace(/_/g, ' ');
+        }
+
+        function updateDiscoveryFilterInfo(filteredCount) {
+            const info = document.getElementById('discoveries-filter-info');
+            if (!info) return;
+            const total = cachedDiscoveries.length;
+            if (!total) {
+                info.textContent = '';
+                return;
+            }
+            if (filteredCount === 0) {
+                info.textContent = `No discoveries match filters (${total} loaded)`;
+                return;
+            }
+            const showingCount = Math.min(filteredCount, 10);
+            info.textContent = `Showing ${showingCount} of ${filteredCount} filtered (${total} loaded)`;
+        }
+
+        function updateDiscoveryLegend(discoveries) {
+            const container = document.getElementById('discoveries-type-legend');
+            if (!container) return;
+            if (!discoveries || discoveries.length === 0) {
+                container.textContent = '';
+                return;
+            }
+
+            const counts = {};
+            discoveries.forEach(d => {
+                const type = normalizeDiscoveryType(d.type || d.discovery_type || 'note');
+                counts[type] = (counts[type] || 0) + 1;
+            });
+
+            const total = discoveries.length;
+            const chips = [];
+            chips.push(`<button class="discovery-type" data-type="all" type="button">All ${total}</button>`);
+
+            const orderedTypes = ['insight', 'improvement', 'bug_found', 'pattern', 'question', 'answer', 'analysis', 'note', 'exploration'];
+            orderedTypes.forEach(type => {
+                if (!counts[type]) return;
+                const label = escapeHtml(formatDiscoveryType(type));
+                const count = counts[type];
+                chips.push(`<button class="discovery-type ${type}" data-type="${type}" type="button">${label} ${count}</button>`);
+                delete counts[type];
+            });
+
+            Object.keys(counts).sort().forEach(type => {
+                const label = escapeHtml(formatDiscoveryType(type));
+                const count = counts[type];
+                chips.push(`<button class="discovery-type ${type}" data-type="${type}" type="button">${label} ${count}</button>`);
+            });
+
+            container.innerHTML = chips.join(' ');
+        }
+
+        function renderDiscoveriesList(discoveries, searchTerm = '') {
+            const container = document.getElementById('discoveries-container');
+            if (cachedDiscoveries.length === 0) {
+                container.innerHTML = '<div class="loading">No recent discoveries. Use store_knowledge_graph() to add discoveries.</div>';
+                updateDiscoveryFilterInfo(0);
+                return;
+            }
+
+            if (discoveries.length === 0) {
+                container.innerHTML = '<div class="loading">No discoveries match the current filters.</div>';
+                updateDiscoveryFilterInfo(0);
+                return;
+            }
+
+            updateDiscoveryFilterInfo(discoveries.length);
+            container.innerHTML = discoveries.slice(0, 10).map(d => {
+                const type = normalizeDiscoveryType(d.type || d.discovery_type || 'note');
+                const typeLabel = escapeHtml(formatDiscoveryType(type));
+                const agent = escapeHtml(d.by || d.agent_id || d._agent_id || 'Unknown');
+                const details = String(d.details || d.content || d.discovery || '');
+                const summaryText = d.summary || 'Untitled';
+                const summaryHtml = highlightMatch(summaryText, searchTerm);
+                const detailsSnippet = details ? details.substring(0, 150) : '';
+                const detailsHtml = detailsSnippet ? highlightMatch(detailsSnippet, searchTerm) : '';
+                const detailsSuffix = details.length > 150 ? '...' : '';
+                const relative = d._relativeTime ? ` (${d._relativeTime})` : '';
+                const displayDate = escapeHtml(`${d._displayDate || 'Unknown'}${relative}`);
+
+                return `
+                    <div class="discovery-item">
+                        <div class="discoveries-meta-line">
+                            <span class="discovery-type ${type}">${typeLabel}</span>
+                            <span class="meta-item">By: ${agent}</span>
+                            <span class="meta-item">${displayDate}</span>
+                        </div>
+                        <h4>${summaryHtml}</h4>
+                        ${detailsHtml ? `<div class="summary">${detailsHtml}${detailsSuffix}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function applyDiscoveryFilters() {
+            const searchInput = document.getElementById('discovery-search');
+            const typeFilterInput = document.getElementById('discovery-type-filter');
+            const timeFilterInput = document.getElementById('discovery-time-filter');
+            const searchTerm = searchInput ? searchInput.value.trim().toLowerCase() : '';
+            const typeFilter = typeFilterInput ? typeFilterInput.value : 'all';
+            const timeFilter = timeFilterInput ? timeFilterInput.value : 'all';
+            let cutoff = null;
+            if (timeFilter === '24h') {
+                cutoff = Date.now() - 24 * 60 * 60 * 1000;
+            } else if (timeFilter === '7d') {
+                cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+            } else if (timeFilter === '30d') {
+                cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+            }
+
+            const filtered = cachedDiscoveries.filter(d => {
+                const type = normalizeDiscoveryType(d.type || d.discovery_type || 'note');
+                if (typeFilter !== 'all' && type !== typeFilter) {
+                    return false;
+                }
+
+                if (cutoff !== null) {
+                    if (!d._timestampMs || d._timestampMs < cutoff) {
+                        return false;
+                    }
+                }
+
+                if (searchTerm) {
+                    const haystack = `${d.summary || ''} ${d.details || ''} ${d.content || ''} ${d.discovery || ''}`.toLowerCase();
+                    if (!haystack.includes(searchTerm)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+
+            renderDiscoveriesList(filtered, searchTerm);
+        }
+
+        function clearDiscoveryFilters() {
+            const searchInput = document.getElementById('discovery-search');
+            const typeFilterInput = document.getElementById('discovery-type-filter');
+            const timeFilterInput = document.getElementById('discovery-time-filter');
+            if (searchInput) searchInput.value = '';
+            if (typeFilterInput) typeFilterInput.value = 'all';
+            if (timeFilterInput) timeFilterInput.value = 'all';
+            applyDiscoveryFilters();
+        }
+
         async function loadAgents() {
             try {
                 const result = await callTool('list_agents', {
@@ -348,7 +1339,7 @@
                     limit: 1000,  // High limit to ensure status_counts includes all matching agents
                     status_filter: 'all'  // Get all statuses to show accurate counts
                 });
-                
+
                 // Handle rate limit errors gracefully
                 if (result.error && result.error.includes('rate limit')) {
                     console.warn('Rate limit hit, will retry on next refresh');
@@ -360,7 +1351,7 @@
                 const agentsObj = result.agents || {};
                 const summary = result.summary || {};
                 const byStatus = summary.by_status || {};
-                
+
                 // Use summary counts (accurate) not array lengths (limited by pagination)
                 const total = summary.total || 0;
                 const active = (byStatus.active || 0) + (byStatus.waiting_input || 0);
@@ -368,20 +1359,30 @@
                 const archived = byStatus.archived || 0;
                 const deleted = byStatus.deleted || 0;
                 const unknown = byStatus.unknown || 0;
-                
+
+                updateStatusLegend({
+                    active: byStatus.active || 0,
+                    waiting_input: byStatus.waiting_input || 0,
+                    paused,
+                    archived,
+                    deleted,
+                    unknown
+                });
+
                 // Flatten agents from all status categories (for display only)
                 const allAgents = [
                     ...(agentsObj.active || []),
                     ...(agentsObj.waiting_input || []),
                     ...(agentsObj.paused || []),
                     ...(agentsObj.archived || []),
+                    ...(agentsObj.deleted || []),
                     ...(agentsObj.unknown || [])
                 ];
 
                 // Update stats
                 document.getElementById('total-agents').textContent = total;
                 document.getElementById('active-agents').textContent = active;
-                
+
                 const agentsChange = formatChange(total, previousStats.totalAgents);
                 // Show breakdown: active, paused, archived, deleted, unknown
                 const breakdown = [];
@@ -391,7 +1392,7 @@
                 if (deleted > 0) breakdown.push(`${deleted} deleted`);
                 if (unknown > 0) breakdown.push(`${unknown} unknown`);
                 document.getElementById('agents-change').innerHTML = agentsChange || (total > 0 ? breakdown.join(', ') || 'All agents' : 'No agents yet');
-                
+
                 const activeChange = formatChange(active, previousStats.activeAgents);
                 // Show what's not active
                 const inactiveBreakdown = [];
@@ -403,13 +1404,6 @@
                 previousStats.totalAgents = total;
                 previousStats.activeAgents = active;
 
-                // Render agent list
-                const container = document.getElementById('agents-container');
-                if (allAgents.length === 0) {
-                    container.innerHTML = '<div class="loading">No agents found. Agents will appear here after calling onboard() or any tool.</div>';
-                    return;
-                }
-
                 // Sort by last update (most recent first)
                 allAgents.sort((a, b) => {
                     const aTime = new Date(a.last_update || a.created_at || 0);
@@ -417,151 +1411,124 @@
                     return bTime - aTime;
                 });
 
-                container.innerHTML = allAgents.slice(0, 20).map(agent => {
-                    // Use lifecycle_status from agent object (more reliable than array membership)
-                    const status = agent.lifecycle_status || agent.status || 'unknown';
-                    const statusClass = status === 'paused' ? 'paused' : 
-                                       status === 'archived' ? 'archived' : 
-                                       status === 'deleted' ? 'archived' : '';  // Deleted agents styled like archived
-                    const statusIndicator = `<span class="status-indicator ${status}"></span>`;
-                    
-                    const metrics = agent.metrics || {};
-                    // EISV metrics - show all four core metrics
-                    const e = metrics.E !== undefined && metrics.E !== null ? Number(metrics.E).toFixed(2) : '-';
-                    const i = metrics.I !== undefined && metrics.I !== null ? Number(metrics.I).toFixed(2) : '-';
-                    const s = metrics.S !== undefined && metrics.S !== null ? Number(metrics.S).toFixed(2) : '-';
-                    const v = metrics.V !== undefined && metrics.V !== null ? Number(metrics.V).toFixed(2) : '-';
-                    const coherence = metrics.coherence !== undefined && metrics.coherence !== null ? Number(metrics.coherence).toFixed(2) : '-';
-                    const displayName = agent.label || agent.display_name || agent.name || agent.agent_id || 'Unknown';
-                    
-                    // Show metrics only if we have at least one metric value
-                    const hasMetrics = metrics && (metrics.E !== undefined || metrics.I !== undefined || metrics.S !== undefined);
-
-                    return `
-                        <div class="agent-item ${statusClass}">
-                            <div>
-                                ${statusIndicator}
-                                <span class="agent-name">${displayName}</span>
-                            </div>
-                            ${hasMetrics ? `
-                            <div class="agent-metrics">
-                                <div class="metric" title="Energy (divergence/productive capacity)">
-                                    <div class="label">E</div>
-                                    <div class="val">${e}</div>
-                                </div>
-                                <div class="metric" title="Information Integrity">
-                                    <div class="label">I</div>
-                                    <div class="val">${i}</div>
-                                </div>
-                                <div class="metric" title="Entropy (disorder/uncertainty)">
-                                    <div class="label">S</div>
-                                    <div class="val">${s}</div>
-                                </div>
-                                <div class="metric" title="Void Integral (E-I imbalance)">
-                                    <div class="label">V</div>
-                                    <div class="val">${v}</div>
-                                </div>
-                                <div class="metric" title="Coherence">
-                                    <div class="label">C</div>
-                                    <div class="val">${coherence}</div>
-                                </div>
-                            </div>
-                            ` : '<div class="agent-metrics"><span style="color: #8a9ba8; font-size: 0.9em;">No metrics yet</span></div>'}
-                        </div>
-                    `;
-                }).join('');
+                cachedAgents = allAgents;
+                applyAgentFilters();
+                return true;
 
             } catch (error) {
                 showError(`Failed to load agents: ${error.message}`);
-                document.getElementById('agents-container').innerHTML = 
+                cachedAgents = [];
+                document.getElementById('agents-container').innerHTML =
                     '<div class="loading">Error loading agents</div>';
+                updateAgentFilterInfo(0);
+                updateStatusLegend(null);
+                return false;
             }
         }
 
-        async function loadDiscoveries() {
+        async function loadDiscoveries(searchQuery = '') {
             try {
-                // Get total count from list_knowledge_graph
-                const listResult = await callTool('list_knowledge_graph', {});
+                // Get total count from list_knowledge_graph (only on first load or if no search)
+                if (!searchQuery) {
+                    try {
+                        const listResult = await callTool('list_knowledge_graph', {});
+                        const stats = listResult.stats || {};
+                        const totalDiscoveries = stats.total_discoveries || 0;
+                        document.getElementById('discoveries-count').textContent = totalDiscoveries;
+                        const discoveriesChange = formatChange(totalDiscoveries, previousStats.discoveries);
+                        document.getElementById('discoveries-change').innerHTML = discoveriesChange || (totalDiscoveries > 0 ? 'Total discoveries' : 'No discoveries yet');
+                        previousStats.discoveries = totalDiscoveries;
+                    } catch (listError) {
+                        // If list fails, show error but continue with search
+                        console.warn('Failed to get discovery count:', listError);
+                        document.getElementById('discoveries-count').textContent = '?';
+                        document.getElementById('discoveries-change').innerHTML = 'Unable to load count';
+                    }
+                }
+
+                // Get discoveries using search
+                // If searchQuery is present, we rely on the server validation
+                const toolArgs = {
+                    limit: searchQuery ? 50 : 500,  // Lower limit for specific search
+                    include_details: true,
+                };
+
+                if (searchQuery) {
+                    toolArgs.query = searchQuery;
+                }
+
+                const searchResult = await callTool('search_knowledge_graph', toolArgs);
                 
-                // Parse the actual API response format
-                // list_knowledge_graph returns: { stats: { total_discoveries: N, ... } }
-                const stats = listResult.stats || {};
-                const totalDiscoveries = stats.total_discoveries || 0;
+                // Check for error in response
+                if (!searchResult || searchResult.success === false) {
+                    const errorMsg = searchResult?.error || searchResult?.message || 'Unknown error';
+                    // Don't throw for empty results - that's valid
+                    if (errorMsg.includes('too many clients') || errorMsg.includes('connection')) {
+                        throw new Error(`Database connection issue: ${errorMsg}. The server may have too many connections open.`);
+                    }
+                    if (errorMsg.includes('fetch failed')) {
+                        throw new Error(`Database query failed: ${errorMsg}. This may indicate connection pool exhaustion.`);
+                    }
+                    // For other errors, log but continue with empty results
+                    console.warn('Knowledge graph search error:', errorMsg);
+                    return { discoveries: [], stats: {} };
+                }
                 
-                // Get discoveries using search with high limit to ensure we get newest
-                // graph.query() without filters should return newest first, but let's sort client-side to be sure
-                const searchResult = await callTool('search_knowledge_graph', {
-                    limit: 500,  // Get a very large sample to ensure we have the newest
-                    include_details: true
-                });
-                
-                let discoveries = searchResult.discoveries || [];
-                
+                // Handle both array and object response formats
+                let discoveries = [];
+                if (Array.isArray(searchResult)) {
+                    discoveries = searchResult;
+                } else if (searchResult.discoveries) {
+                    discoveries = searchResult.discoveries;
+                } else if (searchResult.results) {
+                    discoveries = searchResult.results;
+                } else if (searchResult.error) {
+                    // Error response - return empty
+                    console.warn('Search returned error:', searchResult.error);
+                    return { discoveries: [], stats: {} };
+                }
+
                 // Sort by ID (which contains ISO timestamp) descending to get most recent first
                 // ID format: "2025-12-29T08:34:42.201273" - lexicographically sortable
-                // Newer dates have higher lexicographic values
                 discoveries.sort((a, b) => {
                     const aId = (a.id || '').trim();
                     const bId = (b.id || '').trim();
                     if (!aId && !bId) return 0;
                     if (!aId) return 1;  // No ID goes to end
                     if (!bId) return -1; // No ID goes to end
-                    // Compare lexicographically (newer dates come first)
                     return bId.localeCompare(aId);
                 });
-                
-                // Take only the 10 most recent
-                discoveries = discoveries.slice(0, 10);
 
-                // Update stats with total count
-                document.getElementById('discoveries-count').textContent = totalDiscoveries;
-                const discoveriesChange = formatChange(totalDiscoveries, previousStats.discoveries);
-                document.getElementById('discoveries-change').innerHTML = discoveriesChange || (totalDiscoveries > 0 ? 'Total discoveries' : 'No discoveries yet');
-                previousStats.discoveries = totalDiscoveries;
-
-                // Render discoveries
-                const container = document.getElementById('discoveries-container');
-                if (discoveries.length === 0) {
-                    container.innerHTML = '<div class="loading">No recent discoveries. Use store_knowledge_graph() to add discoveries.</div>';
-                    return;
+                if (!searchQuery) {
+                    // Only slice if we're doing a general load
+                    discoveries = discoveries.slice(0, 50);
                 }
 
-                container.innerHTML = discoveries.map(d => {
+                const enrichedDiscoveries = discoveries.map(d => {
                     // Parse date from id (format: "2025-12-29T08:34:42.201273" or "2026-01-01T23:40:53.202482")
-                    // IDs use ISO timestamps - parse correctly (it's January 2026, so Dec 29 2025 is 3 days ago)
+                    // IDs use ISO timestamps - parse correctly
                     let dateStr = 'Unknown';
                     let dateObj = null;
                     if (d.id) {
                         try {
-                            // Extract ISO timestamp from ID (first 19 chars: "2026-01-01T23:40:53")
                             const isoStr = d.id.substring(0, 19);
-                            // Parse ISO string - JavaScript Date can parse "2026-01-01T23:40:53" directly
-                            // But to be safe, we'll parse it explicitly
                             const [datePart, timePart] = isoStr.split('T');
                             const [year, month, day] = datePart.split('-').map(Number);
                             const [hour, minute, second] = timePart.split(':').map(Number);
                             dateObj = new Date(year, month - 1, day, hour, minute, second || 0);
-                            
+
                             if (!isNaN(dateObj.getTime())) {
-                                // Show relative time for recent discoveries
                                 const now = new Date();
                                 const diffMs = now - dateObj;
-                                const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-                                const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-                                
-                                // Format: Show date + time for better readability
-                                // Examples: "Dec 29, 8:34 AM" or "Jan 1, 11:40 PM"
                                 const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
                                 const month = monthNames[dateObj.getMonth()];
                                 const day = dateObj.getDate();
                                 const time = dateObj.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
                                 dateStr = `${month} ${day}, ${time}`;
                             } else {
-                                // Fallback: show raw timestamp
                                 dateStr = isoStr.replace('T', ' ');
                             }
                         } catch (e) {
-                            // Fallback: show first part of ID
                             dateStr = d.id.substring(0, 19).replace('T', ' ');
                         }
                     } else if (d.created_at) {
@@ -571,29 +1538,60 @@
                         dateObj = new Date(d.timestamp);
                         dateStr = !isNaN(dateObj.getTime()) ? dateObj.toLocaleString() : d.timestamp;
                     }
-                    
-                    // Get agent name (by field or _agent_id)
-                    const agent = d.by || d.agent_id || d._agent_id || 'Unknown';
-                    const type = d.type || d.discovery_type || 'note';
-                    const details = d.details || d.content || d.discovery || '';
 
-                    return `
-                        <div class="discovery-item">
-                            <h4>${d.summary || 'Untitled'}</h4>
-                            ${details ? `<div class="summary">${details.substring(0, 150)}${details.length > 150 ? '...' : ''}</div>` : ''}
-                            <div class="meta">
-                                <span>Type: ${type}</span>
-                                <span>By: ${agent}</span>
-                                <span>${dateStr}</span>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
+                    const timestampMs = dateObj ? dateObj.getTime() : null;
+                    return {
+                        ...d,
+                        _displayDate: dateStr,
+                        _timestampMs: timestampMs,
+                        _relativeTime: timestampMs ? formatRelativeTime(timestampMs) : null
+                    };
+                });
+
+                cachedDiscoveries = enrichedDiscoveries;
+                updateDiscoveryLegend(cachedDiscoveries);
+                // Re-apply local filters (type/time) to the new search results
+                applyDiscoveryFilters();
+                return true;
 
             } catch (error) {
-                showError(`Failed to load discoveries: ${error.message}`);
-                document.getElementById('discoveries-container').innerHTML = 
-                    '<div class="loading">Error loading discoveries</div>';
+                const errorMsg = error.message || 'Unknown error';
+                console.error('Failed to load discoveries:', error);
+                
+                // Show helpful error message
+                let userMessage = `Failed to load discoveries: ${errorMsg}`;
+                let isRetryable = false;
+                
+                if (errorMsg.includes('too many clients') || errorMsg.includes('connection pool') || errorMsg.includes('connection issue')) {
+                    userMessage = 'Database connection pool exhausted. The server has too many open connections. Try refreshing in a moment or restart the server.';
+                    isRetryable = true;
+                } else if (errorMsg.includes('fetch failed') || errorMsg.includes('timeout')) {
+                    userMessage = 'Database query timed out or failed. This may indicate connection issues. Try refreshing.';
+                    isRetryable = true;
+                } else if (errorMsg.includes('401') || errorMsg.includes('Authentication')) {
+                    userMessage = 'Authentication required. Check if the server needs an API token.';
+                } else if (errorMsg.includes('PostgreSQL') || errorMsg.includes('database')) {
+                    userMessage = 'Database error. Check server logs for details.';
+                    isRetryable = true;
+                }
+                
+                // Show error banner if retryable
+                if (isRetryable) {
+                    updateConnectionBanner(true);
+                }
+                
+                showError(userMessage);
+                document.getElementById('discoveries-container').innerHTML =
+                    `<div class="loading">${escapeHtml(userMessage)}<br><small>You can try refreshing or check the server status.</small></div>`;
+                cachedDiscoveries = [];
+                updateDiscoveryFilterInfo(0);
+                updateDiscoveryLegend([]);
+                
+                // Still update count to show error state
+                document.getElementById('discoveries-count').textContent = '?';
+                document.getElementById('discoveries-change').innerHTML = 'Error loading';
+                
+                return false;
             }
         }
 
@@ -606,34 +1604,179 @@
                 const dialecticChange = formatChange(sessions, previousStats.dialecticSessions);
                 document.getElementById('dialectic-change').innerHTML = dialecticChange || (sessions > 0 ? 'Active sessions' : 'No active sessions');
                 previousStats.dialecticSessions = sessions;
+                return true;
             } catch (error) {
                 // If aggregate_metrics doesn't work, show 0
                 document.getElementById('dialectic-sessions').textContent = '0';
                 document.getElementById('dialectic-change').innerHTML = 'No active sessions';
+                return false;
             }
         }
 
-        async function refresh() {
+        async function refresh(options = {}) {
+            const force = options.force === true;
+            if (autoRefreshPaused && !force) {
+                return;
+            }
+
+            // Don't auto-refresh if valid search text exists (to prevent overwriting search results)
+            const searchInput = document.getElementById('discovery-search');
+            if (searchInput && searchInput.value.trim().length > 0 && !force) {
+                // Only refresh agents
+                await loadAgents();
+                await loadDialecticSessions();
+                return;
+            }
+
             clearError();
-            document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
-            
+            const lastUpdateEl = document.getElementById('last-update');
+            if (lastUpdateEl) {
+                lastUpdateEl.textContent = new Date().toLocaleTimeString();
+            }
+
             try {
-                await Promise.all([
-                    loadAgents().catch(e => console.warn('Failed to load agents:', e)),
-                    loadDiscoveries().catch(e => console.warn('Failed to load discoveries:', e)),
-                    loadDialecticSessions().catch(e => console.warn('Failed to load dialectic sessions:', e))
+                const results = await Promise.all([
+                    loadAgents(),
+                    loadDiscoveries(),
+                    loadDialecticSessions()
                 ]);
+                const hasError = results.some(result => result === false);
+                updateConnectionBanner(hasError);
             } catch (error) {
+                updateConnectionBanner(true);
                 console.error('Refresh error:', error);
             }
+        }
+
+        const agentSearchInput = document.getElementById('agent-search');
+        const agentStatusFilterInput = document.getElementById('agent-status-filter');
+        const agentMetricsOnlyInput = document.getElementById('agent-metrics-only');
+        if (agentSearchInput) {
+            agentSearchInput.addEventListener('input', applyAgentFilters);
+        }
+        if (agentStatusFilterInput) {
+            agentStatusFilterInput.addEventListener('change', applyAgentFilters);
+        }
+        if (agentMetricsOnlyInput) {
+            agentMetricsOnlyInput.addEventListener('change', applyAgentFilters);
+        }
+        const agentClearFiltersButton = document.getElementById('agent-clear-filters');
+        if (agentClearFiltersButton) {
+            agentClearFiltersButton.addEventListener('click', clearAgentFilters);
+        }
+
+        // Debounce helper
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        const discoverySearchInput = document.getElementById('discovery-search');
+        const discoveryTypeFilterInput = document.getElementById('discovery-type-filter');
+        const discoveryTimeFilterInput = document.getElementById('discovery-time-filter');
+
+        // Debounced search handler
+        const handleDiscoverySearch = debounce(async (e) => {
+            const query = e.target.value.trim();
+            // Call server search
+            await loadDiscoveries(query);
+        }, 500); // 500ms debounce
+
+        if (discoverySearchInput) {
+            // Apply local highlighting immediately
+            discoverySearchInput.addEventListener('input', applyDiscoveryFilters);
+            // Trigger server search after delay
+            discoverySearchInput.addEventListener('input', handleDiscoverySearch);
+        }
+        if (discoveryTypeFilterInput) {
+            discoveryTypeFilterInput.addEventListener('change', applyDiscoveryFilters);
+        }
+        if (discoveryTimeFilterInput) {
+            discoveryTimeFilterInput.addEventListener('change', applyDiscoveryFilters);
+        }
+        const discoveryClearFiltersButton = document.getElementById('discovery-clear-filters');
+        if (discoveryClearFiltersButton) {
+            discoveryClearFiltersButton.addEventListener('click', () => {
+                clearDiscoveryFilters();
+                // Reset to full list from server
+                loadDiscoveries('');
+            });
+        }
+        const discoveryLegend = document.getElementById('discoveries-type-legend');
+        if (discoveryLegend && discoveryTypeFilterInput) {
+            discoveryLegend.addEventListener('click', event => {
+                const chip = event.target.closest('.discovery-type');
+                if (!chip) return;
+                const type = chip.getAttribute('data-type');
+                if (!type) return;
+                discoveryTypeFilterInput.value = type;
+                applyDiscoveryFilters();
+            });
+        }
+
+        const refreshNowButton = document.getElementById('refresh-now');
+        const pauseRefreshInput = document.getElementById('pause-refresh');
+        if (refreshNowButton) {
+            refreshNowButton.addEventListener('click', () => refresh({ force: true }));
+        }
+        if (pauseRefreshInput) {
+            pauseRefreshInput.addEventListener('change', event => {
+                autoRefreshPaused = event.target.checked;
+                updateRefreshStatus();
+            });
+        }
+        updateRefreshStatus();
+
+        const agentsContainer = document.getElementById('agents-container');
+        if (agentsContainer) {
+            agentsContainer.addEventListener('click', event => {
+                const button = event.target.closest('button[data-action="copy-id"]');
+                if (!button) return;
+                const agentId = button.getAttribute('data-agent-id');
+                if (!agentId) return;
+                copyToClipboard(agentId)
+                    .then(() => {
+                        const originalLabel = button.textContent;
+                        button.textContent = 'Copied';
+                        setTimeout(() => {
+                            button.textContent = originalLabel;
+                        }, 1500);
+                    })
+                    .catch(() => {
+                        const originalLabel = button.textContent;
+                        button.textContent = 'Copy failed';
+                        setTimeout(() => {
+                            button.textContent = originalLabel;
+                        }, 1500);
+                    });
+            });
+        }
+
+        const agentsLegend = document.getElementById('agents-status-legend');
+        if (agentsLegend && agentStatusFilterInput) {
+            agentsLegend.addEventListener('click', event => {
+                const chip = event.target.closest('.status-chip');
+                if (!chip) return;
+                const status = chip.getAttribute('data-status');
+                if (!status) return;
+                agentStatusFilterInput.value = status;
+                applyAgentFilters();
+            });
         }
 
         // Initial load
         refresh();
 
         // Auto-refresh every 10 seconds (reduced from 5 to avoid rate limits)
-        setInterval(refresh, 10000);
+        setInterval(refresh, REFRESH_INTERVAL_MS);
     </script>
 </body>
-</html>
 
+</html>

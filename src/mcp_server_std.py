@@ -41,6 +41,15 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+# Load .env file if present (for UNITARES_KNOWLEDGE_BACKEND, DB_BACKEND, etc.)
+try:
+    from dotenv import load_dotenv
+    _env_path = _PROJECT_ROOT / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path)
+except ImportError:
+    pass  # dotenv not installed, rely on system environment
+
 # Import structured logging early (used by optional dependency warnings below)
 from src.logging_utils import get_logger
 logger = get_logger(__name__)

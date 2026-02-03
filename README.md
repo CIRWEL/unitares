@@ -8,7 +8,23 @@ Production-ready system for monitoring AI agent behavior using EISV (Energy, Int
 
 ## 🤖 For AI Agents
 
-We provide a zero-boilerplate shorthand script to eliminate the "wrapper tax" when calling tools.
+**⭐ New? Start here:** [GETTING_STARTED_SIMPLE.md](docs/guides/GETTING_STARTED_SIMPLE.md) — 3 tools, 3 steps, done.
+
+**Quick start (3 essential tools):**
+1. `onboard()` — Get your identity
+2. `process_agent_update()` — Log your work  
+3. `get_governance_metrics()` — Check your state
+
+**That's it.** Everything else is optional.
+
+**CLI users:** Use `python3 scripts/unitares_lite.py` — Simple wrapper for the 3 essentials.  
+**Quick reference:** [QUICK_REFERENCE.md](docs/guides/QUICK_REFERENCE.md) — One-page cheat sheet.
+
+---
+
+### CLI Shorthand (Optional)
+
+We provide a zero-boilerplate shorthand script for CLI agents:
 
 **Usage:**
 ```bash
@@ -31,16 +47,23 @@ See [docs/guides/MCP_AGENT_SHORTHAND.md](docs/guides/MCP_AGENT_SHORTHAND.md) for
 
 ## Quick Start
 
-**New here?** → **[START_HERE.md](docs/guides/START_HERE.md)**
+**New here?** → **[GETTING_STARTED_SIMPLE.md](docs/guides/GETTING_STARTED_SIMPLE.md)** ⭐ **Start here for the simplest path**
+
+**Or choose your path:**
+- **Simple path:** [GETTING_STARTED_SIMPLE.md](docs/guides/GETTING_STARTED_SIMPLE.md) — 3 tools, 3 steps, done
+- **Lite guide:** [UNITARES_LITE.md](docs/guides/UNITARES_LITE.md) — Essential tools explained simply
+- **Full guide:** [START_HERE.md](docs/guides/START_HERE.md) — Complete onboarding
 
 **Use Cases:**
-- **Multi-agent coordination:** Coordinate 10+ AI agents as a thermodynamic ensemble with shared knowledge graph and peer review
-- **Solo agent:** Get thermodynamic governance feedback on individual workflows
+- **Solo agent:** Get governance feedback on your work (start with 3 tools)
+- **Multi-agent coordination:** Coordinate agents with shared knowledge graph (explore more tools when ready)
 
-**3 steps:**
-1. Call `onboard()` or any tool (identity auto-creates)
-2. Log your work with `process_agent_update`
-3. Receive governance feedback (EISV metrics, coherence, PROCEED/PAUSE)
+**3 essential steps:**
+1. Call `onboard()` — Get your identity
+2. Call `process_agent_update()` — Log your work
+3. Call `get_governance_metrics()` — Check your state
+
+**That's it.** Everything else is optional.
 
 ---
 

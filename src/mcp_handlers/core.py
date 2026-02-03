@@ -956,6 +956,16 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             # Use authenticated update function (async version)
             # Session-bound agents (from identity()) don't need API key auth
             # The session binding IS the authentication
+
+            # CIRS Protocol: Capture previous void state for transition detection
+            previous_void_active = False
+            try:
+                monitor = mcp_server.monitors.get(agent_id)
+                if monitor and hasattr(monitor.state, 'void_active'):
+                    previous_void_active = bool(monitor.state.void_active)
+            except Exception:
+                pass  # Default to False if monitor not available
+
             try:
                 # Add task_type to agent_state for context-aware interpretation
                 agent_state["task_type"] = task_type
@@ -1004,6 +1014,36 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             # Update runtime cache for compatibility (PostgreSQL is source of truth)
             if meta:
                 meta.health_status = health_status.value
+
+            # CIRS Protocol: Auto-emit VOID_ALERT on void state transitions
+            # This enables multi-agent coordination when an agent enters void state
+            cirs_alert = None
+            try:
+                from .cirs_protocol import maybe_emit_void_alert
+                V_value = metrics_dict.get('V', 0.0)
+                cirs_alert = maybe_emit_void_alert(
+                    agent_id=agent_id,
+                    V=V_value,
+                    void_active=void_active,
+                    coherence=coherence or 0.5,
+                    risk_score=risk_score or 0.0,
+                    previous_void_active=previous_void_active
+                )
+            except Exception as e:
+                logger.debug(f"CIRS void_alert auto-emit skipped: {e}")
+
+            # CIRS Protocol: Auto-emit STATE_ANNOUNCE periodically
+            # Broadcasts EISV + trajectory state for multi-agent coordination
+            cirs_state_announce = None
+            try:
+                from .cirs_protocol import auto_emit_state_announce
+                cirs_state_announce = auto_emit_state_announce(
+                    agent_id=agent_id,
+                    metrics=metrics_dict,
+                    monitor_state=monitor.state
+                )
+            except Exception as e:
+                logger.debug(f"CIRS state_announce auto-emit skipped: {e}")
 
             # PostgreSQL: Record EISV state (single source of truth)
             try:
@@ -1253,7 +1293,25 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             # Include auto-resume info if agent was auto-resumed (Priority 2)
             if auto_resume_info:
                 response_data["auto_resume"] = auto_resume_info
-            
+
+            # Include CIRS protocol info if void alert was emitted
+            if cirs_alert:
+                response_data["cirs_void_alert"] = {
+                    "emitted": True,
+                    "severity": cirs_alert.get("severity"),
+                    "V_snapshot": cirs_alert.get("V_snapshot"),
+                    "message": f"VOID_ALERT broadcast to peer agents: {cirs_alert.get('severity', 'warning').upper()}"
+                }
+
+            # Include CIRS state announce info if emitted
+            if cirs_state_announce:
+                response_data["cirs_state_announce"] = {
+                    "emitted": True,
+                    "regime": cirs_state_announce.get("regime"),
+                    "update_count": cirs_state_announce.get("update_count"),
+                    "message": "STATE_ANNOUNCE broadcast to peer agents"
+                }
+
             # Add helpful explanation for sampling_params (helps agents understand what they mean)
             if "sampling_params" in response_data:
                 sampling_params = response_data["sampling_params"]

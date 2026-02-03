@@ -1282,7 +1282,17 @@ async def handle_mark_response_complete(arguments: Dict[str, Any]) -> Sequence[T
 
 @mcp_tool("direct_resume_if_safe", timeout=10.0)
 async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    """Direct resume without dialectic if agent state is safe. Tier 1 recovery for simple stuck scenarios.
+    """⚠️ DEPRECATED: Use quick_resume() or self_recovery_review() instead.
+    
+    This tool is deprecated in favor of clearer recovery paths:
+    - quick_resume() - for clearly safe states (coherence > 0.60, risk < 0.40, no reflection needed)
+    - self_recovery_review() - for moderate states with reflection (coherence > 0.35, risk < 0.65)
+    
+    Migration guidance:
+    - If coherence > 0.60 and risk < 0.40 → use quick_resume()
+    - Otherwise → use self_recovery_review(reflection="...")
+    
+    This tool will be removed in v2.0. Current thresholds: coherence > 0.40, risk < 0.60.
     
     SECURITY: Requires registered agent_id and API key authentication.
     """
@@ -1366,7 +1376,7 @@ async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[Te
     except Exception as e:
         logger.debug(f"PostgreSQL status update failed: {e}")
 
-    return success_response({
+    response_data = {
         "success": True,
         "message": "Agent resumed successfully",
         "agent_id": agent_id,
@@ -1379,15 +1389,207 @@ async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[Te
             "void_active": void_active,
             "previous_status": status
         },
-        "note": "Agent resumed. Check get_governance_metrics periodically to stay aware of your state."
-    })
+        "note": "Agent resumed. Check get_governance_metrics periodically to stay aware of your state.",
+        "deprecation_warning": {
+            "tool": "direct_resume_if_safe",
+            "status": "deprecated",
+            "message": "This tool is deprecated. Use quick_resume() or self_recovery_review() instead.",
+            "migration": {
+                "if_coherence_gt_0_60_and_risk_lt_0_40": "Use quick_resume() - fastest path, no reflection needed",
+                "otherwise": "Use self_recovery_review(reflection='...') - requires reflection but allows recovery at lower thresholds",
+                "related_tools": ["quick_resume", "self_recovery_review", "check_recovery_options"]
+            },
+            "removal_version": "v2.0"
+        }
+    }
+    return success_response(response_data)
+
+
+@mcp_tool("self_recovery_review", timeout=15.0)
+async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Self-reflection recovery - lightweight alternative to dialectic.
+    
+    Agent reflects on what went wrong and proposes recovery conditions.
+    System validates safety and resumes if safe, or provides guidance if not.
+    
+    This replaces the heavyweight thesis→antithesis→synthesis dialectic
+    with a simpler: reflect → validate → resume flow.
+    
+    Required:
+        reflection: str - What went wrong and what you learned (minimum 20 characters)
+    
+    Optional:
+        proposed_conditions: list[str] - Conditions for resuming (e.g., "reduce complexity", "take breaks")
+        root_cause: str - Agent's understanding of root cause
+    """
+    
+    # 1. Require registered agent
+    agent_id, error = require_registered_agent(arguments)
+    if error:
+        return [error]
+    agent_uuid = arguments.get("_agent_uuid") or agent_id
+    
+    # 2. Verify ownership (can only recover yourself)
+    from .utils import verify_agent_ownership
+    if not verify_agent_ownership(agent_uuid, arguments):
+        return [error_response(
+            "Authentication required. You can only recover your own agent.",
+            error_code="AUTH_REQUIRED",
+            error_category="auth_error",
+            recovery={
+                "action": "Ensure your session is bound to this agent",
+                "related_tools": ["identity"],
+            }
+        )]
+    
+    # 3. Get reflection (required)
+    reflection = arguments.get("reflection", "").strip()
+    if not reflection or len(reflection) < 20:
+        return [error_response(
+            "Reflection required. Please describe what happened and what you learned. "
+            "Minimum 20 characters - genuine reflection helps recovery.",
+            error_code="REFLECTION_REQUIRED",
+            recovery={
+                "action": "Provide a meaningful reflection on what went wrong",
+                "example": "self_recovery_review(reflection='I got stuck in a loop trying to optimize the same function repeatedly. I should have stepped back and considered alternative approaches.')"
+            }
+        )]
+    
+    # 4. Get current metrics
+    meta = mcp_server.agent_metadata.get(agent_uuid)
+    if not meta:
+        return agent_not_found_error(agent_id)
+    
+    monitor = mcp_server.get_or_create_monitor(agent_uuid)
+    metrics = monitor.get_metrics()
+    
+    coherence = float(monitor.state.coherence)
+    risk_score = float(metrics.get("mean_risk", 0.5))
+    void_active = bool(monitor.state.void_active)
+    void_value = float(monitor.state.V)
+    status = meta.status
+    
+    # 5. Compute margin for context
+    margin_info = GovernanceConfig.compute_proprioceptive_margin(
+        risk_score=risk_score,
+        coherence=coherence,
+        void_active=void_active,
+        void_value=void_value
+    )
+    
+    # 6. Safety validation
+    proposed_conditions = arguments.get("proposed_conditions", [])
+    root_cause = arguments.get("root_cause", "")
+    
+    # Check for dangerous conditions (same as dialectic hard limits)
+    dangerous_patterns = [
+        "disable", "bypass", "ignore safety", "remove monitoring",
+        "skip governance", "override limits"
+    ]
+    conditions_text = " ".join(proposed_conditions).lower()
+    for pattern in dangerous_patterns:
+        if pattern in conditions_text:
+            return [error_response(
+                f"Proposed conditions contain dangerous pattern: '{pattern}'. "
+                "Recovery conditions cannot disable safety systems.",
+                error_code="UNSAFE_CONDITIONS"
+            )]
+    
+    # 7. Determine if safe to resume
+    safety_checks = {
+        "coherence_ok": coherence > 0.35,  # Slightly more lenient than direct_resume
+        "risk_ok": risk_score < 0.65,      # Slightly more lenient since reflecting
+        "no_void": not void_active,
+        "has_reflection": len(reflection) >= 20
+    }
+    
+    all_safe = all(safety_checks.values())
+    
+    # 8. Log reflection to knowledge graph (always, even if not resuming)
+    try:
+        from .knowledge_graph import store_discovery_internal
+        await store_discovery_internal(
+            agent_id=agent_uuid,
+            summary=f"Self-recovery reflection: {reflection[:100]}{'...' if len(reflection) > 100 else ''}",
+            discovery_type="recovery_reflection",
+            details=f"Reflection: {reflection}\n\nRoot cause: {root_cause}\n\nProposed conditions: {proposed_conditions}\n\nMetrics at reflection: coherence={coherence:.3f}, risk={risk_score:.3f}, void={void_value:.3f}",
+            tags=["recovery", "self-reflection", margin_info.get('margin', 'unknown')],
+            severity="info" if all_safe else "warning"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to log recovery reflection: {e}")
+    
+    # 9. Resume if safe, or provide guidance
+    if all_safe:
+        # Resume agent
+        meta.status = "active"
+        meta.paused_at = None
+        meta.add_lifecycle_event(
+            "resumed",
+            f"Self-recovery: {reflection[:50]}... Conditions: {proposed_conditions}"
+        )
+        
+        # PostgreSQL update
+        try:
+            await agent_storage.update_agent(agent_uuid, status="active")
+        except Exception as e:
+            logger.debug(f"PostgreSQL status update failed: {e}")
+        
+        return success_response({
+            "success": True,
+            "action": "resumed",
+            "message": "Recovery successful. Agent resumed.",
+            "reflection_logged": True,
+            "conditions": proposed_conditions,
+            "metrics": {
+                "coherence": coherence,
+                "risk_score": risk_score,
+                "margin": margin_info.get('margin', 'unknown')
+            },
+            "guidance": "You've reflected and recovered. Consider your proposed conditions as you continue."
+        })
+    
+    else:
+        # Not safe to resume - provide specific guidance
+        failed = [k for k, v in safety_checks.items() if not v]
+        
+        guidance = []
+        if not safety_checks["coherence_ok"]:
+            guidance.append(f"Coherence is low ({coherence:.3f}). Consider what's causing fragmentation in your approach.")
+        if not safety_checks["risk_ok"]:
+            guidance.append(f"Risk is elevated ({risk_score:.3f}). What could you do differently to reduce risk?")
+        if not safety_checks["no_void"]:
+            guidance.append("Void is active - there's accumulated E-I imbalance. This needs time to settle.")
+        
+        return success_response({
+            "success": False,
+            "action": "not_resumed",
+            "message": "Reflection logged, but not yet safe to resume.",
+            "reflection_logged": True,
+            "failed_checks": failed,
+            "metrics": {
+                "coherence": coherence,
+                "risk_score": risk_score,
+                "void_active": void_active,
+                "margin": margin_info.get('margin', 'unknown')
+            },
+            "guidance": guidance,
+            "next_steps": [
+                "Review the guidance above",
+                "Add to your reflection if you have new insights",
+                "Try again with self_recovery_review() when ready",
+                "Or wait for metrics to improve naturally"
+            ]
+        })
 
 
 def _detect_stuck_agents(
     max_age_minutes: float = 30.0,
     critical_margin_timeout_minutes: float = 5.0,
     tight_margin_timeout_minutes: float = 15.0,
-    include_pattern_detection: bool = True
+    include_pattern_detection: bool = True,
+    min_updates: int = 1,
 ) -> list:
     """
     Detect stuck agents using proprioceptive margin + timeout.
@@ -1418,6 +1620,11 @@ def _detect_stuck_agents(
         
         # Skip if not active
         if meta.status != "active":
+            continue
+
+        # Skip agents with too few updates (likely orphan/test agents)
+        total_updates = getattr(meta, "total_updates", 0) or 0
+        if total_updates < min_updates:
             continue
         
         # Calculate age since last update
@@ -1578,7 +1785,9 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
         max_age_minutes = float(arguments.get("max_age_minutes", 30.0))
         critical_timeout = float(arguments.get("critical_margin_timeout_minutes", 5.0))
         tight_timeout = float(arguments.get("tight_margin_timeout_minutes", 15.0))
+        min_updates = int(arguments.get("min_updates", 1))
         auto_recover = arguments.get("auto_recover", False)
+        note_cooldown_minutes = float(arguments.get("note_cooldown_minutes", 120.0))
         
         # Detect stuck agents (run in executor since _detect_stuck_agents is sync)
         import asyncio
@@ -1590,7 +1799,8 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
             max_age_minutes,
             critical_timeout,
             tight_timeout,
-            include_patterns
+            include_patterns,
+            min_updates
         )
         
         # Auto-recover if requested
@@ -1793,42 +2003,104 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
                                         except Exception as e:
                                             logger.warning(f"[STUCK_AGENT_RECOVERY] Could not trigger dialectic for safe stuck {agent_id[:8]}...: {e}", exc_info=True)
                                     else:
-                                        # Stuck but not long enough - leave note
+                                        # Stuck but not long enough - leave note (deduped by cooldown)
+                                        should_note = True
+                                        try:
+                                            if note_cooldown_minutes > 0 and meta:
+                                                for event in reversed(meta.lifecycle_events or []):
+                                                    if event.get("event") != "stuck_note":
+                                                        continue
+                                                    ts = event.get("timestamp")
+                                                    if not ts:
+                                                        continue
+                                                    try:
+                                                        last_note = datetime.fromisoformat(ts)
+                                                        if last_note.tzinfo is None:
+                                                            last_note = last_note.replace(tzinfo=timezone.utc)
+                                                        if (datetime.now(timezone.utc) - last_note).total_seconds() < note_cooldown_minutes * 60:
+                                                            should_note = False
+                                                            break
+                                                    except Exception:
+                                                        continue
+                                        except Exception:
+                                            pass
+
+                                        if should_note:
+                                            try:
+                                                from .knowledge_graph import handle_leave_note
+                                                await handle_leave_note({
+                                                    "summary": f"Agent detected as stuck ({stuck['reason']}, {age_minutes:.1f} min). Please check in with process_agent_update() to unstick.",
+                                                    "tags": ["stuck-agent", "recovery-needed"],
+                                                    "agent_id": agent_id
+                                                })
+                                                if meta:
+                                                    meta.add_lifecycle_event("stuck_note", f"{stuck['reason']} ({age_minutes:.1f} min)")
+                                            except Exception as e:
+                                                logger.debug(f"Could not leave note for stuck agent: {e}")
+                                            
+                                            recovered.append({
+                                                "agent_id": agent_id,
+                                                "action": "note_left",
+                                                "reason": stuck["reason"],
+                                                "note": f"Left note - stuck {age_minutes:.1f} min (will trigger dialectic if stuck > 60 min)"
+                                            })
+                                        else:
+                                            recovered.append({
+                                                "agent_id": agent_id,
+                                                "action": "note_skipped_recent",
+                                                "reason": stuck["reason"],
+                                                "note": f"Skipped note - recent note within {note_cooldown_minutes:.0f} min"
+                                            })
+                                except (ValueError, TypeError, AttributeError) as e:
+                                    logger.debug(f"Could not calculate age for stuck agent: {e}")
+                                    # Fallback: just leave note
+                                    should_note = True
+                                    try:
+                                        if note_cooldown_minutes > 0 and meta:
+                                            for event in reversed(meta.lifecycle_events or []):
+                                                if event.get("event") != "stuck_note":
+                                                    continue
+                                                ts = event.get("timestamp")
+                                                if not ts:
+                                                    continue
+                                                try:
+                                                    last_note = datetime.fromisoformat(ts)
+                                                    if last_note.tzinfo is None:
+                                                        last_note = last_note.replace(tzinfo=timezone.utc)
+                                                    if (datetime.now(timezone.utc) - last_note).total_seconds() < note_cooldown_minutes * 60:
+                                                        should_note = False
+                                                        break
+                                                except Exception:
+                                                    continue
+                                    except Exception:
+                                        pass
+
+                                    if should_note:
                                         try:
                                             from .knowledge_graph import handle_leave_note
                                             await handle_leave_note({
-                                                "summary": f"Agent detected as stuck ({stuck['reason']}, {age_minutes:.1f} min). Please check in with process_agent_update() to unstick.",
+                                                "summary": f"Agent detected as stuck ({stuck['reason']}). Please check in with process_agent_update() to unstick.",
                                                 "tags": ["stuck-agent", "recovery-needed"],
                                                 "agent_id": agent_id
                                             })
-                                        except Exception as e:
-                                            logger.debug(f"Could not leave note for stuck agent: {e}")
+                                            if meta:
+                                                meta.add_lifecycle_event("stuck_note", stuck["reason"])
+                                        except Exception as e2:
+                                            logger.debug(f"Could not leave note: {e2}")
                                         
                                         recovered.append({
                                             "agent_id": agent_id,
                                             "action": "note_left",
                                             "reason": stuck["reason"],
-                                            "note": f"Left note - stuck {age_minutes:.1f} min (will trigger dialectic if stuck > 60 min)"
+                                            "note": "Left note prompting check-in"
                                         })
-                                except (ValueError, TypeError, AttributeError) as e:
-                                    logger.debug(f"Could not calculate age for stuck agent: {e}")
-                                    # Fallback: just leave note
-                                    try:
-                                        from .knowledge_graph import handle_leave_note
-                                        await handle_leave_note({
-                                            "summary": f"Agent detected as stuck ({stuck['reason']}). Please check in with process_agent_update() to unstick.",
-                                            "tags": ["stuck-agent", "recovery-needed"],
-                                            "agent_id": agent_id
+                                    else:
+                                        recovered.append({
+                                            "agent_id": agent_id,
+                                            "action": "note_skipped_recent",
+                                            "reason": stuck["reason"],
+                                            "note": f"Skipped note - recent note within {note_cooldown_minutes:.0f} min"
                                         })
-                                    except Exception as e2:
-                                        logger.debug(f"Could not leave note: {e2}")
-                                    
-                                    recovered.append({
-                                        "agent_id": agent_id,
-                                        "action": "note_left",
-                                        "reason": stuck["reason"],
-                                        "note": "Left note prompting check-in"
-                                    })
                             # Log intervention (optional - don't fail if it doesn't work)
                             try:
                                 from .knowledge_graph import handle_leave_note
@@ -1913,6 +2185,8 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
             "recovered": recovered if auto_recover else [],
             "summary": {
                 "total_stuck": len(stuck_agents),
+                "min_updates": min_updates,
+                "note_cooldown_minutes": note_cooldown_minutes,
                 "total_recovered": len(recovered) if auto_recover else 0,
                 "by_reason": {
                     reason: sum(1 for s in stuck_agents if s["reason"] == reason)

@@ -10,10 +10,13 @@
 
 | You are... | Start here |
 |------------|------------|
+| **⭐ New agent (simplest)** | [GETTING_STARTED_SIMPLE.md](guides/GETTING_STARTED_SIMPLE.md) — 3 tools, 3 steps |
 | **Claude Code (CLI)** | [CLAUDE_CODE_START_HERE.md](guides/CLAUDE_CODE_START_HERE.md) |
-| **MCP Client (Cursor, etc.)** | [START_HERE.md](guides/START_HERE.md) |
+| **MCP Client (Cursor, etc.)** | [START_HERE.md](guides/START_HERE.md) — Full onboarding |
 | **Developer/Debugger** | [.agent-guides/DEVELOPER_AGENTS.md](../.agent-guides/DEVELOPER_AGENTS.md) |
 | **Human setting up MCP** | [MCP_SETUP.md](guides/MCP_SETUP.md) |
+
+**Navigation:** [NAVIGATION.md](guides/NAVIGATION.md) — Find what you need quickly.
 
 ---
 
@@ -21,10 +24,23 @@
 
 ### `/guides/` - User Guides (36 files)
 
-**Entry Points:**
-- [START_HERE.md](guides/START_HERE.md) - Agent onboarding (MCP clients)
+**Entry Points (Start Here):**
+- ⭐ [GETTING_STARTED_SIMPLE.md](guides/GETTING_STARTED_SIMPLE.md) - **Simplest path** (3 tools, 3 steps)
+- [UNITARES_LITE.md](guides/UNITARES_LITE.md) - Essential tools explained simply
+- [NAVIGATION.md](guides/NAVIGATION.md) - Find what you need quickly
+- [START_HERE.md](guides/START_HERE.md) - Full onboarding (MCP clients)
 - [CLAUDE_CODE_START_HERE.md](guides/CLAUDE_CODE_START_HERE.md) - Claude Code specific guide
 - [ONBOARDING.md](guides/ONBOARDING.md) - Comprehensive onboarding
+
+**Understanding the System:**
+- [ESSENTIAL_TOOLS.md](guides/ESSENTIAL_TOOLS.md) - Tool tiers and 80/20 breakdown
+- [PHILOSOPHY.md](guides/PHILOSOPHY.md) - Why complexity exists (optional reading)
+- [TOOL_DISCOVERY.md](guides/TOOL_DISCOVERY.md) - How to find tools without overwhelm
+- [SIMPLIFICATION_SUMMARY.md](guides/SIMPLIFICATION_SUMMARY.md) - What we built and why
+
+**Quick Reference:**
+- [QUICK_REFERENCE.md](guides/QUICK_REFERENCE.md) - One-page cheat sheet
+- [QUICK_START_CLI.md](guides/QUICK_START_CLI.md) - Simple CLI wrapper
 
 **Setup & Configuration:**
 - [MCP_SETUP.md](guides/MCP_SETUP.md) - MCP server setup

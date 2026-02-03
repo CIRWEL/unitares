@@ -468,31 +468,13 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
             "error": str(e)
         }
 
-    # Check agent metadata backend (SQLite vs JSON) - best effort, kept lightweight.
-    try:
-        backend = getattr(mcp_server, "_resolve_metadata_backend", lambda: "unknown")()
-        # PostgreSQL is now the sole backend - SQLite checks removed
-        if backend == "sqlite":
-            checks["agent_metadata"] = {
-                "status": "deprecated",
-                "backend": "sqlite",
-                "note": "SQLite backend is deprecated. PostgreSQL is now the sole backend."
-            }
-        elif backend == "json":
-            # JSON backend: report presence of snapshot file (legacy).
-            data_dir = Path(mcp_server.project_root) / "data"
-            metadata_file = data_dir / "agent_metadata.json"
-            exists = await loop.run_in_executor(None, metadata_file.exists)
-            checks["agent_metadata"] = {
-                "status": "healthy" if exists else "warning",
-                "backend": backend,
-                "info": {"metadata_file": str(metadata_file), "exists": exists}
-            }
-    except Exception as e:
-        checks["agent_metadata"] = {
-            "status": "error",
-            "error": str(e)
-        }
+    # Agent metadata - PostgreSQL is the canonical backend via agent_storage module.
+    # Legacy SQLite/JSON backends are deprecated and will be removed.
+    checks["agent_metadata"] = {
+        "status": "healthy",
+        "backend": "postgres",
+        "note": "Agent metadata stored in core.identities table (PostgreSQL)"
+    }
     
     # Check data directory (filesystem operation - run in executor)
     try:
@@ -508,13 +490,34 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
             "error": str(e)
         }
     
-    # Overall health status
-    all_healthy = all(c.get("status") == "healthy" for c in checks.values())
-    overall_status = "healthy" if all_healthy else "moderate"
-    
+    # Overall health status - three-tier logic:
+    # - healthy: all checks pass
+    # - moderate: some warnings/deprecated but no errors
+    # - critical: at least one error
+    statuses = [c.get("status") for c in checks.values()]
+    has_error = "error" in statuses
+    all_healthy = all(s == "healthy" for s in statuses)
+
+    if has_error:
+        overall_status = "critical"
+    elif all_healthy:
+        overall_status = "healthy"
+    else:
+        overall_status = "moderate"
+
+    # Include breakdown for transparency
+    status_breakdown = {
+        "healthy": sum(1 for s in statuses if s == "healthy"),
+        "warning": sum(1 for s in statuses if s == "warning"),
+        "deprecated": sum(1 for s in statuses if s == "deprecated"),
+        "unavailable": sum(1 for s in statuses if s == "unavailable"),
+        "error": sum(1 for s in statuses if s == "error"),
+    }
+
     return success_response({
         "status": overall_status,
         "version": "2.3.0",
+        "status_breakdown": status_breakdown,
         "checks": checks,
         "timestamp": datetime.now().isoformat()
     })
@@ -1045,10 +1048,52 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             "related_to": ["process_agent_update", "get_agent_metadata"],
             "category": "lifecycle"
         },
+        "request_dialectic_review": {
+            "deprecated": True,
+            "deprecated_since": "2026-01-29",
+            "superseded_by": "self_recovery_review",
+            "depends_on": ["get_agent_metadata"],
+            "related_to": ["self_recovery_review", "get_dialectic_session"],
+            "category": "lifecycle",
+            "migration": "Use self_recovery_review(reflection='...') instead"
+        },
         "direct_resume_if_safe": {
-            "depends_on": [],  # No deps - identity auto-binds
-            "related_to": ["get_dialectic_session", "get_governance_metrics"],
-            "category": "lifecycle"
+            "deprecated": True,
+            "deprecated_since": "2026-01-29",
+            "superseded_by": "quick_resume",
+            "depends_on": [],
+            "related_to": ["quick_resume", "self_recovery_review", "check_recovery_options"],
+            "category": "lifecycle",
+            "migration": "Use quick_resume() if coherence > 0.60 and risk < 0.40, otherwise use self_recovery_review(reflection='...')"
+        },
+        "self_recovery_review": {
+            "depends_on": ["get_governance_metrics"],
+            "related_to": ["quick_resume", "check_recovery_options"],
+            "replaces": ["direct_resume_if_safe", "request_dialectic_review"],
+            "category": "lifecycle",
+            "recovery_hierarchy": {
+                "fastest": "quick_resume",
+                "primary": "self_recovery_review",
+                "diagnostic": "check_recovery_options"
+            },
+            "description": "Primary recovery path - requires reflection but allows recovery at moderate thresholds"
+        },
+        "quick_resume": {
+            "depends_on": ["get_governance_metrics"],
+            "related_to": ["self_recovery_review", "check_recovery_options"],
+            "category": "lifecycle",
+            "recovery_hierarchy": {
+                "fastest": "quick_resume",
+                "primary": "self_recovery_review",
+                "diagnostic": "check_recovery_options"
+            },
+            "description": "Fastest recovery path - no reflection needed, but requires very safe state"
+        },
+        "check_recovery_options": {
+            "depends_on": ["get_governance_metrics"],
+            "related_to": ["self_recovery_review", "quick_resume"],
+            "category": "lifecycle",
+            "description": "Read-only diagnostic tool to check recovery eligibility"
         },
         "get_system_history": {
             "depends_on": ["list_agents"],

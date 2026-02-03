@@ -7,8 +7,8 @@
 # Install:
 #   pip install -r requirements-core.txt
 
-# Core MCP SDK (1.24.0+ includes Tasks, Elicitation, Streamable HTTP)
-mcp>=1.24.0
+# Core MCP SDK (1.26.0+ includes improved HTTP error handling)
+mcp>=1.26.0,<2.0.0
 
 # Governance system core math
 numpy>=1.24.0,<3.0.0

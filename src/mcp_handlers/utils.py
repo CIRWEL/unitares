@@ -1014,23 +1014,30 @@ def print_metrics(agent_id: str, metrics: Dict[str, Any], title: str = "Metrics"
         print("-" * 60)
 
 
-def verify_agent_ownership(agent_id: str, arguments: Dict[str, Any]) -> bool:
+def verify_agent_ownership(agent_id: str, arguments: Dict[str, Any], allow_operator: bool = False) -> bool:
     """
     Verify that the current session owns/is bound to the given agent_id.
 
     Dec 2025: UUID-based auth replaces API keys. Session binding is authority.
     If the session is bound to this agent_id (via UUID), the caller is authenticated.
 
+    Jan 2026: Added operator exception for cross-agent operations.
+    If allow_operator=True and the calling session is bound to an agent with
+    label="Operator" or tags containing "operator", cross-agent access is allowed.
+
     Args:
         agent_id: The agent to verify ownership of
         arguments: Tool arguments dict (for session lookup)
+        allow_operator: If True, allow operator agents to act on other agents
 
     Returns:
-        True if session is bound to this agent_id, False otherwise
+        True if session is bound to this agent_id or caller is operator, False otherwise
     """
     try:
         from .context import get_context_agent_id
         from .shared import get_mcp_server
+
+        mcp_server = get_mcp_server()
 
         # Use context agent_id (set by identity_v2 at dispatch entry)
         bound_id = get_context_agent_id()
@@ -1038,11 +1045,22 @@ def verify_agent_ownership(agent_id: str, arguments: Dict[str, Any]) -> bool:
             return True
 
         # Also accept if agent_id matches the agent_uuid of the bound agent
-        mcp_server = get_mcp_server()
         if bound_id:
             meta = mcp_server.agent_metadata.get(bound_id)
             if meta and getattr(meta, 'agent_uuid', None) == agent_id:
                 return True
+
+            # Operator exception: If caller is an operator, allow cross-agent access
+            if allow_operator and meta:
+                label = getattr(meta, 'label', '') or ''
+                tags = getattr(meta, 'tags', []) or []
+                is_operator = (
+                    label.lower() == 'operator' or
+                    'operator' in [t.lower() for t in tags]
+                )
+                if is_operator:
+                    logger.info(f"Operator {bound_id} granted cross-agent access to {agent_id}")
+                    return True
 
         return False
     except Exception as e:
