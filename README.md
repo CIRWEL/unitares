@@ -2,6 +2,8 @@
 
 **Thermodynamic AI governance with measurable metrics and autonomous peer review.**
 
+> *With 40% of enterprise apps expected to embed AI agents by end of 2026, governance is no longer optional. UNITARES provides the monitoring and circuit-breaker infrastructure that production agent deployments need.*
+
 UNITARES makes abstract governance concepts (ethical drift, coherence, stability) **concrete and measurable** using thermodynamic state variables. It's the first system to ground AI self-governance in empirical, observable metrics.
 
 ---
