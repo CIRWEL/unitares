@@ -143,7 +143,7 @@ Select integration scenario:
 
 **Primary tools:**
 - `identity()` - Check/create identity (auto-creates on first call, returns UUID)
-- `list_tools` - Enumerate available governance functions (46 tools)
+- `list_tools` - Enumerate available governance functions (79 tools)
 - `process_agent_update` - Main governance cycle (identity auto-injected)
 - `simulate_update` - Dry-run governance evaluation (no state persistence)
 - `get_governance_metrics` - Retrieve current thermodynamic state

@@ -516,7 +516,7 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
 
     return success_response({
         "status": overall_status,
-        "version": "2.3.0",
+        "version": "2.5.4",
         "status_breakdown": status_breakdown,
         "checks": checks,
         "timestamp": datetime.now().isoformat()
@@ -2131,7 +2131,7 @@ async def handle_debug_request_context(arguments: Dict[str, Any]) -> Sequence[Te
             "version": validator_version,
         },
         "server": {
-            "version": "2.3.0",  # Hardcoded - this is just diagnostics
+            "version": "2.5.4",  # Hardcoded - this is just diagnostics
         },
         "recommendation": "For identity, use identity() instead. This tool is for debugging session/context issues."
     }
