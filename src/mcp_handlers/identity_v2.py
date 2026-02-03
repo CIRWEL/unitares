@@ -1347,6 +1347,26 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             # Refresh identity object
             identity["label"] = name
 
+    # TRAJECTORY IDENTITY: Store genesis signature if provided (optional, non-blocking)
+    # Agents from anima-mcp can include trajectory_signature in their onboard call
+    trajectory_result = None
+    trajectory_signature = arguments.get("trajectory_signature")
+    if trajectory_signature and isinstance(trajectory_signature, dict):
+        try:
+            from src.trajectory_identity import TrajectorySignature, store_genesis_signature
+            sig = TrajectorySignature.from_dict(trajectory_signature)
+            stored = await store_genesis_signature(agent_uuid, sig)
+            if stored:
+                trajectory_result = {
+                    "genesis_stored": True,
+                    "confidence": sig.identity_confidence,
+                    "observations": sig.observation_count,
+                }
+                logger.info(f"[TRAJECTORY] Stored genesis Σ₀ for {agent_uuid[:8]}... at onboard")
+        except Exception as e:
+            logger.debug(f"[TRAJECTORY] Could not store genesis at onboard: {e}")
+            # Non-blocking - trajectory is optional
+
     # STEP 3: Generate stable session ID
     # Import helper to ensure consistent format
     from .identity import make_client_session_id
@@ -1501,8 +1521,111 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             }
         })
 
+    # Include trajectory result if genesis was stored
+    if trajectory_result:
+        result["trajectory"] = trajectory_result
+
     logger.info(f"[ONBOARD] Agent {agent_uuid[:8]}... onboarded (is_new={is_new}, label={agent_label})")
 
     # Use lite_response to skip redundant signature
     arguments["lite_response"] = True
     return success_response(result, agent_id=agent_uuid, arguments=arguments)
+
+
+# =============================================================================
+# TRAJECTORY IDENTITY VERIFICATION TOOL
+# =============================================================================
+
+@mcp_tool("verify_trajectory_identity", timeout=10.0)
+async def handle_verify_trajectory_identity(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    🔬 VERIFY_TRAJECTORY_IDENTITY - Two-tier identity verification via trajectory signature.
+
+    Verifies agent identity using the Trajectory Identity framework:
+    - Tier 1 (Coherence): Compare to recent signature (short-term consistency)
+    - Tier 2 (Lineage): Compare to genesis signature (long-term identity continuity)
+
+    Args:
+        trajectory_signature: The current trajectory signature to verify (dict with:
+            preferences, beliefs, attractor, recovery, relational, stability_score,
+            identity_confidence, observation_count)
+        coherence_threshold: Optional threshold for Tier 1 (default: 0.7)
+        lineage_threshold: Optional threshold for Tier 2 (default: 0.6)
+
+    Returns:
+        Verification result with tier details and overall verdict.
+    """
+    # Get agent UUID from context
+    from .context import get_context_agent_id
+    agent_uuid = get_context_agent_id()
+
+    if not agent_uuid:
+        return error_response("Identity not resolved. Call identity() or onboard() first.")
+
+    trajectory_signature = arguments.get("trajectory_signature")
+    if not trajectory_signature or not isinstance(trajectory_signature, dict):
+        return error_response(
+            "trajectory_signature is required",
+            recovery={
+                "action": "Include your trajectory signature from anima-mcp",
+                "example": "verify_trajectory_identity(trajectory_signature={...})"
+            }
+        )
+
+    coherence_threshold = arguments.get("coherence_threshold", 0.7)
+    lineage_threshold = arguments.get("lineage_threshold", 0.6)
+
+    try:
+        from src.trajectory_identity import TrajectorySignature, verify_trajectory_identity
+
+        sig = TrajectorySignature.from_dict(trajectory_signature)
+        result = await verify_trajectory_identity(
+            agent_uuid,
+            sig,
+            coherence_threshold=coherence_threshold,
+            lineage_threshold=lineage_threshold
+        )
+
+        if result.get("error"):
+            return error_response(result["error"])
+
+        return success_response(result, agent_id=agent_uuid, arguments=arguments)
+
+    except Exception as e:
+        logger.error(f"[TRAJECTORY] Verification failed: {e}")
+        return error_response(f"Trajectory verification failed: {e}")
+
+
+@mcp_tool("get_trajectory_status", timeout=10.0)
+async def handle_get_trajectory_status(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    📊 GET_TRAJECTORY_STATUS - Check trajectory identity status for an agent.
+
+    Returns information about the agent's trajectory identity including:
+    - Whether genesis signature exists
+    - Current signature details
+    - Lineage similarity (if both exist)
+    - Drift detection status
+
+    No arguments required - uses current session identity.
+    """
+    # Get agent UUID from context
+    from .context import get_context_agent_id
+    agent_uuid = get_context_agent_id()
+
+    if not agent_uuid:
+        return error_response("Identity not resolved. Call identity() or onboard() first.")
+
+    try:
+        from src.trajectory_identity import get_trajectory_status
+
+        result = await get_trajectory_status(agent_uuid)
+
+        if result.get("error"):
+            return error_response(result["error"])
+
+        return success_response(result, agent_id=agent_uuid, arguments=arguments)
+
+    except Exception as e:
+        logger.error(f"[TRAJECTORY] Status check failed: {e}")
+        return error_response(f"Trajectory status check failed: {e}")

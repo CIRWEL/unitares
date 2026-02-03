@@ -1591,6 +1591,45 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                 pass
 
             # =========================================================
+            # TRAJECTORY IDENTITY - Compare signature if provided
+            # =========================================================
+            # Agents from anima-mcp can include trajectory_signature in updates
+            # This enables lineage tracking and anomaly detection
+            trajectory_signature = arguments.get("trajectory_signature")
+            if trajectory_signature and isinstance(trajectory_signature, dict):
+                try:
+                    from src.trajectory_identity import TrajectorySignature, update_current_signature
+                    sig = TrajectorySignature.from_dict(trajectory_signature)
+                    trajectory_result = await update_current_signature(agent_uuid, sig)
+
+                    if trajectory_result and not trajectory_result.get("error"):
+                        response_data["trajectory_identity"] = {
+                            "updated": trajectory_result.get("stored", False),
+                            "observation_count": trajectory_result.get("observation_count"),
+                            "identity_confidence": trajectory_result.get("identity_confidence"),
+                        }
+
+                        # Include lineage check if genesis exists
+                        if "lineage_similarity" in trajectory_result:
+                            response_data["trajectory_identity"]["lineage"] = {
+                                "similarity": trajectory_result["lineage_similarity"],
+                                "threshold": trajectory_result.get("lineage_threshold", 0.6),
+                                "is_anomaly": trajectory_result.get("is_anomaly", False),
+                            }
+
+                            # Warn on anomaly
+                            if trajectory_result.get("is_anomaly"):
+                                response_data["trajectory_identity"]["warning"] = trajectory_result.get("warning")
+                                logger.warning(f"[TRAJECTORY] Anomaly detected for {agent_uuid[:8]}...")
+
+                        elif trajectory_result.get("genesis_created"):
+                            response_data["trajectory_identity"]["genesis_created"] = True
+                            logger.info(f"[TRAJECTORY] Created genesis Σ₀ for {agent_uuid[:8]}... on first update")
+                except Exception as e:
+                    # Non-blocking - trajectory is optional
+                    logger.debug(f"[TRAJECTORY] Could not update trajectory: {e}")
+
+            # =========================================================
             # v4.2-P SATURATION DIAGNOSTICS - Pressure gauge for I-channel
             # =========================================================
             try:

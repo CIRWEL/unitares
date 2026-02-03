@@ -88,7 +88,9 @@ from .self_recovery import (
 # Identity - v2 simplified (Dec 2025, 3-path architecture)
 from .identity_v2 import (
     handle_identity_adapter as handle_identity,
-    handle_onboard_v2 as handle_onboard
+    handle_onboard_v2 as handle_onboard,
+    handle_verify_trajectory_identity,
+    handle_get_trajectory_status,
 )
 # Model Inference - Free/low-cost LLM access via ngrok.ai
 from .model_inference import handle_call_model
