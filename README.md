@@ -117,6 +117,26 @@ python src/mcp_server_std.py
 }
 ```
 
+**REST/CLI Usage (curl, scripts, GPT):**
+```bash
+# IMPORTANT: Include X-Session-ID header to maintain identity across calls
+SESSION="my-agent-session"
+
+# Onboard
+curl -H "X-Session-ID: $SESSION" \
+  -X POST http://localhost:8767/v1/tools/call \
+  -H "Content-Type: application/json" \
+  -d '{"name": "onboard", "arguments": {"name": "MyAgent"}}'
+
+# Log work (same session = same identity)
+curl -H "X-Session-ID: $SESSION" \
+  -X POST http://localhost:8767/v1/tools/call \
+  -H "Content-Type: application/json" \
+  -d '{"name": "process_agent_update", "arguments": {"response_text": "Did stuff", "complexity": 0.5}}'
+```
+
+> **Without `X-Session-ID`:** Each request gets a new identity. This is intentional for security (prevents identity collision), but means you must explicitly manage sessions for REST clients.
+
 ---
 
 ## Key Features

@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# UNITARES CLI - Simple wrapper with automatic session management
+# Usage: unitares <command> [args...]
+
+set -e
+
+UNITARES_URL="${UNITARES_URL:-http://localhost:8767}"
+SESSION_FILE="${HOME}/.unitares_session"
+
+# Get or create session ID
+get_session() {
+    if [ -f "$SESSION_FILE" ]; then
+        cat "$SESSION_FILE"
+    else
+        SESSION="cli-$(date +%Y%m%d)-$$"
+        echo "$SESSION" > "$SESSION_FILE"
+        echo "$SESSION"
+    fi
+}
+
+SESSION=$(get_session)
+
+call_tool() {
+    local tool="$1"
+    local args="$2"
+    curl -s -X POST "${UNITARES_URL}/v1/tools/call" \
+        -H "Content-Type: application/json" \
+        -H "X-Session-ID: ${SESSION}" \
+        -d "{\"name\": \"${tool}\", \"arguments\": ${args}}"
+}
+
+parse_onboard() {
+    python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+r = data.get('result', {})
+print(f'Welcome: {r.get(\"welcome\", r.get(\"message\", \"Onboarded\"))[:60]}')
+print(f'UUID: {r.get(\"uuid\", r.get(\"agent_uuid\", \"?\"))}')
+"
+}
+
+parse_update() {
+    python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+r = data.get('result', {})
+print(f'Verdict: {r.get(\"verdict\", \"?\")}')
+print(f'Coherence: {r.get(\"coherence\", \"?\")}')
+print(f'Risk: {r.get(\"risk_score\", \"?\")}')
+"
+}
+
+parse_metrics() {
+    python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+r = data.get('result', {})
+def v(x): return x.get('value', x) if isinstance(x, dict) else x
+print(f'E={v(r.get(\"E\",0)):.2f} I={v(r.get(\"I\",0)):.2f} S={v(r.get(\"S\",0)):.2f} V={v(r.get(\"V\",0)):.2f}')
+print(f'Summary: {r.get(\"summary\", \"?\")}')
+"
+}
+
+parse_health() {
+    python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+print(f'Status: {data.get(\"status\", \"?\")}')
+print(f'Version: {data.get(\"version\", \"?\")}')
+print(f'Uptime: {data.get(\"uptime\", {}).get(\"formatted\", \"?\")}')
+"
+}
+
+parse_tools() {
+    python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+print(f'Tools: {data.get(\"count\", \"?\")}/{data.get(\"total_available\", \"?\")} ({data.get(\"mode\", \"?\")} mode)')
+"
+}
+
+case "${1:-help}" in
+    onboard|o)
+        NAME="${2:-CLI-Agent}"
+        call_tool "onboard" "{\"name\": \"${NAME}\"}" | parse_onboard
+        echo "Session: ${SESSION}"
+        ;;
+
+    update|u)
+        TEXT="${2:-Update}"
+        COMPLEXITY="${3:-0.5}"
+        call_tool "process_agent_update" "{\"response_text\": \"${TEXT}\", \"complexity\": ${COMPLEXITY}}" | parse_update
+        ;;
+
+    metrics|m)
+        call_tool "get_governance_metrics" "{}" | parse_metrics
+        ;;
+
+    health|h)
+        curl -s "${UNITARES_URL}/health" | parse_health
+        ;;
+
+    tools|t)
+        curl -s "${UNITARES_URL}/v1/tools" | parse_tools
+        ;;
+
+    call|c)
+        TOOL="$2"
+        ARGS="${3:-{}}"
+        call_tool "$TOOL" "$ARGS"
+        ;;
+
+    reset)
+        rm -f "$SESSION_FILE"
+        echo "Session reset. Next command will create new identity."
+        ;;
+
+    session)
+        echo "Session ID: ${SESSION}"
+        echo "Stored in: ${SESSION_FILE}"
+        ;;
+
+    help|--help|-h|*)
+        cat << 'EOF'
+UNITARES CLI
+
+Commands:
+  onboard [name]              Onboard with optional name
+  update "text" [complexity]  Log work (complexity 0-1, default 0.5)
+  metrics                     Show EISV governance metrics
+  health                      Check server health
+  tools                       List available tools
+  call <tool> [args_json]     Call any tool directly
+  session                     Show current session ID
+  reset                       Reset session (new identity)
+
+Examples:
+  unitares onboard "MyAgent"
+  unitares update "Fixed bug in auth module" 0.6
+  unitares metrics
+  unitares call list_agents '{}'
+
+Environment:
+  UNITARES_URL  Server URL (default: http://localhost:8767)
+EOF
+        ;;
+esac
