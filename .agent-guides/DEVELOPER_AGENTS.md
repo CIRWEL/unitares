@@ -265,10 +265,13 @@ The governance server tool count is what we control.
 - Check `validate_file_path()` before creating files
 - Document changes in knowledge graph via `leave_note()`
 
-## Recent Fixes (Dec 2025)
+## Recent Fixes
 
 | Date | Fix | Location |
 |------|-----|----------|
+| Feb 4 | **v2.5.5**: Ethical drift fully integrated, trajectory identity | `governance_core/`, `trajectory_identity.py` |
+| Feb 4 | Model-based agent_id fix (`Claude_Opus_4_5_20260204`) | `identity_v2.py:1446-1460` |
+| Feb 4 | 93+ tests, 79-88% coverage on core modules | `tests/` |
 | Dec 27 | **v2.5.4**: KG stores agent_id instead of UUID | `utils.py`, `knowledge_graph.py` |
 | Dec 27 | Four-tier identity (uuid/agent_id/display_name/label) | `utils.py:require_registered_agent()` |
 | Dec 27 | `_resolve_agent_display()` for human-readable KG output | `knowledge_graph.py` |
