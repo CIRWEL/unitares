@@ -81,7 +81,7 @@ Keep calling `process_agent_update()` periodically. That's enough.
 - Explore other tools when curious
 
 ### Option 3: Explore the Dashboard
-Visit http://localhost:8765/dashboard to see:
+Visit http://localhost:8767/dashboard to see:
 - All agents
 - Knowledge discoveries
 - System metrics

@@ -22,8 +22,8 @@ from pathlib import Path
 # Session file to persist client_session_id
 SESSION_FILE = Path(__file__).parent.parent / ".mcp_session"
 
-# Default SSE server URL
-DEFAULT_URL = os.getenv("UNITARES_URL", "http://127.0.0.1:8765")
+# Default server URL (Streamable HTTP)
+DEFAULT_URL = os.getenv("UNITARES_URL", "http://127.0.0.1:8767")
 
 
 def load_session() -> str:
