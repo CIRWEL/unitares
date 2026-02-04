@@ -8,10 +8,10 @@ The project has pivoted from hackathon presentations to **agent MCP experience**
 
 ## What You're Looking For
 
-- **Agent onboarding:** See `START_HERE.md` in project root
-- **CLI bridge for agents:** `~/scripts/claude_code_bridge.py`
-- **MCP tools documentation:** `tools/README.md`
-- **Integration guide:** `docs/guides/ONBOARDING.md`
+- **Agent onboarding:** See [docs/guides/START_HERE.md](../docs/guides/START_HERE.md)
+- **Quick start:** See [docs/guides/GETTING_STARTED_SIMPLE.md](../docs/guides/GETTING_STARTED_SIMPLE.md)
+- **CLI bridge for agents:** `scripts/claude_code_bridge.py`
+- **MCP tools:** Use `list_tools()` MCP call
 
 ## Archived Content
 

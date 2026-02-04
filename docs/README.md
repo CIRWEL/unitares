@@ -31,7 +31,7 @@
 | Doc | Description |
 |-----|-------------|
 | [governance_core/README](../governance_core/README.md) | Mathematical foundation (EISV dynamics) |
-| [tools/README](../tools/README.md) | Tool catalog (auto-generated) |
+| `list_tools()` | Tool catalog (use MCP tool) |
 | [CIRCUIT_BREAKER_DIALECTIC](CIRCUIT_BREAKER_DIALECTIC.md) | Circuit breaker + recovery protocol |
 | [database_architecture](database_architecture.md) | PostgreSQL + Redis architecture |
 | [MCP_SYSTEM_EVOLUTION](MCP_SYSTEM_EVOLUTION.md) | Version history (v1.0 → v2.5.4) |
@@ -46,7 +46,7 @@
 
 ---
 
-## Tool Count: 79 Tools
+## Tool Count: 77 Tools
 
 Use `list_tools()` for full list, or `list_tools(lite=true)` for essentials only.
 

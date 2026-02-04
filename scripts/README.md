@@ -4,7 +4,7 @@
 
 **If you have MCP access (Cursor, Claude Desktop, etc.):**
 - ✅ **Use MCP tools directly** - Don't use scripts
-- ✅ **Use `list_tools()`** - Shows all 79 available tools
+- ✅ **Use `list_tools()`** - Shows all 77 available tools
 - ✅ **Full tool suite available** - Scripts are only for CLI-only interfaces
 
 **If you DON'T have MCP access (CLI-only):**
@@ -138,5 +138,5 @@
 **Last Updated:** February 3, 2026
 **Status:** 12 active scripts, 31 archived, 5 moved to tests/
 
-**Key Change:** Most functionality provided by 79 MCP tools. Scripts only needed for CLI-only interfaces.
+**Key Change:** Most functionality provided by 77 MCP tools. Scripts only needed for CLI-only interfaces.
 

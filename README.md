@@ -122,7 +122,7 @@ python src/mcp_server_std.py
 
 ## Key Features
 
-### 78 MCP Tools
+### 77 MCP Tools
 
 | Category | Count | Purpose |
 |----------|-------|---------|
