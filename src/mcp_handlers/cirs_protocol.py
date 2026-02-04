@@ -296,7 +296,7 @@ def _get_state_announces(
 # VOID_ALERT Tool Handler
 # =============================================================================
 
-@mcp_tool("void_alert", timeout=10.0, description="CIRS Protocol: Broadcast or query void state alerts for multi-agent coordination")
+@mcp_tool("void_alert", timeout=10.0, hidden=True, description="CIRS Protocol: Broadcast or query void state alerts for multi-agent coordination")
 async def handle_void_alert(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     CIRS VOID_ALERT - Multi-agent void state coordination.
@@ -482,7 +482,7 @@ async def _handle_void_alert_query(arguments: Dict[str, Any]) -> Sequence[TextCo
 # STATE_ANNOUNCE Tool Handler
 # =============================================================================
 
-@mcp_tool("state_announce", timeout=10.0, description="CIRS Protocol: Broadcast or query agent EISV + trajectory state for multi-agent coordination")
+@mcp_tool("state_announce", timeout=10.0, hidden=True, description="CIRS Protocol: Broadcast or query agent EISV + trajectory state for multi-agent coordination")
 async def handle_state_announce(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     CIRS STATE_ANNOUNCE - Multi-agent state broadcasting.
@@ -996,7 +996,7 @@ def _get_coherence_reports(
 # COHERENCE_REPORT Tool Handler
 # =============================================================================
 
-@mcp_tool("coherence_report", timeout=15.0, description="CIRS Protocol: Compute and share pairwise similarity metrics between agents")
+@mcp_tool("coherence_report", timeout=15.0, hidden=True, description="CIRS Protocol: Compute and share pairwise similarity metrics between agents")
 async def handle_coherence_report(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     CIRS COHERENCE_REPORT - Multi-agent similarity analysis.
@@ -1372,7 +1372,7 @@ def _get_all_boundary_contracts() -> List[Dict[str, Any]]:
 # BOUNDARY_CONTRACT Tool Handler
 # =============================================================================
 
-@mcp_tool("boundary_contract", timeout=10.0, description="CIRS Protocol: Declare trust policies and void response rules for multi-agent coordination")
+@mcp_tool("boundary_contract", timeout=10.0, hidden=True, description="CIRS Protocol: Declare trust policies and void response rules for multi-agent coordination")
 async def handle_boundary_contract(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     CIRS BOUNDARY_CONTRACT - Multi-agent trust and boundary management.
@@ -1677,7 +1677,7 @@ def _get_governance_actions_for_agent(
 # GOVERNANCE_ACTION Tool Handler
 # =============================================================================
 
-@mcp_tool("governance_action", timeout=15.0, description="CIRS Protocol: Coordinate interventions across agents for collaborative governance")
+@mcp_tool("governance_action", timeout=15.0, hidden=True, description="CIRS Protocol: Coordinate interventions across agents for collaborative governance")
 async def handle_governance_action(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     CIRS GOVERNANCE_ACTION - Multi-agent intervention coordination.
@@ -1957,3 +1957,69 @@ async def _handle_governance_action_status(arguments: Dict[str, Any]) -> Sequenc
         "governance_action": gov_action,
         "cirs_protocol": "GOVERNANCE_ACTION"
     })
+
+
+# =============================================================================
+# CONSOLIDATED ENTRY POINT
+# =============================================================================
+
+# Dispatch table for consolidated tool
+_CIRS_DISPATCHERS = {
+    "void_alert": handle_void_alert,
+    "state_announce": handle_state_announce,
+    "coherence_report": handle_coherence_report,
+    "boundary_contract": handle_boundary_contract,
+    "governance_action": handle_governance_action,
+}
+
+
+@mcp_tool("cirs_protocol", timeout=15.0, description="CIRS Protocol: Unified multi-agent coordination (void alerts, state announce, coherence, boundaries, governance)")
+async def handle_cirs_protocol(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    CIRS Protocol - Unified entry point for multi-agent coordination.
+
+    Consolidates all CIRS protocol tools into a single interface.
+    Use 'protocol' to select which operation:
+
+    Protocols:
+        - void_alert: Broadcast/query void state alerts
+        - state_announce: Broadcast/query EISV + trajectory state
+        - coherence_report: Compute pairwise agent similarity
+        - boundary_contract: Declare trust policies
+        - governance_action: Coordinate interventions
+
+    Args:
+        protocol: Which CIRS protocol to use (required)
+        action: The action within that protocol (emit/query/compute/set/get/etc.)
+        ... (other args passed to the specific protocol handler)
+
+    Examples:
+        cirs_protocol(protocol='void_alert', action='query', limit=10)
+        cirs_protocol(protocol='state_announce', action='emit')
+        cirs_protocol(protocol='coherence_report', action='compute', target_agent_id='agent-123')
+    """
+    protocol = arguments.get("protocol")
+
+    if not protocol:
+        return [error_response(
+            "Missing 'protocol' parameter",
+            recovery={
+                "available_protocols": list(_CIRS_DISPATCHERS.keys()),
+                "example": "cirs_protocol(protocol='void_alert', action='query')"
+            }
+        )]
+
+    protocol = protocol.lower().strip()
+
+    if protocol not in _CIRS_DISPATCHERS:
+        return [error_response(
+            f"Unknown protocol: {protocol}",
+            recovery={
+                "available_protocols": list(_CIRS_DISPATCHERS.keys()),
+                "example": f"cirs_protocol(protocol='void_alert', action='query')"
+            }
+        )]
+
+    # Dispatch to the specific handler
+    handler = _CIRS_DISPATCHERS[protocol]
+    return await handler(arguments)

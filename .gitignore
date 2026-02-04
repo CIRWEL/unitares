@@ -135,3 +135,4 @@ tests/additional_security_report.json
 # Prevent test script proliferation in root (tests must go in tests/)
 /test_*.py
 /demo_*.py
+.governance_session
