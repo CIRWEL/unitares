@@ -27,7 +27,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         if [ -f requirements-mcp.txt ]; then pip install -r requirements-mcp.txt; fi
-        pip install pytest pytest-asyncio numpy
+        pip install pytest pytest-asyncio numpy requests
 
     - name: Run tests
       run: |

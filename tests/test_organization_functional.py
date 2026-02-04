@@ -184,7 +184,8 @@ def test_export_handler_integration():
     else:
         print("  ⚠️  Export handler code may not use data/history/")
         print(f"     Found 'history_dir': {'history_dir' in content}")
-        print(f"     Found 'data\", \"history\"': {'data\", \"history\"' in content}")
+        search_str = 'data", "history"'
+        print(f"     Found 'data\", \"history\"': {search_str in content}")
         return False
 
 def main():
