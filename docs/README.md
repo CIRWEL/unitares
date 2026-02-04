@@ -46,7 +46,7 @@
 
 ---
 
-## Tool Count: 77 Tools
+## Tool Count: 81 Tools
 
 Use `list_tools()` for full list, or `list_tools(lite=true)` for essentials only.
 
