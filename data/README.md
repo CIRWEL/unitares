@@ -1,57 +1,63 @@
 # Data Directory
 
-This directory contains runtime data, agent states, history, and knowledge for the UNITARES Governance system.
+Runtime data for UNITARES Governance. Contains agent states, history, knowledge graph, and audit logs.
 
-**⚠️ Important:** Many files in this directory contain sensitive information (API keys, agent data) and are **NOT** tracked in git.
-
----
-
-## Organization
-
-See [ORGANIZATION_GUIDE.md](../docs/ORGANIZATION_GUIDE.md) for complete organization standards.
-
-### Quick Structure
-
-Current organization uses an **organized structure** with subdirectories:
-
-- `agents/` - Agent state files (`{agent_id}_state.json`)
-- `history/` - Historical exports (`{agent_id}_history_{timestamp}.json`)
-- `knowledge/` - Knowledge layer data
-- `dialectic_sessions/` - Optional JSON snapshots for dialectic sessions (SQLite-first in `dialectic.db`)
-- `archive/` - Archived data (agents/, history/, exports/)
-- `test_files/` - Test data (safe for git)
-- `processes/`, `locks/` - Runtime state (not in git)
+**⚠️ Important:** Most files here contain sensitive data and are NOT tracked in git.
 
 ---
 
-## Files NOT in Git
+## Structure
 
-- `agent_metadata.json` - Contains API keys
-- `knowledge/` - May contain sensitive discoveries
+```
+data/
+├── agents/              # Active agent state files
+├── history/             # Historical exports
+├── knowledge/           # Knowledge graph JSON (legacy)
+├── dialectic_sessions/  # Dialectic session snapshots
+├── archive/             # Archived agents/history
+├── exports/             # Manual exports
+├── backups/             # Database backups
+├── telemetry/           # Drift/calibration telemetry
+├── logs/                # Server logs
+├── locks/               # Runtime locks (not in git)
+├── processes/           # Process tracking (not in git)
+├── governance.db        # Main SQLite database
+├── audit_log.jsonl      # Audit trail
+└── tool_usage.jsonl     # Tool usage statistics
+```
+
+---
+
+## What's NOT in Git
+
+- `governance.db` - Main database (agents, knowledge graph, calibration)
 - `audit_log.jsonl` - May contain sensitive information
-- `archive/` - Historical sensitive data
-- `locks/` - Runtime locks
-- `processes/` - Process tracking
+- `agent_metadata.json` - Contains API keys (if using legacy auth)
+- `locks/`, `processes/` - Runtime state
+- Most `*.json` agent files
 
 ---
 
-## Files Safe for Git
+## What IS in Git
 
-- `agent_metadata.example.json` - Example template
-- `test_files/` - Test data (no real API keys)
-- `README.md` files - Documentation
+- `README.md` - This file
+- `agent_metadata.example.json` - Template
+- `test_files/` - Test fixtures
+- `.gitkeep` files - Directory placeholders
+- `telemetry/` - Aggregated metrics (anonymized)
 
 ---
 
 ## Quick Reference
 
-**Where do I put...?**
+| I need to... | Location |
+|-------------|----------|
+| Check agent state | `agents/{agent_id}_state.json` or query `governance.db` |
+| Export history | `history/{agent_id}_history_{timestamp}.json` |
+| View audit trail | `audit_log.jsonl` |
+| Check tool usage | `tool_usage.jsonl` |
+| Backup database | `backups/` |
 
-- **Active agent state:** `agents/{agent_id}_state.json`
-- **History export:** `history/{agent_id}_history_{timestamp}.json`
-- **Knowledge data:** `knowledge/{agent_id}_knowledge.json`
-- **Test data:** `test_files/test_*.json`
-- **Archived data:** `archive/agents/` or `archive/history/`
+---
 
-**See:** [ORGANIZATION_GUIDE.md](../docs/ORGANIZATION_GUIDE.md) for complete guidelines.
-
+**Last Updated:** February 3, 2026
