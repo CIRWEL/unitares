@@ -76,8 +76,8 @@ from .knowledge_graph import (
     handle_cleanup_knowledge_graph,
     handle_get_lifecycle_stats,
 )
-# Dialectic - Only get_dialectic_session remains (Dec 2025)
-from .dialectic import handle_get_dialectic_session
+# Dialectic - get_dialectic_session + list_dialectic_sessions (Feb 2026)
+from .dialectic import handle_get_dialectic_session, handle_list_dialectic_sessions
 # Self-Recovery - Simplified recovery without external reviewers (Jan 2026)
 # Note: handle_self_recovery_review moved to lifecycle.py per SELF_RECOVERY_SPEC.md
 from .self_recovery import (
@@ -96,20 +96,6 @@ from .identity_v2 import (
 from .model_inference import handle_call_model
 # ROI Metrics - Customer value tracking
 from .roi_metrics import handle_get_roi_metrics
-# Pi Orchestration - Mac→Pi coordination (Jan 2026)
-from .pi_orchestration import (
-    handle_pi_get_context,
-    handle_pi_health,
-    handle_pi_sync_eisv,
-    handle_pi_display,
-    handle_pi_say,
-    handle_pi_post_message,
-    handle_pi_query,
-    handle_pi_workflow,
-    # Background tasks
-    eisv_sync_task,
-    sync_eisv_once,
-)
 # Consolidated tools - reduces cognitive load for agents (Jan 2026)
 from .consolidated import (
     handle_knowledge,
@@ -119,6 +105,8 @@ from .consolidated import (
 # CIRS Protocol - Multi-agent resonance layer (Feb 2026)
 # See: UARG Whitepaper for protocol specification
 from .cirs_protocol import (
+    handle_cirs_protocol,  # Consolidated entry point
+    # Individual handlers (hidden, for backwards compat)
     handle_void_alert,
     handle_state_announce,
     handle_coherence_report,

@@ -1798,33 +1798,6 @@ async def main():
         # Start stuck agent recovery task (non-blocking)
         asyncio.create_task(stuck_agent_recovery_task())
 
-        # === Background task: Periodic EISV sync (Pi→Mac) ===
-        async def startup_eisv_sync():
-            """Start periodic EISV synchronization from Pi to Mac."""
-            await asyncio.sleep(5.0)  # Wait for server and SSH tunnel
-
-            try:
-                from src.mcp_handlers.pi_orchestration import eisv_sync_task, sync_eisv_once
-
-                # Run initial sync at startup
-                result = await sync_eisv_once(update_governance=False)
-                if result.get("success"):
-                    eisv = result.get("eisv", {})
-                    logger.info(
-                        f"[EISV_SYNC] Initial sync: E={eisv.get('E', 0):.2f} "
-                        f"I={eisv.get('I', 0):.2f} S={eisv.get('S', 0):.2f} V={eisv.get('V', 0):.2f}"
-                    )
-                else:
-                    logger.warning(f"[EISV_SYNC] Initial sync failed: {result.get('error')} (will retry in background)")
-
-                # Start periodic background task (syncs every 5 minutes)
-                asyncio.create_task(eisv_sync_task(interval_minutes=5.0))
-                logger.info("[EISV_SYNC] Started periodic sync (runs every 5 minutes)")
-            except Exception as e:
-                logger.warning(f"[EISV_SYNC] Could not start sync task: {e}", exc_info=True)
-
-        asyncio.create_task(startup_eisv_sync())
-
         # === Server warmup task ===
         # Prevents "request before initialization" errors when multiple clients
         # reconnect simultaneously after a server restart
@@ -2031,14 +2004,6 @@ async def main():
                         "result": {"error": "Tool deprecated. SSE transport deprecated by MCP. Use Streamable HTTP."},
                         "success": False
                     })
-                    # Old code:
-                    # diagnostics = await connection_tracker.get_diagnostics()
-                    # result_data = {
-                    #     "success": True,
-                    #     "diagnostics": diagnostics,
-                    #     "recommendations": _generate_connection_recommendations(diagnostics)
-                    }
-                    return JSONResponse({"name": tool_name, "result": result_data, "success": True})
                 
                 # Inject stable client session for identity binding (avoid collision with dialectic session_id)
                 client_session_id = None
