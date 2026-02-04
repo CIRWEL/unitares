@@ -4820,6 +4820,49 @@ RETURNS:
                 "required": ["workflow"]
             }
         ),
+        Tool(
+            name="pi_git_pull",
+            description="Pull latest code on Pi and optionally restart. Proxies to Pi's git_pull tool with SSE handling.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "stash": {
+                        "type": "boolean",
+                        "description": "Stash local changes before pulling (default: false)"
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Force reset to remote (DANGER: loses local changes)"
+                    },
+                    "restart": {
+                        "type": "boolean",
+                        "description": "Restart anima server after pull (default: false)"
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="pi_system_power",
+            description="Reboot or shutdown the Pi remotely. For emergency recovery. Requires confirm=true for destructive actions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Power action: status (uptime), reboot, or shutdown",
+                        "enum": ["status", "reboot", "shutdown"],
+                        "default": "status"
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Must be true to actually reboot/shutdown (safety)",
+                        "default": False
+                    }
+                },
+                "required": []
+            }
+        ),
     ]
 
     # ========================================================================

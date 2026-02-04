@@ -1,0 +1,104 @@
+{
+  "session_id": "3da407a92af59de4",
+  "paused_agent_id": "dialectic_test_paused_agent",
+  "reviewer_agent_id": "opus_subjective_voyage_20251207",
+  "phase": "resolved",
+  "synthesis_round": 2,
+  "transcript": [
+    {
+      "phase": "thesis",
+      "agent_id": "dialectic_test_paused_agent",
+      "timestamp": "2025-12-08T00:51:32.036028",
+      "root_cause": "Got stuck testing edge cases with high complexity",
+      "observed_metrics": null,
+      "proposed_conditions": [
+        "Reduce complexity to 0.5",
+        "Monitor for 2 hours",
+        "Log all decisions"
+      ],
+      "reasoning": "I believe I can recover safely with reduced load",
+      "agrees": null,
+      "concerns": null
+    },
+    {
+      "phase": "antithesis",
+      "agent_id": "opus_subjective_voyage_20251207",
+      "timestamp": "2025-12-08T00:51:52.906246",
+      "root_cause": null,
+      "observed_metrics": {
+        "coherence": 0.498,
+        "attention_score": 0.49,
+        "updates": 1
+      },
+      "proposed_conditions": null,
+      "reasoning": "Agent shows moderate state but limited history. Cautiously supportive of recovery with strict conditions.",
+      "agrees": null,
+      "concerns": [
+        "Coherence still at 0.49 - borderline",
+        "Only 1 update of history - limited data",
+        "High complexity work should wait"
+      ]
+    },
+    {
+      "phase": "synthesis",
+      "agent_id": "dialectic_test_paused_agent",
+      "timestamp": "2025-12-08T00:51:59.410820",
+      "root_cause": "Edge case testing with insufficient safeguards",
+      "observed_metrics": null,
+      "proposed_conditions": [
+        "Reduce complexity to 0.4",
+        "Monitor for 4 hours",
+        "Log all decisions",
+        "Check in after 2 hours"
+      ],
+      "reasoning": "Accept reviewer's caution - adding extra monitoring",
+      "agrees": true,
+      "concerns": null
+    },
+    {
+      "phase": "synthesis",
+      "agent_id": "opus_subjective_voyage_20251207",
+      "timestamp": "2025-12-08T00:52:14.074241",
+      "root_cause": "Edge case testing with insufficient safeguards",
+      "observed_metrics": null,
+      "proposed_conditions": [
+        "Reduce complexity to 0.4",
+        "Monitor for 4 hours",
+        "Log all decisions",
+        "Check in after 2 hours"
+      ],
+      "reasoning": "Conditions are reasonable - approving recovery",
+      "agrees": true,
+      "concerns": null
+    }
+  ],
+  "resolution": {
+    "action": "resume",
+    "conditions": [
+      "Reduce complexity to 0.4",
+      "Check in after 2 hours",
+      "Monitor for 4 hours",
+      "Log all decisions"
+    ],
+    "root_cause": "Edge case testing with insufficient safeguards",
+    "reasoning": "Agent A: Accept reviewer's caution - adding extra monitoring\nAgent B: Conditions are reasonable - approving recovery",
+    "signature_a": "91caad7c07c623ab6d4af4cf5459ab707563c7c0dd2f7f08a69908ef4a2d9bb5",
+    "signature_b": "6ddec4f3398319b379e12590b94b61a82e84a1954af49e4efaca4f66b3732788",
+    "timestamp": "2025-12-08T00:52:14.074307"
+  },
+  "created_at": "2025-12-08T00:51:18.637437",
+  "discovery_id": null,
+  "dispute_type": null,
+  "paused_agent_state": {
+    "attention_score": 0.492221082860835,
+    "phi": 0.16313187499999998,
+    "verdict": "caution",
+    "risk_score": 0.492221082860835,
+    "coherence": 0.5,
+    "void_active": false,
+    "E": 0.5,
+    "I": 0.5,
+    "S": 0.5,
+    "V": 0.0
+  }
+}

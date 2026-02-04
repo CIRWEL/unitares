@@ -1,0 +1,49 @@
+{
+  "session_id": "eb1d34b90d10bebe",
+  "paused_agent_id": "dialectic_test_reviewer_agent",
+  "reviewer_agent_id": "auto_cursor_agent_router_20251207",
+  "phase": "failed",
+  "synthesis_round": 0,
+  "transcript": [
+    {
+      "phase": "thesis",
+      "agent_id": "dialectic_test_reviewer_agent",
+      "timestamp": "2025-12-08T00:53:15.024826",
+      "root_cause": "Agent state: coherence=0.499, attention_score=0.431",
+      "observed_metrics": null,
+      "proposed_conditions": [
+        "Monitor coherence for stability"
+      ],
+      "reasoning": "Auto-generated from agent state. Reason: Testing smart dialectic auto-progression",
+      "agrees": null,
+      "concerns": null
+    },
+    {
+      "phase": "synthesis",
+      "agent_id": "system",
+      "timestamp": "2025-12-08T03:11:56.410146",
+      "root_cause": null,
+      "observed_metrics": null,
+      "proposed_conditions": null,
+      "reasoning": "Session auto-failed: Reviewer timeout - waited 2.3 hours for antithesis",
+      "agrees": null,
+      "concerns": null
+    }
+  ],
+  "resolution": null,
+  "created_at": "2025-12-08T00:53:15.024808",
+  "discovery_id": null,
+  "dispute_type": null,
+  "paused_agent_state": {
+    "coherence": 0.4985000044999838,
+    "attention_score": 0.430790832860835,
+    "phi": 0.16325,
+    "verdict": "caution",
+    "risk_score": 0.430790832860835,
+    "void_active": false,
+    "E": 0.702,
+    "I": 0.809,
+    "S": 0.1815,
+    "V": -0.0030000000000000027
+  }
+}

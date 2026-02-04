@@ -127,6 +127,7 @@ from .pi_orchestration import (
     handle_pi_post_message,
     handle_pi_query,
     handle_pi_workflow,
+    handle_pi_git_pull,
 )
 # Keep helper functions from identity.py (used by dispatch_tool)
 from .identity import (

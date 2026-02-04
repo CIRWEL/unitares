@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "calibrated-decisions"
+version = "0.1.0"
+description = "Confidence calibration for autonomous decision-making systems"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Your Name", email = "you@example.com" }
+]
+keywords = [
+    "calibration",
+    "confidence",
+    "machine-learning",
+    "trading",
+    "autonomous-systems",
+    "drift-detection",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.optional-dependencies]
+server = ["fastapi>=0.100.0", "uvicorn>=0.23.0"]
+dev = ["pytest>=7.0.0", "pytest-asyncio>=0.21.0"]
+
+[project.scripts]
+caldec = "caldec.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/yourname/calibrated-decisions"
+Documentation = "https://github.com/yourname/calibrated-decisions#readme"
+Repository = "https://github.com/yourname/calibrated-decisions"
+
+[tool.hatch.build.targets.wheel]
+packages = ["caldec"]

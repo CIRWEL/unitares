@@ -1,0 +1,15 @@
+{
+  "session_id": "1b957b5462d721fe",
+  "paused_agent_id": "test_agent",
+  "reviewer_agent_id": "reviewer_agent",
+  "phase": "thesis",
+  "synthesis_round": 0,
+  "transcript": [],
+  "resolution": null,
+  "created_at": "2025-12-13T05:23:07.754078",
+  "discovery_id": null,
+  "dispute_type": "verification",
+  "session_type": "recovery",
+  "topic": null,
+  "paused_agent_state": {}
+}

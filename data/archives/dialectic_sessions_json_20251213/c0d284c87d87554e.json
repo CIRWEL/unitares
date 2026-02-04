@@ -1,0 +1,47 @@
+{
+  "session_id": "c0d284c87d87554e",
+  "paused_agent_id": "claude_opus_governance_explorer_20251127",
+  "reviewer_agent_id": "claude-in-c",
+  "phase": "failed",
+  "synthesis_round": 0,
+  "transcript": [
+    {
+      "phase": "thesis",
+      "agent_id": "claude_opus_governance_explorer_20251127",
+      "timestamp": "2025-11-27T19:06:02.795719",
+      "root_cause": "Exploring dialectic system for documentation purposes",
+      "observed_metrics": null,
+      "proposed_conditions": [
+        "Continue monitoring",
+        "Document findings"
+      ],
+      "reasoning": "I initiated this dialectic review intentionally to test the recovery flow as part of a system exploration session with the user.",
+      "agrees": null,
+      "concerns": null
+    },
+    {
+      "phase": "failed",
+      "agent_id": "system",
+      "timestamp": "2025-11-27T19:06:10.135595",
+      "root_cause": null,
+      "observed_metrics": null,
+      "proposed_conditions": null,
+      "reasoning": "Reviewer stuck - session aborted",
+      "agrees": null,
+      "concerns": null
+    },
+    {
+      "phase": "failed",
+      "agent_id": "system",
+      "timestamp": "2025-11-27T21:37:57.728228",
+      "root_cause": null,
+      "observed_metrics": null,
+      "proposed_conditions": null,
+      "reasoning": "Reviewer stuck - session aborted",
+      "agrees": null,
+      "concerns": null
+    }
+  ],
+  "resolution": null,
+  "created_at": "2025-11-27T19:05:56.080193"
+}

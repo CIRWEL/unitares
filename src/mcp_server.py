@@ -8,7 +8,7 @@ simultaneously and share state via this single server instance.
 Usage:
     python src/mcp_server.py [--port PORT] [--host HOST]
 
-    Default: http://127.0.0.1:8765/mcp
+    Default: http://127.0.0.1:8767/mcp
 
 Configuration (in claude_desktop_config.json or cursor mcp config):
     {
@@ -1053,7 +1053,7 @@ async def _reconcile_postgres_to_metadata(db) -> Dict[str, Any]:
 # ============================================================================
 
 DEFAULT_HOST = "0.0.0.0"  # Changed from 127.0.0.1 to allow network access (ngrok, etc.)
-DEFAULT_PORT = 8765
+DEFAULT_PORT = 8767  # Standard port for unitares governance on Mac (8766 is anima, 8765 was old default)
 
 def parse_args():
     """Parse command line arguments."""
