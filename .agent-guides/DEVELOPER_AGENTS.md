@@ -8,7 +8,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                    MCP Server (mcp_server.py)                   │
 │  - Streamable HTTP transport                                    │
-│  - 77 tools (Essential, Common, Advanced tiers)                 │
+│  - ~79 tools (run verify script for exact count)                │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Handlers (mcp_handlers/)                      │
 │  - core.py: process_agent_update, get_governance_metrics        │
@@ -56,7 +56,7 @@ curl http://localhost:8765/health | jq
 
 ### 2. View Server Logs
 ```bash
-tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/sse_server_error.log
+tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/mcp_server_error.log
 ```
 
 ### 3. Restart Server
@@ -132,30 +132,126 @@ See `mcp_handlers/__init__.py:dispatch_tool()` for the fix.
 - `src/cirs.py` contains `OscillationDetector`, `ResonanceDamper`, `classify_response`
 - Three response tiers: `proceed`, `soft_dampen`, `hard_block`
 
-## Adding a New Tool
+## Tool Management (IMPORTANT)
 
-1. **Define schema** in `src/tool_schemas.py`:
-```python
-{
-    "name": "my_new_tool",
-    "description": "What it does",
-    "tier": "common",  # essential, common, or advanced
-    "category": "admin",
-    "timeout": 10.0,
-    "inputSchema": {...}
-}
+Tool count has been a recurring source of confusion. Here's the authoritative guide:
+
+### Three Places Tools Are Defined
+
+| Location | Purpose | Must Match? |
+|----------|---------|-------------|
+| `src/tool_schemas.py` | Schema definitions (what MCP clients see) | Yes |
+| `src/mcp_handlers/*.py` | Handler implementations with `@mcp_tool` decorator | Yes |
+| `src/mcp_handlers/__init__.py` | Handler exports (for dispatch) | Yes |
+
+**All three must be synchronized for a tool to work.**
+
+### Verify Tool Count
+
+```bash
+# Quick check - run this after any tool changes
+PYTHONPATH=src python3 -c "
+from tool_schemas import get_tool_definitions
+from mcp_handlers import TOOL_HANDLERS
+
+schemas = get_tool_definitions()
+handlers = TOOL_HANDLERS
+
+print(f'Schemas: {len(schemas)}')
+print(f'Handlers: {len(handlers)}')
+
+schema_names = set(t.name for t in schemas)
+handler_names = set(handlers.keys())
+
+missing_handlers = schema_names - handler_names
+missing_schemas = handler_names - schema_names
+
+if missing_handlers:
+    print(f'ERROR - Schemas without handlers: {missing_handlers}')
+if missing_schemas:
+    print(f'ERROR - Handlers without schemas: {missing_schemas}')
+if not missing_handlers and not missing_schemas:
+    print('✓ All tools synchronized')
+"
 ```
 
-2. **Implement handler** in appropriate `mcp_handlers/*.py`:
+### Adding a New Tool (Checklist)
+
+1. **Handler** in `src/mcp_handlers/<category>.py`:
 ```python
-async def handle_my_new_tool(kwargs: dict, ctx: Context = None) -> dict:
+from .decorators import mcp_tool
+
+@mcp_tool("my_new_tool", timeout=10.0)
+async def handle_my_new_tool(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     # Implementation
-    return {"success": True, ...}
+    return success_response({"success": True})
 ```
 
-3. **Register in dispatch** (auto-registration handles this via `tool_schemas.py`)
+2. **Export** in `src/mcp_handlers/__init__.py`:
+```python
+from .category import handle_my_new_tool
+```
 
-4. **Test**: Server auto-registers on restart
+3. **Schema** in `src/tool_schemas.py`:
+```python
+Tool(
+    name="my_new_tool",
+    description="What it does...",
+    inputSchema={...}
+),
+```
+
+4. **Restart server** (critical - MCP clients cache tool lists):
+```bash
+launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
+launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
+```
+
+5. **Verify** with the quick check above
+
+### Removing a Tool (Checklist)
+
+1. Remove from `tool_schemas.py`
+2. Remove from handler file (or comment out)
+3. Remove export from `__init__.py`
+4. **Restart server**
+5. Verify with quick check
+
+### Common Pitfalls
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| MCP client shows old tool count | Server not restarted | `launchctl unload/load` |
+| "Handler not found" | Missing export in `__init__.py` | Add the export |
+| Tool appears but doesn't work | Handler missing `@mcp_tool` decorator | Add decorator |
+| Syntax error on server start | Bad edit left orphan brackets | Check error logs, fix syntax |
+| Count mismatch schemas vs handlers | Forgot one of the three locations | Use verify script |
+
+### Server Restart After Changes
+
+**Always restart after tool changes:**
+```bash
+# Check for syntax errors first
+PYTHONPATH=src python3 -c "import mcp_server; print('✓ Compiles')"
+
+# Then restart
+launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
+sleep 1
+launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
+sleep 2
+
+# Verify server is up
+curl -s http://127.0.0.1:8767/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'✓ Server {d[\"version\"]} up')"
+```
+
+### Why Claude Code Shows Different Count
+
+Claude Code shows tools from **all** connected MCP servers combined:
+- `unitares-governance`: ~79 tools
+- `anima` (if connected): ~30 tools
+- Total shown: ~109 tools
+
+The governance server tool count is what we control.
 
 ## Anti-Proliferation Policy
 
@@ -183,7 +279,7 @@ async def handle_my_new_tool(kwargs: dict, ctx: Context = None) -> dict:
 | Dec 25 | label column added to core.agents | `db/postgres_backend.py` |
 | Dec 25 | Bug #2 - attention_score → risk_score | `mcp_handlers/lifecycle.py:261` |
 | Dec 24 | kwargs unwrapping for MCP transport | `mcp_handlers/__init__.py` |
-| Dec 24 | Startup reconciliation Postgres→SQLite | `mcp_server_sse.py:939-1040` |
+| Dec 24 | Startup reconciliation Postgres→SQLite | `mcp_server.py` |
 
 ## Where to Look When Things Break
 
@@ -225,5 +321,5 @@ Future agents will find it via `search_knowledge_graph()`.
 ---
 
 **Written by:** Opus_4.5_CLI_20251223 (Dec 24, 2025)
-**Updated:** v2.5.4 (Dec 27, 2025) - Four-tier identity, KG stores agent_id instead of UUID
+**Updated:** Feb 3, 2026 - Comprehensive tool management guide added
 **For:** Future developer/debugger agents
