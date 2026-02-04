@@ -3,6 +3,9 @@ import pytest
 Test extracted handlers individually.
 
 Tests the more complex handlers to ensure they work correctly.
+
+NOTE: With identity_v2, missing agent_id triggers auto-binding (session-based identity).
+Tests updated to reflect this behavior.
 """
 
 import sys
@@ -17,139 +20,106 @@ sys.path.insert(0, str(project_root))
 
 @pytest.mark.asyncio
 async def test_get_governance_metrics():
-    """Test get_governance_metrics handler"""
+    """Test get_governance_metrics handler
+
+    With identity_v2, missing agent_id triggers auto-binding.
+    The handler should succeed and return metrics for the auto-bound agent.
+
+    Note: Once a session is bound, you CANNOT switch to a different agent_id.
+    This is by design - each session is bound to one agent identity.
+    """
     print("\nTesting get_governance_metrics...")
-    
+
     from src.mcp_handlers import dispatch_tool
-    
-    # Test with non-existent agent (should error gracefully)
-    result = await dispatch_tool("get_governance_metrics", {"agent_id": "test_nonexistent_agent"})
-    assert result is not None, "Should return error response"
-    
-    response_data = json.loads(result[0].text)
-    assert response_data.get("success") == False, "Should fail for non-existent agent"
-    print("✅ Handles non-existent agent correctly")
-    
-    # Test with missing agent_id (should error)
+
+    # Test with missing agent_id - should auto-bind (identity_v2 behavior)
     result = await dispatch_tool("get_governance_metrics", {})
-    assert result is not None, "Should return error response"
-    
+    assert result is not None, "Should return response"
+
     response_data = json.loads(result[0].text)
-    assert response_data.get("success") == False, "Should fail without agent_id"
-    error_msg = response_data.get("error", "").lower()
-    assert "agent_id" in error_msg or "required" in error_msg, f"Should mention agent_id or required (got: {error_msg})"
-    print("✅ Validates required arguments")
-    
+    # With identity_v2, auto-binding creates a new agent, so success=True
+    assert response_data.get("success") == True, "Should succeed with auto-binding"
+    assert "agent_signature" in response_data or "resolved_agent_id" in response_data, \
+        "Should have identity info from auto-binding"
+    print("✅ Auto-binds agent when agent_id missing (identity_v2)")
+
+    # Subsequent calls without agent_id should also succeed (uses bound identity)
+    result = await dispatch_tool("get_governance_metrics", {})
+    assert result is not None, "Should return response"
+    response_data = json.loads(result[0].text)
+    assert response_data.get("success") == True, "Should succeed on subsequent calls"
+    print("✅ Works on subsequent calls (uses bound identity)")
+
     print("✅ get_governance_metrics handler tests passed")
 
 
 @pytest.mark.asyncio
 async def test_simulate_update():
     """Test simulate_update handler
-    
-    Note: simulate_update requires a registered agent (security fix 2025-12).
-    We first register via process_agent_update, then test simulation.
+
+    With identity_v2, auto-binding allows simulation without prior registration.
+    Note: Once bound, you cannot switch agent_ids within the same session.
     """
     print("\nTesting simulate_update...")
-    
+
     from src.mcp_handlers import dispatch_tool
-    
-    # Test with missing agent_id
+
+    # Test with missing agent_id - should auto-bind and succeed (identity_v2)
     result = await dispatch_tool("simulate_update", {})
-    assert result is not None, "Should return error response"
-    
+    assert result is not None, "Should return response"
+
     response_data = json.loads(result[0].text)
-    assert response_data.get("success") == False, "Should fail without agent_id"
-    print("✅ Validates required arguments")
-    
-    # First register the agent (required after security fix)
-    agent_id = "test_simulate_agent_registered"
-    result = await dispatch_tool("process_agent_update", {
-        "agent_id": agent_id,
-        "complexity": 0.3,
-        "confidence": 0.8
-    })
-    response_data = json.loads(result[0].text)
-    api_key = response_data.get("api_key")
-    assert api_key is not None, "Should get API key on registration"
-    print("✅ Agent registered")
-    
-    # Now test simulation with registered agent
+    # With identity_v2, auto-binding means this succeeds
+    assert response_data.get("success") == True, "Should succeed with auto-binding"
+    assert response_data.get("simulation") == True, "Should mark as simulation"
+    print("✅ Auto-binds and simulates (identity_v2)")
+
+    # Test with explicit parameters but NO agent_id (uses bound identity)
     result = await dispatch_tool("simulate_update", {
-        "agent_id": agent_id,
         "parameters": [0.7, 0.8, 0.15, 0.0],
         "ethical_drift": [0.0, 0.0, 0.0],
         "complexity": 0.3,
         "confidence": 0.9
     })
-    
+
     assert result is not None, "Should return result"
     response_data = json.loads(result[0].text)
-    assert response_data.get("success") == True, "Should succeed with registered agent"
+    assert response_data.get("success") == True, "Should succeed"
     assert response_data.get("simulation") == True, "Should mark as simulation"
     assert "metrics" in response_data, "Should have metrics"
-    print("✅ Simulates update correctly")
-    
-    # Test that unregistered agent fails
-    result = await dispatch_tool("simulate_update", {
-        "agent_id": "unregistered_agent_xyz123",
-        "complexity": 0.3
-    })
-    response_data = json.loads(result[0].text)
-    assert response_data.get("success") == False, "Should fail for unregistered agent"
-    print("✅ Rejects unregistered agents")
-    
+    print("✅ Simulates with explicit parameters")
+
     print("✅ simulate_update handler tests passed")
 
 
 @pytest.mark.asyncio
 async def test_set_thresholds():
     """Test set_thresholds handler
-    
+
     Note: set_thresholds requires admin privileges (security fix 2025-12).
     Admin status requires 'admin' tag or 100+ updates.
     For testing, we verify the auth rejection and get_thresholds (read-only).
     """
     print("\nTesting set_thresholds...")
-    
+
     from src.mcp_handlers import dispatch_tool
-    
-    # Test that unauthenticated request fails
+
+    # Test that unauthenticated/non-admin request fails
     result = await dispatch_tool("set_thresholds", {
         "thresholds": {"risk_approve_threshold": 0.32},
         "validate": True
     })
     response_data = json.loads(result[0].text)
-    assert response_data.get("success") == False, "Should fail without auth"
-    print("✅ Rejects unauthenticated requests")
-    
-    # Test that non-admin agent fails
-    agent_id = "test_threshold_nonadmin"
-    result = await dispatch_tool("process_agent_update", {
-        "agent_id": agent_id,
-        "complexity": 0.3
-    })
-    response_data = json.loads(result[0].text)
-    api_key = response_data.get("api_key")
-    
-    result = await dispatch_tool("set_thresholds", {
-        "agent_id": agent_id,
-        "api_key": api_key,
-        "thresholds": {"risk_approve_threshold": 0.32},
-        "validate": True
-    })
-    response_data = json.loads(result[0].text)
-    assert response_data.get("success") == False, "Should fail for non-admin agent"
-    assert "admin" in response_data.get("error", "").lower(), "Should mention admin requirement"
-    print("✅ Rejects non-admin agents")
-    
+    assert response_data.get("success") == False, "Should fail without admin"
+    print("✅ Rejects non-admin requests")
+
     # Verify get_thresholds works (read-only, no auth needed)
     result = await dispatch_tool("get_thresholds", {})
     response_data = json.loads(result[0].text)
     assert response_data.get("success") == True, "Should succeed for read-only"
     assert "thresholds" in response_data, "Should have thresholds"
     print("✅ get_thresholds works (read-only)")
-    
+
     print("✅ set_thresholds handler tests passed")
 
 
@@ -157,21 +127,21 @@ async def test_set_thresholds():
 async def test_error_handling():
     """Test error handling in handlers"""
     print("\nTesting error handling...")
-    
+
     from src.mcp_handlers import dispatch_tool
-    
+
     # Test with invalid arguments
     result = await dispatch_tool("set_thresholds", {
         "thresholds": {"invalid_threshold": 999},
         "validate": True
     })
-    
+
     assert result is not None, "Should return result"
     response_data = json.loads(result[0].text)
     # Should either succeed (if invalid threshold ignored) or fail gracefully
     assert "success" in response_data, "Should have success field"
     print("✅ Handles invalid arguments gracefully")
-    
+
     print("✅ Error handling tests passed")
 
 
@@ -199,4 +169,3 @@ async def main():
 if __name__ == "__main__":
     exit_code = asyncio.run(main())
     sys.exit(exit_code)
-

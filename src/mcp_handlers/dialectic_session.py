@@ -5,7 +5,7 @@ Handles saving and loading dialectic sessions to/from disk.
 All I/O operations are async to prevent blocking the event loop.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
 from pathlib import Path
 import json
 import os
@@ -349,3 +349,84 @@ async def load_session(session_id: str) -> Optional[DialecticSession]:
         logger.error(f"Unexpected error loading session {session_id}: {e}", exc_info=True)
         return None
 
+
+async def list_all_sessions(
+    agent_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    include_transcript: bool = False
+) -> List[Dict[str, Any]]:
+    """
+    List all dialectic sessions with optional filtering.
+
+    Args:
+        agent_id: Filter by agent (requestor or reviewer)
+        status: Filter by phase (e.g., 'resolved', 'failed', 'pending')
+        limit: Max sessions to return (default 50)
+        include_transcript: Include full transcript (default False for performance)
+
+    Returns:
+        List of session summaries
+    """
+    sessions = []
+
+    # Ensure directory exists
+    SESSION_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+    loop = asyncio.get_running_loop()
+
+    def _list_sessions_sync():
+        """List and load session files synchronously in executor"""
+        result = []
+        session_files = sorted(
+            SESSION_STORAGE_DIR.glob("*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True  # Most recent first
+        )
+
+        for session_file in session_files[:limit * 2]:  # Load extra for filtering
+            if len(result) >= limit:
+                break
+            try:
+                with open(session_file, 'r') as f:
+                    data = json.load(f)
+
+                session_id = session_file.stem
+
+                # Apply filters
+                if agent_id:
+                    requestor = data.get("requestor_agent_id", "")
+                    reviewer = data.get("reviewer_agent_id", "")
+                    if agent_id not in [requestor, reviewer]:
+                        continue
+
+                if status:
+                    phase = data.get("phase", "")
+                    if status.lower() not in phase.lower():
+                        continue
+
+                # Build summary
+                summary = {
+                    "session_id": session_id,
+                    "phase": data.get("phase", "unknown"),
+                    "session_type": data.get("session_type", "unknown"),
+                    "requestor": data.get("requestor_agent_id", "unknown"),
+                    "reviewer": data.get("reviewer_agent_id"),
+                    "topic": data.get("topic", ""),
+                    "created": data.get("created_at", ""),
+                    "message_count": len(data.get("transcript", data.get("messages", []))),
+                }
+
+                if include_transcript:
+                    summary["transcript"] = data.get("transcript", data.get("messages", []))
+
+                result.append(summary)
+
+            except Exception as e:
+                logger.warning(f"Could not read session {session_file}: {e}")
+                continue
+
+        return result
+
+    sessions = await loop.run_in_executor(None, _list_sessions_sync)
+    return sessions

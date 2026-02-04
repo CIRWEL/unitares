@@ -710,8 +710,8 @@ class TestParameters:
 
     def test_get_i_dynamics_mode_default(self, monkeypatch):
         """Default should be 'logistic'."""
-        # Remove env var if set
-        monkeypatch.delenv("UNITARES_I_DYNAMICS_MODE", raising=False)
+        # Remove env var if set (correct name: UNITARES_I_DYNAMICS, not _MODE)
+        monkeypatch.delenv("UNITARES_I_DYNAMICS", raising=False)
         mode = get_i_dynamics_mode()
         assert mode == "logistic"
 

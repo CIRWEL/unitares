@@ -8,6 +8,8 @@ This is the "pull-based" discovery pattern where agents:
 1. Call recall_identity() on login
 2. See pending_reviews in the response if sessions are awaiting a reviewer
 3. Can join as reviewer using the session_id provided
+
+NOTE: TestDialecticDiscovery requires PostgreSQL - skipped in CI.
 """
 
 import pytest
@@ -16,6 +18,7 @@ import sys
 sys.path.insert(0, '/Users/cirwel/projects/governance-mcp-v1')
 
 
+@pytest.mark.skip(reason="Requires PostgreSQL connection - run locally with DB")
 class TestDialecticDiscovery:
     """Test pull-based dialectic discovery via recall_identity()."""
 
