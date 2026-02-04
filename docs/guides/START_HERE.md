@@ -6,16 +6,7 @@
 
 **Flexible onboarding - start however feels natural. Most agents jump right in.**
 
-## 🚀 For Claude Code (CLI)
-
-**You're special!** → Go to **[CLAUDE_CODE_START_HERE.md](CLAUDE_CODE_START_HERE.md)**
-
-Quick command:
-```bash
-./scripts/governance_cli.sh "your_id" "what you did" 0.5
-```
-
-## For Other Agents (MCP Clients: Cursor, Claude Desktop, etc.)
+## For All Agents (MCP Clients: Cursor, Claude Desktop, Claude Code, etc.)
 
 **Step 0: Call `onboard()` first!**
 
@@ -54,9 +45,7 @@ export GOVERNANCE_TOOL_MODE=minimal
 
 **Other modes:**
 - **Lite mode** (`GOVERNANCE_TOOL_MODE=lite`): 10 essential tools - for local models
-- **Full mode** (`GOVERNANCE_TOOL_MODE=full`): All 79 tools - for cloud models (default)
-  - Note: Tool mode filtering removed - all tools always available
-  - SSE server: 79 tools (+1 SSE-only: `get_connected_clients`)
+- **Full mode** (`GOVERNANCE_TOOL_MODE=full`): All 78 tools - for cloud models (default)
 
 **Note:** `list_tools` is always available in any mode to enable tool discovery.
 
@@ -158,20 +147,17 @@ agents = list_agents()
 
 ## Step 2: Read the Guide (When Ready)
 
-**For AI Agents (Recommended):**
-→ **[docs/reference/AI_ASSISTANT_GUIDE.md](docs/reference/AI_ASSISTANT_GUIDE.md)**
+**This guide (START_HERE.md) covers everything you need.**
 
-Written by AI agents after real testing. Covers:
-- Common mistakes to avoid
-- How to actually use the system
-- What the metrics mean (with practical translation)
-- Trust boundary and honest self-reporting
-- Actionable feedback interpretation
+Key sections below:
+- Step 3: How to log activity
+- What You'll Get Back: Understanding metrics
+- Quick Reference: Common tasks
 
-**For Humans (Optional - more detail):**
-→ **[docs/guides/ONBOARDING.md](docs/guides/ONBOARDING.md)** - Detailed human onboarding guide
-
-**Note:** Most agents can skip ONBOARDING.md - START_HERE.md + AI_ASSISTANT_GUIDE.md covers everything you need.
+**Additional resources:**
+- [QUICK_REFERENCE.md](QUICK_REFERENCE.md) - One-page cheat sheet
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and fixes
+- [GETTING_STARTED_SIMPLE.md](GETTING_STARTED_SIMPLE.md) - Minimal 3-tool path
 
 ---
 
@@ -330,20 +316,20 @@ list_tools(include_advanced=False)  # Hide Tier 3 (advanced) tools
 |-------------|-------------|
 | **Get started** | `onboard()` - THE portal tool, call FIRST |
 | Read the guide | This file (START_HERE.md) |
-| Understand the system | [AI_ASSISTANT_GUIDE.md](docs/reference/AI_ASSISTANT_GUIDE.md) |
+| Quick cheat sheet | [QUICK_REFERENCE.md](QUICK_REFERENCE.md) |
 | Share my work | `process_agent_update` (MCP) or `UNITARESMonitor` (Python) |
 | Check my identity | `identity()` (MCP) |
 | Check my state | `get_governance_metrics` (MCP) |
 | See all tools | `list_tools` (MCP) |
-| Find solutions | [TROUBLESHOOTING.md](docs/guides/TROUBLESHOOTING.md) |
-| Navigate docs | [docs/README.md](docs/README.md) |
-| **Debug the system** | [.agent-guides/DEVELOPER_AGENTS.md](../../.agent-guides/DEVELOPER_AGENTS.md) |
+| Find solutions | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
+| Setup MCP | [MCP_SETUP.md](MCP_SETUP.md) |
+| Deploy | [DEPLOYMENT.md](DEPLOYMENT.md) |
 
 ---
 
 ## If You Get Stuck
 
-1. Read [TROUBLESHOOTING.md](docs/guides/TROUBLESHOOTING.md) - common issues and solutions
+1. Read [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - common issues and solutions
 2. Check your identity: `identity()` - shows bound state
 3. Check your state: `get_governance_metrics()` - shows EISV metrics
 4. Get diagnostics: `health_check()` or `debug_request_context()`
