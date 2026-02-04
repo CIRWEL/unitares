@@ -67,7 +67,7 @@ sleep 10
 # Check health
 echo ""
 echo "🏥 Checking service health..."
-if curl -f http://localhost:8765/health > /dev/null 2>&1; then
+if curl -f http://localhost:8767/health > /dev/null 2>&1; then
     echo "✅ Server is healthy!"
 else
     echo "⚠️  Server may still be starting. Check logs with: docker-compose logs server"
@@ -78,9 +78,11 @@ echo "=========================================="
 echo "✅ Installation Complete!"
 echo "=========================================="
 echo ""
-echo "📊 Dashboard: http://localhost:8765/dashboard"
-echo "🔌 MCP Endpoint: http://localhost:8765/sse"
-echo "💚 Health Check: http://localhost:8765/health"
+echo "📊 Dashboard: http://localhost:8767/dashboard"
+echo "🔌 MCP Endpoint: http://localhost:8767/mcp/"
+echo "💚 Health Check: http://localhost:8767/health"
+echo ""
+echo "   Note: /sse endpoint still available for legacy clients"
 echo ""
 echo "📝 Useful commands:"
 echo "   docker-compose logs -f server    # View server logs"

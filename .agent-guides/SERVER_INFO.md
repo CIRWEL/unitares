@@ -7,7 +7,7 @@ The MCP server runs as a **persistent background service** via macOS launchd.
 ## Current Setup
 
 **Service name:** `com.unitares.governance-mcp`
-**Port:** 8765
+**Port:** 8767
 **Status:** Running (PID can be checked with `launchctl list | grep governance`)
 
 ## How It Works
@@ -17,7 +17,7 @@ macOS Login
     ↓
 launchd loads: ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
     ↓
-Starts: python3 src/mcp_server.py --port 8765
+Starts: python3 src/mcp_server_sse.py --port 8767
     ↓
 Server runs continuously
     ↓
@@ -49,7 +49,7 @@ Just use:
 **Check status:**
 ```bash
 launchctl list | grep governance
-lsof -i :8765
+lsof -i :8767
 ```
 
 **Restart:**
@@ -101,7 +101,7 @@ tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/mcp_server_error.log
 
 1. **Check if running:**
    ```bash
-   lsof -i :8765
+   lsof -i :8767
    ```
 
 2. **Check launchd status:**
@@ -121,10 +121,10 @@ tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/mcp_server_error.log
 
 ### Port already in use
 
-If something else is using port 8765:
+If something else is using port 8767:
 ```bash
 # Find what's using it
-lsof -i :8765
+lsof -i :8767
 
 # Kill the process if needed
 kill -9 <PID>
@@ -151,7 +151,7 @@ If the server code changes:
 ## Integration with MCP Clients
 
 **Cursor, Claude Desktop, etc. connect to this same server:**
-- All use the same HTTP endpoint: http://127.0.0.1:8765/mcp/
+- All use the same HTTP endpoint: http://127.0.0.1:8767/mcp/
 - State is shared across all connected clients
 - launchd ensures the server is always available
 
