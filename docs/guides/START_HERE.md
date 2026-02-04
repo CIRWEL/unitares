@@ -45,7 +45,7 @@ export GOVERNANCE_TOOL_MODE=minimal
 
 **Other modes:**
 - **Lite mode** (`GOVERNANCE_TOOL_MODE=lite`): 10 essential tools - for local models
-- **Full mode** (`GOVERNANCE_TOOL_MODE=full`): All 73 tools - for cloud models (default)
+- **Full mode** (`GOVERNANCE_TOOL_MODE=full`): All 85+ tools - for cloud models (default)
 
 **Note:** `list_tools` is always available in any mode to enable tool discovery.
 
@@ -366,4 +366,4 @@ Governance should be **informative, not restrictive**. Agents log activity, rece
 
 ---
 
-**Last Updated:** 2026-02-01 (v2.5.4: identity_v2, session auto-bind, no API keys needed)
+**Last Updated:** 2026-02-04 (v2.5.5: ethical drift, trajectory identity, 85+ tools)

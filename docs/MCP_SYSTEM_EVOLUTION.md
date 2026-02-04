@@ -1,4 +1,4 @@
-# MCP System Evolution: v1.0.0 → v2.5.4
+# MCP System Evolution: v1.0.0 → v2.5.5
 
 **Complete history of how the UNITARES Governance MCP system has evolved**
 
@@ -18,6 +18,7 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 - **v2.5.0** (Dec 2025) - HCK/CIRS stability monitoring
 - **v2.5.1** (Dec 2025) - Three-tier identity model
 - **v2.5.4** (Dec 2025) - Meaningful identity in knowledge graph
+- **v2.5.5** (Feb 2026) - Ethical drift, trajectory identity, 85+ tools
 
 ---
 
@@ -256,6 +257,47 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 
 ---
 
+## v2.5.4 → v2.5.5: Ethical Drift & Trajectory Identity
+
+### What Changed
+
+**Ethical Drift (Δη) Fully Integrated:**
+
+1. **Drift Computation**
+   - Parameter-based: ‖Δη‖² = ‖θ_t - θ_{t-1}‖² / dim
+   - 4 components: calibration deviation, complexity divergence, coherence deviation, stability deviation
+   - Fed into φ objective with weight `wEta`
+
+2. **Self-Governance Principle**
+   - Ground truth from objective outcomes (test results, command success)
+   - No human oracle required for calibration
+   - `auto_ground_truth.py` collects calibration signals automatically
+
+**Trajectory Identity:**
+
+1. **Genesis Signature (Σ₀)**
+   - Stored at first onboard, never overwritten
+   - Lineage comparison detects anomalies
+   - Alerts when similarity < 0.6
+
+2. **New Tools**
+   - `verify_trajectory_identity()` - Two-tier check (genesis + current)
+   - `get_trajectory_status()` - View lineage health
+
+**Tool Expansion:**
+
+- Tool count expanded from 43 to **85+ tools**
+- New categories: Pi Orchestration, Trajectory, CIRS, Recovery
+- Unified tools: `self_recovery`, `cirs_protocol`, `agent`, `knowledge`, `calibration`
+
+### Impact
+
+- **Complete ethical drift** - Measured from observable signals, not placeholders
+- **Identity verification** - Detect potential identity drift or anomalies
+- **Richer toolset** - Comprehensive multi-agent coordination
+
+---
+
 ## Architecture Evolution Summary
 
 ### Code Organization
@@ -278,7 +320,8 @@ v2.5.4:  Meaningful identity in KG
 - **v2.1.0:** 29 tools (same, but better organized)
 - **v2.2.0:** 35 tools (+6 knowledge graph tools)
 - **v2.3.0:** 43 tools (+8 more tools)
-- **v2.4.0+:** 43 tools (refinements)
+- **v2.4.0:** 43 tools (refinements)
+- **v2.5.5:** 85+ tools (+42 tools: Pi orchestration, trajectory, recovery, unified tools)
 
 ### Performance Improvements
 
@@ -306,7 +349,7 @@ v2.5.4:  Meaningful identity in KG
 
 ---
 
-## Current State (v2.5.4)
+## Current State (v2.5.5)
 
 ### Core Features
 
@@ -315,8 +358,11 @@ v2.5.4:  Meaningful identity in KG
 - ✅ Knowledge graph system (35,000x faster)
 - ✅ Three-tier identity model
 - ✅ Auto-healing infrastructure
-- ✅ 43 MCP tools
+- ✅ **85+ MCP tools**
 - ✅ Dual transport support (SSE + Streamable HTTP)
+- ✅ Ethical drift (Δη) fully integrated
+- ✅ Trajectory identity (genesis signatures, lineage comparison)
+- ✅ Automatic calibration from objective outcomes
 
 ### Architecture
 
@@ -361,6 +407,6 @@ v2.5.4:  Meaningful identity in KG
 
 ---
 
-**Last Updated:** December 27, 2025  
-**Current Version:** v2.5.4  
-**Total Evolution:** 1.0.0 → 2.5.4 (15 versions)
+**Last Updated:** February 4, 2026
+**Current Version:** v2.5.5
+**Total Evolution:** 1.0.0 → 2.5.5 (16 versions)
