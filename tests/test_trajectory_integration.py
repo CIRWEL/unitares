@@ -1,0 +1,482 @@
+#!/usr/bin/env python3
+"""
+Tests for trajectory identity integration.
+
+Verifies the trajectory identity framework from:
+- src/trajectory_identity.py (UNITARES side)
+- Integration with process_agent_update
+
+Tests cover:
+1. TrajectorySignature dataclass and serialization
+2. Genesis storage (Σ₀) - first signature becomes anchor
+3. Lineage comparison - subsequent signatures compared to genesis
+4. Anomaly detection - similarity < 0.6 triggers warning
+5. Two-tier verification (coherence + lineage)
+"""
+
+import pytest
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+class TestTrajectorySignature:
+    """Unit tests for TrajectorySignature dataclass."""
+
+    def test_create_empty_signature(self):
+        """Should create signature with default empty values."""
+        from src.trajectory_identity import TrajectorySignature
+
+        sig = TrajectorySignature()
+
+        assert sig.preferences == {}
+        assert sig.beliefs == {}
+        assert sig.attractor is None
+        assert sig.recovery == {}
+        assert sig.relational == {}
+        assert sig.observation_count == 0
+        assert sig.stability_score == 0.0
+        assert sig.identity_confidence == 0.0
+
+    def test_from_dict(self):
+        """Should create signature from dictionary."""
+        from src.trajectory_identity import TrajectorySignature
+
+        data = {
+            "preferences": {"vector": [0.5, 0.3, 0.7]},
+            "beliefs": {"values": [0.8, 0.6], "avg_confidence": 0.7},
+            "attractor": {"center": [0.5, 0.5, 0.5, 0.5], "variance": 0.1},
+            "recovery": {"tau_estimate": 10.5},
+            "relational": {"n_relationships": 3},
+            "observation_count": 100,
+            "stability_score": 0.85,
+            "identity_confidence": 0.9,
+        }
+
+        sig = TrajectorySignature.from_dict(data)
+
+        assert sig.preferences == {"vector": [0.5, 0.3, 0.7]}
+        assert sig.beliefs["avg_confidence"] == 0.7
+        assert sig.attractor["center"] == [0.5, 0.5, 0.5, 0.5]
+        assert sig.recovery["tau_estimate"] == 10.5
+        assert sig.observation_count == 100
+        assert sig.identity_confidence == 0.9
+
+    def test_to_dict(self):
+        """Should serialize signature to dictionary."""
+        from src.trajectory_identity import TrajectorySignature
+
+        sig = TrajectorySignature(
+            preferences={"vector": [0.5, 0.3]},
+            beliefs={"values": [0.8]},
+            observation_count=50,
+            stability_score=0.75,
+        )
+
+        result = sig.to_dict()
+
+        assert result["preferences"] == {"vector": [0.5, 0.3]}
+        assert result["observation_count"] == 50
+        assert result["stability_score"] == 0.75
+        assert "computed_at" in result
+
+    def test_similarity_identical(self):
+        """Identical signatures should have similarity ~1.0."""
+        from src.trajectory_identity import TrajectorySignature
+
+        sig1 = TrajectorySignature(
+            attractor={"center": [0.5, 0.5, 0.5, 0.5]},
+            beliefs={"values": [0.8, 0.6, 0.7]},
+            recovery={"tau_estimate": 10.0},
+            stability_score=0.8,
+        )
+        sig2 = TrajectorySignature(
+            attractor={"center": [0.5, 0.5, 0.5, 0.5]},
+            beliefs={"values": [0.8, 0.6, 0.7]},
+            recovery={"tau_estimate": 10.0},
+            stability_score=0.8,
+        )
+
+        similarity = sig1.similarity(sig2)
+        assert similarity > 0.95, f"Expected ~1.0, got {similarity}"
+
+    def test_similarity_different(self):
+        """Very different signatures should have low similarity."""
+        from src.trajectory_identity import TrajectorySignature
+
+        sig1 = TrajectorySignature(
+            attractor={"center": [0.1, 0.1, 0.1, 0.1]},
+            beliefs={"values": [0.2, 0.2, 0.2]},
+            recovery={"tau_estimate": 5.0},
+            stability_score=0.3,
+        )
+        sig2 = TrajectorySignature(
+            attractor={"center": [0.9, 0.9, 0.9, 0.9]},
+            beliefs={"values": [0.9, 0.9, 0.9]},
+            recovery={"tau_estimate": 50.0},
+            stability_score=0.9,
+        )
+
+        similarity = sig1.similarity(sig2)
+        assert similarity < 0.5, f"Expected low similarity, got {similarity}"
+
+    def test_similarity_no_data(self):
+        """Signatures with no comparable data should return 0.5."""
+        from src.trajectory_identity import TrajectorySignature
+
+        sig1 = TrajectorySignature()
+        sig2 = TrajectorySignature()
+
+        similarity = sig1.similarity(sig2)
+        assert similarity == 0.5, f"Expected 0.5 (no data), got {similarity}"
+
+
+class TestGenesisStorage:
+    """Tests for genesis signature (Σ₀) storage."""
+
+    @pytest.mark.asyncio
+    async def test_store_genesis_new_agent(self):
+        """First signature should be stored as genesis."""
+        from src.trajectory_identity import store_genesis_signature, TrajectorySignature
+
+        sig = TrajectorySignature(
+            observation_count=10,
+            identity_confidence=0.8,
+        )
+
+        # Mock database (patch at source, not import location)
+        with patch('src.db.get_db') as mock_db:
+            mock_identity = MagicMock()
+            mock_identity.metadata = {}  # No existing genesis
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=mock_identity)
+            mock_db_instance.update_identity_metadata = AsyncMock()
+            mock_db.return_value = mock_db_instance
+
+            result = await store_genesis_signature("test-agent-uuid", sig)
+
+            assert result is True
+            mock_db_instance.update_identity_metadata.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_genesis_immutable(self):
+        """Genesis should not be overwritten once set."""
+        from src.trajectory_identity import store_genesis_signature, TrajectorySignature
+
+        sig = TrajectorySignature(observation_count=20)
+
+        with patch('src.db.get_db') as mock_db:
+            mock_identity = MagicMock()
+            mock_identity.metadata = {
+                "trajectory_genesis": {"observation_count": 10}  # Already exists!
+            }
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=mock_identity)
+            mock_db.return_value = mock_db_instance
+
+            result = await store_genesis_signature("test-agent-uuid", sig)
+
+            # Should return False - genesis already exists
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_store_genesis_agent_not_found(self):
+        """Should return False if agent doesn't exist."""
+        from src.trajectory_identity import store_genesis_signature, TrajectorySignature
+
+        sig = TrajectorySignature()
+
+        with patch('src.db.get_db') as mock_db:
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=None)
+            mock_db.return_value = mock_db_instance
+
+            result = await store_genesis_signature("nonexistent-uuid", sig)
+
+            assert result is False
+
+
+class TestUpdateCurrentSignature:
+    """Tests for update_current_signature function."""
+
+    @pytest.mark.asyncio
+    async def test_first_update_creates_genesis(self):
+        """First trajectory update should create genesis."""
+        from src.trajectory_identity import update_current_signature, TrajectorySignature
+
+        sig = TrajectorySignature(
+            observation_count=15,
+            identity_confidence=0.75,
+        )
+
+        with patch('src.db.get_db') as mock_db, \
+             patch('src.trajectory_identity.store_genesis_signature', new_callable=AsyncMock) as mock_store:
+
+            mock_identity = MagicMock()
+            mock_identity.metadata = {}  # No genesis yet
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=mock_identity)
+            mock_db_instance.update_identity_metadata = AsyncMock()
+            mock_db.return_value = mock_db_instance
+
+            mock_store.return_value = True
+
+            result = await update_current_signature("test-uuid", sig)
+
+            assert result["stored"] is True
+            assert result.get("genesis_created") is True
+            mock_store.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_compares_to_genesis(self):
+        """Subsequent updates should compare to genesis."""
+        from src.trajectory_identity import update_current_signature, TrajectorySignature
+
+        # Current signature (slightly different from genesis)
+        current_sig = TrajectorySignature(
+            attractor={"center": [0.52, 0.48, 0.51, 0.49]},
+            observation_count=50,
+        )
+
+        with patch('src.db.get_db') as mock_db:
+            mock_identity = MagicMock()
+            mock_identity.metadata = {
+                "trajectory_genesis": {
+                    "attractor": {"center": [0.5, 0.5, 0.5, 0.5]},
+                    "observation_count": 10,
+                }
+            }
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=mock_identity)
+            mock_db_instance.update_identity_metadata = AsyncMock()
+            mock_db.return_value = mock_db_instance
+
+            result = await update_current_signature("test-uuid", current_sig)
+
+            assert result["stored"] is True
+            assert "lineage_similarity" in result
+            assert result["lineage_threshold"] == 0.6
+
+    @pytest.mark.asyncio
+    async def test_anomaly_detected_low_similarity(self):
+        """Should flag anomaly when similarity < 0.6."""
+        from src.trajectory_identity import update_current_signature, TrajectorySignature
+
+        # Very different signature
+        current_sig = TrajectorySignature(
+            attractor={"center": [0.9, 0.9, 0.9, 0.9]},
+            beliefs={"values": [0.9, 0.9, 0.9]},
+            recovery={"tau_estimate": 100.0},
+            stability_score=0.95,
+            observation_count=100,
+        )
+
+        with patch('src.db.get_db') as mock_db:
+            mock_identity = MagicMock()
+            mock_identity.metadata = {
+                "trajectory_genesis": {
+                    "attractor": {"center": [0.1, 0.1, 0.1, 0.1]},
+                    "beliefs": {"values": [0.1, 0.1, 0.1]},
+                    "recovery": {"tau_estimate": 5.0},
+                    "stability_score": 0.2,
+                    "observation_count": 10,
+                }
+            }
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=mock_identity)
+            mock_db_instance.update_identity_metadata = AsyncMock()
+            mock_db.return_value = mock_db_instance
+
+            result = await update_current_signature("test-uuid", current_sig)
+
+            assert result["is_anomaly"] is True
+            assert "warning" in result
+            assert result["lineage_similarity"] < 0.6
+
+
+class TestGetTrajectoryStatus:
+    """Tests for get_trajectory_status function."""
+
+    @pytest.mark.asyncio
+    async def test_status_no_trajectory(self):
+        """Agent without trajectory data should report has_genesis=False."""
+        from src.trajectory_identity import get_trajectory_status
+
+        with patch('src.db.get_db') as mock_db:
+            mock_identity = MagicMock()
+            mock_identity.metadata = {}  # No trajectory data
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=mock_identity)
+            mock_db.return_value = mock_db_instance
+
+            result = await get_trajectory_status("test-uuid")
+
+            assert result["has_genesis"] is False
+            assert result["has_current"] is False
+
+    @pytest.mark.asyncio
+    async def test_status_with_genesis_only(self):
+        """Agent with genesis but no current should report appropriately."""
+        from src.trajectory_identity import get_trajectory_status
+
+        with patch('src.db.get_db') as mock_db:
+            mock_identity = MagicMock()
+            mock_identity.metadata = {
+                "trajectory_genesis": {
+                    "observation_count": 10,
+                    "identity_confidence": 0.7,
+                },
+                "trajectory_genesis_at": "2026-02-04T10:00:00",
+            }
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=mock_identity)
+            mock_db.return_value = mock_db_instance
+
+            result = await get_trajectory_status("test-uuid")
+
+            assert result["has_genesis"] is True
+            assert result["has_current"] is False
+            assert result["genesis_observations"] == 10
+
+    @pytest.mark.asyncio
+    async def test_status_with_both(self):
+        """Agent with genesis and current should include lineage comparison."""
+        from src.trajectory_identity import get_trajectory_status
+
+        with patch('src.db.get_db') as mock_db:
+            mock_identity = MagicMock()
+            mock_identity.metadata = {
+                "trajectory_genesis": {
+                    "attractor": {"center": [0.5, 0.5, 0.5, 0.5]},
+                    "observation_count": 10,
+                    "identity_confidence": 0.7,
+                },
+                "trajectory_current": {
+                    "attractor": {"center": [0.5, 0.5, 0.5, 0.5]},
+                    "observation_count": 50,
+                    "identity_confidence": 0.85,
+                },
+            }
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=mock_identity)
+            mock_db.return_value = mock_db_instance
+
+            result = await get_trajectory_status("test-uuid")
+
+            assert result["has_genesis"] is True
+            assert result["has_current"] is True
+            assert "lineage_similarity" in result
+
+
+class TestVerifyTrajectoryIdentity:
+    """Tests for two-tier identity verification."""
+
+    @pytest.mark.asyncio
+    async def test_verify_passes_both_tiers(self):
+        """Signature similar to both current and genesis should pass."""
+        from src.trajectory_identity import verify_trajectory_identity, TrajectorySignature
+
+        test_sig = TrajectorySignature(
+            attractor={"center": [0.5, 0.5, 0.5, 0.5]},
+            observation_count=60,
+        )
+
+        with patch('src.db.get_db') as mock_db:
+            mock_identity = MagicMock()
+            mock_identity.metadata = {
+                "trajectory_genesis": {
+                    "attractor": {"center": [0.5, 0.5, 0.5, 0.5]},
+                },
+                "trajectory_current": {
+                    "attractor": {"center": [0.5, 0.5, 0.5, 0.5]},
+                },
+            }
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=mock_identity)
+            mock_db.return_value = mock_db_instance
+
+            result = await verify_trajectory_identity("test-uuid", test_sig)
+
+            assert result["verified"] is True
+
+    @pytest.mark.asyncio
+    async def test_verify_fails_lineage(self):
+        """Signature very different from genesis should fail lineage tier."""
+        from src.trajectory_identity import verify_trajectory_identity, TrajectorySignature
+
+        # Very different from genesis
+        test_sig = TrajectorySignature(
+            attractor={"center": [0.9, 0.9, 0.9, 0.9]},
+            beliefs={"values": [0.9, 0.9]},
+            recovery={"tau_estimate": 100.0},
+            stability_score=0.95,
+        )
+
+        with patch('src.db.get_db') as mock_db:
+            mock_identity = MagicMock()
+            mock_identity.metadata = {
+                "trajectory_genesis": {
+                    "attractor": {"center": [0.1, 0.1, 0.1, 0.1]},
+                    "beliefs": {"values": [0.1, 0.1]},
+                    "recovery": {"tau_estimate": 5.0},
+                    "stability_score": 0.1,
+                },
+                "trajectory_current": {
+                    "attractor": {"center": [0.9, 0.9, 0.9, 0.9]},  # Current matches
+                },
+            }
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=mock_identity)
+            mock_db.return_value = mock_db_instance
+
+            result = await verify_trajectory_identity("test-uuid", test_sig)
+
+            assert result["verified"] is False
+            assert "lineage" in result.get("failed_tiers", [])
+
+
+class TestProcessAgentUpdateIntegration:
+    """Integration tests for trajectory in process_agent_update."""
+
+    def test_trajectory_signature_format(self):
+        """Verify trajectory_signature format matches UNITARES expectations."""
+        from src.trajectory_identity import TrajectorySignature
+
+        # Create signature like anima-mcp would
+        sig = TrajectorySignature(
+            preferences={"vector": [0.5, 0.3, 0.7]},
+            beliefs={"values": [0.8, 0.6]},
+            attractor={"center": [0.5, 0.5, 0.5, 0.5], "variance": 0.1},
+            recovery={"tau_estimate": 10.0},
+            relational={"n_relationships": 2},
+            observation_count=25,
+            stability_score=0.8,
+        )
+        sig.identity_confidence = 0.75
+
+        # Convert to dict (what would be sent in arguments)
+        sig_dict = sig.to_dict()
+        sig_dict["identity_confidence"] = sig.identity_confidence
+
+        # Verify required fields for UNITARES
+        assert "preferences" in sig_dict
+        assert "beliefs" in sig_dict
+        assert "attractor" in sig_dict
+        assert "recovery" in sig_dict
+        assert "observation_count" in sig_dict
+        assert "identity_confidence" in sig_dict
+        assert sig_dict["observation_count"] == 25
+        assert sig_dict["identity_confidence"] == 0.75
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

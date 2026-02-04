@@ -7,12 +7,14 @@
 ## The 3 Essential Tools
 
 ### 1. `onboard()` — Get Your Identity
-**When:** First call, or checking who you are  
-**Frequency:** Once per session  
+**When:** First call, or checking who you are
+**Frequency:** Once per session
 **Example:**
 ```python
 onboard(name="MyAgent")
 ```
+
+**Returns:** `agent_id` (e.g., `Claude_Opus_4_5_20260204`), UUID, genesis signature stored
 
 ---
 

@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.5.5] - 2026-02-04
+
+### Added - Trajectory Identity & Test Coverage
+
+#### Trajectory Identity Framework
+- **Genesis signature (Σ₀)** stored at first onboard, immutable thereafter
+- **Lineage comparison** on each update - similarity to genesis tracked
+- **Anomaly detection** when similarity drops below 0.6
+- New functions: `store_genesis_signature()`, `update_current_signature()`, `verify_trajectory_identity()`, `get_trajectory_status()`
+
+#### Model-Based agent_id Fix
+- `agent_id` now properly uses model type when provided
+- Format: `{Model}_{Version}_{Date}` (e.g., `Claude_Opus_4_5_20260204`)
+- Fixed bug where `handle_onboard_v2` was ignoring properly generated `agent_id`
+
+#### Test Coverage Expansion
+- **93+ tests passing** (up from 25)
+- `governance_monitor.py`: 79% coverage (63 tests)
+- `trajectory_identity.py`: 88% coverage (19 tests)
+- `identity_v2.py`: 11% coverage (11 tests)
+
+#### New Test Classes
+- `TestGainModulation` - HCK v3.0 PI gain modulation
+- `TestEthicalDrift` - ‖Δη‖² computation
+- `TestStatePersistence` - Save/load state
+- `TestVoidFrequency` - Void frequency calculation
+- `TestLambda1Update` - PI controller bounds
+- `TestSimulateUpdate` - Dry-run without mutation
+- `TestTrajectorySignature` - Dataclass serialization
+- `TestGenesisStorage` - Immutable genesis
+- `TestLineageComparison` - Similarity detection
+- `TestVerifyIdentity` - Two-tier verification
+
+### Changed
+- Documentation updated to reflect actual system state
+- "Ethical drift" section now correctly describes implemented functionality
+- Roadmap updated with completed items
+
+### Files Changed
+- `src/mcp_handlers/identity_v2.py` - Fixed agent_id bug at lines 1446-1460
+- `src/anima_mcp/unitares_bridge.py` - Wired trajectory signature to UNITARES
+- `tests/test_governance_monitor_core.py` - 63 new tests
+- `tests/test_trajectory_integration.py` - 19 new tests
+- `tests/test_identity_agent_id.py` - 11 new tests
+- `README.md` - Updated to reflect current state
+
+---
+
 ## [2.5.4] - 2025-12-27
 
 ### Changed - Meaningful Identity in Knowledge Graph

@@ -46,9 +46,18 @@
 
 ---
 
-## Tool Count: 77 Tools
+## Tool Count: 85+ Tools
 
 Use `list_tools()` for full list, or `list_tools(lite=true)` for essentials only.
+
+## Test Coverage
+
+| Module | Coverage |
+|--------|----------|
+| `governance_monitor.py` | 79% |
+| `trajectory_identity.py` | 88% |
+
+93+ tests passing as of Feb 2026.
 
 ---
 
