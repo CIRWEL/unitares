@@ -3173,6 +3173,77 @@ DEPENDENCIES:
                 "required": []
             }
         ),
+        Tool(
+            name="list_dialectic_sessions",
+            description="""List all dialectic sessions with optional filtering.
+
+Browse historical dialectic sessions to learn from past negotiations and recoveries.
+Returns summaries by default for efficiency; use include_transcript for full details.
+
+USE CASES:
+- Browse past recovery negotiations
+- Learn from resolved dialectics
+- Find sessions by phase (resolved, failed, thesis)
+- Review an agent's dialectic history
+
+RETURNS:
+{
+  "success": true,
+  "session_count": int,
+  "sessions": [
+    {
+      "session_id": "string",
+      "phase": "thesis" | "antithesis" | "synthesis" | "resolved" | "escalated" | "failed",
+      "session_type": "recovery" | "exploration",
+      "requestor": "agent_id",
+      "reviewer": "agent_id" | null,
+      "topic": "string",
+      "created": "ISO timestamp",
+      "message_count": int
+    }, ...
+  ],
+  "filters_applied": {...}
+}
+
+VALID ENUM VALUES:
+- status (filter): "thesis", "antithesis", "synthesis", "resolved", "escalated", "failed"
+
+RELATED TOOLS:
+- get_dialectic_session: Get full session by ID
+- request_dialectic_review: Start a new session
+- search_knowledge_graph: Search discoveries from sessions
+
+EXAMPLE REQUESTS:
+{}  # List all sessions (up to 50)
+{"status": "resolved"}  # Only resolved sessions
+{"agent_id": "scout", "limit": 10}  # Scout's last 10 sessions
+{"include_transcript": true, "limit": 5}  # With full transcripts
+
+DEPENDENCIES:
+- Optional: agent_id, status, limit, include_transcript""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Filter by agent (either requestor or reviewer)"
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Filter by phase (e.g., 'resolved', 'failed', 'thesis')"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max sessions to return (default 50, max 200)"
+                    },
+                    "include_transcript": {
+                        "type": "boolean",
+                        "description": "Include full transcript in results (default false for performance)"
+                    }
+                },
+                "required": []
+            }
+        ),
         # ========================================================================
         # KNOWLEDGE GRAPH TOOLS - Dec 2025
         # Removed: nudge_dialectic_session, start_interactive_dialectic,
@@ -4486,130 +4557,40 @@ EXAMPLE: calibration(action="check")
             }
         ),
         # ========================================================================
-        # PI ORCHESTRATION TOOLS (Jan 2026) - Mac→Pi coordination
+        # CIRS PROTOCOL (Feb 2026) - Multi-agent coordination
         # ========================================================================
         Tool(
-            name="pi_get_context",
-            description="Get Lumen's complete context from Pi (identity, anima, sensors, mood). Orchestrated call to Pi's get_lumen_context.",
+            name="cirs_protocol",
+            description="""Unified CIRS multi-agent coordination protocol.
+
+PROTOCOLS:
+- void_alert: Broadcast/query void state alerts
+- state_announce: Broadcast/query EISV + trajectory state
+- coherence_report: Compute pairwise agent similarity
+- boundary_contract: Declare trust policies
+- governance_action: Coordinate interventions
+
+EXAMPLES:
+  cirs_protocol(protocol='void_alert', action='query', limit=10)
+  cirs_protocol(protocol='state_announce', action='emit')
+  cirs_protocol(protocol='coherence_report', action='compute', target_agent_id='...')""",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "include": {
-                        "type": "array",
-                        "items": {"type": "string", "enum": ["identity", "anima", "sensors", "mood"]},
-                        "description": "What to include (default: all)"
-                    }
-                },
-                "required": []
-            }
-        ),
-        Tool(
-            name="pi_health",
-            description="Check Pi anima-mcp health and connectivity. Returns latency, component status, and diagnostics.",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        ),
-        Tool(
-            name="pi_sync_eisv",
-            description="Sync Lumen's anima state to EISV governance metrics. Maps warmth→E, clarity→I, stability→S, presence→V.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "update_governance": {"type": "boolean", "description": "Also update governance state (default: false)"}
-                },
-                "required": []
-            }
-        ),
-        Tool(
-            name="pi_display",
-            description="Control Pi's display: switch screens, show face, navigate.",
-            inputSchema={
-                "type": "object",
-                "properties": {
+                    "protocol": {
+                        "type": "string",
+                        "enum": ["void_alert", "state_announce", "coherence_report", "boundary_contract", "governance_action"],
+                        "description": "Which CIRS protocol to use"
+                    },
                     "action": {
                         "type": "string",
-                        "enum": ["switch", "face", "next", "previous"],
-                        "description": "Display action"
+                        "description": "Action within the protocol (emit/query/compute/set/get/initiate/respond)"
                     },
-                    "screen": {
-                        "type": "string",
-                        "enum": ["face", "sensors", "identity", "diagnostics", "notepad", "learning", "messages", "qa", "self_graph"],
-                        "description": "Screen to switch to (for action=switch)"
-                    }
+                    "target_agent_id": {"type": "string", "description": "Target agent (for coherence_report)"},
+                    "severity": {"type": "string", "enum": ["warning", "critical"], "description": "Alert severity (for void_alert)"},
+                    "limit": {"type": "integer", "description": "Max results for queries"}
                 },
-                "required": ["action"]
-            }
-        ),
-        Tool(
-            name="pi_say",
-            description="Have Lumen speak via Pi's voice system.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Text to speak"},
-                    "blocking": {"type": "boolean", "description": "Wait for speech to complete (default: true)"}
-                },
-                "required": ["text"]
-            }
-        ),
-        Tool(
-            name="pi_post_message",
-            description="Post a message to Lumen's message board on Pi.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "message": {"type": "string", "description": "Message content"},
-                    "source": {"type": "string", "enum": ["human", "agent"], "description": "Message source"},
-                    "agent_name": {"type": "string", "description": "Agent name (if source=agent)"},
-                    "responds_to": {"type": "string", "description": "Question ID to answer"}
-                },
-                "required": ["message"]
-            }
-        ),
-        Tool(
-            name="pi_query",
-            description="Query Lumen's knowledge systems on Pi (learned, memory, graph, cognitive).",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Query text"},
-                    "type": {
-                        "type": "string",
-                        "enum": ["learned", "memory", "graph", "cognitive"],
-                        "description": "Query type (default: cognitive)"
-                    },
-                    "limit": {"type": "integer", "description": "Max results"}
-                },
-                "required": ["text"]
-            }
-        ),
-        Tool(
-            name="pi_workflow",
-            description="Execute multi-step workflow on Pi with audit trail. Workflows: full_status, morning_check, custom.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "workflow": {
-                        "type": "string",
-                        "enum": ["full_status", "morning_check", "custom"],
-                        "description": "Workflow to execute"
-                    },
-                    "steps": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "tool": {"type": "string"},
-                                "args": {"type": "object"}
-                            }
-                        },
-                        "description": "Custom steps (for workflow=custom)"
-                    }
-                },
-                "required": ["workflow"]
+                "required": ["protocol"]
             }
         ),
         # Self-Recovery Tools (added per SELF_RECOVERY_SPEC.md)

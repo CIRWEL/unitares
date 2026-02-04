@@ -43,6 +43,7 @@ from .dialectic_session import (
     save_session,
     load_session,
     load_all_sessions,
+    list_all_sessions,
     ACTIVE_SESSIONS,
     SESSION_STORAGE_DIR,
     _SESSION_METADATA_CACHE,
@@ -519,3 +520,69 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
             }
         )]
 
+
+@mcp_tool("list_dialectic_sessions", timeout=15.0, rate_limit_exempt=True)
+async def handle_list_dialectic_sessions(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    List all dialectic sessions with optional filtering.
+
+    Allows agents to browse historical dialectic sessions to learn from past
+    negotiations and recoveries. Returns summaries by default for efficiency.
+
+    Args:
+        agent_id: Filter by agent (either requestor or reviewer) - optional
+        status: Filter by phase (e.g., 'resolved', 'failed', 'thesis') - optional
+        limit: Max sessions to return (default 50, max 200)
+        include_transcript: Include full transcript in results (default False)
+
+    Returns:
+        List of session summaries with optional full transcript
+    """
+    try:
+        agent_id = arguments.get('agent_id')
+        status = arguments.get('status')
+        limit = min(int(arguments.get('limit', 50) or 50), 200)
+        include_transcript = bool(arguments.get('include_transcript', False))
+
+        sessions = await list_all_sessions(
+            agent_id=agent_id,
+            status=status,
+            limit=limit,
+            include_transcript=include_transcript
+        )
+
+        if not sessions:
+            return success_response({
+                "success": True,
+                "message": "No dialectic sessions found matching criteria",
+                "sessions": [],
+                "filters_applied": {
+                    "agent_id": agent_id,
+                    "status": status,
+                    "limit": limit
+                },
+                "tip": "Use list_dialectic_sessions() with no filters to see all sessions"
+            })
+
+        return success_response({
+            "success": True,
+            "session_count": len(sessions),
+            "sessions": sessions,
+            "filters_applied": {
+                "agent_id": agent_id,
+                "status": status,
+                "limit": limit,
+                "include_transcript": include_transcript
+            },
+            "tip": "Use get_dialectic_session(session_id='...') for full details"
+        })
+
+    except Exception as e:
+        logger.error(f"Error listing dialectic sessions: {e}", exc_info=True)
+        return [error_response(
+            f"Error listing sessions: {str(e)}",
+            recovery={
+                "action": "Try with different filters or check server logs",
+                "related_tools": ["get_dialectic_session", "health_check"]
+            }
+        )]

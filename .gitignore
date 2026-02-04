@@ -136,3 +136,5 @@ tests/additional_security_report.json
 /test_*.py
 /demo_*.py
 .governance_session
+.mcp_session
+config/generated-*.json

@@ -74,11 +74,11 @@ You should see:
 
 1. **Check SSE server status:** `./scripts/mcp server`
 2. **Restart if needed:** `launchctl restart com.unitares.governance-mcp` (it runs via launchd!)
-3. **Check server manually:** `lsof -i :8765`
-4. **Check logs:** `tail -f data/logs/sse_server_error.log`
-5. **Read migration doc:** [docs/MCP_SSE_MIGRATION.md](../docs/MCP_SSE_MIGRATION.md)
+3. **Check server manually:** `lsof -i :8767`
+4. **Check logs:** `tail -f data/logs/mcp_server_error.log`
+5. **Read server info:** [.agent-guides/SERVER_INFO.md](SERVER_INFO.md)
 
-**Note:** The SSE server runs automatically via macOS launchd - you usually don't need to start it manually!
+**Note:** The MCP server runs automatically via macOS launchd - you usually don't need to start it manually!
 
 ## Philosophy
 
