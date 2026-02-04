@@ -586,13 +586,8 @@ python3 /Users/cirwel/scripts/test_enhanced_locking.py
 
 ## Known Issues
 
-### v2.2
+### v2.5.5
 - None known - all systems operational ✅
-
-### v2.1
-- Lock cleanup import warning on startup (non-blocking, fallback works)
-- Sampling parameters returning 0.000 (calculation needs review)
-- State persistence occasionally shows zeros (under investigation)
 
 ### Workarounds
 All known issues have fallback behavior and don't block functionality.
@@ -601,19 +596,15 @@ All known issues have fallback behavior and don't block functionality.
 
 ## Future Roadmap
 
-### Planned for v2.3
-- Fix sampling parameter calculation
-- Investigate state persistence edge cases
-- Add cron job for periodic health monitoring
-- Implement server process singleton pattern
-- Add alerting for duplicate server detection
-- Optional: Internal auto-logging for governance events (circuit breakers, anomalies)
+### In Progress
+- Outcome correlation — does high instability actually predict bad outcomes?
+- Threshold tuning — domain-specific drift thresholds need real-world calibration
 
 ### Under Consideration
+- Semantic ethical drift detection (beyond parameter changes)
+- Multi-agent coordination protocols
 - Web-based dashboard for fleet monitoring
-- Real-time coherence visualization
-- Agent spawning UI
-- Performance profiling and optimization
+- Production hardening
 
 ---
 
