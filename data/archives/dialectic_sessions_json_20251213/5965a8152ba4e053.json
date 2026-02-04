@@ -1,0 +1,92 @@
+{
+  "session_id": "5965a8152ba4e053",
+  "paused_agent_id": "claude_opus_mcp_session_20251212",
+  "reviewer_agent_id": "claude_opus_mcp_session_20251212",
+  "phase": "resolved",
+  "synthesis_round": 0,
+  "transcript": [
+    {
+      "phase": "thesis",
+      "agent_id": "claude_opus_mcp_session_20251212",
+      "timestamp": "2025-12-12T23:25:12.710393",
+      "root_cause": "Session was created with reviewer=self due to verification using discovery owner; needs peer reviewer. Closing session to avoid blocking.",
+      "observed_metrics": null,
+      "proposed_conditions": [
+        "Close session",
+        "Recreate verification with peer reviewer selection (non-self)"
+      ],
+      "reasoning": "This session is invalid for verification because reviewer==paused agent. Will close and recreate with peer reviewer after patch.",
+      "agrees": null,
+      "concerns": null
+    },
+    {
+      "phase": "antithesis",
+      "agent_id": "claude_opus_mcp_session_20251212",
+      "timestamp": "2025-12-12T23:25:17.293686",
+      "root_cause": null,
+      "observed_metrics": null,
+      "proposed_conditions": null,
+      "reasoning": "A verification session must have a distinct reviewer. Closing and recreating.",
+      "agrees": null,
+      "concerns": [
+        "Self-review undermines verification; cannot provide independent antithesis."
+      ]
+    },
+    {
+      "phase": "synthesis",
+      "agent_id": "claude_opus_mcp_session_20251212",
+      "timestamp": "2025-12-12T23:25:22.067236",
+      "root_cause": "Verification must be peer-reviewed, not owner-reviewed.",
+      "observed_metrics": null,
+      "proposed_conditions": [
+        "Mark this session resolved/closed as invalid for verification",
+        "Recreate new session with dispute_type='verification' and reviewer != discovery owner"
+      ],
+      "reasoning": "Resolve by closing session and recreating with peer reviewer selection.",
+      "agrees": 1,
+      "concerns": null
+    },
+    {
+      "phase": "synthesis",
+      "agent_id": "claude_opus_mcp_session_20251212",
+      "timestamp": "2025-12-12T23:25:26.031436",
+      "root_cause": "Same; close invalid self-review session.",
+      "observed_metrics": null,
+      "proposed_conditions": [
+        "Close session as invalid self-review",
+        "Recreate peer verification session after patch"
+      ],
+      "reasoning": "Converge: close and recreate peer verification.",
+      "agrees": true,
+      "concerns": null
+    }
+  ],
+  "resolution": {
+    "action": "resume",
+    "conditions": [
+      "Recreate peer verification session after patch",
+      "Close session as invalid self-review"
+    ],
+    "root_cause": "Same; close invalid self-review session.",
+    "reasoning": "Agent A: Converge: close and recreate peer verification.\nAgent B: Converge: close and recreate peer verification.",
+    "signature_a": "133510322b54eb8565c9b35cea2a0061f6455403d3dba16e7b6f828c0b4f044f",
+    "signature_b": "133510322b54eb8565c9b35cea2a0061f6455403d3dba16e7b6f828c0b4f044f",
+    "timestamp": "2025-12-12T23:25:26.040736"
+  },
+  "created_at": "2025-12-12T23:24:37.468480",
+  "discovery_id": "2025-12-12T23:17:25.582919",
+  "dispute_type": "verification",
+  "session_type": "recovery",
+  "topic": null,
+  "paused_agent_state": {
+    "risk_score": 0.43200981539388,
+    "phi": 0.17728839814957062,
+    "verdict": "caution",
+    "coherence": 0.49536975198818267,
+    "void_active": false,
+    "E": 0.707124806005625,
+    "I": 0.827574075838647,
+    "S": 0.17086132479108077,
+    "V": -0.009260760754049992
+  }
+}

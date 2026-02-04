@@ -45,8 +45,8 @@ if pgrep -f "ngrok.*8765" > /dev/null; then
 fi
 
 # Start MCP server
-echo "📡 Starting MCP server on port 8765..."
-nohup python3 src/mcp_server.py --port 8765 --host 0.0.0.0 --force > /tmp/unitares.log 2>&1 &
+echo "📡 Starting MCP server on port 8767..."
+nohup python3 src/mcp_server.py --port 8767 --host 0.0.0.0 --force > /tmp/unitares.log 2>&1 &
 SERVER_PID=$!
 
 # Wait for server to start
@@ -86,8 +86,8 @@ echo ""
 echo "════════════════════════════════════════════════════════════"
 echo "  UNITARES Status"
 echo "════════════════════════════════════════════════════════════"
-echo "  MCP Server:  http://localhost:8765/mcp"
-echo "  Health:       http://localhost:8765/health"
+echo "  MCP Server:  http://localhost:8767/mcp"
+echo "  Health:       http://localhost:8767/health"
 echo "  Ngrok URL:    https://unitares.ngrok.io/mcp"
 echo ""
 echo "  Logs:"

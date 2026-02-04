@@ -536,6 +536,68 @@ async def handle_pi_workflow(arguments: Dict[str, Any]) -> Sequence[TextContent]
     })
 
 
+@mcp_tool("pi_git_pull", timeout=120.0, description="Pull latest code on Pi and optionally restart. Proxies to Pi's git_pull tool.")
+async def handle_pi_git_pull(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Pull latest code from GitHub on Pi and optionally restart the server.
+    Proxies to Pi's git_pull MCP tool, handling SSE response parsing.
+    """
+    agent_id = arguments.get("agent_id", "mac-orchestrator")
+    stash = arguments.get("stash", False)
+    force = arguments.get("force", False)
+    restart = arguments.get("restart", False)
+
+    tool_args = {}
+    if stash:
+        tool_args["stash"] = True
+    if force:
+        tool_args["force"] = True
+    if restart:
+        tool_args["restart"] = True
+
+    result = await call_pi_tool("git_pull", tool_args, agent_id=agent_id, timeout=90.0)
+
+    if "error" in result:
+        return error_response(f"Git pull failed: {result['error']}")
+
+    return success_response({
+        "device": "pi",
+        "operation": "git_pull",
+        "stash": stash,
+        "force": force,
+        "restart": restart,
+        "result": result
+    })
+
+
+@mcp_tool("pi_system_power", timeout=30.0, description="Reboot or shutdown the Pi remotely. For emergency recovery. Requires confirm=true.")
+async def handle_pi_system_power(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Reboot or shutdown the Pi remotely.
+    Proxies to Pi's system_power MCP tool.
+    """
+    agent_id = arguments.get("agent_id", "mac-orchestrator")
+    action = arguments.get("action", "status")
+    confirm = arguments.get("confirm", False)
+
+    tool_args = {"action": action}
+    if confirm:
+        tool_args["confirm"] = True
+
+    result = await call_pi_tool("system_power", tool_args, agent_id=agent_id, timeout=30.0)
+
+    if "error" in result:
+        return error_response(f"Power command failed: {result['error']}")
+
+    return success_response({
+        "device": "pi",
+        "operation": "system_power",
+        "action": action,
+        "confirm": confirm,
+        "result": result
+    })
+
+
 # ============================================================
 # Periodic EISV Sync Task (Background)
 # ============================================================

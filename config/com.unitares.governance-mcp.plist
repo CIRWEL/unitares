@@ -10,7 +10,7 @@
         <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
         <string>/Users/cirwel/projects/governance-mcp-v1/src/mcp_server.py</string>
         <string>--port</string>
-        <string>8765</string>
+        <string>8767</string>
     </array>
     
     <key>WorkingDirectory</key>
