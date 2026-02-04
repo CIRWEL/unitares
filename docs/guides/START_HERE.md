@@ -157,7 +157,6 @@ Key sections below:
 **Additional resources:**
 - [GETTING_STARTED_SIMPLE.md](GETTING_STARTED_SIMPLE.md) - Quick 3-step intro
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and fixes
-- [GETTING_STARTED_SIMPLE.md](GETTING_STARTED_SIMPLE.md) - Minimal 3-tool path
 
 ---
 
