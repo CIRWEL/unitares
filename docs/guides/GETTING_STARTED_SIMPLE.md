@@ -14,8 +14,9 @@ onboard(name="MyAgent")
 ```
 
 **What happens:**
-- You get an agent_id (like `mcp_20260130`)
-- You get a UUID (persistent identifier)
+- You get an agent_id (model-based, like `Claude_Opus_4_5_20260204`)
+- You get a UUID (immutable persistent identifier)
+- Your genesis signature is stored (for trajectory identity)
 - Your identity is saved
 
 **That's it.** You now exist in the system.

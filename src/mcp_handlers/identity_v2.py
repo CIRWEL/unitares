@@ -564,13 +564,18 @@ async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str
                     if not getattr(meta, 'structured_id', None):
                         try:
                             from .naming_helpers import detect_interface_context, generate_structured_id
+                            from .context import get_context_client_hint
                             context = detect_interface_context()
                             existing_ids = [
                                 getattr(m, 'structured_id', None)
                                 for m in mcp_server.agent_metadata.values()
                                 if getattr(m, 'structured_id', None)
                             ]
-                            meta.structured_id = generate_structured_id(context=context, existing_ids=existing_ids)
+                            meta.structured_id = generate_structured_id(
+                                context=context,
+                                existing_ids=existing_ids,
+                                client_hint=get_context_client_hint()
+                            )
                             logger.info(f"Migrated structured_id: {meta.structured_id}")
                         except Exception as e:
                             logger.debug(f"Could not generate structured_id: {e}")
@@ -594,13 +599,18 @@ async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str
                     # Generate structured_id (three-tier identity model v2.5.0+)
                     try:
                         from .naming_helpers import detect_interface_context, generate_structured_id
+                        from .context import get_context_client_hint
                         context = detect_interface_context()
                         existing_ids = [
                             getattr(m, 'structured_id', None)
                             for m in mcp_server.agent_metadata.values()
                             if getattr(m, 'structured_id', None)
                         ]
-                        meta.structured_id = generate_structured_id(context=context, existing_ids=existing_ids)
+                        meta.structured_id = generate_structured_id(
+                            context=context,
+                            existing_ids=existing_ids,
+                            client_hint=get_context_client_hint()
+                        )
                         logger.info(f"Generated structured_id: {meta.structured_id}")
                     except Exception as e:
                         logger.debug(f"Could not generate structured_id: {e}")
@@ -1433,18 +1443,20 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         "unknown": "For best session continuity, include client_session_id in all tool calls."
     }
 
-    # Get structured_id if available
-    structured_id = None
-    try:
-        from .shared import get_mcp_server
-        mcp_server = get_mcp_server()
-        if agent_uuid in mcp_server.agent_metadata:
-            meta = mcp_server.agent_metadata[agent_uuid]
-            structured_id = getattr(meta, 'structured_id', None)
-    except Exception:
-        pass
+    # Get structured_id - USE agent_id from resolve_session_identity (properly generated with model_type)
+    # Only fall back to metadata lookup if agent_id was not properly set
+    structured_id = agent_id if agent_id and agent_id != agent_uuid else None
+    if not structured_id:
+        try:
+            from .shared import get_mcp_server
+            mcp_server = get_mcp_server()
+            if agent_uuid in mcp_server.agent_metadata:
+                meta = mcp_server.agent_metadata[agent_uuid]
+                structured_id = getattr(meta, 'structured_id', None)
+        except Exception:
+            pass
 
-    # Determine friendly name
+    # Determine friendly name - final fallback to UUID-based if nothing else
     if not structured_id:
         structured_id = f"agent_{agent_uuid[:8]}"
     friendly_name = agent_label or structured_id
