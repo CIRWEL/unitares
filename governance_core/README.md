@@ -1,7 +1,7 @@
 # UNITARES Governance Core
 
-**Version:** 2.0.1  
-**Status:** Active  
+**Version:** 2.5.5
+**Status:** Active
 **Last Updated:** 2026-02-04
 
 ---
@@ -22,34 +22,40 @@ This module contains **only math** — no infrastructure, no I/O, no MCP. Pure f
 | **Coherence Function** | ✅ Implemented | `coherence.py` — C(V,Θ) with tanh |
 | **Φ Objective** | ✅ Implemented | `scoring.py` — weighted objective function |
 | **Verdict Logic** | ✅ Implemented | `scoring.py` — safe/caution/high-risk |
-| **Ethical Drift Vector** | ⚠️ Partial | `ethical_drift.py` — structure exists, oracle missing |
+| **Ethical Drift Vector** | ✅ Implemented | `ethical_drift.py` — computed from observable signals |
 
 ### About Ethical Drift (Δη)
 
-The ethical drift vector Δη is **defined but not populated**:
+The ethical drift vector Δη is **computed from observable signals**:
 
 ```python
-# The vector structure exists:
+# The vector is populated from real measurements:
 Δη = (
     calibration_deviation,    # |predicted_correct - actual_correct|
     complexity_divergence,    # |derived_complexity - self_complexity|
     coherence_deviation,      # |current_coherence - baseline_coherence|
     stability_deviation       # Decision pattern instability
 )
+
+# Also computed in governance_monitor.py:
+‖Δη‖² = ‖θ_t - θ_{t-1}‖² / dim  # Parameter change magnitude
 ```
 
 **What's implemented:**
 - `EthicalDriftVector` dataclass with 4 components
 - `AgentBaseline` for tracking deviation from normal
 - `compute_ethical_drift()` function that combines signals
-- Integration into `governance_monitor.py`
+- Parameter-based drift in `governance_monitor.py`
+- Integration into φ objective function (penalizes large drift)
+- Integration into `update_dynamics()` (influences entropy evolution)
 
-**What's NOT implemented:**
-- The *oracle* that would detect actual ethical violations
-- External behavioral classifiers
-- Ground-truth validation of "ethical" vs "unethical" behavior
+**Design philosophy:**
+The system does NOT require a human "oracle" to determine ground truth. Instead:
+- Objective outcomes (test results, command success) provide calibration signals
+- Parameter changes between updates measure behavioral drift
+- Baseline deviations detect coherence/stability drift
 
-In practice, `ethical_drift` defaults to `[0,0,0]` because there's no detection system feeding it real signals. The math works — we just don't have the input data.
+This is the "self-governance" principle: the system calibrates from observable outcomes, not human judgment.
 
 ---
 
@@ -62,7 +68,7 @@ governance_core/
 ├── dynamics.py          # Core differential equations
 ├── coherence.py         # Coherence function C(V, Θ)
 ├── scoring.py           # Objective function Φ and verdicts
-├── ethical_drift.py     # Δη vector (partially integrated)
+├── ethical_drift.py     # Δη vector (fully integrated)
 ├── phase_aware.py       # Phase-aware dynamics
 ├── utils.py             # Helper functions
 └── README.md            # This file
@@ -93,7 +99,7 @@ from governance_core import step_state, DEFAULT_PARAMS, DEFAULT_THETA
 new_state = step_state(
     state=state,
     theta=DEFAULT_THETA,
-    delta_eta=[0.0, 0.0, 0.0],  # Ethical drift (usually zero)
+    delta_eta=[0.0, 0.0, 0.0],  # Ethical drift vector
     dt=0.1,
     params=DEFAULT_PARAMS,
     complexity=0.5,  # Agent-reported complexity
@@ -137,7 +143,7 @@ dV/dt = κ(E - I) - δ·V
 - ✅ `k`, `beta_I`, `gamma_I` — I dynamics active  
 - ✅ `mu`, `lambda1`, `lambda2`, `beta_complexity` — S dynamics active
 - ✅ `kappa`, `delta` — V dynamics active
-- ⚠️ `gamma_E = 0.05` enabled but `‖Δη‖² = 0` in practice (no drift oracle)
+- ✅ `gamma_E = 0.05` — drift computed from parameter changes
 
 ### Coherence Function
 
@@ -249,16 +255,21 @@ print(f'✅ E={new.E:.3f}, I={new.I:.3f}, S={new.S:.3f}, V={new.V:.3f}')
 
 ---
 
-## What Would Complete Ethical Drift Detection Require?
+## What Ethical Drift Measures (and Doesn't)
 
-To make `Δη` actually useful, you'd need:
+**What Δη currently measures:**
+- Parameter changes between updates (behavioral drift)
+- Calibration deviation (confidence vs actual outcomes)
+- Complexity divergence (derived vs reported)
+- Coherence deviation (current vs baseline)
+- Decision stability (pattern consistency)
 
-1. **Behavioral classifiers** — Detect harmful outputs, deceptive patterns, policy violations
-2. **Ground truth labels** — Know which agent behaviors were actually problematic
-3. **Real-time inference** — Run detection on agent outputs before scoring
-4. **Calibration data** — Validate that high `‖Δη‖²` correlates with bad outcomes
+**What interpreting Δη requires:**
+- Domain context — high drift during learning may be healthy
+- Outcome correlation — does instability predict bad results?
+- Threshold tuning — what drift level is concerning?
 
-This is a research problem, not an engineering task. The current system provides the *infrastructure* for ethical drift — the detection layer is what's missing.
+The math is complete. The *interpretation* is domain-specific — a model learning rapidly may have high drift that's actually good. The system provides the measurement; you decide what the thresholds mean for your use case.
 
 ---
 

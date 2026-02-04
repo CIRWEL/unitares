@@ -216,7 +216,7 @@ governance-mcp-v1/
 ├── governance_core/            # Canonical math (Phase-3)
 │   ├── dynamics.py             # Differential equations
 │   ├── coherence.py            # C(V,Θ) function
-│   ├── ethical_drift.py        # Δη vector (partially integrated)
+│   ├── ethical_drift.py        # Δη vector computation
 │   └── scoring.py              # Φ objective, verdicts
 ├── docs/                       # Documentation
 ├── data/                       # Runtime data (agents/, knowledge/)
