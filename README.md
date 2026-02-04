@@ -22,10 +22,10 @@ UNITARES monitors AI agent behavior using continuous state variables (EISV). Whe
 - ✅ **Automatic calibration** — Ground truth from objective outcomes (test results, command success), not human oracle
 
 **What's partial/research-grade:**
-- ⚠️ **"Measurable ethics"** — We can measure *instability* and *drift*, but mapping these to ethical violations remains an open research question
-- ⚠️ **External validation** — Calibration uses self-reported outcomes; needs more ground-truth signals
+- ⚠️ **"Measurable ethics"** — We measure *instability* and *drift*, but mapping these to ethical violations remains an open research question
+- ⚠️ **Outcome correlation** — Does high instability actually predict bad outcomes? Needs more real-world validation
 
-The thermodynamic math is real. The stability monitoring works. Ethical drift is computed but interpreting it requires domain-specific understanding of what constitutes "drift" in your context.
+The thermodynamic math is real. The stability monitoring works. Ethical drift is computed from observable signals. Interpreting thresholds requires domain-specific tuning.
 
 ---
 
@@ -321,8 +321,8 @@ The thermodynamic framing isn't metaphor — it's a design choice that makes beh
 - ✅ 93+ tests with 79-88% coverage on core modules
 
 **In progress:**
-- 🔄 External validation signals — calibration still mostly self-reported
 - 🔄 Outcome correlation — does instability actually predict bad outcomes?
+- 🔄 Threshold tuning — domain-specific drift thresholds need real-world calibration
 
 **Future:**
 - Semantic ethical drift detection (beyond parameter changes)
