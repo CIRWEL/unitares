@@ -340,7 +340,7 @@ Built by [@CIRWEL](https://github.com/CIRWEL). Also building [Lumen/anima-mcp](h
 
 ## License
 
-Research prototype — contact for licensing.
+MIT License with Attribution — see [LICENSE](LICENSE) for details.
 
 ---
 
