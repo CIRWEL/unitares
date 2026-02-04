@@ -17,7 +17,7 @@ macOS Login
     ↓
 launchd loads: ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
     ↓
-Starts: python3 src/mcp_server_sse.py --port 8767
+Starts: python3 src/mcp_server.py --port 8767
     ↓
 Server runs continuously
     ↓

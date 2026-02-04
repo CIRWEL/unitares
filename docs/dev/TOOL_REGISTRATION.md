@@ -157,18 +157,18 @@ This ensures old code/agents continue to work.
 
 ```bash
 # Check registered tools count
-curl -s -X POST "http://localhost:8765/v1/tools/call" \
+curl -s -X POST "http://localhost:8767/v1/tools/call" \
   -H "Content-Type: application/json" \
   -d '{"name": "list_tools", "arguments": {"lite": false}}' | \
   python3 -c "import json,sys; d=json.load(sys.stdin); print(f'Total tools: {len(d.get(\"result\",{}).get(\"tools\",[]))}')"
 
 # Verify specific tool exists
-curl -s -X POST "http://localhost:8765/v1/tools/call" \
+curl -s -X POST "http://localhost:8767/v1/tools/call" \
   -H "Content-Type: application/json" \
   -d '{"name": "describe_tool", "arguments": {"tool_name": "my_new_tool"}}'
 
 # Check server logs for auto-registration
-tail -100 /Users/cirwel/projects/governance-mcp-v1/data/logs/sse_server_error.log | grep "AUTO_REGISTER"
+tail -100 /Users/cirwel/projects/governance-mcp-v1/data/logs/mcp_server_error.log | grep "AUTO_REGISTER"
 ```
 
 ---

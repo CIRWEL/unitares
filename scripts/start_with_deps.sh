@@ -38,4 +38,4 @@ if ! docker ps --format '{{.Names}}' | grep -q '^postgres-age$'; then
 fi
 
 # Start the MCP server
-exec "$SCRIPT_DIR/start_sse_server.sh" "$@"
+exec "$SCRIPT_DIR/start_server.sh" "$@"
