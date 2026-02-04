@@ -14,7 +14,7 @@
 curl http://localhost:8765/health | python3 -m json.tool
 
 # Check processes
-ps aux | grep -E "(mcp_server_sse|ngrok)"
+ps aux | grep -E "(mcp_server|ngrok)"
 
 # Check logs
 tail -f /tmp/unitares.log
@@ -38,7 +38,7 @@ tail -f /tmp/ngrok.log
 
 **Symptoms:**
 - `./scripts/start_unitares.sh` fails
-- Error: "SSE server is already running"
+- Error: "Server is already running"
 - Error: "Port 8765 already in use"
 
 **Solutions:**
@@ -46,14 +46,14 @@ tail -f /tmp/ngrok.log
 1. **Clean up stale locks:**
    ```bash
    cd /Users/cirwel/projects/governance-mcp-v1
-   rm -f data/.mcp_server_sse.*
+   rm -f data/.mcp_server.*
    ```
 
 2. **Kill existing processes:**
    ```bash
    ./scripts/stop_unitares.sh
    # Or manually:
-   pkill -f "mcp_server_sse"
+   pkill -f "mcp_server"
    pkill -f "ngrok.*8765"
    ```
 
@@ -65,7 +65,7 @@ tail -f /tmp/ngrok.log
 
 4. **Use --force flag:**
    ```bash
-   python3 src/mcp_server_sse.py --port 8765 --host 0.0.0.0 --force
+   python3 src/mcp_server.py --port 8765 --host 0.0.0.0 --force
    ```
 
 ---
@@ -216,7 +216,7 @@ tail -f /tmp/ngrok.log
 
 1. **Check memory usage:**
    ```bash
-   ps aux | grep mcp_server_sse | awk '{print $4, $11}'
+   ps aux | grep mcp_server | awk '{print $4, $11}'
    ```
 
 2. **Restart server:**
@@ -231,7 +231,7 @@ tail -f /tmp/ngrok.log
    - Review connection count (too many connections?)
 
 4. **Reduce connection limits:**
-   - Edit `src/mcp_server_sse.py`
+   - Edit `src/mcp_server.py`
    - Reduce `limit_concurrency` in uvicorn config
 
 ---
@@ -239,7 +239,7 @@ tail -f /tmp/ngrok.log
 ### Issue 6: Lock File Conflicts
 
 **Symptoms:**
-- Error: "SSE server is already running"
+- Error: "Server is already running"
 - Lock file exists but process not running
 - Can't start server
 
@@ -247,12 +247,12 @@ tail -f /tmp/ngrok.log
 
 1. **Check if process is actually running:**
    ```bash
-   ps aux | grep mcp_server_sse
+   ps aux | grep mcp_server
    ```
 
 2. **Check lock file:**
    ```bash
-   cat data/.mcp_server_sse.lock
+   cat data/.mcp_server.lock
    # Note the PID
    ```
 
@@ -263,12 +263,12 @@ tail -f /tmp/ngrok.log
 
 4. **Clean up stale locks:**
    ```bash
-   rm -f data/.mcp_server_sse.*
+   rm -f data/.mcp_server.*
    ```
 
 5. **Use --force flag:**
    ```bash
-   python3 src/mcp_server_sse.py --force
+   python3 src/mcp_server.py --force
    ```
 
 ---
@@ -369,7 +369,7 @@ python3 --version
 # Test server startup
 cd /Users/cirwel/projects/governance-mcp-v1
 source .venv/bin/activate
-python3 src/mcp_server_sse.py --port 8765 --host 0.0.0.0 --force
+python3 src/mcp_server.py --port 8765 --host 0.0.0.0 --force
 
 # Test ngrok separately
 ngrok http 8765 --url=unitares.ngrok.io
@@ -388,7 +388,7 @@ If everything is broken:
 ./scripts/stop_unitares.sh
 
 # 2. Clean up
-rm -f data/.mcp_server_sse.*
+rm -f data/.mcp_server.*
 rm -f /tmp/unitares.log
 rm -f /tmp/ngrok.log
 

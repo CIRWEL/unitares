@@ -1,8 +1,8 @@
-# SSE Server - Background Service Info
+# MCP Server - Background Service Info
 
 ## Status: Running Automatically
 
-The SSE server runs as a **persistent background service** via macOS launchd.
+The MCP server runs as a **persistent background service** via macOS launchd.
 
 ## Current Setup
 
@@ -17,7 +17,7 @@ macOS Login
     ↓
 launchd loads: ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
     ↓
-Starts: python3 src/mcp_server_sse.py --port 8765
+Starts: python3 src/mcp_server.py --port 8765
     ↓
 Server runs continuously
     ↓
@@ -32,8 +32,8 @@ If it crashes → launchd automatically restarts it (KeepAlive: true)
 - `RunAtLoad: true` - Starts automatically on login
 - `KeepAlive: true` - Restarts if it crashes
 - `WorkingDirectory` - Set to project root
-- `StandardOutPath` - Logs to data/logs/sse_server.log
-- `StandardErrorPath` - Errors to data/logs/sse_server_error.log
+- `StandardOutPath` - Logs to data/logs/mcp_server.log
+- `StandardErrorPath` - Errors to data/logs/mcp_server_error.log
 
 ## For New Agents
 
@@ -76,12 +76,12 @@ launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
 
 **Standard output:**
 ```bash
-tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/sse_server.log
+tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/mcp_server.log
 ```
 
 **Errors:**
 ```bash
-tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/sse_server_error.log
+tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/mcp_server_error.log
 ```
 
 ## Why This Matters for Onboarding
@@ -90,10 +90,10 @@ tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/sse_server_error.log
 **Reality:** Server is always running via launchd
 
 **This means:**
-- ✅ New agents can immediately use `governance_cli.sh`
-- ✅ No "server not found" errors (unless launchd failed)
-- ✅ Simpler onboarding - one command works
-- ✅ Persistent across sessions
+- New agents can immediately use the MCP tools
+- No "server not found" errors (unless launchd failed)
+- Simpler onboarding - one command works
+- Persistent across sessions
 
 ## Troubleshooting
 
@@ -111,7 +111,7 @@ tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/sse_server_error.log
 
 3. **Check logs:**
    ```bash
-   tail -50 data/logs/sse_server_error.log
+   tail -50 data/logs/mcp_server_error.log
    ```
 
 4. **Restart:**
@@ -151,7 +151,7 @@ If the server code changes:
 ## Integration with MCP Clients
 
 **Cursor, Claude Desktop, etc. connect to this same server:**
-- All share the same SSE endpoint: http://127.0.0.1:8765/sse
+- All use the same HTTP endpoint: http://127.0.0.1:8765/mcp/
 - State is shared across all connected clients
 - launchd ensures the server is always available
 
@@ -159,6 +159,6 @@ If the server code changes:
 
 ---
 
-**Last Updated:** 2025-12-26 (v2.5.1)
+**Last Updated:** 2026-02-03 (v2.5.4 - SSE deprecated, uses Streamable HTTP)
 **Service Status:** Active via launchd
 **Onboarding Impact:** Simplified - no manual server management needed

@@ -12,7 +12,7 @@
 #
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SERVER_SCRIPT="$SCRIPT_DIR/src/mcp_server_sse.py"
+SERVER_SCRIPT="$SCRIPT_DIR/src/mcp_server.py"
 PORT=8767
 LOG_FILE="/tmp/unitares_watchdog.log"
 PID_FILE="/tmp/unitares_server.pid"
@@ -49,7 +49,7 @@ stop_server() {
         rm -f "$PID_FILE"
     fi
     # Also kill any orphan processes
-    pkill -f "mcp_server_sse.py.*$PORT" 2>/dev/null
+    pkill -f "mcp_server.py.*$PORT" 2>/dev/null
 }
 
 check_health() {

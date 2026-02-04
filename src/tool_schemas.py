@@ -1720,98 +1720,7 @@ DEPENDENCIES:
                 "required": []  # agent_id optional - injected from MCP session binding
             }
         ),
-        Tool(
-            name="direct_resume_if_safe",
-            description="""Direct resume without dialectic if agent state is safe. Tier 1 recovery for simple stuck scenarios.
-
-USE CASES:
-- Simple stuck scenarios (frozen session, timeout)
-- Agent got reflect decision and needs to retry
-- Low-risk recovery scenarios
-- Fast recovery (< 1 second) without peer review
-
-RETURNS:
-{
-  "success": true,
-  "message": "Agent resumed successfully",
-  "agent_id": "string",
-  "action": "resumed",
-  "conditions": ["string"],
-  "reason": "string",
-  "metrics": {
-    "coherence": float,
-    "risk_score": float,  # Governance/operational risk
-    "attention_score": float,  # DEPRECATED: Use risk_score instead. Kept for backward compatibility.
-    "phi": float,  # Primary physics signal
-    "verdict": "safe" | "caution" | "high-risk",  # Primary governance signal
-    "void_active": boolean,
-    "previous_status": "string"
-  },
-  "note": "string"
-}
-
-RELATED TOOLS:
-- request_dialectic_review: Use for complex recovery (circuit breaker, high risk)
-- get_governance_metrics: Check current state before resuming
-- mark_response_complete: Mark response complete if just stuck waiting
-
-EXAMPLE REQUEST:
-{
-  "agent_id": "test_agent_001",
-  "conditions": ["Monitor for 24h", "Reduce complexity to 0.3"],
-  "reason": "Simple stuck scenario - state is safe"
-}
-
-EXAMPLE RESPONSE:
-{
-  "success": true,
-  "message": "Agent resumed successfully",
-  "agent_id": "test_agent_001",
-  "action": "resumed",
-  "conditions": ["Monitor for 24h", "Reduce complexity to 0.3"],
-  "reason": "Simple stuck scenario - state is safe",
-  "metrics": {
-    "coherence": 0.65,
-    "risk_score": 0.35,  # Governance/operational risk (primary)
-    "phi": 0.20,  # Primary physics signal
-    "verdict": "caution",  # Primary governance signal
-    "void_active": false,
-    "previous_status": "waiting_input"
-  },
-  "note": "Agent resumed via Tier 1 recovery (direct resume). Use request_dialectic_review for complex cases."
-}
-
-DEPENDENCIES:
-- Requires: agent_id (auto-injected from session binding)
-- Optional: conditions (list of resumption conditions), reason (explanation)
-- Safety checks: coherence > 0.40, risk_score < 0.60, void_active == false, status in [paused, waiting_input, moderate]
-- Workflow: 1. Check metrics with get_governance_metrics 2. If safe, call direct_resume_if_safe 3. If not safe, use request_dialectic_review""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "client_session_id": {
-                        "type": "string",
-                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
-                    },
-                    "agent_id": {
-                        "type": "string",
-                        "description": "Agent identifier"
-                    },
-                    "conditions": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "description": "List of conditions for resumption (optional)"
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Reason for resumption (optional)"
-                    }
-                },
-                "required": []  # agent_id optional - injected from MCP session binding (UUID-based auth Dec 2025)
-            }
-        ),
+        # DEPRECATED: direct_resume_if_safe removed - use quick_resume or self_recovery_review instead
         Tool(
             name="archive_agent",
             description="""Archive an agent for long-term storage. Agent can be resumed later. Optionally unload from memory.
@@ -4459,48 +4368,7 @@ EXAMPLE: With session continuity
                 "required": []
             }
         ),
-        # Debug/diagnostic tool
-        Tool(
-            name="get_status",
-            description="""Unified status check - aggregates system health, connection diagnostics, and governance metrics.
-Reduces tool overload by providing a single point of truth for agent self-awareness.
-
-USE CASES:
-- Single-shot status check for autonomous agents
-- Get connection health + governance metrics + system info in one call
-- Reduce token usage (1 call vs 3 calls)
-
-RETURNS:
-{
-  "success": true,
-  "system": {"version": "...", "uptime": "..."},
-  "connections": {"total": int, "health": {...}},
-  "governance": {"risk_score": float, "coherence": float, ...},
-  "message": "System operational"
-}
-
-RELATED TOOLS:
-- get_governance_metrics: Detailed governance data
-- get_connection_diagnostics: Detailed connection debug data
-- get_server_info: Detailed process info
-
-EXAMPLE REQUEST:
-{}""",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "client_session_id": {
-                        "type": "string",
-                        "description": "Session continuity token from identity(). Include in all calls to maintain identity."
-                    },
-                    "agent_id": {
-                        "type": "string",
-                        "description": "Agent identifier. Optional if session-bound (auto-injected)."
-                    }
-                },
-                "required": []
-            }
-        ),
+        # DEPRECATED: get_status removed - use get_governance_metrics instead
         Tool(
             name="debug_request_context",
             description="Debug request context - shows transport, session binding, identity injection, and registry info. Use to diagnose dispatch issues.",

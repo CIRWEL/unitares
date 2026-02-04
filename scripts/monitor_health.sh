@@ -102,7 +102,7 @@ check_processes() {
     local server_running=false
     local ngrok_running=false
     
-    if pgrep -f "mcp_server_sse.py" > /dev/null; then
+    if pgrep -f "mcp_server.py" > /dev/null; then
         server_running=true
     fi
     

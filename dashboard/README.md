@@ -61,7 +61,7 @@ Edit `dashboard/index.html` to:
 ## Development
 
 ### Local Testing
-1. Start the MCP server: `python src/mcp_server_sse.py --port 8767`
+1. Start the MCP server: `python src/mcp_server.py --port 8767`
 2. Open browser: http://127.0.0.1:8767/dashboard
 3. Edit `dashboard/index.html` and refresh
 

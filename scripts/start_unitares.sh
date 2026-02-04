@@ -28,12 +28,12 @@ source .venv/bin/activate
 
 # Clean up stale locks and PID files
 echo "🧹 Cleaning up stale lock files..."
-rm -f data/.mcp_server_sse.* 2>/dev/null || true
+rm -f data/.mcp_server.* 2>/dev/null || true
 
 # Check if server is already running
-if pgrep -f "mcp_server_sse.py" > /dev/null; then
+if pgrep -f "mcp_server.py" > /dev/null; then
     echo -e "${YELLOW}⚠️  Server appears to be running. Stopping existing instance...${NC}"
-    pkill -f "mcp_server_sse.py" || true
+    pkill -f "mcp_server.py" || true
     sleep 2
 fi
 
@@ -46,7 +46,7 @@ fi
 
 # Start MCP server
 echo "📡 Starting MCP server on port 8765..."
-nohup python3 src/mcp_server_sse.py --port 8765 --host 0.0.0.0 --force > /tmp/unitares.log 2>&1 &
+nohup python3 src/mcp_server.py --port 8765 --host 0.0.0.0 --force > /tmp/unitares.log 2>&1 &
 SERVER_PID=$!
 
 # Wait for server to start
@@ -86,7 +86,7 @@ echo ""
 echo "════════════════════════════════════════════════════════════"
 echo "  UNITARES Status"
 echo "════════════════════════════════════════════════════════════"
-echo "  MCP Server:  http://localhost:8765/sse"
+echo "  MCP Server:  http://localhost:8765/mcp"
 echo "  Health:       http://localhost:8765/health"
 echo "  Ngrok URL:    https://unitares.ngrok.io/mcp"
 echo ""

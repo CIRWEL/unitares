@@ -104,7 +104,6 @@ data/*.db-shm
 data/*.db-wal
 data/*.db-journal
 data/.last_active_agent
-data/.mcp_server_sse.pid
 
 # Activity tracking (runtime data)
 data/activity/*.json

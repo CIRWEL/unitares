@@ -1,7 +1,7 @@
 # Full dependencies for UNITARES Governance MCP
 #
 # Use this for:
-# - SSE + HTTP server (`src/mcp_server_sse.py`)
+# - HTTP server (`src/mcp_server.py`)
 # - multi-client deployments (Cursor + Claude Desktop sharing state)
 # - tests / diagnostics scripts
 #
@@ -10,7 +10,7 @@
 
 -r requirements-core.txt
 
-# SSE/HTTP server support (multi-client mode)
+# HTTP server support (multi-client mode)
 uvicorn>=0.30.0
 starlette>=0.37.0
 

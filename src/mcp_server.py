@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 """
-UNITARES Governance MCP Server - SSE (Server-Sent Events) Transport
+UNITARES Governance MCP Server - Streamable HTTP Transport
 
 Multi-client support! Multiple agents (Cursor, Claude Desktop, etc.) can connect
 simultaneously and share state via this single server instance.
 
 Usage:
-    python src/mcp_server_sse.py [--port PORT] [--host HOST]
-    
-    Default: http://127.0.0.1:8765/sse
+    python src/mcp_server.py [--port PORT] [--host HOST]
+
+    Default: http://127.0.0.1:8765/mcp
 
 Configuration (in claude_desktop_config.json or cursor mcp config):
     {
       "governance-monitor-v1": {
-        "url": "http://127.0.0.1:8765/sse"
+        "url": "http://127.0.0.1:8765/mcp"
       }
     }
 
-Features vs stdio transport:
+Features:
     - Multiple clients share single server instance
     - Shared state across all agents (knowledge graph, dialectic, etc.)
     - Real multi-agent dialectic (agents can actually review each other!)
     - Persistent service (survives client restarts)
-    - Connection tracking (see who's connected)
+    - Uses MCP Streamable HTTP transport (SSE deprecated)
 """
 
 from __future__ import annotations
@@ -63,9 +63,9 @@ project_root = ensure_project_root()
 from src.logging_utils import get_logger
 logger = get_logger(__name__)
 
-# Process management for SSE server (prevent multiple instances)
-SSE_PID_FILE = Path(project_root) / "data" / ".mcp_server_sse.pid"
-SSE_LOCK_FILE = Path(project_root) / "data" / ".mcp_server_sse.lock"
+# Process management (prevent multiple instances)
+SSE_PID_FILE = Path(project_root) / "data" / ".mcp_server.pid"
+SSE_LOCK_FILE = Path(project_root) / "data" / ".mcp_server.lock"
 CURRENT_PID = os.getpid()
 
 # Server readiness flag - prevents "request before initialization" errors
@@ -856,31 +856,14 @@ async def debug_request_context(ctx: Context = None) -> dict:
 
 
 # ============================================================================
-# SSE-Specific Tools (Multi-Agent Awareness)
+# SSE-Specific Tools (DEPRECATED - SSE transport deprecated by MCP)
+# These tools are kept for backward compatibility but not registered.
+# Use Streamable HTTP (/mcp/) instead of SSE (/sse).
 # ============================================================================
 
-@tool_no_schema(description="""
-Get information about connected clients (SSE-only feature).
-Shows all clients currently connected to this shared governance server.
-Useful for multi-agent coordination and seeing who's active.
-
-Returns:
-{
-  "success": true,
-  "transport": "SSE",
-  "server_version": "string",
-  "connected_clients": {
-    "client_id": {
-      "connected_at": "ISO timestamp",
-      "last_activity": "ISO timestamp",
-      "request_count": int
-    }
-  },
-  "total_clients": int,
-  "message": "string"
-}
-""")
-async def get_connected_clients() -> str:
+# DEPRECATED: SSE-specific tool removed from registration
+# @tool_no_schema(description="""...""")
+async def _deprecated_get_connected_clients() -> str:
     """Get information about connected clients (SSE-only)."""
     clients = connection_tracker.get_connected_clients()
     
@@ -903,17 +886,9 @@ async def get_connected_clients() -> str:
     }, indent=2)
 
 
-@tool_no_schema(description="""Get detailed connection diagnostics for debugging reliability issues.
-
-Returns comprehensive information about all connections including:
-- Connection health status (healthy/degraded)
-- Reconnection history (how many times each client reconnected)
-- Recent connection events (connects, disconnects, cleanups)
-- Problematic clients (frequent reconnects, stale connections)
-
-Use this tool when experiencing connection instability between clients.
-""")
-async def get_connection_diagnostics() -> str:
+# DEPRECATED: SSE-specific tool removed from registration
+# @tool_no_schema(description="""...""")
+async def _deprecated_get_connection_diagnostics() -> str:
     """Get comprehensive connection diagnostics for debugging."""
     diagnostics = await connection_tracker.get_diagnostics()
     
@@ -2022,9 +1997,17 @@ async def main():
                 if tool_name.startswith(mcp_prefix):
                     tool_name = tool_name[len(mcp_prefix):]
                 
-                # SSE-specific tools: handle directly (not in dispatch_tool)
+                # DEPRECATED: SSE-specific tools removed
+                # These tools are no longer registered but kept for backward compat
                 if tool_name == "get_connected_clients":
-                    clients = connection_tracker.get_connected_clients()
+                    # Return deprecation notice
+                    return JSONResponse({
+                        "name": tool_name,
+                        "result": {"error": "Tool deprecated. SSE transport deprecated by MCP. Use Streamable HTTP."},
+                        "success": False
+                    })
+                    # Old code:
+                    # clients = connection_tracker.get_connected_clients()
                     # Enrich with health info
                     enriched_clients = {}
                     for client_id, data in clients.items():
@@ -2042,11 +2025,18 @@ async def main():
                     return JSONResponse({"name": tool_name, "result": result_data, "success": True})
                 
                 if tool_name == "get_connection_diagnostics":
-                    diagnostics = await connection_tracker.get_diagnostics()
-                    result_data = {
-                        "success": True,
-                        "diagnostics": diagnostics,
-                        "recommendations": _generate_connection_recommendations(diagnostics)
+                    # DEPRECATED: SSE-specific tool
+                    return JSONResponse({
+                        "name": tool_name,
+                        "result": {"error": "Tool deprecated. SSE transport deprecated by MCP. Use Streamable HTTP."},
+                        "success": False
+                    })
+                    # Old code:
+                    # diagnostics = await connection_tracker.get_diagnostics()
+                    # result_data = {
+                    #     "success": True,
+                    #     "diagnostics": diagnostics,
+                    #     "recommendations": _generate_connection_recommendations(diagnostics)
                     }
                     return JSONResponse({"name": tool_name, "result": result_data, "success": True})
                 
