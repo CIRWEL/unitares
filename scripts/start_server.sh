@@ -1,10 +1,10 @@
 #!/bin/bash
-# Start the Governance MCP Server in SSE mode (multi-client support)
+# Start the Governance MCP Server (multi-client support)
 #
 # Usage:
-#   ./scripts/start_sse_server.sh [--port PORT] [--host HOST]
+#   ./scripts/start_server.sh [--port PORT] [--host HOST]
 #
-# Default: http://127.0.0.1:8765/sse
+# Default: http://127.0.0.1:8765/mcp
 #
 # Key Environment Variables (set in .env):
 #   DB_BACKEND=postgres           - Database backend
@@ -44,16 +44,16 @@ fi
 
 # Dependencies: do NOT auto-install at runtime (avoids surprise failures / permission issues)
 if ! "$PYTHON" -c "import mcp, uvicorn, starlette" 2>/dev/null; then
-    echo "Error: missing dependencies for SSE server."
+    echo "Error: missing dependencies for HTTP server."
     echo ""
     echo "Install minimal (stdio only):"
     echo "  pip install -r requirements-core.txt"
     echo ""
-    echo "Install full (SSE/HTTP):"
+    echo "Install full (HTTP):"
     echo "  pip install -r requirements-full.txt"
     echo ""
     exit 1
 fi
 
-echo "Starting Governance MCP Server (SSE mode)..."
-exec "$PYTHON" src/mcp_server_sse.py "$@"
+echo "Starting Governance MCP Server..."
+exec "$PYTHON" src/mcp_server.py "$@"

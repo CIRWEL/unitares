@@ -6,9 +6,9 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    MCP Server (mcp_server_sse.py)               │
-│  - SSE + Streamable HTTP transport                              │
-│  - 46 tools (11 essential, 22 common, 13 advanced)              │
+│                    MCP Server (mcp_server.py)                   │
+│  - Streamable HTTP transport                                    │
+│  - 77 tools (Essential, Common, Advanced tiers)                 │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Handlers (mcp_handlers/)                      │
 │  - core.py: process_agent_update, get_governance_metrics        │
@@ -33,7 +33,7 @@
 
 | Purpose | File |
 |---------|------|
-| Server entry | `src/mcp_server_sse.py` |
+| Server entry | `src/mcp_server.py` |
 | Tool dispatch | `src/mcp_handlers/__init__.py` |
 | Core governance | `src/mcp_handlers/core.py` |
 | Identity/session | `src/mcp_handlers/identity_v2.py` (v2.4.0+) |

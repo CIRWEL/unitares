@@ -71,7 +71,7 @@ cd governance-mcp-v1
 pip install -r requirements-core.txt
 
 # Run MCP server (recommended)
-python src/mcp_server_sse.py --port 8767
+python src/mcp_server.py --port 8767
 
 # Or single-client stdio mode
 python src/mcp_server_std.py
@@ -80,8 +80,7 @@ python src/mcp_server_std.py
 **Endpoints:**
 | Endpoint | Transport | Use Case |
 |----------|-----------|----------|
-| `/mcp/` | Streamable HTTP | **Recommended** — modern clients, resumable |
-| `/sse` | Server-Sent Events | Legacy MCP clients |
+| `/mcp/` | Streamable HTTP | **Recommended** — modern clients |
 | `/dashboard` | HTTP | Web dashboard |
 | `/health` | HTTP | Health checks |
 
@@ -122,7 +121,7 @@ python src/mcp_server_std.py
 
 ## Key Features
 
-### 81 MCP Tools
+### 77 MCP Tools
 
 | Category | Count | Purpose |
 |----------|-------|---------|
@@ -170,7 +169,7 @@ governance-mcp-v1/
 ├── src/
 │   ├── governance_monitor.py   # Core EISV dynamics (91KB)
 │   ├── cirs.py                 # Oscillation detection
-│   ├── mcp_server_sse.py       # HTTP/SSE server (multi-client)
+│   ├── mcp_server.py           # HTTP server (multi-client)
 │   ├── mcp_server_std.py       # Stdio server (single-client)
 │   └── mcp_handlers/           # Tool implementations
 ├── governance_core/            # Canonical math (Phase-3)

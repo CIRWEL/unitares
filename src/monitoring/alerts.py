@@ -207,13 +207,13 @@ async def check_system_health() -> List[Alert]:
             ))
         
         # Check for connection issues
-        from src.mcp_server_sse import connection_tracker
+        from src.mcp_server import connection_tracker
         connections = await connection_tracker.get_all_connections()
         if len(connections) == 0:
             alerts.append(Alert(
                 AlertSeverity.WARNING,
                 "connections",
-                "No active SSE connections",
+                "No active connections",
                 "Server may be idle or clients disconnected"
             ))
         

@@ -13,15 +13,15 @@ NC='\033[0m' # No Color
 echo "🛑 Stopping UNITARES Governance MCP Server..."
 
 # Stop MCP server
-if pgrep -f "mcp_server_sse.py" > /dev/null; then
+if pgrep -f "mcp_server.py" > /dev/null; then
     echo "📡 Stopping MCP server..."
-    pkill -f "mcp_server_sse.py" || true
+    pkill -f "mcp_server.py" || true
     sleep 1
-    
+
     # Force kill if still running
-    if pgrep -f "mcp_server_sse.py" > /dev/null; then
+    if pgrep -f "mcp_server.py" > /dev/null; then
         echo -e "${YELLOW}⚠️  Force killing server...${NC}"
-        pkill -9 -f "mcp_server_sse.py" || true
+        pkill -9 -f "mcp_server.py" || true
     fi
     echo -e "${GREEN}✅ MCP server stopped${NC}"
 else
@@ -52,7 +52,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 echo "🧹 Cleaning up lock files..."
-rm -f data/.mcp_server_sse.* 2>/dev/null || true
+rm -f data/.mcp_server.* 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}✅ UNITARES stopped successfully${NC}"

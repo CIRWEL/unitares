@@ -37,6 +37,6 @@ EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8765/health || exit 1
 
-# Run the SSE server
-CMD ["python", "src/mcp_server_sse.py", "--host", "0.0.0.0", "--port", "8765"]
+# Run the MCP server
+CMD ["python", "src/mcp_server.py", "--host", "0.0.0.0", "--port", "8765"]
 

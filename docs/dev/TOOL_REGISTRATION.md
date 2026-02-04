@@ -28,7 +28,7 @@ async def handle_my_new_tool(arguments: Dict[str, Any]) -> Sequence[TextContent]
 ```
 
 **Step 3 (optional): Add to session injection list** if it needs `client_session_id`:
-In `src/mcp_server_sse.py`, add to `TOOLS_NEEDING_SESSION_INJECTION`:
+In `src/mcp_server.py`, add to `TOOLS_NEEDING_SESSION_INJECTION`:
 ```python
 TOOLS_NEEDING_SESSION_INJECTION = {
     "my_new_tool",  # Add here if tool needs session identity
@@ -48,11 +48,11 @@ TOOLS_NEEDING_SESSION_INJECTION = {
 |------|---------|--------------|
 | `src/tool_schemas.py` | Tool definitions (name, description, schema) | Always - defines the tool |
 | `src/mcp_handlers/*.py` | Handler implementations with `@mcp_tool` | Always - implements the logic |
-| `src/mcp_server_sse.py` | SSE transport registration | **Rarely** - only for SSE-only tools |
+| `src/mcp_server.py` | HTTP transport registration | **Rarely** - only for server-specific tools |
 
 ### Auto-Registration System
 
-The `auto_register_all_tools()` function in `mcp_server_sse.py`:
+The `auto_register_all_tools()` function in `mcp_server.py`:
 1. Reads all tool definitions from `tool_schemas.py`
 2. Creates FastMCP wrappers for each tool
 3. Injects `client_session_id` for tools in `TOOLS_NEEDING_SESSION_INJECTION`
@@ -64,7 +64,7 @@ The `auto_register_all_tools()` function in `mcp_server_sse.py`:
 
 ## Session Injection
 
-Some tools need the SSE session's `client_session_id` injected automatically.
+Some tools need the session's `client_session_id` injected automatically.
 
 **When to add a tool to `TOOLS_NEEDING_SESSION_INJECTION`:**
 - Tool uses identity/authentication
@@ -89,7 +89,7 @@ TOOLS_NEEDING_SESSION_INJECTION = {
     "get_system_history",
     "export_to_file",
     "mark_response_complete",
-    "direct_resume_if_safe",
+    # "direct_resume_if_safe", # DEPRECATED - use quick_resume
     "update_discovery_status_graph",
     "get_discovery_details",
     "get_dialectic_session",
@@ -97,20 +97,6 @@ TOOLS_NEEDING_SESSION_INJECTION = {
     "compare_me_to_similar",
 }
 ```
-
----
-
-## SSE-Only Tools
-
-Some tools exist ONLY in the SSE server (not in `tool_schemas.py`):
-
-| Tool | Purpose | Why SSE-only |
-|------|---------|--------------|
-| `debug_request_context` | SSE connection diagnostics | Accesses SSE session state |
-| `get_connected_clients` | List connected MCP clients | Accesses `connection_tracker` |
-| `get_connection_diagnostics` | Connection health/history | Accesses `connection_tracker` |
-
-**These require manual `@tool_no_schema` decorators** because they're not in tool_schemas.py.
 
 ---
 
@@ -153,13 +139,13 @@ This ensures old code/agents continue to work.
 **Cause:** Added to `tool_schemas.py` but forgot to add handler with `@mcp_tool`.
 **Fix:** Add handler in `src/mcp_handlers/*.py`.
 
-### 2. Tool shows in REST API but not SSE clients
-**Cause:** (Pre Dec-2025) Missing `@tool_no_schema` decorator in `mcp_server_sse.py`.
+### 2. Tool shows in REST API but not MCP clients
+**Cause:** (Pre Dec-2025) Missing registration decorator.
 **Fix:** Now auto-registered. Check server logs for registration errors.
 
 ### 3. Session identity not working
 **Cause:** Tool not in `TOOLS_NEEDING_SESSION_INJECTION`.
-**Fix:** Add tool name to the set in `mcp_server_sse.py`.
+**Fix:** Add tool name to the set in `mcp_server.py`.
 
 ### 4. Deprecated tool still appearing
 **Cause:** Tool not added to aliases in `tool_stability.py`.
@@ -192,11 +178,10 @@ tail -100 /Users/cirwel/projects/governance-mcp-v1/data/logs/sse_server_error.lo
 | Task | Files to Edit |
 |------|---------------|
 | Add new tool | `tool_schemas.py` + `mcp_handlers/*.py` |
-| Tool needs session | + `TOOLS_NEEDING_SESSION_INJECTION` in `mcp_server_sse.py` |
-| Add SSE-only tool | `mcp_server_sse.py` only (manual decorator) |
+| Tool needs session | + `TOOLS_NEEDING_SESSION_INJECTION` in `mcp_server.py` |
 | Rename/deprecate tool | `tool_stability.py` (add alias) |
 | Categorize for list_tools | `tool_modes.py` (add to tier) |
 
 ---
 
-**Last Updated:** 2025-12-23 (Auto-registration system implemented)
+**Last Updated:** 2026-02-03 (SSE deprecated, uses Streamable HTTP)

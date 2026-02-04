@@ -27,16 +27,16 @@ echo ""
 
 # Check if SSE server is running
 if ! lsof -ti:$SSE_PORT > /dev/null 2>&1; then
-    echo "❌ SSE server not running on port $SSE_PORT"
+    echo "❌ MCP server not running on port $SSE_PORT"
     echo ""
     echo "Start it first:"
     echo "  cd $PROJECT_ROOT"
-    echo "  python src/mcp_server_sse.py --port $SSE_PORT"
+    echo "  python src/mcp_server.py --port $SSE_PORT"
     echo ""
     exit 1
 fi
 
-echo "✅ SSE server running on port $SSE_PORT"
+echo "✅ MCP server running on port $SSE_PORT"
 echo ""
 
 # Check ngrok installation

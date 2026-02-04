@@ -27,13 +27,13 @@ async def handle_get_server_info(arguments: Dict[str, Any]) -> Sequence[TextCont
     import time
     import os
     
-    # Detect transport from current process args (SSE vs stdio).
-    # This prevents SSE from accidentally reporting stdio processes (and vice versa).
+    # Detect transport from current process args (HTTP vs stdio).
+    # This prevents HTTP from accidentally reporting stdio processes (and vice versa).
     argv = [str(a) for a in getattr(sys, "argv", [])]
-    is_sse = any("mcp_server_sse.py" in a for a in argv)
+    is_http = any("mcp_server.py" in a for a in argv)
     is_stdio = any("mcp_server_std.py" in a for a in argv)
-    transport = "SSE" if is_sse else ("STDIO" if is_stdio else "unknown")
-    target_script = "mcp_server_sse.py" if is_sse else ("mcp_server_std.py" if is_stdio else None)
+    transport = "HTTP" if is_http else ("STDIO" if is_stdio else "unknown")
+    target_script = "mcp_server.py" if is_http else ("mcp_server_std.py" if is_stdio else None)
 
     # Current pid should always be the live process hosting this handler.
     current_pid = os.getpid()
@@ -60,7 +60,7 @@ async def handle_get_server_info(arguments: Dict[str, Any]) -> Sequence[TextCont
                             continue
                     else:
                         # Unknown transport: include either server type if present.
-                        if not any(('mcp_server_std.py' in str(arg) or 'mcp_server_sse.py' in str(arg)) for arg in cmdline):
+                        if not any(('mcp_server_std.py' in str(arg) or 'mcp_server.py' in str(arg)) for arg in cmdline):
                             continue
 
                         pid = proc.info['pid']
@@ -112,7 +112,7 @@ async def handle_get_server_info(arguments: Dict[str, Any]) -> Sequence[TextCont
 
     # PID file differs by transport.
     project_root = Path(__file__).resolve().parent.parent.parent
-    pid_file = (project_root / "data" / ".mcp_server_sse.pid") if is_sse else (project_root / "data" / ".mcp_server.pid")
+    pid_file = (project_root / "data" / ".mcp_server.pid") if is_http else (project_root / "data" / ".mcp_server_std.pid")
 
     return success_response({
         "transport": transport,
@@ -2063,9 +2063,9 @@ async def handle_debug_request_context(arguments: Dict[str, Any]) -> Sequence[Te
     # Detect transport
     import sys
     argv = [str(a) for a in getattr(sys, "argv", [])]
-    is_sse = any("mcp_server_sse.py" in a for a in argv)
+    is_http = any("mcp_server.py" in a for a in argv)
     is_stdio = any("mcp_server_std.py" in a for a in argv)
-    transport = "sse" if is_sse else ("stdio" if is_stdio else "http")
+    transport = "http" if is_http else ("stdio" if is_stdio else "unknown")
 
     # Get validator info
     validator_version = "1.0.0"
@@ -2228,9 +2228,9 @@ async def handle_get_connection_status(arguments: Dict[str, Any]) -> Sequence[Te
     # Check transport type
     import sys
     argv = [str(a) for a in getattr(sys, "argv", [])]
-    is_sse = any("mcp_server_sse.py" in a for a in argv)
+    is_http = any("mcp_server.py" in a for a in argv)
     is_stdio = any("mcp_server_std.py" in a for a in argv)
-    transport = "SSE" if is_sse else ("STDIO" if is_stdio else "unknown")
+    transport = "HTTP" if is_http else ("STDIO" if is_stdio else "unknown")
     
     # Check if tools are available (basic check)
     tools_available = False
