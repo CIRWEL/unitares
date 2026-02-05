@@ -1,4 +1,4 @@
-# UNITARES Governance Framework v2.5.6
+# UNITARES Governance Framework v2.5.7
 
 **Stability monitoring for multi-agent AI systems.**
 
@@ -344,4 +344,4 @@ MIT License with Attribution — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Version:** 2.5.6 | **Last Updated:** 2026-02-05
+**Version:** 2.5.7 | **Last Updated:** 2026-02-05

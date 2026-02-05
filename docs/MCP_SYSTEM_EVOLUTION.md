@@ -1,4 +1,4 @@
-# MCP System Evolution: v1.0.0 → v2.5.6
+# MCP System Evolution: v1.0.0 → v2.5.7
 
 **Complete history of how the UNITARES Governance MCP system has evolved**
 
@@ -20,6 +20,7 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 - **v2.5.4** (Dec 2025) - Meaningful identity in knowledge graph
 - **v2.5.5** (Feb 2026) - Ethical drift, trajectory identity, 85+ tools
 - **v2.5.6** (Feb 2026) - SSH-based Pi restart, test expansion (310+ tests)
+- **v2.5.7** (Feb 2026) - Identity persistence fix, Redis failure logging
 
 ---
 
@@ -334,6 +335,37 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 
 ---
 
+## v2.5.6 → v2.5.7: Identity Persistence Fix
+
+### What Changed
+
+**Identity Persistence Bug Fix:**
+
+1. **Root Cause**
+   - `onboard()` called `resolve_session_identity(persist=False)` first
+   - If Redis cache write failed silently (logged at DEBUG), identity was lost
+   - Second call to `resolve_session_identity(persist=True)` created a different UUID
+   - Result: each tool call got a new identity for HTTP clients
+
+2. **Fix**
+   - Track fresh identity from first call (`created_fresh_identity` flag)
+   - Persist that exact UUID directly via `ensure_agent_persisted()`
+   - Don't call `resolve_session_identity` twice
+
+**Logging Improvements:**
+
+- Redis cache write failures: DEBUG → **WARNING**
+- Redis lookup failures: DEBUG → **INFO**
+- Makes cache failures visible instead of silent
+
+### Impact
+
+- **Stable identity** - HTTP clients (claude.ai, etc.) maintain same UUID across calls
+- **Better observability** - Redis failures now visible in logs
+- **Simpler flow** - Single identity creation, no race condition
+
+---
+
 ## Architecture Evolution Summary
 
 ### Code Organization
@@ -348,6 +380,7 @@ v2.4.0:  Simplified identity system
 v2.5.0:  Stability monitoring (HCK/CIRS)
 v2.5.4:  Meaningful identity in KG
 v2.5.6:  SSH-based Pi restart, 310+ tests
+v2.5.7:  Identity persistence fix
 ```
 
 ### Tool Count Growth
@@ -386,7 +419,7 @@ v2.5.6:  SSH-based Pi restart, 310+ tests
 
 ---
 
-## Current State (v2.5.6)
+## Current State (v2.5.7)
 
 ### Core Features
 
@@ -401,6 +434,7 @@ v2.5.6:  SSH-based Pi restart, 310+ tests
 - ✅ Trajectory identity (genesis signatures, lineage comparison)
 - ✅ Automatic calibration from objective outcomes
 - ✅ SSH-based Pi restart (works when MCP is down)
+- ✅ Identity persistence fix (HTTP clients maintain stable UUID)
 - ✅ **310+ tests** with 83-88% coverage
 
 ### Architecture
@@ -446,6 +480,6 @@ v2.5.6:  SSH-based Pi restart, 310+ tests
 
 ---
 
-**Last Updated:** February 4, 2026
-**Current Version:** v2.5.6
-**Total Evolution:** 1.0.0 → 2.5.6 (17 versions)
+**Last Updated:** February 5, 2026
+**Current Version:** v2.5.7
+**Total Evolution:** 1.0.0 → 2.5.7 (18 versions)

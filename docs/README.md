@@ -34,7 +34,7 @@
 | `list_tools()` | Tool catalog (use MCP tool) |
 | [CIRCUIT_BREAKER_DIALECTIC](CIRCUIT_BREAKER_DIALECTIC.md) | Circuit breaker + recovery protocol |
 | [database_architecture](database_architecture.md) | PostgreSQL + Redis architecture |
-| [MCP_SYSTEM_EVOLUTION](MCP_SYSTEM_EVOLUTION.md) | Version history (v1.0 → v2.5.6) |
+| [MCP_SYSTEM_EVOLUTION](MCP_SYSTEM_EVOLUTION.md) | Version history (v1.0 → v2.5.7) |
 
 ---
 

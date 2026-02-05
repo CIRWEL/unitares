@@ -349,8 +349,8 @@ async def resolve_session_identity(
                     }
 
             except Exception as e:
-
-                logger.debug(f"Redis lookup failed: {e}")
+                # INFO level (v2.5.7): Redis lookup failures are recoverable but should be visible
+                logger.info(f"Redis lookup failed for session {session_key[:20]}...: {e}")
 
 
 
@@ -707,7 +707,8 @@ async def _cache_session(session_key: str, agent_uuid: str, display_agent_id: st
             else:
                 await session_cache.bind(session_key, agent_uuid)
         except Exception as e:
-            logger.debug(f"Redis cache write failed: {e}")
+            # WARNING level (v2.5.7): Cache failures can cause identity loss
+            logger.warning(f"Redis cache write failed for session {session_key[:20]}...: {e}")
 
 
 async def _agent_exists_in_postgres(agent_uuid: str) -> bool:
@@ -1185,6 +1186,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     # Skip this check if force_new is requested
     # Auto-resume existing identity by default (no prompt needed)
     existing_identity = None
+    created_fresh_identity = False  # Track if we got a fresh identity to persist
     if not force_new:
         existing_identity = await resolve_session_identity(base_session_key, persist=False)
         if not existing_identity.get("created"):
@@ -1196,7 +1198,16 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             # Mark for resume flow below
             resume = True
         else:
-            # NEW AGENT - include model in session key for fleet tracking
+            # NEW AGENT - got a fresh identity from persist=False call
+            # CRITICAL FIX (v2.5.7): Capture the fresh identity to persist it directly
+            # instead of calling resolve_session_identity again (which could create a different UUID
+            # if Redis caching failed silently)
+            created_fresh_identity = True
+            agent_uuid = existing_identity.get("agent_uuid")
+            agent_id = existing_identity.get("agent_id", agent_uuid)
+            logger.info(f"[ONBOARD] Created fresh identity {agent_uuid[:8]}... (will persist)")
+
+            # Adjust session_key for fleet tracking
             session_key = base_session_key
             if model_type:
                 normalized_model = model_type.lower().replace("-", "_").replace(".", "_")
@@ -1237,6 +1248,28 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         is_new = False
         identity = existing_identity
         logger.info(f"[ONBOARD] Resuming existing agent {agent_uuid[:8]}... (explicit resume=true)")
+    elif created_fresh_identity:
+        # CRITICAL FIX (v2.5.7): Persist the fresh identity we already created
+        # instead of calling resolve_session_identity again (which could create a different UUID)
+        try:
+            # Persist the identity we got from the persist=False call
+            newly_persisted = await ensure_agent_persisted(agent_uuid, session_key)
+            if newly_persisted:
+                logger.info(f"[ONBOARD] Persisted fresh identity {agent_uuid[:8]}... to PostgreSQL")
+            else:
+                logger.debug(f"[ONBOARD] Fresh identity {agent_uuid[:8]}... was already persisted")
+
+            # Cache with the adjusted session_key (may include model suffix)
+            await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
+
+            identity = existing_identity
+            identity["persisted"] = True
+            identity["source"] = "created"
+            is_new = True
+            agent_label = None
+        except Exception as e:
+            logger.error(f"[ONBOARD] Failed to persist fresh identity: {e}")
+            return error_response(f"Failed to persist identity: {e}")
     else:
         # STEP 2b: Get or create identity (using v2 logic)
         try:
