@@ -28,8 +28,8 @@ case "$COMMAND" in
     echo "    - ~/Library/Application Support/Claude/claude_desktop_config.json"
     echo ""
     echo "Tip: generate config JSON with:"
-    echo "  ./scripts/mcp config cursor http://127.0.0.1:8765/sse"
-    echo "  ./scripts/mcp config claude-desktop http://127.0.0.1:8765/sse"
+    echo "  ./scripts/mcp config cursor http://127.0.0.1:8767/mcp/"
+    echo "  ./scripts/mcp config claude-desktop http://127.0.0.1:8767/mcp/"
     exit 0
     ;;
 
@@ -40,12 +40,12 @@ case "$COMMAND" in
     #   ./scripts/mcp write-config cursor [sse-url] [output-path]
     #   ./scripts/mcp write-config claude-desktop [sse-url] [output-path]
     CLIENT="${2:-}"
-    SSE_URL="${3:-http://127.0.0.1:8765/sse}"
+    SSE_URL="${3:-http://127.0.0.1:8767/mcp/}"
     OUT="${4:-}"
     if [[ -z "$CLIENT" ]]; then
       echo "Usage:"
-      echo "  ./scripts/mcp write-config cursor [http://127.0.0.1:8765/sse] [config/generated-cursor.json]"
-      echo "  ./scripts/mcp write-config claude-desktop [http://127.0.0.1:8765/sse] [config/generated-claude-desktop.json]"
+      echo "  ./scripts/mcp write-config cursor [http://127.0.0.1:8767/mcp/] [config/generated-cursor.json]"
+      echo "  ./scripts/mcp write-config claude-desktop [http://127.0.0.1:8767/mcp/] [config/generated-claude-desktop.json]"
       exit 1
     fi
     if [[ -z "$OUT" ]]; then
@@ -72,11 +72,11 @@ case "$COMMAND" in
     #   ./scripts/mcp config claude-desktop [--sse-url URL]
     #
     CLIENT="${2:-}"
-    SSE_URL="${3:-http://127.0.0.1:8765/sse}"
+    SSE_URL="${3:-http://127.0.0.1:8767/mcp/}"
     if [[ "$CLIENT" != "cursor" && "$CLIENT" != "claude-desktop" ]]; then
       echo "Usage:"
-      echo "  ./scripts/mcp config cursor [http://127.0.0.1:8765/sse]"
-      echo "  ./scripts/mcp config claude-desktop [http://127.0.0.1:8765/sse]"
+      echo "  ./scripts/mcp config cursor [http://127.0.0.1:8767/mcp/]"
+      echo "  ./scripts/mcp config claude-desktop [http://127.0.0.1:8767/mcp/]"
       exit 1
     fi
     if [[ "$CLIENT" == "cursor" ]]; then
@@ -276,9 +276,9 @@ EOF
     ;;
 
   server)
-    echo "🌐 SSE SERVER STATUS"
-    echo "  Port 8765:"
-    lsof -i :8765 | grep LISTEN && echo "    ✅ Running" || echo "    ❌ Not running"
+    echo "🌐 MCP SERVER STATUS"
+    echo "  Port 8767:"
+    lsof -i :8767 | grep LISTEN && echo "    ✅ Running" || echo "    ❌ Not running"
     echo ""
     echo "  launchd service:"
     launchctl list | grep governance && echo "    ✅ Loaded" || echo "    ❌ Not loaded"
@@ -293,7 +293,7 @@ EOF
     echo "✅ Server restarted"
     echo ""
     echo "Verifying connection..."
-    curl -s http://127.0.0.1:8765/sse | head -5
+    curl -s http://127.0.0.1:8767/mcp/ | head -5
     echo ""
     echo "✅ Governance MCP is back online"
     ;;

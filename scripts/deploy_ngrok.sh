@@ -3,8 +3,8 @@
 # Deploy UNITARES MCP Server via ngrok
 #
 # Usage:
-#   ./scripts/deploy_ngrok.sh              # Uses unitares.ngrok.io (default)
-#   ./scripts/deploy_ngrok.sh [domain]     # Use different domain
+#   ./scripts/deploy_ngrok.sh your-domain.ngrok.io   # Use your reserved domain
+#   ./scripts/deploy_ngrok.sh                        # Uses random ngrok URL (no domain)
 #
 
 set -e
@@ -12,31 +12,32 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Default port for SSE server
+# Default port for MCP server (Streamable HTTP)
 # NOTE: 8767 is the standard port for unitares governance on Mac
 #       8766 is used by anima (tunneled from Pi)
 #       8765 was the old default but caused conflicts
-SSE_PORT="${SSE_PORT:-8767}"
+MCP_PORT="${MCP_PORT:-8767}"
 
-# Domain (defaults to your reserved domain)
-DOMAIN="${1:-unitares.ngrok.io}"
+# Domain (optional - pass your reserved ngrok domain as first argument)
+# Get your own domain at: https://dashboard.ngrok.com/domains
+DOMAIN="${1:-}"
 
 echo "🚀 UNITARES MCP Server - ngrok Deployment"
 echo "=========================================="
 echo ""
 
-# Check if SSE server is running
-if ! lsof -ti:$SSE_PORT > /dev/null 2>&1; then
-    echo "❌ MCP server not running on port $SSE_PORT"
+# Check if MCP server is running
+if ! lsof -ti:$MCP_PORT > /dev/null 2>&1; then
+    echo "❌ MCP server not running on port $MCP_PORT"
     echo ""
     echo "Start it first:"
     echo "  cd $PROJECT_ROOT"
-    echo "  python src/mcp_server.py --port $SSE_PORT"
+    echo "  python src/mcp_server.py --port $MCP_PORT"
     echo ""
     exit 1
 fi
 
-echo "✅ MCP server running on port $SSE_PORT"
+echo "✅ MCP server running on port $MCP_PORT"
 echo ""
 
 # Check ngrok installation
@@ -66,7 +67,7 @@ echo "✅ ngrok configured"
 echo ""
 
 # Build ngrok command
-NGROK_CMD="ngrok http $SSE_PORT"
+NGROK_CMD="ngrok http $MCP_PORT"
 
 # Add domain if provided
 if [ -n "$DOMAIN" ]; then
@@ -85,9 +86,9 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "🔗 Your UNITARES MCP Server is available at:"
 if [ -n "$DOMAIN" ]; then
-    echo "   https://$DOMAIN/sse"
+    echo "   https://$DOMAIN/mcp/"
 else
-    echo "   https://[random-domain]/sse"
+    echo "   https://[random-domain]/mcp/"
 fi
 echo ""
 echo "📋 For ChatGPT MCP:"
@@ -95,7 +96,7 @@ if [ -n "$DOMAIN" ]; then
     echo "   {
      \"servers\": {
        \"unitares\": {
-         \"url\": \"https://$DOMAIN/sse\",
+         \"url\": \"https://$DOMAIN/mcp/\",
          \"description\": \"UNITARES AI Governance Framework\",
          \"auth\": {
            \"type\": \"oauth\",
@@ -108,7 +109,7 @@ else
     echo '   {
      "servers": {
        "unitares": {
-         "url": "https://[your-domain]/sse",
+         "url": "https://[your-domain]/mcp/",
          "description": "UNITARES AI Governance Framework",
          "auth": {
            "type": "oauth",

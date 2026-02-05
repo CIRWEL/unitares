@@ -94,7 +94,7 @@ async def test_sse_keepalive():
         import httpx
         
         # Test governance server SSE endpoint
-        url = "http://127.0.0.1:8765/sse?probe=true"
+        url = "http://127.0.0.1:8767/sse?probe=true"
         
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(url)

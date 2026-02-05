@@ -28,18 +28,16 @@ else
     echo "ℹ️  MCP server not running"
 fi
 
-# Stop ngrok
-if pgrep -f "ngrok.*8765" > /dev/null || pgrep -f "ngrok.*unitares" > /dev/null; then
+# Stop ngrok (check both old port 8765 and current 8767)
+if pgrep -f "ngrok http" > /dev/null; then
     echo "🌐 Stopping ngrok tunnel..."
-    pkill -f "ngrok.*8765" || true
-    pkill -f "ngrok.*unitares" || true
+    pkill -f "ngrok http" || true
     sleep 1
-    
+
     # Force kill if still running
-    if pgrep -f "ngrok.*8765" > /dev/null || pgrep -f "ngrok.*unitares" > /dev/null; then
+    if pgrep -f "ngrok http" > /dev/null; then
         echo -e "${YELLOW}⚠️  Force killing ngrok...${NC}"
-        pkill -9 -f "ngrok.*8765" || true
-        pkill -9 -f "ngrok.*unitares" || true
+        pkill -9 -f "ngrok http" || true
     fi
     echo -e "${GREEN}✅ Ngrok tunnel stopped${NC}"
 else

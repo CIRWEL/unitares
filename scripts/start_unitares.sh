@@ -38,9 +38,9 @@ if pgrep -f "mcp_server.py" > /dev/null; then
 fi
 
 # Check if ngrok is already running for this port
-if pgrep -f "ngrok.*8765" > /dev/null; then
+if pgrep -f "ngrok.*8767" > /dev/null; then
     echo -e "${YELLOW}⚠️  Ngrok appears to be running. Stopping existing instance...${NC}"
-    pkill -f "ngrok.*8765" || true
+    pkill -f "ngrok.*8767" || true
     sleep 1
 fi
 
@@ -60,15 +60,21 @@ if ! ps -p $SERVER_PID > /dev/null; then
 fi
 
 # Test server connectivity
-if curl -s http://localhost:8765/health > /dev/null 2>&1; then
+if curl -s http://localhost:8767/health > /dev/null 2>&1; then
     echo -e "${GREEN}✅ Server is running (PID: $SERVER_PID)${NC}"
 else
     echo -e "${YELLOW}⚠️  Server started but health check failed. It may still be warming up.${NC}"
 fi
 
-# Start ngrok tunnel
+# Start ngrok tunnel (pass domain as argument or use random URL)
+NGROK_DOMAIN="${NGROK_DOMAIN:-}"
 echo "🌐 Starting ngrok tunnel..."
-nohup ngrok http 8765 --url=unitares.ngrok.io --log=stdout > /tmp/ngrok.log 2>&1 &
+if [ -n "$NGROK_DOMAIN" ]; then
+    nohup ngrok http 8767 --url="$NGROK_DOMAIN" --log=stdout > /tmp/ngrok.log 2>&1 &
+else
+    echo -e "${YELLOW}ℹ️  No NGROK_DOMAIN set - using random URL. Set NGROK_DOMAIN env var for stable URL.${NC}"
+    nohup ngrok http 8767 --log=stdout > /tmp/ngrok.log 2>&1 &
+fi
 NGROK_PID=$!
 
 # Wait for ngrok to start
@@ -86,9 +92,13 @@ echo ""
 echo "════════════════════════════════════════════════════════════"
 echo "  UNITARES Status"
 echo "════════════════════════════════════════════════════════════"
-echo "  MCP Server:  http://localhost:8767/mcp"
-echo "  Health:       http://localhost:8767/health"
-echo "  Ngrok URL:    https://unitares.ngrok.io/mcp"
+echo "  MCP Server:  http://localhost:8767/mcp/"
+echo "  Health:      http://localhost:8767/health"
+if [ -n "$NGROK_DOMAIN" ]; then
+    echo "  Ngrok URL:   https://$NGROK_DOMAIN/mcp/"
+else
+    echo "  Ngrok URL:   (check /tmp/ngrok.log for URL)"
+fi
 echo ""
 echo "  Logs:"
 echo "    Server:    tail -f /tmp/unitares.log"

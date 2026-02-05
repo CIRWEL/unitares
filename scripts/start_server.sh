@@ -4,7 +4,7 @@
 # Usage:
 #   ./scripts/start_server.sh [--port PORT] [--host HOST]
 #
-# Default: http://127.0.0.1:8765/mcp
+# Default: http://127.0.0.1:8767/mcp
 #
 # Key Environment Variables (set in .env):
 #   DB_BACKEND=postgres           - Database backend
