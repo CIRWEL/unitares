@@ -4863,6 +4863,131 @@ RETURNS:
                 "required": []
             }
         ),
+        Tool(
+            name="pi_restart_service",
+            description="Restart anima service on Pi via SSH. FALLBACK when MCP is down and pi(restart=true) can't work.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "service": {
+                        "type": "string",
+                        "description": "Service to control: anima, anima-broker, or ngrok",
+                        "enum": ["anima", "anima-broker", "ngrok"],
+                        "default": "anima"
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": "Action: restart, start, stop, or status",
+                        "enum": ["restart", "start", "stop", "status"],
+                        "default": "restart"
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="pi",
+            description="Unified Pi/Lumen operations: health, context, display, say, message, query, workflow, git, power",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action to perform: health, context, sync_eisv, display, say, message, qa, query, workflow, git_pull, power, tools",
+                        "enum": ["health", "context", "sync_eisv", "display", "say", "message", "qa", "query", "workflow", "git_pull", "power", "tools"]
+                    },
+                    "include": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["identity", "anima", "sensors", "mood"]},
+                        "description": "What to include for context action (default: all)"
+                    },
+                    "screen": {
+                        "type": "string",
+                        "enum": ["face", "sensors", "identity", "diagnostics", "notepad", "learning", "messages", "qa", "self_graph"],
+                        "description": "Screen to switch to (for display action)"
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Text for Lumen to speak (say action), query text (query action), or message content (message action)"
+                    },
+                    "blocking": {
+                        "type": "boolean",
+                        "description": "Wait for speech to complete (for say action, default: true)"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Message content (for message action)"
+                    },
+                    "source": {
+                        "type": "string",
+                        "enum": ["human", "agent"],
+                        "description": "Message source (for message action, default: agent)"
+                    },
+                    "agent_name": {
+                        "type": "string",
+                        "description": "Agent name (for message/qa actions)"
+                    },
+                    "responds_to": {
+                        "type": "string",
+                        "description": "ID of message/question being responded to"
+                    },
+                    "question_id": {
+                        "type": "string",
+                        "description": "Question ID to answer (for qa action)"
+                    },
+                    "answer": {
+                        "type": "string",
+                        "description": "Answer to question (for qa action)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results/questions to return (for qa/query actions, default: 5-10)"
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["learned", "memory", "graph", "cognitive"],
+                        "description": "Query type (for query action, default: cognitive)"
+                    },
+                    "workflow": {
+                        "type": "string",
+                        "enum": ["full_status", "morning_check", "custom"],
+                        "description": "Workflow name (for workflow action)"
+                    },
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "tool": {"type": "string"},
+                                "args": {"type": "object"}
+                            }
+                        },
+                        "description": "Custom workflow steps (for workflow=custom)"
+                    },
+                    "update_governance": {
+                        "type": "boolean",
+                        "description": "Update governance state with synced EISV values (for sync_eisv action)"
+                    },
+                    "stash": {
+                        "type": "boolean",
+                        "description": "Stash local changes before pulling (for git_pull action)"
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Force reset to remote (for git_pull action, DANGER: loses local changes)"
+                    },
+                    "restart": {
+                        "type": "boolean",
+                        "description": "Restart anima server after pull (for git_pull action)"
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Must be true to actually reboot/shutdown (for power action, safety)"
+                    }
+                },
+                "required": ["action"]
+            }
+        ),
     ]
 
     # ========================================================================
