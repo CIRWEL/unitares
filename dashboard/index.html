@@ -10,6 +10,11 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
         rel="stylesheet">
+    <!-- Chart.js for visualizations -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Dashboard utilities -->
+    <script src="/dashboard/utils.js"></script>
+    <script src="/dashboard/components.js"></script>
     <style>
         :root {
             --bg-color: #0d0d12;
@@ -25,6 +30,254 @@
             --accent-yellow: #f5d77a;
             --font-family: 'Inter', system-ui, -apple-system, sans-serif;
             --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+        }
+
+        /* Light theme variables */
+        [data-theme="light"] {
+            --bg-color: #f5f5f7;
+            --card-bg: #ffffff;
+            --panel-bg: #ffffff;
+            --border-color: #e0e0e0;
+            --text-primary: #1a1a1a;
+            --text-secondary: #666666;
+        }
+
+        /* Loading skeletons */
+        .skeleton {
+            animation: skeleton-pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes skeleton-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .skeleton-line {
+            background: linear-gradient(90deg, 
+                var(--border-color) 0%, 
+                rgba(255, 255, 255, 0.1) 50%, 
+                var(--border-color) 100%);
+            background-size: 200% 100%;
+            animation: skeleton-shimmer 1.5s infinite;
+            border-radius: 4px;
+        }
+
+        @keyframes skeleton-shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+
+        .skeleton-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 12px;
+        }
+
+        .skeleton-stat {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 25px;
+        }
+
+        .skeleton-list-item {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 12px;
+        }
+
+        .skeleton-metric {
+            flex: 1;
+        }
+
+        .skeleton-bar {
+            height: 3px;
+            background: var(--border-color);
+            border-radius: 2px;
+            margin-top: 4px;
+        }
+
+        /* Metric tooltips */
+        .metric-tooltip {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            max-width: 300px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+        }
+
+        .metric-tooltip-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .metric-tooltip-value {
+            font-family: var(--font-mono);
+            font-weight: 600;
+            font-size: 1.1em;
+        }
+
+        .metric-tooltip-interpretation {
+            color: var(--text-secondary);
+            font-size: 0.9em;
+            margin-bottom: 8px;
+        }
+
+        .metric-tooltip-trend {
+            font-size: 0.85em;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .metric-tooltip-description {
+            color: var(--text-secondary);
+            font-size: 0.85em;
+            line-height: 1.4;
+            border-top: 1px solid var(--border-color);
+            padding-top: 8px;
+        }
+
+        /* Anima gauges */
+        .anima-gauge {
+            position: relative;
+            display: inline-block;
+        }
+
+        .gauge-value {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: var(--font-mono);
+            font-weight: 600;
+            font-size: 0.9em;
+            color: var(--text-primary);
+        }
+
+        .gauge-label {
+            position: absolute;
+            bottom: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.75em;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+
+        .gauge-progress {
+            transition: stroke-dashoffset 0.5s ease;
+        }
+
+        /* Theme toggle */
+        .theme-toggle {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .theme-toggle:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        /* Export buttons */
+        .export-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .export-button {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.2s;
+        }
+
+        .export-button:hover {
+            border-color: var(--accent-green);
+            color: var(--accent-green);
+        }
+
+        /* Chart containers */
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-top: 20px;
+        }
+
+        .chart-container.small {
+            height: 200px;
+        }
+
+        .chart-container.large {
+            height: 400px;
+        }
+
+        /* Lumen status panel */
+        .lumen-panel {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 25px;
+        }
+
+        .lumen-status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+            justify-items: center;
+        }
+
+        .anima-value {
+            text-align: center;
+        }
+
+        .anima-value-label {
+            font-size: 0.75em;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .anima-value-number {
+            font-family: var(--font-mono);
+            font-size: 1.5em;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .anima-mood {
+            font-size: 0.9em;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        /* Smooth transitions */
+        * {
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
         }
 
         * {
@@ -617,6 +870,10 @@
                 <input id="pause-refresh" type="checkbox">
                 Pause auto-refresh
             </label>
+            <button id="theme-toggle" class="theme-toggle" type="button" title="Toggle theme">
+                <span id="theme-icon">🌙</span>
+                <span id="theme-label">Dark</span>
+            </button>
         </div>
         <div class="toolbar-status">
             <span id="refresh-status">Auto-refresh every 10 seconds</span> • Last updated: <span
@@ -668,6 +925,10 @@
                         <input id="agent-metrics-only" type="checkbox">
                         Metrics only
                     </label>
+                    <div class="export-buttons">
+                        <button id="export-agents-csv" class="export-button" type="button" title="Export as CSV">📥 CSV</button>
+                        <button id="export-agents-json" class="export-button" type="button" title="Export as JSON">📥 JSON</button>
+                    </div>
                     <button id="agent-clear-filters" class="panel-button" type="button">Clear</button>
                 </div>
             </div>
@@ -701,6 +962,10 @@
                         <option value="7d">Last 7 days</option>
                         <option value="30d">Last 30 days</option>
                     </select>
+                    <div class="export-buttons">
+                        <button id="export-discoveries-csv" class="export-button" type="button" title="Export as CSV">📥 CSV</button>
+                        <button id="export-discoveries-json" class="export-button" type="button" title="Export as JSON">📥 JSON</button>
+                    </div>
                     <button id="discovery-clear-filters" class="panel-button" type="button">Clear</button>
                 </div>
             </div>
@@ -717,8 +982,14 @@
     </div>
 
     <script>
-        // Use relative URLs so dashboard works both locally and via ngrok
-        const API_BASE = window.location.origin; // Automatically uses current origin (localhost:8767 or ngrok URL)
+        // Wait for utilities to load
+        if (typeof DashboardAPI === 'undefined' || typeof DataProcessor === 'undefined' || typeof ThemeManager === 'undefined') {
+            console.error('Dashboard utilities not loaded. Make sure utils.js and components.js are accessible.');
+        }
+
+        // Initialize utilities
+        const api = typeof DashboardAPI !== 'undefined' ? new DashboardAPI(window.location.origin) : null;
+        const themeManager = typeof ThemeManager !== 'undefined' ? new ThemeManager() : null;
         const REFRESH_INTERVAL_MS = 10000;
         let previousStats = {};
         let cachedAgents = [];
@@ -727,81 +998,190 @@
         let refreshFailures = 0;
         const maxRefreshFailures = 2;
 
-        async function callTool(toolName, arguments = {}) {
+        // Use new API utility or fallback to old implementation
+        async function callTool(toolName, toolArguments = {}, options = {}) {
+            // Use 'toolArguments' instead of 'arguments' to avoid reserved word issues
+            if (api) {
+                try {
+                    return await api.callTool(toolName, toolArguments, options);
+                } catch (error) {
+                    console.error(`Error calling ${toolName}:`, error);
+                    throw error;
+                }
+            } else {
+                // Fallback to old implementation if utilities not loaded
+                console.warn('Using fallback API implementation - utilities not loaded');
+                return await callToolFallback(toolName, toolArguments);
+            }
+        }
+
+        // Fallback implementation
+        async function callToolFallback(toolName, toolArguments = {}) {
             try {
                 const headers = {
                     'Content-Type': 'application/json',
                 };
                 
-                // Add authentication if API token is available (from localStorage or URL param)
                 const apiToken = localStorage.getItem('unitares_api_token') || 
                                  new URLSearchParams(window.location.search).get('token');
                 if (apiToken) {
                     headers['Authorization'] = `Bearer ${apiToken}`;
                 }
                 
-                const response = await fetch(`${API_BASE}/v1/tools/call`, {
+                // Ensure toolArguments is an object
+                if (!toolArguments || typeof toolArguments !== 'object') {
+                    toolArguments = {};
+                }
+                
+                const requestBody = {
+                    name: String(toolName || ''),
+                    arguments: toolArguments
+                };
+                
+                console.log('Sending request:', { toolName, toolArguments: Object.keys(toolArguments) });
+                
+                const requestBodyStr = JSON.stringify(requestBody);
+                console.log(`[Fallback API] Calling ${toolName}:`, requestBodyStr.substring(0, 200));
+                
+                const response = await fetch(`${window.location.origin}/v1/tools/call`, {
                     method: 'POST',
                     headers: headers,
-                    body: JSON.stringify({
-                        name: toolName,
-                        arguments: arguments
-                    }),
-                    signal: AbortSignal.timeout(30000) // 30 second timeout
+                    body: requestBodyStr,
+                    signal: AbortSignal.timeout(30000)
                 });
 
+                const responseText = await response.text();
+                console.log(`[Fallback API] Response: ${response.status}`, responseText.substring(0, 200));
+
                 if (!response.ok) {
-                    const errorText = await response.text().catch(() => response.statusText);
                     let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
                     
-                    // Parse error details if available
                     try {
-                        const errorData = JSON.parse(errorText);
+                        const errorData = JSON.parse(responseText);
                         if (errorData.error) {
                             errorMessage = errorData.error;
                         }
                     } catch {
                         // Not JSON, use text as-is
+                        if (responseText) {
+                            errorMessage = responseText.substring(0, 200);
+                        }
                     }
                     
-                    if (response.status === 401) {
-                        errorMessage = 'Authentication required. If the server uses HTTP_API_TOKEN, add ?token=YOUR_TOKEN to the URL or set localStorage.unitares_api_token';
-                    } else if (response.status === 503 || response.status === 429) {
-                        errorMessage = 'Server overloaded or rate limited. Please try again in a moment.';
-                    }
                     throw new Error(errorMessage);
                 }
 
-                const data = await response.json();
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (parseError) {
+                    console.error('[Fallback API] Failed to parse response:', responseText.substring(0, 200));
+                    throw new Error(`Invalid JSON response: ${parseError.message}`);
+                }
                 
-                // Check for error in response even if HTTP 200
                 if (data.success === false || data.error) {
-                    const errorMsg = data.error || data.message || 'Tool call failed';
-                    // Don't throw for connection errors - let caller handle gracefully
-                    if (errorMsg.includes('too many clients') || errorMsg.includes('connection pool') || errorMsg.includes('fetch failed')) {
-                        throw new Error(`Database connection issue: ${errorMsg}`);
-                    }
-                    throw new Error(errorMsg);
+                    throw new Error(data.error || data.message || 'Tool call failed');
                 }
 
-                return typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+                // Handle result - could be string JSON or already parsed
+                if (typeof data.result === 'string') {
+                    try {
+                        return JSON.parse(data.result);
+                    } catch (parseError) {
+                        console.warn('[Fallback API] Result is string but not valid JSON');
+                        return data.result;
+                    }
+                }
+                return data.result;
             } catch (error) {
-                // Handle timeout
-                if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-                    throw new Error(`Request timeout after 30s. The server may be overloaded.`);
-                }
-                // Handle network errors
-                if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-                    throw new Error(`Network error: Cannot reach server at ${API_BASE}. Is the server running?`);
-                }
                 console.error(`Error calling ${toolName}:`, error);
                 throw error;
             }
         }
 
+        // Use DataProcessor utilities or fallback
+        const escapeHtml = typeof DataProcessor !== 'undefined' && DataProcessor.escapeHtml ? DataProcessor.escapeHtml : function(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        };
+        
+        const highlightMatch = typeof DataProcessor !== 'undefined' && DataProcessor.highlightMatch ? DataProcessor.highlightMatch : function(text, term) {
+            if (!term) return escapeHtml(text);
+            const safeText = String(text || '');
+            const safeTerm = String(term || '').trim();
+            if (!safeTerm) return escapeHtml(safeText);
+            const escapedTerm = safeTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(escapedTerm, 'ig');
+            let result = '';
+            let lastIndex = 0;
+            let match;
+            while ((match = regex.exec(safeText)) !== null) {
+                result += escapeHtml(safeText.slice(lastIndex, match.index));
+                result += `<mark class="highlight">${escapeHtml(match[0])}</mark>`;
+                lastIndex = match.index + match[0].length;
+            }
+            result += escapeHtml(safeText.slice(lastIndex));
+            return result;
+        };
+        
+        const copyToClipboard = typeof DataProcessor !== 'undefined' && DataProcessor.copyToClipboard ? DataProcessor.copyToClipboard : async function(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                return navigator.clipboard.writeText(text);
+            }
+            return new Promise((resolve, reject) => {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                try {
+                    const success = document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    if (success) resolve();
+                    else reject(new Error('Copy failed'));
+                } catch (error) {
+                    document.body.removeChild(textarea);
+                    reject(error);
+                }
+            });
+        };
+        
+        const formatRelativeTime = typeof DataProcessor !== 'undefined' && DataProcessor.formatRelativeTime ? DataProcessor.formatRelativeTime : function(timestampMs) {
+            if (!timestampMs) return null;
+            const diffMs = Date.now() - timestampMs;
+            if (diffMs <= 0) return 'just now';
+            const seconds = Math.floor(diffMs / 1000);
+            if (seconds < 60) return `${seconds}s ago`;
+            const minutes = Math.floor(seconds / 60);
+            if (minutes < 60) return `${minutes}m ago`;
+            const hours = Math.floor(minutes / 60);
+            if (hours < 24) return `${hours}h ago`;
+            const days = Math.floor(hours / 24);
+            if (days < 7) return `${days}d ago`;
+            const weeks = Math.floor(days / 7);
+            if (weeks < 5) return `${weeks}w ago`;
+            const months = Math.floor(days / 30);
+            if (months < 12) return `${months}mo ago`;
+            const years = Math.floor(days / 365);
+            return `${years}y ago`;
+        };
+        
+        const formatTimestamp = typeof DataProcessor !== 'undefined' && DataProcessor.formatTimestamp ? DataProcessor.formatTimestamp : function(timestamp) {
+            if (!timestamp) return null;
+            const date = new Date(timestamp);
+            if (isNaN(date.getTime())) return null;
+            return date.toLocaleString();
+        };
+
         function showError(message) {
             const container = document.getElementById('error-container');
-            container.innerHTML = `<div class="error">Error: ${message}</div>`;
+            container.innerHTML = `<div class="error">Error: ${escapeHtml(message)}</div>`;
         }
 
         function clearError() {
@@ -817,77 +1197,21 @@
             return `<span style="color: ${color}">${sign}${diff}</span>`;
         }
 
-        function escapeHtml(value) {
-            return String(value || '')
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        function highlightMatch(text, term) {
-            if (!term) {
-                return escapeHtml(text);
-            }
-            const safeText = String(text || '');
-            const safeTerm = String(term || '').trim();
-            if (!safeTerm) {
-                return escapeHtml(safeText);
-            }
-            const escapedTerm = safeTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(escapedTerm, 'ig');
-            let result = '';
-            let lastIndex = 0;
-            let match;
-            while ((match = regex.exec(safeText)) !== null) {
-                result += escapeHtml(safeText.slice(lastIndex, match.index));
-                result += `<mark class="highlight">${escapeHtml(match[0])}</mark>`;
-                lastIndex = match.index + match[0].length;
-            }
-            result += escapeHtml(safeText.slice(lastIndex));
-            return result;
-        }
-
-        function copyToClipboard(text) {
-            if (navigator.clipboard && window.isSecureContext) {
-                return navigator.clipboard.writeText(text);
-            }
-
-            return new Promise((resolve, reject) => {
-                const textarea = document.createElement('textarea');
-                textarea.value = text;
-                textarea.style.position = 'fixed';
-                textarea.style.opacity = '0';
-                document.body.appendChild(textarea);
-                textarea.focus();
-                textarea.select();
-                try {
-                    const success = document.execCommand('copy');
-                    document.body.removeChild(textarea);
-                    if (success) {
-                        resolve();
-                    } else {
-                        reject(new Error('Copy failed'));
-                    }
-                } catch (error) {
-                    document.body.removeChild(textarea);
-                    reject(error);
-                }
-            });
-        }
-
         function updateConnectionBanner(hasError) {
             const banner = document.getElementById('connection-banner');
             if (!banner) return;
             if (hasError) {
                 refreshFailures += 1;
             } else {
-                refreshFailures = 0;
+                // Reset on success, but only if we had failures
+                if (refreshFailures > 0) {
+                    refreshFailures = Math.max(0, refreshFailures - 1); // Decay failures gradually
+                }
             }
 
+            // Only show banner after multiple consecutive failures
             if (refreshFailures >= maxRefreshFailures) {
-                banner.textContent = 'Connection issues detected. Check server status or network.';
+                banner.textContent = `Connection issues detected (${refreshFailures} failures). Check server status or network. Click "Refresh now" to retry.`;
                 banner.classList.remove('hidden');
             } else {
                 banner.classList.add('hidden');
@@ -928,32 +1252,8 @@
             return labels[normalized] || normalized.replace(/_/g, ' ');
         }
 
-        function formatTimestamp(timestamp) {
-            if (!timestamp) return null;
-            const date = new Date(timestamp);
-            if (isNaN(date.getTime())) return null;
-            return date.toLocaleString();
-        }
-
-        function formatRelativeTime(timestampMs) {
-            if (!timestampMs) return null;
-            const diffMs = Date.now() - timestampMs;
-            if (diffMs <= 0) return 'just now';
-            const seconds = Math.floor(diffMs / 1000);
-            if (seconds < 60) return `${seconds}s ago`;
-            const minutes = Math.floor(seconds / 60);
-            if (minutes < 60) return `${minutes}m ago`;
-            const hours = Math.floor(minutes / 60);
-            if (hours < 24) return `${hours}h ago`;
-            const days = Math.floor(hours / 24);
-            if (days < 7) return `${days}d ago`;
-            const weeks = Math.floor(days / 7);
-            if (weeks < 5) return `${weeks}w ago`;
-            const months = Math.floor(days / 30);
-            if (months < 12) return `${months}mo ago`;
-            const years = Math.floor(days / 365);
-            return `${years}y ago`;
-        }
+        // formatTimestamp and formatRelativeTime are already defined above as const variables
+        // These duplicate definitions are removed to avoid conflicts
 
         function formatAgentTimestamp(agent) {
             const lastUpdateDate = agent.last_update ? new Date(agent.last_update) : null;
@@ -1334,16 +1634,59 @@
 
         async function loadAgents() {
             try {
-                const result = await callTool('list_agents', {
+                console.log('Loading agents...');
+                // Use unified agent() tool with action='list'
+                const result = await callTool('agent', {
+                    action: 'list',
                     include_metrics: true,
                     limit: 1000,  // High limit to ensure status_counts includes all matching agents
                     status_filter: 'all'  // Get all statuses to show accurate counts
                 });
 
-                // Handle rate limit errors gracefully
+                console.log('Agents result:', result);
+                console.log('Result type:', typeof result);
+                console.log('Result keys:', result ? Object.keys(result) : 'null');
+
+                // Handle null/undefined result
+                if (!result) {
+                    throw new Error('No response from server');
+                }
+
+                // Handle rate limit errors gracefully - don't count as failure
                 if (result.error && result.error.includes('rate limit')) {
                     console.warn('Rate limit hit, will retry on next refresh');
-                    return;
+                    // Keep existing data, don't clear cache
+                    return true; // Return true to not trigger connection banner
+                }
+
+                // Check for error response
+                if (result.error) {
+                    throw new Error(result.error);
+                }
+
+                // Handle case where result might be an array (unexpected format)
+                if (Array.isArray(result)) {
+                    console.warn('Unexpected array response, converting to expected format');
+                    const agentsObj = {
+                        active: result.filter(a => (a.lifecycle_status || a.status) === 'active'),
+                        waiting_input: result.filter(a => (a.lifecycle_status || a.status) === 'waiting_input'),
+                        paused: result.filter(a => (a.lifecycle_status || a.status) === 'paused'),
+                        archived: result.filter(a => (a.lifecycle_status || a.status) === 'archived'),
+                        deleted: result.filter(a => (a.lifecycle_status || a.status) === 'deleted'),
+                        unknown: result.filter(a => !['active', 'waiting_input', 'paused', 'archived', 'deleted'].includes(a.lifecycle_status || a.status))
+                    };
+                    const summary = {
+                        total: result.length,
+                        by_status: {
+                            active: agentsObj.active.length,
+                            waiting_input: agentsObj.waiting_input.length,
+                            paused: agentsObj.paused.length,
+                            archived: agentsObj.archived.length,
+                            deleted: agentsObj.deleted.length,
+                            unknown: agentsObj.unknown.length
+                        }
+                    };
+                    result = { agents: agentsObj, summary: summary };
                 }
 
                 // Parse the actual API response format
@@ -1416,10 +1759,14 @@
                 return true;
 
             } catch (error) {
-                showError(`Failed to load agents: ${error.message}`);
+                console.error('Error loading agents:', error);
+                const errorMsg = error.message || 'Unknown error';
+                showError(`Failed to load agents: ${errorMsg}`);
                 cachedAgents = [];
-                document.getElementById('agents-container').innerHTML =
-                    '<div class="loading">Error loading agents</div>';
+                const container = document.getElementById('agents-container');
+                if (container) {
+                    container.innerHTML = `<div class="loading">Error loading agents: ${escapeHtml(errorMsg)}</div>`;
+                }
                 updateAgentFilterInfo(0);
                 updateStatusLegend(null);
                 return false;
@@ -1428,21 +1775,36 @@
 
         async function loadDiscoveries(searchQuery = '') {
             try {
+                console.log('Loading discoveries...', searchQuery ? `(search: ${searchQuery})` : '');
                 // Get total count from list_knowledge_graph (only on first load or if no search)
                 if (!searchQuery) {
                     try {
-                        const listResult = await callTool('list_knowledge_graph', {});
+                        // Use unified knowledge() tool with action='stats'
+                        const listResult = await callTool('knowledge', { action: 'stats' });
+                        console.log('Discovery count result:', listResult);
                         const stats = listResult.stats || {};
                         const totalDiscoveries = stats.total_discoveries || 0;
-                        document.getElementById('discoveries-count').textContent = totalDiscoveries;
+                        const countEl = document.getElementById('discoveries-count');
+                        if (countEl) {
+                            countEl.textContent = totalDiscoveries;
+                        }
                         const discoveriesChange = formatChange(totalDiscoveries, previousStats.discoveries);
-                        document.getElementById('discoveries-change').innerHTML = discoveriesChange || (totalDiscoveries > 0 ? 'Total discoveries' : 'No discoveries yet');
+                        const changeEl = document.getElementById('discoveries-change');
+                        if (changeEl) {
+                            changeEl.innerHTML = discoveriesChange || (totalDiscoveries > 0 ? 'Total discoveries' : 'No discoveries yet');
+                        }
                         previousStats.discoveries = totalDiscoveries;
                     } catch (listError) {
                         // If list fails, show error but continue with search
                         console.warn('Failed to get discovery count:', listError);
-                        document.getElementById('discoveries-count').textContent = '?';
-                        document.getElementById('discoveries-change').innerHTML = 'Unable to load count';
+                        const countEl = document.getElementById('discoveries-count');
+                        if (countEl) {
+                            countEl.textContent = '?';
+                        }
+                        const changeEl = document.getElementById('discoveries-change');
+                        if (changeEl) {
+                            changeEl.innerHTML = 'Unable to load count';
+                        }
                     }
                 }
 
@@ -1458,10 +1820,18 @@
                 }
 
                 const searchResult = await callTool('search_knowledge_graph', toolArgs);
+                console.log('Search result:', searchResult);
+                console.log('Search result type:', typeof searchResult);
+                console.log('Search result keys:', searchResult ? Object.keys(searchResult) : 'null');
                 
+                // Handle null/undefined result
+                if (!searchResult) {
+                    throw new Error('No response from server');
+                }
+
                 // Check for error in response
-                if (!searchResult || searchResult.success === false) {
-                    const errorMsg = searchResult?.error || searchResult?.message || 'Unknown error';
+                if (searchResult.error || searchResult.success === false) {
+                    const errorMsg = searchResult.error || searchResult.message || 'Unknown error';
                     // Don't throw for empty results - that's valid
                     if (errorMsg.includes('too many clients') || errorMsg.includes('connection')) {
                         throw new Error(`Database connection issue: ${errorMsg}. The server may have too many connections open.`);
@@ -1471,21 +1841,27 @@
                     }
                     // For other errors, log but continue with empty results
                     console.warn('Knowledge graph search error:', errorMsg);
-                    return { discoveries: [], stats: {} };
+                    cachedDiscoveries = [];
+                    updateDiscoveryFilterInfo(0);
+                    updateDiscoveryLegend([]);
+                    return false;
                 }
                 
                 // Handle both array and object response formats
                 let discoveries = [];
                 if (Array.isArray(searchResult)) {
                     discoveries = searchResult;
+                    console.log('Got array response with', discoveries.length, 'discoveries');
                 } else if (searchResult.discoveries) {
                     discoveries = searchResult.discoveries;
+                    console.log('Got discoveries array with', discoveries.length, 'items');
                 } else if (searchResult.results) {
                     discoveries = searchResult.results;
-                } else if (searchResult.error) {
-                    // Error response - return empty
-                    console.warn('Search returned error:', searchResult.error);
-                    return { discoveries: [], stats: {} };
+                    console.log('Got results array with', discoveries.length, 'items');
+                } else {
+                    // Unexpected format - log and try to continue
+                    console.warn('Unexpected response format:', searchResult);
+                    discoveries = [];
                 }
 
                 // Sort by ID (which contains ISO timestamp) descending to get most recent first
@@ -1596,21 +1972,17 @@
         }
 
         async function loadDialecticSessions() {
-            try {
-                // Try to get dialectic session count from aggregate metrics
-                const result = await callTool('aggregate_metrics', {});
-                const sessions = result.dialectic_sessions || 0;
-                document.getElementById('dialectic-sessions').textContent = sessions;
-                const dialecticChange = formatChange(sessions, previousStats.dialecticSessions);
-                document.getElementById('dialectic-change').innerHTML = dialecticChange || (sessions > 0 ? 'Active sessions' : 'No active sessions');
-                previousStats.dialecticSessions = sessions;
-                return true;
-            } catch (error) {
-                // If aggregate_metrics doesn't work, show 0
-                document.getElementById('dialectic-sessions').textContent = '0';
-                document.getElementById('dialectic-change').innerHTML = 'No active sessions';
-                return false;
+            // Dialectic sessions are not tracked via API currently
+            // Show placeholder until feature is implemented
+            const sessionsEl = document.getElementById('dialectic-sessions');
+            const changeEl = document.getElementById('dialectic-change');
+            if (sessionsEl) {
+                sessionsEl.textContent = '-';
             }
+            if (changeEl) {
+                changeEl.innerHTML = 'Coming soon';
+            }
+            return true;
         }
 
         async function refresh(options = {}) {
@@ -1619,10 +1991,13 @@
                 return;
             }
 
+            console.log('Refreshing dashboard...', { force, paused: autoRefreshPaused });
+
             // Don't auto-refresh if valid search text exists (to prevent overwriting search results)
             const searchInput = document.getElementById('discovery-search');
             if (searchInput && searchInput.value.trim().length > 0 && !force) {
                 // Only refresh agents
+                console.log('Search active, skipping discovery refresh');
                 await loadAgents();
                 await loadDialecticSessions();
                 return;
@@ -1635,16 +2010,47 @@
             }
 
             try {
-                const results = await Promise.all([
+                console.log('Starting parallel load...');
+                const results = await Promise.allSettled([
                     loadAgents(),
                     loadDiscoveries(),
                     loadDialecticSessions()
                 ]);
-                const hasError = results.some(result => result === false);
-                updateConnectionBanner(hasError);
+                console.log('Load results:', results);
+                
+                // Check if critical operations failed (agents and discoveries)
+                const agentsResult = results[0];
+                const discoveriesResult = results[1];
+                const dialecticResult = results[2];
+                
+                const criticalFailures = [
+                    agentsResult.status === 'rejected' || (agentsResult.status === 'fulfilled' && agentsResult.value === false),
+                    discoveriesResult.status === 'rejected' || (discoveriesResult.status === 'fulfilled' && discoveriesResult.value === false)
+                ].filter(Boolean).length;
+                
+                // Only show connection banner if BOTH critical operations failed
+                // This prevents false positives from transient errors
+                if (criticalFailures >= 2) {
+                    updateConnectionBanner(true);
+                    console.warn('Critical operations failed:', {
+                        agents: agentsResult.status,
+                        discoveries: discoveriesResult.status
+                    });
+                } else {
+                    updateConnectionBanner(false);
+                }
+                
+                // Log any individual failures
+                results.forEach((result, index) => {
+                    if (result.status === 'rejected') {
+                        console.error(`Load operation ${index} failed:`, result.reason);
+                    }
+                });
             } catch (error) {
+                // This should rarely happen since we're using Promise.allSettled
                 updateConnectionBanner(true);
                 console.error('Refresh error:', error);
+                showError(`Refresh failed: ${error.message}`);
             }
         }
 
@@ -1771,11 +2177,174 @@
             });
         }
 
-        // Initial load
-        refresh();
+        // Theme toggle
+        const themeToggle = document.getElementById('theme-toggle');
+        const themeIcon = document.getElementById('theme-icon');
+        const themeLabel = document.getElementById('theme-label');
+        if (themeToggle && themeManager) {
+            themeToggle.addEventListener('click', () => {
+                const newTheme = themeManager.toggle();
+                if (themeIcon) themeIcon.textContent = newTheme === 'dark' ? '🌙' : '☀️';
+                if (themeLabel) themeLabel.textContent = newTheme === 'dark' ? 'Dark' : 'Light';
+            });
+            // Set initial icon
+            const currentTheme = themeManager.getTheme();
+            if (themeIcon) themeIcon.textContent = currentTheme === 'dark' ? '🌙' : '☀️';
+            if (themeLabel) themeLabel.textContent = currentTheme === 'dark' ? 'Dark' : 'Light';
+        } else if (themeToggle) {
+            // Hide theme toggle if themeManager not available
+            themeToggle.style.display = 'none';
+        }
+
+
+        // Export functionality
+        function exportAgents(format) {
+            if (cachedAgents.length === 0) {
+                showError('No agents to export');
+                return;
+            }
+
+            const exportData = cachedAgents.map(agent => ({
+                agent_id: agent.agent_id || '',
+                name: getAgentDisplayName(agent),
+                status: getAgentStatus(agent),
+                E: agent.metrics?.E || null,
+                I: agent.metrics?.I || null,
+                S: agent.metrics?.S || null,
+                V: agent.metrics?.V || null,
+                coherence: agent.metrics?.coherence || null,
+                last_update: agent.last_update || '',
+                created_at: agent.created_at || ''
+            }));
+
+            if (format === 'csv') {
+                if (typeof DataProcessor !== 'undefined' && DataProcessor.exportToCSV) {
+                    DataProcessor.exportToCSV(exportData, `agents_${new Date().toISOString().split('T')[0]}.csv`);
+                } else {
+                    // Fallback CSV export
+                    const headers = Object.keys(exportData[0]);
+                    const csv = [
+                        headers.join(','),
+                        ...exportData.map(row => headers.map(h => {
+                            const v = row[h];
+                            return v === null || v === undefined ? '' : String(v).replace(/"/g, '""');
+                        }).join(','))
+                    ].join('\n');
+                    const blob = new Blob([csv], { type: 'text/csv' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `agents_${new Date().toISOString().split('T')[0]}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            } else {
+                if (typeof DataProcessor !== 'undefined' && DataProcessor.exportToJSON) {
+                    DataProcessor.exportToJSON(exportData, `agents_${new Date().toISOString().split('T')[0]}.json`);
+                } else {
+                    // Fallback JSON export
+                    const json = JSON.stringify(exportData, null, 2);
+                    const blob = new Blob([json], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `agents_${new Date().toISOString().split('T')[0]}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            }
+        }
+
+        function exportDiscoveries(format) {
+            if (cachedDiscoveries.length === 0) {
+                showError('No discoveries to export');
+                return;
+            }
+
+            const exportData = cachedDiscoveries.map(d => ({
+                id: d.id || '',
+                type: d.type || d.discovery_type || 'note',
+                summary: d.summary || '',
+                content: d.details || d.content || d.discovery || '',
+                agent: d.by || d.agent_id || d._agent_id || '',
+                timestamp: d._timestampMs ? new Date(d._timestampMs).toISOString() : ''
+            }));
+
+            if (format === 'csv') {
+                if (typeof DataProcessor !== 'undefined' && DataProcessor.exportToCSV) {
+                    DataProcessor.exportToCSV(exportData, `discoveries_${new Date().toISOString().split('T')[0]}.csv`);
+                } else {
+                    // Fallback CSV export
+                    const headers = Object.keys(exportData[0]);
+                    const csv = [
+                        headers.join(','),
+                        ...exportData.map(row => headers.map(h => {
+                            const v = row[h];
+                            return v === null || v === undefined ? '' : String(v).replace(/"/g, '""');
+                        }).join(','))
+                    ].join('\n');
+                    const blob = new Blob([csv], { type: 'text/csv' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `discoveries_${new Date().toISOString().split('T')[0]}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            } else {
+                if (typeof DataProcessor !== 'undefined' && DataProcessor.exportToJSON) {
+                    DataProcessor.exportToJSON(exportData, `discoveries_${new Date().toISOString().split('T')[0]}.json`);
+                } else {
+                    // Fallback JSON export
+                    const json = JSON.stringify(exportData, null, 2);
+                    const blob = new Blob([json], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `discoveries_${new Date().toISOString().split('T')[0]}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            }
+        }
+
+        const exportAgentsCsv = document.getElementById('export-agents-csv');
+        const exportAgentsJson = document.getElementById('export-agents-json');
+        const exportDiscoveriesCsv = document.getElementById('export-discoveries-csv');
+        const exportDiscoveriesJson = document.getElementById('export-discoveries-json');
+
+        if (exportAgentsCsv) exportAgentsCsv.addEventListener('click', () => exportAgents('csv'));
+        if (exportAgentsJson) exportAgentsJson.addEventListener('click', () => exportAgents('json'));
+        if (exportDiscoveriesCsv) exportDiscoveriesCsv.addEventListener('click', () => exportDiscoveries('csv'));
+        if (exportDiscoveriesJson) exportDiscoveriesJson.addEventListener('click', () => exportDiscoveries('json'));
+
+        // Initial load - wait a bit for scripts to load
+        console.log('Dashboard initializing...');
+        console.log('API available:', typeof api !== 'undefined' && api !== null);
+        console.log('DataProcessor available:', typeof DataProcessor !== 'undefined');
+        console.log('ThemeManager available:', typeof themeManager !== 'undefined' && themeManager !== null);
+        
+        // Wait for DOM to be ready and scripts to potentially load
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                console.log('DOM ready, starting initial load');
+                setTimeout(() => {
+                    refresh();
+                }, 100);
+            });
+        } else {
+            console.log('DOM already ready, starting initial load');
+            setTimeout(() => {
+                refresh();
+            }, 100);
+        }
 
         // Auto-refresh every 10 seconds (reduced from 5 to avoid rate limits)
-        setInterval(refresh, REFRESH_INTERVAL_MS);
+        setInterval(() => {
+            if (!autoRefreshPaused) {
+                refresh();
+            }
+        }, REFRESH_INTERVAL_MS);
     </script>
 </body>
 
