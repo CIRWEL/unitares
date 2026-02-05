@@ -356,7 +356,7 @@ v2.5.4:  Meaningful identity in KG
 - ✅ Complete UNITARES framework (EISV dynamics)
 - ✅ HCK/CIRS stability monitoring
 - ✅ Knowledge graph system (35,000x faster)
-- ✅ Three-tier identity model
+- ✅ Identity model (2 visible: agent_id + name; UUID internal)
 - ✅ Auto-healing infrastructure
 - ✅ **85+ MCP tools**
 - ✅ Dual transport support (SSE + Streamable HTTP)

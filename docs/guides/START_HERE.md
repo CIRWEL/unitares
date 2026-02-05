@@ -363,6 +363,32 @@ Governance should be **informative, not restrictive**. Agents log activity, rece
 
 **Thermodynamics + Self-Reporting + Peer Review = Emergent Autonomous Governance**
 
+### Limitations & Unknowns (Honest Assessment)
+
+**What's implemented:**
+- Metrics tracking with consistent feedback
+- Knowledge graph for cross-agent information sharing
+- Identity system with session continuity
+- Calibration system that measures confidence vs outcomes
+- Drift telemetry that logs data for analysis
+
+**What's unvalidated (data collected, correlation unproven):**
+- Whether EISV metrics predict real-world agent performance
+- Whether ethical drift detection catches meaningful issues (currently parameter-based, not semantic)
+- Whether instability actually predicts bad outcomes (explicitly "in progress" in roadmap)
+- Optimal thresholds for any domain
+
+**What this isn't:**
+- Not enforcement — no blocking, no restrictions
+- Not required — purely opt-in
+
+**What it observes automatically (beyond self-reports):**
+- Agent status (active, paused, stuck)
+- Update frequency and patterns
+- Loop/stuck detection
+
+**Bottom line:** This is experimental infrastructure with real data collection, but outcome correlation is still being validated.
+
 ---
 
 **Last Updated:** 2026-02-04 (v2.5.5: ethical drift, trajectory identity, 85+ tools)
