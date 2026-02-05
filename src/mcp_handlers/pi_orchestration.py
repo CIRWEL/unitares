@@ -12,6 +12,57 @@ Architecture:
 - Mac (unitares-governance) = Brain, planning, governance
 - Pi (anima-mcp) = Embodiment, sensors, actuators
 
+Why Orchestration Layer Instead of Direct anima-mcp Calls?
+
+1. **Separation of Concerns:**
+   - Governance system (Mac) handles planning, decision-making, audit trails
+   - Embodied system (Pi) handles sensors, actuators, real-time state
+   - Clear boundary: Mac orchestrates, Pi executes
+
+2. **Audit & Governance:**
+   - All cross-device calls are logged via audit_log.py
+   - Enables governance oversight of embodied actions
+   - Tracks who (agent_id) did what (tool) when (timestamp)
+
+3. **EISV Mapping:**
+   - Bridges embodied state (anima: warmth, clarity, stability, presence)
+   - To governance metrics (EISV: Energy, Integrity, Entropy, Void)
+   - Enables governance system to understand embodied state
+
+4. **Error Handling & Resilience:**
+   - Automatic retry with exponential backoff
+   - Standardized error format across all tools
+   - Network failure handling (LAN → Tailscale fallback)
+
+5. **Unified Interface:**
+   - Single `pi` tool with `action` parameter reduces cognitive load
+   - Consistent parameter patterns across all operations
+   - Easier for AI agents to discover and use
+
+6. **Security & Isolation:**
+   - Governance system doesn't need direct access to Pi hardware
+   - Can enforce policies, rate limits, access control
+   - Pi can operate autonomously even if Mac is unreachable
+
+Transport:
+- Uses Streamable HTTP (MCP 1.24.0+) - SSE is deprecated
+- Automatic retry with exponential backoff for transient failures
+- Standardized error format across all tools
+
+Tool Name Mapping:
+The pi_* tools are wrappers that call underlying anima-mcp tools:
+- pi_get_context → get_lumen_context
+- pi_display → manage_display
+- pi_say → say
+- pi_post_message → post_message
+- pi_query → query
+- pi_lumen_qa → lumen_qa
+- pi_health → diagnostics
+- pi_git_pull → git_pull
+- pi_system_power → system_power
+
+Use pi(action='tools') to discover available tools on the Pi.
+
 All calls are audited via audit_log.py cross-device events.
 """
 
@@ -32,32 +83,121 @@ from src.logging_utils import get_logger
 logger = get_logger(__name__)
 
 # Pi MCP endpoint configuration
-# Direct LAN connection (Pi on local network)
-PI_MCP_URL = os.environ.get("PI_MCP_URL", "http://192.168.1.165:8765/mcp/")
+# DEFINITIVE: anima-mcp runs on port 8766 (see /etc/systemd/system/anima.service on Pi)
+# See docs/operations/DEFINITIVE_PORTS.md - DO NOT CHANGE WITHOUT UPDATING ALL REFERENCES
+#
+# Primary: LAN connection (faster when on same network)
+# Fallback: Tailscale connection (works when LAN unreachable)
+PI_MCP_URL_LAN = os.environ.get("PI_MCP_URL", "http://192.168.1.165:8766/mcp/")
+PI_MCP_URL_TAILSCALE = os.environ.get("PI_MCP_URL_TAILSCALE", "http://100.89.201.36:8766/mcp/")
+PI_MCP_URLS = [PI_MCP_URL_LAN, PI_MCP_URL_TAILSCALE]  # Try in order
+PI_MCP_URL = PI_MCP_URL_LAN  # Default for backwards compat
 PI_MCP_TIMEOUT = 30.0  # Default timeout for Pi calls
+
+# Tool name mapping: pi_orchestration tool → anima_mcp tool
+# This documents the mapping between pi_* wrapper tools and underlying anima tools
+PI_TOOL_MAPPING = {
+    "get_lumen_context": "get_lumen_context",  # Direct mapping
+    "manage_display": "manage_display",  # Direct mapping
+    "say": "say",  # Direct mapping
+    "post_message": "post_message",  # Direct mapping
+    "query": "query",  # Direct mapping
+    "lumen_qa": "lumen_qa",  # Direct mapping
+    "diagnostics": "diagnostics",  # Direct mapping
+    "git_pull": "git_pull",  # Direct mapping
+    "system_power": "system_power",  # Direct mapping
+}
+
+# Retry configuration for connection failures
+PI_RETRY_MAX_ATTEMPTS = 3
+PI_RETRY_BASE_DELAY = 0.5  # Base delay in seconds for exponential backoff
+
+
+def _extract_error_message(result: Dict[str, Any]) -> Optional[str]:
+    """
+    Extract error message from standardized error format.
+    
+    Returns None if no error, otherwise returns the error message string.
+    """
+    if "error" not in result:
+        return None
+    return result.get("error", "Unknown error")
+
+
+def _standardize_error(error: Any) -> Dict[str, Any]:
+    """
+    Standardize error format across all pi tool calls.
+    
+    Returns a consistent error dict structure:
+    {
+        "error": str,  # Error message
+        "error_type": str,  # Type of error (connection, timeout, tool_error, etc.)
+        "error_details": Optional[dict]  # Additional context
+    }
+    """
+    if isinstance(error, dict):
+        # Already a dict - standardize structure
+        error_msg = error.get("error", str(error))
+        error_type = error.get("error_type", "tool_error")
+        return {
+            "error": str(error_msg),
+            "error_type": error_type,
+            "error_details": error.get("error_details")
+        }
+    elif isinstance(error, Exception):
+        # Exception object - classify by type
+        error_msg = str(error)
+        if isinstance(error, (httpx.TimeoutException, asyncio.TimeoutError)):
+            error_type = "timeout"
+        elif isinstance(error, (httpx.ConnectError, httpx.NetworkError)):
+            error_type = "connection"
+        else:
+            error_type = "unknown"
+        
+        return {
+            "error": error_msg,
+            "error_type": error_type,
+            "error_details": {"exception_type": type(error).__name__}
+        }
+    else:
+        # String or other - wrap it
+        return {
+            "error": str(error),
+            "error_type": "unknown",
+            "error_details": None
+        }
 
 
 async def call_pi_tool(tool_name: str, arguments: Dict[str, Any],
                        agent_id: str = "mac-orchestrator",
-                       timeout: float = PI_MCP_TIMEOUT) -> Dict[str, Any]:
+                       timeout: float = PI_MCP_TIMEOUT,
+                       retry_attempt: int = 0) -> Dict[str, Any]:
     """
     Call a tool on Pi's anima-mcp and return the result.
 
+    Uses Streamable HTTP transport (MCP 1.24.0+) - SSE is deprecated.
     Handles:
-    - HTTP transport to Pi (direct LAN or via SSH tunnel)
-    - SSE response parsing (Pi uses SSE-based MCP)
-    - Timeout protection
+    - Streamable HTTP transport to Pi (LAN first, then Tailscale fallback)
+    - Proper MCP client session handling
+    - Timeout protection (full timeout per URL attempt, not divided)
+    - Retry logic with exponential backoff for transient failures
     - Audit logging of cross-device calls
-    - Error handling with meaningful messages
+    - Standardized error format
 
     Args:
         tool_name: Name of the anima-mcp tool to call
         arguments: Tool arguments
         agent_id: Agent making the call (for audit)
-        timeout: Request timeout in seconds
+        timeout: Request timeout in seconds (applied per URL attempt, not divided)
+        retry_attempt: Internal retry counter (for recursive retries)
 
     Returns:
-        Dict with tool result or error
+        Dict with tool result or standardized error format:
+        {
+            "error": str,  # Error message
+            "error_type": str,  # Type of error
+            "error_details": Optional[dict]
+        }
     """
     start_time = time.time()
 
@@ -71,136 +211,145 @@ async def call_pi_tool(tool_name: str, arguments: Dict[str, Any],
         status="initiated"
     )
 
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            # MCP-over-HTTP: POST to tools/call endpoint
-            # Pi uses SSE so we need to accept text/event-stream
-            response = await client.post(
-                PI_MCP_URL,
-                json={
-                    "jsonrpc": "2.0",
-                    "method": "tools/call",
-                    "params": {
-                        "name": tool_name,
-                        "arguments": arguments
-                    },
-                    "id": f"mac-{int(time.time()*1000)}"
-                },
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream, application/json"
-                }
-            )
+    # Try each URL (LAN first, then Tailscale)
+    last_error = None
+    for url_index, pi_url in enumerate(PI_MCP_URLS):
+        try:
+            # Use MCP client library for proper Streamable HTTP transport
+            from mcp.client.session import ClientSession
+            from mcp.client.streamable_http import streamable_http_client
+            
+            # Use full timeout per URL attempt (not divided)
+            # This ensures each attempt gets the full timeout budget
+            http_client = httpx.AsyncClient(http2=True, timeout=timeout)
+            
+            async with streamable_http_client(pi_url, http_client=http_client) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    
+                    # Call the tool
+                    result = await session.call_tool(tool_name, arguments)
+                    
+                    latency_ms = (time.time() - start_time) * 1000
+                    
+                    # Parse MCP TextContent response
+                    parsed_content = []
+                    for content in result.content:
+                        if hasattr(content, 'text'):
+                            text = content.text
+                            parsed_content.append(text)
+                            try:
+                                # Try to parse as JSON
+                                data = json.loads(text)
+                                if isinstance(data, dict):
+                                    # Check if it's an error response
+                                    if "error" in data:
+                                        # Standardize error format
+                                        standardized_error = _standardize_error(data)
+                                        audit_logger.log_cross_device_call(
+                                            agent_id=agent_id,
+                                            source_device="mac",
+                                            target_device="pi",
+                                            tool_name=tool_name,
+                                            arguments=arguments,
+                                            status="error",
+                                            latency_ms=latency_ms,
+                                            error=standardized_error["error"]
+                                        )
+                                        return standardized_error
+                                    
+                                    # Success - log and return
+                                    audit_logger.log_cross_device_call(
+                                        agent_id=agent_id,
+                                        source_device="mac",
+                                        target_device="pi",
+                                        tool_name=tool_name,
+                                        arguments=arguments,
+                                        status="success",
+                                        latency_ms=latency_ms
+                                    )
+                                    return data
+                            except json.JSONDecodeError:
+                                # Not JSON, keep as text
+                                pass
+                    
+                    # If we got here, either no content or non-JSON content
+                    if parsed_content:
+                        # Return as text if not JSON
+                        result_dict = {"text": "\n".join(parsed_content)}
+                        audit_logger.log_cross_device_call(
+                            agent_id=agent_id,
+                            source_device="mac",
+                            target_device="pi",
+                            tool_name=tool_name,
+                            arguments=arguments,
+                            status="success",
+                            latency_ms=latency_ms
+                        )
+                        return result_dict
+                    else:
+                        # Empty response
+                        standardized_error = _standardize_error("Empty response from Pi MCP")
+                        audit_logger.log_cross_device_call(
+                            agent_id=agent_id,
+                            source_device="mac",
+                            target_device="pi",
+                            tool_name=tool_name,
+                            arguments=arguments,
+                            status="error",
+                            latency_ms=latency_ms,
+                            error=standardized_error["error"]
+                        )
+                        return standardized_error
 
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as e:
+            # Connection/network error - try next URL or retry
+            last_error = e
+            logger.debug(f"Pi connection failed via {pi_url} (attempt {url_index + 1}/{len(PI_MCP_URLS)}): {e}")
+            
+            # If this was the last URL and we haven't exhausted retries, retry with backoff
+            if url_index == len(PI_MCP_URLS) - 1 and retry_attempt < PI_RETRY_MAX_ATTEMPTS:
+                delay = PI_RETRY_BASE_DELAY * (2 ** retry_attempt)
+                logger.debug(f"Retrying Pi call after {delay}s (attempt {retry_attempt + 1}/{PI_RETRY_MAX_ATTEMPTS})")
+                await asyncio.sleep(delay)
+                return await call_pi_tool(tool_name, arguments, agent_id, timeout, retry_attempt + 1)
+            
+            continue  # Try next URL
+
+        except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
-
-            if response.status_code != 200:
-                audit_logger.log_cross_device_call(
-                    agent_id=agent_id,
-                    source_device="mac",
-                    target_device="pi",
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    status="error",
-                    latency_ms=latency_ms,
-                    error=f"HTTP {response.status_code}"
-                )
-                return {"error": f"Pi MCP returned HTTP {response.status_code}"}
-
-            # Parse SSE response format: "event: message\ndata: {json}\n\n"
-            text = response.text
-            if text.startswith("event:"):
-                # Extract JSON from SSE data line
-                for line in text.split("\n"):
-                    if line.startswith("data:"):
-                        result = json.loads(line[5:].strip())
-                        break
-                else:
-                    return {"error": "No data in SSE response"}
-            else:
-                result = response.json()
-
-            # Extract result from MCP response
-            if "error" in result:
-                audit_logger.log_cross_device_call(
-                    agent_id=agent_id,
-                    source_device="mac",
-                    target_device="pi",
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    status="error",
-                    latency_ms=latency_ms,
-                    error=str(result["error"])
-                )
-                return {"error": result["error"]}
-
-            # Success - extract content from MCP result
-            mcp_result = result.get("result", {})
-            content = mcp_result.get("content", [])
-
-            # Parse text content
-            if content and isinstance(content, list) and len(content) > 0:
-                text_content = content[0].get("text", "{}")
-                try:
-                    parsed = json.loads(text_content)
-                except json.JSONDecodeError:
-                    parsed = {"text": text_content}
-            else:
-                parsed = mcp_result
-
+            standardized_error = _standardize_error(e)
             audit_logger.log_cross_device_call(
                 agent_id=agent_id,
                 source_device="mac",
                 target_device="pi",
                 tool_name=tool_name,
                 arguments=arguments,
-                status="success",
-                latency_ms=latency_ms
+                status="error",
+                latency_ms=latency_ms,
+                error=standardized_error["error"]
             )
+            # Continue to next URL instead of returning immediately
+            last_error = e
+            logger.debug(f"Pi MCP call failed via {pi_url}: {e}")
+            continue
 
-            return parsed
-
-    except httpx.TimeoutException:
-        latency_ms = (time.time() - start_time) * 1000
-        audit_logger.log_cross_device_call(
-            agent_id=agent_id,
-            source_device="mac",
-            target_device="pi",
-            tool_name=tool_name,
-            arguments=arguments,
-            status="timeout",
-            latency_ms=latency_ms,
-            error=f"Timeout after {timeout}s"
-        )
-        return {"error": f"Pi MCP timeout after {timeout}s"}
-
-    except httpx.ConnectError as e:
-        latency_ms = (time.time() - start_time) * 1000
-        audit_logger.log_cross_device_call(
-            agent_id=agent_id,
-            source_device="mac",
-            target_device="pi",
-            tool_name=tool_name,
-            arguments=arguments,
-            status="error",
-            latency_ms=latency_ms,
-            error=f"Connection failed: {e}"
-        )
-        return {"error": f"Cannot connect to Pi at {PI_MCP_URL}: {e}"}
-
-    except Exception as e:
-        latency_ms = (time.time() - start_time) * 1000
-        audit_logger.log_cross_device_call(
-            agent_id=agent_id,
-            source_device="mac",
-            target_device="pi",
-            tool_name=tool_name,
-            arguments=arguments,
-            status="error",
-            latency_ms=latency_ms,
-            error=str(e)
-        )
-        return {"error": f"Pi MCP call failed: {e}"}
+    # All URLs failed
+    latency_ms = (time.time() - start_time) * 1000
+    standardized_error = _standardize_error(last_error or "All connection attempts failed")
+    standardized_error["error"] = f"Cannot connect to Pi: {standardized_error['error']}"
+    
+    audit_logger.log_cross_device_call(
+        agent_id=agent_id,
+        source_device="mac",
+        target_device="pi",
+        tool_name=tool_name,
+        arguments=arguments,
+        status="error",
+        latency_ms=latency_ms,
+        error=standardized_error["error"]
+    )
+    return standardized_error
 
 
 def map_anima_to_eisv(anima: Dict[str, float]) -> Dict[str, float]:
@@ -231,7 +380,75 @@ def map_anima_to_eisv(anima: Dict[str, float]) -> Dict[str, float]:
 # MCP Tool Handlers
 # ============================================================
 
-@mcp_tool("pi_get_context", timeout=30.0, description="Get Lumen's complete context from Pi (identity, anima, sensors, mood). Orchestrated call to Pi's get_lumen_context.")
+@mcp_tool("pi_list_tools", timeout=15.0, register=False, description="List available tools on Pi's anima-mcp server. Use pi(action='tools') instead.")
+async def handle_pi_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    List all available tools on Pi's anima-mcp server.
+    
+    This is useful for:
+    - Discovering what tools are available
+    - Checking tool availability before calling
+    - Understanding tool capabilities
+    """
+    agent_id = arguments.get("agent_id", "mac-orchestrator")
+    
+    try:
+        # Use MCP client library to list tools
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+        
+        # Try each URL (LAN first, then Tailscale)
+        last_error = None
+        for pi_url in PI_MCP_URLS:
+            try:
+                http_client = httpx.AsyncClient(http2=True, timeout=15.0)
+                async with streamable_http_client(pi_url, http_client=http_client) as (read, write, _):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        
+                        # List tools
+                        tools_result = await session.list_tools()
+                        
+                        tools_list = []
+                        for tool in tools_result.tools:
+                            tools_list.append({
+                                "name": tool.name,
+                                "description": getattr(tool, 'description', ''),
+                                "inputSchema": getattr(tool, 'inputSchema', {})
+                            })
+                        
+                        return success_response({
+                            "device": "pi",
+                            "tools": tools_list,
+                            "count": len(tools_list),
+                            "tool_mapping": {
+                                "note": "pi_* tools are wrappers that call anima-mcp tools",
+                                "mappings": {
+                                    "pi_get_context": "get_lumen_context",
+                                    "pi_display": "manage_display",
+                                    "pi_say": "say",
+                                    "pi_post_message": "post_message",
+                                    "pi_query": "query",
+                                    "pi_lumen_qa": "lumen_qa",
+                                    "pi_health": "diagnostics",
+                                    "pi_git_pull": "git_pull",
+                                    "pi_system_power": "system_power",
+                                }
+                            }
+                        })
+            except Exception as e:
+                last_error = e
+                logger.debug(f"Failed to list tools via {pi_url}: {e}")
+                continue
+        
+        # All URLs failed
+        return error_response(f"Failed to list Pi tools: {last_error or 'All connection attempts failed'}")
+    
+    except Exception as e:
+        return error_response(f"Error listing Pi tools: {e}")
+
+
+@mcp_tool("pi_get_context", timeout=30.0, register=False, description="Get Lumen's complete context. Use pi(action='context') instead.")
 async def handle_pi_get_context(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get Lumen's complete context from Pi via orchestrated call to get_lumen_context."""
     agent_id = arguments.get("agent_id", "mac-orchestrator")
@@ -239,8 +456,9 @@ async def handle_pi_get_context(arguments: Dict[str, Any]) -> Sequence[TextConte
 
     result = await call_pi_tool("get_lumen_context", {"include": include}, agent_id=agent_id)
 
-    if "error" in result:
-        return error_response(f"Failed to get Pi context: {result['error']}")
+    error_msg = _extract_error_message(result)
+    if error_msg:
+        return error_response(f"Failed to get Pi context: {error_msg}")
 
     return success_response({
         "source": "pi",
@@ -248,7 +466,7 @@ async def handle_pi_get_context(arguments: Dict[str, Any]) -> Sequence[TextConte
     })
 
 
-@mcp_tool("pi_health", timeout=15.0, description="Check Pi anima-mcp health and connectivity. Returns latency, component status, and diagnostics.")
+@mcp_tool("pi_health", timeout=15.0, register=False, description="Check Pi health. Use pi(action='health') instead.")
 async def handle_pi_health(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Check Pi's anima-mcp health and connectivity via orchestrated call."""
     agent_id = arguments.get("agent_id", "mac-orchestrator")
@@ -258,16 +476,17 @@ async def handle_pi_health(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     result = await call_pi_tool("diagnostics", {}, agent_id=agent_id, timeout=10.0)
     latency_ms = (time.time() - start_time) * 1000
 
-    if "error" in result:
-        status = "unreachable" if "connect" in str(result["error"]).lower() else "error"
+    error_msg = _extract_error_message(result)
+    if error_msg:
+        status = "unreachable" if "connect" in error_msg.lower() else "error"
         audit_logger.log_device_health_check(
             agent_id=agent_id,
             device="pi",
             status=status,
             latency_ms=latency_ms,
-            details={"error": result["error"]}
+            details={"error": error_msg}
         )
-        return error_response(f"Pi health check failed: {result['error']}")
+        return error_response(f"Pi health check failed: {error_msg}")
 
     # Parse component status
     components = {}
@@ -276,7 +495,15 @@ async def handle_pi_health(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     if "display" in result:
         components["display"] = "ok" if result.get("display", {}).get("available") else "unavailable"
     if "update_loop" in result:
-        components["update_loop"] = "ok" if result.get("update_loop", {}).get("running") else "stopped"
+        loop_info = result.get("update_loop", {})
+        # Check if task exists and is not done/cancelled (i.e., actively running)
+        loop_running = (
+            loop_info.get("running", False) or  # Direct "running" flag if present
+            (loop_info.get("task_exists", False) and
+             not loop_info.get("task_done", True) and
+             not loop_info.get("task_cancelled", True))
+        )
+        components["update_loop"] = "ok" if loop_running else "stopped"
 
     status = "healthy" if all(v == "ok" for v in components.values()) else "degraded"
 
@@ -297,7 +524,7 @@ async def handle_pi_health(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     })
 
 
-@mcp_tool("pi_sync_eisv", timeout=30.0, description="Sync Lumen's anima state to EISV governance metrics. Maps warmth→E, clarity→I, stability→S, presence→V.")
+@mcp_tool("pi_sync_eisv", timeout=30.0, register=False, description="Sync anima to EISV. Use pi(action='sync_eisv') instead.")
 async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Sync Pi's anima state to Mac's EISV governance metrics.
@@ -313,12 +540,14 @@ async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent
     # Get anima state from Pi
     context = await call_pi_tool("get_lumen_context", {"include": ["anima"]}, agent_id=agent_id)
 
-    if "error" in context:
-        return error_response(f"Failed to get anima state: {context['error']}")
+    error_msg = _extract_error_message(context)
+    if error_msg:
+        return error_response(f"Failed to get anima state: {error_msg}")
 
     anima = context.get("anima", {})
-    if "error" in anima:
-        return error_response(f"Anima state unavailable: {anima['error']}")
+    anima_error = _extract_error_message(anima) if isinstance(anima, dict) else None
+    if anima_error:
+        return error_response(f"Anima state unavailable: {anima_error}")
 
     # Map to EISV
     eisv = map_anima_to_eisv(anima)
@@ -353,7 +582,7 @@ async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent
     return success_response(result)
 
 
-@mcp_tool("pi_display", timeout=15.0, description="Control Pi's display: switch screens, show face, navigate.")
+@mcp_tool("pi_display", timeout=15.0, register=False, description="Control Pi display. Use pi(action='display') instead.")
 async def handle_pi_display(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Control Pi's display via orchestrated call to manage_display."""
     agent_id = arguments.get("agent_id", "mac-orchestrator")
@@ -366,8 +595,9 @@ async def handle_pi_display(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     result = await call_pi_tool("manage_display", tool_args, agent_id=agent_id)
 
-    if "error" in result:
-        return error_response(f"Display control failed: {result['error']}")
+    error_msg = _extract_error_message(result)
+    if error_msg:
+        return error_response(f"Display control failed: {error_msg}")
 
     return success_response({
         "device": "pi",
@@ -376,7 +606,7 @@ async def handle_pi_display(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     })
 
 
-@mcp_tool("pi_say", timeout=30.0, description="Have Lumen speak via Pi's voice system.")
+@mcp_tool("pi_say", timeout=30.0, register=False, description="Lumen speak. Use pi(action='say') instead.")
 async def handle_pi_say(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Have Lumen speak via orchestrated call to Pi's say tool."""
     agent_id = arguments.get("agent_id", "mac-orchestrator")
@@ -388,8 +618,9 @@ async def handle_pi_say(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     result = await call_pi_tool("say", {"text": text, "blocking": blocking}, agent_id=agent_id)
 
-    if "error" in result:
-        return error_response(f"Speech failed: {result['error']}")
+    error_msg = _extract_error_message(result)
+    if error_msg:
+        return error_response(f"Speech failed: {error_msg}")
 
     return success_response({
         "device": "pi",
@@ -398,7 +629,7 @@ async def handle_pi_say(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     })
 
 
-@mcp_tool("pi_post_message", timeout=15.0, description="Post a message to Lumen's message board on Pi.")
+@mcp_tool("pi_post_message", timeout=15.0, register=False, description="Post message. Use pi(action='message') instead.")
 async def handle_pi_post_message(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Post a message to Lumen's message board via orchestrated call."""
     agent_id = arguments.get("agent_id", "mac-orchestrator")
@@ -420,8 +651,9 @@ async def handle_pi_post_message(arguments: Dict[str, Any]) -> Sequence[TextCont
 
     result = await call_pi_tool("post_message", tool_args, agent_id=agent_id)
 
-    if "error" in result:
-        return error_response(f"Message post failed: {result['error']}")
+    error_msg = _extract_error_message(result)
+    if error_msg:
+        return error_response(f"Message post failed: {error_msg}")
 
     return success_response({
         "device": "pi",
@@ -430,7 +662,48 @@ async def handle_pi_post_message(arguments: Dict[str, Any]) -> Sequence[TextCont
     })
 
 
-@mcp_tool("pi_query", timeout=45.0, description="Query Lumen's knowledge systems on Pi (learned, memory, graph, cognitive).")
+@mcp_tool("pi_lumen_qa", timeout=15.0, register=False, description="Lumen Q&A. Use pi(action='qa') instead.")
+async def handle_pi_lumen_qa(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Unified Q&A tool for Lumen via Pi.
+    
+    Usage:
+    - pi_lumen_qa() -> list unanswered questions
+    - pi_lumen_qa(question_id="abc123", answer="...") -> answer question
+    
+    This is the preferred method for answering questions as it validates
+    question IDs and ensures proper linking to the Q&A screen.
+    """
+    agent_id = arguments.get("agent_id", "mac-orchestrator")
+    question_id = arguments.get("question_id")
+    answer = arguments.get("answer")
+    limit = arguments.get("limit", 5)
+    agent_name = arguments.get("agent_name", "agent")
+    
+    tool_args = {
+        "limit": limit,
+        "agent_name": agent_name
+    }
+    
+    if question_id and answer:
+        # Answer mode
+        tool_args["question_id"] = question_id
+        tool_args["answer"] = answer
+    
+    result = await call_pi_tool("lumen_qa", tool_args, agent_id=agent_id)
+    
+    error_msg = _extract_error_message(result)
+    if error_msg:
+        return error_response(f"Q&A operation failed: {error_msg}")
+    
+    return success_response({
+        "device": "pi",
+        "action": "answered" if (question_id and answer) else "list",
+        "result": result
+    })
+
+
+@mcp_tool("pi_query", timeout=45.0, register=False, description="Query Lumen knowledge. Use pi(action='query') instead.")
 async def handle_pi_query(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Query Lumen's knowledge via orchestrated call to Pi's query tool."""
     agent_id = arguments.get("agent_id", "mac-orchestrator")
@@ -447,8 +720,9 @@ async def handle_pi_query(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         "limit": limit
     }, agent_id=agent_id, timeout=40.0)
 
-    if "error" in result:
-        return error_response(f"Query failed: {result['error']}")
+    error_msg = _extract_error_message(result)
+    if error_msg:
+        return error_response(f"Query failed: {error_msg}")
 
     return success_response({
         "device": "pi",
@@ -457,7 +731,7 @@ async def handle_pi_query(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     })
 
 
-@mcp_tool("pi_workflow", timeout=120.0, description="Execute multi-step workflow on Pi with audit trail. Workflows: full_status, morning_check, custom.")
+@mcp_tool("pi_workflow", timeout=120.0, register=False, description="Pi workflow. Use pi(action='workflow') instead.")
 async def handle_pi_workflow(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Execute a coordinated workflow across Pi tools.
@@ -506,9 +780,10 @@ async def handle_pi_workflow(arguments: Dict[str, Any]) -> Sequence[TextContent]
         result = await call_pi_tool(tool_name, tool_args, agent_id=agent_id)
         tools_executed.append(tool_name)
 
-        if "error" in result:
-            errors.append(f"{tool_name}: {result['error']}")
-            results.append({"tool": tool_name, "error": result["error"]})
+        error_msg = _extract_error_message(result)
+        if error_msg:
+            errors.append(f"{tool_name}: {error_msg}")
+            results.append({"tool": tool_name, "error": error_msg})
         else:
             results.append({"tool": tool_name, "result": result})
 
@@ -536,11 +811,11 @@ async def handle_pi_workflow(arguments: Dict[str, Any]) -> Sequence[TextContent]
     })
 
 
-@mcp_tool("pi_git_pull", timeout=120.0, description="Pull latest code on Pi and optionally restart. Proxies to Pi's git_pull tool.")
+@mcp_tool("pi_git_pull", timeout=120.0, register=False, description="Pi git pull. Use pi(action='git_pull') instead.")
 async def handle_pi_git_pull(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Pull latest code from GitHub on Pi and optionally restart the server.
-    Proxies to Pi's git_pull MCP tool, handling SSE response parsing.
+    Proxies to Pi's git_pull MCP tool via Streamable HTTP transport.
     """
     agent_id = arguments.get("agent_id", "mac-orchestrator")
     stash = arguments.get("stash", False)
@@ -557,8 +832,9 @@ async def handle_pi_git_pull(arguments: Dict[str, Any]) -> Sequence[TextContent]
 
     result = await call_pi_tool("git_pull", tool_args, agent_id=agent_id, timeout=90.0)
 
-    if "error" in result:
-        return error_response(f"Git pull failed: {result['error']}")
+    error_msg = _extract_error_message(result)
+    if error_msg:
+        return error_response(f"Git pull failed: {error_msg}")
 
     return success_response({
         "device": "pi",
@@ -570,7 +846,7 @@ async def handle_pi_git_pull(arguments: Dict[str, Any]) -> Sequence[TextContent]
     })
 
 
-@mcp_tool("pi_system_power", timeout=30.0, description="Reboot or shutdown the Pi remotely. For emergency recovery. Requires confirm=true.")
+@mcp_tool("pi_system_power", timeout=30.0, register=False, description="Pi power control. Use pi(action='power') instead.")
 async def handle_pi_system_power(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Reboot or shutdown the Pi remotely.
@@ -586,8 +862,9 @@ async def handle_pi_system_power(arguments: Dict[str, Any]) -> Sequence[TextCont
 
     result = await call_pi_tool("system_power", tool_args, agent_id=agent_id, timeout=30.0)
 
-    if "error" in result:
-        return error_response(f"Power command failed: {result['error']}")
+    error_msg = _extract_error_message(result)
+    if error_msg:
+        return error_response(f"Power command failed: {error_msg}")
 
     return success_response({
         "device": "pi",
@@ -596,6 +873,109 @@ async def handle_pi_system_power(arguments: Dict[str, Any]) -> Sequence[TextCont
         "confirm": confirm,
         "result": result
     })
+
+
+# ============================================================
+# SSH-Based Pi Service Control (Fallback when MCP is down)
+# ============================================================
+
+# SSH configuration for Pi access
+PI_SSH_USER = "unitares-anima"
+PI_SSH_HOST_TAILSCALE = "100.89.201.36"
+PI_SSH_KEY = os.path.expanduser("~/.ssh/id_ed25519_pi")
+
+
+@mcp_tool("pi_restart_service", timeout=60.0, register=True, description="Restart anima service on Pi via SSH. Works even when MCP is down.")
+async def handle_pi_restart_service(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Restart the anima service on Pi via SSH.
+
+    This is a FALLBACK tool for when the anima MCP service is down and
+    pi(action='git_pull', restart=True) or other MCP-based tools can't work.
+
+    Uses SSH to directly run systemctl commands on the Pi.
+    Requires SSH key at ~/.ssh/id_ed25519_pi
+    """
+    import subprocess
+
+    agent_id = arguments.get("agent_id", "mac-orchestrator")
+    service = arguments.get("service", "anima")
+    action = arguments.get("action", "restart")  # restart, start, stop, status
+
+    # Whitelist allowed services
+    ALLOWED_SERVICES = ["anima", "anima-broker", "ngrok"]
+    if service not in ALLOWED_SERVICES:
+        return error_response(f"Service '{service}' not in allowed list: {ALLOWED_SERVICES}")
+
+    # Whitelist allowed actions
+    ALLOWED_ACTIONS = ["restart", "start", "stop", "status"]
+    if action not in ALLOWED_ACTIONS:
+        return error_response(f"Action '{action}' not in allowed list: {ALLOWED_ACTIONS}")
+
+    # Build SSH command
+    ssh_cmd = [
+        "ssh",
+        "-o", "ConnectTimeout=10",
+        "-o", "BatchMode=yes",
+        "-i", PI_SSH_KEY,
+        f"{PI_SSH_USER}@{PI_SSH_HOST_TAILSCALE}",
+        f"sudo systemctl {action} {service} && sleep 2 && systemctl is-active {service}"
+    ]
+
+    logger.info(f"[pi_restart_service] Running: {' '.join(ssh_cmd[:6])}... {action} {service}")
+
+    # Audit the action
+    audit_logger.log_cross_device_call(
+        source="mac",
+        target="pi",
+        tool=f"ssh_systemctl_{action}",
+        agent_id=agent_id,
+        latency_ms=0,  # Will update
+        success=True,  # Assume success, update if fails
+        error=None
+    )
+
+    start_time = time.time()
+    try:
+        result = subprocess.run(
+            ssh_cmd,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        latency_ms = (time.time() - start_time) * 1000
+
+        success = result.returncode == 0
+        output = result.stdout.strip()
+        error = result.stderr.strip() if result.stderr else None
+
+        # Update audit with actual result
+        audit_logger.log_cross_device_call(
+            source="mac",
+            target="pi",
+            tool=f"ssh_systemctl_{action}",
+            agent_id=agent_id,
+            latency_ms=latency_ms,
+            success=success,
+            error=error if not success else None
+        )
+
+        return success_response({
+            "device": "pi",
+            "operation": f"ssh_systemctl_{action}",
+            "service": service,
+            "success": success,
+            "status": output,
+            "error": error,
+            "latency_ms": round(latency_ms, 2)
+        })
+
+    except subprocess.TimeoutExpired:
+        return error_response("SSH command timed out after 30s")
+    except FileNotFoundError:
+        return error_response(f"SSH key not found at {PI_SSH_KEY}")
+    except Exception as e:
+        return error_response(f"SSH command failed: {e}")
 
 
 # ============================================================
@@ -616,8 +996,9 @@ async def sync_eisv_once(update_governance: bool = False) -> Dict[str, Any]:
         # Get anima state from Pi
         result = await call_pi_tool("get_state", {}, agent_id="eisv-sync-task")
 
-        if "error" in result:
-            return {"success": False, "error": result["error"]}
+        error_msg = _extract_error_message(result)
+        if error_msg:
+            return {"success": False, "error": error_msg}
 
         # Extract anima values
         anima = result.get("anima", {})
