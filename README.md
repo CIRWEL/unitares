@@ -1,4 +1,4 @@
-# UNITARES Governance Framework v2.5.5
+# UNITARES Governance Framework v2.5.6
 
 **Stability monitoring for multi-agent AI systems.**
 
@@ -155,7 +155,7 @@ curl -H "X-Session-ID: $SESSION" \
 | **Recovery** | 2 | `self_recovery` (unified), operator resume |
 | **Admin** | 14 | Health, calibration, telemetry |
 | **Identity** | 3 | Onboarding, identity management, trajectory verification |
-| **Pi Orchestration** | 8 | Mac↔Raspberry Pi coordination |
+| **Pi Orchestration** | 9 | Mac↔Raspberry Pi coordination |
 | **CIRS** | 1 | `cirs_protocol` (unified coordination) |
 | **Trajectory** | 3 | Genesis storage, lineage comparison, anomaly detection |
 
@@ -282,13 +282,7 @@ The drift is *computed*, but interpreting "high drift = bad" requires domain con
 python -m pytest tests/ -v
 ```
 
-**Current status:** 93+ tests passing
-
-| Module | Coverage | Tests |
-|--------|----------|-------|
-| `governance_monitor.py` | 79% | 63 tests |
-| `trajectory_identity.py` | 88% | 19 tests |
-| `identity_v2.py` | 11% | 11 tests |
+**Current status:** 310+ tests, 83-88% coverage
 
 Core governance logic is well-tested. Coverage improves with each session.
 
@@ -317,7 +311,8 @@ The thermodynamic framing isn't metaphor — it's a design choice that makes beh
 - ✅ Trajectory identity — genesis signatures, lineage comparison
 - ✅ Model-based agent_id naming (`Claude_Opus_4_5_20260204`)
 - ✅ Automatic ground truth collection from objective outcomes
-- ✅ 93+ tests with 79-88% coverage on core modules
+- ✅ SSH-based Pi restart (`pi_restart_service`) — works even when MCP is down
+- ✅ 310+ tests with 83-88% coverage on core modules
 
 **In progress:**
 - 🔄 Outcome correlation — does instability actually predict bad outcomes?
@@ -344,4 +339,4 @@ MIT License with Attribution — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Version:** 2.5.5 | **Last Updated:** 2026-02-04
+**Version:** 2.5.6 | **Last Updated:** 2026-02-04
