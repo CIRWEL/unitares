@@ -81,6 +81,10 @@ htmlcov/
 .env.local
 secrets/
 
+# Internal/local documentation (deployment-specific configs)
+docs/INTERNAL_CONFIG.md
+*.local.md
+
 # macOS
 .DS_Store
 .AppleDouble
@@ -138,3 +142,4 @@ tests/additional_security_report.json
 .governance_session
 .mcp_session
 config/generated-*.json
+data/telemetry/*.jsonl
