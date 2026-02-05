@@ -76,8 +76,13 @@ from .knowledge_graph import (
     handle_cleanup_knowledge_graph,
     handle_get_lifecycle_stats,
 )
-# Dialectic - get_dialectic_session + list_dialectic_sessions (Feb 2026)
-from .dialectic import handle_get_dialectic_session, handle_list_dialectic_sessions
+# Dialectic - get_dialectic_session + list_dialectic_sessions + llm_assisted_dialectic (Feb 2026)
+from .dialectic import (
+    handle_get_dialectic_session,
+    handle_list_dialectic_sessions,
+    handle_request_dialectic_review,
+    handle_llm_assisted_dialectic,
+)
 # Self-Recovery - Simplified recovery without external reviewers (Jan 2026)
 # Note: handle_self_recovery_review moved to lifecycle.py per SELF_RECOVERY_SPEC.md
 from .self_recovery import (
@@ -117,17 +122,20 @@ from .cirs_protocol import (
     auto_emit_state_announce,  # Hook for process_agent_update
 )
 # Pi Orchestration - Mac→Pi coordination tools (Feb 2026)
-# Proxies calls to anima-mcp on Pi, handles SSE protocol translation
+# Proxies calls to anima-mcp on Pi via Streamable HTTP transport (MCP 1.24.0+)
 from .pi_orchestration import (
+    handle_pi_list_tools,
     handle_pi_get_context,
     handle_pi_health,
     handle_pi_sync_eisv,
     handle_pi_display,
     handle_pi_say,
     handle_pi_post_message,
+    handle_pi_lumen_qa,
     handle_pi_query,
     handle_pi_workflow,
     handle_pi_git_pull,
+    handle_pi_restart_service,  # SSH-based fallback when MCP is down
 )
 # Keep helper functions from identity.py (used by dispatch_tool)
 from .identity import (
@@ -279,11 +287,16 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
     original_name = name  # Save original for logging
     actual_name, alias_info = resolve_tool_alias(name)
 
-    # If this is an alias, add migration note to response
+    # If this is an alias, add migration note to response and inject action if needed
     migration_note = None
     if alias_info:
         migration_note = alias_info.migration_note
         name = actual_name  # Use actual tool name for dispatch
+
+        # For consolidated tools, inject the action parameter if not already set
+        if alias_info.inject_action and "action" not in arguments:
+            arguments["action"] = alias_info.inject_action
+            _logger.debug(f"[ALIAS] Injected action='{alias_info.inject_action}' for consolidated tool '{actual_name}'")
 
     # === SESSION-BASED IDENTITY INJECTION ===
     # MCP session-based identity continuity (per MCP 1.24.0+ spec)
@@ -299,11 +312,15 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
         if bound_id:
             if not provided_id:
                 # Case 1: No agent_id provided, inject from session
-                # EXCEPTION: Search tools should NOT auto-filter by agent - they search ALL data
+                # EXCEPTION: Browsable data tools should NOT auto-filter by agent - they search ALL data
                 # Users can explicitly pass agent_id to filter if desired
-                search_tools = {"search_knowledge_graph", "query_knowledge_graph", "list_knowledge_graph"}
-                _logger.info(f"[DISPATCH] name={name}, in search_tools={name in search_tools}, bound_id={bound_id[:8] if bound_id else None}...")
-                if name not in search_tools:
+                # Includes: knowledge graph search, dialectic session browsing
+                browsable_data_tools = {
+                    "search_knowledge_graph", "query_knowledge_graph", "list_knowledge_graph",
+                    "list_dialectic_sessions", "get_dialectic_session"
+                }
+                _logger.info(f"[DISPATCH] name={name}, in browsable_data_tools={name in browsable_data_tools}, bound_id={bound_id[:8] if bound_id else None}...")
+                if name not in browsable_data_tools:
                     arguments["agent_id"] = bound_id
                     _logger.debug(f"Injected session-bound agent_id: {bound_id}")
             elif provided_id != bound_id:
@@ -465,10 +482,15 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
     # Catches common mistakes (wrong types, string instead of list, etc.)
     # and provides helpful error messages with examples
     from .validators import validate_and_coerce_params
-    coerced_args, validation_error = validate_and_coerce_params(name, arguments)
+    coerced_args, validation_error, param_coercions = validate_and_coerce_params(name, arguments)
     if validation_error:
         return [validation_error]
     arguments = coerced_args
+
+    # Store coercions for transparency in response (UX Fix #12)
+    # Agents can see what type coercions were applied to their parameters
+    if param_coercions:
+        arguments["_param_coercions"] = param_coercions
     
     handler = TOOL_HANDLERS.get(name)
     if handler is None:
