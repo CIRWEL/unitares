@@ -523,7 +523,7 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
     })
 
 
-@mcp_tool("check_calibration", timeout=10.0, rate_limit_exempt=True)
+@mcp_tool("check_calibration", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_check_calibration(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Check calibration of confidence estimates.
@@ -607,7 +607,7 @@ async def handle_check_calibration(arguments: Dict[str, Any]) -> Sequence[TextCo
     return success_response(response)
 
 
-@mcp_tool("rebuild_calibration", timeout=60.0, rate_limit_exempt=True)
+@mcp_tool("rebuild_calibration", timeout=60.0, rate_limit_exempt=True, register=False)
 async def handle_rebuild_calibration(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Rebuild calibration from scratch using auto ground truth collection.
@@ -653,7 +653,7 @@ async def handle_rebuild_calibration(arguments: Dict[str, Any]) -> Sequence[Text
         return error_response(f"Failed to rebuild calibration: {e}")
 
 
-@mcp_tool("update_calibration_ground_truth", timeout=10.0)
+@mcp_tool("update_calibration_ground_truth", timeout=10.0, register=False)
 async def handle_update_calibration_ground_truth(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Optional: Update calibration with an external truth signal after review
     
@@ -780,7 +780,7 @@ async def handle_update_calibration_ground_truth(arguments: Dict[str, Any]) -> S
             return [error_response(str(e))]
 
 
-@mcp_tool("backfill_calibration_from_dialectic", timeout=20.0, rate_limit_exempt=True)
+@mcp_tool("backfill_calibration_from_dialectic", timeout=20.0, rate_limit_exempt=True, register=False)
 async def handle_backfill_calibration_from_dialectic(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Retroactively update calibration from historical resolved verification-type dialectic sessions.
@@ -1455,7 +1455,8 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         lite_tools = [
             {
                 "name": t["name"],
-                "hint": t["description"][:50],
+                "hint": t["description"][:100] + ("..." if len(t["description"]) > 100 else ""),
+                "tier": t.get("tier", "common"),  # essential/common/advanced
                 "op": t.get("op", "read"),  # read/write/admin
                 "category": t.get("category"),
                 "category_icon": t.get("category_icon"),
@@ -1502,10 +1503,32 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         except Exception:
             pass
         
+        # Count lite tools by tier
+        lite_tier_counts = {"essential": 0, "common": 0, "advanced": 0}
+        for t in lite_tools:
+            tier = t.get("tier", "common")
+            if tier in lite_tier_counts:
+                lite_tier_counts[tier] += 1
+
         response_data = {
             "tools": lite_tools,
             "total_available": len(tools_list),
             "shown": len(lite_tools),
+            # Tier summary for quick understanding of tool importance
+            "tier_summary": {
+                "essential": {
+                    "count": lite_tier_counts["essential"],
+                    "note": "Core tools - use these for basic workflows"
+                },
+                "common": {
+                    "count": lite_tier_counts["common"],
+                    "note": "Standard tools - commonly used for specific tasks"
+                },
+                "advanced": {
+                    "count": lite_tier_counts["advanced"],
+                    "note": "Advanced tools - specialized functionality"
+                }
+            },
             "categories_summary": {
                 cat: {
                     "icon": category_metadata[cat]["icon"],
@@ -1943,9 +1966,26 @@ async def handle_describe_tool(arguments: Dict[str, Any]) -> Sequence[TextConten
                 from .validators import PARAM_ALIASES
                 tool_aliases = PARAM_ALIASES.get(tool_name, {})
 
+                # UX FIX (Feb 2026): Add tier information to help agents understand tool complexity
+                from src.tool_modes import TOOL_TIERS, TOOL_OPERATIONS
+                tool_tier = "common"  # Default
+                if tool_name in TOOL_TIERS["essential"]:
+                    tool_tier = "essential"
+                elif tool_name in TOOL_TIERS["advanced"]:
+                    tool_tier = "advanced"
+
+                tier_guidance = {
+                    "essential": "Core tool - regularly used for basic workflows",
+                    "common": "Standard tool - commonly used for specific tasks",
+                    "advanced": "Advanced tool - use when you need specialized functionality"
+                }
+
                 response_data = {
                     "tool": tool_name,
                     "description": (description or "").splitlines()[0].strip(),
+                    "tier": tool_tier,
+                    "tier_note": tier_guidance.get(tool_tier, ""),
+                    "operation": TOOL_OPERATIONS.get(tool_name, "read"),  # read/write/admin
                     "parameters": params_simple,
                     "example": example,
                     "note": "Lite mode - use describe_tool(tool_name=..., lite=false) for full schema"

@@ -395,9 +395,10 @@ async def list_all_sessions(
 
                 # Apply filters
                 if agent_id:
-                    requestor = data.get("requestor_agent_id", "")
+                    # Note: paused_agent_id is the requestor in dialectic sessions
+                    paused = data.get("paused_agent_id", "")
                     reviewer = data.get("reviewer_agent_id", "")
-                    if agent_id not in [requestor, reviewer]:
+                    if agent_id not in [paused, reviewer]:
                         continue
 
                 if status:
@@ -410,7 +411,7 @@ async def list_all_sessions(
                     "session_id": session_id,
                     "phase": data.get("phase", "unknown"),
                     "session_type": data.get("session_type", "unknown"),
-                    "requestor": data.get("requestor_agent_id", "unknown"),
+                    "paused_agent": data.get("paused_agent_id", "unknown"),
                     "reviewer": data.get("reviewer_agent_id"),
                     "topic": data.get("topic", ""),
                     "created": data.get("created_at", ""),

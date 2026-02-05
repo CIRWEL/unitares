@@ -31,26 +31,30 @@ def mcp_tool(
     rate_limit_exempt: bool = False,
     deprecated: bool = False,
     hidden: bool = False,
-    superseded_by: Optional[str] = None
+    superseded_by: Optional[str] = None,
+    register: bool = True
 ):
     """
     Decorator for MCP tool handlers with auto-registration and timeout protection.
-    
+
     Provides:
     - Automatic timeout protection
     - Performance timing/observability (warns if >80% of timeout)
     - Error handling with recovery guidance
     - Tool registration for discovery
     - Deprecation and hiding support
-    
+
     Usage:
         @mcp_tool("process_agent_update", timeout=60.0)
         async def handle_process_agent_update(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             ...
-        
+
         @mcp_tool("old_tool", deprecated=True, superseded_by="new_tool")
         async def handle_old_tool(...): ...
-    
+
+        @mcp_tool("internal_helper", register=False)  # Not exposed to MCP clients
+        async def handle_internal_helper(...): ...
+
     Args:
         name: Tool name (defaults to function name without 'handle_' prefix)
         timeout: Timeout in seconds (default: 30.0)
@@ -59,10 +63,11 @@ def mcp_tool(
         deprecated: If True, tool still works but warns users to use superseded_by
         hidden: If True, tool is not shown in list_tools (internal use only)
         superseded_by: Name of tool that replaces this one (for deprecation messages)
-    
+        register: If False, tool is NOT registered (for internal handlers called by consolidated tools)
+
     Returns:
         Decorated handler function (wrapper with timeout protection)
-    
+
     Note: Future improvement could split into composable decorators:
         @mcp_tool("name") @with_timeout(60) @with_timing @with_error_handling
     This would allow mixing/matching features, but current monolithic approach works well.
@@ -127,17 +132,18 @@ def mcp_tool(
                     }
                 )]
         
-        # Fixed: Register wrapper (not func) to ensure timeout protection is always applied
-        # This prevents bypassing timeout protection when using registry directly
-        _TOOL_REGISTRY[tool_name] = wrapper
-        _TOOL_TIMEOUTS[tool_name] = timeout
-        _TOOL_DESCRIPTIONS[tool_name] = tool_description
-        _TOOL_METADATA[tool_name] = {
-            "deprecated": deprecated,
-            "hidden": hidden,
-            "superseded_by": superseded_by
-        }
-        
+        # Only register if register=True (default)
+        # Use register=False for internal handlers called by consolidated tools
+        if register:
+            _TOOL_REGISTRY[tool_name] = wrapper
+            _TOOL_TIMEOUTS[tool_name] = timeout
+            _TOOL_DESCRIPTIONS[tool_name] = tool_description
+            _TOOL_METADATA[tool_name] = {
+                "deprecated": deprecated,
+                "hidden": hidden,
+                "superseded_by": superseded_by
+            }
+
         return wrapper
     return decorator
 

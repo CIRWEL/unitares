@@ -220,7 +220,7 @@ async def handle_self_recovery(arguments: Dict[str, Any]) -> Sequence[TextConten
         )]
 
 
-@mcp_tool("check_recovery_options", timeout=10.0, hidden=True)
+@mcp_tool("check_recovery_options", timeout=10.0, register=False)
 async def handle_check_recovery_options(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Check if an agent is eligible for self-recovery.
@@ -319,7 +319,7 @@ async def handle_check_recovery_options(arguments: Dict[str, Any]) -> Sequence[T
 
 
 
-@mcp_tool("quick_resume", timeout=10.0, hidden=True)
+@mcp_tool("quick_resume", timeout=10.0, register=False)
 async def handle_quick_resume(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Quick resume for agents in clearly safe states - no reflection required.

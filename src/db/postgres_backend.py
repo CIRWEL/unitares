@@ -158,9 +158,11 @@ class PostgresBackend(DatabaseBackend):
                 ctx_self.backend = backend
                 ctx_self.timeout = timeout
                 ctx_self.conn = None
+                ctx_self.acquired_pool = None  # Track which pool we acquired from
 
             async def __aenter__(ctx_self):
                 pool = await ctx_self.backend._ensure_pool()
+                ctx_self.acquired_pool = pool  # Store reference to THIS pool
                 try:
                     # Use timeout to prevent hanging (default 10s)
                     acquire_timeout = ctx_self.timeout or 10.0
@@ -175,12 +177,24 @@ class PostgresBackend(DatabaseBackend):
                     )
 
             async def __aexit__(ctx_self, exc_type, exc_val, exc_tb):
-                if ctx_self.conn and ctx_self.backend._pool:
-                    try:
-                        await ctx_self.backend._pool.release(ctx_self.conn)
-                    except Exception as e:
-                        logger.warning(f"Error releasing connection: {e}")
+                if ctx_self.conn and ctx_self.acquired_pool:
+                    # Only release to the SAME pool we acquired from
+                    # If pool was recreated, current_pool will differ from acquired_pool
+                    current_pool = ctx_self.backend._pool
+                    if current_pool is ctx_self.acquired_pool:
+                        try:
+                            await ctx_self.acquired_pool.release(ctx_self.conn)
+                        except Exception as e:
+                            logger.warning(f"Error releasing connection: {e}")
+                    else:
+                        # Pool was recreated - connection is orphaned, just close it
+                        logger.debug("Pool was recreated during operation, closing orphan connection")
+                        try:
+                            await ctx_self.conn.close()
+                        except Exception:
+                            pass  # Connection may already be closed
                 ctx_self.conn = None
+                ctx_self.acquired_pool = None
                 return False
 
         return _AcquireContext(self, timeout)

@@ -144,7 +144,7 @@ async def check_reviewer_stuck(session: DialecticSession) -> bool:
         return True
 
 
-@mcp_tool("request_dialectic_review", timeout=10.0)
+@mcp_tool("request_dialectic_review", timeout=10.0, register=False)
 async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Create a dialectic recovery session.
@@ -321,7 +321,7 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
         "note": "Dialectic auto-progress is disabled; submit_thesis/antithesis/synthesis remain archived."
     })
 
-@mcp_tool("get_dialectic_session", timeout=10.0, rate_limit_exempt=True)
+@mcp_tool("get_dialectic_session", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     View historical dialectic sessions (archive).
@@ -521,7 +521,7 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
         )]
 
 
-@mcp_tool("list_dialectic_sessions", timeout=15.0, rate_limit_exempt=True)
+@mcp_tool("list_dialectic_sessions", timeout=15.0, rate_limit_exempt=True, register=False)
 async def handle_list_dialectic_sessions(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     List all dialectic sessions with optional filtering.
@@ -586,3 +586,205 @@ async def handle_list_dialectic_sessions(arguments: Dict[str, Any]) -> Sequence[
                 "related_tools": ["get_dialectic_session", "health_check"]
             }
         )]
+
+
+@mcp_tool("llm_assisted_dialectic", timeout=45.0, register=False)
+async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Run LLM-assisted dialectic recovery when no peer reviewer is available.
+
+    This tool enables single-agent dialectic recovery by using a local LLM
+    as a "synthetic reviewer". It runs the full thesis -> antithesis -> synthesis
+    protocol, generating counterarguments and synthesizing a resolution.
+
+    Use this when:
+    - Agent is stuck/paused and needs recovery
+    - No peer reviewer is available or responding
+    - You want structured reflection on what went wrong
+
+    Args:
+        root_cause: Your understanding of what caused the issue
+        proposed_conditions: List of conditions you propose for recovery
+        reasoning: Your explanation/reasoning (optional)
+
+    Returns:
+        Complete dialectic result with antithesis, synthesis, and recommendation
+    """
+    # Import LLM delegation functions
+    from .llm_delegation import run_full_dialectic, is_llm_available
+
+    # Require registered agent
+    agent_id, error = require_registered_agent(arguments)
+    if error:
+        return [error]
+
+    agent_uuid = arguments.get("_agent_uuid") or agent_id
+
+    # Check LLM availability
+    if not await is_llm_available():
+        return [error_response(
+            "Local LLM (Ollama) not available for dialectic review",
+            error_code="LLM_UNAVAILABLE",
+            error_category="system_error",
+            recovery={
+                "action": "Start Ollama: `ollama serve` or use request_dialectic_review for peer review",
+                "related_tools": ["request_dialectic_review", "health_check"],
+                "workflow": [
+                    "1. Check Ollama: curl http://localhost:11434/api/tags",
+                    "2. Start if needed: ollama serve",
+                    "3. Retry this tool"
+                ]
+            }
+        )]
+
+    # Get thesis components from arguments
+    root_cause = arguments.get("root_cause")
+    proposed_conditions = arguments.get("proposed_conditions", [])
+    reasoning = arguments.get("reasoning", "")
+
+    if not root_cause:
+        return [error_response(
+            "root_cause is required - explain what you think caused the issue",
+            error_code="MISSING_ARGUMENT",
+            error_category="validation_error",
+            recovery={
+                "action": "Provide root_cause: your understanding of what went wrong",
+                "example": {
+                    "root_cause": "High complexity task without sufficient planning",
+                    "proposed_conditions": ["Reduce task complexity", "Add progress checkpoints"],
+                    "reasoning": "The task scope exceeded my capacity to maintain coherence"
+                }
+            }
+        )]
+
+    # Ensure proposed_conditions is a list
+    if isinstance(proposed_conditions, str):
+        proposed_conditions = [proposed_conditions]
+
+    # Build thesis
+    thesis = {
+        "root_cause": root_cause,
+        "proposed_conditions": proposed_conditions,
+        "reasoning": reasoning,
+        "agent_id": agent_uuid,
+        "timestamp": datetime.now().isoformat()
+    }
+
+    # Get agent state for context
+    agent_state = None
+    try:
+        monitor = getattr(mcp_server, "monitors", {}).get(agent_uuid)
+        if monitor:
+            agent_state = {
+                "risk_score": getattr(monitor, "risk_score", None),
+                "coherence": getattr(monitor.state, "coherence", None) if hasattr(monitor, "state") else None,
+                "E": getattr(monitor.state, "E", None) if hasattr(monitor, "state") else None,
+                "I": getattr(monitor.state, "I", None) if hasattr(monitor, "state") else None,
+                "S": getattr(monitor.state, "S", None) if hasattr(monitor, "state") else None,
+                "V": getattr(monitor.state, "V", None) if hasattr(monitor, "state") else None,
+            }
+    except Exception as e:
+        logger.debug(f"Could not get agent state: {e}")
+
+    # Run full dialectic
+    logger.info(f"Running LLM-assisted dialectic for agent {agent_uuid[:8]}...")
+    result = await run_full_dialectic(
+        thesis=thesis,
+        agent_state=agent_state,
+        max_synthesis_rounds=2
+    )
+
+    if not result:
+        return [error_response(
+            "Dialectic process failed - LLM did not respond",
+            error_code="DIALECTIC_FAILED",
+            error_category="system_error",
+            recovery={
+                "action": "Check Ollama status and retry",
+                "related_tools": ["health_check", "call_model"]
+            }
+        )]
+
+    if not result.get("success"):
+        return [error_response(
+            f"Dialectic incomplete: {result.get('error', 'Unknown error')}",
+            error_code="DIALECTIC_INCOMPLETE",
+            error_category="system_error",
+            recovery={
+                "action": "Review partial result and retry with clearer thesis",
+                "partial_result": result
+            }
+        )]
+
+    # Format successful response
+    recommendation = result.get("recommendation", "ESCALATE")
+    synthesis = result.get("synthesis", {})
+
+    response_data = {
+        "success": True,
+        "message": f"Dialectic complete. Recommendation: {recommendation}",
+        "recommendation": recommendation,
+        "thesis": {
+            "root_cause": thesis["root_cause"],
+            "proposed_conditions": thesis["proposed_conditions"]
+        },
+        "antithesis": {
+            "concerns": result.get("antithesis", {}).get("concerns", ""),
+            "counter_reasoning": result.get("antithesis", {}).get("counter_reasoning", ""),
+            "suggested_conditions": result.get("antithesis", {}).get("suggested_conditions", "")
+        },
+        "synthesis": {
+            "agreed_root_cause": synthesis.get("agreed_root_cause", ""),
+            "merged_conditions": synthesis.get("merged_conditions", ""),
+            "reasoning": synthesis.get("reasoning", "")
+        },
+        "next_steps": _get_dialectic_next_steps(recommendation),
+        "_note": "Generated via LLM-assisted dialectic (no peer reviewer required)"
+    }
+
+    # Store as discovery in knowledge graph for learning
+    try:
+        from .llm_delegation import call_local_llm  # Verify import works
+        from src.knowledge_graph import get_knowledge_graph, DiscoveryNode
+
+        graph = await get_knowledge_graph()
+        discovery = DiscoveryNode(
+            agent_id=agent_uuid,
+            summary=f"LLM dialectic: {root_cause[:80]}... → {recommendation}",
+            type="dialectic_synthesis",
+            tags=["dialectic", "llm-assisted", "recovery", recommendation.lower()],
+            details=json.dumps({
+                "thesis": thesis,
+                "antithesis": result.get("antithesis"),
+                "synthesis": synthesis,
+                "recommendation": recommendation
+            }, indent=2)
+        )
+        await graph.store(discovery)
+        response_data["discovery_stored"] = True
+    except Exception as e:
+        logger.debug(f"Could not store dialectic discovery: {e}")
+
+    return success_response(response_data, agent_id=agent_uuid, arguments=arguments)
+
+
+def _get_dialectic_next_steps(recommendation: str) -> List[str]:
+    """Get next steps based on dialectic recommendation."""
+    if recommendation == "RESUME":
+        return [
+            "You can resume work with the agreed conditions",
+            "Call process_agent_update() to log your next action",
+            "Monitor your coherence with get_governance_metrics()"
+        ]
+    elif recommendation == "COOLDOWN":
+        return [
+            "Take a brief pause before resuming",
+            "Review the synthesis reasoning",
+            "When ready, call process_agent_update() with lower complexity"
+        ]
+    else:  # ESCALATE
+        return [
+            "The dialectic suggests human review may be needed",
+            "Consider simplifying your approach",
+            "Use request_dialectic_review() for peer review if available"
+        ]

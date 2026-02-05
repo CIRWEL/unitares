@@ -39,7 +39,7 @@ from config.governance_config import GovernanceConfig
 logger = get_logger(__name__)
 
 
-@mcp_tool("list_agents", timeout=15.0, rate_limit_exempt=True)
+@mcp_tool("list_agents", timeout=15.0, rate_limit_exempt=True, register=False)
 async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextContent]:
     """List all agents currently being monitored with lifecycle metadata and health status
     
@@ -469,7 +469,7 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
         )
 
 
-@mcp_tool("get_agent_metadata", timeout=10.0)
+@mcp_tool("get_agent_metadata", timeout=10.0, register=False)
 async def handle_get_agent_metadata(arguments: Sequence[TextContent]) -> list:
     """Get complete metadata for an agent including lifecycle events, current state, and computed fields.
 
@@ -614,7 +614,7 @@ async def handle_get_agent_metadata(arguments: Sequence[TextContent]) -> list:
     return success_response(metadata_response)
 
 
-@mcp_tool("update_agent_metadata", timeout=10.0)
+@mcp_tool("update_agent_metadata", timeout=10.0, register=False)
 async def handle_update_agent_metadata(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Update agent tags and notes
 
@@ -740,7 +740,7 @@ async def handle_update_agent_metadata(arguments: Dict[str, Any]) -> Sequence[Te
     })
 
 
-@mcp_tool("archive_agent", timeout=15.0)
+@mcp_tool("archive_agent", timeout=15.0, register=False)
 async def handle_archive_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Archive an agent for long-term storage
     
@@ -829,7 +829,7 @@ async def handle_archive_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
     })
 
 
-@mcp_tool("delete_agent", timeout=15.0)
+@mcp_tool("delete_agent", timeout=15.0, register=False)
 async def handle_delete_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Handle delete_agent tool - delete agent and archive data (protected: cannot delete pioneer agents)
     
@@ -1405,7 +1405,7 @@ async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[Te
     return success_response(response_data)
 
 
-@mcp_tool("self_recovery_review", timeout=15.0, hidden=True)  # Use self_recovery(action="review") instead
+@mcp_tool("self_recovery_review", timeout=15.0, register=False)  # Use self_recovery(action="review") instead
 async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Self-reflection recovery - lightweight alternative to dialectic.
@@ -1620,6 +1620,12 @@ def _detect_stuck_agents(
         
         # Skip if not active
         if meta.status != "active":
+            continue
+
+        # Skip autonomous/embodied agents - they operate on different timescales
+        # (e.g., Lumen, creatures) and shouldn't be flagged as "stuck" by timeout
+        agent_tags = getattr(meta, "tags", []) or []
+        if any(tag in agent_tags for tag in ["autonomous", "embodied", "creature", "anima"]):
             continue
 
         # Skip agents with too few updates (likely orphan/test agents)

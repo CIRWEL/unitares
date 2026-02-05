@@ -944,64 +944,18 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         session_key = f"{base_session_key}:{normalized_model}"
         logger.info(f"[IDENTITY] Using model-specific session_key: {session_key} (model_type={model_type})")
     
-    # STEP 2: Check for existing identity (unless force_new or resume)
+    # STEP 2: Check for existing identity (unless force_new)
+    # Auto-resume existing identity by default (no prompt needed)
     existing_identity = None
-    if not force_new and not resume:
+    if not force_new:
         existing_identity = await resolve_session_identity(session_key, persist=False)
         if not existing_identity.get("created"):
-            # EXISTING AGENT FOUND - prompt for resume vs new
+            # EXISTING AGENT FOUND - auto-resume
             agent_uuid = existing_identity.get("agent_uuid")
             agent_id = existing_identity.get("agent_id", agent_uuid)
             label = existing_identity.get("label")
-            persisted = existing_identity.get("persisted", False)
-            
-            # Get agent metadata for prompt
-            agent_metadata = {}
-            if persisted:
-                try:
-                    db = get_db()
-                    if hasattr(db, "init"):
-                        await db.init()
-                    agent = await db.get_agent(agent_uuid)
-                    if agent:
-                        from datetime import datetime, timezone
-                        last_update = getattr(agent, "last_update", None) or getattr(agent, "created_at", None)
-                        update_count = getattr(agent, "update_count", 0)
-                        agent_metadata = {
-                            "last_active": last_update.isoformat() if last_update else None,
-                            "update_count": update_count,
-                        }
-                except Exception as e:
-                    logger.debug(f"Could not fetch agent metadata: {e}")
-            
-            # Return prompt instead of silently resuming
-            return success_response({
-                "found_existing": True,
-                "existing_agent": {
-                    "uuid": agent_uuid,
-                    "agent_id": agent_id,
-                    "name": label,
-                    **agent_metadata
-                },
-                "prompt": "Found existing identity. Resume or create new?",
-                "options": {
-                    "resume": "identity(resume=true)",
-                    "new": "identity(force_new=true)"
-                },
-                "message": f"Existing agent '{label or agent_id}' found. Use resume=true to continue, or force_new=true to create a new identity."
-            })
-    
-    # Handle resume flag (explicit consent)
-    if resume:
-        if not existing_identity:
-            existing_identity = await resolve_session_identity(session_key, persist=False)
-        if existing_identity and not existing_identity.get("created"):
-            # User explicitly chose to resume - return existing identity
-            agent_uuid = existing_identity.get("agent_uuid")
-            agent_id = existing_identity.get("agent_id", agent_uuid)
-            label = existing_identity.get("label")
-            logger.info(f"[IDENTITY] Resuming existing agent {agent_uuid[:8]}... (explicit resume=true)")
-            
+            logger.info(f"[IDENTITY] Auto-resuming existing agent {agent_uuid[:8]}...")
+
             # Update label if requested
             if arguments.get("name") and arguments.get("name") != label:
                 success = await set_agent_label(agent_uuid, arguments.get("name"), session_key=session_key)
@@ -1013,7 +967,8 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
                 "agent_id": agent_id,
                 "display_name": label,
                 "resumed": True,
-                "message": f"Resumed existing identity '{label or agent_id}'"
+                "message": f"Welcome back! Resumed identity '{label or agent_id}'",
+                "hint": "Use force_new=true to create a new identity instead"
             })
 
     # Call simplified handler with model_type for agent_id generation
@@ -1228,58 +1183,18 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     # STEP 1: Check if an identity already exists for this session (base key)
     # This prevents forking when model_type is passed for an existing agent
     # Skip this check if force_new is requested
+    # Auto-resume existing identity by default (no prompt needed)
     existing_identity = None
     if not force_new:
         existing_identity = await resolve_session_identity(base_session_key, persist=False)
         if not existing_identity.get("created"):
-            # EXISTING AGENT FOUND
+            # EXISTING AGENT FOUND - auto-resume
             agent_uuid = existing_identity.get("agent_uuid")
             agent_id = existing_identity.get("agent_id", agent_uuid)
             label = existing_identity.get("label")
-            persisted = existing_identity.get("persisted", False)
-            
-            # If resume=true, skip the prompt and continue to resume
-            if resume:
-                logger.info(f"[ONBOARD] Resuming existing agent {agent_uuid[:8]}... (explicit resume=true)")
-                # Fall through to the resume handling below
-                pass
-            else:
-                # Prompt for resume vs new (only if resume not specified)
-                # Get agent metadata for prompt
-                agent_metadata = {}
-                if persisted:
-                    try:
-                        db = get_db()
-                        if hasattr(db, "init"):
-                            await db.init()
-                        agent = await db.get_agent(agent_uuid)
-                        if agent:
-                            from datetime import datetime, timezone
-                            last_update = getattr(agent, "last_update", None) or getattr(agent, "created_at", None)
-                            update_count = getattr(agent, "update_count", 0)
-                            agent_metadata = {
-                                "last_active": last_update.isoformat() if last_update else None,
-                                "update_count": update_count,
-                            }
-                    except Exception as e:
-                        logger.debug(f"Could not fetch agent metadata: {e}")
-                
-                # Return prompt instead of silently resuming
-                return success_response({
-                    "found_existing": True,
-                    "existing_agent": {
-                        "uuid": agent_uuid,
-                        "agent_id": agent_id,
-                        "name": label,
-                        **agent_metadata
-                    },
-                    "prompt": "Found existing identity. Resume or create new?",
-                    "options": {
-                        "resume": "onboard(resume=true) or identity(resume=true)",
-                        "new": "onboard(force_new=true) or identity(force_new=true)"
-                    },
-                    "message": f"Existing agent '{label or agent_id}' found. Use resume=true to continue, or force_new=true to create a new identity."
-                })
+            logger.info(f"[ONBOARD] Auto-resuming existing agent {agent_uuid[:8]}...")
+            # Mark for resume flow below
+            resume = True
         else:
             # NEW AGENT - include model in session key for fleet tracking
             session_key = base_session_key

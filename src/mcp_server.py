@@ -724,16 +724,20 @@ TOOLS_NEEDING_SESSION_INJECTION = {
 
 def auto_register_all_tools():
     """
-    Auto-register all tools from tool_schemas.py with typed signatures.
+    Auto-register tools from tool_schemas.py with typed signatures.
+
+    Only registers tools that are in the decorator registry (register=True).
+    Tools with register=False in @mcp_tool decorator are skipped.
 
     This generates wrappers with explicit parameter signatures from JSON schemas,
     allowing FastMCP to infer correct schemas without kwargs wrapping.
-    
+
     Benefits:
     - Claude.ai sends parameters directly (no kwargs wrapper needed)
     - CLI's kwargs wrapping still works (dispatch_tool unwraps)
     - Proper client autocomplete from typed signatures
-    
+    - Consolidated tools reduce cognitive load (90 → 49 tools)
+
     Just add the tool to:
     1. tool_schemas.py (definition)
     2. mcp_handlers/*.py (implementation with @mcp_tool)
@@ -742,12 +746,23 @@ def auto_register_all_tools():
     """
     from src.tool_schemas import get_tool_definitions
     from src.mcp_handlers.wrapper_generator import create_typed_wrapper
+    from src.mcp_handlers.decorators import get_tool_registry
 
     tools = get_tool_definitions()
     registered_count = 0
+    skipped_count = 0
+
+    # Get tools that are registered (register=True in @mcp_tool decorator)
+    registered_tools = get_tool_registry()
 
     for tool in tools:
         tool_name = tool.name
+
+        # Skip tools not in registry (register=False in decorator)
+        if tool_name not in registered_tools:
+            skipped_count += 1
+            continue
+
         description = tool.description.split("\n")[0] if tool.description else f"Tool: {tool_name}"
         input_schema = getattr(tool, 'inputSchema', {}) or {}
         inject_session = tool_name in TOOLS_NEEDING_SESSION_INJECTION
@@ -765,11 +780,11 @@ def auto_register_all_tools():
             # Register with FastMCP - it will infer schema from signature
             mcp.tool(description=description, structured_output=False)(wrapper)
             registered_count += 1
-            
+
         except Exception as e:
             logger.warning(f"Failed to auto-register tool {tool_name}: {e}")
 
-    logger.info(f"[AUTO_REGISTER] Registered {registered_count} tools with typed signatures")
+    logger.info(f"[AUTO_REGISTER] Registered {registered_count} tools, skipped {skipped_count} (consolidated)")
     return registered_count
 
 # Call auto-registration
@@ -2314,7 +2329,43 @@ async def main():
                 "path": str(dashboard_path)
             }, status_code=404)
         
+        # Dashboard static files (utils.js, components.js)
+        async def http_dashboard_static(request):
+            """Serve dashboard static files"""
+            file_path = request.path_params.get("file", "")
+            if not file_path or ".." in file_path:
+                return JSONResponse({"error": "Invalid file path"}, status_code=400)
+            
+            # Only allow specific files for security
+            allowed_files = ["utils.js", "components.js"]
+            if file_path not in allowed_files:
+                return JSONResponse({
+                    "error": "File not allowed",
+                    "requested": file_path,
+                    "allowed": allowed_files
+                }, status_code=403)
+            
+            static_path = Path(__file__).parent.parent / "dashboard" / file_path
+            if static_path.exists() and static_path.is_file():
+                # Determine content type
+                content_type = "application/javascript"
+                if file_path.endswith(".css"):
+                    content_type = "text/css"
+                elif file_path.endswith(".json"):
+                    content_type = "application/json"
+                
+                return Response(
+                    content=static_path.read_text(),
+                    media_type=content_type
+                )
+            return JSONResponse({
+                "error": "File not found",
+                "path": str(static_path)
+            }, status_code=404)
+        
         # Register HTTP endpoints
+        # IMPORTANT: Static file route must come BEFORE dashboard route to match /dashboard/utils.js, etc.
+        app.routes.append(Route("/dashboard/{file}", http_dashboard_static, methods=["GET"]))
         app.routes.append(Route("/dashboard", http_dashboard, methods=["GET"]))
         app.routes.append(Route("/", http_dashboard, methods=["GET"]))  # Root also serves dashboard
         app.routes.append(Route("/v1/tools", http_list_tools, methods=["GET"]))

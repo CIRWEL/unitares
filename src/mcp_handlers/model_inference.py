@@ -82,19 +82,21 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     # Get optional parameters
     model = arguments.get("model", "auto")  # auto, hf, gemini-flash, llama-3.1-8b, etc.
     task_type = arguments.get("task_type", "reasoning")  # reasoning, generation, analysis
-    max_tokens = arguments.get("max_tokens", 500)
-    temperature = arguments.get("temperature", 0.7)
+    max_tokens = int(arguments.get("max_tokens", 500))  # Must be int for Ollama
+    temperature = float(arguments.get("temperature", 0.7))
     privacy = arguments.get("privacy", "auto")  # auto, local, cloud
     provider = arguments.get("provider", "auto")  # auto, hf, gemini, ollama
     
     # Privacy routing: Force local if requested
-    if privacy == "local":
+    if privacy == "local" or provider == "ollama":
         # Route to Ollama (local)
         base_url = "http://localhost:11434/v1"  # Ollama OpenAI-compatible API
-        model = "llama-3.1-8b"
-        api_key = None  # Ollama doesn't require API key
+        # Use specified model or default to llama3 (common Ollama model)
+        if model == "auto" or model == "llama-3.1-8b":
+            model = "llama3:70b"  # Default Ollama model (adjust based on what's installed)
+        api_key = "ollama"  # Dummy key - Ollama ignores it but OpenAI SDK requires non-None
         provider = "ollama"
-        logger.info(f"Privacy mode: local - routing to Ollama")
+        logger.info(f"Privacy mode: local - routing to Ollama with model {model}")
     elif provider == "hf" or (provider == "auto" and (model.startswith("deepseek-ai/") or model.startswith("openai/gpt-oss") or model.startswith("hf:"))):
         # Hugging Face Inference Providers (free tier, OpenAI-compatible)
         base_url = "https://router.huggingface.co/v1"
@@ -149,39 +151,61 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             model = "gemini-flash"
         logger.info(f"Using Google Gemini: {model}")
     elif provider == "auto":
-        # Auto-select: Try HF first (free tier), then Gemini, then fallback
-        hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
-        if hf_token:
-            # Prefer HF Inference Providers (free tier, many models)
-            base_url = "https://router.huggingface.co/v1"
-            api_key = hf_token
-            model = "deepseek-ai/DeepSeek-R1:fastest" if model == "auto" else model
-            if ":" not in model and not model.startswith("deepseek-ai/") and not model.startswith("openai/gpt-oss"):
-                model = f"{model}:fastest"
-            logger.info(f"Auto-selected Hugging Face Inference Providers: {model}")
+        # Auto-select: Try Ollama first (local, free), then Gemini, then HF
+        # Check if Ollama is available
+        ollama_available = False
+        try:
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.5)
+            result = sock.connect_ex(('localhost', 11434))
+            sock.close()
+            ollama_available = (result == 0)
+        except Exception:
+            pass
+
+        if ollama_available:
+            # Prefer Ollama (local, free, no token needed)
+            base_url = "http://localhost:11434/v1"
+            api_key = "ollama"
+            model = os.getenv("UNITARES_LLM_MODEL", "gemma3:27b") if model == "auto" else model
+            provider = "ollama"
+            logger.info(f"Auto-selected Ollama (local): {model}")
         else:
-            # Fallback to Gemini or ngrok.ai gateway
-            base_url = os.getenv("NGROK_AI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta")
-            api_key = os.getenv("GOOGLE_AI_API_KEY") or os.getenv("NGROK_API_KEY") or os.getenv("OPENAI_API_KEY")
-            if not api_key:
+            # Fallback to Gemini or HF
+            google_key = os.getenv("GOOGLE_AI_API_KEY") or os.getenv("NGROK_API_KEY")
+            hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
+
+            if google_key:
+                base_url = os.getenv("NGROK_AI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta")
+                api_key = google_key
+                model = "gemini-flash" if model == "auto" else model
+                provider = "gemini"
+                logger.info(f"Auto-selected Google Gemini: {model}")
+            elif hf_token:
+                base_url = "https://router.huggingface.co/v1"
+                api_key = hf_token
+                model = "deepseek-ai/DeepSeek-R1:fastest" if model == "auto" else model
+                if ":" not in model and not model.startswith("deepseek-ai/") and not model.startswith("openai/gpt-oss"):
+                    model = f"{model}:fastest"
+                provider = "hf"
+                logger.info(f"Auto-selected Hugging Face: {model}")
+            else:
                 return [error_response(
-                    "No provider configured. Set HF_TOKEN, GOOGLE_AI_API_KEY, or NGROK_API_KEY",
+                    "No provider available. Ollama not running and no cloud API keys configured.",
                     error_code="MISSING_CONFIG",
                     error_category="system_error",
                     recovery={
-                        "action": "Set at least one provider token/key",
+                        "action": "Start Ollama (recommended) or configure cloud API keys",
                         "related_tools": ["health_check"],
                         "workflow": [
-                            "1. Get HF token: https://huggingface.co/settings/tokens (recommended)",
+                            "1. Install & run Ollama: ollama serve (recommended - free, local)",
                             "2. Or get Google key: https://aistudio.google.com/app/apikey",
-                            "3. Set: export HF_TOKEN=your_token (or GOOGLE_AI_API_KEY=your_key)",
-                            "4. Restart MCP server",
-                            "5. Retry call_model tool"
+                            "3. Or get HF token: https://huggingface.co/settings/tokens",
+                            "4. Retry call_model tool"
                         ]
                     }
                 )]
-            model = "gemini-flash" if model == "auto" else model
-            logger.info(f"Auto-selected provider: {model}")
     else:
         # Default: ngrok.ai gateway or OpenAI-compatible endpoint
         base_url = os.getenv("NGROK_AI_ENDPOINT", "https://api.openai.com/v1")

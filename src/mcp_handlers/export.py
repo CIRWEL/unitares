@@ -20,7 +20,7 @@ from .shared import get_mcp_server
 mcp_server = get_mcp_server()
 
 
-@mcp_tool("get_system_history", timeout=20.0)
+@mcp_tool("get_system_history", timeout=20.0, register=False)
 async def handle_get_system_history(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Export complete governance history for an agent"""
     # PROACTIVE GATE: Require agent to be registered
@@ -48,7 +48,7 @@ async def handle_get_system_history(arguments: Dict[str, Any]) -> Sequence[TextC
     })
 
 
-@mcp_tool("export_to_file", timeout=45.0)
+@mcp_tool("export_to_file", timeout=45.0, register=False)
 async def handle_export_to_file(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Export governance history to a file in the server's data directory"""
     # PROACTIVE GATE: Require agent to be registered

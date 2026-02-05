@@ -17,7 +17,7 @@ from .shared import get_mcp_server
 mcp_server = get_mcp_server()
 
 
-@mcp_tool("observe_agent", timeout=15.0)
+@mcp_tool("observe_agent", timeout=15.0, register=False)
 async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Observe another agent's governance state with pattern analysis"""
     # PROACTIVE GATE: Require target agent to be registered before observing
@@ -69,7 +69,7 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
     return success_response(response_data)
 
 
-@mcp_tool("compare_agents", timeout=15.0)
+@mcp_tool("compare_agents", timeout=15.0, register=False)
 async def handle_compare_agents(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Compare governance patterns across multiple agents"""
     # Reload metadata to get latest state (handles multi-process sync) - non-blocking
@@ -196,7 +196,7 @@ async def handle_compare_agents(arguments: Dict[str, Any]) -> Sequence[TextConte
     return success_response(response_data)
 
 
-@mcp_tool("compare_me_to_similar", timeout=15.0)
+@mcp_tool("compare_me_to_similar", timeout=15.0, register=False)
 async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Compare yourself to similar agents automatically - finds similar agents and compares
     
@@ -446,7 +446,7 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
     return success_response(comparison_data)
 
 
-@mcp_tool("detect_anomalies", timeout=15.0)
+@mcp_tool("detect_anomalies", timeout=15.0, register=False)
 async def handle_detect_anomalies(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Detect anomalies across agents"""
     import asyncio
@@ -544,7 +544,7 @@ async def handle_detect_anomalies(arguments: Dict[str, Any]) -> Sequence[TextCon
     })
 
 
-@mcp_tool("aggregate_metrics", timeout=15.0)
+@mcp_tool("aggregate_metrics", timeout=15.0, register=False)
 async def handle_aggregate_metrics(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get fleet-level health overview"""
     import numpy as np

@@ -24,21 +24,24 @@ from src.knowledge_graph import get_knowledge_graph, DiscoveryNode, ResponseTo
 from config.governance_config import config
 from src.logging_utils import get_logger
 from src.perf_monitor import record_ms
+from .llm_delegation import synthesize_results
 
 logger = get_logger(__name__)
 
 
-def _check_display_name_required(agent_id: str, arguments: Dict[str, Any]) -> Optional[TextContent]:
+def _check_display_name_required(agent_id: str, arguments: Dict[str, Any]) -> tuple[Optional[TextContent], Optional[str]]:
     """
     Check if agent has a meaningful display_name set for KG attribution.
 
-    UX FIX (Dec 2025): Require display_name for KG writes.
-    Makes discoveries attributable and human-readable. Without a display_name,
-    KG entries show as anonymous UUIDs which defeats the purpose of attribution.
+    UX FIX (Feb 2026): Auto-generate display_name instead of blocking.
+    If no meaningful display_name is set, auto-generates one and returns a warning.
+    This allows agents to contribute to KG immediately without the name-setting ritual.
 
     Returns:
-        None if display_name is set (OK to proceed)
-        TextContent error if display_name is missing (prompt to set one)
+        Tuple of (error_if_any, warning_message_if_generated)
+        - (None, None) if display_name is set and meaningful
+        - (None, "warning message") if display_name was auto-generated
+        - Error only returned for critical failures (rare)
     """
     try:
         from .shared import get_mcp_server
@@ -74,28 +77,30 @@ def _check_display_name_required(agent_id: str, arguments: Dict[str, Any]) -> Op
                 is_auto_pattern = display_name.startswith("auto_") or display_name.startswith("Agent_")
 
                 if not is_uuid_pattern and not is_auto_pattern:
-                    return None  # Has a real display_name, OK to proceed
+                    return None, None  # Has a real display_name, OK to proceed
 
-        # No meaningful display_name - prompt to set one
-        return error_response(
-            "Please set a display name before writing to the Knowledge Graph.",
-            error_code="DISPLAY_NAME_REQUIRED",
-            error_category="identity_incomplete",
-            recovery={
-                "action": "Call identity(name='YourName') to set your display name",
-                "example": "identity(name='Ariadne') or identity(name='Claude_Explorer')",
-                "related_tools": ["identity", "onboard"],
-                "why": "Display names make KG entries attributable. Without one, your discoveries show as anonymous UUIDs.",
-                "workflow": [
-                    "1. Call identity(name='YourChosenName')",
-                    "2. Then retry this KG write"
-                ]
-            }
+        # No meaningful display_name - auto-generate instead of blocking
+        # UX FIX (Feb 2026): Don't block first contribution, just warn
+        auto_name = f"Agent_{(bound_uuid or agent_id)[:8]}"
+
+        # Try to set the auto-generated name in metadata
+        if meta and bound_uuid:
+            try:
+                meta.label = auto_name
+                meta.display_name = auto_name
+                mcp_server.save_metadata()  # Persist for future use
+            except Exception as e:
+                logger.debug(f"Could not save auto-generated display_name: {e}")
+
+        warning = (
+            f"KG entry attributed to '{auto_name}' (auto-generated). "
+            f"Call identity(name='YourName') to set a personalized name."
         )
+        return None, warning
 
     except Exception as e:
         logger.debug(f"Could not check display_name: {e}")
-        return None  # Don't block on check failures
+        return None, None  # Don't block on check failures
 
 
 def _resolve_agent_display(agent_id: str) -> Dict[str, str]:
@@ -136,7 +141,7 @@ def _resolve_agent_display(agent_id: str) -> Dict[str, str]:
     return {"agent_id": agent_id, "display_name": agent_id}
 
 
-@mcp_tool("store_knowledge_graph", timeout=20.0)
+@mcp_tool("store_knowledge_graph", timeout=20.0, register=False)
 async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Store knowledge discovery/discoveries in graph - fast, non-blocking, transparent
 
@@ -149,17 +154,20 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
 
     # REDUCE FRICTION (Dec 2025): Allow unregistered agents to write low/medium notes
     # Only enforce strict registration and display name for high/critical severity (security)
+    # UX FIX (Feb 2026): Auto-generate display_name instead of blocking
     raw_severity = str(arguments.get("severity", "low")).lower()
+    display_name_warning = None  # Track if we auto-generated a name
+
     if raw_severity in ["high", "critical"]:
         agent_id, error = require_registered_agent(arguments)
         if not error:
-            # Require meaningful name for high-severity
-            display_name_error = _check_display_name_required(agent_id, arguments)
+            # Check display_name (auto-generates if missing, returns warning)
+            display_name_error, display_name_warning = _check_display_name_required(agent_id, arguments)
             if display_name_error:
                 return [display_name_error]
     else:
         agent_id, error = require_agent_id(arguments)
-    
+
     if error:
         return [error]
 
@@ -367,6 +375,10 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
             "discovery": discovery.to_dict(include_details=False)  # Summary only in response
         }
 
+        # UX FIX (Feb 2026): Include warning if display_name was auto-generated
+        if display_name_warning:
+            response["_name_hint"] = display_name_warning
+
         # Add truncation warning if content was truncated (v2.5.0+)
         if truncation_info:
             response["_truncated"] = truncation_info
@@ -414,6 +426,10 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         limit = arguments.get("limit", config.KNOWLEDGE_QUERY_DEFAULT_LIMIT)
         include_details = arguments.get("include_details", False)
         include_provenance = arguments.get("include_provenance", False)  # Merged from query_provenance
+
+        # LLM delegation: synthesize results via local model
+        # When enabled, uses Ollama to summarize key patterns from multiple discoveries
+        synthesize = arguments.get("synthesize", False)
 
         # Optional full-text query (SQLite FTS5 if available; bounded substring scan fallback for JSON backend)
         # Accept both "query" and "text" as parameter names for better UX
@@ -808,14 +824,35 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 "2) Search by discovery_type: discovery_type='insight' "
                 "3) Use single keywords instead of phrases"
             )
-        
+
+        # LLM DELEGATION: Synthesize results via local model when requested
+        # Threshold: Only synthesize when there are enough results to make it worthwhile
+        SYNTHESIS_THRESHOLD = 3  # Minimum discoveries to trigger synthesis
+        if synthesize and len(discovery_list) >= SYNTHESIS_THRESHOLD:
+            try:
+                synthesis_result = await synthesize_results(
+                    discoveries=discovery_list,
+                    query=query_text,
+                    max_discoveries=10,  # Cap at 10 for prompt size
+                    max_tokens=400
+                )
+                if synthesis_result:
+                    response_data["synthesis"] = synthesis_result
+                    logger.debug(f"Knowledge synthesis generated for {len(discovery_list)} discoveries")
+            except Exception as e:
+                # Non-blocking: If synthesis fails, still return results
+                logger.debug(f"Synthesis skipped: {e}")
+                response_data["_synthesis_note"] = "Synthesis unavailable (local LLM not responding)"
+        elif synthesize and len(discovery_list) < SYNTHESIS_THRESHOLD:
+            response_data["_synthesis_note"] = f"Synthesis skipped: fewer than {SYNTHESIS_THRESHOLD} results"
+
         return success_response(response_data, arguments=arguments)
         
     except Exception as e:
         return [error_response(f"Failed to search knowledge: {str(e)}")]
 
 
-@mcp_tool("get_knowledge_graph", timeout=15.0, rate_limit_exempt=True)
+@mcp_tool("get_knowledge_graph", timeout=15.0, rate_limit_exempt=True, register=False)
 async def handle_get_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get all knowledge for an agent - summaries only (use get_discovery_details for full content)"""
     # SECURITY FIX: Verify agent_id is registered (prevents phantom agent_ids)
@@ -873,7 +910,7 @@ async def handle_get_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Text
         return [error_response(f"Failed to retrieve knowledge: {str(e)}")]
 
 
-@mcp_tool("list_knowledge_graph", timeout=10.0, rate_limit_exempt=True)
+@mcp_tool("list_knowledge_graph", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_list_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """List knowledge graph statistics - full transparency"""
     try:
@@ -891,7 +928,7 @@ async def handle_list_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Tex
         return [error_response(f"Failed to list knowledge: {str(e)}")]
 
 
-@mcp_tool("update_discovery_status_graph", timeout=10.0)
+@mcp_tool("update_discovery_status_graph", timeout=10.0, register=False)
 async def handle_update_discovery_status_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Update discovery status - fast graph update
     
@@ -978,7 +1015,7 @@ async def handle_update_discovery_status_graph(arguments: Dict[str, Any]) -> Seq
         return [error_response(f"Failed to update discovery: {str(e)}")]
 
 
-@mcp_tool("get_discovery_details", timeout=10.0, rate_limit_exempt=True)
+@mcp_tool("get_discovery_details", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_get_discovery_details(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get full details for a specific discovery with optional pagination and response chain.
 
@@ -1419,18 +1456,23 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         # v2.5.3: Include agent display info
         agent_display = arguments.get("_agent_display") or _resolve_agent_display(agent_id)
 
+        # UX FIX (Feb 2026): Clarify visibility - notes are shared and discoverable
         return success_response({
             "message": f"Note saved",
             "note_id": note.id,
             "agent": agent_display,
-            "note": note.to_dict(include_details=False)
+            "note": note.to_dict(include_details=False),
+            # Clarify visibility for agent understanding
+            "visibility": "shared",
+            "discoverable": True,
+            "_visibility_note": "Notes are shared and searchable by other agents. Use response_to to reply to discoveries.",
         }, arguments=arguments)
 
     except Exception as e:
         return [error_response(f"Failed to leave note: {str(e)}")]
 
 
-@mcp_tool("cleanup_knowledge_graph", timeout=60.0)
+@mcp_tool("cleanup_knowledge_graph", timeout=60.0, register=False)
 async def handle_cleanup_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Run knowledge graph lifecycle cleanup.
 
@@ -1461,7 +1503,7 @@ async def handle_cleanup_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[
         return [error_response(f"Failed to run lifecycle cleanup: {str(e)}")]
 
 
-@mcp_tool("get_lifecycle_stats", timeout=30.0, rate_limit_exempt=True)
+@mcp_tool("get_lifecycle_stats", timeout=30.0, rate_limit_exempt=True, register=False)
 async def handle_get_lifecycle_stats(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get knowledge graph lifecycle statistics.
 

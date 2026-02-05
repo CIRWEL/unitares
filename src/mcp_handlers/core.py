@@ -292,6 +292,14 @@ async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequenc
                 coherence_status = '🔴 low'
             risk_status = '🟢 low' if risk_score is not None and risk_score < RISK_THRESHOLD_MEDIUM else ('🟡 medium' if risk_score is not None and risk_score < RISK_THRESHOLD_HIGH else '🔴 high' if risk_score is not None else '⚪ unknown')
 
+        # Format void with more precision - small non-zero values are meaningful
+        void_raw = metrics.get('V')
+        if void_raw is not None and void_raw != 0:
+            # Show 6 decimals for small non-zero values to make drift visible
+            void_display = round(void_raw, 6)
+        else:
+            void_display = 0.0 if void_raw == 0 else void_raw
+
         lite_metrics = {
             'agent_id': agent_id,
             'status': status_display,
@@ -301,7 +309,7 @@ async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequenc
             'E': {'value': metrics.get('E'), 'range': '0-1', 'note': 'Energy capacity'},
             'I': {'value': metrics.get('I'), 'range': '0-1', 'note': 'Information integrity'},
             'S': {'value': metrics.get('S'), 'range': '0-1', 'ideal': '<0.2', 'note': 'Entropy (lower=better)'},
-            'V': {'value': metrics.get('V'), 'range': '0-1', 'ideal': '<0.1', 'note': 'Void (lower=better)'},
+            'V': {'value': void_display, 'range': '0-1', 'ideal': '<0.1', 'note': 'Void (lower=better)'},
             # Key metrics with thresholds
             'coherence': {
                 'value': coherence,
@@ -485,12 +493,19 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
         task_type: "divergent" (exploring) or "convergent" (focused)
         complexity: 0.0-1.0 how complex was this work
         confidence: 0.0-1.0 how confident are you
+        lite: If true, returns minimal response (action + margin only). Alias for response_mode='minimal'
+        response_mode: 'minimal' (action only), 'compact' (brief metrics), 'standard' (interpreted), 'full' (everything), 'auto' (adapts to health - default)
 
     No api_key needed - identity is bound to session via UUID.
     """
     # MAGNET PATTERN: Accept fuzzy inputs (text, message, work → response_text)
     from .validators import apply_param_aliases
     arguments = apply_param_aliases("process_agent_update", arguments)
+
+    # LITE MODE SHORTHAND: lite=true → response_mode='minimal' for consistency with other tools
+    if arguments.get("lite") in (True, "true", "1", 1):
+        if not arguments.get("response_mode"):  # Don't override explicit response_mode
+            arguments["response_mode"] = "minimal"
 
     # DEBUG: Log raw arguments keys to detect MCP boundary stripping
     logger.info(f"[SESSION_DEBUG] process_agent_update() entry: args_keys={list(arguments.keys()) if arguments else []}")

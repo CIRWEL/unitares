@@ -29,64 +29,62 @@ MINIMAL_MODE_TOOLS: Set[str] = {
 
 # Core/essential tools for lite mode (optimized for local models)
 # THIS IS THE SINGLE SOURCE OF TRUTH - admin.py imports from here
+# Updated Feb 2026: Use consolidated tools to reduce cognitive load
 LITE_MODE_TOOLS: Set[str] = {
     # Core governance
     "process_agent_update",       # Log agent work
     "get_governance_metrics",     # Check agent state
-    "simulate_update",            # Test potential updates
 
     # Identity (streamlined - Dec 2025)
     "onboard",                    # 🚀 Portal tool - call this FIRST
     "identity",                   # Primary identity tool (auto-creates on first call)
-    "list_agents",                # View all agents
+
+    # Consolidated tools (Feb 2026)
+    "agent",                      # Agent lifecycle (list/get/update/archive/delete)
+    "knowledge",                  # Knowledge graph (store/search/get/list/update/note/cleanup/stats)
+    "observe",                    # Observability (agent/compare/similar/anomalies/aggregate)
+    "pi",                         # Pi/Lumen operations (health/context/display/say/query/etc)
+    "dialectic",                  # Dialectic (request/get/list/llm)
+    "calibration",                # Calibration (check/update/backfill/rebuild)
+    "config",                     # Config (get/set thresholds)
+    "export",                     # Export (history/file)
 
     # System health
     "health_check",               # System status
-    "get_server_info",            # Server information
-    "get_connection_status",      # Verify MCP connection and tool availability
     "list_tools",                 # See available tools
     "describe_tool",              # Pull full tool details on demand
-    "debug_request_context",      # Debug identity binding issues
 
-    # Data access
-    "get_system_history",         # View agent history
-    "export_to_file",             # Export data
-
-    # Knowledge graph (read + write)
-    "search_knowledge_graph",     # Search discoveries
-    "store_knowledge_graph",      # Record discoveries
+    # Convenient shortcuts (kept for discoverability)
+    "search_knowledge_graph",     # Direct search (common operation)
     "leave_note",                 # Quick notes
+    "call_model",                 # LLM access
 }
 
 # Operator read-only mode: Observability and detection tools for central operator agent
 # Used by operator agent for monitoring, stuck detection, and reporting (Phase 1)
+# Updated Feb 2026: Use consolidated tools
 OPERATOR_READONLY_MODE_TOOLS: Set[str] = {
-    # Core observability
-    "list_agents",                # View all agents
-    "get_agent_metadata",         # Get agent details
-    "observe_agent",              # View agent state
+    # Consolidated tools
+    "agent",                      # Agent lifecycle (list/get/update/archive/delete)
+    "observe",                    # Observability (agent/compare/similar/anomalies/aggregate)
+    "knowledge",                  # Knowledge graph operations
+    "calibration",                # Calibration checks
+
+    # Specialized detection (keep separate)
     "detect_stuck_agents",        # Essential: detect stuck agents
-    
+
     # Governance metrics
     "get_governance_metrics",     # Check agent state
-    "detect_anomalies",           # Anomaly detection
     "get_telemetry_metrics",      # System telemetry
-    
-    # Knowledge graph (read-only)
-    "search_knowledge_graph",     # Search discoveries
-    "get_discovery_details",      # Get discovery details
-    "list_knowledge_graph",       # Overview statistics
-    "get_lifecycle_stats",        # KG lifecycle metrics
-    
+
     # System health
     "health_check",               # System status
     "get_workspace_health",       # Workspace health
-    "get_tool_usage_stats",       # Tool usage statistics
-    
+
     # Identity (for operator itself)
     "identity",                   # Check/set operator identity
     "onboard",                    # Operator onboarding
-    
+
     # Discovery tools (always available)
     "list_tools",                 # See available tools
     "describe_tool",              # Get tool details
