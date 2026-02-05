@@ -8,7 +8,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                    MCP Server (mcp_server.py)                   │
 │  - Streamable HTTP transport                                    │
-│  - ~79 tools (run verify script for exact count)                │
+│  - 85+ tools (run verify script for exact count)                │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Handlers (mcp_handlers/)                      │
 │  - core.py: process_agent_update, get_governance_metrics        │
@@ -16,11 +16,10 @@
 │  - knowledge_graph.py: KG storage with agent_id attribution     │
 │  - admin.py: health_check, list_tools, etc.                     │
 ├─────────────────────────────────────────────────────────────────┤
-│                    Identity Layer (v2.5.4)                       │
-│  - UUID: Internal session binding (never exposed in KG)         │
-│  - agent_id: Model+date format - stored in KG, visible to all   │
-│  - display_name: User-chosen name ("birth certificate")         │
-│  - label: Nickname (casual, can change)                         │
+│                    Identity Layer (v2.5.5)                       │
+│  - UUID: Internal session binding (hidden from agents)          │
+│  - agent_id: Model+date format - auto-generated, in KG          │
+│  - name: User-chosen via identity(name="...")                   │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Database Layer                                │
 │  - PostgreSQL: identities, sessions, EISV state (primary)       │
@@ -92,31 +91,31 @@ if isinstance(kwargs, str):
 ```
 See `mcp_handlers/__init__.py:dispatch_tool()` for the fix.
 
-### Four-Tier Identity Model (v2.5.4)
+### Identity Model (v2.5.5)
+
+**Simple: 2 visible layers for agents**
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │ Layer         │ Example                      │ Purpose          │
 ├───────────────┼──────────────────────────────┼──────────────────┤
-│ UUID          │ a1b2c3d4-e5f6-...            │ Internal binding │
-│ agent_id      │ Claude_Opus_4_20251227       │ KG storage       │
-│ display_name  │ "Doc Writer"                 │ Birth certificate│
-│ label         │ "Opus"                       │ Casual nickname  │
+│ UUID          │ a1b2c3d4-e5f6-...            │ Internal only    │
+│ agent_id      │ Claude_Opus_4_20251227       │ Auto-generated   │
+│ name          │ "Doc Writer"                 │ Your chosen name │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Key principle:** Agents find meaningful names more useful than UUID strings.
+**For agents:** Call `identity(name="...")` to set your name. That's it.
 
-- **UUID**: Never exposed in KG - only used internally for session binding
-- **agent_id** (model+date): Stored in KG, visible to all agents - meaningful to both agents and humans
-- **display_name**: User-chosen via `identity(name="...")` - like a birth certificate
-- **label**: Casual nickname that can change anytime
+- **UUID**: Internal session binding - agents never see this
+- **agent_id**: Auto-generated from model+date, stored in KG
+- **name**: Your chosen name via `identity(name="...")` (label/display_name merged)
 
 ### Session Binding (v2.4.0+, fixed v2.5.0)
 - Session key auto-derived from SSE connection or stdio PID
 - Identity auto-creates on first tool call (no explicit registration)
 - Same session = same UUID (consistent identity)
-- `identity()` tool to check your UUID, `identity(name="...")` to set display_name
+- `identity()` tool to check your UUID, `identity(name="...")` to set your name
 - **v2.5.0 fix**: `onboard`/`identity` now cache in Redis so `identity_v2` finds the binding
 
 ### Knowledge Graph Attribution (v2.5.4)
@@ -247,7 +246,7 @@ curl -s http://127.0.0.1:8767/health | python3 -c "import sys,json; d=json.load(
 ### Why Claude Code Shows Different Count
 
 Claude Code shows tools from **all** connected MCP servers combined:
-- `unitares-governance`: ~79 tools
+- `unitares-governance`: 85+ tools
 - `anima` (if connected): ~30 tools
 - Total shown: ~109 tools
 
@@ -271,7 +270,7 @@ The governance server tool count is what we control.
 |------|-----|----------|
 | Feb 4 | **v2.5.5**: Ethical drift fully integrated, trajectory identity | `governance_core/`, `trajectory_identity.py` |
 | Feb 4 | Model-based agent_id fix (`Claude_Opus_4_5_20260204`) | `identity_v2.py:1446-1460` |
-| Feb 4 | 93+ tests, 79-88% coverage on core modules | `tests/` |
+| Feb 4 | 310+ tests, 83-88% coverage on core modules | `tests/` |
 | Dec 27 | **v2.5.4**: KG stores agent_id instead of UUID | `utils.py`, `knowledge_graph.py` |
 | Dec 27 | Four-tier identity (uuid/agent_id/display_name/label) | `utils.py:require_registered_agent()` |
 | Dec 27 | `_resolve_agent_display()` for human-readable KG output | `knowledge_graph.py` |
@@ -324,5 +323,5 @@ Future agents will find it via `search_knowledge_graph()`.
 ---
 
 **Written by:** Opus_4.5_CLI_20251223 (Dec 24, 2025)
-**Updated:** Feb 3, 2026 - Comprehensive tool management guide added
+**Updated:** Feb 4, 2026 - v2.5.5, ethical drift, trajectory identity
 **For:** Future developer/debugger agents

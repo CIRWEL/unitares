@@ -19,7 +19,7 @@
 |-------|-------------|
 | [GETTING_STARTED_SIMPLE](guides/GETTING_STARTED_SIMPLE.md) | Fastest path - 3 tools |
 | [START_HERE](guides/START_HERE.md) | Full onboarding guide |
-| [DEPLOYMENT](guides/DEPLOYMENT.md) | Installation & setup |
+| [DEPLOYMENT](guides/DEPLOYMENT.md) | Installation & setup (includes [ngrok](guides/NGROK_DEPLOYMENT.md)) |
 | [MCP_SETUP](guides/MCP_SETUP.md) | MCP client configuration |
 | [TROUBLESHOOTING](guides/TROUBLESHOOTING.md) | Common issues & fixes |
 
@@ -53,10 +53,11 @@ Use `list_tools()` for full list, or `list_tools(lite=true)` for essentials only
 
 | Module | Coverage |
 |--------|----------|
-| `governance_monitor.py` | 79% |
+| `governance_monitor.py` | 83% |
 | `trajectory_identity.py` | 88% |
+| `workspace_health.py` | 83% |
 
-93+ tests passing as of Feb 2026.
+310+ tests passing as of Feb 2026.
 
 ---
 

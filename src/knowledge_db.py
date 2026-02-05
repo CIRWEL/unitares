@@ -275,9 +275,12 @@ class KnowledgeGraphDB:
         # Rate limiting config
         self.rate_limit_stores_per_hour = 20
 
-        # Embedding configuration
-        self.enable_embeddings = enable_embeddings
+        # Embedding configuration - can be disabled via env var
+        env_disable = os.getenv("UNITARES_DISABLE_EMBEDDINGS", "").lower() in ("true", "1", "yes")
+        self.enable_embeddings = enable_embeddings and not env_disable
         self._embedding_model = None  # Lazy-loaded
+        if env_disable:
+            logger.info("Embeddings disabled via UNITARES_DISABLE_EMBEDDINGS")
 
         # Initialize schema
         self._init_schema()

@@ -39,7 +39,10 @@ class KnowledgeGraphDBPostgres:
             enable_embeddings: If True, generate embeddings for semantic search
         """
         self._backend = None  # Lazy-loaded
-        self.enable_embeddings = enable_embeddings
+        # Embedding configuration - can be disabled via env var
+        import os
+        env_disable = os.getenv("UNITARES_DISABLE_EMBEDDINGS", "").lower() in ("true", "1", "yes")
+        self.enable_embeddings = enable_embeddings and not env_disable
         self._embedding_model = None
         self.rate_limit_stores_per_hour = 20
 

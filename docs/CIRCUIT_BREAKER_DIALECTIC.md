@@ -1,5 +1,7 @@
 # Circuit Breaker + Dialectic Recovery
 
+**Last Updated:** 2026-02-04 (v2.5.5)
+
 This system uses a **circuit breaker** to pause agents when risk signals or coherence drop below safe thresholds. Recovery is handled via a **dialectic protocol** (structured peer review) that provides a safe path to resume.
 
 This document is the canonical overview for the dialectic flow implemented in `src/dialectic_protocol.py`.

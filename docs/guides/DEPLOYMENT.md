@@ -222,20 +222,19 @@ curl http://localhost:8765/metrics
 
 ## Deployment Variants
 
-### Headless Browser with Screen Sharing
-For PI (Raspberry Pi) or headless systems with browser access via screen sharing and CLDO keyring:
-- **[HEADLESS_BROWSER_DEPLOYMENT.md](HEADLESS_BROWSER_DEPLOYMENT.md)** - Complete setup guide
+### Public Access via ngrok
+For ChatGPT OAuth, demos, and remote access:
+- **[NGROK_DEPLOYMENT.md](NGROK_DEPLOYMENT.md)** - ngrok tunnel setup with reserved domain
 
-### Remote Access via ngrok
-For public deployment and ChatGPT OAuth integration:
-- **[NGROK_DEPLOYMENT.md](NGROK_DEPLOYMENT.md)** - ngrok tunnel setup
+### Headless/Pi Deployment (Advanced)
+For Raspberry Pi with screen sharing and CLDO keyring:
+- See archived guide: `docs/archive/2026-02/guides-advanced/HEADLESS_BROWSER_DEPLOYMENT.md`
 
 ## Support
 
 **Documentation:**
 - [README.md](../../README.md) - Full documentation
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues
-- [MULTI_AGENT_TUTORIAL.md](MULTI_AGENT_TUTORIAL.md) - Usage guide
 
 **Logs:**
 ```bash
