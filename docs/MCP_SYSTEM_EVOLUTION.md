@@ -1,4 +1,4 @@
-# MCP System Evolution: v1.0.0 → v2.5.5
+# MCP System Evolution: v1.0.0 → v2.5.6
 
 **Complete history of how the UNITARES Governance MCP system has evolved**
 
@@ -19,6 +19,7 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 - **v2.5.1** (Dec 2025) - Three-tier identity model
 - **v2.5.4** (Dec 2025) - Meaningful identity in knowledge graph
 - **v2.5.5** (Feb 2026) - Ethical drift, trajectory identity, 85+ tools
+- **v2.5.6** (Feb 2026) - SSH-based Pi restart, test expansion (310+ tests)
 
 ---
 
@@ -298,6 +299,41 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 
 ---
 
+## v2.5.5 → v2.5.6: Operational Resilience
+
+### What Changed
+
+**SSH-Based Pi Restart:**
+
+1. **New Tool**
+   - `pi_restart_service` - Restart anima service via SSH when MCP is down
+   - Uses Tailscale IP for reliable connectivity
+   - Whitelisted services: anima, anima-broker, ngrok
+   - Whitelisted actions: restart, start, stop, status
+
+2. **Problem Solved**
+   - **Before:** When `git_pull` with restart killed MCP, no way to recover remotely
+   - **After:** SSH-based fallback works even when MCP service is down
+
+**Test Expansion:**
+
+- Test count: 93+ → **310+ tests**
+- Coverage: 79-88% → **83-88%**
+- Comprehensive coverage across governance, identity, trajectory, and coordination modules
+
+**Sensor Schema Cleanup:**
+
+- Removed deprecated `sound_level` field from anima-mcp sensors
+- Cleaner sensor schema: 5 core environmental sensors instead of 6
+
+### Impact
+
+- **Better recovery** - Remote restart possible even when MCP is down
+- **Higher confidence** - 3x more tests validate system behavior
+- **Cleaner architecture** - Removed unused sensor field
+
+---
+
 ## Architecture Evolution Summary
 
 ### Code Organization
@@ -311,6 +347,7 @@ v2.3.0:  Decorator pattern (all tools)
 v2.4.0:  Simplified identity system
 v2.5.0:  Stability monitoring (HCK/CIRS)
 v2.5.4:  Meaningful identity in KG
+v2.5.6:  SSH-based Pi restart, 310+ tests
 ```
 
 ### Tool Count Growth
@@ -349,7 +386,7 @@ v2.5.4:  Meaningful identity in KG
 
 ---
 
-## Current State (v2.5.5)
+## Current State (v2.5.6)
 
 ### Core Features
 
@@ -363,6 +400,8 @@ v2.5.4:  Meaningful identity in KG
 - ✅ Ethical drift (Δη) fully integrated
 - ✅ Trajectory identity (genesis signatures, lineage comparison)
 - ✅ Automatic calibration from objective outcomes
+- ✅ SSH-based Pi restart (works when MCP is down)
+- ✅ **310+ tests** with 83-88% coverage
 
 ### Architecture
 
@@ -408,5 +447,5 @@ v2.5.4:  Meaningful identity in KG
 ---
 
 **Last Updated:** February 4, 2026
-**Current Version:** v2.5.5
-**Total Evolution:** 1.0.0 → 2.5.5 (16 versions)
+**Current Version:** v2.5.6
+**Total Evolution:** 1.0.0 → 2.5.6 (17 versions)
