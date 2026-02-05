@@ -27,6 +27,7 @@ class ToolAlias:
     reason: str  # "renamed", "consolidated", "deprecated"
     deprecated_since: Optional[datetime] = None
     migration_note: Optional[str] = None
+    inject_action: Optional[str] = None  # For consolidated tools: auto-inject this action parameter
 
 @dataclass
 class ToolLifecycle:
@@ -218,22 +219,119 @@ _TOOL_ALIASES: Dict[str, ToolAlias] = {
     ),
     "get_related_discoveries_graph": ToolAlias(
         old_name="get_related_discoveries_graph",
-        new_name="get_discovery_details",
+        new_name="knowledge",
         reason="consolidated",
-        migration_note="Use get_discovery_details() - includes related discoveries"
+        migration_note="Use knowledge(action='details') - includes related discoveries"
     ),
     "get_response_chain_graph": ToolAlias(
         old_name="get_response_chain_graph",
-        new_name="get_discovery_details",
+        new_name="knowledge",
         reason="consolidated",
-        migration_note="Use get_discovery_details() - includes response chain"
+        migration_note="Use knowledge(action='details') - includes response chain"
     ),
     "reply_to_question": ToolAlias(
         old_name="reply_to_question",
-        new_name="store_knowledge_graph",
+        new_name="knowledge",
         reason="consolidated",
-        migration_note="Use store_knowledge_graph(response_to=question_id) to reply"
+        migration_note="Use knowledge(action='store', response_to=question_id) to reply"
     ),
+
+    # ==========================================================================
+    # Feb 2026 Tool Consolidation - removed tools map to consolidated versions
+    # ==========================================================================
+
+    # Pi tools → pi(action='...')
+    "pi_health": ToolAlias(old_name="pi_health", new_name="pi", reason="consolidated",
+        migration_note="Use pi(action='health')", inject_action="health"),
+    "pi_get_context": ToolAlias(old_name="pi_get_context", new_name="pi", reason="consolidated",
+        migration_note="Use pi(action='context')", inject_action="context"),
+    "pi_sync_eisv": ToolAlias(old_name="pi_sync_eisv", new_name="pi", reason="consolidated",
+        migration_note="Use pi(action='sync_eisv')", inject_action="sync_eisv"),
+    "pi_display": ToolAlias(old_name="pi_display", new_name="pi", reason="consolidated",
+        migration_note="Use pi(action='display')", inject_action="display"),
+    "pi_say": ToolAlias(old_name="pi_say", new_name="pi", reason="consolidated",
+        migration_note="Use pi(action='say', text='...')", inject_action="say"),
+    "pi_post_message": ToolAlias(old_name="pi_post_message", new_name="pi", reason="consolidated",
+        migration_note="Use pi(action='message', message='...')", inject_action="message"),
+    "pi_lumen_qa": ToolAlias(old_name="pi_lumen_qa", new_name="pi", reason="consolidated",
+        migration_note="Use pi(action='qa')", inject_action="qa"),
+    "pi_query": ToolAlias(old_name="pi_query", new_name="pi", reason="consolidated",
+        migration_note="Use pi(action='query', text='...')", inject_action="query"),
+    "pi_workflow": ToolAlias(old_name="pi_workflow", new_name="pi", reason="consolidated",
+        migration_note="Use pi(action='workflow', workflow='...')", inject_action="workflow"),
+    "pi_git_pull": ToolAlias(old_name="pi_git_pull", new_name="pi", reason="consolidated",
+        migration_note="Use pi(action='git_pull')", inject_action="git_pull"),
+    "pi_system_power": ToolAlias(old_name="pi_system_power", new_name="pi", reason="consolidated",
+        migration_note="Use pi(action='power')", inject_action="power"),
+    "pi_list_tools": ToolAlias(old_name="pi_list_tools", new_name="pi", reason="consolidated",
+        migration_note="Use pi(action='tools')", inject_action="tools"),
+
+    # Observe tools → observe(action='...')
+    "observe_agent": ToolAlias(old_name="observe_agent", new_name="observe", reason="consolidated",
+        migration_note="Use observe(action='agent', agent_id='...')", inject_action="agent"),
+    "compare_agents": ToolAlias(old_name="compare_agents", new_name="observe", reason="consolidated",
+        migration_note="Use observe(action='compare', agent_ids=[...])", inject_action="compare"),
+    "compare_me_to_similar": ToolAlias(old_name="compare_me_to_similar", new_name="observe", reason="consolidated",
+        migration_note="Use observe(action='similar')", inject_action="similar"),
+    "detect_anomalies": ToolAlias(old_name="detect_anomalies", new_name="observe", reason="consolidated",
+        migration_note="Use observe(action='anomalies')", inject_action="anomalies"),
+    "aggregate_metrics": ToolAlias(old_name="aggregate_metrics", new_name="observe", reason="consolidated",
+        migration_note="Use observe(action='aggregate')", inject_action="aggregate"),
+
+    # Dialectic tools → dialectic(action='...')
+    "get_dialectic_session": ToolAlias(old_name="get_dialectic_session", new_name="dialectic", reason="consolidated",
+        migration_note="Use dialectic(action='get')", inject_action="get"),
+    "list_dialectic_sessions": ToolAlias(old_name="list_dialectic_sessions", new_name="dialectic", reason="consolidated",
+        migration_note="Use dialectic(action='list')", inject_action="list"),
+    "llm_assisted_dialectic": ToolAlias(old_name="llm_assisted_dialectic", new_name="dialectic", reason="consolidated",
+        migration_note="Use dialectic(action='llm')", inject_action="llm"),
+
+    # Config tools - registered directly (not aliased to avoid action parameter issues)
+    # Use config(action='get') or config(action='set') for consolidated access
+
+    # Export tools → export(action='...')
+    "get_system_history": ToolAlias(old_name="get_system_history", new_name="export", reason="consolidated",
+        migration_note="Use export(action='history')", inject_action="history"),
+    "export_to_file": ToolAlias(old_name="export_to_file", new_name="export", reason="consolidated",
+        migration_note="Use export(action='file')", inject_action="file"),
+
+    # Agent lifecycle tools → agent(action='...')
+    "list_agents": ToolAlias(old_name="list_agents", new_name="agent", reason="consolidated",
+        migration_note="Use agent(action='list')", inject_action="list"),
+    "get_agent_metadata": ToolAlias(old_name="get_agent_metadata", new_name="agent", reason="consolidated",
+        migration_note="Use agent(action='get', agent_id='...')", inject_action="get"),
+    "update_agent_metadata": ToolAlias(old_name="update_agent_metadata", new_name="agent", reason="consolidated",
+        migration_note="Use agent(action='update', ...)", inject_action="update"),
+    "archive_agent": ToolAlias(old_name="archive_agent", new_name="agent", reason="consolidated",
+        migration_note="Use agent(action='archive', agent_id='...')", inject_action="archive"),
+    "delete_agent": ToolAlias(old_name="delete_agent", new_name="agent", reason="consolidated",
+        migration_note="Use agent(action='delete', agent_id='...', confirm=true)", inject_action="delete"),
+
+    # Calibration tools → calibration(action='...')
+    "check_calibration": ToolAlias(old_name="check_calibration", new_name="calibration", reason="consolidated",
+        migration_note="Use calibration(action='check')", inject_action="check"),
+    "update_calibration_ground_truth": ToolAlias(old_name="update_calibration_ground_truth", new_name="calibration", reason="consolidated",
+        migration_note="Use calibration(action='update', actual_correct=...)", inject_action="update"),
+    "backfill_calibration_from_dialectic": ToolAlias(old_name="backfill_calibration_from_dialectic", new_name="calibration", reason="consolidated",
+        migration_note="Use calibration(action='backfill')", inject_action="backfill"),
+    "rebuild_calibration": ToolAlias(old_name="rebuild_calibration", new_name="calibration", reason="consolidated",
+        migration_note="Use calibration(action='rebuild')", inject_action="rebuild"),
+
+    # Knowledge graph tools → knowledge(action='...')
+    "store_knowledge_graph": ToolAlias(old_name="store_knowledge_graph", new_name="knowledge", reason="consolidated",
+        migration_note="Use knowledge(action='store', summary='...')", inject_action="store"),
+    "get_knowledge_graph": ToolAlias(old_name="get_knowledge_graph", new_name="knowledge", reason="consolidated",
+        migration_note="Use knowledge(action='get')", inject_action="get"),
+    "list_knowledge_graph": ToolAlias(old_name="list_knowledge_graph", new_name="knowledge", reason="consolidated",
+        migration_note="Use knowledge(action='list')", inject_action="list"),
+    "update_discovery_status_graph": ToolAlias(old_name="update_discovery_status_graph", new_name="knowledge", reason="consolidated",
+        migration_note="Use knowledge(action='update', discovery_id='...', status='...')", inject_action="update"),
+    "get_discovery_details": ToolAlias(old_name="get_discovery_details", new_name="knowledge", reason="consolidated",
+        migration_note="Use knowledge(action='details', discovery_id='...')", inject_action="details"),
+    "cleanup_knowledge_graph": ToolAlias(old_name="cleanup_knowledge_graph", new_name="knowledge", reason="consolidated",
+        migration_note="Use knowledge(action='cleanup')", inject_action="cleanup"),
+    "get_lifecycle_stats": ToolAlias(old_name="get_lifecycle_stats", new_name="knowledge", reason="consolidated",
+        migration_note="Use knowledge(action='stats')", inject_action="stats"),
 }
 
 # Reverse mapping: new_name -> list of old names

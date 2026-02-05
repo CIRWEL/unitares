@@ -99,10 +99,55 @@ def compute_agent_signature(
         return {"uuid": None}
 
 
+def _infer_error_code_and_category(message: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Auto-infer error_code and error_category from message patterns.
+
+    This provides consistent error codes even when callers don't explicitly provide them.
+    Returns (error_code, error_category) tuple.
+    """
+    msg_lower = message.lower()
+
+    # Pattern-based inference for error codes
+    error_patterns = [
+        # Validation errors
+        (["not found", "does not exist", "doesn't exist"], "NOT_FOUND", "validation_error"),
+        (["missing required", "required parameter", "must provide"], "MISSING_REQUIRED", "validation_error"),
+        (["invalid", "must be", "should be"], "INVALID_PARAM", "validation_error"),
+        (["already exists", "duplicate"], "ALREADY_EXISTS", "validation_error"),
+        (["too long", "exceeds maximum", "too large"], "VALUE_TOO_LARGE", "validation_error"),
+        (["too short", "too small", "minimum"], "VALUE_TOO_SMALL", "validation_error"),
+        (["empty", "cannot be empty"], "EMPTY_VALUE", "validation_error"),
+
+        # Auth errors
+        (["permission", "not authorized", "forbidden", "access denied"], "PERMISSION_DENIED", "auth_error"),
+        (["api key", "apikey"], "API_KEY_ERROR", "auth_error"),
+        (["session", "identity not resolved"], "SESSION_ERROR", "auth_error"),
+
+        # State errors
+        (["paused", "is paused"], "AGENT_PAUSED", "state_error"),
+        (["archived", "is archived"], "AGENT_ARCHIVED", "state_error"),
+        (["deleted", "is deleted"], "AGENT_DELETED", "state_error"),
+        (["locked", "already locked"], "RESOURCE_LOCKED", "state_error"),
+
+        # System errors
+        (["timeout", "timed out"], "TIMEOUT", "system_error"),
+        (["connection", "connect"], "CONNECTION_ERROR", "system_error"),
+        (["database", "postgres", "db error"], "DATABASE_ERROR", "system_error"),
+        (["failed to", "could not", "unable to"], "OPERATION_FAILED", "system_error"),
+    ]
+
+    for patterns, code, category in error_patterns:
+        if any(p in msg_lower for p in patterns):
+            return code, category
+
+    return None, None
+
+
 def error_response(
-    message: str, 
-    details: Optional[Dict[str, Any]] = None, 
-    recovery: Optional[Dict[str, Any]] = None, 
+    message: str,
+    details: Optional[Dict[str, Any]] = None,
+    recovery: Optional[Dict[str, Any]] = None,
     context: Optional[Dict[str, Any]] = None,
     error_code: Optional[str] = None,
     error_category: Optional[str] = None,
@@ -110,21 +155,23 @@ def error_response(
 ) -> TextContent:
     """
     Create an error response with optional recovery guidance and system context.
-    
+
     SECURITY: Sanitizes error messages to prevent internal structure leakage.
-    
+    Auto-infers error_code and error_category if not provided based on message patterns.
+
     Args:
         message: Error message (will be sanitized)
         details: Optional additional error details (will be sanitized)
         recovery: Optional recovery suggestions for AGI agents
         context: Optional system context (what was happening, system state, etc.)
-        error_code: Optional machine-readable error code (e.g., "AGENT_NOT_FOUND")
-        error_category: Optional error category: "validation_error", "auth_error", "system_error"
-                      Helps categorize errors for consistent handling
-        
+        error_code: Optional machine-readable error code (e.g., "AGENT_NOT_FOUND").
+                   Auto-inferred from message if not provided.
+        error_category: Optional error category: "validation_error", "auth_error",
+                       "state_error", "system_error". Auto-inferred if not provided.
+
     Returns:
         TextContent with error response
-        
+
     Example:
         >>> error_response(
         ...     "Agent not found",
@@ -135,6 +182,14 @@ def error_response(
     """
     # SECURITY: Sanitize error message to prevent internal structure leakage
     sanitized_message = _sanitize_error_message(message)
+
+    # Auto-infer error_code and error_category if not provided
+    if not error_code or not error_category:
+        inferred_code, inferred_category = _infer_error_code_and_category(message)
+        if not error_code:
+            error_code = inferred_code
+        if not error_category:
+            error_category = inferred_category
     
     response = {
         "success": False,
@@ -146,9 +201,9 @@ def error_response(
     if error_code:
         response["error_code"] = error_code
     
-    # Add error category if provided (standardized: validation_error, auth_error, system_error)
+    # Add error category if provided (standardized: validation_error, auth_error, state_error, system_error)
     if error_category:
-        if error_category not in ["validation_error", "auth_error", "system_error"]:
+        if error_category not in ["validation_error", "auth_error", "state_error", "system_error"]:
             logger.warning(f"Unknown error_category '{error_category}', using as-is")
         response["error_category"] = error_category
     
@@ -322,44 +377,69 @@ def format_metrics_text(metrics: Dict[str, Any]) -> str:
 
 def _sanitize_error_message(message: str) -> str:
     """
-    Sanitize error messages to prevent internal structure leakage.
-    
+    Sanitize error messages to prevent internal structure leakage while preserving actionable context.
+
     Removes:
-    - File paths
-    - Line numbers
-    - Internal variable names
+    - Full file paths (keeps filename)
     - Stack traces
-    - Module paths
+    - Internal implementation details
+
+    Preserves (important for actionability):
+    - Error codes (uppercase names like AGENT_NOT_FOUND)
+    - Parameter names
+    - Agent IDs and tool names
+    - Semantic error context
     """
     if not isinstance(message, str):
         return str(message)
-    
+
     import re
-    
-    # Remove file paths (but keep filename)
+
+    # Remove full file paths (but keep filename for context)
     message = re.sub(r'/[^\s]+/([^/\s]+\.py)', r'\1', message)
-    
-    # Remove line numbers
-    message = re.sub(r':\d+:', ':', message)
+
+    # Simplify stack trace line references but keep some location info
+    message = re.sub(r', line \d+, in \w+', '', message)
     message = re.sub(r'line \d+', 'line N', message)
-    
-    # Remove internal variable names (common patterns)
-    message = re.sub(r'\b[A-Z_]{3,}\b', lambda m: m.group() if m.group() in ['RISK', 'ERROR', 'SUCCESS'] else 'CONFIG', message)
-    
-    # Remove stack trace indicators
-    message = re.sub(r'Traceback.*?File', 'Error in', message, flags=re.DOTALL)
-    message = re.sub(r'File "[^"]+", line \d+', 'Internal error', message)
-    
-    # Remove module paths (keep module name)
-    message = re.sub(r'[a-z_]+\.([a-z_]+)', r'\1', message)
-    
-    # Limit length to prevent information leakage
+
+    # Remove full stack traces but keep the actual error message
+    # Capture the last error line which usually has the useful message
+    traceback_match = re.search(r'Traceback.*\n(.+)$', message, flags=re.DOTALL)
+    if traceback_match:
+        # Extract just the final error message from the traceback
+        final_error = traceback_match.group(1).strip()
+        # Replace the full traceback with a simplified version
+        message = re.sub(r'Traceback.*$', f'Error: {final_error}', message, flags=re.DOTALL)
+
+    # Remove "File X, line N" patterns but preserve context
+    message = re.sub(r'File "[^"]+", line \d+(?:, in \w+)?', '', message)
+
+    # Clean up module qualifications for internal modules only
+    # Keep first part visible for better context (governance_core.x → governance_core.x)
+    # Only strip deep internal paths like src.mcp_handlers.utils.foo
+    message = re.sub(r'src\.mcp_handlers\.[a-z_]+\.', '', message)
+    message = re.sub(r'governance_core\.[a-z_]+\.[a-z_]+\.', 'governance_core.', message)
+
+    # PRESERVE: Uppercase error codes (AGENT_NOT_FOUND, MISSING_REQUIRED, etc.)
+    # These are intentionally NOT stripped - they're actionable identifiers
+
+    # Clean up double spaces and extra whitespace
+    message = re.sub(r'  +', ' ', message)
+    message = re.sub(r'\n\s*\n', '\n', message)
+
+    # Limit length to prevent information leakage, but ensure truncation is graceful
     from config.governance_config import config
     max_length = config.MAX_ERROR_MESSAGE_LENGTH
     if len(message) > max_length:
-        message = message[:max_length] + "..."
-    
-    return message
+        # Try to truncate at sentence boundary
+        truncated = message[:max_length]
+        last_period = truncated.rfind('. ')
+        if last_period > max_length * 0.7:  # Only use period break if it keeps most content
+            message = truncated[:last_period + 1]
+        else:
+            message = truncated.rstrip() + "..."
+
+    return message.strip()
 
 
 def _make_json_serializable(obj: Any) -> Any:
@@ -581,13 +661,22 @@ def success_response(data: Dict[str, Any], agent_id: str = None, arguments: Dict
 
     # UX FIX (Dec 2025): Support lite_response to reduce output verbosity
     lite_response = (arguments or {}).get("lite_response", False)
-    
+
     if lite_response:
         # Skip agent_signature for cleaner output
         pass
     else:
         # Add agent signature using centralized computation
         response["agent_signature"] = compute_agent_signature(agent_id=agent_id, arguments=arguments)
+
+    # UX FIX #12 (Feb 2026): Surface parameter coercions for transparency
+    # Helps agents understand what type conversions were applied to their inputs
+    param_coercions = (arguments or {}).get("_param_coercions")
+    if param_coercions and not lite_response:
+        response["_param_coercions"] = {
+            "applied": param_coercions,
+            "note": "Your parameters were auto-corrected. Use native types (e.g., 0.5 not '0.5') to avoid coercion."
+        }
     
     # Convert non-serializable types before JSON encoding
     # OPTIMIZATION: Use compact JSON (no indent) to speed up serialization and reduce size

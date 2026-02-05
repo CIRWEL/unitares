@@ -41,6 +41,10 @@ from .admin import (
     handle_backfill_calibration_from_dialectic,
     handle_rebuild_calibration,
 )
+from .config import (
+    handle_get_thresholds,
+    handle_set_thresholds,
+)
 
 
 # ============================================================
@@ -70,7 +74,7 @@ async def handle_knowledge(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     action = arguments.get("action", "").lower()
 
     if not action:
-        return error_response(
+        return [error_response(
             "action parameter required",
             recovery={
                 "valid_actions": ["store", "search", "get", "list", "update", "details", "note", "cleanup", "stats"],
@@ -80,7 +84,7 @@ async def handle_knowledge(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                     "knowledge(action='note', content='Remember to check cache')",
                 ]
             }
-        )
+        )]
 
     # Route to appropriate handler
     if action == "store":
@@ -117,12 +121,12 @@ async def handle_knowledge(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         return await handle_get_lifecycle_stats(arguments)
 
     else:
-        return error_response(
+        return [error_response(
             f"Unknown action: {action}",
             recovery={
                 "valid_actions": ["store", "search", "get", "list", "update", "details", "note", "cleanup", "stats"]
             }
-        )
+        )]
 
 
 # ============================================================
@@ -147,7 +151,7 @@ async def handle_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     action = arguments.get("action", "").lower()
 
     if not action:
-        return error_response(
+        return [error_response(
             "action parameter required",
             recovery={
                 "valid_actions": ["list", "get", "update", "archive", "delete"],
@@ -158,7 +162,7 @@ async def handle_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                     "agent(action='archive', agent_id='old-agent-id')",
                 ]
             }
-        )
+        )]
 
     if action == "list":
         return await handle_list_agents(arguments)
@@ -176,12 +180,12 @@ async def handle_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         return await handle_delete_agent(arguments)
 
     else:
-        return error_response(
+        return [error_response(
             f"Unknown action: {action}",
             recovery={
                 "valid_actions": ["list", "get", "update", "archive", "delete"]
             }
-        )
+        )]
 
 
 # ============================================================
@@ -217,7 +221,7 @@ async def handle_calibration(arguments: Dict[str, Any]) -> Sequence[TextContent]
         return await handle_rebuild_calibration(arguments)
 
     else:
-        return error_response(
+        return [error_response(
             f"Unknown action: {action}",
             recovery={
                 "valid_actions": ["check", "update", "backfill", "rebuild"],
@@ -226,4 +230,40 @@ async def handle_calibration(arguments: Dict[str, Any]) -> Sequence[TextContent]
                     "calibration(action='update', ground_truth=True)",
                 ]
             }
-        )
+        )]
+
+
+# ============================================================
+# Consolidated Config Tool
+# ============================================================
+
+@mcp_tool("config", timeout=15.0, description="Unified configuration operations: get, set thresholds")
+async def handle_config(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Consolidated configuration operations.
+
+    Actions:
+    - get: Get current governance threshold configuration
+    - set: Set runtime threshold overrides (admin only)
+
+    Replaces: get_thresholds, set_thresholds
+    """
+    action = arguments.get("action", "get").lower()
+
+    if action == "get":
+        return await handle_get_thresholds(arguments)
+
+    elif action == "set":
+        return await handle_set_thresholds(arguments)
+
+    else:
+        return [error_response(
+            f"Unknown action: {action}",
+            recovery={
+                "valid_actions": ["get", "set"],
+                "examples": [
+                    "config(action='get')",
+                    "config(action='set', thresholds={'PAUSE_RISK_THRESHOLD': 0.75})",
+                ]
+            }
+        )]

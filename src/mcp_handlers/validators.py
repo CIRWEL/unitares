@@ -28,8 +28,10 @@ TOOL_PARAM_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "confidence": {"type": "float", "range": [0.0, 1.0]},
             "task_type": {"type": "enum", "values": ["convergent", "divergent", "mixed"], "default": "mixed"},
             "response_text": {"type": "string"},
+            "lite": {"type": "bool"},  # Alias for response_mode='minimal'
+            "response_mode": {"type": "enum", "values": ["minimal", "compact", "standard", "full", "auto"], "default": "auto"},
         },
-        "example": 'process_agent_update(complexity=0.5)  # agent_id from session',
+        "example": 'process_agent_update(complexity=0.5) or process_agent_update(lite=true)  # agent_id from session',
     },
     "store_knowledge_graph": {
         "required": ["summary"],  # agent_id injected from session binding
@@ -319,20 +321,23 @@ def _apply_generic_coercion(arguments: Dict[str, Any]) -> Dict[str, Any]:
 def validate_and_coerce_params(
     tool_name: str,
     arguments: Dict[str, Any]
-) -> Tuple[Dict[str, Any], Optional[TextContent]]:
+) -> Tuple[Dict[str, Any], Optional[TextContent], List[str]]:
     """
     Smart parameter validation for smaller/lighter models.
-    
+
     - Catches common formatting mistakes (strings instead of lists, etc.)
     - Coerces types where safe (e.g., "0.5" -> 0.5)
     - Returns helpful error messages with examples
-    
+    - Returns list of coercions applied (for transparency)
+
     Args:
         tool_name: Name of the tool being called
         arguments: Arguments dictionary
-        
+
     Returns:
-        Tuple of (coerced_arguments, error_response). If validation fails, error_response is provided.
+        Tuple of (coerced_arguments, error_response, fixes_applied).
+        - If validation fails, error_response is provided.
+        - fixes_applied is a list of human-readable coercion descriptions.
     """
     # Apply parameter aliases first (e.g., "content" → "summary")
     arguments = apply_param_aliases(tool_name, arguments)
@@ -345,19 +350,19 @@ def validate_and_coerce_params(
     schema = TOOL_PARAM_SCHEMAS.get(tool_name)
     if not schema:
         # No schema defined - already applied generic coercion above
-        return arguments, None
+        return arguments, None, []
 
     coerced = dict(arguments)
     errors = []
     fixes_applied = []
-    
+
     # Check required parameters
     for param in schema.get("required", []):
         if param not in arguments or arguments[param] is None:
             errors.append(f"Missing required parameter: '{param}'")
-    
+
     if errors:
-        return arguments, _format_param_error(tool_name, schema, errors, [])
+        return arguments, _format_param_error(tool_name, schema, errors, []), []
     
     # Validate and coerce optional parameters
     for param, spec in schema.get("optional", {}).items():
@@ -459,7 +464,7 @@ def validate_and_coerce_params(
             errors.append(f"'{param}' conversion failed: {str(e)}")
     
     if errors:
-        return arguments, _format_param_error(tool_name, schema, errors, fixes_applied)
+        return arguments, _format_param_error(tool_name, schema, errors, fixes_applied), fixes_applied
 
     # Apply generic coercion for any params NOT already handled by schema
     # This catches params that exist in GENERIC_PARAM_TYPES but not in the tool's schema
@@ -494,7 +499,7 @@ def validate_and_coerce_params(
                 except (ValueError, TypeError):
                     pass  # Leave original value
 
-    return coerced, None
+    return coerced, None, fixes_applied
 
 
 def _format_param_error(
