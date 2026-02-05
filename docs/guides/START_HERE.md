@@ -394,4 +394,4 @@ Governance should be **informative, not restrictive**. Agents log activity, rece
 
 ---
 
-**Last Updated:** 2026-02-04 (v2.5.5: ethical drift, trajectory identity, 85+ tools)
+**Last Updated:** 2026-02-04 (v2.5.6: SSH-based Pi restart, 310+ tests)

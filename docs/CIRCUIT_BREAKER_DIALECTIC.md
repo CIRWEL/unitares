@@ -1,6 +1,6 @@
 # Circuit Breaker + Dialectic Recovery
 
-**Last Updated:** 2026-02-04 (v2.5.5)
+**Last Updated:** 2026-02-04 (v2.5.6)
 
 This system uses a **circuit breaker** to pause agents when risk signals or coherence drop below safe thresholds. Recovery is handled via a **dialectic protocol** that provides a safe path to resume.
 

@@ -1,6 +1,6 @@
 # LLM Delegation Guide
 
-**Last Updated:** 2026-02-04 (v2.5.5)
+**Last Updated:** 2026-02-04 (v2.5.6)
 
 UNITARES provides LLM delegation capabilities for agents to call local or cloud models for reasoning, analysis, and dialectic synthesis.
 
