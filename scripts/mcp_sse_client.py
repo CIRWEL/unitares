@@ -20,7 +20,7 @@ from mcp.client.session import ClientSession
 class GovernanceMCPClient:
     """Client for connecting to governance MCP server via SSE"""
 
-    def __init__(self, url: str = "http://127.0.0.1:8765/sse"):
+    def __init__(self, url: str = "http://127.0.0.1:8767/sse"):
         self.url = url
         self.session: Optional[ClientSession] = None
         self._sse_context = None

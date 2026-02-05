@@ -36,6 +36,14 @@
         <string>postgres</string>
         <key>DB_POSTGRES_URL</key>
         <string>postgresql://postgres:postgres@localhost:5432/governance</string>
+        <key>HOME</key>
+        <string>/Users/cirwel</string>
+        <key>HF_HOME</key>
+        <string>/Users/cirwel/.cache/huggingface</string>
+        <key>TRANSFORMERS_OFFLINE</key>
+        <string>1</string>
+        <key>HF_HUB_OFFLINE</key>
+        <string>1</string>
     </dict>
 </dict>
 </plist>

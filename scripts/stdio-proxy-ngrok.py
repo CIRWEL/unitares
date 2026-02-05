@@ -10,7 +10,7 @@ Usage:
     python stdio-proxy-ngrok.py <sse_url> <username> <password>
 
 Example:
-    python stdio-proxy-ngrok.py https://unitares.ngrok.io/sse unitares 8QF6L8Ui0pZFiHGQ
+    python stdio-proxy-ngrok.py https://your-domain.ngrok.io/sse username password
 """
 
 import sys

@@ -5,8 +5,8 @@
 set -e
 
 # Configuration
-HEALTH_URL="${HEALTH_URL:-http://localhost:8765/health}"
-METRICS_URL="${METRICS_URL:-http://localhost:8765/metrics}"
+HEALTH_URL="${HEALTH_URL:-http://localhost:8767/health}"
+METRICS_URL="${METRICS_URL:-http://localhost:8767/metrics}"
 ALERT_EMAIL="${ALERT_EMAIL:-}"  # Optional: email for alerts
 CHECK_INTERVAL="${CHECK_INTERVAL:-60}"  # Check every 60 seconds
 MAX_FAILURES="${MAX_FAILURES:-3}"  # Alert after 3 consecutive failures
@@ -106,7 +106,7 @@ check_processes() {
         server_running=true
     fi
     
-    if pgrep -f "ngrok.*8765" > /dev/null || pgrep -f "ngrok.*unitares" > /dev/null; then
+    if pgrep -f "ngrok.*8767" > /dev/null || pgrep -f "ngrok.*unitares" > /dev/null; then
         ngrok_running=true
     fi
     

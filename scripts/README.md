@@ -1,142 +1,182 @@
 # Scripts Directory
 
-**⚠️ IMPORTANT: Scripts are for CLI-only interfaces only**
+**Last Updated:** 2026-02-04
 
-**If you have MCP access (Cursor, Claude Desktop, etc.):**
-- ✅ **Use MCP tools directly** - Don't use scripts
-- ✅ **Use `list_tools()`** - Shows all 77 available tools
-- ✅ **Full tool suite available** - Scripts are only for CLI-only interfaces
+> **Note:** Most functionality is available via MCP tools. Scripts are for CLI-only interfaces, operations, and maintenance.
 
-**If you DON'T have MCP access (CLI-only):**
-- ⚠️ **Use scripts below** - Only for CLI-only interfaces
-- ⚠️ **Limited functionality** - Scripts only provide basic bridge functionality
+**Active Scripts:** 67 | **Archived:** 49+
 
 ---
 
-**Purpose:** Utility scripts for CLI-only interfaces and system maintenance
+## CLI Tools
 
-**Total Scripts:** 12 active scripts (6 automation + 6 utilities), 31 archived
+| Script | Description |
+|--------|-------------|
+| `unitares` | Main CLI wrapper for MCP calls |
+| `unitares_lite.py` | Lightweight Python CLI |
+| `mcp` | MCP CLI tool (governance_cli.sh symlinks here) |
+| `mcp_call.py` | Direct MCP tool caller |
+| `mcp_agent.py` | Autonomous MCP agent |
+| `mcp_sse_client.py` | SSE client (legacy, use Streamable HTTP) |
+| `operator_agent.py` | Operator-level agent with elevated permissions |
+
+## Operations
+
+| Script | Description |
+|--------|-------------|
+| `start_unitares.sh` | Start the governance MCP server |
+| `stop_unitares.sh` | Stop the governance MCP server |
+| `start_server.sh` | Alternative server start |
+| `start_with_deps.sh` | Start with dependencies |
+| `deploy_ngrok.sh` | Deploy ngrok tunnel |
+| `monitor_health.sh` | Health monitoring |
+| `watchdog.sh` | Process watchdog |
+| `check_health.sh` | Quick health check |
+
+## Database & Connections
+
+| Script | Description |
+|--------|-------------|
+| `check_databases.sh` | Check database status |
+| `emergency_fix_postgres.sh` | Emergency Postgres fixes |
+| `fix_database_connections.sh` | Fix connection issues |
+| `cleanup_stale_connections.sh` | Clean stale connections |
+| `kill_idle_connections.sh` | Kill idle DB connections |
+
+## Cleanup & Maintenance
+
+| Script | Description |
+|--------|-------------|
+| `cleanup_stale.sh` | General stale data cleanup |
+| `cleanup_mcp_servers.sh` | Clean zombie MCP processes |
+| `cleanup_zombie_mcp_servers.sh` | Alternative zombie cleanup |
+| `cleanup_knowledge_graph.py` | Knowledge graph cleanup |
+| `cleanup_migration_summaries.py` | Clean migration summaries |
+| `archive_old_markdowns.py` | Archive old markdown files |
+| `archive_outdated_discoveries.py` | Archive old discoveries |
+| `auto_archive_metadata.py` | Auto-archive agent metadata |
+
+## Validation & Auditing
+
+| Script | Description |
+|--------|-------------|
+| `validate_all.py` | Consolidated validation |
+| `validate_doc_dates.sh` | Validate document dates |
+| `validate_markdown_formatting.py` | Markdown format validation |
+| `validate_theoretical_foundations.py` | Theory validation |
+| `validate_tool_modes.py` | Tool mode validation |
+| `validate_tool_registration.py` | Tool registration check |
+| `audit_markdown_proliferation.py` | Markdown audit |
+| `audit_tool_categories.py` | Tool category audit |
+| `audit_error_messages.py` | Error message audit |
+
+## Calibration & Analysis
+
+| Script | Description |
+|--------|-------------|
+| `backfill_calibration.py` | Backfill calibration data |
+| `report_calibration.py` | Generate calibration report |
+| `reset_calibration.py` | Reset calibration |
+| `analyze_drift.py` | Analyze EISV drift |
+| `check_eisv_completeness.py` | EISV completeness check |
+| `check_test_coverage.py` | Test coverage report |
+
+## Backfill & Sync
+
+| Script | Description |
+|--------|-------------|
+| `backfill_age_edges.py` | Backfill AGE graph edges |
+| `backfill_embeddings.py` | Regenerate embeddings |
+| `regenerate_embeddings.py` | Regenerate embeddings (alt) |
+| `sync_discoveries_to_age.py` | Sync discoveries to AGE |
+| `sync_bridge_with_mcp.py` | Sync bridge with MCP |
+
+## Documentation & Tools
+
+| Script | Description |
+|--------|-------------|
+| `generate_tool_docs.py` | Generate tool documentation |
+| `update_changelog.py` | Update changelog |
+| `update_readme_metadata.py` | Update README metadata |
+| `update_docs_tool_count.py` | Update tool counts in docs |
+| `doc_tools.py` | Documentation utilities |
+| `count_tools.py` | Count registered tools |
+| `version_manager.py` | Version management |
+
+## Diagnostics
+
+| Script | Description |
+|--------|-------------|
+| `diagnose_unresponsive_agents.py` | Diagnose stuck agents |
+| `diagnose_date_context_connection.py` | Date context MCP debug |
+| `test_date_context_connection.py` | Test date context connection |
+| `verify_gpu_acceleration.py` | Verify GPU setup |
+| `self_monitor.py` | Self-monitoring script |
+
+## Specialized
+
+| Script | Description |
+|--------|-------------|
+| `notion_bridge.py` | Notion integration bridge |
+| `stdio-proxy-ngrok.py` | STDIO proxy for ngrok |
+| `answer_lumen_questions.py` | Answer Lumen's questions |
+| `process_current_session.py` | Process current session |
+| `process_dialectic_synthesis.py` | Process dialectic synthesis |
+| `repair_identity_agent_links.py` | Repair identity links |
+
+## Git Hooks
+
+| Script | Description |
+|--------|-------------|
+| `install_git_hooks.sh` | Install git hooks |
+| `pre-commit-combined` | Combined pre-commit hook |
+| `pre-commit-docs` | Docs pre-commit hook |
+| `pre_commit_tool_count_check.sh` | Tool count check hook |
+| `git-hooks/` | Git hooks directory |
 
 ---
 
-## Core Scripts (Essential Only)
+## Subdirectories
 
-### Integration (1 script)
-- **`claude_code_bridge.py`** - CLI bridge for non-MCP interfaces
-  - Only script needed for CLI-only interfaces
-  - Logs governance updates from Claude Code
-  - Handles authentication automatically
-  - Usage: `python3 scripts/claude_code_bridge.py --log "summary"`
+### `age/`
+AGE (Apache Graph Extension) utilities:
+- `docker-compose.age.yml` - Docker config for AGE
+- `bootstrap.sql` - AGE initialization
+- `export_knowledge_sqlite_to_age.py` - Export to AGE
+- `sample_queries.sql` - Sample Cypher queries
+- `philosophical_queries.sql` - Advanced queries
+- `HANDOFF_CLI.md` - CLI handoff documentation
 
-### Maintenance (3 scripts)
-- **`auto_archive_metadata.py`** - Automatic agent metadata archival
-  - Keeps metadata.json lean
-  - Usage: `python3 scripts/auto_archive_metadata.py` (or cron)
+### `archive/`
+Archived scripts organized by type:
+- `migrations_completed_202602/` - Completed migrations (SQLite to Postgres)
+- `deprecated_20251210/` - Deprecated CLI tools
+- One-off session scripts
+- Completed bug fixes
+- Old process scripts
 
-- **`archive_old_markdowns.py`** - Markdown file archival
-  - Archives completed work and old files
-  - Usage: `python3 scripts/archive_old_markdowns.py --dry-run`
-
-- **`audit_markdown_proliferation.py`** - Markdown audit tool
-  - Analyzes markdown file proliferation
-  - Usage: `python3 scripts/audit_markdown_proliferation.py --stats`
-
-### Validation (1 script)
-- **`validate_all.py`** - Consolidated validation (replaces 2 scripts)
-  - Validates project docs and layer consistency
-  - Usage: `python3 scripts/validate_all.py`
-  - Options: `--docs-only`, `--layers-only`
-
----
-
-## Utility Scripts (As-Needed)
-
-### Bug Management
-- **`bugbot.py`** - Bug tracking bot (specialized)
-- **`generate_bug_summary.py`** - Generate bug summaries
-- **`update_bug_statuses.py`** - Update bug statuses
-- **`resolve_recently_fixed_bugs.py`** - ⚠️ ARCHIVED - One-off script (moved to archive/)
-
-### Migration Scripts (Archived)
-- **Archived to `scripts/archive/`:**
-  - `migrate_agent_api_keys.py` - Completed migration
-  - `migrate_to_knowledge_graph.py` - Completed migration
-  - `migrate_docs_to_knowledge.py` - Deprecated (knowledge layer deprecated)
-
-### Export/Diagnostics
-- **`export_claude_code.py`** - Export Claude Code data
-- **`dashboard_simple.py`** - Simple dashboard
-- **`diagnose_mcp_concurrency.py`** - MCP concurrency diagnosis
-- **`smoke_test.py`** - Smoke tests
-
-### Documentation Utilities
-- **`check_small_markdowns.py`** - Check for small markdown files
-- **`cleanup_docs.py`** - Documentation cleanup
-
-### Registration
-- **`register_claude_code.py`** - Register Claude Code agents
-
----
-
-## Test Scripts
-
-**Location:** `tests/` directory (moved from scripts/)
-
-- `test_coherence_scenarios.py` - Coherence scenario tests (moved Nov 29)
-- `test_critical_fixes.py` - Critical fix tests (moved Nov 29)
-- `smoke_test.py` - Smoke tests (moved Nov 29)
-- `test_organization.py` - Organization tests (previously moved)
-- `test_organization_functional.py` - Functional organization tests (previously moved)
-
----
-
-## Archived Scripts
-
-**Location:** `scripts/archive/`
-
-**Old Version Scripts:**
-- `process_update_3.py` - Specific update #3 (one-off)
-- `process_update_4.py` - Specific update #4 (one-off)
-- `process_claude_code_update.py` - Old version
-- `process_claude_code_update2.py` - Old version 2
-
-**One-Off Fix Scripts:**
-- `resolve_health_status_bug.py` - Completed bug fix
-- `resolve_loop_detection_gap_bug.py` - Completed bug fix
-
-**Session Scripts:**
-- `process_architecture_session.py` - One-off session
-- `finalize_claude_code_session.py` - One-off session
-- `export_and_archive_agent.py` - One-off script (Sakamoto's redundant script)
-- `finalize_agent_session.py` - One-off script
-- `record_session_discoveries.py` - One-off script (archived Nov 29)
-
----
-
-## Script Lifecycle
-
-**Active Scripts:** Core integration, maintenance, validation  
-**Utility Scripts:** As-needed tools, specialized functions  
-**Archived Scripts:** Obsolete, one-off, completed migrations  
-**Test Scripts:** Moved to `tests/` directory
+### `safeguards/`
+Safety-related scripts
 
 ---
 
 ## Adding New Scripts
 
-**Before creating a new script:**
-
-1. ❓ **Is it a test?** → Put in `tests/` directory
-2. ❓ **Is it one-off?** → Plan to archive after use
-3. ❓ **Is it documented?** → Add to this README
-4. ❓ **Is it deprecated?** → Add deprecation notice
-
-**Default:** Document in this README, plan for archival if one-off.
+1. **Is it a test?** Put in `tests/` directory
+2. **Is it one-off?** Plan to archive after use
+3. **Document it** in this README
+4. **Consider MCP** - Can this be an MCP tool instead?
 
 ---
 
-**Last Updated:** February 3, 2026
-**Status:** 12 active scripts, 31 archived, 5 moved to tests/
+## Launchd Service
 
-**Key Change:** Most functionality provided by 77 MCP tools. Scripts only needed for CLI-only interfaces.
+The plist for launchd is at:
+- `com.unitares.governance-mcp.plist` (copy in this dir)
+- Installed at: `~/Library/LaunchAgents/com.unitares.governance-mcp.plist`
 
+```bash
+# Restart service
+launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
+launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
+```

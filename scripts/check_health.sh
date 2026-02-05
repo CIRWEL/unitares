@@ -2,7 +2,7 @@
 # Quick health check: MCP vs Anthropic
 
 echo "=== MCP Server ==="
-curl -s --max-time 2 http://127.0.0.1:8765/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'✓ MCP: {d.get(\"status\",\"?\")} v{d.get(\"version\",\"?\")}')" 2>/dev/null || echo "✗ MCP: Not responding"
+curl -s --max-time 2 http://127.0.0.1:8767/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'✓ MCP: {d.get(\"status\",\"?\")} v{d.get(\"version\",\"?\")}')" 2>/dev/null || echo "✗ MCP: Not responding"
 
 echo ""
 echo "=== PostgreSQL ==="

@@ -215,7 +215,7 @@ def main():
     parser.add_argument('tool_name', help='Name of the MCP tool to call')
     parser.add_argument('arguments', nargs='*', help='Tool arguments in key=value format')
     parser.add_argument('--json', dest='json_input', help='Provide arguments as JSON string')
-    parser.add_argument('--url', default='http://127.0.0.1:8765/mcp/', help='MCP server URL')
+    parser.add_argument('--url', default='http://127.0.0.1:8767/mcp/', help='MCP server URL')
     parser.add_argument('--pretty', action='store_true', help='Pretty-print JSON output')
     
     args = parser.parse_args()

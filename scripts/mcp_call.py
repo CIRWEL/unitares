@@ -23,7 +23,7 @@ import urllib.request
 import urllib.error
 from typing import Any, Dict, Optional
 
-DEFAULT_URL = "http://127.0.0.1:8765"
+DEFAULT_URL = "http://127.0.0.1:8767"
 
 
 def call_tool(

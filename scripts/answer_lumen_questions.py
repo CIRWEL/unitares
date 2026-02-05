@@ -81,7 +81,7 @@ async def main():
         print(f"❌ Error fetching questions: {result['error']}")
         # Try direct IP
         global PI_MCP_URL
-        PI_MCP_URL = "http://192.168.1.165:8766/mcp/"
+        PI_MCP_URL = "http://192.168.1.165:8766/mcp/"  # DEFINITIVE: anima-mcp runs on 8766
         print(f"🔄 Trying direct connection: {PI_MCP_URL}")
         result = await call_pi_tool("get_questions", {"limit": 20})
         if "error" in result:

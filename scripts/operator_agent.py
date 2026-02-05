@@ -24,8 +24,11 @@ Usage:
 
 Environment Variables:
     GOVERNANCE_TOOL_MODE=operator_recovery  # Set automatically when --enable-recovery
-    MCP_SERVER_URL=http://127.0.0.1:8765/sse  # Override default
+    MCP_SERVER_URL=http://127.0.0.1:8767/sse  # Override default (uses legacy SSE transport)
     OPERATOR_LABEL=Operator  # Override operator label
+
+Note: This script uses the legacy SSE transport. Consider using mcp_agent.py for
+      Streamable HTTP (/mcp/) support.
 """
 
 import asyncio
@@ -55,7 +58,7 @@ class OperatorAgent:
 
     def __init__(
         self,
-        mcp_url: str = "http://127.0.0.1:8765/sse",
+        mcp_url: str = "http://127.0.0.1:8767/sse",
         operator_label: str = "Operator",
         stuck_interval: int = 300,  # 5 minutes
         health_interval: int = 3600,  # 1 hour
@@ -555,8 +558,8 @@ async def main():
     
     parser.add_argument(
         "--url",
-        default=os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8765/sse"),
-        help="MCP server URL (default: http://127.0.0.1:8765/sse)"
+        default=os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8767/sse"),
+        help="MCP server URL (default: http://127.0.0.1:8767/sse)"
     )
     
     parser.add_argument(
