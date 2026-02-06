@@ -34,7 +34,7 @@
 | `list_tools()` | Tool catalog (use MCP tool) |
 | [CIRCUIT_BREAKER_DIALECTIC](CIRCUIT_BREAKER_DIALECTIC.md) | Circuit breaker + recovery protocol |
 | [database_architecture](database_architecture.md) | PostgreSQL + Redis architecture |
-| [MCP_SYSTEM_EVOLUTION](MCP_SYSTEM_EVOLUTION.md) | Version history (v1.0 → v2.5.7) |
+| [MCP_SYSTEM_EVOLUTION](MCP_SYSTEM_EVOLUTION.md) | Version history (v1.0 → v2.6.0) |
 
 ---
 
@@ -46,9 +46,9 @@
 
 ---
 
-## Tool Count: 85+ Tools
+## Tool Count: 29 Registered Tools
 
-Use `list_tools()` for full list, or `list_tools(lite=true)` for essentials only.
+v2.6.0 reduced the public surface from 49 to 29 tools. Use `list_tools()` or read [SKILL.md](../skills/unitares-governance/SKILL.md).
 
 ## Test Coverage
 
@@ -57,8 +57,9 @@ Use `list_tools()` for full list, or `list_tools(lite=true)` for essentials only
 | `governance_monitor.py` | 83% |
 | `trajectory_identity.py` | 88% |
 | `workspace_health.py` | 83% |
+| **Overall** | **40%** |
 
-416 tests passing as of Feb 2026.
+1,798 tests passing as of v2.6.0 (Feb 2026).
 
 ---
 

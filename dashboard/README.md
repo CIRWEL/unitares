@@ -1,7 +1,7 @@
 # UNITARES Governance Dashboard
 
 **Created:** December 30, 2025
-**Last Updated:** February 3, 2026
+**Last Updated:** February 5, 2026
 **Status:** Active
 
 ---
@@ -51,8 +51,14 @@ The dashboard makes the following tool calls:
 - `search_knowledge_graph` - Get recent discoveries
 - `aggregate_metrics` - Get system-wide metrics
 
+### File Structure
+- `index.html` — Main dashboard page
+- `styles.css` — Extracted CSS (dark/light theme support)
+- `utils.js` — API client, data processing, theme manager
+- `components.js` — Reusable UI components
+
 ### Customization
-Edit `dashboard/index.html` to:
+Edit the dashboard files to:
 - Change refresh interval (default: 5000ms)
 - Modify displayed metrics
 - Adjust styling/colors
@@ -66,21 +72,28 @@ Edit `dashboard/index.html` to:
 3. Edit `dashboard/index.html` and refresh
 
 ### Adding New Features
-1. Add new API calls in the JavaScript `refresh()` function
-2. Update HTML to display new data
-3. Style with CSS in the `<style>` section
+1. Add new API calls using `DashboardAPI` in `utils.js`
+2. Update HTML in `index.html` to display new data
+3. Style with CSS in `styles.css`
+
+## Completed Enhancements
+
+- [x] Filter/search agents
+- [x] Export data (CSV/JSON) — via `utils.js` DataProcessor
+- [x] Dark/light theme toggle — via ThemeManager
+- [x] Dialectic session viewer with filters
+- [x] Modular component architecture (`components.js`)
+- [x] Extracted CSS with theme variables (`styles.css`)
 
 ## Future Enhancements
 
 - [ ] EISV metrics charts over time
 - [ ] Agent activity timeline
 - [ ] Knowledge graph visualization
-- [ ] Filter/search agents
-- [ ] Export data (CSV/JSON)
-- [ ] Dark/light theme toggle
 - [ ] Real-time WebSocket updates (instead of polling)
+- [ ] Loading performance optimization
 
 ---
 
-**Status:** MVP Complete - Ready for customer demos
+**Status:** Active — Serving at `/dashboard`
 

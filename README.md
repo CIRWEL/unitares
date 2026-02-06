@@ -1,4 +1,4 @@
-# UNITARES Governance Framework v2.5.7
+# UNITARES Governance Framework v2.6.0
 
 **Stability monitoring for multi-agent AI systems.**
 
@@ -144,22 +144,23 @@ curl -H "X-Session-ID: $SESSION" \
 
 ## Key Features
 
-### 85+ MCP Tools
+### 29 Registered MCP Tools (Slim Surface)
 
-| Category | Count | Purpose |
+v2.6.0 reduced the public tool surface from 49 to 29 registered tools. Admin/internal tools are still callable but hidden from tool listings to reduce cognitive load.
+
+| Category | Tools | Purpose |
 |----------|-------|---------|
-| **Core** | 3 | Governance cycle, metrics, simulation |
-| **Lifecycle** | 10 | Agent management, archiving |
-| **Knowledge Graph** | 9 | Discovery storage, semantic search |
-| **Observability** | 5 | Pattern analysis, anomaly detection |
-| **Recovery** | 2 | `self_recovery` (unified), operator resume |
-| **Admin** | 14 | Health, calibration, telemetry |
-| **Identity** | 3 | Onboarding, identity management, trajectory verification |
-| **Pi Orchestration** | 9 | Mac↔Raspberry Pi coordination |
-| **CIRS** | 1 | `cirs_protocol` (unified coordination) |
-| **Trajectory** | 3 | Genesis storage, lineage comparison, anomaly detection |
+| **Core** | `process_agent_update`, `get_governance_metrics` | Governance cycle |
+| **Identity** | `onboard`, `identity` | Agent identity management |
+| **Knowledge** | `knowledge`, `search_knowledge_graph`, `leave_note` | Persistent cross-agent learning |
+| **Dialectic** | `request_dialectic_review`, `submit_thesis/antithesis/synthesis` | Peer review protocol |
+| **Consolidated** | `agent`, `config`, `calibration`, `export`, `observe` | Unified operations |
+| **Recovery** | `self_recovery`, `operator_resume_agent` | Stuck agent recovery |
+| **CIRS** | `cirs_protocol` | Multi-agent coordination |
+| **Pi** | `pi` | Mac ↔ Raspberry Pi orchestration |
+| **Admin** | `health_check`, `get_workspace_health`, `get_connection_status` | System health |
 
-**List tools:** `list_tools()` — progressive disclosure, start with essentials
+**Discover tools:** `list_tools()` or read [SKILL.md](skills/unitares-governance/SKILL.md)
 
 ### Stability Monitoring
 
@@ -208,19 +209,31 @@ get_trajectory_status()       → View lineage health
 ```
 governance-mcp-v1/
 ├── src/
-│   ├── governance_monitor.py   # Core EISV dynamics (91KB)
+│   ├── governance_monitor.py   # Core EISV dynamics
 │   ├── cirs.py                 # Oscillation detection
 │   ├── mcp_server.py           # HTTP server (multi-client)
 │   ├── mcp_server_std.py       # Stdio server (single-client)
-│   └── mcp_handlers/           # Tool implementations
+│   ├── mcp_handlers/           # Tool implementations
+│   │   ├── identity_v2.py      # Identity resolution (session→UUID)
+│   │   ├── core.py             # process_agent_update, metrics
+│   │   ├── dialectic.py        # Dialectic peer review
+│   │   ├── consolidated.py     # Unified agent/config/calibration tools
+│   │   └── knowledge_graph.py  # Knowledge storage & search
+│   ├── db/                     # Database backends
+│   │   └── postgres_backend.py # PostgreSQL (primary)
+│   ├── cache/                  # Redis client, rate limiter
+│   └── storage/
+│       └── knowledge_graph_age.py  # AGE graph database
 ├── governance_core/            # Canonical math (Phase-3)
 │   ├── dynamics.py             # Differential equations
 │   ├── coherence.py            # C(V,Θ) function
 │   ├── ethical_drift.py        # Δη vector computation
 │   └── scoring.py              # Φ objective, verdicts
+├── dashboard/                  # Web dashboard (HTML/CSS/JS)
+├── skills/                     # SKILL.md for agent onboarding
 ├── docs/                       # Documentation
 ├── data/                       # Runtime data (agents/, knowledge/)
-└── tests/                      # Test suite
+└── tests/                      # 1,798 tests, 40% coverage
 ```
 
 ---
@@ -282,9 +295,7 @@ The drift is *computed*, but interpreting "high drift = bad" requires domain con
 python -m pytest tests/ -v
 ```
 
-**Current status:** 358 tests, 30% overall coverage (core modules higher)
-
-Core governance logic is well-tested. Coverage improves with each session.
+**Current status:** 1,798 tests, 40% coverage. Core modules (governance_monitor 83%, trajectory_identity 88%, workspace_health 83%) are well-tested.
 
 ---
 
@@ -306,26 +317,25 @@ The thermodynamic framing isn't metaphor — it's a design choice that makes beh
 
 ## Roadmap
 
-**Recently completed (Feb 2026):**
-- ✅ UX friction fixes — error code auto-inference, tool alias action injection, lite response mode
-- ✅ Consolidated tools — `config`, `knowledge`, `agent`, `calibration` (38+ tool aliases)
-- ✅ LLM delegation — delegate tasks to local/remote smaller models (Ollama, OpenAI)
-- ✅ Dashboard improvements — modular components, better structure
-- ✅ Ethical drift (Δη) computed and integrated into φ objective
-- ✅ Trajectory identity — genesis signatures, lineage comparison
-- ✅ Model-based agent_id naming (`Claude_Opus_4_5_20260204`)
-- ✅ Automatic ground truth collection from objective outcomes
-- ✅ SSH-based Pi restart (`pi_restart_service`) — works even when MCP is down
-- ✅ 358 tests with comprehensive UX fix coverage
+**v2.6.0 (Feb 2026):**
+- ✅ Dead code removal — ~4,200 lines of legacy code deleted (identity v1, old DBs, unused modules)
+- ✅ Slim tool surface — 49 → 29 registered tools, admin tools hidden
+- ✅ PostgreSQL dialectic — Fully migrated from SQLite to PostgreSQL
+- ✅ Consolidated exports/observability — Unified `export()` and `observe()` tools
+- ✅ Agent circuit breaker enforcement — Paused agents now actually blocked
+- ✅ Redis resilience — Circuit breaker, connection pooling, retry with backoff
+- ✅ 1,798 tests, 40% coverage (up from 358 tests, 25%)
+- ✅ SKILL.md — Agent onboarding guide for the slim MCP surface
+- ✅ Identity v2 — Three-tier model with session→UUID binding via MCP headers
 
 **In progress:**
-- 🔄 Identity simplification — reduce PID complexity
-- 🔄 Outcome correlation — does instability actually predict bad outcomes?
-- 🔄 Threshold tuning — domain-specific drift thresholds need real-world calibration
+- 🔄 Outcome correlation — Does instability actually predict bad outcomes?
+- 🔄 Threshold tuning — Domain-specific drift thresholds need real-world calibration
+- 🔄 Dashboard performance — Loading speed improvements
 
 **Future:**
 - Semantic ethical drift detection (beyond parameter changes)
-- Multi-agent coordination protocols
+- Multi-agent coordination protocols (CIRS v1.0)
 - Production hardening
 
 Contributions welcome. This is research-grade infrastructure, not production-certified.
@@ -344,4 +354,4 @@ MIT License with Attribution — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Version:** 2.5.7 | **Last Updated:** 2026-02-05
+**Version:** 2.6.0 | **Last Updated:** 2026-02-05

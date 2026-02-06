@@ -1,4 +1,4 @@
-# MCP System Evolution: v1.0.0 → v2.5.7
+# MCP System Evolution: v1.0.0 → v2.6.0
 
 **Complete history of how the UNITARES Governance MCP system has evolved**
 
@@ -21,6 +21,9 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 - **v2.5.5** (Feb 2026) - Ethical drift, trajectory identity, 85+ tools
 - **v2.5.6** (Feb 2026) - UX friction fixes, consolidated tools, 38+ tool aliases
 - **v2.5.7** (Feb 2026) - Three-tier identity (merged label→display_name), identity_shared.py module, 416 tests
+- **v2.5.8** (Feb 2026) - Production Redis resilience (circuit breaker, pooling, retry)
+- **v2.5.9** (Feb 2026) - Agent circuit breaker enforcement (paused agents actually blocked)
+- **v2.6.0** (Feb 2026) - Major cleanup: ~4,200 lines dead code removed, tool surface 49→29, PostgreSQL dialectic, 1,798 tests at 40% coverage
 
 ---
 
