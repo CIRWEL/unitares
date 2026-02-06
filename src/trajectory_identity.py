@@ -224,6 +224,11 @@ async def update_current_signature(
             await store_genesis_signature(agent_id, signature)
             result["genesis_created"] = True
 
+        # Compute and store trust tier before saving
+        trust_tier = compute_trust_tier(metadata)
+        metadata["trust_tier"] = trust_tier
+        result["trust_tier"] = trust_tier
+
         # Save updated metadata
         await db.update_identity_metadata(agent_id, metadata)
 
@@ -232,6 +237,89 @@ async def update_current_signature(
     except Exception as e:
         logger.error(f"[Trajectory] Failed to update signature: {e}")
         return {"error": str(e)}
+
+
+def compute_trust_tier(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Compute trust tier from trajectory metadata stored in identity.metadata.
+
+    Pure function: takes metadata dict, returns tier assessment.
+    No DB access, no side effects.
+
+    Tiers:
+        0 (unknown):     No trajectory data
+        1 (emerging):    Has genesis, < 50 observations OR confidence < 0.5
+        2 (established): 50+ observations, confidence >= 0.5, lineage > 0.7
+        3 (verified):    200+ observations, confidence >= 0.7, lineage > 0.8
+    """
+    genesis = metadata.get("trajectory_genesis")
+    current = metadata.get("trajectory_current")
+
+    # Tier 0: No trajectory data at all
+    if not genesis:
+        return {
+            "tier": 0,
+            "name": "unknown",
+            "observation_count": 0,
+            "identity_confidence": 0.0,
+            "lineage_similarity": None,
+            "reason": "No trajectory data",
+        }
+
+    # Use current if available, otherwise genesis
+    sig_data = current if current else genesis
+    observation_count = sig_data.get("observation_count", 0)
+    identity_confidence = sig_data.get("identity_confidence", 0.0)
+
+    # Compute lineage similarity if both genesis and current exist
+    lineage_similarity = None
+    if genesis and current:
+        try:
+            g = TrajectorySignature.from_dict(genesis)
+            c = TrajectorySignature.from_dict(current)
+            lineage_similarity = round(c.similarity(g), 4)
+        except Exception:
+            pass
+
+    # Tier 3: verified (200+ obs, confidence >= 0.7, lineage > 0.8)
+    if (observation_count >= 200
+            and identity_confidence >= 0.7
+            and lineage_similarity is not None
+            and lineage_similarity > 0.8):
+        return {
+            "tier": 3,
+            "name": "verified",
+            "observation_count": observation_count,
+            "identity_confidence": round(identity_confidence, 4),
+            "lineage_similarity": lineage_similarity,
+            "reason": f"Strong behavioral continuity ({observation_count} obs, "
+                      f"confidence={identity_confidence:.2f}, lineage={lineage_similarity:.2f})",
+        }
+
+    # Tier 2: established (50+ obs, confidence >= 0.5, lineage > 0.7)
+    if (observation_count >= 50
+            and identity_confidence >= 0.5
+            and (lineage_similarity is None or lineage_similarity > 0.7)):
+        return {
+            "tier": 2,
+            "name": "established",
+            "observation_count": observation_count,
+            "identity_confidence": round(identity_confidence, 4),
+            "lineage_similarity": lineage_similarity,
+            "reason": f"Stable identity ({observation_count} obs, "
+                      f"confidence={identity_confidence:.2f})",
+        }
+
+    # Tier 1: emerging (has genesis but doesn't meet tier 2)
+    return {
+        "tier": 1,
+        "name": "emerging",
+        "observation_count": observation_count,
+        "identity_confidence": round(identity_confidence, 4),
+        "lineage_similarity": lineage_similarity,
+        "reason": f"Building identity ({observation_count} obs, "
+                  f"confidence={identity_confidence:.2f})",
+    }
 
 
 async def get_trajectory_status(agent_id: str) -> Dict[str, Any]:

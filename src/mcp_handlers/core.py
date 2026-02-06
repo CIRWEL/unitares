@@ -1691,6 +1691,60 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                         elif trajectory_result.get("genesis_created"):
                             response_data["trajectory_identity"]["genesis_created"] = True
                             logger.info(f"[TRAJECTORY] Created genesis Σ₀ for {agent_uuid[:8]}... on first update")
+                    # TRUST TIER: Compute from trajectory metadata, apply risk adjustment
+                    try:
+                        from src.trajectory_identity import compute_trust_tier
+
+                        trust_tier = trajectory_result.get("trust_tier")
+                        if not trust_tier:
+                            # Fallback: compute from DB if update_current_signature didn't return it
+                            identity = await get_db().get_identity(agent_uuid)
+                            if identity and identity.metadata:
+                                trust_tier = compute_trust_tier(identity.metadata)
+
+                        if trust_tier:
+                            response_data["trajectory_identity"]["trust_tier"] = trust_tier
+
+                            # Cache on in-memory metadata for fast list queries
+                            if meta:
+                                meta.trust_tier = trust_tier.get("name", "unknown")
+                                meta.trust_tier_num = trust_tier.get("tier", 0)
+
+                            # Risk adjustment based on trust tier
+                            tier_num = trust_tier.get("tier", 0)
+                            is_anomaly = trajectory_result.get("is_anomaly", False)
+
+                            risk_adj = 0.0
+                            risk_reason = None
+
+                            if is_anomaly:
+                                risk_adj = 0.15
+                                risk_reason = "Behavioral deviation detected (lineage < 0.6)"
+                            elif tier_num <= 1:
+                                risk_adj = 0.05
+                                risk_reason = f"Trust tier {tier_num} ({trust_tier['name']}): identity not yet established"
+                            elif tier_num == 3:
+                                risk_adj = -0.05
+                                risk_reason = f"Trust tier 3 (verified): earned trust reduces friction"
+
+                            if risk_adj != 0.0 and "metrics" in response_data:
+                                original_risk = response_data["metrics"].get("risk_score")
+                                if original_risk is not None:
+                                    adjusted_risk = max(0.0, min(1.0, original_risk + risk_adj))
+                                    response_data["metrics"]["risk_score"] = round(adjusted_risk, 4)
+                                    response_data["metrics"]["trajectory_risk_adjustment"] = {
+                                        "original": round(original_risk, 4),
+                                        "adjusted": round(adjusted_risk, 4),
+                                        "delta": risk_adj,
+                                        "reason": risk_reason,
+                                    }
+                                    logger.info(
+                                        f"[TRAJECTORY] Risk adjusted for {agent_uuid[:8]}...: "
+                                        f"{original_risk:.3f} → {adjusted_risk:.3f} ({risk_reason})"
+                                    )
+                    except Exception as e:
+                        logger.debug(f"[TRAJECTORY] Trust tier computation failed: {e}")
+
                 except Exception as e:
                     # Non-blocking - trajectory is optional
                     logger.debug(f"[TRAJECTORY] Could not update trajectory: {e}")

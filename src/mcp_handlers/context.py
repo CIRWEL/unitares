@@ -154,6 +154,25 @@ def get_mcp_session_id() -> Optional[str]:
     return _mcp_session_id.get()
 
 
+# Trajectory identity confidence - set during dispatch if verification runs
+_trajectory_confidence: ContextVar[Optional[float]] = ContextVar('trajectory_confidence', default=None)
+
+
+def set_trajectory_confidence(confidence: float) -> object:
+    """Set trajectory confidence for current request. Returns token for reset."""
+    return _trajectory_confidence.set(confidence)
+
+
+def reset_trajectory_confidence(token: object) -> None:
+    """Reset trajectory confidence."""
+    _trajectory_confidence.reset(token)
+
+
+def get_trajectory_confidence() -> Optional[float]:
+    """Get trajectory confidence from context, or None if not set."""
+    return _trajectory_confidence.get()
+
+
 def detect_client_from_user_agent(user_agent: str) -> Optional[str]:
     """
     Detect client type from User-Agent string.

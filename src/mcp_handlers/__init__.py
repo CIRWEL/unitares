@@ -323,6 +323,36 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
     # DEBUG: Log entry to dispatch_tool to trace MCP vs REST calls
     _logger.info(f"[DISPATCH_ENTRY] tool={name}, has_kwargs={'kwargs' in arguments}, arg_keys={list(arguments.keys())[:5]}, bound_agent_id={bound_agent_id[:8] + '...' if bound_agent_id else 'None'}")
 
+    # === TRAJECTORY IDENTITY VERIFICATION ===
+    # If the incoming arguments include a trajectory_signature AND the agent
+    # has a stored genesis signature, run two-tier verification.
+    # Non-blocking: verification failure is logged, never blocks execution.
+    trajectory_confidence_token = None
+    try:
+        traj_sig = arguments.get("trajectory_signature") if arguments else None
+        if traj_sig and isinstance(traj_sig, dict) and bound_agent_id:
+            from src.trajectory_identity import TrajectorySignature, verify_trajectory_identity
+            from .context import set_trajectory_confidence
+
+            sig = TrajectorySignature.from_dict(traj_sig)
+            verification = await verify_trajectory_identity(bound_agent_id, sig)
+
+            if verification and not verification.get("error"):
+                coherence_sim = verification.get("tiers", {}).get("coherence", {}).get("similarity")
+                lineage_sim = verification.get("tiers", {}).get("lineage", {}).get("similarity")
+                sims = [s for s in [coherence_sim, lineage_sim] if s is not None]
+                if sims:
+                    traj_conf = min(sims)
+                    trajectory_confidence_token = set_trajectory_confidence(traj_conf)
+
+                if not verification.get("verified"):
+                    _logger.warning(
+                        f"[TRAJECTORY] Verification FAILED for {bound_agent_id[:8]}...: "
+                        f"failed_tiers={verification.get('failed_tiers', [])}"
+                    )
+    except Exception as e:
+        _logger.debug(f"[TRAJECTORY] Verification skipped: {e}")
+
     # === KWARGS UNWRAPPING ===
     # MCP clients may send arguments wrapped as:
     #   {"kwargs": "{\"name\": \"...\"}"}  (string - needs JSON parsing)
@@ -586,4 +616,7 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
     finally:
         # Reset contextvars to prevent cross-request contamination
         reset_session_context(context_token)
+        if trajectory_confidence_token is not None:
+            from .context import reset_trajectory_confidence
+            reset_trajectory_confidence(trajectory_confidence_token)
 

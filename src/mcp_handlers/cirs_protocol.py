@@ -132,6 +132,7 @@ class StateAnnounce:
     trajectory_signature: Optional[Dict[str, Any]] = None
     purpose: Optional[str] = None
     update_count: int = 0
+    trust_tier: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         result = {
@@ -149,6 +150,8 @@ class StateAnnounce:
             result["trajectory_signature"] = self.trajectory_signature
         if self.purpose:
             result["purpose"] = self.purpose
+        if self.trust_tier:
+            result["trust_tier"] = self.trust_tier
         return result
 
 
@@ -598,11 +601,13 @@ async def _handle_state_announce_emit(arguments: Dict[str, Any]) -> Sequence[Tex
             logger.debug(f"Could not compute trajectory signature: {e}")
             trajectory_signature = None
 
-    # Get agent purpose if available
+    # Get agent purpose and trust tier if available
     purpose = None
+    trust_tier_name = None
     meta = mcp_server.agent_metadata.get(agent_id)
     if meta:
         purpose = getattr(meta, 'purpose', None)
+        trust_tier_name = getattr(meta, 'trust_tier', None)
 
     # Create and store the announcement
     announce = StateAnnounce(
@@ -617,6 +622,7 @@ async def _handle_state_announce_emit(arguments: Dict[str, Any]) -> Sequence[Tex
         trajectory_signature=trajectory_signature,
         purpose=purpose,
         update_count=int(metrics.get("updates", 0)),
+        trust_tier=trust_tier_name,
     )
 
     _store_state_announce(announce)
@@ -854,6 +860,16 @@ def auto_emit_state_announce(
             "V": float(metrics.get("V", 0.0)),
         }
 
+        # Get trust tier from cache if available
+        trust_tier_name = None
+        try:
+            from .shared import get_mcp_server
+            _meta = get_mcp_server().agent_metadata.get(agent_id)
+            if _meta:
+                trust_tier_name = getattr(_meta, 'trust_tier', None)
+        except Exception:
+            pass
+
         # Create announcement (simplified - no trajectory signature in auto-emit)
         announce = StateAnnounce(
             agent_id=agent_id,
@@ -867,6 +883,7 @@ def auto_emit_state_announce(
             trajectory_signature=None,  # Skip in auto-emit for performance
             purpose=None,
             update_count=int(update_count),
+            trust_tier=trust_tier_name,
         )
 
         _store_state_announce(announce)

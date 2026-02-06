@@ -378,7 +378,10 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
             if standardized:
                 agent_info.setdefault("health_status", "unknown")
                 agent_info.setdefault("metrics", None)
-            
+
+            # Trust tier from cached trajectory data
+            agent_info["trust_tier"] = getattr(meta, 'trust_tier', None)
+
             agents_list.append(agent_info)
         
         # Sort by last_update (most recent first)

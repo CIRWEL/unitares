@@ -478,5 +478,163 @@ class TestProcessAgentUpdateIntegration:
         assert sig_dict["identity_confidence"] == 0.75
 
 
+class TestComputeTrustTier:
+    """Tests for trust tier computation from trajectory metadata."""
+
+    def test_tier_0_no_data(self):
+        """No trajectory data = tier 0 (unknown)."""
+        from src.trajectory_identity import compute_trust_tier
+        result = compute_trust_tier({})
+        assert result["tier"] == 0
+        assert result["name"] == "unknown"
+        assert result["observation_count"] == 0
+
+    def test_tier_0_empty_genesis(self):
+        """Empty metadata with no trajectory keys = tier 0."""
+        from src.trajectory_identity import compute_trust_tier
+        result = compute_trust_tier({"some_other_key": True})
+        assert result["tier"] == 0
+        assert result["name"] == "unknown"
+
+    def test_tier_1_genesis_only_low_obs(self):
+        """Genesis only, low observations = tier 1 (emerging)."""
+        from src.trajectory_identity import compute_trust_tier
+        metadata = {
+            "trajectory_genesis": {
+                "observation_count": 10,
+                "identity_confidence": 0.3,
+            }
+        }
+        result = compute_trust_tier(metadata)
+        assert result["tier"] == 1
+        assert result["name"] == "emerging"
+        assert result["observation_count"] == 10
+
+    def test_tier_1_with_current_low_confidence(self):
+        """Current exists but low confidence = tier 1."""
+        from src.trajectory_identity import compute_trust_tier
+        metadata = {
+            "trajectory_genesis": {
+                "attractor": {"center": [0.5, 0.5, 0.5, 0.5]},
+                "observation_count": 10,
+                "identity_confidence": 0.3,
+            },
+            "trajectory_current": {
+                "attractor": {"center": [0.52, 0.48, 0.51, 0.49]},
+                "observation_count": 60,
+                "identity_confidence": 0.4,
+            }
+        }
+        result = compute_trust_tier(metadata)
+        assert result["tier"] == 1
+        assert result["name"] == "emerging"
+
+    def test_tier_2_established(self):
+        """50+ observations, confidence >= 0.5, similar attractors = tier 2."""
+        from src.trajectory_identity import compute_trust_tier
+        metadata = {
+            "trajectory_genesis": {
+                "attractor": {"center": [0.5, 0.5, 0.5, 0.5]},
+                "observation_count": 10,
+                "identity_confidence": 0.4,
+            },
+            "trajectory_current": {
+                "attractor": {"center": [0.52, 0.48, 0.51, 0.49]},
+                "observation_count": 75,
+                "identity_confidence": 0.6,
+            }
+        }
+        result = compute_trust_tier(metadata)
+        assert result["tier"] == 2
+        assert result["name"] == "established"
+        assert result["lineage_similarity"] is not None
+        assert result["lineage_similarity"] > 0.7
+
+    def test_tier_2_genesis_only_high_obs(self):
+        """Genesis only (no current), high obs and confidence = tier 2.
+        Lineage is None since there's no current to compare."""
+        from src.trajectory_identity import compute_trust_tier
+        metadata = {
+            "trajectory_genesis": {
+                "observation_count": 100,
+                "identity_confidence": 0.7,
+            }
+        }
+        result = compute_trust_tier(metadata)
+        # Uses genesis as sig_data, lineage is None (allowed for tier 2)
+        assert result["tier"] == 2
+        assert result["name"] == "established"
+        assert result["lineage_similarity"] is None
+
+    def test_tier_3_verified(self):
+        """200+ observations, high confidence, nearly identical sigs = tier 3."""
+        from src.trajectory_identity import compute_trust_tier
+        metadata = {
+            "trajectory_genesis": {
+                "attractor": {"center": [0.5, 0.5, 0.5, 0.5]},
+                "beliefs": {"values": [0.8, 0.6, 0.7]},
+                "recovery": {"tau_estimate": 10.0},
+                "stability_score": 0.8,
+                "observation_count": 10,
+                "identity_confidence": 0.5,
+            },
+            "trajectory_current": {
+                "attractor": {"center": [0.5, 0.5, 0.5, 0.5]},
+                "beliefs": {"values": [0.8, 0.6, 0.7]},
+                "recovery": {"tau_estimate": 10.0},
+                "stability_score": 0.8,
+                "observation_count": 250,
+                "identity_confidence": 0.85,
+            }
+        }
+        result = compute_trust_tier(metadata)
+        assert result["tier"] == 3
+        assert result["name"] == "verified"
+        assert result["lineage_similarity"] > 0.8
+
+    def test_drift_prevents_promotion(self):
+        """High obs and confidence but diverged attractors = low tier."""
+        from src.trajectory_identity import compute_trust_tier
+        metadata = {
+            "trajectory_genesis": {
+                "attractor": {"center": [0.1, 0.1, 0.1, 0.1]},
+                "beliefs": {"values": [0.1, 0.1, 0.1]},
+                "recovery": {"tau_estimate": 5.0},
+                "stability_score": 0.2,
+                "observation_count": 10,
+                "identity_confidence": 0.4,
+            },
+            "trajectory_current": {
+                "attractor": {"center": [0.9, 0.9, 0.9, 0.9]},
+                "beliefs": {"values": [0.9, 0.9, 0.9]},
+                "recovery": {"tau_estimate": 100.0},
+                "stability_score": 0.95,
+                "observation_count": 300,
+                "identity_confidence": 0.9,
+            }
+        }
+        result = compute_trust_tier(metadata)
+        assert result["tier"] <= 1
+        assert result["lineage_similarity"] is not None
+        assert result["lineage_similarity"] < 0.7
+
+    def test_result_has_all_fields(self):
+        """Every tier result should include required fields."""
+        from src.trajectory_identity import compute_trust_tier
+        for metadata in [
+            {},
+            {"trajectory_genesis": {"observation_count": 5, "identity_confidence": 0.1}},
+        ]:
+            result = compute_trust_tier(metadata)
+            assert "tier" in result
+            assert "name" in result
+            assert "observation_count" in result
+            assert "identity_confidence" in result
+            assert "lineage_similarity" in result
+            assert "reason" in result
+            assert isinstance(result["tier"], int)
+            assert 0 <= result["tier"] <= 3
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

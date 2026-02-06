@@ -1688,6 +1688,11 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     # Include trajectory result if genesis was stored
     if trajectory_result:
         result["trajectory"] = trajectory_result
+        result["trajectory"]["trust_tier"] = {
+            "tier": 1,
+            "name": "emerging",
+            "reason": "Genesis stored at onboard. Identity will mature with behavioral consistency.",
+        }
 
     logger.info(f"[ONBOARD] Agent {agent_uuid[:8]}... onboarded (is_new={is_new}, label={agent_label})")
 
@@ -1787,6 +1792,16 @@ async def handle_get_trajectory_status(arguments: Dict[str, Any]) -> Sequence[Te
 
         if result.get("error"):
             return error_response(result["error"])
+
+        # Add trust tier to status response
+        try:
+            from src.trajectory_identity import compute_trust_tier
+            from src.db import get_db
+            identity = await get_db().get_identity(agent_uuid)
+            if identity and identity.metadata:
+                result["trust_tier"] = compute_trust_tier(identity.metadata)
+        except Exception:
+            pass
 
         return success_response(result, agent_id=agent_uuid, arguments=arguments)
 
