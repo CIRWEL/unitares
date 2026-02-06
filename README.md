@@ -110,7 +110,7 @@ For REST clients, include an `X-Session-ID` header to maintain identity across c
 
 ## Key Concepts
 
-**29 registered tools** — v2.6.0 reduced the public surface from 49 to 29 tools. Use `list_tools()` or read [SKILL.md](skills/unitares-governance/SKILL.md) for the full catalog.
+**31 registered tools** — v2.6.2 reduced the public surface from 49 to 31 tools via consolidation (`action_router`). Use `list_tools()` or read [SKILL.md](skills/unitares-governance/SKILL.md) for the full catalog.
 
 **Three-tier identity:**
 
@@ -142,7 +142,7 @@ For REST clients, include an `X-Session-ID` header to maintain identity across c
 python -m pytest tests/ -v
 ```
 
-1,907 tests, 41% coverage. Core modules: governance_monitor 83%, trajectory_identity 88%, workspace_health 83%.
+2,194 tests, 43% coverage. Core modules: governance_monitor 83%, trajectory_identity 88%, workspace_health 83%.
 
 ---
 
@@ -163,4 +163,4 @@ Built by [@CIRWEL](https://github.com/CIRWEL). Also building [Lumen/anima-mcp](h
 
 MIT License with Attribution — see [LICENSE](LICENSE).
 
-**v2.6.0** | 2026-02-05
+**v2.6.2** | 2026-02-06

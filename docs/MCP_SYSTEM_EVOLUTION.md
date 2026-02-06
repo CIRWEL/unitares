@@ -1,4 +1,4 @@
-# MCP System Evolution: v1.0.0 → v2.6.0
+# MCP System Evolution: v1.0.0 → v2.6.2
 
 **Complete history of how the UNITARES Governance MCP system has evolved**
 
@@ -24,6 +24,8 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 - **v2.5.8** (Feb 2026) - Production Redis resilience (circuit breaker, pooling, retry)
 - **v2.5.9** (Feb 2026) - Agent circuit breaker enforcement (paused agents actually blocked)
 - **v2.6.0** (Feb 2026) - Major cleanup: ~4,200 lines dead code removed, tool surface 49→29, PostgreSQL dialectic, 1,798 tests at 40% coverage
+- **v2.6.1** (Feb 2026) - Name-based identity (PATH 2.5), observe tool fix, dashboard overhaul, trust tiers
+- **v2.6.2** (Feb 2026) - Architecture refactoring: ToolDefinition dataclass, action_router, dispatch middleware, response formatter. 31 tools, 2,194 tests at 43% coverage
 
 ---
 
@@ -384,9 +386,12 @@ v2.5.0:  Stability monitoring (HCK/CIRS)
 v2.5.4:  Meaningful identity in KG
 v2.5.6:  SSH-based Pi restart, 310+ tests
 v2.5.7:  Identity persistence fix
+v2.6.0:  Major cleanup, 49→29 tools, 1,798 tests
+v2.6.1:  Name-based identity (PATH 2.5), dashboard overhaul
+v2.6.2:  Architecture refactoring, 31 tools, 2,194 tests
 ```
 
-### Tool Count Growth
+### Tool Count Evolution
 
 - **v1.0.0:** 4 tools
 - **v2.0.0:** 29 tools
@@ -395,6 +400,8 @@ v2.5.7:  Identity persistence fix
 - **v2.3.0:** 43 tools (+8 more tools)
 - **v2.4.0:** 43 tools (refinements)
 - **v2.5.5:** 85+ tools (+42 tools: Pi orchestration, trajectory, recovery, unified tools)
+- **v2.6.0:** 29 tools (85+ consolidated to 29 public, admin/internal hidden)
+- **v2.6.2:** 31 tools (+ 2 new registered tools, 49 consolidated sub-handlers)
 
 ### Performance Improvements
 
@@ -422,31 +429,32 @@ v2.5.7:  Identity persistence fix
 
 ---
 
-## Current State (v2.5.7)
+## Current State (v2.6.2)
 
 ### Core Features
 
 - ✅ Complete UNITARES framework (EISV dynamics)
 - ✅ HCK/CIRS stability monitoring
-- ✅ Knowledge graph system (35,000x faster)
-- ✅ Identity model (2 visible: agent_id + name; UUID internal)
+- ✅ Knowledge graph system (Apache AGE + semantic search)
+- ✅ Identity model (4-path: Redis → PG → Name Claim → Create)
 - ✅ Auto-healing infrastructure
-- ✅ **85+ MCP tools**
+- ✅ **31 registered MCP tools** + aliases (49 consolidated sub-handlers)
 - ✅ Streamable HTTP transport (`/mcp/` endpoint)
 - ✅ Ethical drift (Δη) fully integrated
-- ✅ Trajectory identity (genesis signatures, lineage comparison)
+- ✅ Trajectory identity (genesis signatures, lineage comparison, trust tiers)
 - ✅ Automatic calibration from objective outcomes
-- ✅ SSH-based Pi restart (works when MCP is down)
-- ✅ Identity persistence fix (HTTP clients maintain stable UUID)
-- ✅ **310+ tests** with 83-88% coverage
+- ✅ Web dashboard (EISV sparklines, dialectic timeline, trust tier badges)
+- ✅ Pi/Lumen orchestration via anima-mcp
+- ✅ **2,194 tests** with 43% overall coverage (core modules 83-88%)
 
-### Architecture
+### Architecture (v2.6.2)
 
-- **Handler-based** - Clean separation of concerns
-- **Decorator pattern** - Self-documenting, timeout-protected
-- **Indexed queries** - Logarithmic scaling
-- **Async operations** - Non-blocking I/O
-- **Multi-agent** - Parent/child tracking, spawning
+- **Declarative tool registration** — `ToolDefinition` dataclass, `action_router()` for consolidated tools
+- **Middleware pipeline** — 8-step dispatch: identity → trajectory → kwargs → alias → inject → validate → rate limit → patterns
+- **Response formatting** — Auto/minimal/compact/standard/full modes via `response_formatter.py`
+- **Decorator pattern** — `@mcp_tool` with timeout, deprecation, hidden, rate_limit_exempt
+- **Indexed queries** — Logarithmic scaling via AGE graph indexes
+- **Async operations** — Non-blocking I/O throughout
 
 ### Performance
 
@@ -457,19 +465,15 @@ v2.5.7:  Identity persistence fix
 
 ---
 
-## Future Evolution (Planned)
-
-### v2.6.0 (Planned)
-- Web-based dashboard for fleet monitoring
-- Real-time coherence visualization
-- Agent spawning UI
-- Performance profiling
+## Future Evolution
 
 ### Under Consideration
-- Graph-native queries (Cypher via Apache AGE)
-- Multi-instance coordination
-- Advanced analytics
-- Machine learning integration
+- Outcome correlation — does instability predict bad outcomes?
+- Threshold tuning — domain-specific calibration
+- WebSocket dashboard updates (replace polling)
+- CIRS v1.0 — full multi-agent oscillation damping
+- Semantic ethical drift detection
+- Production hardening and horizontal scaling
 
 ---
 
@@ -483,6 +487,6 @@ v2.5.7:  Identity persistence fix
 
 ---
 
-**Last Updated:** February 5, 2026
-**Current Version:** v2.5.7
-**Total Evolution:** 1.0.0 → 2.5.7 (18 versions)
+**Last Updated:** February 6, 2026
+**Current Version:** v2.6.2
+**Total Evolution:** 1.0.0 → 2.6.2 (21 versions)

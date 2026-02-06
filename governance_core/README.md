@@ -1,8 +1,8 @@
 # UNITARES Governance Core
 
-**Version:** 2.6.0
+**Version:** 2.6.2
 **Status:** Active
-**Last Updated:** 2026-02-05
+**Last Updated:** 2026-02-06
 
 ---
 
@@ -282,4 +282,4 @@ The math is complete. The *interpretation* is domain-specific — a model learni
 ---
 
 **Maintainer:** @CIRWEL  
-**Last Updated:** 2026-02-05
+**Last Updated:** 2026-02-06

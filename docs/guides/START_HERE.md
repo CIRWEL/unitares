@@ -45,7 +45,7 @@ export GOVERNANCE_TOOL_MODE=minimal
 
 **Other modes:**
 - **Lite mode** (`GOVERNANCE_TOOL_MODE=lite`): 10 essential tools - for local models
-- **Full mode** (`GOVERNANCE_TOOL_MODE=full`): All 85+ tools - for cloud models (default)
+- **Full mode** (`GOVERNANCE_TOOL_MODE=full`): All 31 tools - for cloud models (default)
 
 **Note:** `list_tools` is always available in any mode to enable tool discovery.
 
@@ -302,8 +302,8 @@ list_tools(include_advanced=False)  # Hide Tier 3 (advanced) tools
 
 **Tool Tiers (based on actual usage):**
 - **Tier 1 (Essential)**: ~10 core workflow tools - use these daily
-- **Tier 2 (Common)**: ~25 regularly-used tools - use weekly/monthly
-- **Tier 3 (Advanced)**: ~16 rarely-used tools - for special cases
+- **Tier 2 (Common)**: ~15 regularly-used tools - use weekly/monthly
+- **Tier 3 (Advanced)**: ~6 rarely-used tools - for special cases
 
 **Tip:** Start with `list_tools(essential_only=True)` to reduce cognitive load. All tools remain available - tiers just help you focus on what you need.
 
@@ -394,4 +394,4 @@ Governance should be **informative, not restrictive**. Agents log activity, rece
 
 ---
 
-**Last Updated:** 2026-02-04 (v2.5.6: SSH-based Pi restart, 310+ tests)
+**Last Updated:** 2026-02-06 (v2.6.2: 31 tools, action_router, middleware pipeline, 2,194 tests)

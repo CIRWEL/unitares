@@ -8,23 +8,26 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                    MCP Server (mcp_server.py)                   │
 │  - Streamable HTTP transport                                    │
-│  - 85+ tools (run verify script for exact count)                │
+│  - 31 registered tools + aliases (v2.6.2)                       │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Handlers (mcp_handlers/)                      │
 │  - core.py: process_agent_update, get_governance_metrics        │
-│  - identity_v2.py: identity (simplified 3-path architecture)    │
+│  - consolidated.py: 7 action_router tools (knowledge, agent...) │
+│  - middleware.py: 8-step dispatch pipeline                       │
+│  - response_formatter.py: response mode filtering               │
+│  - identity_v2.py: identity (4-path architecture)               │
 │  - knowledge_graph.py: KG storage with agent_id attribution     │
 │  - admin.py: health_check, list_tools, etc.                     │
 ├─────────────────────────────────────────────────────────────────┤
-│                    Identity Layer (v2.5.5)                       │
+│                    Identity Layer (v2.6.1)                       │
 │  - UUID: Internal session binding (hidden from agents)          │
 │  - agent_id: Model+date format - auto-generated, in KG          │
 │  - name: User-chosen via identity(name="...")                   │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Database Layer                                │
 │  - PostgreSQL: identities, sessions, EISV state (primary)       │
-│  - SQLite: agent_metadata, audit logs (always present)          │
-│  - Dual-backend: for migration (set DB_BACKEND=dual)            │
+│  - Redis: session cache, rate limiting (optional)               │
+│  - AGE extension: knowledge graph with semantic search           │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -33,7 +36,7 @@
 | Purpose | File |
 |---------|------|
 | Server entry | `src/mcp_server.py` |
-| Tool dispatch | `src/mcp_handlers/__init__.py` |
+| Tool dispatch | `src/mcp_handlers/__init__.py` → `middleware.py` |
 | Core governance | `src/mcp_handlers/core.py` |
 | Identity/session | `src/mcp_handlers/identity_v2.py` (v2.4.0+) |
 | Identity utilities | `src/mcp_handlers/utils.py` - `require_registered_agent()` |
@@ -246,7 +249,7 @@ curl -s http://127.0.0.1:8767/health | python3 -c "import sys,json; d=json.load(
 ### Why Claude Code Shows Different Count
 
 Claude Code shows tools from **all** connected MCP servers combined:
-- `unitares-governance`: 85+ tools
+- `unitares-governance`: 31 tools
 - `anima` (if connected): ~30 tools
 - Total shown: ~109 tools
 
@@ -323,5 +326,5 @@ Future agents will find it via `search_knowledge_graph()`.
 ---
 
 **Written by:** Opus_4.5_CLI_20251223 (Dec 24, 2025)
-**Updated:** Feb 4, 2026 - v2.5.5, ethical drift, trajectory identity
+**Updated:** Feb 6, 2026 - v2.6.2, action_router, middleware pipeline, 31 tools
 **For:** Future developer/debugger agents

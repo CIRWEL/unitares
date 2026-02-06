@@ -21,7 +21,7 @@
 | `list_tools()` | Tool catalog (use MCP tool) |
 | [CIRCUIT_BREAKER_DIALECTIC](CIRCUIT_BREAKER_DIALECTIC.md) | Circuit breaker + recovery protocol |
 | [database_architecture](database_architecture.md) | PostgreSQL + Redis architecture |
-| [MCP_SYSTEM_EVOLUTION](MCP_SYSTEM_EVOLUTION.md) | Version history (v1.0 → v2.6.0) |
+| [MCP_SYSTEM_EVOLUTION](MCP_SYSTEM_EVOLUTION.md) | Version history (v1.0 → v2.6.2) |
 
 ---
 
@@ -35,7 +35,7 @@
 
 ## Tool Count: 31 Registered Tools
 
-v2.6.1 has 31 tools + aliases (status, list_agents, observe_agent, checkin, etc.). Use `list_tools()` or read [SKILL.md](../skills/unitares-governance/SKILL.md).
+v2.6.2 has 31 tools + aliases (status, list_agents, observe_agent, checkin, etc.). Use `list_tools()` or read [SKILL.md](../skills/unitares-governance/SKILL.md).
 
 ## Test Coverage
 
