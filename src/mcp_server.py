@@ -1849,20 +1849,27 @@ async def main():
             token = auth.split(" ", 1)[1].strip()
             return token == HTTP_API_TOKEN
 
-        def _extract_client_session_id(request) -> str:
+        async def _extract_client_session_id(request) -> str:
             """
             Stable per-client session id for HTTP callers.
             - Prefer explicit header X-Session-ID (agents should echo this back)
+            - Check UA-hash pin from recent onboard
             - Fall back to ConnectionTrackingMiddleware id if present
             - Otherwise generate a unique session ID per request chain
-
-            Note: Without X-Session-ID, each request gets a new session. This is
-            intentional - it prevents different agents/users from sharing identity
-            just because they come from the same IP (e.g., all ChatGPT users).
             """
             sid = request.headers.get("X-Session-ID") or request.headers.get("x-session-id")
             if sid:
                 return str(sid)
+            try:
+                from src.mcp_handlers.identity_v2 import ua_hash_from_header, lookup_onboard_pin
+                ua = request.headers.get("user-agent", "")
+                base_fp = ua_hash_from_header(ua)
+                pinned_sid = await lookup_onboard_pin(base_fp)
+                if pinned_sid:
+                    logger.info(f"[REST_PIN] Injected {pinned_sid} from {base_fp}")
+                    return pinned_sid
+            except Exception as e:
+                logger.debug(f"[REST_PIN] Pin lookup failed: {e}")
             try:
                 if hasattr(request, "state") and hasattr(request.state, "governance_client_id"):
                     return str(getattr(request.state, "governance_client_id"))
@@ -2023,18 +2030,14 @@ async def main():
                 # Inject stable client session for identity binding (avoid collision with dialectic session_id)
                 client_session_id = None
                 if isinstance(arguments, dict) and "client_session_id" not in arguments:
-                    client_session_id = _extract_client_session_id(request)
+                    client_session_id = await _extract_client_session_id(request)
                     arguments["client_session_id"] = client_session_id
                 elif isinstance(arguments, dict):
                     client_session_id = arguments.get("client_session_id")
 
-                # CLI/GPT identity: Inject agent_id from X-Agent-Id header if provided
-                # This allows stateless clients (Claude Code, GPT, Cursor REST) to maintain identity
-                x_agent_id = None
-                if isinstance(arguments, dict) and "agent_id" not in arguments:
-                    x_agent_id = request.headers.get("x-agent-id") or request.headers.get("X-Agent-Id")
-                    if x_agent_id:
-                        arguments["agent_id"] = x_agent_id
+                # NOTE: X-Agent-Id NOT injected as agent_id pre-dispatch.
+                # Session binding via X-Session-ID handles identity.
+                x_agent_id = request.headers.get("x-agent-id") or request.headers.get("X-Agent-Id")
 
                 # AUTO-DETECT CLIENT TYPE and MODEL TYPE from User-Agent for better auto-naming
                 # This ensures agent_id becomes "cursor_20251226" instead of "mcp_20251226"
@@ -2337,7 +2340,7 @@ async def main():
                 return JSONResponse({"error": "Invalid file path"}, status_code=400)
             
             # Only allow specific files for security
-            allowed_files = ["utils.js", "components.js"]
+            allowed_files = ["utils.js", "components.js", "styles.css"]
             if file_path not in allowed_files:
                 return JSONResponse({
                     "error": "File not allowed",
@@ -2446,19 +2449,26 @@ async def main():
                     ua = headers.get("user-agent", "unknown")
                     import hashlib
                     ua_fingerprint = hashlib.md5(ua.encode()).hexdigest()[:6]
-                    client_id = headers.get("x-client-id") or headers.get("x-mcp-client-id") or f"{client_ip}:{ua_fingerprint}"
-                    
-                    # Set in scope state so downstream _session_id_from_ctx can find it
+                    x_session_id = headers.get("x-session-id")
+                    x_client_id = headers.get("x-client-id") or headers.get("x-mcp-client-id")
+                    if x_session_id:
+                        client_id = x_session_id
+                        logger.info(f"[/mcp] Using X-Session-ID: {x_session_id[:20]}...")
+                    elif x_client_id:
+                        client_id = x_client_id
+                    else:
+                        client_id = f"{client_ip}:{ua_fingerprint}"
+
                     state = scope.setdefault("state", {})
                     state["governance_client_id"] = client_id
-                    logger.debug(f"[/mcp] Identity: {client_id}")
 
                     # PROPAGATE IDENTITY via contextvars
                     from src.mcp_handlers.context import set_session_context, reset_session_context
+                    effective_session_key = x_session_id or mcp_sid or x_client_id or client_id
                     session_context_token = set_session_context(
-                        session_key=client_id,
-                        client_session_id=headers.get("x-client-id"),
-                        user_agent=ua
+                        session_key=effective_session_key,
+                        client_session_id=x_session_id or x_client_id or mcp_sid,
+                        user_agent=ua,
                     )
 
                     # Detect client type from User-Agent

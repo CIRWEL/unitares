@@ -35,6 +35,15 @@ from src.logging_utils import get_logger
 from src.db import get_db
 from .utils import success_response, error_response
 
+# Import GovernanceConfig with fallback defaults
+try:
+    from config.governance_config import GovernanceConfig
+except ImportError:
+    # Fallback if config module not available
+    class GovernanceConfig:
+        SESSION_TTL_SECONDS = 86400  # 24 hours
+        SESSION_TTL_HOURS = 24
+
 logger = get_logger(__name__)
 
 # =============================================================================
@@ -245,10 +254,23 @@ async def resolve_session_identity(
     """
 
     if not session_key:
-
         raise ValueError("session_key is required")
 
+    # SECURITY (Feb 2026): Validate and sanitize session_key to prevent injection attacks
+    # Session keys should be reasonable length and contain only safe characters
+    MAX_SESSION_KEY_LENGTH = 256
+    if len(session_key) > MAX_SESSION_KEY_LENGTH:
+        logger.warning(f"[SECURITY] Session key too long ({len(session_key)} chars), truncating")
+        session_key = session_key[:MAX_SESSION_KEY_LENGTH]
 
+    # Sanitize: Replace potentially dangerous characters
+    # Allow: alphanumeric, dash, underscore, colon, dot, at-sign (for email-like IDs)
+    import re
+    if not re.match(r'^[\w\-.:@]+$', session_key):
+        # Contains characters outside allowed set - sanitize
+        original = session_key
+        session_key = re.sub(r'[^\w\-.:@]', '_', session_key)
+        logger.warning(f"[SECURITY] Session key sanitized: {original[:30]}... -> {session_key[:30]}...")
 
     # If force_new is requested, skip lookup paths and go straight to creation
 
@@ -323,8 +345,6 @@ async def resolve_session_identity(
                         raw_redis = await get_redis()
 
                         if raw_redis:
-
-                            from config.governance_config import GovernanceConfig
                             await raw_redis.expire(f"session:{session_key}", GovernanceConfig.SESSION_TTL_SECONDS)
 
                     except Exception:
@@ -706,7 +726,6 @@ async def _cache_session(session_key: str, agent_uuid: str, display_agent_id: st
                         "bound_at": datetime.now(timezone.utc).isoformat(),
                     }
                     key = f"session:{session_key}"
-                    from config.governance_config import GovernanceConfig
                     await redis.setex(key, GovernanceConfig.SESSION_TTL_SECONDS, json.dumps(data))
                 else:
                     # Fallback to normal bind without display_agent_id
@@ -889,13 +908,28 @@ def _derive_session_key(arguments: Dict[str, Any]) -> str:
 
     Precedence:
     1. arguments["client_session_id"] (Explicit session ID from client)
-    2. contextvars session_key (Fingerprinted ID from transport layer)
-    3. stdio fallback (Claude Desktop / single-user)
+    2. MCP session ID from mcp-session-id header (MCP Streamable HTTP transport)
+    3. contextvars session_key (Fingerprinted ID from transport layer)
+    4. stdio fallback (Claude Desktop / single-user)
+
+    CRITICAL (Feb 2026): Priority 2 enables MCP Streamable HTTP clients to maintain
+    stable identity across requests without manually passing client_session_id.
     """
     if arguments.get("client_session_id"):
         return str(arguments["client_session_id"])
 
-    # 2. Check contextvars (set by transport layer at request entry)
+    # 2. Check MCP session ID (set by ASGI wrapper from mcp-session-id header)
+    # This is the implicit identity mechanism for MCP Streamable HTTP transport
+    try:
+        from .context import get_mcp_session_id
+        mcp_sid = get_mcp_session_id()
+        if mcp_sid:
+            logger.debug(f"[SESSION] Using mcp-session-id: {mcp_sid[:16]}...")
+            return f"mcp:{mcp_sid}"
+    except Exception:
+        pass
+
+    # 3. Check contextvars (set by transport layer at request entry)
     try:
         from .context import get_context_session_key
         ctx_key = get_context_session_key()
@@ -904,8 +938,126 @@ def _derive_session_key(arguments: Dict[str, Any]) -> str:
     except Exception:
         pass
 
-    # Stable fallback for stdio
+    # 4. Stable fallback for stdio
     return f"stdio:{os.getpid()}"
+
+
+def _extract_base_fingerprint(session_key: str) -> Optional[str]:
+    """Extract stable base fingerprint from a session key.
+
+    For HTTP transports, session keys follow the pattern IP:UA_hash or
+    IP:UA_hash:random_suffix. Claude.ai's proxy pool rotates IPs per
+    request, so we pin by UA_hash ONLY — the UA string is stable across
+    requests from the same conversation/model.
+
+    Returns None for keys that already provide stable identity (mcp:*,
+    stdio:*, agent-*) since those don't need onboard pinning.
+    """
+    if not session_key:
+        return None
+    # Keys with stable identity don't need pinning
+    if session_key.startswith(("mcp:", "stdio:", "agent-")):
+        logger.debug(f"[ONBOARD_PIN] Skipping stable key: {session_key[:30]}...")
+        return None
+    # Pattern: IP:UA_hash or IP:UA_hash:random_suffix or IP:UA_hash:model_hint
+    # Pin by UA_hash only (parts[1]) — IP rotates across Claude.ai proxy pool
+    parts = session_key.split(":")
+    if len(parts) >= 2:
+        ua_hash = parts[1]
+        logger.debug(f"[ONBOARD_PIN] extract_fp: raw={session_key!r} ({len(parts)} parts) -> ua_hash={ua_hash!r}")
+        return f"ua:{ua_hash}"
+    # Single-part key (unusual) — return as-is
+    logger.debug(f"[ONBOARD_PIN] extract_fp: raw={session_key!r} (single part) -> as-is")
+    return session_key
+
+
+def ua_hash_from_header(user_agent: str) -> Optional[str]:
+    """Compute the canonical UA hash from a raw User-Agent string.
+
+    This is the SINGLE SOURCE OF TRUTH for UA hash computation.
+    Both REST and MCP paths must use this to ensure pin keys match.
+
+    Returns: "ua:{md5_prefix}" or None if no user_agent.
+    """
+    if not user_agent:
+        return None
+    import hashlib
+    ua_hash = hashlib.md5(user_agent.encode()).hexdigest()[:6]
+    return f"ua:{ua_hash}"
+
+
+_PIN_TTL = 1800  # 30 minutes — refresh on use
+
+
+async def lookup_onboard_pin(base_fingerprint: str, *, refresh_ttl: bool = True) -> Optional[str]:
+    """Look up a pinned client_session_id from a recent onboard.
+
+    Shared by REST path (_extract_client_session_id) and MCP dispatcher
+    (dispatch_tool) to eliminate duplication and divergence risk.
+
+    Args:
+        base_fingerprint: Output of _extract_base_fingerprint() or ua_hash_from_header(),
+                          e.g. "ua:d20c2f"
+        refresh_ttl: Whether to extend the pin's TTL on successful lookup (default True)
+
+    Returns: The pinned client_session_id, or None.
+    """
+    if not base_fingerprint:
+        return None
+    try:
+        from src.cache.redis_client import get_redis
+        import json as _json
+        raw_redis = await get_redis()
+        if not raw_redis:
+            return None
+        pin_key = f"recent_onboard:{base_fingerprint}"
+        pin_data = await raw_redis.get(pin_key)
+        if not pin_data:
+            logger.debug(f"[ONBOARD_PIN] No pin at {pin_key}")
+            return None
+        pin = _json.loads(pin_data if isinstance(pin_data, str) else pin_data.decode())
+        pinned_session_id = pin.get("client_session_id")
+        if pinned_session_id and refresh_ttl:
+            await raw_redis.expire(pin_key, _PIN_TTL)
+        return pinned_session_id
+    except Exception as e:
+        logger.debug(f"[ONBOARD_PIN] Pin lookup failed: {e}")
+        return None
+
+
+async def set_onboard_pin(base_fingerprint: str, agent_uuid: str, client_session_id: str) -> bool:
+    """Set a pin mapping a transport fingerprint to an onboarded agent.
+
+    Called by handle_onboard_v2() after successful onboard.
+
+    Args:
+        base_fingerprint: Output of _extract_base_fingerprint(), e.g. "ua:d20c2f"
+        agent_uuid: The newly onboarded agent's UUID
+        client_session_id: The stable session ID to inject on subsequent calls
+
+    Returns: True if the pin was set successfully.
+    """
+    if not base_fingerprint:
+        logger.debug("[ONBOARD_PIN] No fingerprint — skip pin-set")
+        return False
+    try:
+        from src.cache.redis_client import get_redis
+        import json as _json
+        raw_redis = await get_redis()
+        if not raw_redis:
+            logger.warning("[ONBOARD_PIN] Redis not available for pin-setting")
+            return False
+        pin_key = f"recent_onboard:{base_fingerprint}"
+        pin_data = _json.dumps({
+            "agent_uuid": agent_uuid,
+            "client_session_id": client_session_id,
+        })
+        await raw_redis.setex(pin_key, _PIN_TTL, pin_data)
+        logger.info(f"[ONBOARD_PIN] Set {pin_key} -> {agent_uuid[:8]}...")
+        return True
+    except Exception as e:
+        logger.warning(f"[ONBOARD_PIN] Could not set pin: {e}")
+        return False
 
 
 @mcp_tool("identity", timeout=10.0)
@@ -932,11 +1084,38 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     base_session_key = _derive_session_key(arguments)
     normalized_model = None
 
-    # STEP 1: Build session key with model differentiation
-    # Always include model_type in session key when provided to prevent identity collision
-    # between different models using the same client_session_id
+    # STEP 1: Check for existing identity under BASE key first (unless force_new)
+    # This prevents identity bifurcation when model_type is passed inconsistently
+    # FIX (Feb 2026): Match onboard() pattern - check base key first, then model-suffixed
+    existing_identity = None
     session_key = base_session_key
-    
+
+    if not force_new:
+        existing_identity = await resolve_session_identity(base_session_key, persist=False)
+        if not existing_identity.get("created"):
+            # EXISTING AGENT FOUND under base key - use it regardless of model_type
+            agent_uuid = existing_identity.get("agent_uuid")
+            agent_id = existing_identity.get("agent_id", agent_uuid)
+            label = existing_identity.get("label")
+            logger.info(f"[IDENTITY] Auto-resuming existing agent {agent_uuid[:8]}... (found under base key)")
+
+            # Update label if requested
+            if arguments.get("name") and arguments.get("name") != label:
+                success = await set_agent_label(agent_uuid, arguments.get("name"), session_key=session_key)
+                if success:
+                    label = arguments.get("name")
+
+            return success_response({
+                "uuid": agent_uuid,
+                "agent_id": agent_id,
+                "display_name": label,
+                "resumed": True,
+                "message": f"Welcome back! Resumed identity '{label or agent_id}'",
+                "hint": "Use force_new=true to create a new identity instead"
+            })
+
+    # STEP 2: No existing identity under base key - use model differentiation if provided
+    # This only affects NEW identity creation, not resumption
     if model_type:
         # Normalize model type
         normalized_model = model_type.lower().replace("-", "_").replace(".", "_")
@@ -952,12 +1131,11 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
             normalized_model = "llama"
         # Append model to session key for distinct binding (prevents identity collision)
         session_key = f"{base_session_key}:{normalized_model}"
-        logger.info(f"[IDENTITY] Using model-specific session_key: {session_key} (model_type={model_type})")
-    
-    # STEP 2: Check for existing identity (unless force_new)
-    # Auto-resume existing identity by default (no prompt needed)
-    existing_identity = None
-    if not force_new:
+        logger.info(f"[IDENTITY] Creating NEW identity with model-specific session_key: {session_key}")
+
+    # STEP 3: Check for existing identity under model-suffixed key (for force_new=false case)
+    # This handles the case where identity was created with model_type previously
+    if not force_new and model_type and session_key != base_session_key:
         existing_identity = await resolve_session_identity(session_key, persist=False)
         if not existing_identity.get("created"):
             # EXISTING AGENT FOUND - auto-resume
@@ -1352,6 +1530,17 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     except ImportError:
         pass
 
+    # STEP 4b: Pin onboard identity for transport-level session continuity
+    # When Claude.ai doesn't pass client_session_id, dispatch_tool() can
+    # use this pin to inject the correct session ID based on transport fingerprint.
+    # This prevents knowledge graph attribution from scattering across random UUIDs.
+    try:
+        logger.debug(f"[ONBOARD_PIN] base_session_key={base_session_key!r}")
+        base_fp = _extract_base_fingerprint(base_session_key)
+        await set_onboard_pin(base_fp, agent_uuid, stable_session_id)
+    except Exception as e:
+        logger.warning(f"[ONBOARD_PIN] Could not set pin: {e}")
+
     # STEP 5: Build toolcard payload
     next_calls = [
         {
@@ -1418,13 +1607,13 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         structured_id = f"agent_{agent_uuid[:8]}"
     friendly_name = agent_label or structured_id
 
-    # Welcome message
+    # Welcome message — embed session ID directly in welcome so agents can't miss it
     if is_new:
-        welcome = "🎉 Welcome! You're onboarded and ready to go."
+        welcome = f"Welcome! Your session ID is `{stable_session_id}`. Pass this as `client_session_id` in all calls."
         welcome_message = "This system monitors your work like a health monitor tracks your heart. It helps you stay on track, avoid getting stuck, and work more effectively. Your identity is created—use the templates below to get started."
     else:
-        welcome = f"👋 Welcome back, {friendly_name}!"
-        welcome_message = f"I found your existing identity. You're all set to continue where you left off."
+        welcome = f"Welcome back, {friendly_name}! Your session ID is `{stable_session_id}`."
+        welcome_message = f"I found your existing identity. Pass `client_session_id: \"{stable_session_id}\"` in all tool calls for best attribution."
 
     result = {
         "success": True,
@@ -1456,6 +1645,12 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
         # Date context (implicit - no separate tool needed)
         "date_context": _get_date_context(),
+
+        # Skill document resource (eliminates 3-5 orientation tool calls)
+        "skill_resource": {
+            "uri": "unitares://skill",
+            "tip": "Read this MCP resource for full framework orientation instead of calling list_tools/describe_tool",
+        },
     }
 
     # Add tool mode info so agents know what subset they're seeing

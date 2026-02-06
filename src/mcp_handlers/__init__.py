@@ -76,11 +76,14 @@ from .knowledge_graph import (
     handle_cleanup_knowledge_graph,
     handle_get_lifecycle_stats,
 )
-# Dialectic - get_dialectic_session + list_dialectic_sessions + llm_assisted_dialectic (Feb 2026)
+# Dialectic - full protocol restored (Feb 2026)
 from .dialectic import (
     handle_get_dialectic_session,
     handle_list_dialectic_sessions,
     handle_request_dialectic_review,
+    handle_submit_thesis,
+    handle_submit_antithesis,
+    handle_submit_synthesis,
     handle_llm_assisted_dialectic,
 )
 # Self-Recovery - Simplified recovery without external reviewers (Jan 2026)
@@ -218,6 +221,45 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
     except Exception:
         pass
 
+    # ONBOARD PIN: If no explicit client_session_id, check if a recent onboard()
+    # pinned an identity for this transport fingerprint. This fixes attribution
+    # fragmentation when Claude.ai doesn't echo back client_session_id.
+    #
+    # We check multiple sources for the transport fingerprint because different
+    # ASGI paths store it differently:
+    # - governance_client_id: set in ASGI scope["state"] (may not propagate to contextvars)
+    # - session_key contextvar: set via set_session_context() in ASGI wrapper
+    transport_fingerprint = request_state_id
+    if not transport_fingerprint:
+        try:
+            from .context import get_context_session_key
+            transport_fingerprint = get_context_session_key()
+        except Exception:
+            pass
+    _logger.debug(
+        f"[ONBOARD_PIN] dispatch entry: tool={name} client_session_id={client_session_id!r} "
+        f"request_state_id={request_state_id!r} transport_fingerprint={transport_fingerprint!r}"
+    )
+    if not client_session_id and transport_fingerprint:
+        try:
+            from .identity_v2 import _extract_base_fingerprint, lookup_onboard_pin
+            base_fp = _extract_base_fingerprint(transport_fingerprint)
+            pinned_session_id = await lookup_onboard_pin(base_fp)
+            if pinned_session_id:
+                client_session_id = pinned_session_id
+                arguments["client_session_id"] = pinned_session_id
+                _logger.info(
+                    f"[ONBOARD_PIN] Injected client_session_id={pinned_session_id} "
+                    f"for tool={name} from pin recent_onboard:{base_fp}"
+                )
+        except Exception as e:
+            _logger.debug(f"[ONBOARD_PIN] Pin lookup failed: {e}")
+
+    # NOTE: X-Agent-Id injection moved AFTER session resolution (see below).
+    # If session binding already resolves to an agent, X-Agent-Id would cause
+    # a mismatch error (creature UUID != governance UUID). X-Agent-Id is now
+    # only used as a FALLBACK when no session binding exists.
+
     # Derive session key with explicit priority
     from .identity_v2 import _derive_session_key
     session_key = client_session_id or request_state_id or _derive_session_key(arguments)
@@ -231,15 +273,39 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
     try:
         identity_result = await resolve_session_identity(session_key)
         bound_agent_id = identity_result.get("agent_uuid")
-        
-        # DURABILITY FIX (Dec 2025): Update session activity in DB on every call
+
+        # LAZY CREATION (Feb 2026 revert): Do NOT eagerly persist new identities.
+        # Previous "durability fix" caused ghost agent proliferation (96% ghosts)
+        # because HTTP/SSE session keys rotate per request.
+        #
+        # Design: Let lazy creation work - only persist when:
+        # 1. Explicit onboard() call (user commits to identity)
+        # 2. First meaningful work (calibration update, knowledge store, etc.)
+        #
+        # Mark identities created via dispatch as ephemeral - they're just session cache
+        if identity_result.get("created") and not identity_result.get("persisted"):
+            identity_result["ephemeral"] = True
+            identity_result["created_via"] = "dispatch"
+            _logger.info(f"[DISPATCH] Ephemeral identity created (not persisted): {bound_agent_id[:8]}...")
+
+        # DURABILITY FIX (Dec 2025/Feb 2026): Update session activity in DB on every call
         # This prevents 24h hard expiry for active agents.
+        # Feb 2026: Added retry and logging for better reliability
         if identity_result.get("persisted"):
-            try:
-                from src.db import get_db
-                await get_db().update_session_activity(session_key)
-            except Exception:
-                pass
+            ttl_updated = False
+            for attempt in range(2):  # 2 attempts max
+                try:
+                    from src.db import get_db
+                    result = await get_db().update_session_activity(session_key)
+                    ttl_updated = result if isinstance(result, bool) else True
+                    break
+                except Exception as e:
+                    if attempt == 0:
+                        await asyncio.sleep(0.05)  # Brief retry delay
+                    else:
+                        _logger.warning(f"[DISPATCH] Session TTL update failed for {session_key[:20]}...: {e}")
+            # Note: We don't fail the request if TTL update fails - it's best effort
+            # The session will still work until expiry, and next call will retry
     except Exception as e:
         _logger.debug(f"Could not resolve session identity: {e}")
     
@@ -327,7 +393,16 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
                 # Case 2: agent_id provided but differs from session binding
                 # This prevents impersonation - reject unless it's an identity tool
                 # OR if provided_id is a label that matches the bound_id
+                #
+                # EXCEPTION: Dialectic tools allow explicit agent_id because:
+                # - Sessions validate roles (paused vs reviewer)
+                # - Ephemeral agents may not have persistent session bindings
+                # - Operator-facilitated dialectic needs to act on behalf of agents
                 identity_tools = {"status"}
+                dialectic_tools = {
+                    "submit_thesis", "submit_antithesis", "submit_synthesis",
+                    "request_dialectic_review"
+                }
                 
                 # Check if it's a label match
                 is_label_match = False
@@ -342,7 +417,7 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
                 except Exception:
                     pass
 
-                if name not in identity_tools and not is_label_match:
+                if name not in identity_tools and name not in dialectic_tools and not is_label_match:
                     return [error_response(
                         f"Session mismatch: you are bound as '{bound_id}' but requested '{provided_id}'",
                         details={
@@ -356,125 +431,22 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
                             "related_tools": ["identity"]
                         }
                     )]
-                # For identity tools, allow the switch (they handle rebinding)
+                # For identity/dialectic tools, allow the switch (they handle their own validation)
         elif provided_id:
-            # Case 3: REST client with X-Agent-Id header (no session binding yet)
-            # Trust the provided agent_id and bind the session to it
-            # This makes REST clients work seamlessly without friction
-            try:
-                from .identity import _get_session_key, _get_identity_record_async, _persist_session_new
-                from .shared import get_mcp_server
-                from datetime import datetime
-
-                mcp_server = get_mcp_server()
-                session_key = _get_session_key(arguments=arguments)
-
-                # Get or create metadata for the provided agent_id
-                meta = mcp_server.get_or_create_metadata(provided_id)
-                meta.label = provided_id  # Use provided_id as display name
-
-                # Bind session to this agent
-                identity_rec = await _get_identity_record_async(arguments=arguments)
-                identity_rec["bound_agent_id"] = provided_id
-                identity_rec["bound_at"] = datetime.now().isoformat()
-                identity_rec["bind_count"] = identity_rec.get("bind_count", 0) + 1
-
-                # Update metadata
-                meta.active_session_key = session_key
-                meta.session_bound_at = identity_rec["bound_at"]
-
-                # Persist session binding
-                await _persist_session_new(
-                    session_key=session_key,
-                    agent_id=provided_id,
-                    api_key=meta.api_key or "",
-                    created_at=identity_rec["bound_at"]
-                )
-
-                _logger.info(f"REST identity bound: {provided_id} (via X-Agent-Id header)")
-            except Exception as e:
-                _logger.debug(f"REST identity binding skipped: {e}")
-                # Continue anyway - the provided_id is already in arguments
+            # Case 3: REST client with X-Agent-Id header but no session binding
+            # This only happens if v2 failed - just use the provided_id directly
+            _logger.warning(f"[IDENTITY] No session binding but agent_id provided: {provided_id}. V2 may have failed.")
+            arguments["agent_id"] = provided_id  # Trust the provided ID
         else:
-            # Case 4: No binding and no agent_id - AUTO-CREATE and AUTO-BIND
-            # Default behavior: One agent per chat/session, auto-create on first contact
-            identity_tools = {"status", "list_tools",
-                             "health_check", "get_server_info", "describe_tool", "debug_request_context"}
+            # Case 4: No binding and no agent_id
+            # This only happens if v2 failed to create an identity
+            # For non-identity tools, this is an error state
+            identity_tools = {"status", "list_tools", "health_check", "get_server_info",
+                             "describe_tool", "debug_request_context", "onboard", "identity"}
             if name not in identity_tools:
-                # Auto-create and auto-bind an unguessable internal identity
-                # This is the "smart default" - no interrogation required
-                try:
-                    from .identity import _get_session_key, _get_identity_record_async
-                    from .shared import get_mcp_server
-                    import uuid
-                    from datetime import datetime
-
-                    mcp_server = get_mcp_server()
-                    session_key = _get_session_key(arguments=arguments)
-
-                    # Generate unguessable agent_uuid - replaces API key as auth
-                    agent_uuid = str(uuid.uuid4())
-
-                    # agent_id = None until agent names themselves
-                    # UUID is auth (hidden), agent_id is name (visible)
-                    agent_id = None  # Self-naming via status(agent_id='...')
-
-                    # Create metadata keyed by UUID (internal), agent_id stored separately
-                    meta = mcp_server.get_or_create_metadata(agent_uuid)
-                    meta.agent_uuid = agent_uuid  # Auth mechanism (replaces api_key)
-                    meta.label = agent_id  # Display name (None until self-named)
-
-                    # Auto-bind to session
-                    identity_rec = await _get_identity_record_async(arguments=arguments)
-                    identity_rec["bound_agent_id"] = agent_uuid  # Bind by UUID
-                    identity_rec["bound_at"] = datetime.now().isoformat()
-                    identity_rec["bind_count"] = 1
-
-                    # Update metadata
-                    meta.active_session_key = session_key
-                    meta.session_bound_at = identity_rec["bound_at"]
-
-                    # Persist session binding
-                    from .identity import _persist_session_new
-                    await _persist_session_new(
-                        session_key=session_key,
-                        agent_id=agent_uuid,  # Keyed by UUID
-                        api_key=meta.api_key or "",
-                        created_at=identity_rec["bound_at"]
-                    )
-
-                    # Preserve declared agent_id if provided, else use UUID as fallback
-                    # agent_id = user-chosen name, _agent_uuid = internal auth
-                    # EXCEPTION: Search tools should NOT auto-filter by agent - they search ALL data
-                    search_tools = {"search_knowledge_graph", "query_knowledge_graph", "list_knowledge_graph"}
-                    declared_id = arguments.get("agent_id") or arguments.get("id") or arguments.get("name")
-                    if name not in search_tools:
-                        arguments["agent_id"] = declared_id or agent_uuid  # Prefer user's name
-                    arguments["_agent_uuid"] = agent_uuid  # Internal auth (hidden)
-                    if declared_id:
-                        meta.label = declared_id  # Store their chosen name
-                        _logger.info(f"Auto-created identity: {declared_id} (uuid: {agent_uuid[:8]}...)")
-                    else:
-                        _logger.info(f"Auto-created identity (uuid: {agent_uuid[:8]}...) - name yourself with identity(name='...')")
-                except Exception as e:
-                    _logger.warning(f"Auto-create failed: {e}, falling back to error")
-                    return [error_response(
-                        "No identity bound to this session",
-                        details={"error_type": "no_session_binding"},
-                        recovery={
-                                "action": "Call onboard() first to create your identity and get started",
-                                "example": "onboard()  # No parameters needed!",
-                                "alternative": "Or call process_agent_update() - identity auto-creates",
-                                "related_tools": ["onboard", "identity", "process_agent_update"],
-                                "workflow": [
-                                    "1. Call onboard() - creates identity + gives you templates",
-                                    "2. Save client_session_id from response",
-                                    "3. Include client_session_id in all future calls",
-                                    "4. Use identity(name='...') to name yourself"
-                                ],
-                                "note": "onboard() is the START HERE tool - it gives you everything you need!"
-                        }
-                    )]
+                _logger.warning(f"[IDENTITY] No identity for tool {name}. V2 should have created one.")
+                # Don't block - v2 may have cached the identity and context wasn't set up properly
+                # The tool handler will deal with missing agent_id if needed
     except Exception as e:
         _logger.debug(f"Session identity check skipped: {e}")
 
