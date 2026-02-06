@@ -1722,9 +1722,9 @@ async def main():
             try:
                 from src.mcp_handlers.lifecycle import handle_archive_orphan_agents
                 result = await handle_archive_orphan_agents({
-                    "zero_update_hours": 1.0,
-                    "low_update_hours": 3.0,
-                    "unlabeled_hours": 6.0,
+                    "zero_update_hours": 4.0,
+                    "low_update_hours": 12.0,
+                    "unlabeled_hours": 24.0,
                     "dry_run": False
                 })
                 # Extract count from response

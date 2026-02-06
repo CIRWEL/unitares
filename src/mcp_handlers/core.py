@@ -1694,11 +1694,12 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                     # TRUST TIER: Compute from trajectory metadata, apply risk adjustment
                     try:
                         from src.trajectory_identity import compute_trust_tier
+                        from src.db import get_db as _get_db
 
                         trust_tier = trajectory_result.get("trust_tier")
                         if not trust_tier:
                             # Fallback: compute from DB if update_current_signature didn't return it
-                            identity = await get_db().get_identity(agent_uuid)
+                            identity = await _get_db().get_identity(agent_uuid)
                             if identity and identity.metadata:
                                 trust_tier = compute_trust_tier(identity.metadata)
 

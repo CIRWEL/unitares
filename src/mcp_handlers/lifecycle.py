@@ -1062,9 +1062,9 @@ async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[Te
     import re
     UUID_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
 
-    zero_update_hours = float(arguments.get("zero_update_hours", 1.0))
-    low_update_hours = float(arguments.get("low_update_hours", 3.0))
-    unlabeled_hours = float(arguments.get("unlabeled_hours", 6.0))
+    zero_update_hours = float(arguments.get("zero_update_hours", 4.0))
+    low_update_hours = float(arguments.get("low_update_hours", 12.0))
+    unlabeled_hours = float(arguments.get("unlabeled_hours", 24.0))
     dry_run = arguments.get("dry_run", False)
 
     # Reload metadata to ensure we have latest state
