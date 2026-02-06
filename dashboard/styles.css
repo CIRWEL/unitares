@@ -20,6 +20,10 @@
     --accent-yellow: #f5d77a;
     --font-family: 'Inter', system-ui, -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+    --item-bg: #0f1525;
+    --toolbar-bg: rgba(26, 26, 35, 0.5);
+    --input-bg: #0f1525;
+    --metric-track: #222;
 }
 
 /* Light theme variables */
@@ -30,6 +34,10 @@
     --border-color: #e0e0e0;
     --text-primary: #1a1a1a;
     --text-secondary: #666666;
+    --item-bg: #f8f9fa;
+    --toolbar-bg: rgba(255, 255, 255, 0.7);
+    --input-bg: #ffffff;
+    --metric-track: #e5e7eb;
 }
 
 /* ============================================
@@ -339,7 +347,7 @@ body {
     flex-wrap: wrap;
     margin: 0 auto 30px;
     max-width: 1200px;
-    background: rgba(26, 26, 35, 0.5);
+    background: var(--toolbar-bg);
     padding: 15px;
     border-radius: 12px;
     border: 1px solid var(--border-color);
@@ -353,9 +361,9 @@ body {
 }
 
 .toolbar-button {
-    background: linear-gradient(135deg, #2a2a35, #3a3a45);
-    border: 1px solid #444;
-    color: white;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
     padding: 8px 16px;
     border-radius: 6px;
     cursor: pointer;
@@ -394,8 +402,8 @@ body {
    ============================================ */
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 16px;
     margin-bottom: 30px;
     max-width: 1200px;
     margin-left: auto;
@@ -405,38 +413,61 @@ body {
 .stat-card {
     background-color: var(--card-bg);
     border: 1px solid var(--border-color);
+    border-top: 3px solid var(--accent-cyan);
     border-radius: 12px;
-    padding: 25px;
+    padding: 20px;
     transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+    position: relative;
+    overflow: hidden;
 }
+
+.stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 80px;
+    height: 80px;
+    background: radial-gradient(circle at top right, rgba(0, 255, 255, 0.04), transparent 70%);
+    pointer-events: none;
+}
+
+.stat-card:nth-child(2) { border-top-color: var(--accent-green); }
+.stat-card:nth-child(2)::before { background: radial-gradient(circle at top right, rgba(3, 218, 198, 0.04), transparent 70%); }
+.stat-card:nth-child(3) { border-top-color: var(--accent-purple); }
+.stat-card:nth-child(3)::before { background: radial-gradient(circle at top right, rgba(187, 134, 252, 0.04), transparent 70%); }
+.stat-card:nth-child(4) { border-top-color: var(--accent-yellow); }
+.stat-card:nth-child(4)::before { background: radial-gradient(circle at top right, rgba(245, 215, 122, 0.04), transparent 70%); }
+.stat-card:nth-child(5) { border-top-color: var(--accent-green); }
+.stat-card:nth-child(5)::before { background: radial-gradient(circle at top right, rgba(3, 218, 198, 0.04), transparent 70%); }
 
 .stat-card:hover {
     transform: translateY(-3px);
-    border-color: var(--accent-cyan);
-    box-shadow: 0 8px 15px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
 }
 
 .stat-card h3 {
     color: var(--text-secondary);
-    font-size: 0.85em;
+    font-size: 0.75em;
     text-transform: uppercase;
     letter-spacing: 1px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     font-weight: 600;
 }
 
 .stat-card .value {
     color: var(--text-primary);
-    font-size: 2.2em;
+    font-size: 1.8em;
     font-weight: 700;
     font-family: var(--font-mono);
 }
 
 .stat-card .change {
-    font-size: 0.9em;
+    font-size: 0.8em;
     margin-top: 5px;
     font-family: var(--font-mono);
+    color: var(--text-secondary);
 }
 
 /* ============================================
@@ -510,9 +541,9 @@ body {
 
 .panel-controls input[type="text"],
 .panel-controls select {
-    background: #0f1525;
+    background: var(--input-bg);
     border: 1px solid var(--border-color);
-    color: white;
+    color: var(--text-primary);
     padding: 8px 12px;
     border-radius: 6px;
     font-family: var(--font-family);
@@ -570,19 +601,20 @@ body {
    Agent Items
    ============================================ */
 .agent-item {
-    background: #0f1525;
+    background: var(--item-bg);
     border: 1px solid var(--border-color);
     border-left: 3px solid var(--accent-cyan);
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 15px;
     margin-bottom: 12px;
-    transition: transform 0.2s;
+    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
 }
 
 .agent-item:hover {
-    transform: translateX(2px);
-    border-color: #555;
+    transform: translateX(3px);
+    border-color: rgba(0, 255, 255, 0.3);
     border-left-color: var(--accent-cyan);
+    box-shadow: 0 2px 12px rgba(0, 255, 255, 0.08);
 }
 
 .agent-item.paused {
@@ -625,7 +657,7 @@ body {
     letter-spacing: 0.05em;
     font-weight: 600;
     border: none;
-    background: #2a2a35;
+    background: var(--metric-track);
     color: var(--text-secondary);
     cursor: pointer;
 }
@@ -651,7 +683,7 @@ body {
 .agent-metrics {
     margin-top: 12px;
     padding-top: 12px;
-    border-top: 1px solid #222;
+    border-top: 1px solid var(--border-color);
     display: flex;
     gap: 15px;
 }
@@ -674,7 +706,7 @@ body {
 
 .metric-bar {
     height: 3px;
-    background: #222;
+    background: var(--metric-track);
     border-radius: 2px;
     margin-top: 4px;
     overflow: hidden;
@@ -706,10 +738,90 @@ body {
 }
 
 /* ============================================
+   Trust Tier Badges
+   ============================================ */
+.trust-tier {
+    font-size: 0.65em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+.trust-tier.tier-0 {
+    background: rgba(160, 160, 176, 0.15);
+    color: var(--text-secondary);
+}
+
+.trust-tier.tier-1 {
+    background: rgba(245, 215, 122, 0.15);
+    color: var(--accent-yellow);
+}
+
+.trust-tier.tier-2 {
+    background: rgba(3, 218, 198, 0.15);
+    color: var(--accent-green);
+}
+
+.trust-tier.tier-3 {
+    background: rgba(0, 255, 255, 0.15);
+    color: var(--accent-cyan);
+}
+
+/* ============================================
+   Governance Row (health + verdict + risk)
+   ============================================ */
+.agent-governance {
+    display: flex;
+    gap: 10px;
+    margin: 6px 0 0 20px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.health-badge,
+.verdict-badge,
+.risk-badge {
+    font-size: 0.75em;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.health-badge.healthy { color: var(--accent-green); }
+.health-badge.moderate { color: var(--accent-yellow); }
+.health-badge.critical { color: var(--accent-orange); }
+.health-badge.unknown { color: var(--text-secondary); }
+
+.verdict-badge.safe { color: var(--accent-green); }
+.verdict-badge.caution { color: var(--accent-yellow); }
+.verdict-badge.high-risk { color: var(--accent-orange); }
+
+.risk-badge.low { color: var(--accent-green); }
+.risk-badge.medium { color: var(--accent-yellow); }
+.risk-badge.high { color: var(--accent-orange); }
+
+/* ============================================
+   Agent Purpose
+   ============================================ */
+.agent-purpose {
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    font-style: italic;
+    margin: 4px 0 0 20px;
+    max-width: 500px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ============================================
    Discoveries
    ============================================ */
 .discovery-item {
-    background: #0f1525;
+    background: var(--item-bg);
     border: 1px solid var(--border-color);
     border-radius: 6px;
     padding: 15px;
@@ -728,7 +840,7 @@ body {
     font-size: 0.7em;
     padding: 2px 8px;
     border-radius: 4px;
-    background: #222;
+    background: var(--metric-track);
     color: var(--text-secondary);
     text-transform: uppercase;
     border: 1px solid transparent;
@@ -1134,9 +1246,19 @@ body {
 /* ============================================
    Responsive
    ============================================ */
+@media (max-width: 1100px) {
+    .stats-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
 @media (max-width: 900px) {
     .main-content {
         grid-template-columns: 1fr;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
     }
 }
 
@@ -1146,6 +1268,10 @@ body {
     }
 
     .stats-grid {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: 1fr;
+    }
+
+    .stat-card .value {
+        font-size: 1.5em;
     }
 }

@@ -40,7 +40,7 @@
             </button>
         </div>
         <div class="toolbar-status">
-            <span id="refresh-status">Auto-refresh every 10 seconds</span> • Last updated: <span
+            <span id="refresh-status">Auto-refresh every 30 seconds</span> &bull; Last updated: <span
                 id="last-update">-</span>
         </div>
     </div>
@@ -68,6 +68,11 @@
             <div class="value" id="dialectic-sessions">-</div>
             <div class="change" id="dialectic-change"></div>
         </div>
+        <div class="stat-card">
+            <h3>Fleet Health</h3>
+            <div class="value" id="fleet-coherence">-</div>
+            <div class="change" id="fleet-health-detail"></div>
+        </div>
     </div>
 
     <div class="main-content">
@@ -85,6 +90,13 @@
                         <option value="archived">Archived</option>
                         <option value="deleted">Deleted</option>
                         <option value="unknown">Unknown</option>
+                    </select>
+                    <select id="agent-sort">
+                        <option value="recent">Most Recent</option>
+                        <option value="name">Name A-Z</option>
+                        <option value="coherence">Coherence</option>
+                        <option value="risk">Risk</option>
+                        <option value="updates">Updates</option>
                     </select>
                     <label>
                         <input id="agent-metrics-only" type="checkbox">
@@ -236,15 +248,6 @@
                 return '<div class="loading">No discoveries found</div>';
             }
 
-            const escapeHtml = (str) => {
-                if (!str) return '';
-                return String(str)
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;');
-            };
-
             return `<div class="discoveries-list">${discoveries.map(d => {
                 const type = d.type || d.discovery_type || 'note';
                 const summary = d.summary || d.title || 'Untitled';
@@ -272,15 +275,6 @@
             if (!sessions || sessions.length === 0) {
                 return '<div class="loading">No dialectic sessions found</div>';
             }
-
-            const escapeHtml = (str) => {
-                if (!str) return '';
-                return String(str)
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;');
-            };
 
             return `<div class="dialectic-list">${sessions.map(session => {
                 const phase = session.phase || session.status || 'unknown';
@@ -685,51 +679,101 @@
                 if (agentId) {
                     subtitleParts.push(`ID ${idHtml}`);
                 }
-                const subtitleHtml = subtitleParts.length ? `<div class="agent-subtitle">${subtitleParts.join(' • ')}</div>` : '';
-                const actionsHtml = agentId
-                    ? `<div class="agent-actions"><button class="agent-action" type="button" data-action="copy-id" data-agent-id="${escapeHtml(agentId)}">Copy ID</button></div>`
-                    : '';
+                const totalUpdates = agent.total_updates || 0;
+                if (totalUpdates > 0) {
+                    subtitleParts.push(`${totalUpdates} update${totalUpdates !== 1 ? 's' : ''}`);
+                }
+                const subtitleHtml = subtitleParts.length ? `<div class="agent-subtitle">${subtitleParts.join(' &bull; ')}</div>` : '';
+
+                // Purpose line
+                const purpose = agent.purpose ? escapeHtml(agent.purpose) : '';
+                const purposeHtml = purpose ? `<div class="agent-purpose" title="${purpose}">${purpose}</div>` : '';
+
+                // Trust tier badge — API returns string names: "unknown", "emerging", "established", "verified"
+                const tierRaw = agent.trust_tier;
+                const tierNameToNum = { unknown: 0, emerging: 1, established: 2, verified: 3 };
+                const tierNames = { 0: 'unknown', 1: 'emerging', 2: 'established', 3: 'verified' };
+                const tierNum = tierRaw !== undefined && tierRaw !== null
+                    ? (typeof tierRaw === 'number' ? tierRaw : (tierNameToNum[String(tierRaw).toLowerCase()] ?? 0))
+                    : 0;
+                const tierDisplayNames = { 0: 'T0', 1: 'T1', 2: 'T2', 3: 'T3' };
+                const trustTierHtml = `<span class="trust-tier tier-${tierNum}" title="Trust Tier ${tierNum}: ${tierNames[tierNum] || 'unknown'}">${tierDisplayNames[tierNum]}</span>`;
 
                 // Show metrics only if we have at least one metric value
                 const hasMetrics = agentHasMetrics(agent);
 
+                // Health + verdict + risk governance row
+                const healthStatus = agent.health_status || '';
+                const verdict = metrics.verdict || '';
+                const riskScore = metrics.risk_score !== undefined && metrics.risk_score !== null ? Number(metrics.risk_score) : null;
+                const verdictClass = verdict === 'safe' ? 'safe' : verdict === 'caution' ? 'caution' : verdict === 'high-risk' ? 'high-risk' : '';
+                const riskClass = riskScore !== null ? (riskScore < 0.3 ? 'low' : riskScore < 0.6 ? 'medium' : 'high') : '';
+                const hasGovernance = healthStatus || verdict || riskScore !== null;
+                const governanceHtml = hasGovernance && hasMetrics ? `
+                    <div class="agent-governance">
+                        ${healthStatus ? `<span class="health-badge ${healthStatus}">&#9679; ${escapeHtml(healthStatus)}</span>` : ''}
+                        ${verdict ? `<span class="verdict-badge ${verdictClass}">${escapeHtml(verdict)}</span>` : ''}
+                        ${riskScore !== null ? `<span class="risk-badge ${riskClass}">Risk ${(riskScore * 100).toFixed(0)}%</span>` : ''}
+                    </div>` : '';
+
+                const actionsHtml = agentId
+                    ? `<div class="agent-actions"><button class="agent-action" type="button" data-action="copy-id" data-agent-id="${escapeHtml(agentId)}">Copy ID</button></div>`
+                    : '';
+
+                // Contextual metric bar colors: E/I high=green, S/V low=green
+                const metricColor = (val, inverted) => {
+                    if (val === null || Number.isNaN(val)) return '';
+                    if (inverted) {
+                        return val < 0.3 ? 'var(--accent-green)' : val < 0.6 ? 'var(--accent-yellow)' : 'var(--accent-orange)';
+                    }
+                    return val > 0.6 ? 'var(--accent-green)' : val > 0.3 ? 'var(--accent-yellow)' : 'var(--accent-orange)';
+                };
+                const eColor = metricColor(eValue, false);
+                const iColor = metricColor(iValue, false);
+                const sColor = metricColor(sValue, true);
+                const vColor = metricColor(vValue, true);
+                const cColor = metricColor(cValue, false);
+
                 return `
-                    <div class="agent-item ${statusClass}">
+                    <div class="agent-item ${statusClass}" data-agent-uuid="${escapeHtml(agentId)}" style="cursor: pointer;" title="Click to view details">
                         <div class="agent-meta">
                             <div class="agent-title">
                                 ${statusIndicator}
                                 <span class="agent-name">${nameHtml}</span>
                                 <span class="status-chip ${status}">${statusLabel}</span>
+                                ${trustTierHtml}
                                 ${actionsHtml}
                             </div>
                             ${subtitleHtml}
+                            ${purposeHtml}
+                            ${governanceHtml}
                         </div>
                         ${hasMetrics ? `
                             <div class="agent-metrics">
                                 <div class="metric e" title="Energy (divergence/productive capacity)">
                                     <div class="label">E</div>
                                     <div class="val">${e}</div>
-                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${ePct}%"></div></div>
+                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${ePct}%; ${eColor ? `background: ${eColor}` : ''}"></div></div>
                                 </div>
                                 <div class="metric i" title="Information Integrity">
                                     <div class="label">I</div>
                                     <div class="val">${i}</div>
-                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${iPct}%"></div></div>
+                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${iPct}%; ${iColor ? `background: ${iColor}` : ''}"></div></div>
                                 </div>
                                 <div class="metric s" title="Entropy (disorder/uncertainty)">
                                     <div class="label">S</div>
                                     <div class="val">${s}</div>
-                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${sPct}%"></div></div>
+                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${sPct}%; ${sColor ? `background: ${sColor}` : ''}"></div></div>
                                 </div>
                                 <div class="metric v" title="Void Integral (E-I imbalance)">
                                     <div class="label">V</div>
                                     <div class="val">${v}</div>
-                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${vPct}%"></div></div>
+                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${vPct}%; ${vColor ? `background: ${vColor}` : ''}"></div></div>
                                 </div>
                                 <div class="metric c" title="Coherence">
                                     <div class="label">C</div>
                                     <div class="val">${coherence}</div>
-                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${cPct}%"></div></div>
+                                    <div class="metric-bar"><div class="metric-bar-fill" style="width: ${cPct}%; ${cColor ? `background: ${cColor}` : ''}"></div></div>
                                 </div>
                             </div>
                         ` : '<div class="agent-metrics"><span style="color: #8a9ba8; font-size: 0.9em;">No metrics yet</span></div>'}
@@ -742,12 +786,14 @@
             const searchInput = document.getElementById('agent-search');
             const statusFilterInput = document.getElementById('agent-status-filter');
             const metricsOnlyInput = document.getElementById('agent-metrics-only');
+            const sortInput = document.getElementById('agent-sort');
 
             const searchTerm = searchInput ? searchInput.value.trim().toLowerCase() : '';
             const statusFilter = statusFilterInput ? statusFilterInput.value : 'all';
             const metricsOnly = metricsOnlyInput ? metricsOnlyInput.checked : false;
+            const sortBy = sortInput ? sortInput.value : 'recent';
 
-            const filteredAgents = cachedAgents.filter(agent => {
+            let filteredAgents = cachedAgents.filter(agent => {
                 const status = getAgentStatus(agent);
                 if (statusFilter !== 'all' && status !== statusFilter) {
                     return false;
@@ -760,13 +806,40 @@
                 if (searchTerm) {
                     const displayName = getAgentDisplayName(agent);
                     const agentId = agent.agent_id || '';
-                    const haystack = `${displayName} ${agentId}`.toLowerCase();
+                    const purpose = agent.purpose || '';
+                    const haystack = `${displayName} ${agentId} ${purpose}`.toLowerCase();
                     if (!haystack.includes(searchTerm)) {
                         return false;
                     }
                 }
 
                 return true;
+            });
+
+            // Sort
+            filteredAgents = [...filteredAgents].sort((a, b) => {
+                switch (sortBy) {
+                    case 'name':
+                        return getAgentDisplayName(a).localeCompare(getAgentDisplayName(b));
+                    case 'coherence': {
+                        const aC = (a.metrics || {}).coherence ?? -1;
+                        const bC = (b.metrics || {}).coherence ?? -1;
+                        return bC - aC; // high first
+                    }
+                    case 'risk': {
+                        const aR = (a.metrics || {}).risk_score ?? -1;
+                        const bR = (b.metrics || {}).risk_score ?? -1;
+                        return bR - aR; // high first
+                    }
+                    case 'updates':
+                        return (b.total_updates || 0) - (a.total_updates || 0);
+                    case 'recent':
+                    default: {
+                        const aTime = new Date(a.last_update || a.created_at || 0);
+                        const bTime = new Date(b.last_update || b.created_at || 0);
+                        return bTime - aTime;
+                    }
+                }
             });
 
             renderAgentsList(filteredAgents, searchTerm);
@@ -776,9 +849,11 @@
             const searchInput = document.getElementById('agent-search');
             const statusFilterInput = document.getElementById('agent-status-filter');
             const metricsOnlyInput = document.getElementById('agent-metrics-only');
+            const sortInput = document.getElementById('agent-sort');
             if (searchInput) searchInput.value = '';
             if (statusFilterInput) statusFilterInput.value = 'all';
             if (metricsOnlyInput) metricsOnlyInput.checked = false;
+            if (sortInput) sortInput.value = 'recent';
             applyAgentFilters();
         }
 
@@ -1060,6 +1135,32 @@
 
                 previousStats.totalAgents = total;
                 previousStats.activeAgents = active;
+
+                // Fleet health stat card — computed from loaded agent data
+                const fleetCoherenceEl = document.getElementById('fleet-coherence');
+                const fleetDetailEl = document.getElementById('fleet-health-detail');
+                if (fleetCoherenceEl && fleetDetailEl) {
+                    const agentsWithMetrics = allAgents.filter(a => {
+                        const m = a.metrics || {};
+                        return m.coherence !== undefined && m.coherence !== null;
+                    });
+                    if (agentsWithMetrics.length > 0) {
+                        const avgCoherence = agentsWithMetrics.reduce((sum, a) => sum + Number(a.metrics.coherence), 0) / agentsWithMetrics.length;
+                        fleetCoherenceEl.textContent = avgCoherence.toFixed(3);
+                        const criticalCount = allAgents.filter(a => a.health_status === 'critical').length;
+                        const highRiskCount = allAgents.filter(a => {
+                            const rs = a.metrics && a.metrics.risk_score;
+                            return rs !== undefined && rs !== null && Number(rs) > 0.6;
+                        }).length;
+                        const parts = [];
+                        if (criticalCount > 0) parts.push(`${criticalCount} critical`);
+                        if (highRiskCount > 0) parts.push(`${highRiskCount} high-risk`);
+                        fleetDetailEl.innerHTML = parts.length > 0 ? parts.join(', ') : `${agentsWithMetrics.length} agents tracked`;
+                    } else {
+                        fleetCoherenceEl.textContent = '-';
+                        fleetDetailEl.innerHTML = 'No metrics data';
+                    }
+                }
 
                 // Sort by last update (most recent first)
                 allAgents.sort((a, b) => {
@@ -1370,14 +1471,6 @@
                 return;
             }
 
-            const escapeHtml = (str) => {
-                if (!str) return '';
-                return String(str)
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;');
-            };
 
             // Limit to 25 sessions for display
             const displaySessions = sessions.slice(0, 25);
@@ -1558,6 +1651,10 @@
         if (agentMetricsOnlyInput) {
             agentMetricsOnlyInput.addEventListener('change', applyAgentFilters);
         }
+        const agentSortInput = document.getElementById('agent-sort');
+        if (agentSortInput) {
+            agentSortInput.addEventListener('change', applyAgentFilters);
+        }
         const agentClearFiltersButton = document.getElementById('agent-clear-filters');
         if (agentClearFiltersButton) {
             agentClearFiltersButton.addEventListener('click', clearAgentFilters);
@@ -1635,25 +1732,37 @@
         const agentsContainer = document.getElementById('agents-container');
         if (agentsContainer) {
             agentsContainer.addEventListener('click', event => {
+                // Handle copy-id button click (don't bubble to agent detail)
                 const button = event.target.closest('button[data-action="copy-id"]');
-                if (!button) return;
-                const agentId = button.getAttribute('data-agent-id');
-                if (!agentId) return;
-                copyToClipboard(agentId)
-                    .then(() => {
-                        const originalLabel = button.textContent;
-                        button.textContent = 'Copied';
-                        setTimeout(() => {
-                            button.textContent = originalLabel;
-                        }, 1500);
-                    })
-                    .catch(() => {
-                        const originalLabel = button.textContent;
-                        button.textContent = 'Copy failed';
-                        setTimeout(() => {
-                            button.textContent = originalLabel;
-                        }, 1500);
-                    });
+                if (button) {
+                    event.stopPropagation();
+                    const agentId = button.getAttribute('data-agent-id');
+                    if (!agentId) return;
+                    copyToClipboard(agentId)
+                        .then(() => {
+                            const originalLabel = button.textContent;
+                            button.textContent = 'Copied';
+                            setTimeout(() => {
+                                button.textContent = originalLabel;
+                            }, 1500);
+                        })
+                        .catch(() => {
+                            const originalLabel = button.textContent;
+                            button.textContent = 'Copy failed';
+                            setTimeout(() => {
+                                button.textContent = originalLabel;
+                            }, 1500);
+                        });
+                    return;
+                }
+
+                // Handle agent card click → open detail modal
+                const agentItem = event.target.closest('.agent-item');
+                if (!agentItem) return;
+                const agentUuid = agentItem.getAttribute('data-agent-uuid');
+                if (!agentUuid) return;
+                const agent = cachedAgents.find(a => (a.agent_id || '') === agentUuid);
+                if (agent) showAgentDetail(agent);
             });
         }
 
@@ -1715,6 +1824,160 @@
                 const discovery = cachedDiscoveries[index];
                 showDiscoveryDetail(discovery);
             });
+        }
+
+        function showAgentDetail(agent) {
+            const modal = document.getElementById('panel-modal');
+            const modalTitle = document.getElementById('modal-title');
+            const modalBody = document.getElementById('modal-body');
+            if (!modal || !modalTitle || !modalBody) return;
+
+            const displayName = getAgentDisplayName(agent);
+            const status = getAgentStatus(agent);
+            const agentId = agent.agent_id || 'Unknown';
+            const metrics = agent.metrics || {};
+            const tierNameToNum = { unknown: 0, emerging: 1, established: 2, verified: 3 };
+            const tierRaw = agent.trust_tier;
+            const trustTier = tierRaw !== undefined && tierRaw !== null
+                ? (typeof tierRaw === 'number' ? tierRaw : (tierNameToNum[String(tierRaw).toLowerCase()] ?? 0))
+                : 0;
+            const tierNames = { 0: 'Unknown', 1: 'Emerging', 2: 'Established', 3: 'Verified' };
+            const tierDescriptions = {
+                0: 'New agent, no trajectory history. +5% risk adjustment.',
+                1: 'Some history, building consistency. +5% risk adjustment.',
+                2: 'Consistent behavioral trajectory. No risk adjustment.',
+                3: 'Strong trajectory match + operator endorsement. -5% risk reduction.'
+            };
+
+            // EISV with interpretations using DataProcessor
+            const eisvMetrics = ['E', 'I', 'S', 'V', 'C'];
+            const metricValues = {
+                E: metrics.E, I: metrics.I, S: metrics.S, V: metrics.V,
+                C: metrics.coherence
+            };
+            const eisvHtml = eisvMetrics.map(name => {
+                const val = metricValues[name];
+                if (val === undefined || val === null) return '';
+                const formatted = typeof DataProcessor !== 'undefined'
+                    ? DataProcessor.formatEISVMetric(Number(val), name)
+                    : { display: Number(val).toFixed(3), interpretation: '', color: 'var(--text-primary)' };
+                return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-color);">
+                        <div>
+                            <strong style="color: ${formatted.color}; font-family: var(--font-mono);">${name}</strong>
+                            <span style="color: var(--text-secondary); font-size: 0.85em; margin-left: 8px;">${escapeHtml(formatted.interpretation)}</span>
+                        </div>
+                        <span style="font-family: var(--font-mono); font-weight: 600; color: ${formatted.color};">${formatted.display}</span>
+                    </div>`;
+            }).filter(Boolean).join('');
+
+            // Governance section
+            const healthStatus = agent.health_status || 'unknown';
+            const verdict = metrics.verdict || '-';
+            const riskScore = metrics.risk_score !== undefined && metrics.risk_score !== null ? (Number(metrics.risk_score) * 100).toFixed(1) + '%' : '-';
+            const phi = metrics.phi !== undefined && metrics.phi !== null ? Number(metrics.phi).toFixed(4) : '-';
+            const meanRisk = metrics.mean_risk !== undefined && metrics.mean_risk !== null ? (Number(metrics.mean_risk) * 100).toFixed(1) + '%' : '-';
+
+            // Tags and notes
+            const tags = agent.tags && agent.tags.length > 0 ? agent.tags.map(t => `<span style="background: rgba(0,255,255,0.1); color: var(--accent-cyan); padding: 2px 8px; border-radius: 3px; font-size: 0.85em;">${escapeHtml(t)}</span>`).join(' ') : '<span style="color: var(--text-secondary);">None</span>';
+            const notes = agent.notes ? escapeHtml(agent.notes) : '';
+            const purpose = agent.purpose ? escapeHtml(agent.purpose) : '';
+
+            let html = `
+                <div class="agent-detail">
+                    <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px; flex-wrap: wrap;">
+                        <span class="status-indicator ${status}" style="width: 10px; height: 10px;"></span>
+                        <span style="font-size: 1.2em; font-weight: 600;">${escapeHtml(displayName)}</span>
+                        <span class="status-chip ${status}">${escapeHtml(formatStatusLabel(status))}</span>
+                        ${trustTier !== null ? `<span class="trust-tier tier-${trustTier}">Tier ${trustTier}: ${tierNames[trustTier] || 'Unknown'}</span>` : ''}
+                    </div>
+
+                    ${purpose ? `<div style="color: var(--text-secondary); font-style: italic; margin-bottom: 15px;">${purpose}</div>` : ''}
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                        <div>
+                            <strong style="color: var(--text-secondary);">Agent ID:</strong><br>
+                            <code style="font-size: 0.85em; word-break: break-all;">${escapeHtml(agentId)}</code>
+                        </div>
+                        <div>
+                            <strong style="color: var(--text-secondary);">Total Updates:</strong><br>
+                            ${agent.total_updates || 0}
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                        <div>
+                            <strong style="color: var(--text-secondary);">Created:</strong><br>
+                            ${agent.created_at || agent.created || '-'}
+                        </div>
+                        <div>
+                            <strong style="color: var(--text-secondary);">Last Update:</strong><br>
+                            ${agent.last_update || '-'}
+                        </div>
+                    </div>
+
+                    ${trustTier !== null ? `
+                        <div style="margin-bottom: 15px; padding: 10px; background: rgba(0,255,255,0.05); border-radius: 6px; border-left: 3px solid var(--accent-cyan);">
+                            <strong style="color: var(--accent-cyan);">Trust Tier ${trustTier}: ${tierNames[trustTier] || 'Unknown'}</strong><br>
+                            <span style="color: var(--text-secondary); font-size: 0.9em;">${tierDescriptions[trustTier] || ''}</span>
+                        </div>
+                    ` : ''}
+
+                    ${eisvHtml ? `
+                        <div style="margin-bottom: 15px;">
+                            <strong style="color: var(--accent-cyan);">EISV Metrics:</strong>
+                            <div style="margin-top: 8px;">${eisvHtml}</div>
+                        </div>
+                    ` : ''}
+
+                    <div style="margin-bottom: 15px;">
+                        <strong style="color: var(--accent-cyan);">Governance:</strong>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-top: 8px;">
+                            <div style="padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
+                                <div style="font-size: 0.75em; color: var(--text-secondary); text-transform: uppercase;">Health</div>
+                                <div class="health-badge ${healthStatus}" style="font-size: 1.1em; font-weight: 600;">${escapeHtml(healthStatus)}</div>
+                            </div>
+                            <div style="padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
+                                <div style="font-size: 0.75em; color: var(--text-secondary); text-transform: uppercase;">Verdict</div>
+                                <div style="font-size: 1.1em; font-weight: 600;">${escapeHtml(verdict)}</div>
+                            </div>
+                            <div style="padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
+                                <div style="font-size: 0.75em; color: var(--text-secondary); text-transform: uppercase;">Risk</div>
+                                <div style="font-size: 1.1em; font-weight: 600;">${riskScore}</div>
+                            </div>
+                            <div style="padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
+                                <div style="font-size: 0.75em; color: var(--text-secondary); text-transform: uppercase;">Phi</div>
+                                <div style="font-size: 1.1em; font-weight: 600; font-family: var(--font-mono);">${phi}</div>
+                            </div>
+                            <div style="padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
+                                <div style="font-size: 0.75em; color: var(--text-secondary); text-transform: uppercase;">Mean Risk</div>
+                                <div style="font-size: 1.1em; font-weight: 600;">${meanRisk}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 15px;">
+                        <strong style="color: var(--text-secondary);">Tags:</strong>
+                        <div style="margin-top: 5px;">${tags}</div>
+                    </div>
+
+                    ${notes ? `
+                        <div style="margin-bottom: 15px;">
+                            <strong style="color: var(--text-secondary);">Notes:</strong>
+                            <div style="margin-top: 5px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; white-space: pre-wrap;">${notes}</div>
+                        </div>
+                    ` : ''}
+
+                    <details style="margin-top: 15px;">
+                        <summary style="cursor: pointer; color: var(--text-secondary);">Raw data</summary>
+                        <pre style="font-size: 0.75em; max-height: 200px; overflow: auto; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 4px; margin-top: 8px;">${escapeHtml(JSON.stringify(agent, null, 2))}</pre>
+                    </details>
+                </div>`;
+
+            modalTitle.textContent = `Agent: ${displayName}`;
+            modalBody.innerHTML = html;
+            modal.classList.add('visible');
+            document.body.style.overflow = 'hidden';
         }
 
         function showDiscoveryDetail(discovery) {
@@ -2080,7 +2343,7 @@ ${escapeHtml(details)}</div>
             }, 100);
         }
 
-        // Auto-refresh every 10 seconds (reduced from 5 to avoid rate limits)
+        // Auto-refresh every 30 seconds
         setInterval(() => {
             if (!autoRefreshPaused) {
                 refresh();
