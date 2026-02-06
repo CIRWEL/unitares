@@ -355,6 +355,80 @@ async def load_session(session_id: str) -> Optional[DialecticSession]:
         return None
 
 
+async def load_session_as_dict(session_id: str) -> Optional[Dict[str, Any]]:
+    """Load session data formatted for API response, skipping object reconstruction.
+
+    This is a fast path for read-only consumers (e.g. dashboard) that don't need
+    DialecticSession objects — avoids the reconstruct→to_dict() round-trip.
+    Returns None if DB unavailable so caller can fall back to full load_session().
+    """
+    backend = _resolve_dialectic_backend()
+    if backend not in ("sqlite", "postgres"):
+        return None
+    try:
+        from src.dialectic_db import get_dialectic_db
+        db = await get_dialectic_db()
+        await db._ensure_pool()
+        async with db._pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT session_id, phase, status, session_type,
+                       paused_agent_id, reviewer_agent_id, topic,
+                       created_at, resolution_json
+                FROM core.dialectic_sessions WHERE session_id = $1
+            """, session_id)
+            if not row:
+                return None
+
+            msg_rows = await conn.fetch("""
+                SELECT message_type, agent_id, timestamp, reasoning,
+                       root_cause, proposed_conditions, concerns, agrees
+                FROM core.dialectic_messages
+                WHERE session_id = $1 ORDER BY message_id
+            """, session_id)
+
+            created = row["created_at"]
+            result = {
+                "session_id": row["session_id"],
+                "phase": row["phase"] or row["status"] or "unknown",
+                "session_type": row["session_type"] or "unknown",
+                "paused_agent": row["paused_agent_id"] or "unknown",
+                "reviewer": row["reviewer_agent_id"],
+                "topic": row["topic"] or "",
+                "created": created.isoformat() if hasattr(created, 'isoformat') else str(created or ""),
+                "message_count": len(msg_rows),
+                "transcript": [],
+            }
+
+            res = row["resolution_json"]
+            if res:
+                result["resolution"] = res if isinstance(res, dict) else json.loads(res)
+
+            for msg in msg_rows:
+                m = {
+                    "phase": msg["message_type"],
+                    "role": msg["message_type"],
+                    "agent_id": msg["agent_id"],
+                    "timestamp": msg["timestamp"].isoformat() if hasattr(msg["timestamp"], 'isoformat') else msg["timestamp"],
+                    "reasoning": msg["reasoning"],
+                }
+                if msg["root_cause"]:
+                    m["root_cause"] = msg["root_cause"]
+                if msg["proposed_conditions"]:
+                    val = msg["proposed_conditions"]
+                    m["proposed_conditions"] = val if isinstance(val, (list, dict)) else json.loads(val)
+                if msg["concerns"]:
+                    val = msg["concerns"]
+                    m["concerns"] = val if isinstance(val, (list, dict)) else json.loads(val)
+                if msg["agrees"] is not None:
+                    m["agrees"] = bool(msg["agrees"])
+                result["transcript"].append(m)
+
+            return result
+    except Exception as e:
+        logger.warning(f"Fast load failed for session {session_id}: {e}")
+        return None
+
+
 async def verify_data_consistency() -> Dict[str, Any]:
     """
     Verify that SQLite and JSON dialectic data are consistent.
@@ -569,7 +643,7 @@ async def list_all_sessions(
         await db._ensure_pool()
 
         async with db._pool.acquire() as conn:
-            # Build query with filters
+            # Build query with filters (LEFT JOIN for pre-aggregated message count)
             query = """
                 SELECT
                     ds.session_id,
@@ -581,8 +655,13 @@ async def list_all_sessions(
                     ds.topic,
                     ds.created_at,
                     ds.resolution_json,
-                    (SELECT COUNT(*) FROM core.dialectic_messages dm WHERE dm.session_id = ds.session_id) as message_count
+                    COALESCE(mc.cnt, 0) as message_count
                 FROM core.dialectic_sessions ds
+                LEFT JOIN (
+                    SELECT session_id, COUNT(*) as cnt
+                    FROM core.dialectic_messages
+                    GROUP BY session_id
+                ) mc ON mc.session_id = ds.session_id
                 WHERE 1=1
             """
             params = []

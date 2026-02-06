@@ -57,9 +57,43 @@ v2.6.0 reduced the public surface from 49 to 29 tools. Use `list_tools()` or rea
 | `governance_monitor.py` | 83% |
 | `trajectory_identity.py` | 88% |
 | `workspace_health.py` | 83% |
-| **Overall** | **40%** |
+| **Overall** | **41%** |
 
-1,798 tests passing as of v2.6.0 (Feb 2026).
+1,907 tests passing as of v2.6.0 (Feb 2026).
+
+---
+
+## Project Structure
+
+```
+governance-mcp-v1/
+├── src/
+│   ├── governance_monitor.py   # Core EISV dynamics
+│   ├── cirs.py                 # Oscillation detection
+│   ├── mcp_server.py           # HTTP server (multi-client)
+│   ├── mcp_server_std.py       # Stdio server (single-client)
+│   ├── mcp_handlers/           # Tool implementations
+│   │   ├── identity_v2.py      # Identity resolution (session→UUID)
+│   │   ├── core.py             # process_agent_update, metrics
+│   │   ├── dialectic.py        # Dialectic peer review
+│   │   ├── consolidated.py     # Unified agent/config/calibration tools
+│   │   └── knowledge_graph.py  # Knowledge storage & search
+│   ├── db/                     # Database backends
+│   │   └── postgres_backend.py # PostgreSQL (primary)
+│   ├── cache/                  # Redis client, rate limiter
+│   └── storage/
+│       └── knowledge_graph_age.py  # AGE graph database
+├── governance_core/            # Canonical math (Phase-3)
+│   ├── dynamics.py             # Differential equations
+│   ├── coherence.py            # C(V,Θ) function
+│   ├── ethical_drift.py        # Δη vector computation
+│   └── scoring.py              # Φ objective, verdicts
+├── dashboard/                  # Web dashboard (HTML/CSS/JS)
+├── skills/                     # SKILL.md for agent onboarding
+├── docs/                       # Documentation
+├── data/                       # Runtime data (agents/, knowledge/)
+└── tests/                      # 1,907 tests, 41% coverage
+```
 
 ---
 

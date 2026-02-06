@@ -12,7 +12,7 @@ class DashboardAPI {
     constructor(baseURL = window.location.origin) {
         this.baseURL = baseURL;
         this.cache = new Map();
-        this.cacheTimeout = 5000; // 5 seconds default cache
+        this.cacheTimeout = 25000; // 25 seconds default cache (just under 30s refresh interval)
         this.retryConfig = {
             maxRetries: 3,
             baseDelay: 500,

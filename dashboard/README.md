@@ -30,7 +30,7 @@ Once the MCP server is running, access the dashboard at:
 - Shows top 20 most recently active agents
 - Displays EISV metrics (Energy, Integrity, Coherence)
 - Color-coded status indicators (active/paused/archived)
-- Real-time updates every 5 seconds
+- Real-time updates every 30 seconds
 
 ### Recent Discoveries
 - Latest knowledge graph entries
@@ -42,14 +42,14 @@ Once the MCP server is running, access the dashboard at:
 ### Architecture
 - **Frontend:** Pure HTML/CSS/JavaScript (no build step required)
 - **Backend:** Uses existing `/v1/tools/call` HTTP API
-- **Auto-refresh:** Polls every 5 seconds
+- **Auto-refresh:** Polls every 30 seconds (with 25s client-side cache)
 - **Responsive:** Works on desktop and mobile
 
 ### API Calls
 The dashboard makes the following tool calls:
-- `list_agents` - Get agent list with metrics
-- `search_knowledge_graph` - Get recent discoveries
-- `aggregate_metrics` - Get system-wide metrics
+- `agent(action='list')` — Get agent list with metrics
+- `search_knowledge_graph` — Get recent discoveries
+- `get_dialectic_session` / `list_dialectic_sessions` — Dialectic sessions and transcripts
 
 ### File Structure
 - `index.html` — Main dashboard page
@@ -59,7 +59,7 @@ The dashboard makes the following tool calls:
 
 ### Customization
 Edit the dashboard files to:
-- Change refresh interval (default: 5000ms)
+- Change refresh interval (default: 30000ms)
 - Modify displayed metrics
 - Adjust styling/colors
 - Add new panels/sections
@@ -81,9 +81,10 @@ Edit the dashboard files to:
 - [x] Filter/search agents
 - [x] Export data (CSV/JSON) — via `utils.js` DataProcessor
 - [x] Dark/light theme toggle — via ThemeManager
-- [x] Dialectic session viewer with filters
+- [x] Dialectic session viewer with filters and transcript display
 - [x] Modular component architecture (`components.js`)
 - [x] Extracted CSS with theme variables (`styles.css`)
+- [x] Loading performance optimization — scoped CSS transitions, reduced API calls, fast DB paths for dialectic
 
 ## Future Enhancements
 
@@ -91,7 +92,6 @@ Edit the dashboard files to:
 - [ ] Agent activity timeline
 - [ ] Knowledge graph visualization
 - [ ] Real-time WebSocket updates (instead of polling)
-- [ ] Loading performance optimization
 
 ---
 

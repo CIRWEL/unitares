@@ -42,6 +42,7 @@ mcp_server = get_mcp_server()
 from .dialectic_session import (
     save_session,
     load_session,
+    load_session_as_dict,
     load_all_sessions,
     list_all_sessions,
     ACTIVE_SESSIONS,
@@ -323,6 +324,13 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
 
         # If session_id provided, use it directly
         if session_id:
+            # Fast path: skip object reconstruction when timeout checks disabled (dashboard use case)
+            if not check_timeout:
+                fast_result = await load_session_as_dict(session_id)
+                if fast_result:
+                    fast_result["success"] = True
+                    return success_response(fast_result)
+
             # Try in-memory first
             session = ACTIVE_SESSIONS.get(session_id)
             if not session:

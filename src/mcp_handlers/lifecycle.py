@@ -85,11 +85,12 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
             status_filter = arguments.get("status_filter", "active")
             include_test_agents = arguments.get("include_test_agents", False)
             # Default: include zero-update agents so newly created agents are discoverable.
-            # Callers can still pass min_updates=2 to hide one-shot / placeholder agents.
+            # Callers can still pass min_updates=1 to hide ghost agents.
             min_updates = arguments.get("min_updates", 0)
+            # Smart default: show labeled agents first; if none, show active unlabeled ones
+            named_only = arguments.get("named_only")  # None = auto, True/False = explicit
             # NEW: Filter by recency - default 7 days to reduce noise from stale agents
             recent_days = arguments.get("recent_days", 7)
-            named_only = arguments.get("named_only", False)  # Only show agents with labels
 
             # Calculate cutoff time for recency filter
             cutoff_time = None
@@ -106,8 +107,14 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                     continue
                 if not include_test_agents and is_test_agent(agent_id):  # Filter test agents
                     continue
-                if named_only and not getattr(meta, 'label', None):
+                if named_only is True and not getattr(meta, 'label', None):
                     continue
+                if named_only is False:
+                    pass  # Show everything
+                elif named_only is None:
+                    # Auto mode: skip unlabeled agents with 0 updates (ghosts)
+                    if not getattr(meta, 'label', None) and meta.total_updates < 1:
+                        continue
 
                 # Apply recency filter
                 if cutoff_time and meta.last_update:
@@ -127,9 +134,10 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                     "updates": meta.total_updates,
                     "last": meta.last_update[:10] if meta.last_update else None,
                     "last_update": meta.last_update,
+                    "trust_tier": getattr(meta, 'trust_tier', None),
                 })
-            # Sort by most recent activity so new agents show up immediately.
-            agents.sort(key=lambda x: x.get("last_update", "") or "", reverse=True)
+            # Sort: labeled first, then by most recent activity
+            agents.sort(key=lambda x: (0 if x.get("label") else 1, -(x.get("updates") or 0), x.get("last_update", "") or ""), reverse=False)
             for a in agents:
                 a.pop("last_update", None)
 

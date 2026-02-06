@@ -188,7 +188,7 @@
         // Initialize utilities
         const api = typeof DashboardAPI !== 'undefined' ? new DashboardAPI(window.location.origin) : null;
         const themeManager = typeof ThemeManager !== 'undefined' ? new ThemeManager() : null;
-        const REFRESH_INTERVAL_MS = 10000;
+        const REFRESH_INTERVAL_MS = 30000;
         let previousStats = {};
         let cachedAgents = [];
         let cachedDiscoveries = [];
@@ -956,13 +956,10 @@
                 const result = await callTool('agent', {
                     action: 'list',
                     include_metrics: true,
-                    limit: 1000,  // High limit to ensure status_counts includes all matching agents
-                    status_filter: 'all'  // Get all statuses to show accurate counts
+                    limit: 100
                 });
 
-                console.log('Agents result:', result);
-                console.log('Result type:', typeof result);
-                console.log('Result keys:', result ? Object.keys(result) : 'null');
+                console.log('Agents loaded:', result ? (result.summary?.total || 'ok') : 'null');
 
                 // Handle null/undefined result
                 if (!result) {
@@ -1093,42 +1090,10 @@
         async function loadDiscoveries(searchQuery = '') {
             try {
                 console.log('Loading discoveries...', searchQuery ? `(search: ${searchQuery})` : '');
-                // Get total count from list_knowledge_graph (only on first load or if no search)
-                if (!searchQuery) {
-                    try {
-                        // Use unified knowledge() tool with action='stats'
-                        const listResult = await callTool('knowledge', { action: 'stats' });
-                        console.log('Discovery count result:', listResult);
-                        const stats = listResult.stats || {};
-                        const totalDiscoveries = stats.total_discoveries || 0;
-                        const countEl = document.getElementById('discoveries-count');
-                        if (countEl) {
-                            countEl.textContent = totalDiscoveries;
-                        }
-                        const discoveriesChange = formatChange(totalDiscoveries, previousStats.discoveries);
-                        const changeEl = document.getElementById('discoveries-change');
-                        if (changeEl) {
-                            changeEl.innerHTML = discoveriesChange || (totalDiscoveries > 0 ? 'Total discoveries' : 'No discoveries yet');
-                        }
-                        previousStats.discoveries = totalDiscoveries;
-                    } catch (listError) {
-                        // If list fails, show error but continue with search
-                        console.warn('Failed to get discovery count:', listError);
-                        const countEl = document.getElementById('discoveries-count');
-                        if (countEl) {
-                            countEl.textContent = '?';
-                        }
-                        const changeEl = document.getElementById('discoveries-change');
-                        if (changeEl) {
-                            changeEl.innerHTML = 'Unable to load count';
-                        }
-                    }
-                }
 
-                // Get discoveries using search
-                // If searchQuery is present, we rely on the server validation
+                // Single API call — get discoveries and derive count from results
                 const toolArgs = {
-                    limit: searchQuery ? 50 : 500,  // Lower limit for specific search
+                    limit: 50,
                     include_details: true,
                 };
 
@@ -1137,9 +1102,6 @@
                 }
 
                 const searchResult = await callTool('search_knowledge_graph', toolArgs);
-                console.log('Search result:', searchResult);
-                console.log('Search result type:', typeof searchResult);
-                console.log('Search result keys:', searchResult ? Object.keys(searchResult) : 'null');
                 
                 // Handle null/undefined result
                 if (!searchResult) {
@@ -1192,11 +1154,6 @@
                     return bId.localeCompare(aId);
                 });
 
-                if (!searchQuery) {
-                    // Only slice if we're doing a general load
-                    discoveries = discoveries.slice(0, 50);
-                }
-
                 const enrichedDiscoveries = discoveries.map(d => {
                     // Parse date from id (format: "2025-12-29T08:34:42.201273" or "2026-01-01T23:40:53.202482")
                     // IDs use ISO timestamps - parse correctly
@@ -1242,6 +1199,16 @@
                 });
 
                 cachedDiscoveries = enrichedDiscoveries;
+
+                // Update stat card from loaded discoveries count
+                const totalDiscoveries = enrichedDiscoveries.length;
+                const countEl = document.getElementById('discoveries-count');
+                if (countEl) countEl.textContent = totalDiscoveries;
+                const discoveriesChange = formatChange(totalDiscoveries, previousStats.discoveries);
+                const changeEl = document.getElementById('discoveries-change');
+                if (changeEl) changeEl.innerHTML = discoveriesChange || (totalDiscoveries > 0 ? 'Recent discoveries' : 'No discoveries yet');
+                previousStats.discoveries = totalDiscoveries;
+
                 updateDiscoveryLegend(cachedDiscoveries);
                 // Re-apply local filters (type/time) to the new search results
                 applyDiscoveryFilters();
