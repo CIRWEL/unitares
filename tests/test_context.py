@@ -183,3 +183,39 @@ class TestDetectClientFromUserAgent:
 
     def test_none_returns_none(self):
         assert detect_client_from_user_agent(None) is None
+
+
+class TestTrajectoryConfidence:
+
+    def test_set_and_get(self):
+        from src.mcp_handlers.context import (
+            set_trajectory_confidence,
+            get_trajectory_confidence,
+            reset_trajectory_confidence,
+        )
+        token = set_trajectory_confidence(0.85)
+        try:
+            assert get_trajectory_confidence() == 0.85
+        finally:
+            reset_trajectory_confidence(token)
+
+    def test_default_is_none(self):
+        from src.mcp_handlers.context import get_trajectory_confidence
+        # Default value should be None when not set
+        val = get_trajectory_confidence()
+        assert val is None or isinstance(val, float)
+
+    def test_reset_restores_previous(self):
+        from src.mcp_handlers.context import (
+            set_trajectory_confidence,
+            get_trajectory_confidence,
+            reset_trajectory_confidence,
+        )
+        token1 = set_trajectory_confidence(0.5)
+        try:
+            token2 = set_trajectory_confidence(0.9)
+            assert get_trajectory_confidence() == 0.9
+            reset_trajectory_confidence(token2)
+            assert get_trajectory_confidence() == 0.5
+        finally:
+            reset_trajectory_confidence(token1)

@@ -19,6 +19,7 @@ from types import SimpleNamespace
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+fakeredis = pytest.importorskip("fakeredis")
 import fakeredis.aioredis
 
 from src.cache.session_cache import SessionCache, _fallback_cache, SESSION_PREFIX
