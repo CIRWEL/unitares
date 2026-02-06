@@ -44,9 +44,9 @@ v2.6.1 has 31 tools + aliases (status, list_agents, observe_agent, checkin, etc.
 | `governance_monitor.py` | 83% |
 | `trajectory_identity.py` | 88% |
 | `workspace_health.py` | 83% |
-| **Overall** | **41%** |
+| **Overall** | **43%** |
 
-1,907 tests passing as of v2.6.1 (Feb 2026).
+2,194 tests passing as of v2.6.2 (Feb 2026).
 
 ---
 
@@ -60,10 +60,13 @@ governance-mcp-v1/
 │   ├── mcp_server.py           # HTTP server (multi-client)
 │   ├── mcp_server_std.py       # Stdio server (single-client)
 │   ├── mcp_handlers/           # Tool implementations
+│   │   ├── decorators.py       # @mcp_tool, ToolDefinition, action_router()
+│   │   ├── middleware.py       # 8-step dispatch pipeline (identity, alias, rate limit, etc.)
+│   │   ├── consolidated.py     # 7 consolidated tools via action_router()
+│   │   ├── response_formatter.py # Response mode filtering (auto/minimal/compact/standard/full)
 │   │   ├── identity_v2.py      # Identity resolution (4-path: Redis→PG→Name→Create)
 │   │   ├── core.py             # process_agent_update, metrics
 │   │   ├── dialectic.py        # Dialectic peer review
-│   │   ├── consolidated.py     # Unified agent/observe/config/calibration tools
 │   │   ├── observability.py    # Observe/compare/anomaly handlers
 │   │   └── knowledge_graph.py  # Knowledge storage & search
 │   ├── db/                     # Database backends
@@ -80,7 +83,7 @@ governance-mcp-v1/
 ├── skills/                     # SKILL.md for agent onboarding
 ├── docs/                       # Documentation
 ├── data/                       # Runtime data (agents/, knowledge/)
-└── tests/                      # 1,907 tests, 41% coverage
+└── tests/                      # 2,194 tests, 43% coverage
 ```
 
 ---
