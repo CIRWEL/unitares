@@ -1,8 +1,9 @@
 """
 Auto-Resolve Stuck Dialectic Sessions
 
-Quick Win A: Automatically resolve sessions that are stuck/inactive for >30 minutes.
-This removes artificial barriers and prevents session conflicts.
+Quick Win A: Automatically resolve sessions that are stuck/inactive for >2 hours.
+This removes artificial barriers and prevents session conflicts while giving
+agents sufficient time to engage in thoughtful dialectic (matching DialecticProtocol timeouts).
 """
 
 from datetime import datetime, timedelta, timezone
@@ -18,20 +19,22 @@ from src.dialectic_db import (
 
 logger = get_logger(__name__)
 
-# Stuck session threshold: 30 minutes of inactivity
-# Increased from 5 min - ephemeral agents may lose context between interactions
-STUCK_SESSION_THRESHOLD = timedelta(minutes=30)
+# Stuck session threshold: 2 hours of inactivity
+# Increased from 5 min → 30 min → 2 hours
+# Rationale: DialecticProtocol.MAX_ANTITHESIS_WAIT is 2 hours - agents need time to think
+# 30 min was still too aggressive for real dialectic interactions (see session 5551079c40546c65)
+STUCK_SESSION_THRESHOLD = timedelta(hours=2)
 
 
 async def auto_resolve_stuck_sessions() -> Dict[str, Any]:
     """
-    Automatically resolve sessions that are stuck/inactive for >30 minutes.
+    Automatically resolve sessions that are stuck/inactive for >2 hours.
 
     A session is considered "stuck" if:
-    1. Status is 'active' but no activity for >30 minutes
-    2. Phase is AWAITING_THESIS and created >30 minutes ago
-    3. Phase is ANTITHESIS and thesis submitted >30 minutes ago with no antithesis
-    4. Phase is SYNTHESIS and last update >30 minutes ago
+    1. Status is 'active' but no activity for >2 hours
+    2. Phase is AWAITING_THESIS and created >2 hours ago
+    3. Phase is ANTITHESIS and thesis submitted >2 hours ago with no antithesis
+    4. Phase is SYNTHESIS and last update >2 hours ago
 
     Returns:
         Dict with counts of resolved sessions and details
@@ -50,7 +53,7 @@ async def auto_resolve_stuck_sessions() -> Dict[str, Any]:
                 "message": "No active sessions found"
             }
 
-        # Filter to stuck sessions (inactive for >30 minutes)
+        # Filter to stuck sessions (inactive for >2 hours)
         stuck_sessions = []
         for session in active_sessions:
             # Get updated_at or created_at

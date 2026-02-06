@@ -50,8 +50,8 @@ async def test_no_stuck_sessions():
 
 @pytest.mark.asyncio
 async def test_resolves_stuck_session():
-    """Sessions inactive for >30 minutes should be auto-resolved."""
-    old_time = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat()
+    """Sessions inactive for >2 hours should be auto-resolved."""
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
     sessions = [
         {"session_id": "stuck-1", "updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"}
     ]
@@ -78,7 +78,7 @@ async def test_resolves_stuck_session():
 @pytest.mark.asyncio
 async def test_resolves_multiple_stuck_sessions():
     """Should resolve all stuck sessions, not just the first one."""
-    old_time = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat()
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
     sessions = [
         {"session_id": "s1", "updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"},
         {"session_id": "s2", "updated_at": old_time, "paused_agent_id": "a2", "phase": "antithesis"},
@@ -107,7 +107,7 @@ async def test_resolves_multiple_stuck_sessions():
 @pytest.mark.asyncio
 async def test_uses_created_at_fallback():
     """Should fall back to created_at when updated_at is missing."""
-    old_time = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat()
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
     sessions = [
         {"session_id": "s1", "created_at": old_time, "paused_agent_id": "a1", "phase": "thesis"}
     ]
@@ -133,7 +133,7 @@ async def test_uses_created_at_fallback():
 @pytest.mark.asyncio
 async def test_handles_z_suffix_timestamps():
     """Should handle 'Z' suffix in ISO timestamps."""
-    old_time = (datetime.now(timezone.utc) - timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
     sessions = [
         {"session_id": "s1", "updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"}
     ]
@@ -159,7 +159,7 @@ async def test_handles_z_suffix_timestamps():
 @pytest.mark.asyncio
 async def test_handles_naive_datetime_timestamps():
     """Should handle naive datetime strings (no 'T' separator)."""
-    old_time = (datetime.now(timezone.utc) - timedelta(minutes=60)).strftime("%Y-%m-%d %H:%M:%S")
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
     sessions = [
         {"session_id": "s1", "updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"}
     ]
@@ -185,7 +185,7 @@ async def test_handles_naive_datetime_timestamps():
 @pytest.mark.asyncio
 async def test_handles_session_without_id():
     """Sessions without session_id should be skipped."""
-    old_time = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat()
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
     sessions = [
         {"updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"}  # No session_id
     ]
@@ -223,7 +223,7 @@ async def test_handles_get_sessions_error():
 @pytest.mark.asyncio
 async def test_handles_update_error_gracefully():
     """Should continue resolving other sessions when one update fails."""
-    old_time = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat()
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
     sessions = [
         {"session_id": "s1", "updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"},
         {"session_id": "s2", "updated_at": old_time, "paused_agent_id": "a2", "phase": "thesis"},
@@ -277,6 +277,7 @@ async def test_check_and_resolve_handles_error():
 # --- STUCK_SESSION_THRESHOLD Tests ---
 
 
-def test_stuck_threshold_is_30_minutes():
+def test_stuck_threshold_is_2_hours():
+    """Threshold should match DialecticProtocol.MAX_ANTITHESIS_WAIT."""
     from src.mcp_handlers.dialectic_auto_resolve import STUCK_SESSION_THRESHOLD
-    assert STUCK_SESSION_THRESHOLD == timedelta(minutes=30)
+    assert STUCK_SESSION_THRESHOLD == timedelta(hours=2)
