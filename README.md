@@ -11,21 +11,23 @@ UNITARES monitors AI agent behavior using continuous state variables (EISV). Whe
 ## What It Actually Does (Honest Assessment)
 
 **Today, UNITARES provides:**
-- ✅ **Stability monitoring** — Detect agents trending toward trouble
-- ✅ **Stuck-agent detection** — Find agents that stopped responding
+- ✅ **Stability monitoring** — Continuous EISV state tracking, detect agents trending toward trouble
+- ✅ **Circuit breakers** — Automatic pause when risk thresholds crossed, enforced (not cosmetic)
+- ✅ **Stuck-agent detection** — Find agents that stopped responding, with auto-recovery
 - ✅ **Oscillation detection** — Catch decision flip-flop loops (CIRS v0.1)
-- ✅ **Circuit breakers** — Automatic pause when risk thresholds crossed
-- ✅ **Cross-agent observability** — Compare and monitor agent fleets
-- ✅ **Knowledge graph** — Persistent cross-agent learning
-- ✅ **Ethical drift tracking** — ‖Δη‖² computed from parameter changes, fed into φ objective
-- ✅ **Trajectory identity** — Genesis signature stored at onboard, lineage comparison detects anomalies
-- ✅ **Automatic calibration** — Ground truth from objective outcomes (test results, command success), not human oracle
+- ✅ **Dialectic peer review** — Structured thesis/antithesis/synthesis protocol for dispute resolution
+- ✅ **Knowledge graph** — Persistent cross-agent learning with semantic search (AGE graph DB)
+- ✅ **Cross-agent observability** — Compare agents, detect anomalies, aggregate fleet metrics
+- ✅ **Ethical drift tracking** — ‖Δη‖² computed from parameter changes, fed into Φ objective
+- ✅ **Trajectory identity** — Genesis signatures, lineage comparison, anomaly detection
+- ✅ **Web dashboard** — Real-time agent metrics, dialectic sessions, knowledge discoveries
+- ✅ **Pi/Lumen orchestration** — Coordinate with Raspberry Pi-based embodied agents
 
-**What's partial/research-grade:**
-- ⚠️ **"Measurable ethics"** — We measure *instability* and *drift*, but mapping these to ethical violations remains an open research question
-- ⚠️ **Outcome correlation** — Does high instability actually predict bad outcomes? Needs more real-world validation
+**What's research-grade:**
+- ⚠️ **Outcome correlation** — Does instability actually predict bad outcomes? Working theory, needs validation
+- ⚠️ **Threshold tuning** — Default thresholds work, but domain-specific calibration improves accuracy
 
-The thermodynamic math is real. The stability monitoring works. Ethical drift is computed from observable signals. Interpreting thresholds requires domain-specific tuning.
+The thermodynamic math is real. The stability monitoring works. Ethical drift is computed from observable signals.
 
 ---
 
@@ -68,6 +70,8 @@ The key insight: these are *continuous* variables, not binary pass/fail. You can
 
 ## Installation
 
+**Prerequisites:** PostgreSQL 16+, Redis (optional but recommended)
+
 ```bash
 git clone https://github.com/CIRWEL/governance-mcp-v1-backup.git
 cd governance-mcp-v1
@@ -83,11 +87,19 @@ python src/mcp_server_std.py
 **Endpoints:**
 | Endpoint | Transport | Use Case |
 |----------|-----------|----------|
-| `/mcp/` | Streamable HTTP | **Recommended** — modern clients |
+| `/mcp/` | Streamable HTTP | **Recommended** — modern MCP clients |
+| `/v1/tools/call` | REST POST | CLI, scripts, non-MCP clients |
 | `/dashboard` | HTTP | Web dashboard |
 | `/health` | HTTP | Health checks |
 
-> **Note:** URLs must end with `/mcp/` (trailing slash required). Without it, you'll get a 307 redirect most clients don't follow.
+> **Note:** MCP URLs must end with `/mcp/` (trailing slash required). Without it, you'll get a 307 redirect most clients don't follow.
+
+**Storage stack:**
+| Component | Purpose | Required |
+|-----------|---------|----------|
+| PostgreSQL | Agent state, dialectic sessions, calibration | Yes |
+| AGE (graph extension) | Knowledge graph with semantic search | Yes |
+| Redis | Session cache, rate limiting, distributed locks | Optional (graceful fallback) |
 
 ---
 
@@ -171,10 +183,12 @@ v2.6.0 reduced the public tool surface from 49 to 29 registered tools. Admin/int
 
 ### Knowledge Graph
 
-Cross-agent persistent learning:
+Cross-agent persistent learning backed by Apache AGE (graph database):
 ```
-store_knowledge_graph()   → Save discoveries, insights, questions
-search_knowledge_graph()  → Semantic + tag-based retrieval
+knowledge(action='store', ...)       → Save discoveries, insights, questions
+knowledge(action='search', ...)      → Semantic + tag-based retrieval
+search_knowledge_graph(query=...)    → Direct semantic search
+leave_note(message=...)              → Quick note (minimal friction)
 ```
 
 ### Three-Tier Identity
@@ -190,7 +204,7 @@ search_knowledge_graph()  → Semantic + tag-based retrieval
 - Fallback to client hint: `{client}_{Date}` (e.g., `cursor_20260204`)
 - Final fallback: `mcp_{Date}`
 
-### Trajectory Identity (New in v2.5.5)
+### Trajectory Identity
 
 Lineage tracking for identity verification:
 - **Genesis signature (Σ₀)** — Stored at first onboard, never overwritten
@@ -266,15 +280,15 @@ The drift is *computed*, but interpreting "high drift = bad" requires domain con
 ## When to Use UNITARES
 
 **Good fit:**
-- Running multiple AI agents that need coordination
-- Want early warning before agents crash or loop
+- Running AI agents (one or many) that need stability monitoring
+- Want early warning before agents crash, loop, or drift
 - Need circuit breakers for autonomous agent systems
-- Building infrastructure for agent fleets
+- Building infrastructure for coordinated agent fleets
+- Embodied AI (Lumen/anima-mcp runs on a single Raspberry Pi agent)
 
 **Not a fit (yet):**
-- Need verified ethical compliance (the detection layer isn't built)
-- Want human-in-the-loop approval workflows (system is autonomous)
-- Single-agent deployments (overkill)
+- Need verified ethical compliance (drift detection exists, but mapping to ethical violations is research-grade)
+- Need sub-second latency governance (current cycle is ~200-500ms)
 
 ---
 
@@ -317,26 +331,18 @@ The thermodynamic framing isn't metaphor — it's a design choice that makes beh
 
 ## Roadmap
 
-**v2.6.0 (Feb 2026):**
-- ✅ Dead code removal — ~4,200 lines of legacy code deleted (identity v1, old DBs, unused modules)
-- ✅ Slim tool surface — 49 → 29 registered tools, admin tools hidden
-- ✅ PostgreSQL dialectic — Fully migrated from SQLite to PostgreSQL
-- ✅ Consolidated exports/observability — Unified `export()` and `observe()` tools
-- ✅ Agent circuit breaker enforcement — Paused agents now actually blocked
-- ✅ Redis resilience — Circuit breaker, connection pooling, retry with backoff
-- ✅ 1,798 tests, 40% coverage (up from 358 tests, 25%)
-- ✅ SKILL.md — Agent onboarding guide for the slim MCP surface
-- ✅ Identity v2 — Three-tier model with session→UUID binding via MCP headers
-
 **In progress:**
 - 🔄 Outcome correlation — Does instability actually predict bad outcomes?
 - 🔄 Threshold tuning — Domain-specific drift thresholds need real-world calibration
-- 🔄 Dashboard performance — Loading speed improvements
+- 🔄 Dashboard performance — Loading speed for large agent sets
+- 🔄 CIRS v1.0 — Full multi-agent coordination protocol (oscillation damping, resonance)
 
 **Future:**
 - Semantic ethical drift detection (beyond parameter changes)
-- Multi-agent coordination protocols (CIRS v1.0)
-- Production hardening
+- Production hardening and horizontal scaling
+- WebSocket dashboard updates (replace polling)
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 Contributions welcome. This is research-grade infrastructure, not production-certified.
 
