@@ -50,16 +50,38 @@ TOOLS_NEEDING_SESSION_INJECTION = {
 | `src/mcp_handlers/*.py` | Handler implementations with `@mcp_tool` | Always - implements the logic |
 | `src/mcp_server.py` | HTTP transport registration | **Rarely** - only for server-specific tools |
 
+### Key Modules (v2.6.2)
+
+| Module | Purpose |
+|--------|---------|
+| `decorators.py` | `@mcp_tool` decorator, `ToolDefinition` dataclass, `action_router()`, unified `_TOOL_DEFINITIONS` registry |
+| `middleware.py` | 8-step dispatch pipeline: identity → trajectory → kwargs → alias → inject → validate → rate limit → patterns |
+| `consolidated.py` | 7 consolidated tools built declaratively via `action_router()` |
+| `response_formatter.py` | Response mode filtering (auto/minimal/compact/standard/full) for `process_agent_update` |
+| `__init__.py` | `dispatch_tool()` orchestrates the middleware pipeline and calls handlers |
+
 ### Auto-Registration System
 
 The `auto_register_all_tools()` function in `mcp_server.py`:
 1. Reads all tool definitions from `tool_schemas.py`
-2. **Filters to only tools in the decorator registry** (tools with `register=True`)
+2. **Filters to only tools in `_TOOL_DEFINITIONS`** (tools with `register=True`)
 3. Creates FastMCP wrappers for each tool
 4. Injects `client_session_id` for tools in `TOOLS_NEEDING_SESSION_INJECTION`
 5. Registers with `mcp.tool()` decorator
 
 **Important:** A tool must be in BOTH `tool_schemas.py` AND have `@mcp_tool` with `register=True` (default) to be exposed via MCP.
+
+### Dispatch Pipeline
+
+When a tool is called, `dispatch_tool()` runs it through middleware steps defined in `middleware.py`:
+
+```
+resolve_identity → verify_trajectory → unwrap_kwargs → resolve_alias → inject_identity → validate_params
+    ↓ (handler lookup)
+check_rate_limit → track_patterns → handler()
+```
+
+Each step is `async (name, arguments, ctx) → (name, arguments, ctx) | list[TextContent]`. Returning a list short-circuits with that error response. State flows via `DispatchContext` dataclass.
 
 ---
 
@@ -80,35 +102,43 @@ To reduce cognitive load, related tools are consolidated into single tools with 
 
 ### Creating a Consolidated Tool
 
-1. **Create the consolidated handler** in `src/mcp_handlers/consolidated.py`:
-```python
-@mcp_tool("my_group", timeout=30.0, description="Unified my_group operations: action1, action2")
-async def handle_my_group(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    action = arguments.get("action", "").lower()
+Use `action_router()` in `src/mcp_handlers/consolidated.py` — no manual if/elif needed:
 
-    if action == "action1":
-        return await handle_individual_tool_1(arguments)
-    elif action == "action2":
-        return await handle_individual_tool_2(arguments)
-    else:
-        return error_response(f"Unknown action: {action}", recovery={"valid_actions": ["action1", "action2"]})
+```python
+from .decorators import action_router
+
+handle_my_group = action_router(
+    "my_group",
+    actions={
+        "action1": handle_individual_tool_1,
+        "action2": handle_individual_tool_2,
+    },
+    timeout=30.0,
+    description="Unified my_group operations: action1, action2",
+    default_action="action1",                    # Optional: used when action is missing
+    param_maps={"action2": {"q": "query"}},      # Optional: remap params per action
+    examples=["my_group(action='action1')"],      # Optional: shown in error messages
+)
 ```
 
-2. **Mark individual handlers as internal** with `register=False`:
+`action_router()` handles: action extraction, validation, error messages with valid actions + examples, parameter remapping, and MCP registration.
+
+Individual handlers should use `register=False`:
 ```python
 @mcp_tool("individual_tool_1", timeout=10.0, register=False)
 async def handle_individual_tool_1(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    # Still works, just not exposed to MCP clients
+    # Still works, just not exposed to MCP clients directly
     ...
 ```
 
-3. **Add aliases** in `tool_stability.py` for backward compatibility:
+Add backward-compat aliases in `tool_stability.py`:
 ```python
 "individual_tool_1": ToolAlias(
     old_name="individual_tool_1",
     new_name="my_group",
     reason="consolidated",
-    migration_note="Use my_group(action='action1')"
+    migration_note="Use my_group(action='action1')",
+    inject_action="action1",  # Auto-inject action param for the alias
 ),
 ```
 
@@ -228,12 +258,13 @@ curl -s -X POST "http://localhost:8767/v1/tools/call" \
 
 | Task | Files to Edit |
 |------|---------------|
-| Add new standalone tool | `tool_schemas.py` + `mcp_handlers/*.py` |
-| Add to consolidated tool | `consolidated.py` + set `register=False` on individual handler |
+| Add new standalone tool | `tool_schemas.py` + `mcp_handlers/*.py` with `@mcp_tool` |
+| Add to consolidated tool | `consolidated.py` (add to `action_router` actions dict) + `register=False` on handler |
+| Add dispatch middleware step | `middleware.py` (add function + add to `PRE_DISPATCH_STEPS` or `POST_VALIDATION_STEPS`) |
 | Tool needs session | + `TOOLS_NEEDING_SESSION_INJECTION` in `mcp_server.py` |
 | Rename/deprecate tool | `tool_stability.py` (add alias) |
 | Categorize for list_tools | `tool_modes.py` (add to tier) |
 
 ---
 
-**Last Updated:** 2026-02-04 (Added consolidated tools, register=False parameter)
+**Last Updated:** 2026-02-06 (action_router, dispatch middleware, response formatter, ToolDefinition)

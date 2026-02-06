@@ -97,6 +97,19 @@ When you get a verdict:
 - `pause` → Stop your current task. Reflect on what's flagged. Consider requesting dialectic review
 - `margin: tight` → You're near an edge. Be more careful with next steps
 
+### Response Modes
+
+Check-in responses are filtered by verbosity to reduce token bloat:
+
+- **auto** (default): Selects mode based on health — healthy→minimal, moderate→compact, at_risk→standard
+- **minimal**: Just `action` + EISV snapshot + margin. Lowest cognitive load.
+- **compact**: Brief metrics + decision summary
+- **standard**: Human-readable interpretation via GovernanceState
+- **full**: All fields, no filtering
+
+Set per-call: `checkin(response_mode='compact', ...)` or permanently:
+`agent(action='update', preferences={'verbosity': 'minimal'})`
+
 ### Knowledge Graph
 
 The shared knowledge graph is institutional memory across all agents. Use it to:
@@ -204,6 +217,8 @@ Use `list_tools()` for the full catalog with schemas. Here's the mental model:
 
 ### System
 - `health_check()` — System component status
+- `list_tools()` — Full tool catalog with schemas
+- `describe_tool(tool_name='...')` — Detailed info about a specific tool
 - `export()` — Export session history
 - `call_model()` — Delegate to a secondary LLM
 - `pi()` — Lumen/Pi orchestration (context, display, say, health, etc.)
