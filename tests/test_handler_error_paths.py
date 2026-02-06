@@ -49,13 +49,12 @@ async def test_missing_required_parameters():
     assert response_data.get("success") == True, "Should succeed with bound identity"
     print("✅ get_governance_metrics uses bound identity (identity_v2)")
 
-    # Test simulate_update without agent_id - uses bound identity
-    result = await dispatch_tool("simulate_update", {})
+    # Test config without args - uses bound identity
+    result = await dispatch_tool("config", {})
     assert result is not None, "Should return response"
     response_data = json.loads(result[0].text)
-    # With identity_v2, this succeeds using the bound agent
     assert response_data.get("success") == True, "Should succeed with bound identity"
-    print("✅ simulate_update uses bound identity (identity_v2)")
+    print("✅ config uses bound identity (identity_v2)")
 
 
 @pytest.mark.asyncio
@@ -296,11 +295,11 @@ async def test_empty_arguments():
     """Test handlers handle empty arguments gracefully"""
     print("\n=== Testing Empty Arguments ===")
     
-    # Test with empty dict
-    result = await dispatch_tool("get_thresholds", {})
-    assert result is not None, "Should return result (get_thresholds doesn't need args)"
+    # Test with empty dict (config is consolidated get_thresholds)
+    result = await dispatch_tool("config", {})
+    assert result is not None, "Should return result (config doesn't need args)"
     response_data = json.loads(result[0].text)
-    assert response_data.get("success") == True, "get_thresholds should work with empty args"
+    assert response_data.get("success") == True, "config should work with empty args"
     print("✅ Handles empty arguments for optional-arg tools")
     
     # Test with None (should be treated as empty)

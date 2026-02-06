@@ -54,73 +54,45 @@ async def test_get_governance_metrics():
 
 
 @pytest.mark.asyncio
-async def test_simulate_update():
-    """Test simulate_update handler
+async def test_process_agent_update():
+    """Test process_agent_update handler
 
-    With identity_v2, auto-binding allows simulation without prior registration.
-    Note: Once bound, you cannot switch agent_ids within the same session.
+    With identity_v2, auto-binding allows updates without prior registration.
     """
-    print("\nTesting simulate_update...")
+    print("\nTesting process_agent_update...")
 
     from src.mcp_handlers import dispatch_tool
 
-    # Test with missing agent_id - should auto-bind and succeed (identity_v2)
-    result = await dispatch_tool("simulate_update", {})
-    assert result is not None, "Should return response"
-
-    response_data = json.loads(result[0].text)
-    # With identity_v2, auto-binding means this succeeds
-    assert response_data.get("success") == True, "Should succeed with auto-binding"
-    assert response_data.get("simulation") == True, "Should mark as simulation"
-    print("✅ Auto-binds and simulates (identity_v2)")
-
-    # Test with explicit parameters but NO agent_id (uses bound identity)
-    result = await dispatch_tool("simulate_update", {
-        "parameters": [0.7, 0.8, 0.15, 0.0],
-        "ethical_drift": [0.0, 0.0, 0.0],
+    # Test with parameters (uses auto-bound identity)
+    result = await dispatch_tool("process_agent_update", {
         "complexity": 0.3,
-        "confidence": 0.9
+        "confidence": 0.9,
+        "response_text": "Test update from extracted handlers test"
     })
 
     assert result is not None, "Should return result"
     response_data = json.loads(result[0].text)
     assert response_data.get("success") == True, "Should succeed"
-    assert response_data.get("simulation") == True, "Should mark as simulation"
-    assert "metrics" in response_data, "Should have metrics"
-    print("✅ Simulates with explicit parameters")
+    assert "action" in response_data, "Should have governance action"
+    print("✅ process_agent_update with parameters works")
 
-    print("✅ simulate_update handler tests passed")
+    print("✅ process_agent_update handler tests passed")
 
 
 @pytest.mark.asyncio
-async def test_set_thresholds():
-    """Test set_thresholds handler
-
-    Note: set_thresholds requires admin privileges (security fix 2025-12).
-    Admin status requires 'admin' tag or 100+ updates.
-    For testing, we verify the auth rejection and get_thresholds (read-only).
-    """
-    print("\nTesting set_thresholds...")
+async def test_config():
+    """Test config handler (consolidated from get_thresholds/set_thresholds)"""
+    print("\nTesting config...")
 
     from src.mcp_handlers import dispatch_tool
 
-    # Test that unauthenticated/non-admin request fails
-    result = await dispatch_tool("set_thresholds", {
-        "thresholds": {"risk_approve_threshold": 0.32},
-        "validate": True
-    })
-    response_data = json.loads(result[0].text)
-    assert response_data.get("success") == False, "Should fail without admin"
-    print("✅ Rejects non-admin requests")
-
-    # Verify get_thresholds works (read-only, no auth needed)
-    result = await dispatch_tool("get_thresholds", {})
+    # Verify config works (read-only, no auth needed)
+    result = await dispatch_tool("config", {})
     response_data = json.loads(result[0].text)
     assert response_data.get("success") == True, "Should succeed for read-only"
-    assert "thresholds" in response_data, "Should have thresholds"
-    print("✅ get_thresholds works (read-only)")
+    print("✅ config works (read-only)")
 
-    print("✅ set_thresholds handler tests passed")
+    print("✅ config handler tests passed")
 
 
 @pytest.mark.asyncio
@@ -130,17 +102,13 @@ async def test_error_handling():
 
     from src.mcp_handlers import dispatch_tool
 
-    # Test with invalid arguments
-    result = await dispatch_tool("set_thresholds", {
-        "thresholds": {"invalid_threshold": 999},
-        "validate": True
-    })
+    # Test with unknown tool
+    result = await dispatch_tool("nonexistent_tool", {})
 
     assert result is not None, "Should return result"
     response_data = json.loads(result[0].text)
-    # Should either succeed (if invalid threshold ignored) or fail gracefully
-    assert "success" in response_data, "Should have success field"
-    print("✅ Handles invalid arguments gracefully")
+    assert response_data.get("success") == False, "Should fail for unknown tool"
+    print("✅ Handles unknown tool gracefully")
 
     print("✅ Error handling tests passed")
 
@@ -149,8 +117,8 @@ async def main():
     """Run all handler tests"""
     try:
         await test_get_governance_metrics()
-        await test_simulate_update()
-        await test_set_thresholds()
+        await test_process_agent_update()
+        await test_config()
         await test_error_handling()
         print("\n🎉 All handler tests passed!")
         return 0

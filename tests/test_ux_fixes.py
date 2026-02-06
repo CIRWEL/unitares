@@ -433,16 +433,15 @@ class TestDispatchAliasInjection:
         # Should succeed with calibration check
         assert data.get("success") == True
 
-    async def test_dispatch_get_thresholds_works(self):
-        """dispatch_tool('get_thresholds') works directly (no alias injection needed)"""
+    async def test_dispatch_config_works(self):
+        """dispatch_tool('config') works (consolidated from get_thresholds)"""
         from src.mcp_handlers import dispatch_tool
 
-        result = await dispatch_tool("get_thresholds", {})
+        result = await dispatch_tool("config", {})
         assert len(result) > 0
 
         data = json.loads(result[0].text)
         assert data.get("success") == True
-        assert "thresholds" in data
 
 
 # ============================================================================

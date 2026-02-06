@@ -44,11 +44,7 @@ def test_agent_setup():
     metrics = monitor.get_metrics()
     metrics["mean_risk"] = 0.4
     
-    # Setup session binding for authentication
-    from src.mcp_handlers.identity import _get_identity_record_async, _persist_session_new
-    import asyncio
-    
-    # Create session binding
+    # Create session binding (mock - not persisted)
     identity_rec = {
         "bound_agent_id": agent_uuid,
         "bound_at": "2026-01-29T00:00:00",
