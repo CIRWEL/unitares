@@ -1995,6 +1995,13 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                 if meta and hasattr(meta, 'preferences') and meta.preferences:
                     agent_verbosity_pref = meta.preferences.get("verbosity")
 
+                # Preserve trust_tier across response mode filtering
+                _saved_trust_tier = None
+                try:
+                    _saved_trust_tier = response_data.get("trajectory_identity", {}).get("trust_tier", {}).get("name")
+                except Exception:
+                    pass
+
                 # Priority: per-call > agent pref > env var > auto
                 response_mode = (
                     arguments.get("response_mode") or
@@ -2093,6 +2100,8 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                         response_data["nearest_edge"] = nearest_edge
                     if using_default_mode:
                         response_data["_tip"] = "Set verbosity: update_agent_metadata(preferences={'verbosity':'minimal'})"
+                    if _saved_trust_tier:
+                        response_data["trust_tier"] = _saved_trust_tier
 
                 # COMPACT MODE: Minimal fields (existing behavior)
                 elif response_mode in ("compact", "lite"):
@@ -2146,10 +2155,13 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                         "_mode": "compact",
                     }
 
+                    if _saved_trust_tier:
+                        response_data["trust_tier"] = _saved_trust_tier
+
                     # Add visibility hint for agents using default mode (v2.5.0+)
                     if using_default_mode:
                         response_data["_tip"] = "Verbosity options: response_mode='minimal'|'compact'|'full', or set permanently via update_agent_metadata(preferences={'verbosity':'minimal'})"
-                    
+
                     # EXTREME LITE MODE: Strip optional context for minimal/compact modes
                     # Reduces cognitive load by removing noise once agent is established
                     if response_mode in ("minimal", "compact"):
