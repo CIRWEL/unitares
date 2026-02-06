@@ -58,7 +58,7 @@ class TestDialecticDiscovery:
         Note: If no identity is bound, recall_identity returns guidance to bind first.
         The pending_reviews feature only applies when an agent is already bound.
         """
-        from src.mcp_handlers.identity import handle_identity, handle_onboard
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter as handle_identity, handle_onboard_v2 as handle_onboard
         import json
 
         # Create a test agent using onboard() which binds identity

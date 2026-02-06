@@ -191,10 +191,12 @@ async def test_backward_compatibility():
     assert callable(dialectic.execute_resolution), "execute_resolution should be callable"
     assert callable(dialectic.select_reviewer), "select_reviewer should be callable"
     
-    # Verify archived handlers are NOT present (expected behavior)
-    assert not hasattr(dialectic, 'handle_submit_thesis'), "handle_submit_thesis was archived and should not exist"
-    
-    print("✅ Backward compatibility maintained (archived handlers correctly removed)")
+    # Verify core handlers exist
+    assert hasattr(dialectic, 'handle_submit_thesis'), "handle_submit_thesis should exist"
+    assert hasattr(dialectic, 'handle_submit_antithesis'), "handle_submit_antithesis should exist"
+    assert hasattr(dialectic, 'handle_submit_synthesis'), "handle_submit_synthesis should exist"
+
+    print("✅ Backward compatibility maintained (all dialectic handlers present)")
 
 
 async def main():

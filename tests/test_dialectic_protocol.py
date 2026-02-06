@@ -2,29 +2,28 @@ import pytest
 """
 Test Circuit Breaker Dialectic Protocol
 
-NOTE: Dialectic protocol was archived in Dec 2025 (v2.5.1+).
-These tests are kept for historical reference but are skipped.
-The dialectic handlers were removed - only get_dialectic_session remains for viewing historical sessions.
-
 Tests the end-to-end dialectic flow:
 1. Request review → 2. Thesis → 3. Antithesis → 4. Synthesis → 5. Resolution
+
+Note: These tests require PostgreSQL connection and proper database setup.
+Run with: UNITARES_DIALECTIC_BACKEND=postgres pytest tests/test_dialectic_protocol.py -v
 """
 
 import asyncio
 import sys
+import os
 sys.path.insert(0, 'src')
 
-# Dialectic handlers were removed - mark tests as skipped
-pytestmark = pytest.mark.skip(reason="Dialectic protocol archived in v2.5.1+ - handlers removed")
+# Skip if no PostgreSQL available
+pytestmark = pytest.mark.skip(reason="Requires PostgreSQL dialectic backend - run locally with DB setup")
 
-# These imports no longer exist - kept for reference
-# from mcp_handlers.dialectic import (
-#     handle_request_dialectic_review,
-#     handle_submit_thesis,
-#     handle_submit_antithesis,
-#     handle_submit_synthesis,
-#     handle_get_dialectic_session
-# )
+from mcp_handlers.dialectic import (
+    handle_request_dialectic_review,
+    handle_submit_thesis,
+    handle_submit_antithesis,
+    handle_submit_synthesis,
+    handle_get_dialectic_session
+)
 import json
 
 
