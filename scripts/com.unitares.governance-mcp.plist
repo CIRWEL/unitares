@@ -28,6 +28,12 @@
     <key>StandardErrorPath</key>
     <string>/Users/cirwel/projects/governance-mcp-v1/data/logs/mcp_server_error.log</string>
     
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+
     <key>EnvironmentVariables</key>
     <dict>
         <key>PYTHONPATH</key>
@@ -36,6 +42,14 @@
         <string>postgres</string>
         <key>DB_POSTGRES_URL</key>
         <string>postgresql://postgres:postgres@localhost:5432/governance</string>
+        <key>DB_POSTGRES_MIN_CONN</key>
+        <string>2</string>
+        <key>DB_POSTGRES_MAX_CONN</key>
+        <string>10</string>
+        <key>UNITARES_KNOWLEDGE_BACKEND</key>
+        <string>age</string>
+        <key>UNITARES_DIALECTIC_BACKEND</key>
+        <string>postgres</string>
         <key>HOME</key>
         <string>/Users/cirwel</string>
         <key>HF_HOME</key>
