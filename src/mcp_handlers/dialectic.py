@@ -97,12 +97,11 @@ except ImportError:
 
 
 # ==============================================================================
-# NOTE: Dialectic handlers (Dec 2025)
+# NOTE: Dialectic handlers (Feb 2026)
 # ==============================================================================
-# Restored: request_dialectic_review (lite entry point for recovery)
-# Still removed: request_exploration_session, submit_thesis, submit_antithesis,
-#                submit_synthesis, nudge_dialectic_session, handle_self_recovery
-# Only get_dialectic_session remains for viewing existing sessions.
+# ACTIVE: request_dialectic_review, submit_thesis, submit_antithesis, submit_synthesis
+# ACTIVE: get_dialectic_session, list_dialectic_sessions, llm_assisted_dialectic
+# Still removed: request_exploration_session, nudge_dialectic_session, handle_self_recovery
 # ==============================================================================
 
 
@@ -144,7 +143,7 @@ async def check_reviewer_stuck(session: DialecticSession) -> bool:
         return True
 
 
-@mcp_tool("request_dialectic_review", timeout=10.0, register=False)
+@mcp_tool("request_dialectic_review", timeout=10.0, register=True)
 async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Create a dialectic recovery session.
@@ -216,8 +215,7 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
     discovery_id = arguments.get("discovery_id")
     dispute_type = arguments.get("dispute_type")
     topic = arguments.get("topic")
-    reviewer_mode = arguments.get("reviewer_mode", "auto")
-    reviewer_agent_id = arguments.get("reviewer_agent_id")
+    reviewer_mode = arguments.get("reviewer_mode", "auto")  # auto: random selection, self fallback
     max_synthesis_rounds = arguments.get("max_synthesis_rounds", 5)
     auto_progress = bool(arguments.get("auto_progress", False))
 
@@ -230,43 +228,14 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
     except Exception:
         paused_agent_state = {}
 
-    # Reviewer selection
+    # Reviewer selection: NO auto-selection
+    # User facilitates dialectic and assigns reviewer manually
+    # Only self-review mode sets reviewer automatically
     if reviewer_mode == "self":
         reviewer_agent_id = agent_uuid
-    elif reviewer_agent_id:
-        if reviewer_agent_id not in mcp_server.agent_metadata:
-            return [error_response(
-                f"Reviewer agent '{reviewer_agent_id}' not found.",
-                error_code="REVIEWER_NOT_FOUND",
-                error_category="validation_error",
-                recovery={
-                    "action": "Pick a valid reviewer or use reviewer_mode='auto'",
-                    "related_tools": ["list_agents"]
-                },
-                arguments=arguments
-            )]
     else:
-        reviewer_agent_id = await select_reviewer(
-            paused_agent_id=agent_uuid,
-            metadata=mcp_server.agent_metadata,
-            paused_agent_state=paused_agent_state,
-            paused_agent_tags=getattr(meta, "tags", []),
-            exclude_agent_ids=None
-        )
-        if reviewer_agent_id is None:
-            if reviewer_mode in ("auto", "self"):
-                reviewer_agent_id = agent_uuid
-            else:
-                return [error_response(
-                    "No eligible reviewer available.",
-                    error_code="NO_REVIEWER",
-                    error_category="validation_error",
-                    recovery={
-                        "action": "Try reviewer_mode='auto' (self fallback) or wait for a healthy reviewer",
-                        "related_tools": ["list_agents"]
-                    },
-                    arguments=arguments
-                )]
+        # No reviewer assigned - user will facilitate and assign one
+        reviewer_agent_id = None
 
     # Create session
     session = DialecticSession(
@@ -280,7 +249,8 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
         max_synthesis_rounds=int(max_synthesis_rounds or 5),
     )
 
-    # Persist to SQLite/Postgres (source of truth) and JSON snapshot
+    # Persist to SQLite (single source of truth)
+    # JSON snapshots removed - use export_dialectic_session() for debugging
     try:
         await sqlite_create_session(
             session_id=session.session_id,
@@ -295,13 +265,15 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
             synthesis_round=session.synthesis_round,
             paused_agent_state=paused_agent_state,
         )
+        logger.info(f"Dialectic session {session.session_id} persisted to SQLite")
     except Exception as e:
-        logger.warning(f"SQLite/PG dialectic session create failed: {e}")
-
-    try:
-        await save_session(session)
-    except Exception as e:
-        logger.warning(f"Failed to save dialectic session snapshot: {e}")
+        logger.error(f"SQLite dialectic session create FAILED: {e}")
+        return [error_response(
+            f"Failed to persist dialectic session: {e}",
+            error_code="DB_WRITE_FAILED",
+            error_category="system_error",
+            arguments=arguments
+        )]
 
     # Cache in-memory for quick access
     ACTIVE_SESSIONS[session.session_id] = session
@@ -309,19 +281,26 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
     if auto_progress:
         logger.info("auto_progress requested for dialectic review, but auto progression is not enabled.")
 
+    # Build response based on whether reviewer is assigned
+    if session.reviewer_agent_id:
+        note = "Session created with self-review. Use submit_thesis to add your thesis."
+    else:
+        note = "Session created. Awaiting reviewer assignment. Operator should assign a reviewer, then paused agent submits thesis."
+
     return success_response({
         "success": True,
         "message": "Dialectic session created",
         "session_id": session.session_id,
         "paused_agent_id": session.paused_agent_id,
         "reviewer_agent_id": session.reviewer_agent_id,
+        "awaiting_reviewer": session.reviewer_agent_id is None,
         "phase": session.phase.value,
         "session_type": session.session_type,
         "auto_progress": False,
-        "note": "Dialectic auto-progress is disabled; submit_thesis/antithesis/synthesis remain archived."
+        "note": note
     })
 
-@mcp_tool("get_dialectic_session", timeout=10.0, rate_limit_exempt=True, register=False)
+@mcp_tool("get_dialectic_session", timeout=10.0, rate_limit_exempt=True, register=True)
 async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     View historical dialectic sessions (archive).
@@ -361,13 +340,19 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                 timeout_reason = session.check_timeout()
                 if timeout_reason:
                     session.phase = DialecticPhase.FAILED
-                    session.transcript.append(DialecticMessage(
+                    timeout_msg = DialecticMessage(
                         phase="synthesis",
                         agent_id="system",
                         timestamp=datetime.now().isoformat(),
                         reasoning=f"Session auto-failed: {timeout_reason}"
-                    ))
-                    await save_session(session)
+                    )
+                    session.transcript.append(timeout_msg)
+                    # Persist to SQLite
+                    try:
+                        await sqlite_add_message(session_id, timeout_msg.to_dict())
+                        await sqlite_update_phase(session_id, "failed")
+                    except Exception as e:
+                        logger.error(f"Failed to persist timeout to SQLite: {e}")
                     # QUICK WIN B: Improved error message with actionable guidance
                     return success_response({
                         "success": False,
@@ -389,14 +374,19 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                 # Check if reviewer is stuck
                 if await check_reviewer_stuck(session):
                     session.phase = DialecticPhase.FAILED
-                    # type: ignore
-                    session.transcript.append(DialecticMessage(
-                        phase=session.phase.value,
+                    stuck_msg = DialecticMessage(
+                        phase="failed",
                         agent_id="system",
                         timestamp=datetime.now().isoformat(),
                         reasoning="Reviewer stuck - session aborted"
-                    ))
-                    await save_session(session)
+                    )
+                    session.transcript.append(stuck_msg)
+                    # Persist to SQLite
+                    try:
+                        await sqlite_add_message(session_id, stuck_msg.to_dict())
+                        await sqlite_update_phase(session_id, "failed")
+                    except Exception as e:
+                        logger.error(f"Failed to persist reviewer stuck to SQLite: {e}")
                     # QUICK WIN B: Improved error message with actionable guidance
                     return success_response({
                         "success": False,
@@ -521,7 +511,7 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
         )]
 
 
-@mcp_tool("list_dialectic_sessions", timeout=15.0, rate_limit_exempt=True, register=False)
+@mcp_tool("list_dialectic_sessions", timeout=15.0, rate_limit_exempt=True, register=True)
 async def handle_list_dialectic_sessions(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     List all dialectic sessions with optional filtering.
@@ -586,6 +576,358 @@ async def handle_list_dialectic_sessions(arguments: Dict[str, Any]) -> Sequence[
                 "related_tools": ["get_dialectic_session", "health_check"]
             }
         )]
+
+
+@mcp_tool("submit_thesis", timeout=10.0, register=True)
+async def handle_submit_thesis(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Paused agent submits thesis: "What I did, what I think happened"
+
+    Args:
+        session_id: Dialectic session ID
+        agent_id: Paused agent ID (or use bound identity)
+        root_cause: Agent's understanding of what caused the issue
+        proposed_conditions: List of conditions for resumption
+        reasoning: Natural language explanation
+
+    Returns:
+        Status with next phase
+    """
+    try:
+        session_id = arguments.get('session_id')
+        agent_id = arguments.get('agent_id')
+        api_key = arguments.get('api_key', '')
+
+        # Auto-retrieve API key and agent_id from bound identity if not provided
+        if not api_key or not agent_id:
+            try:
+                from .identity_shared import get_bound_agent_id
+                if not agent_id:
+                    agent_id = get_bound_agent_id(arguments=arguments)
+                # Note: api_key auto-detection removed (get_bound_api_key didn't exist)
+            except Exception as e:
+                logger.debug(f"Could not auto-retrieve credentials: {e}")
+
+        if not session_id or not agent_id:
+            return [error_response(
+                "session_id and agent_id are required",
+                recovery={
+                    "action": "Provide session_id, and optionally agent_id (can be auto-detected from bound identity)",
+                    "related_tools": ["get_dialectic_session", "identity"]
+                }
+            )]
+
+        # Get session - reload from disk if not in memory
+        session = ACTIVE_SESSIONS.get(session_id)
+        if not session:
+            session = await load_session(session_id)
+            if session:
+                ACTIVE_SESSIONS[session_id] = session
+            else:
+                return [error_response(
+                    f"Session '{session_id}' not found",
+                    recovery={
+                        "action": "Session may have expired or been resolved",
+                        "related_tools": ["get_dialectic_session", "request_dialectic_review"]
+                    }
+                )]
+
+        # Create thesis message
+        message = DialecticMessage(
+            phase="thesis",
+            agent_id=agent_id,
+            timestamp=datetime.now().isoformat(),
+            root_cause=arguments.get('root_cause'),
+            proposed_conditions=arguments.get('proposed_conditions', []),
+            reasoning=arguments.get('reasoning')
+        )
+
+        # Submit to session
+        result = session.submit_thesis(message, api_key)
+
+        if result["success"]:
+            result["next_step"] = f"Reviewer '{session.reviewer_agent_id}' should submit antithesis"
+
+            # Persist to SQLite
+            try:
+                await sqlite_add_message(
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    message_type="thesis",
+                    root_cause=arguments.get('root_cause'),
+                    proposed_conditions=arguments.get('proposed_conditions', []),
+                    reasoning=arguments.get('reasoning'),
+                )
+                await sqlite_update_phase(session_id, session.phase.value)
+            except Exception as e:
+                logger.warning(f"Could not update SQLite after thesis: {e}")
+
+            # Persist to JSON (export snapshot)
+            try:
+                await save_session(session)
+            except Exception as e:
+                logger.warning(f"Could not save session after thesis: {e}")
+
+        return success_response(result)
+
+    except Exception as e:
+        return [error_response(f"Error submitting thesis: {str(e)}")]
+
+
+@mcp_tool("submit_antithesis", timeout=10.0, register=True)
+async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Reviewer agent submits antithesis: "What I observe, my concerns"
+
+    Args:
+        session_id: Dialectic session ID
+        agent_id: Reviewer agent ID (or use bound identity)
+        observed_metrics: Metrics observed about paused agent
+        concerns: List of concerns
+        reasoning: Natural language explanation
+
+    Returns:
+        Status with next phase
+    """
+    try:
+        session_id = arguments.get('session_id')
+        agent_id = arguments.get('agent_id')
+        api_key = arguments.get('api_key', '')
+
+        # Auto-retrieve credentials from bound identity
+        if not api_key or not agent_id:
+            try:
+                from .identity_shared import get_bound_agent_id
+                if not agent_id:
+                    agent_id = get_bound_agent_id(arguments=arguments)
+                # Note: api_key auto-detection removed (get_bound_api_key didn't exist)
+            except Exception as e:
+                logger.debug(f"Could not auto-retrieve credentials: {e}")
+
+        if not session_id or not agent_id:
+            return [error_response(
+                "session_id and agent_id are required",
+                recovery={
+                    "action": "Provide session_id, and optionally agent_id",
+                    "related_tools": ["get_dialectic_session", "identity"]
+                }
+            )]
+
+        # Get session
+        session = ACTIVE_SESSIONS.get(session_id)
+        if not session:
+            session = await load_session(session_id)
+            if session:
+                ACTIVE_SESSIONS[session_id] = session
+            else:
+                return [error_response(
+                    f"Session '{session_id}' not found",
+                    recovery={
+                        "action": "Session may have expired or been resolved",
+                        "related_tools": ["get_dialectic_session", "request_dialectic_review"]
+                    }
+                )]
+
+        # Create antithesis message
+        message = DialecticMessage(
+            phase="antithesis",
+            agent_id=agent_id,
+            timestamp=datetime.now().isoformat(),
+            observed_metrics=arguments.get('observed_metrics', {}),
+            concerns=arguments.get('concerns', []),
+            reasoning=arguments.get('reasoning')
+        )
+
+        # Submit to session
+        result = session.submit_antithesis(message, api_key)
+
+        if result["success"]:
+            result["next_step"] = "Both agents should negotiate via submit_synthesis() until convergence"
+
+            # Persist to SQLite
+            try:
+                await sqlite_add_message(
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    message_type="antithesis",
+                    observed_metrics=arguments.get('observed_metrics', {}),
+                    concerns=arguments.get('concerns', []),
+                    reasoning=arguments.get('reasoning'),
+                )
+                await sqlite_update_phase(session_id, session.phase.value)
+            except Exception as e:
+                logger.warning(f"Could not update SQLite after antithesis: {e}")
+
+            # Persist to JSON
+            try:
+                await save_session(session)
+            except Exception as e:
+                logger.warning(f"Could not save session after antithesis: {e}")
+
+        return success_response(result)
+
+    except Exception as e:
+        return [error_response(f"Error submitting antithesis: {str(e)}")]
+
+
+@mcp_tool("submit_synthesis", timeout=15.0, register=True)
+async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Either agent submits synthesis proposal during negotiation.
+
+    Args:
+        session_id: Dialectic session ID
+        agent_id: Agent ID (either paused or reviewer)
+        proposed_conditions: Proposed resumption conditions
+        root_cause: Agreed understanding of root cause
+        reasoning: Explanation of proposal
+        agrees: Whether this agent agrees with current proposal (bool)
+
+    Returns:
+        Status with convergence info and resolution if converged
+    """
+    try:
+        session_id = arguments.get('session_id')
+        agent_id = arguments.get('agent_id')
+        api_key = arguments.get('api_key', '')
+
+        # Auto-retrieve credentials from bound identity
+        if not api_key or not agent_id:
+            try:
+                from .identity_shared import get_bound_agent_id
+                if not agent_id:
+                    agent_id = get_bound_agent_id(arguments=arguments)
+                # Note: api_key auto-detection removed (get_bound_api_key didn't exist)
+            except Exception as e:
+                logger.debug(f"Could not auto-retrieve credentials: {e}")
+
+        if not session_id or not agent_id:
+            return [error_response(
+                "session_id and agent_id are required",
+                recovery={
+                    "action": "Provide session_id, and optionally agent_id",
+                    "related_tools": ["get_dialectic_session", "identity"]
+                }
+            )]
+
+        # Always reload from disk to get latest state
+        session = await load_session(session_id)
+        if session:
+            ACTIVE_SESSIONS[session_id] = session
+        else:
+            session = ACTIVE_SESSIONS.get(session_id)
+            if not session:
+                return [error_response(
+                    f"Session '{session_id}' not found",
+                    recovery={
+                        "action": "Session may have expired or been resolved",
+                        "related_tools": ["get_dialectic_session", "request_dialectic_review"]
+                    }
+                )]
+
+        # Create synthesis message
+        message = DialecticMessage(
+            phase="synthesis",
+            agent_id=agent_id,
+            timestamp=datetime.now().isoformat(),
+            proposed_conditions=arguments.get('proposed_conditions', []),
+            root_cause=arguments.get('root_cause'),
+            reasoning=arguments.get('reasoning'),
+            agrees=arguments.get('agrees', False)
+        )
+
+        # Submit to session
+        result = session.submit_synthesis(message, api_key)
+
+        if result.get("success"):
+            # Persist to SQLite
+            try:
+                await sqlite_add_message(
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    message_type="synthesis",
+                    root_cause=arguments.get('root_cause'),
+                    proposed_conditions=arguments.get('proposed_conditions', []),
+                    reasoning=arguments.get('reasoning'),
+                    agrees=arguments.get('agrees', False),
+                )
+                await sqlite_update_phase(session_id, session.phase.value)
+            except Exception as e:
+                logger.warning(f"Could not update SQLite after synthesis: {e}")
+
+            # Persist to JSON
+            try:
+                await save_session(session)
+            except Exception as e:
+                logger.warning(f"Could not save session after synthesis: {e}")
+
+        # If converged, finalize resolution
+        if result.get("success") and result.get("converged"):
+            # Generate signatures
+            paused_meta = mcp_server.agent_metadata.get(session.paused_agent_id)
+            reviewer_meta = mcp_server.agent_metadata.get(session.reviewer_agent_id)
+
+            api_key_a = paused_meta.api_key if paused_meta and paused_meta.api_key else api_key
+            api_key_b = reviewer_meta.api_key if reviewer_meta and reviewer_meta.api_key else ""
+
+            synthesis_messages = [msg for msg in session.transcript if msg.phase == "synthesis" and msg.agrees]
+            if synthesis_messages:
+                last_msg = synthesis_messages[-1]
+                signature_a = last_msg.sign(api_key_a) if api_key_a else ""
+                signature_b = last_msg.sign(api_key_b) if api_key_b else ""
+            else:
+                import hashlib
+                session_data = f"{session.session_id}:{api_key_a}"
+                signature_a = hashlib.sha256(session_data.encode()).hexdigest()[:32]
+                session_data = f"{session.session_id}:{api_key_b}"
+                signature_b = hashlib.sha256(session_data.encode()).hexdigest()[:32] if api_key_b else ""
+
+            resolution = session.finalize_resolution(signature_a, signature_b)
+            is_safe, violation = session.check_hard_limits(resolution)
+
+            if not is_safe:
+                result["action"] = "block"
+                result["reason"] = f"Safety violation: {violation}"
+                try:
+                    await sqlite_resolve_session(session_id=session_id, resolution={"action": "block", "reason": violation}, status="failed")
+                except Exception as e:
+                    logger.warning(f"Could not resolve session in SQLite: {e}")
+            else:
+                result["action"] = "resume"
+                result["resolution"] = resolution.to_dict()
+
+                try:
+                    execution_result = await execute_resolution(session, resolution)
+                    result["execution"] = execution_result
+                    result["next_step"] = "Agent resumed successfully with agreed conditions"
+
+                    # Invalidate cache
+                    if session.paused_agent_id in _SESSION_METADATA_CACHE:
+                        del _SESSION_METADATA_CACHE[session.paused_agent_id]
+                    if session.reviewer_agent_id in _SESSION_METADATA_CACHE:
+                        del _SESSION_METADATA_CACHE[session.reviewer_agent_id]
+                except Exception as e:
+                    result["execution_error"] = str(e)
+                    result["next_step"] = f"Failed to execute resolution: {e}"
+
+                try:
+                    await sqlite_resolve_session(session_id=session_id, resolution=resolution.to_dict(), status="resolved")
+                except Exception as e:
+                    logger.warning(f"Could not resolve session in SQLite: {e}")
+
+            await save_session(session)
+
+        elif not result.get("success"):
+            # Max rounds exceeded - conservative default
+            result["autonomous_resolution"] = True
+            result["resolution_type"] = "conservative_default"
+            result["next_step"] = "Peers could not reach consensus. Maintaining current state."
+            result["cooldown_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
+
+        return success_response(result)
+
+    except Exception as e:
+        return [error_response(f"Error submitting synthesis: {str(e)}")]
 
 
 @mcp_tool("llm_assisted_dialectic", timeout=45.0, register=False)

@@ -236,150 +236,75 @@ async def is_agent_in_active_session(agent_id: str) -> bool:
 
 
 async def select_reviewer(paused_agent_id: str,
-                   metadata: Dict[str, Any],
+                   metadata: Dict[str, Any] = None,
                    paused_agent_state: Dict[str, Any] = None,
                    paused_agent_tags: List[str] = None,
                    exclude_agent_ids: List[str] = None) -> Optional[str]:
     """
-    Select a healthy reviewer agent for dialectic session.
+    Select a reviewer agent for dialectic session via random selection.
 
-    Selection criteria:
-    - Healthy (risk < 0.40)
+    Selection criteria (simple eligibility, then random):
     - Not the paused agent
     - Not in exclude_agent_ids list
     - Not already in another active session (prevents recursive assignment)
     - Not recently reviewed this agent (prevent collusion)
-    - Weighted by authority score
+    - Status is 'active'
+
+    No arbitrary authority metrics - just random from eligible pool.
+    Self-review is fallback when no eligible agents found.
 
     Args:
         paused_agent_id: ID of paused agent
         metadata: All agent metadata (dict mapping agent_id -> AgentMetadata)
-        paused_agent_state: State of paused agent
-        paused_agent_tags: Tags of paused agent (for expertise matching)
+        paused_agent_state: State of paused agent (unused, kept for API compat)
+        paused_agent_tags: Tags of paused agent (unused, kept for API compat)
         exclude_agent_ids: Optional list of agent IDs to exclude from selection
 
     Returns:
         Selected reviewer agent_id, or None if no reviewer available
     """
-    # Ensure metadata is a dict (not a string or other type)
-    if not isinstance(metadata, dict):
-        raise TypeError(f"metadata must be a dict, got {type(metadata).__name__}: {metadata}")
-    
-    # Get all agents - iterate over items() to get (agent_id, meta) pairs
-    # This matches the pattern used in lifecycle.py
+    # Handle missing or invalid metadata
+    if not metadata or not isinstance(metadata, dict):
+        return None
+
     candidates = []
-    scores = []
-    
+
     for agent_id, agent_meta in metadata.items():
         # Validate agent_id is a string
         if not isinstance(agent_id, str):
-            continue  # Skip invalid keys
-        
-        # Skip paused agent
+            continue
+
+        # Skip paused agent (can't review yourself unless fallback)
         if agent_id == paused_agent_id:
             continue
-        
+
         # Skip explicitly excluded agents
         if exclude_agent_ids and agent_id in exclude_agent_ids:
             continue
-        
-        # Skip agents already in active sessions (prevents recursive assignment) - async to avoid blocking
+
+        # Skip agents already in active sessions (prevents recursive assignment)
         if await is_agent_in_active_session(agent_id):
             continue
-        
-        # IMPLEMENTED: Skip agents who recently reviewed this paused agent (prevent collusion)
-        # Check resolved sessions from last 24 hours (async to avoid blocking)
+
+        # Skip agents who recently reviewed this paused agent (prevent collusion)
         if await _has_recently_reviewed(agent_id, paused_agent_id, hours=24):
             continue
-        
-        # Validate agent_meta is not a string (should be AgentMetadata object or dict)
-        # FIXED: Properly handle invalid entries and log for debugging
+
+        # Skip invalid metadata entries
         if isinstance(agent_meta, str) or agent_meta is None:
-            # Skip invalid entries (strings, None, etc.)
-            # This should not happen if metadata is properly loaded, but defensive check
-            logger.warning(f"Invalid metadata entry for {agent_id}: type={type(agent_meta).__name__}")
             continue
-        
-        # Skip non-active agents (for MVP, only consider active agents)
-        # FIXED: Use .get() for dicts since agent_meta is converted from AgentMetadata above
+
+        # Skip non-active agents
         status = agent_meta.get('status') if isinstance(agent_meta, dict) else getattr(agent_meta, 'status', None)
         if status and status != 'active':
             continue
-        
-        # Convert AgentMetadata to dict for calculate_authority_score
-        agent_meta_dict = None
-        if hasattr(agent_meta, 'to_dict'):
-            try:
-                agent_meta_dict = agent_meta.to_dict()
-            except Exception:
-                continue
-        elif isinstance(agent_meta, dict):
-            agent_meta_dict = agent_meta
-        elif hasattr(agent_meta, '__dict__'):
-            # Convert object to dict manually
-            try:
-                agent_meta_dict = {}
-                for key, value in agent_meta.__dict__.items():
-                    if not key.startswith('_'):
-                        agent_meta_dict[key] = value
-            except Exception:
-                continue
-        else:
-            # Skip if we can't convert
-            continue
-        
-        # Validate we got a dict
-        if not isinstance(agent_meta_dict, dict):
-            continue
-        
-        # Get reviewer's actual state if available, otherwise use mock
-        reviewer_state = None
-        if paused_agent_state:
-            # Use paused agent's state as proxy (MVP - could load reviewer's actual state)
-            reviewer_state = paused_agent_state
-        else:
-            # Mock state for authority calculation (MVP - assume healthy)
-            reviewer_state = {'risk_score': 0.25}
-        
-        # Add paused agent tags to metadata for expertise matching
-        agent_meta_dict_with_tags = agent_meta_dict.copy()
-        agent_meta_dict_with_tags['paused_agent_tags'] = paused_agent_tags or []
-        
-        # Calculate authority score
-        try:
-            score = calculate_authority_score(agent_meta_dict_with_tags, reviewer_state)
-            
-            # Filter by health (risk < 0.40)
-            # NOTE: Many agents may not have risk_score persisted in metadata.
-            # Defaulting missing risk to 1.0 effectively excludes everyone and forces "self" fallback.
-            # Be permissive for peer selection: treat unknown as low-ish risk and let authority weighting decide.
-            risk = agent_meta_dict.get('risk_score')
-            if risk is None:
-                risk = agent_meta_dict.get('latest_risk_score')
-            if risk is None:
-                risk = 0.25  # Unknown -> assume healthy enough for peer review; better than always forcing self-review
-            try:
-                risk = float(risk)
-            except Exception:
-                risk = 0.25
-            if risk >= 0.40:
-                continue
-            
-            candidates.append(agent_id)
-            scores.append(score)
-            
-        except Exception as e:
-            # Skip this agent if score calculation fails
-            logger.debug(f"Error calculating authority score for {agent_id}: {e}")
-            continue
+
+        # Eligible - add to candidates
+        candidates.append(agent_id)
 
     if not candidates:
         return None
 
-    # Weighted random selection
-    if sum(scores) == 0 or all(s == 0 for s in scores):
-        return random.choice(candidates)
-
-    selected = random.choices(candidates, weights=scores, k=1)[0]
-    return selected
+    # Simple random selection - no arbitrary authority metrics
+    return random.choice(candidates)
 

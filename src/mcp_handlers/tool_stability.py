@@ -191,24 +191,8 @@ _TOOL_ALIASES: Dict[str, ToolAlias] = {
         reason="consolidated",
         migration_note="Use get_dialectic_session() to view/manage dialectic sessions"
     ),
-    "submit_thesis": ToolAlias(
-        old_name="submit_thesis",
-        new_name="get_dialectic_session",
-        reason="consolidated",
-        migration_note="Dialectic creation temporarily disabled - use get_dialectic_session()"
-    ),
-    "submit_antithesis": ToolAlias(
-        old_name="submit_antithesis",
-        new_name="get_dialectic_session",
-        reason="consolidated",
-        migration_note="Dialectic creation temporarily disabled - use get_dialectic_session()"
-    ),
-    "submit_synthesis": ToolAlias(
-        old_name="submit_synthesis",
-        new_name="get_dialectic_session",
-        reason="consolidated",
-        migration_note="Use resolve_interactive_dialectic() to complete session"
-    ),
+    # submit_thesis, submit_antithesis, submit_synthesis - RESTORED Feb 2026
+    # These are now active tools, not aliases
     
     # Knowledge graph tools
     "find_similar_discoveries_graph": ToolAlias(
@@ -278,13 +262,11 @@ _TOOL_ALIASES: Dict[str, ToolAlias] = {
     "aggregate_metrics": ToolAlias(old_name="aggregate_metrics", new_name="observe", reason="consolidated",
         migration_note="Use observe(action='aggregate')", inject_action="aggregate"),
 
-    # Dialectic tools → dialectic(action='...')
-    "get_dialectic_session": ToolAlias(old_name="get_dialectic_session", new_name="dialectic", reason="consolidated",
-        migration_note="Use dialectic(action='get')", inject_action="get"),
-    "list_dialectic_sessions": ToolAlias(old_name="list_dialectic_sessions", new_name="dialectic", reason="consolidated",
-        migration_note="Use dialectic(action='list')", inject_action="list"),
-    "llm_assisted_dialectic": ToolAlias(old_name="llm_assisted_dialectic", new_name="dialectic", reason="consolidated",
-        migration_note="Use dialectic(action='llm')", inject_action="llm"),
+    # Dialectic tools - registered directly (register=True), NOT aliased
+    # NOTE: list_dialectic_sessions and get_dialectic_session registered directly for dashboard access
+    # llm_assisted_dialectic disabled for now
+    # "llm_assisted_dialectic": ToolAlias(old_name="llm_assisted_dialectic", new_name="dialectic", reason="consolidated",
+    #     migration_note="Use dialectic(action='llm')", inject_action="llm"),
 
     # Config tools - registered directly (not aliased to avoid action parameter issues)
     # Use config(action='get') or config(action='set') for consolidated access

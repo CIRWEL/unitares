@@ -947,7 +947,7 @@ async def handle_delete_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
     })
 
 
-@mcp_tool("archive_old_test_agents", timeout=20.0, rate_limit_exempt=True)
+@mcp_tool("archive_old_test_agents", timeout=20.0, rate_limit_exempt=True, register=False)
 async def handle_archive_old_test_agents(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Archive stale agents - test agents by default, or ALL stale agents with include_all=true
     
@@ -1039,7 +1039,7 @@ async def handle_archive_old_test_agents(arguments: Dict[str, Any]) -> Sequence[
     })
 
 
-@mcp_tool("archive_orphan_agents", timeout=30.0, rate_limit_exempt=True)
+@mcp_tool("archive_orphan_agents", timeout=30.0, rate_limit_exempt=True, register=False)
 async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Aggressively archive orphan agents to prevent proliferation.
 
@@ -1159,7 +1159,7 @@ async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[Te
 # Calls to get_agent_api_key are aliased to identity() via tool_stability.py
 
 
-@mcp_tool("mark_response_complete", timeout=5.0)
+@mcp_tool("mark_response_complete", timeout=5.0, register=False)
 async def handle_mark_response_complete(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Mark agent as having completed response, waiting for input"""
     # SECURITY FIX: Require registered agent (prevents phantom agent_ids)
@@ -1280,7 +1280,7 @@ async def handle_mark_response_complete(arguments: Dict[str, Any]) -> Sequence[T
     return success_response(response_data)
 
 
-@mcp_tool("direct_resume_if_safe", timeout=10.0)
+@mcp_tool("direct_resume_if_safe", timeout=10.0, deprecated=True, superseded_by="quick_resume or self_recovery_review")
 async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """⚠️ DEPRECATED: Use quick_resume() or self_recovery_review() instead.
     
@@ -1838,24 +1838,17 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
                             from src.dialectic_protocol import DialecticSession, DialecticPhase
                             from src.mcp_handlers.dialectic_reviewer import select_reviewer
                             from .dialectic_session import save_session
-                            
+
                             # Check if agent already has active dialectic session
                             from src.dialectic_db import is_agent_in_active_session_async
                             has_session = await is_agent_in_active_session_async(agent_id)
-                            
+
                             if not has_session:
-                                # Select reviewer
-                                reviewer_id = await select_reviewer(
-                                    paused_agent_id=agent_id,
-                                    paused_agent_state={
-                                        "risk_score": risk_score,
-                                        "coherence": coherence,
-                                        "void_active": void_active,
-                                        "stuck_reason": stuck["reason"],
-                                        "unresponsive": True
-                                    }
-                                )
-                                
+                                # Random reviewer selection, self-fallback if none available
+                                reviewer_id = await select_reviewer(paused_agent_id=agent_id)
+                                if reviewer_id is None:
+                                    reviewer_id = agent_id  # Self-review fallback
+
                                 if reviewer_id:
                                     # Create dialectic session
                                     session = DialecticSession(
@@ -1944,24 +1937,17 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
                                             from src.dialectic_protocol import DialecticSession, DialecticPhase
                                             from src.mcp_handlers.dialectic_reviewer import select_reviewer
                                             from .dialectic_session import save_session
-                                            
+
                                             # Check if agent already has active dialectic session
                                             from src.dialectic_db import is_agent_in_active_session_async
                                             has_session = await is_agent_in_active_session_async(agent_id)
-                                            
+
                                             if not has_session:
-                                                # Select reviewer
-                                                reviewer_id = await select_reviewer(
-                                                    paused_agent_id=agent_id,
-                                                    paused_agent_state={
-                                                        "risk_score": risk_score,
-                                                        "coherence": coherence,
-                                                        "void_active": void_active,
-                                                        "stuck_reason": stuck["reason"],
-                                                        "safe_but_stuck": True
-                                                    }
-                                                )
-                                                
+                                                # Random reviewer selection, self-fallback if none available
+                                                reviewer_id = await select_reviewer(paused_agent_id=agent_id)
+                                                if reviewer_id is None:
+                                                    reviewer_id = agent_id  # Self-review fallback
+
                                                 if reviewer_id:
                                                     # Create dialectic session
                                                     session = DialecticSession(
@@ -2124,22 +2110,17 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
                             from src.mcp_handlers.dialectic_reviewer import select_reviewer
                             from .dialectic_session import save_session
                             from datetime import datetime
-                            
+
                             # Check if agent already has active dialectic session
                             from src.dialectic_db import is_agent_in_active_session_async
                             has_session = await is_agent_in_active_session_async(agent_id)
-                            
+
                             if not has_session:
-                                # Select reviewer
-                                reviewer_id = await select_reviewer(
-                                    paused_agent_id=agent_id,
-                                    paused_agent_state={
-                                        "risk_score": risk_score,
-                                        "coherence": coherence,
-                                        "void_active": void_active
-                                    }
-                                )
-                                
+                                # Random reviewer selection, self-fallback if none available
+                                reviewer_id = await select_reviewer(paused_agent_id=agent_id)
+                                if reviewer_id is None:
+                                    reviewer_id = agent_id  # Self-review fallback
+
                                 if reviewer_id:
                                     # Create dialectic session
                                     session = DialecticSession(
@@ -2206,7 +2187,7 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
         return [error_response(f"Error detecting stuck agents: {str(e)}")]
 
 
-@mcp_tool("ping_agent", timeout=5.0, rate_limit_exempt=True)
+@mcp_tool("ping_agent", timeout=5.0, rate_limit_exempt=True, register=False)
 async def handle_ping_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Ping an agent to check if it's responsive/alive.
     

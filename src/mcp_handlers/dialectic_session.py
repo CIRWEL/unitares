@@ -42,7 +42,7 @@ ACTIVE_SESSIONS: Dict[str, DialecticSession] = {}
 _SESSION_METADATA_CACHE: Dict[str, Dict] = {}
 _CACHE_TTL = 60.0  # Cache TTL in seconds (1 minute)
 
-UNITARES_DIALECTIC_BACKEND = os.getenv("UNITARES_DIALECTIC_BACKEND", "auto").strip().lower()  # json|sqlite|auto
+UNITARES_DIALECTIC_BACKEND = os.getenv("UNITARES_DIALECTIC_BACKEND", "auto").strip().lower()  # json|sqlite|postgres|auto
 UNITARES_DIALECTIC_WRITE_JSON_SNAPSHOT = os.getenv("UNITARES_DIALECTIC_WRITE_JSON_SNAPSHOT", "1").strip().lower() not in (
     "0",
     "false",
@@ -54,14 +54,15 @@ def _resolve_dialectic_backend() -> str:
     """
     Resolve dialectic backend.
 
+    - postgres: use PostgreSQL (primary, recommended)
     - json: read/write JSON files only
-    - sqlite: prefer SQLite for reads (writes are already done by handlers via sqlite_* calls)
-    - auto: prefer SQLite if it appears available; otherwise JSON.
+    - sqlite: prefer SQLite for reads (legacy)
+    - auto: prefer postgres if available, else sqlite, else json.
     """
-    if UNITARES_DIALECTIC_BACKEND in ("json", "sqlite"):
+    if UNITARES_DIALECTIC_BACKEND in ("json", "sqlite", "postgres"):
         return UNITARES_DIALECTIC_BACKEND
-    # auto: if SQLite module is importable, prefer sqlite for cross-process visibility
-    return "sqlite"
+    # auto: prefer postgres
+    return "postgres"
 
 
 def _reconstruct_session_from_dict(session_id: str, session_data: Dict) -> Optional[DialecticSession]:
@@ -131,7 +132,11 @@ def _reconstruct_session_from_dict(session_id: str, session_data: Dict) -> Optio
         session.synthesis_round = int(session_data.get("synthesis_round", 0) or 0)
         created_at_str = session_data.get("created_at")
         if created_at_str:
-            session.created_at = datetime.fromisoformat(created_at_str)
+            # Handle both string and datetime objects from different backends
+            if isinstance(created_at_str, str):
+                session.created_at = datetime.fromisoformat(created_at_str)
+            elif isinstance(created_at_str, datetime):
+                session.created_at = created_at_str
 
         # Restore timeouts based on session type
         if session.session_type == "exploration":
@@ -213,8 +218,8 @@ async def load_all_sessions() -> int:
     loaded_count = 0
     try:
         backend = _resolve_dialectic_backend()
-        if backend == "sqlite":
-            # Load active sessions from SQLite (cross-process visibility).
+        if backend in ("sqlite", "postgres"):
+            # Load active sessions from PostgreSQL/SQLite (cross-process visibility).
             # We still keep ACTIVE_SESSIONS as a process-local cache for speed.
             sessions = await sqlite_get_active_sessions(limit=500)
             for s in sessions:
@@ -303,7 +308,7 @@ async def load_session(session_id: str) -> Optional[DialecticSession]:
     """Load dialectic session from disk - ASYNC to prevent blocking"""
     try:
         backend = _resolve_dialectic_backend()
-        if backend == "sqlite":
+        if backend in ("sqlite", "postgres"):
             try:
                 session_data = await sqlite_get_session(session_id)
                 if session_data:
@@ -318,7 +323,7 @@ async def load_session(session_id: str) -> Optional[DialecticSession]:
                     if session:
                         return session
             except Exception as e:
-                logger.warning(f"SQLite load failed for session {session_id}, falling back to JSON: {e}")
+                logger.warning(f"PostgreSQL load failed for session {session_id}, falling back to JSON: {e}")
 
         session_file = SESSION_STORAGE_DIR / f"{session_id}.json"
         
@@ -350,6 +355,192 @@ async def load_session(session_id: str) -> Optional[DialecticSession]:
         return None
 
 
+async def verify_data_consistency() -> Dict[str, Any]:
+    """
+    Verify that SQLite and JSON dialectic data are consistent.
+    Called on startup and periodically to detect data loss.
+
+    Returns:
+        Dict with consistency status and any issues found
+    """
+    import sqlite3
+
+    loop = asyncio.get_running_loop()
+
+    def _check_consistency():
+        issues = []
+        stats = {
+            "json_sessions": 0,
+            "sqlite_sessions": 0,
+            "missing_json_backup": [],
+            "missing_sqlite": [],
+            "message_mismatches": [],
+            "empty_sessions": [],
+        }
+
+        # Count JSON sessions
+        json_sessions = {}
+        if SESSION_STORAGE_DIR.exists():
+            for f in SESSION_STORAGE_DIR.glob("*.json"):
+                try:
+                    with open(f) as fp:
+                        data = json.load(fp)
+                        sid = data.get("session_id", f.stem)
+                        json_sessions[sid] = len(data.get("transcript", []))
+                except Exception:
+                    pass
+        stats["json_sessions"] = len(json_sessions)
+
+        # Count SQLite sessions
+        sqlite_sessions = {}
+        sqlite_messages = {}
+        db_path = Path(__file__).parent.parent.parent / "data" / "governance.db"
+        if db_path.exists():
+            try:
+                conn = sqlite3.connect(str(db_path), timeout=5.0)
+                c = conn.cursor()
+                c.execute("SELECT session_id FROM dialectic_sessions")
+                for row in c.fetchall():
+                    sqlite_sessions[row[0]] = True
+                c.execute("SELECT session_id, COUNT(*) FROM dialectic_messages GROUP BY session_id")
+                for row in c.fetchall():
+                    sqlite_messages[row[0]] = row[1]
+                conn.close()
+            except Exception as e:
+                issues.append(f"SQLite query failed: {e}")
+        stats["sqlite_sessions"] = len(sqlite_sessions)
+
+        # Find discrepancies
+        for sid in sqlite_sessions:
+            if sid not in json_sessions:
+                stats["missing_json_backup"].append(sid)
+            sqlite_count = sqlite_messages.get(sid, 0)
+            json_count = json_sessions.get(sid, 0)
+            if json_count > sqlite_count:
+                stats["message_mismatches"].append((sid, json_count, sqlite_count))
+            if sqlite_count == 0 and json_count == 0:
+                stats["empty_sessions"].append(sid)
+
+        for sid in json_sessions:
+            if sid not in sqlite_sessions:
+                stats["missing_sqlite"].append(sid)
+
+        return {
+            "consistent": len(stats["missing_json_backup"]) == 0 and len(stats["missing_sqlite"]) == 0,
+            "stats": stats,
+            "issues": issues,
+        }
+
+    return await loop.run_in_executor(None, _check_consistency)
+
+
+async def run_startup_consolidation() -> Dict[str, Any]:
+    """
+    Run data consolidation on startup to ensure all sessions are backed up.
+    This prevents data loss from sessions that exist only in SQLite.
+    """
+    import sqlite3
+
+    result = {
+        "exported": 0,
+        "synced": 0,
+        "errors": [],
+    }
+
+    loop = asyncio.get_running_loop()
+
+    def _consolidate():
+        exported = 0
+        db_path = Path(__file__).parent.parent.parent / "data" / "governance.db"
+
+        if not db_path.exists():
+            return exported
+
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+
+            # Get all sessions from SQLite
+            c.execute("""
+                SELECT session_id, paused_agent_id, reviewer_agent_id, phase, status,
+                       created_at, topic, session_type, paused_agent_state_json
+                FROM dialectic_sessions
+            """)
+            sessions = c.fetchall()
+
+            for row in sessions:
+                sid = row["session_id"]
+                json_path = SESSION_STORAGE_DIR / f"{sid}.json"
+
+                # Get messages
+                c.execute("""
+                    SELECT agent_id, message_type, timestamp, reasoning, root_cause,
+                           proposed_conditions_json, observed_metrics_json, concerns_json, agrees
+                    FROM dialectic_messages
+                    WHERE session_id = ?
+                    ORDER BY timestamp
+                """, (sid,))
+                messages = []
+                for msg in c.fetchall():
+                    messages.append({
+                        "phase": msg["message_type"],
+                        "agent_id": msg["agent_id"],
+                        "timestamp": msg["timestamp"],
+                        "reasoning": msg["reasoning"],
+                        "root_cause": msg["root_cause"],
+                        "proposed_conditions": json.loads(msg["proposed_conditions_json"]) if msg["proposed_conditions_json"] else [],
+                        "observed_metrics": json.loads(msg["observed_metrics_json"]) if msg["observed_metrics_json"] else None,
+                        "concerns": json.loads(msg["concerns_json"]) if msg["concerns_json"] else None,
+                        "agrees": bool(msg["agrees"]) if msg["agrees"] is not None else None,
+                    })
+
+                sqlite_count = len(messages)
+
+                # Check if JSON needs update
+                json_count = 0
+                if json_path.exists():
+                    try:
+                        with open(json_path) as f:
+                            existing = json.load(f)
+                            json_count = len(existing.get("transcript", []))
+                    except Exception:
+                        pass
+
+                # Export if SQLite has more data
+                if sqlite_count > json_count or not json_path.exists():
+                    SESSION_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+                    export_data = {
+                        "session_id": sid,
+                        "paused_agent_id": row["paused_agent_id"],
+                        "reviewer_agent_id": row["reviewer_agent_id"],
+                        "phase": row["phase"],
+                        "synthesis_round": 0,
+                        "transcript": messages,
+                        "resolution": None,
+                        "created_at": row["created_at"],
+                        "session_type": row["session_type"],
+                        "topic": row["topic"],
+                        "paused_agent_state": json.loads(row["paused_agent_state_json"]) if row["paused_agent_state_json"] else {},
+                    }
+                    with open(json_path, 'w') as f:
+                        json.dump(export_data, f, indent=2)
+                    exported += 1
+
+            conn.close()
+        except Exception as e:
+            result["errors"].append(str(e))
+
+        return exported
+
+    result["exported"] = await loop.run_in_executor(None, _consolidate)
+
+    if result["exported"] > 0:
+        logger.info(f"Startup consolidation: exported {result['exported']} sessions to JSON backup")
+
+    return result
+
+
 async def list_all_sessions(
     agent_id: Optional[str] = None,
     status: Optional[str] = None,
@@ -358,6 +549,9 @@ async def list_all_sessions(
 ) -> List[Dict[str, Any]]:
     """
     List all dialectic sessions with optional filtering.
+
+    Primary backend is PostgreSQL (core.dialectic_sessions).
+    Falls back to JSON files if PostgreSQL fails.
 
     Args:
         agent_id: Filter by agent (requestor or reviewer)
@@ -368,23 +562,128 @@ async def list_all_sessions(
     Returns:
         List of session summaries
     """
-    sessions = []
+    # Primary: Query PostgreSQL
+    try:
+        from src.dialectic_db import get_dialectic_db
+        db = await get_dialectic_db()
+        await db._ensure_pool()
 
-    # Ensure directory exists
+        async with db._pool.acquire() as conn:
+            # Build query with filters
+            query = """
+                SELECT
+                    ds.session_id,
+                    ds.phase,
+                    ds.status,
+                    ds.session_type,
+                    ds.paused_agent_id,
+                    ds.reviewer_agent_id,
+                    ds.topic,
+                    ds.created_at,
+                    ds.resolution_json,
+                    (SELECT COUNT(*) FROM core.dialectic_messages dm WHERE dm.session_id = ds.session_id) as message_count
+                FROM core.dialectic_sessions ds
+                WHERE 1=1
+            """
+            params = []
+            param_idx = 1
+
+            if agent_id:
+                query += f" AND (ds.paused_agent_id = ${param_idx} OR ds.reviewer_agent_id = ${param_idx + 1})"
+                params.extend([agent_id, agent_id])
+                param_idx += 2
+
+            if status:
+                query += f" AND (LOWER(ds.phase) LIKE ${param_idx} OR LOWER(ds.status) LIKE ${param_idx})"
+                params.append(f"%{status.lower()}%")
+                param_idx += 1
+
+            query += f" ORDER BY ds.created_at DESC LIMIT ${param_idx}"
+            params.append(limit)
+
+            rows = await conn.fetch(query, *params)
+
+            result = []
+            for row in rows:
+                created_at = row["created_at"]
+                if created_at and hasattr(created_at, 'isoformat'):
+                    created_at = created_at.isoformat()
+
+                summary = {
+                    "session_id": row["session_id"],
+                    "phase": row["phase"] or row["status"] or "unknown",
+                    "session_type": row["session_type"] or "unknown",
+                    "paused_agent": row["paused_agent_id"] or "unknown",
+                    "reviewer": row["reviewer_agent_id"],
+                    "topic": row["topic"] or "",
+                    "created": created_at or "",
+                    "message_count": row["message_count"] or 0,
+                }
+
+                # Parse resolution if present
+                resolution = row["resolution_json"]
+                if resolution:
+                    if isinstance(resolution, str):
+                        try:
+                            summary["resolution"] = json.loads(resolution)
+                        except Exception:
+                            pass
+                    elif isinstance(resolution, dict):
+                        summary["resolution"] = resolution
+
+                # Include transcript if requested
+                if include_transcript:
+                    msg_rows = await conn.fetch("""
+                        SELECT message_type, agent_id, timestamp, root_cause,
+                               proposed_conditions, reasoning, observed_metrics,
+                               concerns, agrees
+                        FROM core.dialectic_messages
+                        WHERE session_id = $1
+                        ORDER BY message_id
+                    """, row["session_id"])
+
+                    messages = []
+                    for msg_row in msg_rows:
+                        msg = {
+                            "phase": msg_row["message_type"],
+                            "agent_id": msg_row["agent_id"],
+                            "timestamp": msg_row["timestamp"].isoformat() if msg_row["timestamp"] and hasattr(msg_row["timestamp"], 'isoformat') else msg_row["timestamp"],
+                            "reasoning": msg_row["reasoning"],
+                            "root_cause": msg_row["root_cause"],
+                        }
+                        if msg_row["proposed_conditions"]:
+                            val = msg_row["proposed_conditions"]
+                            msg["proposed_conditions"] = val if isinstance(val, (list, dict)) else json.loads(val)
+                        if msg_row["concerns"]:
+                            val = msg_row["concerns"]
+                            msg["concerns"] = val if isinstance(val, (list, dict)) else json.loads(val)
+                        if msg_row["agrees"] is not None:
+                            msg["agrees"] = bool(msg_row["agrees"])
+                        messages.append(msg)
+
+                    summary["transcript"] = messages
+
+                result.append(summary)
+
+        logger.debug(f"Listed {len(result)} sessions from PostgreSQL")
+        return result
+    except Exception as e:
+        logger.warning(f"PostgreSQL list_sessions failed: {e}")
+
+    # Fallback: JSON files
+    loop = asyncio.get_running_loop()
     SESSION_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
-    loop = asyncio.get_running_loop()
-
-    def _list_sessions_sync():
-        """List and load session files synchronously in executor"""
+    def _list_sessions_json():
+        """Fallback to JSON files"""
         result = []
         session_files = sorted(
             SESSION_STORAGE_DIR.glob("*.json"),
             key=lambda p: p.stat().st_mtime,
-            reverse=True  # Most recent first
+            reverse=True
         )
 
-        for session_file in session_files[:limit * 2]:  # Load extra for filtering
+        for session_file in session_files[:limit * 2]:
             if len(result) >= limit:
                 break
             try:
@@ -393,9 +692,7 @@ async def list_all_sessions(
 
                 session_id = session_file.stem
 
-                # Apply filters
                 if agent_id:
-                    # Note: paused_agent_id is the requestor in dialectic sessions
                     paused = data.get("paused_agent_id", "")
                     reviewer = data.get("reviewer_agent_id", "")
                     if agent_id not in [paused, reviewer]:
@@ -406,7 +703,6 @@ async def list_all_sessions(
                     if status.lower() not in phase.lower():
                         continue
 
-                # Build summary
                 summary = {
                     "session_id": session_id,
                     "phase": data.get("phase", "unknown"),
@@ -429,5 +725,5 @@ async def list_all_sessions(
 
         return result
 
-    sessions = await loop.run_in_executor(None, _list_sessions_sync)
+    sessions = await loop.run_in_executor(None, _list_sessions_json)
     return sessions

@@ -23,15 +23,36 @@ mcp_server = get_mcp_server()
 @mcp_tool("get_system_history", timeout=20.0, register=False)
 async def handle_get_system_history(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Export complete governance history for an agent"""
-    # PROACTIVE GATE: Require agent to be registered
-    agent_id, error = require_registered_agent(arguments)
-    if error:
-        return [error]  # Returns onboarding guidance if not registered
+    # Try to get agent_id, but don't fail if not registered - use context agent_id
+    from .context import get_context_agent_id
+    agent_id = arguments.get("agent_id")
+    context_agent_id = get_context_agent_id()
+    
+    # Use context agent_id if no explicit agent_id provided
+    if not agent_id and context_agent_id:
+        agent_id = context_agent_id
+    
+    # If still no agent_id, try require_registered_agent for onboarding guidance
+    if not agent_id:
+        agent_id, error = require_registered_agent(arguments)
+        if error:
+            return [error]  # Returns onboarding guidance if not registered
     
     format_type = arguments.get("format", "json")
     
     # Load monitor state from disk if not in memory (consistent with get_governance_metrics)
     monitor = mcp_server.get_or_create_monitor(agent_id)
+    
+    # Check if monitor has any history
+    if not monitor.state.E_history and not monitor.state.timestamp_history:
+        return [error_response(
+            "No history available for this agent",
+            details={"agent_id": agent_id[:12] if agent_id else "unknown"},
+            recovery={
+                "action": "Agent needs to call process_agent_update() first to generate history",
+                "related_tools": ["process_agent_update", "get_governance_metrics"]
+            }
+        )]
     
     history_data = monitor.export_history(format=format_type)
     
@@ -43,8 +64,10 @@ async def handle_get_system_history(arguments: Dict[str, Any]) -> Sequence[TextC
             logger.warning(f"Could not parse history JSON: {e}")
     
     return success_response({
+        "success": True,
         "format": format_type,
-        "history": history_data
+        "history": history_data,
+        "agent_id": agent_id
     })
 
 

@@ -1276,7 +1276,7 @@ async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_i
         return [error_response(f"Failed to store batch knowledge: {str(e)}")]
 
 
-@mcp_tool("answer_question", timeout=15.0)
+@mcp_tool("answer_question", timeout=15.0, register=False)
 async def handle_answer_question(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Answer a question in the knowledge graph - closes the Q&A loop.
 
