@@ -1461,7 +1461,7 @@
                 }
 
                 return `
-                    <div class="dialectic-item ${phase}" data-session-index="${displaySessions.indexOf(session)}" style="cursor: pointer;" title="Click to view details">
+                    <div class="dialectic-item ${phase}" data-session-id="${session.session_id || ''}" style="cursor: pointer;" title="Click to view details">
                         <div class="dialectic-header">
                             <span class="dialectic-type" style="border-color: ${phaseColor}; color: ${phaseColor}">
                                 ${escapeHtml(formatDialecticPhase(phase))}
@@ -1727,10 +1727,11 @@
             dialecticContainer.addEventListener('click', (event) => {
                 const item = event.target.closest('.dialectic-item');
                 if (!item) return;
-                const index = parseInt(item.getAttribute('data-session-index'), 10);
-                if (isNaN(index) || index < 0 || index >= cachedDialecticSessions.length) return;
+                const sessionId = item.getAttribute('data-session-id');
+                if (!sessionId) return;
 
-                const session = cachedDialecticSessions[index];
+                const session = cachedDialecticSessions.find(s => s.session_id === sessionId);
+                if (!session) return;
                 showDialecticDetail(session);
             });
         }
