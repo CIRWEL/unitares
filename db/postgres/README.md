@@ -27,7 +27,7 @@ docker run -d --name postgres-governance \
   -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=governance \
   -p 5432:5432 \
-  postgres:15
+  postgres:16
 ```
 
 ### 2. Install Apache AGE Extension
@@ -137,6 +137,7 @@ This migrates discoveries, tags, and edges from SQLite to the PostgreSQL knowled
 - `core.agents` - Agent identity and metadata
 - `core.agent_sessions` - Session bindings (fast lookup)
 - `core.dialectic_sessions` - Dialectic recovery sessions
+- `core.dialectic_messages` - Dialectic session messages (thesis/antithesis/synthesis)
 - `core.identities` - (Legacy) Identity records for backward compatibility
 - `core.schema_migrations` - Schema version tracking
 
@@ -193,6 +194,7 @@ SELECT version, name, applied_at FROM core.schema_migrations ORDER BY version;
 |---------|-----------|-------------|
 | 1 | `initial_schema` | Core tables (agents, sessions, dialectic) |
 | 2 | `knowledge_schema` | Knowledge graph tables for PostgreSQL FTS |
+| 3 | `dialectic_messages` | Dialectic messages table (migrated from SQLite) |
 
 The health check returns `schema_version` from this table.
 
@@ -214,7 +216,8 @@ The response includes a `status_breakdown` field showing counts per status type.
 2. **Phase 2**: Install AGE, create graph, dual-write discoveries
 3. **Phase 3**: Backfill historical discoveries to graph
 4. **Phase 4**: Cut over reads to AGE
-5. **Phase 5**: Deprecate JSON/SQLite (current state)
+5. **Phase 5**: Deprecate JSON/SQLite for knowledge graph
+6. **Phase 6**: Migrate dialectic sessions/messages to PostgreSQL (current state)
 
 ## Troubleshooting
 
