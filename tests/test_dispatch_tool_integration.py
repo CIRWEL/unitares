@@ -38,10 +38,14 @@ from src.mcp_handlers.decorators import (
 @pytest.fixture(autouse=True)
 def clean_registry():
     """Save/restore tool registry to prevent cross-test contamination."""
-    orig = dict(_TOOL_DEFINITIONS)
+    from src.mcp_handlers import TOOL_HANDLERS
+    orig_defs = dict(_TOOL_DEFINITIONS)
+    orig_handlers = dict(TOOL_HANDLERS)
     yield
     _TOOL_DEFINITIONS.clear()
-    _TOOL_DEFINITIONS.update(orig)
+    _TOOL_DEFINITIONS.update(orig_defs)
+    TOOL_HANDLERS.clear()
+    TOOL_HANDLERS.update(orig_handlers)
 
 
 @pytest.fixture
