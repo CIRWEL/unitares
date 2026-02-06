@@ -109,10 +109,10 @@ def _load_version():
     version_file = project_root / "VERSION"
     if version_file.exists():
         return version_file.read_text().strip()
-    return "2.5.0"  # Fallback if VERSION file missing
+    return "2.6.0"  # Fallback if VERSION file missing
 
 SERVER_VERSION = _load_version()  # Auto-sync from VERSION file
-SERVER_BUILD_DATE = "2025-12-27"
+SERVER_BUILD_DATE = "2026-02-05"
 
 # PID file for process tracking
 PID_FILE = Path(project_root) / "data" / ".mcp_server.pid"
