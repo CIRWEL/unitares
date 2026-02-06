@@ -123,10 +123,19 @@ Request a dialectic review with `request_dialectic_review()` when:
 
 ### Identity
 
-Your identity persists across sessions via UUID. Known issues with the current system:
-- Multiple UUIDs can appear across different tools (sync/async cache mismatch)
-- Ghost agents accumulate — 96% of registered identities are inactive
-- Identity is being simplified — for now, just use your onboard UUID consistently
+Your identity persists across sessions via UUID. The server resolves your identity
+through a 4-path architecture:
+
+1. **Redis cache** — Fast lookup by session key
+2. **PostgreSQL session** — Durable lookup by session key
+3. **Name claim** — If you provide your name, the server reconnects you to your
+   existing identity by label lookup (no new UUID created)
+4. **Create new** — Last resort, only if paths 1-3 don't match
+
+**Best practice**: Always pass your `name` to `onboard()` or `identity()`. This
+ensures you reconnect to your existing identity even when session keys rotate
+(common with HTTP transport). Include `client_session_id` from the onboard response
+in all subsequent calls for stable attribution.
 
 ## What NOT to Do
 
@@ -151,10 +160,17 @@ See `references/mcp-tools.md` for parameter details.
 ### When Needed
 - `knowledge()` — Full knowledge graph CRUD (store, update, details, cleanup)
 - `agent()` — Agent lifecycle (list, archive, get details)
+- `observe(action='agent', target_agent_id='...')` — Observe another agent's patterns
 - `calibration()` — Check/update calibration data
 - `request_dialectic_review()` — Start a dialectic session
 - `health_check()` — System component status
 - `export()` — Export session history
+
+### Aliases (shortcuts)
+- `status` → `get_governance_metrics` (your EISV state)
+- `list_agents` → `agent(action='list')` (who's active)
+- `observe_agent` → `observe(action='agent')` (observe another agent)
+- `checkin` → `process_agent_update` (check in)
 
 ### Specialized
 - `call_model()` — Delegate to a secondary LLM

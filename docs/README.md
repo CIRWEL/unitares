@@ -1,6 +1,6 @@
 # UNITARES Documentation
 
-**Last Updated:** 2026-02-05
+**Last Updated:** 2026-02-06
 
 ---
 
@@ -59,7 +59,7 @@ v2.6.0 reduced the public surface from 49 to 29 tools. Use `list_tools()` or rea
 | `workspace_health.py` | 83% |
 | **Overall** | **41%** |
 
-1,907 tests passing as of v2.6.0 (Feb 2026).
+1,907 tests passing as of v2.6.1 (Feb 2026).
 
 ---
 
@@ -73,10 +73,11 @@ governance-mcp-v1/
 │   ├── mcp_server.py           # HTTP server (multi-client)
 │   ├── mcp_server_std.py       # Stdio server (single-client)
 │   ├── mcp_handlers/           # Tool implementations
-│   │   ├── identity_v2.py      # Identity resolution (session→UUID)
+│   │   ├── identity_v2.py      # Identity resolution (4-path: Redis→PG→Name→Create)
 │   │   ├── core.py             # process_agent_update, metrics
 │   │   ├── dialectic.py        # Dialectic peer review
-│   │   ├── consolidated.py     # Unified agent/config/calibration tools
+│   │   ├── consolidated.py     # Unified agent/observe/config/calibration tools
+│   │   ├── observability.py    # Observe/compare/anomaly handlers
 │   │   └── knowledge_graph.py  # Knowledge storage & search
 │   ├── db/                     # Database backends
 │   │   └── postgres_backend.py # PostgreSQL (primary)

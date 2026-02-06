@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.1] - 2026-02-06
+
+### Added — Name-Based Identity Resolution (PATH 2.5)
+
+Every new HTTP session was creating a new agent UUID. 1650+ ghost agents existed because
+session keys rotate per request. PATH 2.5 adds name-based identity claim: before creating
+a new UUID, the server checks if the agent is claiming an existing name via label lookup
+in PostgreSQL.
+
+```
+PATH 1: Redis cache by session_key       → found? use it
+PATH 2: PostgreSQL session by session_key → found? use it
+PATH 2.5: PostgreSQL agent by name claim  → found? bind + use it  ← NEW
+PATH 3: Create new UUID                  → last resort
+```
+
+#### Identity Resolution
+- **`resolve_by_name_claim()`** — New function in `identity_v2.py`. Looks up agent by
+  label in PG, optionally verifies trajectory signature (anti-impersonation, rejects if
+  lineage_similarity < 0.6), binds session in Redis + PG.
+- **`resolve_session_identity()`** — New parameters `agent_name` and `trajectory_signature`.
+  PATH 2.5 inserted before PATH 3.
+- **`handle_identity_adapter()`** — Name claim runs before STEP 1 session resolution,
+  preventing dispatch-created ephemerals from polluting the cache.
+- **`handle_onboard_v2()`** — When `name` is provided and `not force_new`, tries
+  `resolve_by_name_claim()` first before session-based lookup.
+- **Dispatch (`__init__.py`)** — Extracts `agent_name` (check-in) or `name` (identity/onboard)
+  and passes to `resolve_session_identity()`.
+- **Schema (`tool_schemas.py`)** — Added `agent_name` parameter to `process_agent_update`.
+
+#### Observe Tool Fix
+- **Schema** — Added proper `inputSchema` for consolidated `observe` tool (was empty
+  `properties: {}`, causing Pydantic typed wrapper to drop all parameters).
+- **`target_agent_id`** — Renamed from `agent_id` to avoid clash with session-bound caller
+  identity. Supports both UUID and label (e.g. `target_agent_id="Lumen"`).
+- **Label resolution** — `handle_observe_agent()` resolves labels to UUIDs via
+  `_find_agent_by_label()`, bypasses `require_agent_id`'s session-override behavior.
+
+### Fixed
+- Ghost agent proliferation: named agents reconnect instead of forking
+- `observe_agent` alias dropping all parameters except `action`
+- Session mismatch error when observing other agents
+- `agent_name` parameter not extracted for identity/onboard tools in dispatch
+
+### Database
+- Added partial index: `idx_agents_label ON core.agents(label) WHERE label IS NOT NULL`
+- Cleaned up test ghost agents (Tessera_* suffixed entries)
+
+### Tests
+- 1,907 tests passing, 0 failures, 41% coverage
+
+### Files Changed
+- `src/mcp_handlers/identity_v2.py` — +162 lines (resolve_by_name_claim + PATH 2.5 wiring)
+- `src/mcp_handlers/__init__.py` — +19 lines (agent_name extraction in dispatch)
+- `src/mcp_handlers/observability.py` — +57 lines (target_agent_id + label resolution)
+- `src/tool_schemas.py` — +70 lines (observe schema + agent_name parameter)
+
+---
+
 ## [2.6.0] - 2026-02-05
 
 ### Major Cleanup & Consolidation
