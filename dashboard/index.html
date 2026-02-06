@@ -146,11 +146,9 @@
                 <h2>Dialectic Sessions</h2>
                 <div class="panel-controls">
                     <select id="dialectic-status-filter">
-                        <option value="all">All phases</option>
+                        <option value="substantive">Substantive (3+ msgs)</option>
+                        <option value="all">All sessions</option>
                         <option value="active">Active</option>
-                        <option value="thesis">Thesis</option>
-                        <option value="antithesis">Antithesis</option>
-                        <option value="synthesis">Synthesis</option>
                         <option value="resolved">Resolved</option>
                         <option value="failed">Failed</option>
                     </select>
@@ -1318,7 +1316,6 @@
                 // Extract sessions - minimal filtering, sort by date
                 const rawSessions = result.sessions || [];
                 const sessions = rawSessions
-                    .filter(s => s.message_count > 0)  // Only filter truly empty sessions
                     .sort((a, b) => {
                         // Sort by date descending (most recent first)
                         const dateA = new Date(a.created || 0);
@@ -1493,14 +1490,16 @@
 
         function applyDialecticFilters() {
             const statusFilter = document.getElementById('dialectic-status-filter');
-            const filter = statusFilter ? statusFilter.value : 'all';
+            const filter = statusFilter ? statusFilter.value : 'substantive';
 
             let filtered = cachedDialecticSessions;
-            if (filter !== 'all') {
+            if (filter === 'substantive') {
+                // Only sessions with real dialectic content (thesis+antithesis+synthesis = 3+ messages)
+                filtered = cachedDialecticSessions.filter(s => (s.message_count || 0) >= 3);
+            } else if (filter !== 'all') {
                 filtered = cachedDialecticSessions.filter(s => {
                     const phase = s.phase || s.status || '';
                     if (filter === 'active') {
-                        // "Active" includes thesis, antithesis, synthesis (not resolved/failed)
                         return ['thesis', 'antithesis', 'synthesis'].includes(phase);
                     }
                     return phase === filter;

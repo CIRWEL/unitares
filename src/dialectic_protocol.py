@@ -157,7 +157,7 @@ Origin: Ticket from opus_hikewa_web_20251125 × hikewa
 
 from dataclasses import dataclass, asdict
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import json
 import hashlib
@@ -927,7 +927,9 @@ class DialecticSession:
         Returns:
             Timeout reason string if timed out, None otherwise
         """
-        elapsed = datetime.now() - self.created_at
+        # Use timezone-aware now if created_at is timezone-aware (from PostgreSQL)
+        now = datetime.now(timezone.utc) if self.created_at.tzinfo else datetime.now()
+        elapsed = now - self.created_at
         
         # Use instance-level timeouts (set in __init__ based on session_type)
         max_total = getattr(self, '_max_total_time', self.MAX_TOTAL_TIME)
@@ -943,15 +945,15 @@ class DialecticSession:
         if self.phase == DialecticPhase.ANTITHESIS:
             thesis_time = self.get_thesis_timestamp()
             if thesis_time:
-                wait_time = datetime.now() - thesis_time
+                wait_time = now - thesis_time
                 if wait_time > max_antithesis:
                     return f"Reviewer timeout - waited {wait_time.total_seconds()/3600:.1f} hours for antithesis"
-        
+
         # Check synthesis phase timeout
         elif self.phase == DialecticPhase.SYNTHESIS:
             last_update = self.get_last_update_timestamp()
             if last_update:
-                wait_time = datetime.now() - last_update
+                wait_time = now - last_update
                 if wait_time > max_synthesis:
                     return f"Synthesis timeout - waited {wait_time.total_seconds()/3600:.1f} hours for next synthesis"
         
