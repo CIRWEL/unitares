@@ -28,7 +28,7 @@ class SimpleDiscovery:
         self.tags = node.tags if hasattr(node, 'tags') else getattr(node, 'tags', [])
 
 
-@mcp_tool("get_roi_metrics", timeout=15.0)
+@mcp_tool("get_roi_metrics", timeout=15.0, register=False)
 async def handle_get_roi_metrics(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Calculate ROI metrics showing value delivered by multi-agent coordination.

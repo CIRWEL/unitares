@@ -1,143 +1,152 @@
 """
 Auto-Resolve Stuck Dialectic Sessions
 
-Quick Win A: Automatically resolve sessions that are stuck/inactive for >5 minutes.
+Quick Win A: Automatically resolve sessions that are stuck/inactive for >30 minutes.
 This removes artificial barriers and prevents session conflicts.
 """
 
-from datetime import datetime, timedelta
-from typing import List, Dict, Any
-import asyncio
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Any
 
 from src.logging_utils import get_logger
-from src.dialectic_db import DialecticDB, DEFAULT_DB_PATH
-from src.dialectic_protocol import DialecticPhase
+from src.dialectic_db import (
+    get_dialectic_db,
+    get_active_sessions_async,
+    update_session_status_async,
+    add_message_async,
+)
 
 logger = get_logger(__name__)
 
-# Stuck session threshold: 5 minutes of inactivity
-STUCK_SESSION_THRESHOLD = timedelta(minutes=5)
+# Stuck session threshold: 30 minutes of inactivity
+# Increased from 5 min - ephemeral agents may lose context between interactions
+STUCK_SESSION_THRESHOLD = timedelta(minutes=30)
 
 
 async def auto_resolve_stuck_sessions() -> Dict[str, Any]:
     """
-    Automatically resolve sessions that are stuck/inactive for >5 minutes.
-    
+    Automatically resolve sessions that are stuck/inactive for >30 minutes.
+
     A session is considered "stuck" if:
-    1. Status is 'active' but no activity for >5 minutes
-    2. Phase is AWAITING_THESIS and created >5 minutes ago
-    3. Phase is ANTITHESIS and thesis submitted >5 minutes ago with no antithesis
-    4. Phase is SYNTHESIS and last update >5 minutes ago
-    
+    1. Status is 'active' but no activity for >30 minutes
+    2. Phase is AWAITING_THESIS and created >30 minutes ago
+    3. Phase is ANTITHESIS and thesis submitted >30 minutes ago with no antithesis
+    4. Phase is SYNTHESIS and last update >30 minutes ago
+
     Returns:
         Dict with counts of resolved sessions and details
     """
-    db = DialecticDB(DEFAULT_DB_PATH)
-    conn = None
-    
     try:
-        conn = db._get_connection()
-        now = datetime.now()
-        threshold_time = (now - STUCK_SESSION_THRESHOLD).isoformat()
-        
-        # Find stuck sessions
-        # Check updated_at if available, otherwise use created_at
-        cursor = conn.execute("""
-            SELECT session_id, paused_agent_id, reviewer_agent_id, phase, status, 
-                   created_at, updated_at
-            FROM dialectic_sessions
-            WHERE status = 'active'
-            AND (
-                (updated_at IS NOT NULL AND updated_at < ?) OR
-                (updated_at IS NULL AND created_at < ?)
-            )
-        """, (threshold_time, threshold_time))
-        
-        stuck_sessions = [dict(row) for row in cursor.fetchall()]
-        
+        # Use UTC for consistent comparison with PostgreSQL timestamps
+        now = datetime.now(timezone.utc)
+        threshold_time = now - STUCK_SESSION_THRESHOLD
+
+        # Get active sessions using the async backend (PostgreSQL or SQLite based on env)
+        active_sessions = await get_active_sessions_async(limit=100)
+
+        if not active_sessions:
+            return {
+                "resolved_count": 0,
+                "message": "No active sessions found"
+            }
+
+        # Filter to stuck sessions (inactive for >30 minutes)
+        stuck_sessions = []
+        for session in active_sessions:
+            # Get updated_at or created_at
+            updated_at = session.get("updated_at")
+            created_at = session.get("created_at")
+
+            # Parse timestamp if it's a string
+            check_time = updated_at or created_at
+            if isinstance(check_time, str):
+                try:
+                    if 'T' in check_time:
+                        check_time = datetime.fromisoformat(check_time.replace('Z', '+00:00'))
+                    else:
+                        # Assume naive strings are UTC
+                        check_time = datetime.strptime(check_time, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                except Exception:
+                    continue
+
+            # Ensure timezone-aware for comparison
+            if check_time is not None:
+                if check_time.tzinfo is None:
+                    # Assume naive datetimes are UTC (PostgreSQL default)
+                    check_time = check_time.replace(tzinfo=timezone.utc)
+
+            if check_time and check_time < threshold_time:
+                stuck_sessions.append(session)
+
         if not stuck_sessions:
             return {
                 "resolved_count": 0,
                 "message": "No stuck sessions found"
             }
-        
+
         # Resolve each stuck session
         resolved_count = 0
         resolved_details = []
-        
+        db = await get_dialectic_db()
+
         for session in stuck_sessions:
-            session_id = session["session_id"]
-            paused_agent_id = session["paused_agent_id"]
-            phase = session["phase"]
-            
-            # Mark as failed with reason
-            conn.execute("""
-                UPDATE dialectic_sessions
-                SET status = 'failed',
-                    phase = ?,
-                    updated_at = ?
-                WHERE session_id = ?
-            """, ("failed", now.isoformat(), session_id))
-            
-            # Add failure message to transcript
-            failure_reason = f"Session auto-resolved: inactive for >{STUCK_SESSION_THRESHOLD.total_seconds()/60:.0f} minutes"
-            
-            # Save failure message
-            conn.execute("""
-                INSERT INTO dialectic_messages
-                (session_id, agent_id, message_type, timestamp, reasoning)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                session_id,
-                "system",
-                "failed",
-                now.isoformat(),
-                failure_reason
-            ))
-            
-            resolved_count += 1
-            resolved_details.append({
-                "session_id": session_id,
-                "paused_agent_id": paused_agent_id,
-                "phase": phase,
-                "reason": "inactive_too_long"
-            })
-            
-            logger.info(f"Auto-resolved stuck session {session_id[:16]}... (paused_agent: {paused_agent_id}, phase: {phase})")
-        
-        conn.commit()
-        
+            session_id = session.get("session_id")
+            paused_agent_id = session.get("paused_agent_id")
+            phase = session.get("phase")
+
+            if not session_id:
+                continue
+
+            # Check if synthesis was reached with agreement
+            # For now, just mark as failed (can enhance later to check for agreement)
+            try:
+                await update_session_status_async(session_id, "failed")
+
+                # Add failure message
+                failure_reason = f"Session auto-resolved: inactive for >{STUCK_SESSION_THRESHOLD.total_seconds()/60:.0f} minutes"
+                try:
+                    await add_message_async(
+                        session_id=session_id,
+                        agent_id="system",
+                        message_type="failed",
+                        reasoning=failure_reason,
+                    )
+                except Exception as msg_error:
+                    logger.warning(f"Could not add failure message: {msg_error}")
+
+                resolved_count += 1
+                resolved_details.append({
+                    "session_id": session_id,
+                    "paused_agent_id": paused_agent_id,
+                    "phase": phase,
+                    "reason": "inactive_too_long"
+                })
+
+                logger.info(f"Auto-resolved stuck session {session_id[:16]}... as FAILED (paused_agent: {paused_agent_id}, phase: {phase})")
+
+            except Exception as e:
+                logger.warning(f"Could not resolve session {session_id}: {e}")
+
         return {
             "resolved_count": resolved_count,
             "resolved_sessions": resolved_details,
             "message": f"Auto-resolved {resolved_count} stuck session(s)"
         }
-        
+
     except Exception as e:
         logger.error(f"Error auto-resolving stuck sessions: {e}", exc_info=True)
-        if conn is not None:
-            try:
-                conn.rollback()
-            except Exception as rollback_error:
-                logger.warning(f"Error rolling back transaction: {rollback_error}")
         return {
             "resolved_count": 0,
             "error": str(e),
             "message": "Failed to auto-resolve stuck sessions"
         }
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception as close_error:
-                logger.warning(f"Error closing database connection: {close_error}")
 
 
 async def check_and_resolve_stuck_sessions() -> Dict[str, Any]:
     """
     Check for stuck sessions and auto-resolve them.
     Called automatically when checking for active sessions.
-    
+
     Returns:
         Dict with resolution results
     """
@@ -146,4 +155,3 @@ async def check_and_resolve_stuck_sessions() -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Could not auto-resolve stuck sessions: {e}")
         return {"resolved_count": 0, "error": str(e)}
-

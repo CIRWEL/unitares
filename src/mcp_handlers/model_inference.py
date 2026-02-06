@@ -84,7 +84,7 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     task_type = arguments.get("task_type", "reasoning")  # reasoning, generation, analysis
     max_tokens = int(arguments.get("max_tokens", 500))  # Must be int for Ollama
     temperature = float(arguments.get("temperature", 0.7))
-    privacy = arguments.get("privacy", "auto")  # auto, local, cloud
+    privacy = arguments.get("privacy", "local")  # local (Ollama default), auto, cloud
     provider = arguments.get("provider", "auto")  # auto, hf, gemini, ollama
     
     # Privacy routing: Force local if requested

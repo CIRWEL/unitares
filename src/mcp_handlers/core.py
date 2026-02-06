@@ -334,7 +334,7 @@ async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequenc
     return success_response(standardized_metrics)
 
 
-@mcp_tool("simulate_update", timeout=30.0)
+@mcp_tool("simulate_update", timeout=30.0, register=False)
 async def handle_simulate_update(arguments: ToolArgumentsDict) -> Sequence[TextContent]:
     """Handle simulate_update tool - dry-run governance cycle without persisting state.
 
@@ -777,11 +777,11 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                 f"Agent '{agent_id}' is paused. Resume it first before processing updates.",
                 recovery={
                     "action": "Check your state and resume when ready",
-                    "related_tools": ["get_governance_metrics", "direct_resume_if_safe"],
+                    "related_tools": ["get_governance_metrics", "quick_resume", "self_recovery"],
                     "workflow": (
                         "1. Check your state with get_governance_metrics "
                         "2. Reflect on what triggered the pause "
-                        "3. Use direct_resume_if_safe when ready (coherence > 0.40, risk_score < 0.60)"
+                        "3. Use quick_resume() if safe (coherence > 0.60, risk < 0.40), otherwise use self_recovery(action='resume')"
                     )
                 },
                 context={
@@ -1225,6 +1225,26 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             # Collect any warnings
             warnings = []
             
+            # Check for loop cooldown status (make loop detection visible)
+            loop_info = None
+            if meta and hasattr(meta, 'loop_cooldown_until') and meta.loop_cooldown_until:
+                try:
+                    from datetime import datetime
+                    cooldown_until = datetime.fromisoformat(meta.loop_cooldown_until)
+                    now = datetime.now()
+                    if now < cooldown_until:
+                        remaining_seconds = (cooldown_until - now).total_seconds()
+                        loop_info = {
+                            "active": True,
+                            "cooldown_remaining_seconds": round(remaining_seconds, 1),
+                            "message": f"Loop detection cooldown active. Wait {remaining_seconds:.1f}s before rapid updates."
+                        }
+                    else:
+                        # Cooldown expired, clear it
+                        meta.loop_cooldown_until = None
+                except (ValueError, TypeError, AttributeError):
+                    pass
+            
             # Check for default agent_id warning
             try:
                 default_warning = mcp_server.check_agent_id_default(agent_id)
@@ -1238,6 +1258,10 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                 logger.warning(f"Could not check agent_id default: {e}")
             # Build response
             response_data = result.copy()
+            
+            # Add loop detection info to response if present
+            if loop_info:
+                response_data['loop_detection'] = loop_info
             
             # STANDARDIZED METRIC REPORTING - Always include agent_id and context
             # Standardize metrics reporting with agent_id and timestamp

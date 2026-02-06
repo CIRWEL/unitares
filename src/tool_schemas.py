@@ -328,7 +328,12 @@ DEPENDENCIES:
 - No dependencies - safe to call anytime""",
             inputSchema={
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+}
             }
         ),
         Tool(
@@ -416,7 +421,12 @@ DEPENDENCIES:
 - Recommended: Run this tool first when onboarding to a new workspace""",
             inputSchema={
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+}
             }
         ),
         Tool(
@@ -634,7 +644,12 @@ DEPENDENCIES:
 - No dependencies - safe to call anytime""",
             inputSchema={
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+}
             }
         ),
         Tool(
@@ -682,7 +697,12 @@ EXAMPLE REQUEST:
 NOTE: This tool helps agents quickly verify they can use MCP tools. If status is "disconnected", check your MCP configuration.""",
             inputSchema={
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+}
             }
         ),
         Tool(
@@ -1258,6 +1278,11 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "lite": {
                         "type": "boolean",
                         "description": "Use lite mode for a compact, fast response (default: True)",
@@ -1639,6 +1664,11 @@ USE CASES:
 - High-risk recovery scenarios
 - Manual escalation when direct_resume_if_safe is not appropriate
 
+REVIEWER SELECTION:
+- Random from eligible agents (no arbitrary metrics)
+- Self-review fallback if no other agents available
+- User can manually facilitate if needed
+
 RETURNS:
 {
   "success": true,
@@ -1659,14 +1689,13 @@ RELATED TOOLS:
 EXAMPLE REQUEST:
 {
   "agent_id": "test_agent_001",
-  "reason": "Circuit breaker triggered (risk_score=0.72)",
-  "reviewer_mode": "auto"
+  "reason": "Circuit breaker triggered (risk_score=0.72)"
 }
 
 DEPENDENCIES:
 - Requires: agent_id (auto-injected from session binding)
-- Optional: reviewer_mode ("auto" | "peer" | "self"), reviewer_agent_id
-- Note: submit_thesis/antithesis/synthesis remain archived""",
+- Optional: reviewer_mode ("auto" | "self")
+- Then use: submit_thesis, submit_antithesis, submit_synthesis""",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1684,12 +1713,8 @@ DEPENDENCIES:
                     },
                     "reviewer_mode": {
                         "type": "string",
-                        "description": "Reviewer selection mode: auto | peer | self",
-                        "enum": ["auto", "peer", "self"]
-                    },
-                    "reviewer_agent_id": {
-                        "type": "string",
-                        "description": "Specific reviewer agent_id (optional)"
+                        "description": "Reviewer selection: auto (random from eligible, self fallback) | self (self-review only)",
+                        "enum": ["auto", "self"]
                     },
                     "session_type": {
                         "type": "string",
@@ -1718,6 +1743,127 @@ DEPENDENCIES:
                     }
                 },
                 "required": []  # agent_id optional - injected from MCP session binding
+            }
+        ),
+        Tool(
+            name="submit_thesis",
+            description="""Submit thesis in a dialectic session. Called by paused agent.
+
+PARAMETERS:
+- session_id: The dialectic session ID
+- root_cause: Your analysis of why you were paused
+- proposed_conditions: List of conditions for resumption
+- reasoning: Explanation supporting your thesis
+
+RETURNS:
+{
+  "success": true,
+  "message": "Thesis submitted",
+  "session_id": "string",
+  "phase": "antithesis",
+  "next_step": "Reviewer should submit antithesis"
+}""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
+                    "session_id": {"type": "string", "description": "Dialectic session ID"},
+                    "root_cause": {"type": "string", "description": "Your analysis of why you were paused"},
+                    "proposed_conditions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of proposed conditions for resumption"
+                    },
+                    "reasoning": {"type": "string", "description": "Explanation supporting your thesis"}
+                },
+                "required": ["session_id", "root_cause", "proposed_conditions", "reasoning"]
+            }
+        ),
+        Tool(
+            name="submit_antithesis",
+            description="""Submit antithesis in a dialectic session. Called by reviewer.
+
+PARAMETERS:
+- session_id: The dialectic session ID
+- observed_metrics: Your observations about the paused agent's state
+- concerns: List of concerns about the thesis
+- reasoning: Your perspective on the situation
+
+RETURNS:
+{
+  "success": true,
+  "message": "Antithesis submitted",
+  "session_id": "string",
+  "phase": "synthesis",
+  "next_step": "Either agent can submit synthesis"
+}""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
+                    "session_id": {"type": "string", "description": "Dialectic session ID"},
+                    "observed_metrics": {"type": "object", "description": "Observations about paused agent state"},
+                    "concerns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of concerns about the thesis"
+                    },
+                    "reasoning": {"type": "string", "description": "Your perspective on the situation"}
+                },
+                "required": ["session_id", "concerns", "reasoning"]
+            }
+        ),
+        Tool(
+            name="submit_synthesis",
+            description="""Submit synthesis proposal in a dialectic session. Either agent can submit.
+
+PARAMETERS:
+- session_id: The dialectic session ID
+- proposed_conditions: Merged/negotiated conditions
+- agrees: Whether you agree with the current synthesis direction
+- reasoning: Explanation of your synthesis
+
+RETURNS (if both agree and converge):
+{
+  "success": true,
+  "converged": true,
+  "resolution": {...},
+  "action": "resume"
+}
+
+RETURNS (if negotiation continues):
+{
+  "success": true,
+  "converged": false,
+  "synthesis_round": N,
+  "next_step": "Other agent responds with synthesis"
+}""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
+                    "session_id": {"type": "string", "description": "Dialectic session ID"},
+                    "proposed_conditions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Merged/negotiated conditions"
+                    },
+                    "agrees": {"type": "boolean", "description": "Whether you agree with current direction"},
+                    "reasoning": {"type": "string", "description": "Explanation of your synthesis"}
+                },
+                "required": ["session_id", "proposed_conditions", "agrees", "reasoning"]
             }
         ),
         # DEPRECATED: direct_resume_if_safe removed - use quick_resume or self_recovery_review instead
@@ -2800,6 +2946,11 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "agent_ids": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -2895,6 +3046,11 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "essential_only": {
                         "type": ["boolean", "string"],
                         "description": "If true, return only Tier 1 (essential) tools (~10). Shortcut for tier='essential'.",
@@ -2964,6 +3120,11 @@ RETURNS:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "tool_name": {
                         "type": "string",
                         "description": "Canonical tool name (e.g. 'process_agent_update')"
@@ -3161,6 +3322,11 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "session_id": {
                         "type": "string",
                         "description": "Dialectic session ID (optional if agent_id provided)"
@@ -3224,6 +3390,11 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "agent_id": {
                         "type": "string",
                         "description": "Filter by agent (either requestor or reviewer)"
@@ -3535,6 +3706,11 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "query": {
                         "type": "string",
                         "description": "Optional text query. Uses SQLite FTS5 when available; otherwise performs a bounded substring scan. If semantic=true, uses vector embeddings for semantic similarity search. Multi-term queries (e.g., 'coherence basin') use OR operator by default - finds discoveries matching ANY term. If 0 results, automatically retries with individual terms (more permissive)."
@@ -3720,7 +3896,12 @@ DEPENDENCIES:
 - No parameters required""",
             inputSchema={
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+}
             }
         ),
         Tool(
@@ -3868,6 +4049,11 @@ DEPENDENCIES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "discovery_id": {
                         "type": "string",
                         "description": "Discovery ID to get full details for"
@@ -4059,6 +4245,11 @@ RELATED TOOLS:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "dry_run": {
                         "type": "boolean",
                         "description": "If true, preview changes without applying them. Default: true.",
@@ -4106,7 +4297,12 @@ RELATED TOOLS:
 - list_knowledge_graph: Basic knowledge graph stats""",
             inputSchema={
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+},
                 "required": []
             }
         ),
@@ -4165,8 +4361,8 @@ EXAMPLE RESPONSE:
 }
 
 PRIVACY:
-- Set privacy="local" to force Ollama routing (sensitive data stays local)
-- Default: auto-routing (system optimizes for cost/performance)
+- Default: local (Ollama routing - data stays on your machine)
+- Set privacy="cloud" or privacy="auto" to use external providers
 
 RELATED TOOLS:
 - get_governance_metrics: Check Energy after model calls
@@ -4219,9 +4415,9 @@ DEPENDENCIES:
                     },
                     "privacy": {
                         "type": "string",
-                        "description": "Privacy mode. Options: auto (system chooses), local (force Ollama routing). Default: auto",
-                        "default": "auto",
-                        "enum": ["auto", "local", "cloud"]
+                        "description": "Privacy mode. Options: local (Ollama, default), auto (system chooses), cloud (external providers)",
+                        "default": "local",
+                        "enum": ["local", "auto", "cloud"]
                     }
                 },
                 "required": ["prompt"]
@@ -4476,6 +4672,11 @@ EXAMPLE: knowledge(action="search", query="authentication bugs")
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "action": {
                         "type": "string",
                         "enum": ["store", "search", "get", "list", "update", "details", "note", "cleanup", "stats"],
@@ -4512,6 +4713,11 @@ EXAMPLE: agent(action="list")
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "action": {
                         "type": "string",
                         "enum": ["list", "get", "update", "archive", "delete"],
@@ -4543,6 +4749,11 @@ EXAMPLE: calibration(action="check")
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "action": {
                         "type": "string",
                         "enum": ["check", "update", "backfill", "rebuild"],
@@ -4577,6 +4788,11 @@ EXAMPLES:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "protocol": {
                         "type": "string",
                         "enum": ["void_alert", "state_announce", "coherence_report", "boundary_contract", "governance_action"],
@@ -4615,6 +4831,11 @@ RETURNS (varies by action):
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "client_session_id": {
+                        "type": "string",
+                        "description": "Session continuity token from onboard(). Include in all calls."
+                    },
+
                     "action": {
                         "type": "string",
                         "enum": ["check", "quick", "review"],

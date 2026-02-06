@@ -131,6 +131,34 @@ server = Server("governance-monitor-v1")
 # Current process PID
 CURRENT_PID = os.getpid()
 
+# ============================================================================
+# MCP Resource Registration (SKILL.md)
+# ============================================================================
+
+@server.list_resources()
+async def list_resources():
+    from mcp.types import Resource
+    return [
+        Resource(
+            uri="unitares://skill",
+            name="UNITARES Governance SKILL",
+            description="Governance framework orientation document for agents",
+            mimeType="text/markdown",
+        )
+    ]
+
+@server.read_resource()
+async def read_resource(uri):
+    from mcp.types import TextResourceContents
+    if str(uri) == "unitares://skill":
+        skill_path = Path(project_root) / "skills" / "unitares-governance" / "SKILL.md"
+        if skill_path.exists():
+            content = skill_path.read_text()
+        else:
+            content = "# UNITARES Governance\n\nSKILL.md not found. Use onboard() to get started."
+        return content
+    raise ValueError(f"Unknown resource: {uri}")
+
 # -----------------------------------------------------------------------------
 # Optional: STDIO -> SSE Proxy Mode
 #
@@ -887,8 +915,9 @@ async def load_metadata_async() -> None:
     if _metadata_loaded:
         return
 
-    # PostgreSQL is now the sole backend
-    db_backend = os.environ.get("DB_BACKEND", "postgres").strip().lower()
+    # Support both PostgreSQL and SQLite backends
+    db_backend = os.environ.get("DB_BACKEND", "sqlite").strip().lower()
+
     if db_backend == "postgres":
         try:
             result = await _load_metadata_from_postgres_async()
@@ -900,10 +929,20 @@ async def load_metadata_async() -> None:
             return
         except Exception as e:
             logger.error(f"Could not load metadata from PostgreSQL: {e}", exc_info=True)
-            raise  # Don't fall back to SQLite - PostgreSQL is required
-    
-    # Legacy SQLite/JSON fallback removed - PostgreSQL is required
-    raise RuntimeError("PostgreSQL backend is required. DB_BACKEND must be 'postgres'")
+            logger.info("Falling back to SQLite backend")
+            # Fall through to SQLite
+
+    # SQLite backend (default)
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _load_metadata_from_sqlite)
+        _metadata_cache_state["last_load_time"] = time.time()
+        _metadata_cache_state["dirty"] = False
+        _metadata_loaded = True
+        logger.debug(f"Loaded {len(agent_metadata)} agents from SQLite (async)")
+    except Exception as e:
+        logger.error(f"Could not load metadata from SQLite: {e}", exc_info=True)
+        raise
 
 
 def ensure_metadata_loaded() -> None:
@@ -1076,20 +1115,21 @@ def load_metadata() -> None:
     """
     global agent_metadata
 
-    # PostgreSQL is now the sole backend
-    # For PostgreSQL backend, sync loading is problematic (event loop conflicts).
-    # Just use in-memory cache if available; async context will load properly.
-    db_backend = os.environ.get("DB_BACKEND", "postgres").strip().lower()
+    # Support both PostgreSQL and SQLite backends
+    db_backend = os.environ.get("DB_BACKEND", "sqlite").strip().lower()
+
     if db_backend == "postgres":
-        # If we already have metadata in memory, use it (async path will refresh)
+        # For PostgreSQL backend, sync loading is problematic (event loop conflicts).
+        # Just use in-memory cache if available; async context will load properly.
         if agent_metadata:
             logger.debug(f"Using in-memory metadata cache ({len(agent_metadata)} agents)")
             return
         # PostgreSQL backend requires async loading - raise error if sync is called
         raise RuntimeError("PostgreSQL backend requires async load_metadata_async(). Sync load_metadata() is not supported.")
-    
-    # Legacy SQLite/JSON fallback removed
-    raise RuntimeError("PostgreSQL backend is required. DB_BACKEND must be 'postgres'")
+
+    # SQLite backend (default)
+    _load_metadata_from_sqlite()
+    logger.debug(f"Loaded {len(agent_metadata)} agents from SQLite (sync)")
 
 
 async def schedule_metadata_save(force: bool = False) -> None:
@@ -3275,6 +3315,18 @@ async def main():
                 logger.info(f"Restored {loaded_sessions} active dialectic session(s) from disk")
         except Exception as e:
             logger.warning(f"Could not load dialectic sessions: {e}", exc_info=True)
+
+        try:
+            # Run dialectic data consolidation to ensure JSON backups exist for all SQLite sessions
+            # This prevents data loss by maintaining dual storage
+            from src.mcp_handlers.dialectic_session import run_startup_consolidation
+            consolidation_result = await run_startup_consolidation()
+            if consolidation_result.get('exported', 0) > 0:
+                logger.info(f"Dialectic consolidation: exported {consolidation_result['exported']} sessions to JSON backup")
+            if consolidation_result.get('synced', 0) > 0:
+                logger.info(f"Dialectic consolidation: synced {consolidation_result['synced']} sessions from JSON to SQLite")
+        except Exception as e:
+            logger.warning(f"Could not run dialectic consolidation: {e}", exc_info=True)
     
     try:
         async with stdio_server() as (read_stream, write_stream):
