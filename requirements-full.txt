@@ -31,6 +31,12 @@ redis>=5.0.0
 # Semantic search support (optional - for knowledge graph semantic queries)
 sentence-transformers>=2.2.0
 
+# Numerical computation (used by governance_monitor, calibration, etc.)
+numpy>=1.24.0
+
+# HTTP client (used by integration tests)
+requests>=2.31.0
+
 # Testing and coverage (optional but included for convenience)
 pytest>=7.4.0
 pytest-cov>=4.1.0
