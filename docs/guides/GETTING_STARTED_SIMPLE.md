@@ -107,7 +107,7 @@ A: No. The system is opt-in. Use it when it helps.
 |------|---------|
 | "Governance" means enforcement | It's just feedback — no blocking or restrictions |
 | You need to understand EISV | You don't. Just use the verdict (PROCEED/PAUSE/CAUTION) |
-| 85+ tools = complexity | You need 3 tools. The rest are for edge cases |
+| 31 tools = complexity | You need 3 tools. The rest are for edge cases |
 | "Thermodynamic" means physics | It's a metaphor. Energy = engagement, Entropy = scatter |
 | Identity is complicated | You just have a name. The rest is internal plumbing |
 | Self-reporting must be accurate | Rough estimates work fine. Don't overthink complexity values |

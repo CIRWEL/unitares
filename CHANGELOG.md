@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.2] - 2026-02-06
+
+### Changed — Architecture Refactoring (4 Refactors)
+
+Four internal refactors to reduce boilerplate, improve clarity, and make the tool system
+more maintainable. No breaking changes — all 31 tools, aliases, and behaviors preserved.
+
+#### Refactor 1: Unified ToolDefinition Registry
+- **Replaced 4 separate dicts** (`_TOOL_REGISTRY`, `_TOOL_TIMEOUTS`, `_TOOL_DESCRIPTIONS`,
+  `_TOOL_METADATA`) with a single `ToolDefinition` dataclass + `_TOOL_DEFINITIONS` registry
+- Backward-compatible accessor functions preserved (`get_tool_registry()`, etc.)
+- **File:** `src/mcp_handlers/decorators.py`
+
+#### Refactor 2: Declarative Action Router
+- **New `action_router()`** function creates consolidated tools from `actions: Dict[str, Callable]`
+- Supports `default_action`, `param_maps` (per-action parameter remapping), and `examples`
+- Rewrote all 7 consolidated handlers (knowledge, agent, calibration, config, export, observe, pi)
+- **`consolidated.py` reduced from 479 → 245 lines** — no more if/elif chains
+- **Files:** `src/mcp_handlers/decorators.py`, `src/mcp_handlers/consolidated.py`
+
+#### Refactor 3: Dispatch Middleware Pipeline
+- **Extracted `dispatch_tool()`** from 440-line monolith into 8 composable middleware steps
+- Each step: `async (name, arguments, ctx) → (name, arguments, ctx) | list[TextContent]`
+- Steps: resolve_identity → verify_trajectory → unwrap_kwargs → resolve_alias →
+  inject_identity → validate_params → check_rate_limit → track_patterns
+- `DispatchContext` dataclass carries state between steps
+- **`dispatch_tool()` reduced from ~440 → ~50 lines**
+- **Files:** `src/mcp_handlers/middleware.py` (NEW), `src/mcp_handlers/__init__.py`
+
+#### Refactor 4: Response Formatter Extraction
+- **Extracted response mode branching** (auto/minimal/compact/standard/full) from `core.py`
+- `format_response()` function handles all mode filtering and context stripping
+- **~190 lines removed from `core.py`**, replaced with 10-line function call
+- **Files:** `src/mcp_handlers/response_formatter.py` (NEW), `src/mcp_handlers/core.py`
+
+### Added — UX Friction Fixes (v2.6.1 session)
+- **Dashboard overhaul** — live EISV sparklines, dialectic timeline, trust tier badges
+- **Name-based identity resolution** (PATH 2.5) — agents reconnect by name, not session key
+- **Observe tool fix** — `target_agent_id` supports labels, proper schema
+
+### Tests
+- 2,194 tests passing, 0 failures, 43% coverage
+
+### Files Changed
+- `src/mcp_handlers/decorators.py` — ToolDefinition dataclass + action_router
+- `src/mcp_handlers/consolidated.py` — Rewritten with action_router (479→245 lines)
+- `src/mcp_handlers/middleware.py` — NEW: 8-step dispatch pipeline
+- `src/mcp_handlers/__init__.py` — Simplified dispatch_tool (~440→~50 lines)
+- `src/mcp_handlers/response_formatter.py` — NEW: response mode filtering
+- `src/mcp_handlers/core.py` — Response formatting extracted
+
+---
+
 ## [2.6.1] - 2026-02-06
 
 ### Added — Name-Based Identity Resolution (PATH 2.5)
@@ -56,7 +109,7 @@ PATH 3: Create new UUID                  → last resort
 - Cleaned up test ghost agents (Tessera_* suffixed entries)
 
 ### Tests
-- 1,907 tests passing, 0 failures, 41% coverage
+- 1,907 tests passing, 0 failures, 41% coverage (at time of release; see v2.6.2 for latest)
 
 ### Files Changed
 - `src/mcp_handlers/identity_v2.py` — +162 lines (resolve_by_name_claim + PATH 2.5 wiring)
@@ -876,8 +929,9 @@ python3 /Users/cirwel/scripts/test_enhanced_locking.py
 
 ## Known Issues
 
-### v2.5.5
-- None known - all systems operational ✅
+### v2.6.2
+- `test_get_governance_metrics` flaky when run with full suite (test ordering issue)
+- Knowledge graph doesn't close loops well — resolve or archive discoveries manually
 
 ### Workarounds
 All known issues have fallback behavior and don't block functionality.
@@ -891,10 +945,10 @@ All known issues have fallback behavior and don't block functionality.
 - Threshold tuning — domain-specific drift thresholds need real-world calibration
 
 ### Under Consideration
+- WebSocket dashboard updates (replace polling)
+- CIRS v1.0 — full multi-agent oscillation damping
 - Semantic ethical drift detection (beyond parameter changes)
-- Multi-agent coordination protocols
-- Web-based dashboard for fleet monitoring
-- Production hardening
+- Production hardening and horizontal scaling
 
 ---
 
