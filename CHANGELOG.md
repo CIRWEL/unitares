@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.3] - 2026-02-06
+
+### Changed — Dialectic Audit & Cleanup
+
+- **Fixed 16 misleading `sqlite_*` import aliases** → `pg_*` across 3 dialectic handler files
+  (backend has been PostgreSQL-only since Feb 2026)
+- **Made `llm_assisted_dialectic` reachable** via `request_dialectic_review(reviewer_mode='llm')`
+- **Consolidated `get_dialectic_session` + `list_dialectic_sessions`** into
+  `dialectic(action='get/list')` via action_router — 31 → 30 registered tools
+- **Implemented EISV governance update** from Pi anima sensor sync:
+  `pi(action='sync_eisv', update_governance=true)` now feeds sensor state into governance engine
+- **Removed dead SSE code** — 3 deprecated functions (~80 lines) from mcp_server.py
+- **Fixed stale comments/metadata** across tool_schemas, admin, tool_modes, tool_stability
+
+### Tests
+- 2,602 tests passing, 0 failures, 49% coverage
+
+### Files Changed
+- `src/mcp_handlers/dialectic.py` — pg_ aliases, LLM reviewer, register=False for get/list
+- `src/mcp_handlers/dialectic_session.py` — pg_ aliases
+- `src/mcp_handlers/dialectic_reviewer.py` — pg_ aliases
+- `src/mcp_handlers/consolidated.py` — Added dialectic action_router
+- `src/mcp_handlers/pi_orchestration.py` — EISV sync governance update
+- `src/mcp_handlers/tool_stability.py` — Dialectic aliases, stability tiers
+- `src/tool_schemas.py` — Dialectic consolidated schema, LLM enum, stale refs
+- `src/tool_modes.py` — Dialectic categorization update
+- `src/mcp_server.py` — Removed dead SSE code
+
+---
+
 ## [2.6.2] - 2026-02-06
 
 ### Changed — Architecture Refactoring (4 Refactors)

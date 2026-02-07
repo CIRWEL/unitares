@@ -8,7 +8,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                    MCP Server (mcp_server.py)                   │
 │  - Streamable HTTP transport                                    │
-│  - 31 registered tools + aliases (v2.6.2)                       │
+│  - 30 registered tools + aliases (v2.6.3)                       │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Handlers (mcp_handlers/)                      │
 │  - core.py: process_agent_update, get_governance_metrics        │

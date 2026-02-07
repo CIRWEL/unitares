@@ -394,4 +394,4 @@ Governance should be **informative, not restrictive**. Agents log activity, rece
 
 ---
 
-**Last Updated:** 2026-02-06 (v2.6.2: 30 tools, action_router, middleware pipeline, 2,194 tests)
+**Last Updated:** 2026-02-06 (v2.6.3: 30 tools, dialectic audit, EISV sensor sync, 2,602 tests)

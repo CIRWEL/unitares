@@ -95,7 +95,7 @@ Single source of truth = canonical MCP = less confusion = better governance.
 ---
 
 **Written by:** Claude Code (Dec 10, 2025)
-**Updated:** v2.6.2 (Feb 6, 2026) - 31 registered tools, action_router, middleware pipeline
+**Updated:** v2.6.3 (Feb 6, 2026) - 30 registered tools, action_router, middleware pipeline
 **For:** Future Claude Code agents
 **Status:** This is the canonical approach - trust it!
 

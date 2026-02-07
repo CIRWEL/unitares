@@ -142,7 +142,7 @@ For REST clients, include an `X-Session-ID` header to maintain identity across c
 python -m pytest tests/ -v
 ```
 
-2,194 tests, 43% coverage. Core modules: governance_monitor 83%, trajectory_identity 88%, workspace_health 83%.
+2,602 tests, 49% coverage. Core modules: governance_monitor 83%, trajectory_identity 88%, workspace_health 83%.
 
 ---
 
@@ -163,4 +163,4 @@ Built by [@CIRWEL](https://github.com/CIRWEL). Also building [Lumen/anima-mcp](h
 
 MIT License with Attribution — see [LICENSE](LICENSE).
 
-**v2.6.2** | 2026-02-06
+**v2.6.3** | 2026-02-06

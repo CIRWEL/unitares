@@ -1,4 +1,4 @@
-# MCP System Evolution: v1.0.0 → v2.6.2
+# MCP System Evolution: v1.0.0 → v2.6.3
 
 **Complete history of how the UNITARES Governance MCP system has evolved**
 
@@ -25,7 +25,8 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 - **v2.5.9** (Feb 2026) - Agent circuit breaker enforcement (paused agents actually blocked)
 - **v2.6.0** (Feb 2026) - Major cleanup: ~4,200 lines dead code removed, tool surface 49→29, PostgreSQL dialectic, 1,798 tests at 40% coverage
 - **v2.6.1** (Feb 2026) - Name-based identity (PATH 2.5), observe tool fix, dashboard overhaul, trust tiers
-- **v2.6.2** (Feb 2026) - Architecture refactoring: ToolDefinition dataclass, action_router, dispatch middleware, response formatter. 30 tools, 2,194 tests at 43% coverage
+- **v2.6.2** (Feb 2026) - Architecture refactoring: ToolDefinition dataclass, action_router, dispatch middleware, response formatter. 31 tools, 2,194 tests at 43% coverage
+- **v2.6.3** (Feb 2026) - Dialectic audit: sqlite→pg aliases, LLM reviewer, dialectic consolidation (30 tools), EISV sensor sync, dead code removal. 2,602 tests at 49% coverage
 
 ---
 
@@ -388,7 +389,8 @@ v2.5.6:  SSH-based Pi restart, 310+ tests
 v2.5.7:  Identity persistence fix
 v2.6.0:  Major cleanup, 49→29 tools, 1,798 tests
 v2.6.1:  Name-based identity (PATH 2.5), dashboard overhaul
-v2.6.2:  Architecture refactoring, 30 tools, 2,194 tests
+v2.6.2:  Architecture refactoring, 31 tools, 2,194 tests
+v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 2,602 tests
 ```
 
 ### Tool Count Evolution
@@ -401,7 +403,8 @@ v2.6.2:  Architecture refactoring, 30 tools, 2,194 tests
 - **v2.4.0:** 43 tools (refinements)
 - **v2.5.5:** 85+ tools (+42 tools: Pi orchestration, trajectory, recovery, unified tools)
 - **v2.6.0:** 29 tools (85+ consolidated to 29 public, admin/internal hidden)
-- **v2.6.2:** 30 tools (+ 2 new registered tools, 49 consolidated sub-handlers)
+- **v2.6.2:** 31 tools (+ 2 new registered tools, 49 consolidated sub-handlers)
+- **v2.6.3:** 30 tools (dialectic consolidated, -1 tool)
 
 ### Performance Improvements
 
@@ -445,9 +448,9 @@ v2.6.2:  Architecture refactoring, 30 tools, 2,194 tests
 - ✅ Automatic calibration from objective outcomes
 - ✅ Web dashboard (EISV sparklines, dialectic timeline, trust tier badges)
 - ✅ Pi/Lumen orchestration via anima-mcp
-- ✅ **2,194 tests** with 43% overall coverage (core modules 83-88%)
+- ✅ **2,602 tests** with 49% overall coverage (core modules 83-88%)
 
-### Architecture (v2.6.2)
+### Architecture (v2.6.3)
 
 - **Declarative tool registration** — `ToolDefinition` dataclass, `action_router()` for consolidated tools
 - **Middleware pipeline** — 8-step dispatch: identity → trajectory → kwargs → alias → inject → validate → rate limit → patterns
@@ -488,5 +491,5 @@ v2.6.2:  Architecture refactoring, 30 tools, 2,194 tests
 ---
 
 **Last Updated:** February 6, 2026
-**Current Version:** v2.6.2
-**Total Evolution:** 1.0.0 → 2.6.2 (21 versions)
+**Current Version:** v2.6.3
+**Total Evolution:** 1.0.0 → 2.6.3 (22 versions)

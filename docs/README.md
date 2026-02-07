@@ -21,7 +21,7 @@
 | `list_tools()` | Tool catalog (use MCP tool) |
 | [CIRCUIT_BREAKER_DIALECTIC](CIRCUIT_BREAKER_DIALECTIC.md) | Circuit breaker + recovery protocol |
 | [database_architecture](database_architecture.md) | PostgreSQL + Redis architecture |
-| [MCP_SYSTEM_EVOLUTION](MCP_SYSTEM_EVOLUTION.md) | Version history (v1.0 → v2.6.2) |
+| [MCP_SYSTEM_EVOLUTION](MCP_SYSTEM_EVOLUTION.md) | Version history (v1.0 → v2.6.3) |
 
 ---
 
@@ -44,9 +44,9 @@ v2.6.2 has 30 tools + aliases (status, list_agents, observe_agent, checkin, etc.
 | `governance_monitor.py` | 83% |
 | `trajectory_identity.py` | 88% |
 | `workspace_health.py` | 83% |
-| **Overall** | **43%** |
+| **Overall** | **49%** |
 
-2,194 tests passing as of v2.6.2 (Feb 2026).
+2,602 tests passing as of v2.6.3 (Feb 2026).
 
 ---
 
@@ -83,7 +83,7 @@ governance-mcp-v1/
 ├── skills/                     # SKILL.md for agent onboarding
 ├── docs/                       # Documentation
 ├── data/                       # Runtime data (agents/, knowledge/)
-└── tests/                      # 2,194 tests, 43% coverage
+└── tests/                      # 2,602 tests, 49% coverage
 ```
 
 ---
