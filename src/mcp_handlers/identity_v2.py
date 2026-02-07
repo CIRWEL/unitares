@@ -514,6 +514,7 @@ async def resolve_session_identity(
                     "created_at": datetime.now().isoformat(),
                     "agent_id": agent_id,  # Human-readable label (model+date)
                     "model_type": model_type,
+                    "total_updates": 0,  # Initialize counter for persistence
                 }
             )
 
@@ -873,6 +874,7 @@ async def ensure_agent_persisted(agent_uuid: str, session_key: str) -> bool:
             metadata={
                 "source": "lazy_creation",
                 "created_at": datetime.now().isoformat(),
+                "total_updates": 0,  # Initialize counter for persistence
             }
         )
 
@@ -1439,7 +1441,7 @@ async def migrate_from_v1(old_session_identities: Dict[str, Dict]) -> int:
             await db.upsert_identity(
                 agent_id=agent_uuid,
                 api_key_hash="",
-                metadata={"migrated_from": "v1"}
+                metadata={"migrated_from": "v1", "total_updates": 0}
             )
 
             # Create session
