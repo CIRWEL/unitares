@@ -46,10 +46,14 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
     LITE MODE: Use lite=true for minimal response (~1KB vs ~15KB)
     """
     try:
-        # Reload metadata to ensure we have latest state (non-blocking)
-        import asyncio
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, mcp_server.load_metadata)
+        # Reload metadata from DB to pick up external changes (archival, etc.)
+        import time
+        try:
+            cache_age = time.time() - mcp_server._metadata_cache_state.get("last_load_time", 0)
+            if cache_age > 60:  # Refresh from DB at most every 60s
+                await mcp_server.load_metadata_async(force=True)
+        except (AttributeError, TypeError):
+            pass  # Mock or missing cache state — skip reload
         
         # LITE MODE: Minimal response for local/smaller models (DEFAULT)
         lite_explicit = "lite" in arguments
@@ -1050,7 +1054,7 @@ async def handle_archive_old_test_agents(arguments: Dict[str, Any]) -> Sequence[
     })
 
 
-@mcp_tool("archive_orphan_agents", timeout=30.0, rate_limit_exempt=True, register=False)
+@mcp_tool("archive_orphan_agents", timeout=30.0, rate_limit_exempt=True)
 async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Aggressively archive orphan agents to prevent proliferation.
 

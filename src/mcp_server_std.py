@@ -903,16 +903,17 @@ def _acquire_metadata_read_lock(timeout: float = 2.0) -> tuple[int, bool]:
     return lock_fd, lock_acquired
 
 
-async def load_metadata_async() -> None:
+async def load_metadata_async(force: bool = False) -> None:
     """
     Async version of load_metadata() for use in async contexts.
 
     Directly calls the async PostgreSQL loader without sync wrappers.
+    Set force=True to reload from DB even if already loaded (picks up external changes).
     """
     global agent_metadata, _metadata_loaded
 
-    # Fast path: already loaded
-    if _metadata_loaded:
+    # Fast path: already loaded (unless forced)
+    if _metadata_loaded and not force:
         return
 
     # Support both PostgreSQL and SQLite backends

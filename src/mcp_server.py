@@ -2478,6 +2478,26 @@ async def main():
                     if detected_client:
                         client_hint_token = set_transport_client_hint(detected_client)
                         logger.debug(f"[/mcp] Detected client_hint={detected_client} from UA")
+
+                    # Auto-resume identity from X-Agent-Name header
+                    # This allows MCP clients to reconnect as a named agent across sessions
+                    x_agent_name = headers.get("x-agent-name")
+                    if x_agent_name:
+                        try:
+                            from src.mcp_handlers.identity_v2 import resolve_by_name_claim
+                            name_result = await resolve_by_name_claim(x_agent_name, effective_session_key)
+                            if name_result:
+                                # Update context with resolved agent ID
+                                reset_session_context(session_context_token)
+                                session_context_token = set_session_context(
+                                    session_key=effective_session_key,
+                                    client_session_id=x_session_id or x_client_id or mcp_sid,
+                                    agent_id=name_result["agent_uuid"],
+                                    user_agent=ua,
+                                )
+                                logger.info(f"[/mcp] Auto-resumed identity '{x_agent_name}' -> {name_result['agent_uuid'][:12]}...")
+                        except Exception as e:
+                            logger.debug(f"[/mcp] X-Agent-Name resolution failed: {e}")
                 except Exception as e:
                     logger.debug(f"[/mcp] Could not capture context: {e}")
 
