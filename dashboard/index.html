@@ -665,7 +665,10 @@
                 const ePct = clampPercent(eValue);
                 const iPct = clampPercent(iValue);
                 const sPct = clampPercent(sValue);
-                const vPct = clampPercent(vValue);
+                // Void can be negative (I>E); bar shows |V| rescaled from effective range
+                const vPct = vValue !== null && !Number.isNaN(vValue)
+                    ? Math.max(0, Math.min(100, (Math.abs(vValue) / 0.3) * 100))
+                    : 0;
                 const cPct = clampPercent(cValue);
                 const displayName = getAgentDisplayName(agent);
                 const agentId = agent.agent_id || '';
