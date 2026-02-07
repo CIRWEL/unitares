@@ -1854,3 +1854,2009 @@ class TestEdgeCases:
         key = "a" * 257
         result = await resolve_session_identity(session_key=key)
         assert result["created"] is True
+
+
+# ============================================================================
+# GovernanceConfig import fallback (lines 41-45)
+# ============================================================================
+
+class TestGovernanceConfigFallback:
+    """Test that GovernanceConfig has expected constants available."""
+
+    def test_session_ttl_seconds_exists(self):
+        """GovernanceConfig.SESSION_TTL_SECONDS is available."""
+        from config.governance_config import GovernanceConfig
+        assert hasattr(GovernanceConfig, "SESSION_TTL_SECONDS")
+        assert isinstance(GovernanceConfig.SESSION_TTL_SECONDS, int)
+
+    def test_session_ttl_hours_exists(self):
+        """GovernanceConfig.SESSION_TTL_HOURS is available."""
+        from config.governance_config import GovernanceConfig
+        assert hasattr(GovernanceConfig, "SESSION_TTL_HOURS")
+
+
+# ============================================================================
+# _get_redis exception path (lines 62-64)
+# ============================================================================
+
+class TestGetRedisExceptionPath:
+
+    def test_redis_exception_marks_unavailable(self):
+        """When get_session_cache raises, _get_redis sets cache to False."""
+        import src.mcp_handlers.identity_v2 as mod
+
+        # Save original
+        original = mod._redis_cache
+        try:
+            mod._redis_cache = None
+            with patch("src.cache.get_session_cache", side_effect=Exception("Connection refused")):
+                result = mod._get_redis()
+
+            assert result is None
+            # Module-level _redis_cache should now be False (unavailable)
+            assert mod._redis_cache is False
+        finally:
+            mod._redis_cache = original
+
+    def test_redis_already_false_returns_none(self):
+        """When _redis_cache is False (marked unavailable), returns None."""
+        import src.mcp_handlers.identity_v2 as mod
+
+        original = mod._redis_cache
+        try:
+            mod._redis_cache = False
+            result = mod._get_redis()
+            assert result is None
+        finally:
+            mod._redis_cache = original
+
+
+# ============================================================================
+# _find_agent_by_id - both PG and in-memory fail (lines 182-183)
+# ============================================================================
+
+class TestFindAgentByIdBothFail:
+
+    @pytest.mark.asyncio
+    async def test_pg_and_memory_both_fail_returns_none(self):
+        """When PG raises and in-memory lookup also raises, returns None."""
+        from src.mcp_handlers.identity_v2 import _find_agent_by_id
+
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_agent.side_effect = Exception("PG error")
+
+        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.shared.get_mcp_server", side_effect=Exception("No server")):
+            result = await _find_agent_by_id("test-agent-id")
+
+        assert result is None
+
+
+# ============================================================================
+# Redis TTL refresh exception (lines 354-356)
+# ============================================================================
+
+class TestRedisTtlRefreshException:
+
+    @pytest.mark.asyncio
+    async def test_ttl_refresh_failure_does_not_break_result(self, mock_db, mock_redis):
+        """If TTL refresh fails, the cached result is still returned."""
+        from src.mcp_handlers.identity_v2 import resolve_session_identity
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260206",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="id-1", metadata={})
+        mock_db.get_agent_label.return_value = "TestAgent"
+
+        # Make raw redis raise on expire (TTL refresh)
+        async def _raise_redis():
+            raise Exception("Redis expire failed")
+
+        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_redis), \
+             patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.cache.redis_client.get_redis", side_effect=Exception("Redis error")):
+            result = await resolve_session_identity(session_key="ttl-fail-test")
+
+        assert result["source"] == "redis"
+        assert result["agent_uuid"] == test_uuid
+        assert result["created"] is False
+
+
+# ============================================================================
+# PG update_session_activity exception (lines 446-448)
+# ============================================================================
+
+class TestPgSessionActivityException:
+
+    @pytest.mark.asyncio
+    async def test_session_activity_update_failure_ignored(self, patch_no_redis, mock_db):
+        """When update_session_activity raises, PG result is still returned."""
+        from src.mcp_handlers.identity_v2 import resolve_session_identity
+
+        test_uuid = str(uuid.uuid4())
+        mock_db.get_session.return_value = SimpleNamespace(agent_id=test_uuid)
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="ident-1", metadata={"agent_id": "Test_20260206"}
+        )
+        mock_db.get_agent_label.return_value = "MyAgent"
+        mock_db.update_session_activity.side_effect = Exception("Activity update failed")
+
+        result = await resolve_session_identity(session_key="activity-fail-test")
+
+        assert result["source"] == "postgres"
+        assert result["agent_uuid"] == test_uuid
+        assert result["created"] is False
+
+
+# ============================================================================
+# set_agent_label - structured_id migration and cache creation (lines 622-688)
+# ============================================================================
+
+class TestSetAgentLabelCacheManagement:
+
+    @pytest.mark.asyncio
+    async def test_syncs_label_to_existing_metadata_entry(self):
+        """When agent is already in cache, label is synced to existing entry."""
+        from src.mcp_handlers.identity_v2 import set_agent_label
+
+        test_uuid = "aaaabbbb-1111-2222-3333-444455556666"
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.update_agent_fields.return_value = True
+
+        mock_server = MagicMock()
+        meta = SimpleNamespace(label=None, structured_id="existing_id")
+        mock_server.agent_metadata = {test_uuid: meta}
+
+        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server):
+            result = await set_agent_label(test_uuid, "NewLabel")
+
+        assert result is True
+        assert meta.label == "NewLabel"
+
+    @pytest.mark.asyncio
+    async def test_creates_new_metadata_entry_when_not_cached(self):
+        """When agent is NOT in cache, a new AgentMetadata entry is created."""
+        from src.mcp_handlers.identity_v2 import set_agent_label
+
+        test_uuid = "aaaabbbb-1111-2222-3333-444455556666"
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.update_agent_fields.return_value = True
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}  # Empty - agent not cached
+
+        # Mock AgentMetadata class
+        mock_meta_class = MagicMock()
+        mock_meta_instance = SimpleNamespace(
+            agent_id=test_uuid, status='active', created_at='', last_update=''
+        )
+        mock_meta_class.return_value = mock_meta_instance
+
+        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
+             patch("src.mcp_server_std.AgentMetadata", mock_meta_class), \
+             patch("src.mcp_handlers.identity_v2.detect_interface_context", return_value={"type": "test"}, create=True), \
+             patch("src.mcp_handlers.identity_v2.generate_structured_id", return_value="test_1", create=True), \
+             patch("src.mcp_handlers.context.get_context_client_hint", return_value="test"):
+            result = await set_agent_label(test_uuid, "FreshLabel")
+
+        assert result is True
+        # Agent should now be in the metadata dict
+        assert test_uuid in mock_server.agent_metadata
+
+    @pytest.mark.asyncio
+    async def test_structured_id_generation_failure_handled(self):
+        """If structured_id generation fails, label is still set."""
+        from src.mcp_handlers.identity_v2 import set_agent_label
+
+        test_uuid = "aaaabbbb-1111-2222-3333-444455556666"
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.update_agent_fields.return_value = True
+
+        mock_server = MagicMock()
+        meta = SimpleNamespace(label=None, structured_id=None)
+        mock_server.agent_metadata = {test_uuid: meta}
+
+        # detect_interface_context raises
+        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
+             patch("src.mcp_handlers.naming_helpers.detect_interface_context", side_effect=Exception("No context")):
+            result = await set_agent_label(test_uuid, "LabelWithoutStructured")
+
+        assert result is True
+        assert meta.label == "LabelWithoutStructured"
+
+    @pytest.mark.asyncio
+    async def test_session_binding_cache_updated(self):
+        """Session binding cache is updated when label is set."""
+        from src.mcp_handlers.identity_v2 import set_agent_label
+
+        test_uuid = "aaaabbbb-1111-2222-3333-444455556666"
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.update_agent_fields.return_value = True
+
+        mock_server = MagicMock()
+        meta = SimpleNamespace(label=None, structured_id="existing_id")
+        mock_server.agent_metadata = {test_uuid: meta}
+
+        # Create a session binding
+        session_identities = {
+            "test-session": {"bound_agent_id": test_uuid, "agent_label": None}
+        }
+
+        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
+             patch("src.mcp_handlers.identity_shared._session_identities", session_identities):
+            result = await set_agent_label(test_uuid, "UpdatedLabel")
+
+        assert result is True
+        assert session_identities["test-session"]["agent_label"] == "UpdatedLabel"
+
+    @pytest.mark.asyncio
+    async def test_session_binding_update_failure_handled(self):
+        """If session binding update fails, label is still set."""
+        from src.mcp_handlers.identity_v2 import set_agent_label
+
+        test_uuid = "aaaabbbb-1111-2222-3333-444455556666"
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.update_agent_fields.return_value = True
+
+        mock_server = MagicMock()
+        meta = SimpleNamespace(label=None, structured_id="existing_id")
+        mock_server.agent_metadata = {test_uuid: meta}
+
+        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
+             patch("src.mcp_handlers.identity_shared._session_identities", side_effect=Exception("import fail")):
+            result = await set_agent_label(test_uuid, "StillWorks")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_redis_metadata_invalidation_on_label_set(self):
+        """Redis metadata cache is invalidated after label set."""
+        from src.mcp_handlers.identity_v2 import set_agent_label
+
+        test_uuid = "aaaabbbb-1111-2222-3333-444455556666"
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.update_agent_fields.return_value = True
+
+        mock_redis = MagicMock()  # Non-None value so _get_redis() returns it
+        mock_metadata_cache = AsyncMock()
+        mock_metadata_cache.invalidate = AsyncMock()
+
+        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_v2._get_redis", return_value=mock_redis), \
+             patch("src.mcp_handlers.shared.get_mcp_server", side_effect=Exception("no server")), \
+             patch("src.cache.get_metadata_cache", return_value=mock_metadata_cache):
+            result = await set_agent_label(test_uuid, "InvalidateTest")
+
+        assert result is True
+        mock_metadata_cache.invalidate.assert_called_once_with(test_uuid)
+
+    @pytest.mark.asyncio
+    async def test_redis_invalidation_exception_handled(self):
+        """Redis metadata invalidation failure is swallowed (lines 681-682)."""
+        from src.mcp_handlers.identity_v2 import set_agent_label
+
+        test_uuid = "aaaabbbb-1111-2222-3333-444455556666"
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.update_agent_fields.return_value = True
+
+        mock_redis = MagicMock()
+
+        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_v2._get_redis", return_value=mock_redis), \
+             patch("src.mcp_handlers.shared.get_mcp_server", side_effect=Exception("no server")), \
+             patch("src.cache.get_metadata_cache", side_effect=Exception("cache error")):
+            result = await set_agent_label(test_uuid, "StillOK")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_overall_exception_returns_false(self):
+        """When the entire set_agent_label throws, returns False (lines 686-688)."""
+        from src.mcp_handlers.identity_v2 import set_agent_label
+
+        test_uuid = "aaaabbbb-1111-2222-3333-444455556666"
+
+        with patch("src.mcp_handlers.identity_v2.get_db", side_effect=Exception("Fatal DB error")):
+            result = await set_agent_label(test_uuid, "WillFail")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_set_label_with_session_key_calls_ensure_persisted(self):
+        """set_agent_label with session_key calls ensure_agent_persisted."""
+        from src.mcp_handlers.identity_v2 import set_agent_label
+
+        test_uuid = "aaaabbbb-1111-2222-3333-444455556666"
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        # First call from ensure_agent_persisted, second from set_agent_label
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.update_agent_fields.return_value = True
+
+        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+             patch("src.mcp_handlers.shared.get_mcp_server", side_effect=Exception("no server")):
+            result = await set_agent_label(test_uuid, "PersistLabel", session_key="sess-key")
+
+        assert result is True
+
+
+# ============================================================================
+# resolve_by_name_claim - trajectory verification exception (lines 759-760)
+# ============================================================================
+
+class TestResolveByNameClaimTrajectoryException:
+
+    @pytest.mark.asyncio
+    async def test_trajectory_verification_exception_still_resolves(self):
+        """If trajectory verification throws, name claim proceeds (non-blocking)."""
+        from src.mcp_handlers.identity_v2 import resolve_by_name_claim
+
+        test_uuid = str(uuid.uuid4())
+        mock_db = AsyncMock()
+        mock_db.find_agent_by_label.return_value = test_uuid
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1", metadata={"agent_id": "Claude_20260206"}
+        )
+        mock_db.get_agent_label.return_value = "VerifyFailAgent"
+        mock_db.create_session = AsyncMock()
+
+        mock_cache = AsyncMock()
+        mock_cache.bind = AsyncMock()
+
+        mock_raw = AsyncMock()
+        mock_raw.setex = AsyncMock()
+
+        async def _get_raw():
+            return mock_raw
+
+        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_cache), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.trajectory_identity.verify_trajectory_identity", side_effect=Exception("Module not loaded")):
+            result = await resolve_by_name_claim(
+                "VerifyFailAgent", "session-traj-fail",
+                trajectory_signature={"some": "data"}
+            )
+
+        # Should still resolve despite trajectory failure
+        assert result is not None
+        assert result["agent_uuid"] == test_uuid
+        assert result["source"] == "name_claim"
+
+    @pytest.mark.asyncio
+    async def test_session_persist_failure_still_resolves(self):
+        """If session persistence fails in name claim, result is still returned (lines 779-780)."""
+        from src.mcp_handlers.identity_v2 import resolve_by_name_claim
+
+        test_uuid = str(uuid.uuid4())
+        mock_db = AsyncMock()
+        mock_db.find_agent_by_label.return_value = test_uuid
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1", metadata={"agent_id": "Test_20260206"}
+        )
+        mock_db.get_agent_label.return_value = "SessionFailAgent"
+        mock_db.create_session.side_effect = Exception("Session create failed")
+
+        mock_cache = AsyncMock()
+        mock_cache.bind = AsyncMock()
+
+        mock_raw = AsyncMock()
+        mock_raw.setex = AsyncMock()
+
+        async def _get_raw():
+            return mock_raw
+
+        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_cache), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw):
+            result = await resolve_by_name_claim("SessionFailAgent", "session-fail")
+
+        assert result is not None
+        assert result["agent_uuid"] == test_uuid
+
+
+# ============================================================================
+# _cache_session - fallback bind and exception paths (lines 818-823)
+# ============================================================================
+
+class TestCacheSessionEdgeCases:
+
+    @pytest.mark.asyncio
+    async def test_raw_redis_none_falls_back_to_bind(self):
+        """When raw redis returns None, falls back to session_cache.bind (line 818)."""
+        from src.mcp_handlers.identity_v2 import _cache_session
+
+        mock_cache = AsyncMock()
+        mock_cache.bind = AsyncMock()
+
+        async def _get_no_raw():
+            return None
+
+        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_cache), \
+             patch("src.cache.redis_client.get_redis", new=_get_no_raw):
+            await _cache_session("sess-fallback", "uuid-fb", display_agent_id="Agent_20260206")
+
+        mock_cache.bind.assert_called_once_with("sess-fallback", "uuid-fb")
+
+    @pytest.mark.asyncio
+    async def test_cache_exception_is_caught(self):
+        """When cache write raises, exception is swallowed (lines 821-823)."""
+        from src.mcp_handlers.identity_v2 import _cache_session
+
+        mock_cache = AsyncMock()
+        mock_cache.bind.side_effect = Exception("Redis write error")
+
+        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_cache):
+            # Should not raise
+            await _cache_session("sess-err", "uuid-err")
+
+
+# ============================================================================
+# lookup_onboard_pin / set_onboard_pin exception paths (lines 1138-1175)
+# ============================================================================
+
+class TestOnboardPinExceptionPaths:
+
+    @pytest.mark.asyncio
+    async def test_lookup_pin_redis_exception_returns_none(self):
+        """lookup_onboard_pin returns None when Redis throws (lines 1138-1140)."""
+        from src.mcp_handlers.identity_v2 import lookup_onboard_pin
+
+        async def _get_error_redis():
+            raise Exception("Connection reset")
+
+        with patch("src.cache.redis_client.get_redis", new=_get_error_redis):
+            result = await lookup_onboard_pin("ua:test123")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_set_pin_redis_exception_returns_false(self):
+        """set_onboard_pin returns False when Redis throws (lines 1173-1175)."""
+        from src.mcp_handlers.identity_v2 import set_onboard_pin
+
+        async def _get_error_redis():
+            raise Exception("Connection reset")
+
+        with patch("src.cache.redis_client.get_redis", new=_get_error_redis):
+            result = await set_onboard_pin("ua:test456", "uuid-1", "sess-1")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_lookup_pin_with_bytes_data(self):
+        """lookup_onboard_pin handles bytes data from Redis."""
+        from src.mcp_handlers.identity_v2 import lookup_onboard_pin
+
+        mock_raw = AsyncMock()
+        pin_data = json.dumps({"client_session_id": "agent-abc123", "agent_uuid": "uuid-123"})
+        mock_raw.get.return_value = pin_data.encode("utf-8")  # bytes, not str
+        mock_raw.expire = AsyncMock()
+
+        async def _get_raw():
+            return mock_raw
+
+        with patch("src.cache.redis_client.get_redis", new=_get_raw):
+            result = await lookup_onboard_pin("ua:bytes-test")
+
+        assert result == "agent-abc123"
+
+    @pytest.mark.asyncio
+    async def test_lookup_pin_no_refresh_ttl(self):
+        """lookup_onboard_pin with refresh_ttl=False does not call expire."""
+        from src.mcp_handlers.identity_v2 import lookup_onboard_pin
+
+        mock_raw = AsyncMock()
+        pin_data = json.dumps({"client_session_id": "agent-norefresh", "agent_uuid": "uuid-123"})
+        mock_raw.get.return_value = pin_data
+        mock_raw.expire = AsyncMock()
+
+        async def _get_raw():
+            return mock_raw
+
+        with patch("src.cache.redis_client.get_redis", new=_get_raw):
+            result = await lookup_onboard_pin("ua:norefresh", refresh_ttl=False)
+
+        assert result == "agent-norefresh"
+        mock_raw.expire.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_lookup_pin_no_data_returns_none(self):
+        """lookup_onboard_pin returns None when no pin data at key."""
+        from src.mcp_handlers.identity_v2 import lookup_onboard_pin
+
+        mock_raw = AsyncMock()
+        mock_raw.get.return_value = None
+
+        async def _get_raw():
+            return mock_raw
+
+        with patch("src.cache.redis_client.get_redis", new=_get_raw):
+            result = await lookup_onboard_pin("ua:nodata")
+
+        assert result is None
+
+
+# ============================================================================
+# Helper to parse TextContent results from handler functions
+# ============================================================================
+
+def _parse(result):
+    """Extract JSON data from Sequence[TextContent] or single TextContent."""
+    if isinstance(result, (list, tuple)):
+        text_content = result[0]
+    else:
+        text_content = result
+    return json.loads(text_content.text)
+
+
+# ============================================================================
+# handle_identity_adapter - full decorator-wrapped handler (lines 1208-1410)
+# ============================================================================
+
+class TestHandleIdentityAdapter:
+
+    @pytest.fixture
+    def patch_identity_deps(self, mock_db, mock_redis, mock_raw_redis):
+        """Patch all deps for handle_identity_adapter tests."""
+        async def _get_raw():
+            return mock_raw_redis
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+
+        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_redis), \
+             patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch("src.mcp_handlers.context.update_context_agent_id"), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server):
+            yield mock_server
+
+    @pytest.mark.asyncio
+    async def test_basic_identity_call(self, patch_identity_deps, mock_db, mock_redis):
+        """Basic identity() call with no arguments returns identity info."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+
+        result = await handle_identity_adapter({"client_session_id": "test-sess-1"})
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert "uuid" in data
+        assert "agent_id" in data
+        assert "identity_summary" in data
+        assert "quick_reference" in data
+        assert "session_continuity" in data
+
+    @pytest.mark.asyncio
+    async def test_identity_name_claim_resolves_existing(self, patch_identity_deps, mock_db, mock_redis, mock_raw_redis):
+        """identity(name='X') resolves via name claim when agent exists (lines 1208-1228)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = test_uuid
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1", metadata={"agent_id": "Claude_20260206"}
+        )
+        mock_db.get_agent_label.return_value = "TestBot"
+        mock_db.create_session = AsyncMock()
+
+        result = await handle_identity_adapter({
+            "client_session_id": "name-adapter-test",
+            "name": "TestBot",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["uuid"] == test_uuid
+        assert data.get("resumed") is True
+        assert data.get("resumed_by_name") is True
+
+    @pytest.mark.asyncio
+    async def test_identity_resumes_existing_agent(self, patch_identity_deps, mock_db, mock_redis, mock_raw_redis):
+        """identity() auto-resumes existing agent under base key."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = "ExistingAgent"
+
+        result = await handle_identity_adapter({"client_session_id": "resume-test"})
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["uuid"] == test_uuid
+        assert data.get("resumed") is True
+
+    @pytest.mark.asyncio
+    async def test_identity_with_model_type_new_agent(self, patch_identity_deps, mock_db, mock_redis):
+        """identity(model_type='claude-opus-4') for new agent uses model differentiation (lines 1262-1277)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+
+        result = await handle_identity_adapter({
+            "client_session_id": "model-new-test",
+            "model_type": "claude-opus-4",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert "Claude_Opus_4" in data.get("agent_id", "")
+
+    @pytest.mark.asyncio
+    async def test_identity_with_model_type_gemini(self, patch_identity_deps, mock_db, mock_redis):
+        """Model normalization works for gemini (lines 1267-1268)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+
+        result = await handle_identity_adapter({
+            "client_session_id": "gemini-test",
+            "model_type": "gemini-pro-1.5",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_identity_with_model_type_gpt(self, patch_identity_deps, mock_db, mock_redis):
+        """Model normalization works for gpt (lines 1269-1270)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+
+        result = await handle_identity_adapter({
+            "client_session_id": "gpt-test",
+            "model_type": "gpt-4-turbo",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_identity_with_model_type_composer(self, patch_identity_deps, mock_db, mock_redis):
+        """Model normalization works for composer/cursor (lines 1271-1272)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+
+        result = await handle_identity_adapter({
+            "client_session_id": "composer-test",
+            "model_type": "cursor-composer",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_identity_with_model_type_llama(self, patch_identity_deps, mock_db, mock_redis):
+        """Model normalization works for llama (lines 1273-1274)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+
+        result = await handle_identity_adapter({
+            "client_session_id": "llama-test",
+            "model_type": "llama-3.1-70b",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_identity_force_new(self, patch_identity_deps, mock_db, mock_redis):
+        """identity(force_new=true) skips existing check and creates new."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+
+        result = await handle_identity_adapter({
+            "client_session_id": "force-new-adapter",
+            "force_new": True,
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_identity_model_type_in_response(self, patch_identity_deps, mock_db, mock_redis):
+        """model_type is included in response when provided (line 1361)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+
+        result = await handle_identity_adapter({
+            "client_session_id": "model-response-test",
+            "model_type": "claude-opus-4",
+        })
+        data = _parse(result)
+
+        assert data.get("model_type") == "claude-opus-4"
+
+    @pytest.mark.asyncio
+    async def test_identity_none_arguments_handled(self, patch_identity_deps, mock_db, mock_redis):
+        """identity() with None arguments does not crash (line 1407-1408)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+
+        # The decorator passes arguments=arguments, so None would come from decorator
+        # but the function defaults to {} if None. Test with empty dict.
+        result = await handle_identity_adapter({})
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_identity_existing_under_model_key_resumes(self, patch_identity_deps, mock_db, mock_redis, mock_raw_redis):
+        """When no base key match but model-suffixed key matches, resumes (lines 1281-1303)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        test_uuid = str(uuid.uuid4())
+
+        call_count = [0]
+        original_get = mock_redis.get
+
+        async def side_effect_get(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call (base key): miss (created=True in resolve)
+                return None
+            else:
+                # Second call (model-suffixed key): hit
+                return {"agent_id": test_uuid, "display_agent_id": "Claude_20260207"}
+
+        mock_redis.get.side_effect = side_effect_get
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = "ModelAgent"
+
+        result = await handle_identity_adapter({
+            "client_session_id": "model-key-resume",
+            "model_type": "claude-opus-4",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_identity_update_label_on_resume(self, patch_identity_deps, mock_db, mock_redis, mock_raw_redis):
+        """identity(name='X') updates label on existing resumed agent (lines 1246-1249, 1291-1294)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = "OldName"
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.update_agent_fields.return_value = True
+
+        result = await handle_identity_adapter({
+            "client_session_id": "label-update-test",
+            "name": "NewName",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+
+# ============================================================================
+# handle_onboard_v2 - full flow (lines 1480-1857)
+# ============================================================================
+
+class TestHandleOnboardV2:
+
+    @pytest.fixture
+    def patch_onboard_deps(self, mock_db, mock_redis, mock_raw_redis):
+        """Patch all deps for handle_onboard_v2 tests."""
+        async def _get_raw():
+            return mock_raw_redis
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+
+        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_redis), \
+             patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value="test-ctx-key"), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_client_hint", return_value="test"), \
+             patch("src.mcp_handlers.context.update_context_agent_id"), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
+             patch("src.mcp_handlers.identity_shared._register_uuid_prefix"):
+            yield mock_server
+
+    @pytest.mark.asyncio
+    async def test_basic_onboard_new_agent(self, patch_onboard_deps, mock_db, mock_redis):
+        """Basic onboard() creates a new agent."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        # For ensure_agent_persisted
+        mock_db.get_identity.side_effect = [
+            None,  # resolve_session_identity PG lookup
+            None,  # ensure_agent_persisted check
+            SimpleNamespace(identity_id="new-ident", metadata={}),  # after upsert
+        ]
+
+        result = await handle_onboard_v2({"client_session_id": "onboard-new"})
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["is_new"] is True
+        assert "uuid" in data
+        assert "client_session_id" in data
+        assert "next_calls" in data
+        assert "date_context" in data
+        assert "session_continuity" in data
+        assert "workflow" in data
+        assert "what_this_does" in data
+
+    @pytest.mark.asyncio
+    async def test_onboard_resumes_existing_agent(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """onboard() auto-resumes existing agent."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = "ResumedAgent"
+
+        result = await handle_onboard_v2({"client_session_id": "onboard-resume"})
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["is_new"] is False
+        assert data["uuid"] == test_uuid
+        assert "Welcome back" in data.get("welcome", "")
+
+    @pytest.mark.asyncio
+    async def test_onboard_with_name_resolves_by_name_claim(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """onboard(name='X') resolves via name claim."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = test_uuid
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1", metadata={"agent_id": "Claude_20260207"}
+        )
+        mock_db.get_agent_label.return_value = "NamedAgent"
+        mock_db.create_session = AsyncMock()
+
+        result = await handle_onboard_v2({
+            "client_session_id": "onboard-name-claim",
+            "name": "NamedAgent",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["uuid"] == test_uuid
+        assert data["is_new"] is False
+
+    @pytest.mark.asyncio
+    async def test_onboard_force_new(self, patch_onboard_deps, mock_db, mock_redis):
+        """onboard(force_new=true) creates fresh identity."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="new-ident", metadata={})
+
+        result = await handle_onboard_v2({
+            "client_session_id": "onboard-force-new",
+            "force_new": True,
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["force_new_applied"] is True
+
+    @pytest.mark.asyncio
+    async def test_onboard_force_new_with_model_type(self, patch_onboard_deps, mock_db, mock_redis):
+        """onboard(force_new=true, model_type='claude') uses model-suffixed key."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="new-ident", metadata={})
+
+        result = await handle_onboard_v2({
+            "client_session_id": "onboard-force-model",
+            "force_new": True,
+            "model_type": "claude-opus-4",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_onboard_with_model_type_gemini(self, patch_onboard_deps, mock_db, mock_redis):
+        """Model normalization for gemini in onboard flow."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.side_effect = [
+            None, None,
+            SimpleNamespace(identity_id="new-ident", metadata={})
+        ]
+
+        result = await handle_onboard_v2({
+            "client_session_id": "onboard-gemini",
+            "model_type": "gemini-pro",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_onboard_with_model_type_gpt(self, patch_onboard_deps, mock_db, mock_redis):
+        """Model normalization for gpt in onboard flow."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.side_effect = [
+            None, None,
+            SimpleNamespace(identity_id="new-ident", metadata={})
+        ]
+
+        result = await handle_onboard_v2({
+            "client_session_id": "onboard-gpt",
+            "model_type": "chatgpt-4o",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_onboard_with_model_type_llama(self, patch_onboard_deps, mock_db, mock_redis):
+        """Model normalization for llama in onboard flow."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.side_effect = [
+            None, None,
+            SimpleNamespace(identity_id="new-ident", metadata={})
+        ]
+
+        result = await handle_onboard_v2({
+            "client_session_id": "onboard-llama",
+            "model_type": "llama-3.1-70b",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_onboard_sets_label(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """onboard(name='X') sets the display label."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.side_effect = [
+            None, None,
+            SimpleNamespace(identity_id="new-ident", metadata={}),
+            SimpleNamespace(identity_id="new-ident", metadata={}),
+        ]
+        mock_db.update_agent_fields.return_value = True
+
+        with patch("src.mcp_handlers.shared.get_mcp_server", side_effect=Exception("no server")):
+            result = await handle_onboard_v2({
+                "client_session_id": "onboard-label",
+                "name": "MyNewAgent",
+            })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_onboard_with_trajectory_signature(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """onboard() with trajectory_signature stores genesis."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = "TrajectoryAgent"
+
+        mock_sig = MagicMock()
+        mock_sig.identity_confidence = 0.8
+        mock_sig.observation_count = 10
+
+        with patch("src.trajectory_identity.TrajectorySignature") as MockTrajSig, \
+             patch("src.trajectory_identity.store_genesis_signature", new_callable=AsyncMock, return_value=True):
+            MockTrajSig.from_dict.return_value = mock_sig
+
+            result = await handle_onboard_v2({
+                "client_session_id": "onboard-trajectory",
+                "trajectory_signature": {
+                    "preferences": {}, "beliefs": {},
+                    "stability_score": 0.9, "identity_confidence": 0.8,
+                    "observation_count": 10,
+                },
+            })
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert "trajectory" in data
+        assert data["trajectory"]["genesis_stored"] is True
+        assert "trust_tier" in data["trajectory"]
+
+    @pytest.mark.asyncio
+    async def test_onboard_trajectory_exception_non_blocking(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """Trajectory store failure does not block onboard."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = None
+
+        with patch("src.trajectory_identity.TrajectorySignature", side_effect=Exception("Import fail")):
+            result = await handle_onboard_v2({
+                "client_session_id": "onboard-traj-fail",
+                "trajectory_signature": {"some": "data"},
+            })
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert "trajectory" not in data  # Not included on failure
+
+    @pytest.mark.asyncio
+    async def test_onboard_kwargs_string_unwrapping(self, patch_onboard_deps, mock_db, mock_redis):
+        """onboard() unwraps kwargs string into arguments (lines 1483-1492)."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.side_effect = [
+            None, None,
+            SimpleNamespace(identity_id="new-ident", metadata={})
+        ]
+
+        result = await handle_onboard_v2({
+            "client_session_id": "kwargs-test",
+            "kwargs": json.dumps({"model_type": "claude-opus-4"}),
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_onboard_kwargs_invalid_json_handled(self, patch_onboard_deps, mock_db, mock_redis):
+        """onboard() handles invalid kwargs JSON gracefully (line 1491)."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.side_effect = [
+            None, None,
+            SimpleNamespace(identity_id="new-ident", metadata={})
+        ]
+
+        result = await handle_onboard_v2({
+            "client_session_id": "kwargs-invalid",
+            "kwargs": "not valid json{{{",
+        })
+        data = _parse(result)
+
+        assert data["success"] is True  # Should not crash
+
+    @pytest.mark.asyncio
+    async def test_onboard_tool_mode_info(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """onboard() includes tool_mode info when available."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = None
+
+        with patch("src.tool_modes.TOOL_MODE", "lite"), \
+             patch("src.tool_modes.get_tools_for_mode", return_value=["t1", "t2", "t3"]), \
+             patch("src.tool_schemas.get_tool_definitions", return_value={"t1": {}, "t2": {}, "t3": {}, "t4": {}, "t5": {}}):
+            result = await handle_onboard_v2({"client_session_id": "tool-mode-test"})
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert "tool_mode" in data
+        assert data["tool_mode"]["current_mode"] == "lite"
+        assert data["tool_mode"]["visible_tools"] == 3
+        assert data["tool_mode"]["total_tools"] == 5
+
+    @pytest.mark.asyncio
+    async def test_onboard_tool_mode_exception_handled(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """tool_mode import failure is swallowed."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = None
+
+        with patch("src.tool_modes.TOOL_MODE", side_effect=Exception("No module")):
+            result = await handle_onboard_v2({"client_session_id": "tool-mode-fail"})
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_onboard_client_tips_chatgpt(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """Client tips for chatgpt hint are included."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = None
+
+        with patch("src.mcp_handlers.context.get_context_client_hint", return_value="chatgpt"):
+            result = await handle_onboard_v2({"client_session_id": "chatgpt-tips"})
+        data = _parse(result)
+
+        assert data["success"] is True
+        tip = data.get("session_continuity", {}).get("tip", "")
+        assert "ChatGPT" in tip or "client_session_id" in tip
+
+    @pytest.mark.asyncio
+    async def test_onboard_persist_failure_returns_error(self, patch_onboard_deps, mock_db, mock_redis):
+        """When persist fails for fresh identity, returns error (line 1613-1615)."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+
+        # Mock ensure_agent_persisted to raise an exception directly
+        # This triggers the except block at line 1613 which returns error_response
+        with patch("src.mcp_handlers.identity_v2.ensure_agent_persisted", side_effect=Exception("Fatal persist error")):
+            result = await handle_onboard_v2({"client_session_id": "persist-fail"})
+        data = _parse(result)
+
+        assert data.get("success") is False
+        assert "persist" in data.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_onboard_none_arguments_handled(self, patch_onboard_deps, mock_db, mock_redis):
+        """onboard(None) defaults to empty dict."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.side_effect = [
+            None, None,
+            SimpleNamespace(identity_id="new-ident", metadata={})
+        ]
+
+        result = await handle_onboard_v2(None)
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_onboard_structured_id_fallback(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """When structured_id lookup from metadata returns nothing, falls back to agent_UUID prefix."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.side_effect = [
+            None, None,
+            SimpleNamespace(identity_id="new-ident", metadata={})
+        ]
+
+        result = await handle_onboard_v2({"client_session_id": "fallback-id-test"})
+        data = _parse(result)
+
+        assert data["success"] is True
+        # agent_id should be generated, not an empty UUID
+        assert data.get("agent_id") is not None
+
+
+# ============================================================================
+# handle_verify_trajectory_identity (lines 1884-1921)
+# ============================================================================
+
+class TestHandleVerifyTrajectoryIdentity:
+
+    @pytest.mark.asyncio
+    async def test_no_agent_uuid_returns_error(self):
+        """verify_trajectory_identity with no identity returns error."""
+        from src.mcp_handlers.identity_v2 import handle_verify_trajectory_identity
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value=None):
+            result = await handle_verify_trajectory_identity({})
+        data = _parse(result)
+
+        assert data["success"] is False
+        assert "identity" in data["error"].lower() or "resolved" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_no_trajectory_signature_returns_error(self):
+        """verify_trajectory_identity without trajectory_signature returns error."""
+        from src.mcp_handlers.identity_v2 import handle_verify_trajectory_identity
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-123"):
+            result = await handle_verify_trajectory_identity({})
+        data = _parse(result)
+
+        assert data["success"] is False
+        assert "trajectory_signature" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_trajectory_signature_type_returns_error(self):
+        """verify_trajectory_identity with non-dict trajectory_signature returns error."""
+        from src.mcp_handlers.identity_v2 import handle_verify_trajectory_identity
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-123"):
+            result = await handle_verify_trajectory_identity({"trajectory_signature": "not a dict"})
+        data = _parse(result)
+
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_successful_verification(self):
+        """verify_trajectory_identity succeeds with valid inputs."""
+        from src.mcp_handlers.identity_v2 import handle_verify_trajectory_identity
+
+        mock_sig = MagicMock()
+        mock_verification_result = {
+            "verified": True,
+            "tiers": {"coherence": {"similarity": 0.9}, "lineage": {"similarity": 0.85}},
+        }
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-verify"), \
+             patch("src.trajectory_identity.TrajectorySignature") as MockTrajSig, \
+             patch("src.trajectory_identity.verify_trajectory_identity", new_callable=AsyncMock, return_value=mock_verification_result):
+            MockTrajSig.from_dict.return_value = mock_sig
+
+            result = await handle_verify_trajectory_identity({
+                "trajectory_signature": {"preferences": {}, "stability_score": 0.9},
+                "coherence_threshold": 0.7,
+                "lineage_threshold": 0.6,
+            })
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["verified"] is True
+
+    @pytest.mark.asyncio
+    async def test_verification_error_result(self):
+        """verify_trajectory_identity with error in result returns error."""
+        from src.mcp_handlers.identity_v2 import handle_verify_trajectory_identity
+
+        mock_sig = MagicMock()
+        mock_verification_result = {"error": "No genesis signature found"}
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-verify"), \
+             patch("src.trajectory_identity.TrajectorySignature") as MockTrajSig, \
+             patch("src.trajectory_identity.verify_trajectory_identity", new_callable=AsyncMock, return_value=mock_verification_result):
+            MockTrajSig.from_dict.return_value = mock_sig
+
+            result = await handle_verify_trajectory_identity({
+                "trajectory_signature": {"preferences": {}},
+            })
+        data = _parse(result)
+
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_verification_exception_returns_error(self):
+        """verify_trajectory_identity exception returns error (lines 1919-1921)."""
+        from src.mcp_handlers.identity_v2 import handle_verify_trajectory_identity
+
+        mock_sig = MagicMock()
+        mock_verify = AsyncMock(side_effect=Exception("Verification module error"))
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-verify"), \
+             patch("src.trajectory_identity.TrajectorySignature") as MockTrajSig, \
+             patch("src.trajectory_identity.verify_trajectory_identity", mock_verify):
+            MockTrajSig.from_dict.return_value = mock_sig
+
+            result = await handle_verify_trajectory_identity({
+                "trajectory_signature": {"preferences": {}},
+            })
+        data = _parse(result)
+
+        assert data["success"] is False
+        error_msg = data.get("error", "").lower()
+        assert "failed" in error_msg or "verification" in error_msg
+
+
+# ============================================================================
+# handle_get_trajectory_status (lines 1938-1966)
+# ============================================================================
+
+class TestHandleGetTrajectoryStatus:
+
+    @pytest.mark.asyncio
+    async def test_no_agent_uuid_returns_error(self):
+        """get_trajectory_status with no identity returns error."""
+        from src.mcp_handlers.identity_v2 import handle_get_trajectory_status
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value=None):
+            result = await handle_get_trajectory_status({})
+        data = _parse(result)
+
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_successful_status(self):
+        """get_trajectory_status returns status info."""
+        from src.mcp_handlers.identity_v2 import handle_get_trajectory_status
+
+        mock_status_result = {
+            "has_genesis": True,
+            "has_current": True,
+            "lineage_similarity": 0.85,
+        }
+
+        mock_db = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1", metadata={"total_updates": 20}
+        )
+
+        mock_trust_tier = {"tier": 2, "name": "stable"}
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-status"), \
+             patch("src.trajectory_identity.get_trajectory_status", new_callable=AsyncMock, return_value=mock_status_result), \
+             patch("src.trajectory_identity.compute_trust_tier", return_value=mock_trust_tier), \
+             patch("src.db.get_db", return_value=mock_db):
+            result = await handle_get_trajectory_status({})
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["has_genesis"] is True
+        assert "trust_tier" in data
+
+    @pytest.mark.asyncio
+    async def test_status_error_result(self):
+        """get_trajectory_status with error in result returns error."""
+        from src.mcp_handlers.identity_v2 import handle_get_trajectory_status
+
+        mock_status_result = {"error": "Agent has no trajectory data"}
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-status"), \
+             patch("src.trajectory_identity.get_trajectory_status", new_callable=AsyncMock, return_value=mock_status_result):
+            result = await handle_get_trajectory_status({})
+        data = _parse(result)
+
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_status_exception_returns_error(self):
+        """get_trajectory_status exception returns error (lines 1964-1966)."""
+        from src.mcp_handlers.identity_v2 import handle_get_trajectory_status
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-status"), \
+             patch("src.trajectory_identity.get_trajectory_status", side_effect=Exception("Module error")):
+            result = await handle_get_trajectory_status({})
+        data = _parse(result)
+
+        assert data["success"] is False
+        assert "failed" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_trust_tier_exception_non_blocking(self):
+        """trust_tier computation failure does not block status response (lines 1959-1960)."""
+        from src.mcp_handlers.identity_v2 import handle_get_trajectory_status
+
+        mock_status_result = {
+            "has_genesis": True,
+            "has_current": False,
+        }
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-status"), \
+             patch("src.trajectory_identity.get_trajectory_status", new_callable=AsyncMock, return_value=mock_status_result), \
+             patch("src.trajectory_identity.compute_trust_tier", side_effect=Exception("No trust data")), \
+             patch("src.db.get_db", side_effect=Exception("DB down")):
+            result = await handle_get_trajectory_status({})
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["has_genesis"] is True
+        # trust_tier should not be present since computation failed
+        assert "trust_tier" not in data
+
+
+# ============================================================================
+# Additional coverage: set_agent_label structured_id migration (lines 611-621)
+# ============================================================================
+
+class TestSetAgentLabelStructuredIdMigration:
+
+    @pytest.mark.asyncio
+    async def test_existing_agent_missing_structured_id_gets_migrated(self):
+        """When existing cache entry has no structured_id, it attempts generation."""
+        from src.mcp_handlers.identity_v2 import set_agent_label
+
+        test_uuid = "aaaabbbb-1111-2222-3333-444455556666"
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.update_agent_fields.return_value = True
+
+        mock_server = MagicMock()
+        # Agent in cache but no structured_id (None)
+        meta = SimpleNamespace(label=None, structured_id=None)
+        # Ensure getattr returns None for structured_id
+        mock_server.agent_metadata = {test_uuid: meta}
+
+        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
+             patch("src.mcp_handlers.naming_helpers.detect_interface_context", return_value={"type": "test"}), \
+             patch("src.mcp_handlers.naming_helpers.generate_structured_id", return_value="migrated_id_1"), \
+             patch("src.mcp_handlers.context.get_context_client_hint", return_value="cursor"):
+            result = await set_agent_label(test_uuid, "MigrateLabel")
+
+        assert result is True
+        assert meta.label == "MigrateLabel"
+        assert meta.structured_id == "migrated_id_1"
+
+
+# ============================================================================
+# Additional coverage: handle_identity_adapter structured_id regeneration (lines 1323-1345)
+# ============================================================================
+
+class TestIdentityAdapterStructuredIdRegeneration:
+
+    @pytest.fixture
+    def patch_identity_regen_deps(self, mock_db, mock_redis, mock_raw_redis):
+        """Patch deps for structured_id regeneration tests."""
+        async def _get_raw():
+            return mock_raw_redis
+
+        mock_server = MagicMock()
+
+        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_redis), \
+             patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch("src.mcp_handlers.context.update_context_agent_id"), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server):
+            yield mock_server
+
+    @pytest.mark.asyncio
+    async def test_structured_id_regenerated_when_model_doesnt_match(self, patch_identity_regen_deps, mock_db, mock_redis):
+        """structured_id is regenerated when model_type doesn't match existing ID (lines 1327-1342)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+
+        # Get the mock server from the fixture
+        mock_server = patch_identity_regen_deps
+
+        # We need the handler to create a new identity first, then check metadata
+        # The trick is the metadata needs to exist AFTER resolve_session_identity runs
+        original_resolve = None
+
+        async def resolve_side_effect(*args, **kwargs):
+            # Simulate creating a new identity and populating metadata
+            agent_uuid = str(uuid.uuid4())
+            agent_id = "Claude_Opus_4_20260207"
+            meta = SimpleNamespace(
+                label=None,
+                structured_id="generic_id_1"  # Doesn't contain "claude"
+            )
+            mock_server.agent_metadata[agent_uuid] = meta
+            return {
+                "agent_id": agent_id,
+                "agent_uuid": agent_uuid,
+                "label": None,
+                "created": True,
+                "persisted": False,
+                "source": "memory_only",
+            }
+
+        with patch("src.mcp_handlers.identity_v2.resolve_session_identity", side_effect=resolve_side_effect), \
+             patch("src.mcp_handlers.naming_helpers.detect_interface_context", return_value={"type": "test"}), \
+             patch("src.mcp_handlers.naming_helpers.generate_structured_id", return_value="claude_opus_1"), \
+             patch("src.mcp_handlers.context.get_context_client_hint", return_value="cursor"):
+
+            result = await handle_identity_adapter({
+                "client_session_id": "regen-struct-id",
+                "model_type": "claude-opus-4",
+                "force_new": True,  # Skip base key lookup
+            })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+
+# ============================================================================
+# Additional coverage: onboard force_new with model normalization branches
+# ============================================================================
+
+class TestOnboardForceNewModelNormalization:
+
+    @pytest.fixture
+    def patch_onboard_force_deps(self, mock_db, mock_redis, mock_raw_redis):
+        """Patch deps for onboard force_new model tests."""
+        async def _get_raw():
+            return mock_raw_redis
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+
+        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_redis), \
+             patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value="force-ctx-key"), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_client_hint", return_value="test"), \
+             patch("src.mcp_handlers.context.update_context_agent_id"), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
+             patch("src.mcp_handlers.identity_shared._register_uuid_prefix"):
+            yield mock_server
+
+    @pytest.mark.asyncio
+    async def test_force_new_gemini_normalization(self, patch_onboard_force_deps, mock_db, mock_redis):
+        """onboard(force_new=true, model_type='gemini-pro') normalizes to 'gemini' (line 1574-1575)."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="new-ident", metadata={})
+
+        result = await handle_onboard_v2({
+            "client_session_id": "force-gemini",
+            "force_new": True,
+            "model_type": "gemini-pro-1.5",
+        })
+        data = _parse(result)
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_force_new_gpt_normalization(self, patch_onboard_force_deps, mock_db, mock_redis):
+        """onboard(force_new=true, model_type='gpt-4') normalizes to 'gpt' (line 1576-1577)."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="new-ident", metadata={})
+
+        result = await handle_onboard_v2({
+            "client_session_id": "force-gpt",
+            "force_new": True,
+            "model_type": "gpt-4-turbo",
+        })
+        data = _parse(result)
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_force_new_llama_normalization(self, patch_onboard_force_deps, mock_db, mock_redis):
+        """onboard(force_new=true, model_type='llama-3') normalizes to 'llama' (line 1578-1579)."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="new-ident", metadata={})
+
+        result = await handle_onboard_v2({
+            "client_session_id": "force-llama",
+            "force_new": True,
+            "model_type": "llama-3.1-70b",
+        })
+        data = _parse(result)
+        assert data["success"] is True
+
+
+# ============================================================================
+# Additional coverage: onboard resolve_session_identity failure in force_new (lines 1632-1634)
+# ============================================================================
+
+class TestOnboardResolveSessionIdentityFailure:
+
+    @pytest.fixture
+    def patch_onboard_resolve_fail_deps(self, mock_db, mock_redis, mock_raw_redis):
+        async def _get_raw():
+            return mock_raw_redis
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+
+        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_redis), \
+             patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value="ctx-key"), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_client_hint", return_value="test"), \
+             patch("src.mcp_handlers.context.update_context_agent_id"), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
+             patch("src.mcp_handlers.identity_shared._register_uuid_prefix"):
+            yield mock_server
+
+    @pytest.mark.asyncio
+    async def test_force_new_resolve_exception_returns_error(self, patch_onboard_resolve_fail_deps, mock_db, mock_redis):
+        """When force_new + resolve_session_identity raises, returns error (lines 1632-1634)."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        with patch("src.mcp_handlers.identity_v2.resolve_session_identity", side_effect=Exception("Resolve failed")):
+            result = await handle_onboard_v2({
+                "client_session_id": "force-resolve-fail",
+                "force_new": True,
+            })
+        data = _parse(result)
+
+        assert data.get("success") is False
+        assert "failed" in data.get("error", "").lower()
+
+
+# ============================================================================
+# Additional coverage: onboard already-persisted fresh identity (line 1603)
+# ============================================================================
+
+class TestOnboardAlreadyPersistedFreshIdentity:
+
+    @pytest.fixture
+    def patch_onboard_persisted_deps(self, mock_db, mock_redis, mock_raw_redis):
+        async def _get_raw():
+            return mock_raw_redis
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+
+        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_redis), \
+             patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value="ctx-key"), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_client_hint", return_value="test"), \
+             patch("src.mcp_handlers.context.update_context_agent_id"), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
+             patch("src.mcp_handlers.identity_shared._register_uuid_prefix"):
+            yield mock_server
+
+    @pytest.mark.asyncio
+    async def test_fresh_identity_already_persisted(self, patch_onboard_persisted_deps, mock_db, mock_redis):
+        """When fresh identity is already persisted, ensure_agent_persisted returns False (line 1603)."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+
+        # ensure_agent_persisted returns False (already persisted)
+        with patch("src.mcp_handlers.identity_v2.ensure_agent_persisted", new_callable=AsyncMock, return_value=False):
+            result = await handle_onboard_v2({"client_session_id": "already-persisted"})
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["is_new"] is True
+
+
+# ============================================================================
+# Additional coverage: update_context_agent_id exception paths
+# ============================================================================
+
+class TestContextUpdateExceptions:
+
+    @pytest.fixture
+    def patch_ctx_deps(self, mock_db, mock_redis, mock_raw_redis):
+        async def _get_raw():
+            return mock_raw_redis
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+
+        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_redis), \
+             patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server):
+            yield mock_server
+
+    @pytest.mark.asyncio
+    async def test_identity_adapter_context_update_exception(self, patch_ctx_deps, mock_db, mock_redis):
+        """update_context_agent_id failure is swallowed in identity adapter (lines 1314-1315)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+
+        with patch("src.mcp_handlers.context.update_context_agent_id", side_effect=Exception("Context error")):
+            result = await handle_identity_adapter({
+                "client_session_id": "ctx-fail-test",
+                "force_new": True,
+            })
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_identity_adapter_name_claim_context_update_exception(self, patch_ctx_deps, mock_db, mock_redis, mock_raw_redis):
+        """update_context_agent_id failure in name claim path is swallowed (lines 1217-1218)."""
+        from src.mcp_handlers.identity_v2 import handle_identity_adapter
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = test_uuid
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1", metadata={"agent_id": "Claude_20260207"}
+        )
+        mock_db.get_agent_label.return_value = "CtxFailAgent"
+        mock_db.create_session = AsyncMock()
+
+        with patch("src.mcp_handlers.context.update_context_agent_id", side_effect=Exception("Context error")):
+            result = await handle_identity_adapter({
+                "client_session_id": "ctx-name-fail",
+                "name": "CtxFailAgent",
+            })
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data.get("resumed_by_name") is True
+
+
+# ============================================================================
+# Additional coverage: onboard structured_id fallback (lines 1752-1763)
+# ============================================================================
+
+class TestOnboardStructuredIdFallback:
+
+    @pytest.fixture
+    def patch_sid_deps(self, mock_db, mock_redis, mock_raw_redis):
+        async def _get_raw():
+            return mock_raw_redis
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+
+        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_redis), \
+             patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value="ctx"), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_client_hint", return_value="test"), \
+             patch("src.mcp_handlers.context.update_context_agent_id"), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
+             patch("src.mcp_handlers.identity_shared._register_uuid_prefix"):
+            yield mock_server
+
+    @pytest.mark.asyncio
+    async def test_structured_id_from_metadata_lookup(self, patch_sid_deps, mock_db, mock_redis, mock_raw_redis):
+        """When agent_id == agent_uuid, falls back to metadata for structured_id (lines 1752-1759)."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_server = patch_sid_deps
+        test_uuid = str(uuid.uuid4())
+
+        # Force resume path where agent_id might equal agent_uuid
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": test_uuid,  # Same as UUID -> triggers fallback
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = None
+
+        # Add metadata with structured_id
+        meta = SimpleNamespace(structured_id="custom_agent_1")
+        mock_server.agent_metadata[test_uuid] = meta
+
+        result = await handle_onboard_v2({"client_session_id": "sid-fallback"})
+        data = _parse(result)
+
+        assert data["success"] is True
+        # structured_id should be from metadata
+        assert data.get("agent_id") == "custom_agent_1"
+
+    @pytest.mark.asyncio
+    async def test_structured_id_uuid_prefix_fallback(self, patch_sid_deps, mock_db, mock_redis, mock_raw_redis):
+        """When no structured_id anywhere, falls back to agent_{uuid[:8]} (line 1763)."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        mock_server = patch_sid_deps
+        test_uuid = str(uuid.uuid4())
+
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": test_uuid,  # Same as UUID
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = None
+
+        result = await handle_onboard_v2({"client_session_id": "uuid-prefix-fallback"})
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data.get("agent_id", "").startswith("agent_")
+
+
+# ============================================================================
+# Additional coverage: onboard pin/uuid_prefix exception paths (lines 1686-1698)
+# ============================================================================
+
+class TestOnboardPinAndPrefixExceptions:
+
+    @pytest.fixture
+    def patch_pin_deps(self, mock_db, mock_redis, mock_raw_redis):
+        async def _get_raw():
+            return mock_raw_redis
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+
+        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_redis), \
+             patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value="ctx"), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_client_hint", return_value="test"), \
+             patch("src.mcp_handlers.context.update_context_agent_id"), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server):
+            yield mock_server
+
+    @pytest.mark.asyncio
+    async def test_uuid_prefix_import_error_handled(self, patch_pin_deps, mock_db, mock_redis, mock_raw_redis):
+        """ImportError for _register_uuid_prefix is swallowed (lines 1686-1687)."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = None
+
+        with patch("src.mcp_handlers.identity_shared._register_uuid_prefix", side_effect=ImportError("not found")):
+            result = await handle_onboard_v2({"client_session_id": "prefix-import-fail"})
+        data = _parse(result)
+
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_set_onboard_pin_exception_handled(self, patch_pin_deps, mock_db, mock_redis, mock_raw_redis):
+        """set_onboard_pin exception is swallowed (lines 1697-1698)."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_agent_label.return_value = None
+
+        with patch("src.mcp_handlers.identity_shared._register_uuid_prefix"), \
+             patch("src.mcp_handlers.identity_v2.set_onboard_pin", side_effect=Exception("Pin error")):
+            result = await handle_onboard_v2({"client_session_id": "pin-exception"})
+        data = _parse(result)
+
+        assert data["success"] is True

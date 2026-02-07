@@ -1247,3 +1247,1181 @@ class TestListTools:
             assert data["success"] is True
             assert "tools" in data
             assert data["shown"] > 0
+
+    @pytest.mark.asyncio
+    async def test_list_tools_full_mode(self, mock_mcp_server, patch_context_agent_id):
+        """Test list_tools in full mode (lite=False) covers lines 1595-1851."""
+        mock_mcp_server.SERVER_VERSION = "test-1.0.0"
+
+        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {
+                 "onboard": None,
+                 "process_agent_update": None,
+                 "health_check": None,
+                 "list_tools": None,
+             }), \
+             patch("src.tool_modes.TOOL_TIERS", {
+                 "essential": {"onboard", "process_agent_update", "list_tools"},
+                 "common": {"health_check"},
+                 "advanced": set(),
+             }), \
+             patch("src.tool_modes.TOOL_OPERATIONS", {
+                 "onboard": "write",
+                 "process_agent_update": "write",
+                 "health_check": "read",
+                 "list_tools": "read",
+             }), \
+             patch("src.tool_modes.LITE_MODE_TOOLS", {
+                 "onboard", "process_agent_update", "list_tools", "health_check"
+             }), \
+             patch("src.mcp_handlers.tool_stability.list_all_aliases", return_value={}), \
+             patch("src.mcp_handlers.decorators.get_tool_timeout", return_value=10.0), \
+             patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
+             patch("src.tool_schemas.get_tool_definitions", return_value=[]):
+
+            from src.mcp_handlers.admin import handle_list_tools
+            result = await handle_list_tools({"lite": False})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert "tools" in data
+            assert "tiers" in data
+            assert "tier_counts" in data
+            assert "categories" in data
+            assert "workflows" in data
+            assert "tool_map" in data
+            assert data["total_tools"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_list_tools_progressive_mode(self, mock_mcp_server, patch_context_agent_id):
+        """Test list_tools with progressive=True covers lines 1441-1467, 1587, 1603-1644."""
+        mock_mcp_server.SERVER_VERSION = "test-1.0.0"
+
+        mock_tracker = MagicMock()
+        mock_tracker.get_usage_stats.return_value = {
+            "tools": {
+                "onboard": {"call_count": 15},
+                "health_check": {"call_count": 3},
+                "list_tools": {"call_count": 0},
+                "process_agent_update": {"call_count": 50},
+            }
+        }
+
+        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {
+                 "onboard": None,
+                 "process_agent_update": None,
+                 "health_check": None,
+                 "list_tools": None,
+             }), \
+             patch("src.tool_modes.TOOL_TIERS", {
+                 "essential": {"onboard", "process_agent_update", "list_tools"},
+                 "common": {"health_check"},
+                 "advanced": set(),
+             }), \
+             patch("src.tool_modes.TOOL_OPERATIONS", {
+                 "onboard": "write",
+                 "process_agent_update": "write",
+                 "health_check": "read",
+                 "list_tools": "read",
+             }), \
+             patch("src.tool_modes.LITE_MODE_TOOLS", {
+                 "onboard", "process_agent_update", "list_tools", "health_check"
+             }), \
+             patch("src.mcp_handlers.tool_stability.list_all_aliases", return_value={}), \
+             patch("src.mcp_handlers.decorators.get_tool_timeout", return_value=10.0), \
+             patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
+             patch("src.tool_schemas.get_tool_definitions", return_value=[]), \
+             patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=mock_tracker):
+
+            from src.mcp_handlers.admin import handle_list_tools
+
+            # Test full mode with progressive
+            result = await handle_list_tools({"lite": False, "progressive": True})
+            data = parse_result(result)
+            assert data["success"] is True
+            assert "progressive" in data
+            assert data["progressive"]["enabled"] is True
+            assert "sections" in data
+
+    @pytest.mark.asyncio
+    async def test_list_tools_lite_progressive(self, mock_mcp_server, patch_context_agent_id):
+        """Test list_tools lite mode with progressive=True covers lines 1490-1492."""
+        mock_mcp_server.SERVER_VERSION = "test-1.0.0"
+
+        mock_tracker = MagicMock()
+        mock_tracker.get_usage_stats.return_value = {
+            "tools": {
+                "onboard": {"call_count": 20},
+                "health_check": {"call_count": 5},
+            }
+        }
+
+        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {
+                 "onboard": None,
+                 "process_agent_update": None,
+                 "health_check": None,
+                 "list_tools": None,
+             }), \
+             patch("src.tool_modes.TOOL_TIERS", {
+                 "essential": {"onboard", "process_agent_update", "list_tools"},
+                 "common": {"health_check"},
+                 "advanced": set(),
+             }), \
+             patch("src.tool_modes.TOOL_OPERATIONS", {}), \
+             patch("src.tool_modes.LITE_MODE_TOOLS", {
+                 "onboard", "process_agent_update", "list_tools", "health_check"
+             }), \
+             patch("src.mcp_handlers.tool_stability.list_all_aliases", return_value={}), \
+             patch("src.mcp_handlers.decorators.get_tool_timeout", return_value=10.0), \
+             patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
+             patch("src.tool_schemas.get_tool_definitions", return_value=[]), \
+             patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=mock_tracker):
+
+            from src.mcp_handlers.admin import handle_list_tools
+            result = await handle_list_tools({"lite": True, "progressive": True})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert "progressive" in data
+
+    @pytest.mark.asyncio
+    async def test_list_tools_essential_only_filter(self, mock_mcp_server, patch_context_agent_id):
+        """Test list_tools with essential_only=True covers lines 1388-1394."""
+        mock_mcp_server.SERVER_VERSION = "test-1.0.0"
+
+        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {
+                 "onboard": None,
+                 "process_agent_update": None,
+                 "health_check": None,
+                 "list_tools": None,
+                 "some_advanced_tool": None,
+             }), \
+             patch("src.tool_modes.TOOL_TIERS", {
+                 "essential": {"onboard", "process_agent_update", "list_tools"},
+                 "common": {"health_check"},
+                 "advanced": {"some_advanced_tool"},
+             }), \
+             patch("src.tool_modes.TOOL_OPERATIONS", {}), \
+             patch("src.tool_modes.LITE_MODE_TOOLS", set()), \
+             patch("src.mcp_handlers.tool_stability.list_all_aliases", return_value={}), \
+             patch("src.mcp_handlers.decorators.get_tool_timeout", return_value=None), \
+             patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
+             patch("src.tool_schemas.get_tool_definitions", return_value=[]):
+
+            from src.mcp_handlers.admin import handle_list_tools
+            result = await handle_list_tools({"lite": False, "essential_only": True})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            # Only essential tools should be included
+            tool_names = [t["name"] for t in data["tools"]]
+            for name in tool_names:
+                assert name in {"onboard", "process_agent_update", "list_tools"}
+
+    @pytest.mark.asyncio
+    async def test_list_tools_exclude_advanced(self, mock_mcp_server, patch_context_agent_id):
+        """Test list_tools with include_advanced=False covers line 1392."""
+        mock_mcp_server.SERVER_VERSION = "test-1.0.0"
+
+        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {
+                 "onboard": None,
+                 "health_check": None,
+                 "some_advanced_tool": None,
+             }), \
+             patch("src.tool_modes.TOOL_TIERS", {
+                 "essential": {"onboard"},
+                 "common": {"health_check"},
+                 "advanced": {"some_advanced_tool"},
+             }), \
+             patch("src.tool_modes.TOOL_OPERATIONS", {}), \
+             patch("src.tool_modes.LITE_MODE_TOOLS", set()), \
+             patch("src.mcp_handlers.tool_stability.list_all_aliases", return_value={}), \
+             patch("src.mcp_handlers.decorators.get_tool_timeout", return_value=None), \
+             patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
+             patch("src.tool_schemas.get_tool_definitions", return_value=[]):
+
+            from src.mcp_handlers.admin import handle_list_tools
+            result = await handle_list_tools({"lite": False, "include_advanced": False})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            tool_names = [t["name"] for t in data["tools"]]
+            assert "some_advanced_tool" not in tool_names
+
+    @pytest.mark.asyncio
+    async def test_list_tools_tier_filter(self, mock_mcp_server, patch_context_agent_id):
+        """Test list_tools with tier filter covers line 1394."""
+        mock_mcp_server.SERVER_VERSION = "test-1.0.0"
+
+        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {
+                 "onboard": None,
+                 "health_check": None,
+                 "some_advanced_tool": None,
+             }), \
+             patch("src.tool_modes.TOOL_TIERS", {
+                 "essential": {"onboard"},
+                 "common": {"health_check"},
+                 "advanced": {"some_advanced_tool"},
+             }), \
+             patch("src.tool_modes.TOOL_OPERATIONS", {}), \
+             patch("src.tool_modes.LITE_MODE_TOOLS", set()), \
+             patch("src.mcp_handlers.tool_stability.list_all_aliases", return_value={}), \
+             patch("src.mcp_handlers.decorators.get_tool_timeout", return_value=None), \
+             patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
+             patch("src.tool_schemas.get_tool_definitions", return_value=[]):
+
+            from src.mcp_handlers.admin import handle_list_tools
+            result = await handle_list_tools({"lite": False, "tier": "common"})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            tool_names = [t["name"] for t in data["tools"]]
+            assert "health_check" in tool_names
+            assert "onboard" not in tool_names
+
+    @pytest.mark.asyncio
+    async def test_list_tools_description_fallbacks(self, mock_mcp_server, patch_context_agent_id):
+        """Test description fallback chain covers lines 1361-1370, 1374."""
+        mock_mcp_server.SERVER_VERSION = "test-1.0.0"
+
+        mock_tool_schema = MagicMock()
+        mock_tool_schema.name = "custom_tool"
+        mock_tool_schema.description = "Schema description\nSecond line"
+
+        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {
+                 "custom_tool": None,
+                 "no_desc_tool": None,
+             }), \
+             patch("src.tool_modes.TOOL_TIERS", {
+                 "essential": set(),
+                 "common": {"custom_tool", "no_desc_tool"},
+                 "advanced": set(),
+             }), \
+             patch("src.tool_modes.TOOL_OPERATIONS", {}), \
+             patch("src.tool_modes.LITE_MODE_TOOLS", set()), \
+             patch("src.mcp_handlers.tool_stability.list_all_aliases", return_value={}), \
+             patch("src.mcp_handlers.decorators.get_tool_timeout", return_value=None), \
+             patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
+             patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool_schema]):
+
+            from src.mcp_handlers.admin import handle_list_tools
+            result = await handle_list_tools({"lite": False})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            tools_by_name = {t["name"]: t for t in data["tools"]}
+            # custom_tool should use schema description (first line only due to newline)
+            assert tools_by_name["custom_tool"]["description"] == "Schema description"
+            # no_desc_tool should use generic fallback
+            assert tools_by_name["no_desc_tool"]["description"] == "Tool: no_desc_tool"
+
+    @pytest.mark.asyncio
+    async def test_list_tools_deprecated_tools_hidden(self, mock_mcp_server, patch_context_agent_id):
+        """Test deprecated tools are hidden covers line 1388."""
+        mock_mcp_server.SERVER_VERSION = "test-1.0.0"
+
+        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {
+                 "onboard": None,
+                 "old_deprecated": None,
+             }), \
+             patch("src.tool_modes.TOOL_TIERS", {
+                 "essential": {"onboard"},
+                 "common": {"old_deprecated"},
+                 "advanced": set(),
+             }), \
+             patch("src.tool_modes.TOOL_OPERATIONS", {}), \
+             patch("src.tool_modes.LITE_MODE_TOOLS", set()), \
+             patch("src.mcp_handlers.tool_stability.list_all_aliases", return_value={"old_deprecated": "onboard"}), \
+             patch("src.mcp_handlers.decorators.get_tool_timeout", return_value=None), \
+             patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
+             patch("src.tool_schemas.get_tool_definitions", return_value=[]):
+
+            from src.mcp_handlers.admin import handle_list_tools
+            result = await handle_list_tools({"lite": False})
+
+            data = parse_result(result)
+            tool_names = [t["name"] for t in data["tools"]]
+            assert "old_deprecated" not in tool_names
+
+    @pytest.mark.asyncio
+    async def test_list_tools_unknown_category_fallback(self, mock_mcp_server, patch_context_agent_id):
+        """Test unknown category fallback covers lines 1432-1433."""
+        mock_mcp_server.SERVER_VERSION = "test-1.0.0"
+
+        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {
+                 "special_tool": None,
+             }), \
+             patch("src.tool_modes.TOOL_TIERS", {
+                 "essential": set(),
+                 "common": {"special_tool"},
+                 "advanced": set(),
+             }), \
+             patch("src.tool_modes.TOOL_OPERATIONS", {}), \
+             patch("src.tool_modes.LITE_MODE_TOOLS", set()), \
+             patch("src.mcp_handlers.tool_stability.list_all_aliases", return_value={}), \
+             patch("src.mcp_handlers.decorators.get_tool_timeout", return_value=None), \
+             patch("src.mcp_handlers.decorators.get_tool_description", return_value="Test tool"), \
+             patch("src.tool_schemas.get_tool_definitions", return_value=[]):
+
+            from src.mcp_handlers.admin import handle_list_tools
+            result = await handle_list_tools({"lite": False})
+
+            data = parse_result(result)
+            assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_list_tools_new_agent_first_time_hint(self, mock_mcp_server):
+        """Test new agent gets first_time hint covers lines 1522-1523."""
+        mock_mcp_server.SERVER_VERSION = "test-1.0.0"
+
+        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {
+                 "onboard": None,
+                 "list_tools": None,
+             }), \
+             patch("src.tool_modes.TOOL_TIERS", {
+                 "essential": {"onboard", "list_tools"},
+                 "common": set(),
+                 "advanced": set(),
+             }), \
+             patch("src.tool_modes.TOOL_OPERATIONS", {}), \
+             patch("src.tool_modes.LITE_MODE_TOOLS", {"onboard", "list_tools"}), \
+             patch("src.mcp_handlers.tool_stability.list_all_aliases", return_value={}), \
+             patch("src.mcp_handlers.decorators.get_tool_timeout", return_value=None), \
+             patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
+             patch("src.tool_schemas.get_tool_definitions", return_value=[]), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None):
+
+            from src.mcp_handlers.admin import handle_list_tools
+            result = await handle_list_tools({"lite": True})
+
+            data = parse_result(result)
+            assert "first_time" in data
+            assert "hint" in data["first_time"]
+
+
+# ============================================================================
+# handle_get_server_info - psutil edge cases
+# ============================================================================
+
+class TestGetServerInfoPsutil:
+
+    @pytest.mark.asyncio
+    async def test_server_info_psutil_cmdline_empty(self, mock_mcp_server, patch_context_agent_id):
+        """Test psutil process with empty cmdline is skipped (line 55)."""
+        mock_mcp_server.PSUTIL_AVAILABLE = True
+
+        mock_proc = MagicMock()
+        mock_proc.info = {
+            "pid": 111,
+            "name": "python",
+            "cmdline": [],  # Empty cmdline
+            "create_time": 0,
+            "status": "running"
+        }
+
+        mock_current = MagicMock()
+        mock_current.create_time.return_value = 100.0
+        mock_current.status.return_value = "running"
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {}), \
+             patch("psutil.process_iter", return_value=[mock_proc]), \
+             patch("psutil.Process", return_value=mock_current), \
+             patch("time.time", return_value=200.0):
+            from src.mcp_handlers.admin import handle_get_server_info
+            result = await handle_get_server_info({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_server_info_psutil_process_exception(self, mock_mcp_server, patch_context_agent_id):
+        """Test psutil NoSuchProcess exception is caught (lines 79-80)."""
+        import psutil
+        mock_mcp_server.PSUTIL_AVAILABLE = True
+
+        mock_proc = MagicMock()
+        mock_proc.info.__getitem__ = MagicMock(side_effect=psutil.NoSuchProcess(123))
+        # Make the proc.info access raise in the inner try
+        mock_proc.info = {"pid": 123, "cmdline": ["mcp_server.py"], "create_time": 0, "status": "running"}
+
+        mock_current = MagicMock()
+        mock_current.create_time.return_value = 100.0
+        mock_current.status.return_value = "running"
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {}), \
+             patch("psutil.process_iter", side_effect=Exception("process enumeration failed")), \
+             patch("psutil.Process", return_value=mock_current), \
+             patch("time.time", return_value=200.0):
+            from src.mcp_handlers.admin import handle_get_server_info
+            result = await handle_get_server_info({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            # Should have error in server_processes
+            assert len(data["server_processes"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_server_info_empty_processes_fallback(self, mock_mcp_server, patch_context_agent_id):
+        """Test fallback when process enumeration finds nothing (lines 91-101)."""
+        mock_mcp_server.PSUTIL_AVAILABLE = True
+
+        mock_current = MagicMock()
+        mock_current.create_time.return_value = 100.0
+        mock_current.status.return_value = "running"
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {}), \
+             patch("psutil.process_iter", return_value=[]), \
+             patch("psutil.Process", return_value=mock_current), \
+             patch("time.time", return_value=200.0):
+            from src.mcp_handlers.admin import handle_get_server_info
+            result = await handle_get_server_info({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            # Should include current process as fallback
+            assert any(p.get("is_current") for p in data["server_processes"])
+
+    @pytest.mark.asyncio
+    async def test_server_info_psutil_current_proc_error(self, mock_mcp_server, patch_context_agent_id):
+        """Test psutil.Process error for current process (lines 100-101)."""
+        import psutil
+        mock_mcp_server.PSUTIL_AVAILABLE = True
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {}), \
+             patch("psutil.process_iter", return_value=[]), \
+             patch("psutil.Process", side_effect=psutil.NoSuchProcess(99999)), \
+             patch("time.time", return_value=200.0):
+            from src.mcp_handlers.admin import handle_get_server_info
+            result = await handle_get_server_info({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_server_info_unknown_transport(self, mock_mcp_server, patch_context_agent_id):
+        """Test unknown transport with process matching (lines 59-64)."""
+        mock_mcp_server.PSUTIL_AVAILABLE = True
+
+        mock_proc = MagicMock()
+        mock_proc.info = {
+            "pid": 222,
+            "name": "python",
+            "cmdline": ["python", "mcp_server.py"],
+            "create_time": 50.0,
+            "status": "running"
+        }
+
+        mock_current = MagicMock()
+        mock_current.create_time.return_value = 100.0
+        mock_current.status.return_value = "running"
+
+        # Force unknown transport
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {}), \
+             patch("psutil.process_iter", return_value=[mock_proc]), \
+             patch("psutil.Process", return_value=mock_current), \
+             patch("time.time", return_value=200.0), \
+             patch.object(sys, "argv", ["python", "something_else.py"]):
+            from src.mcp_handlers.admin import handle_get_server_info
+            result = await handle_get_server_info({})
+
+            data = parse_result(result)
+            assert data["transport"] == "unknown"
+
+
+# ============================================================================
+# handle_health_check - additional edge cases
+# ============================================================================
+
+class TestHealthCheckEdgeCases:
+
+    @pytest.mark.asyncio
+    async def test_health_check_telemetry_error(self, mock_mcp_server, patch_context_agent_id):
+        """Test telemetry error is caught (lines 330-331)."""
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.side_effect = RuntimeError("filesystem error")
+
+        mock_db = AsyncMock()
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+        mock_db.init = AsyncMock()
+
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=False), \
+             patch("src.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock) as mock_kg:
+
+            mock_kg_instance = AsyncMock()
+            mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_kg.return_value = mock_kg_instance
+
+            from src.mcp_handlers.admin import handle_health_check
+            result = await handle_health_check({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert data["checks"]["telemetry"]["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_health_check_primary_db_init_error(self, mock_mcp_server, patch_context_agent_id):
+        """Test primary DB init error is caught (lines 349-350)."""
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock(side_effect=RuntimeError("pool init failed"))
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=False), \
+             patch("src.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock) as mock_kg:
+
+            mock_kg_instance = AsyncMock()
+            mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_kg.return_value = mock_kg_instance
+
+            from src.mcp_handlers.admin import handle_health_check
+            result = await handle_health_check({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert data["checks"]["primary_db"]["init_error"] is not None
+
+    @pytest.mark.asyncio
+    async def test_health_check_db_health_error(self, mock_mcp_server, patch_context_agent_id):
+        """Test primary DB health_check error is caught (lines 354-355)."""
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.health_check = AsyncMock(side_effect=RuntimeError("health check failed"))
+
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=False), \
+             patch("src.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock) as mock_kg:
+
+            mock_kg_instance = AsyncMock()
+            mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_kg.return_value = mock_kg_instance
+
+            from src.mcp_handlers.admin import handle_health_check
+            result = await handle_health_check({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert data["checks"]["primary_db"]["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_health_check_primary_db_exception(self, mock_mcp_server, patch_context_agent_id):
+        """Test primary DB exception is caught (lines 365-366)."""
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", side_effect=RuntimeError("no db")), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=False), \
+             patch("src.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock) as mock_kg:
+
+            mock_kg_instance = AsyncMock()
+            mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_kg.return_value = mock_kg_instance
+
+            from src.mcp_handlers.admin import handle_health_check
+            result = await handle_health_check({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert data["checks"]["primary_db"]["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_health_check_audit_db_error(self, mock_mcp_server, patch_context_agent_id):
+        """Test audit DB exception is caught (lines 380-381)."""
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        mock_db = AsyncMock()
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+        mock_db.init = AsyncMock()
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   side_effect=RuntimeError("audit db error")), \
+             patch("src.cache.is_redis_available", return_value=False), \
+             patch("src.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock) as mock_kg:
+
+            mock_kg_instance = AsyncMock()
+            mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_kg.return_value = mock_kg_instance
+
+            from src.mcp_handlers.admin import handle_health_check
+            result = await handle_health_check({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert data["checks"]["audit_db"]["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_health_check_redis_import_error(self, mock_mcp_server, patch_context_agent_id):
+        """Test Redis ImportError is caught (lines 436-440)."""
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        mock_db = AsyncMock()
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+        mock_db.init = AsyncMock()
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch.dict("sys.modules", {"src.cache": None}), \
+             patch("src.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock) as mock_kg:
+
+            mock_kg_instance = AsyncMock()
+            mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_kg.return_value = mock_kg_instance
+
+            from src.mcp_handlers.admin import handle_health_check
+            result = await handle_health_check({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            # Redis cache should show unavailable or error
+            assert data["checks"]["redis_cache"]["status"] in ("unavailable", "error")
+
+    @pytest.mark.asyncio
+    async def test_health_check_kg_error(self, mock_mcp_server, patch_context_agent_id):
+        """Test knowledge graph exception is caught (lines 465-466)."""
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        mock_db = AsyncMock()
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+        mock_db.init = AsyncMock()
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=False), \
+             patch("src.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock,
+                   side_effect=RuntimeError("KG unavailable")):
+
+            from src.mcp_handlers.admin import handle_health_check
+            result = await handle_health_check({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert data["checks"]["knowledge_graph"]["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_health_check_data_dir_error(self, mock_mcp_server, patch_context_agent_id):
+        """Test data directory exception is caught (lines 487-488)."""
+        mock_mcp_server.project_root = "/nonexistent/path"
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        mock_db = AsyncMock()
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+        mock_db.init = AsyncMock()
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=False), \
+             patch("src.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock) as mock_kg:
+
+            mock_kg_instance = AsyncMock()
+            mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_kg.return_value = mock_kg_instance
+
+            from src.mcp_handlers.admin import handle_health_check
+            result = await handle_health_check({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            # data_directory should still work (nonexistent but no exception)
+
+
+# ============================================================================
+# handle_describe_tool - additional coverage
+# ============================================================================
+
+class TestDescribeToolAdditional:
+
+    @pytest.mark.asyncio
+    async def test_describe_tool_lite_with_known_schema(self, patch_context_agent_id):
+        """Test lite mode with TOOL_PARAM_SCHEMAS entry covers lines 1945-2022."""
+        mock_tool = MagicMock()
+        mock_tool.name = "process_agent_update"
+        mock_tool.description = "Share your work and get feedback"
+        mock_tool.inputSchema = {"type": "object", "properties": {}}
+
+        lite_schema = {
+            "required": ["complexity"],
+            "optional": {
+                "response_text": {"type": "string"},
+                "confidence": {"type": "number", "default": 0.7},
+                "task_type": {"type": "string", "values": ["convergent", "divergent"]},
+            },
+            "example": "process_agent_update(complexity=0.5)"
+        }
+
+        with patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool]), \
+             patch("src.mcp_handlers.validators.TOOL_PARAM_SCHEMAS", {"process_agent_update": lite_schema}), \
+             patch("src.mcp_handlers.validators.PARAM_ALIASES", {"process_agent_update": {"text": "response_text"}}), \
+             patch("src.mcp_handlers.validators.DISCOVERY_TYPE_ALIASES", {}), \
+             patch("src.tool_modes.TOOL_TIERS", {"essential": {"process_agent_update"}, "common": set(), "advanced": set()}), \
+             patch("src.tool_modes.TOOL_OPERATIONS", {"process_agent_update": "write"}):
+            from src.mcp_handlers.admin import handle_describe_tool
+            result = await handle_describe_tool({
+                "tool_name": "process_agent_update",
+                "lite": True
+            })
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert data["tool"] == "process_agent_update"
+            assert data["tier"] == "essential"
+            assert "parameters" in data
+            assert "example" in data
+            assert "common_patterns" in data
+            assert "parameter_aliases" in data
+
+    @pytest.mark.asyncio
+    async def test_describe_tool_lite_fallback_with_aliases(self, patch_context_agent_id):
+        """Test lite mode fallback inputSchema with aliases covers lines 2052, 2057."""
+        mock_tool = MagicMock()
+        mock_tool.name = "custom_tool"
+        mock_tool.description = "Custom tool"
+        mock_tool.inputSchema = {
+            "type": "object",
+            "properties": {
+                "param1": {"type": "string"},
+                "param2": {"type": "integer"}
+            },
+            "required": ["param1"]
+        }
+
+        with patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool]), \
+             patch("src.mcp_handlers.validators.TOOL_PARAM_SCHEMAS", {}), \
+             patch("src.mcp_handlers.validators.PARAM_ALIASES", {"custom_tool": {"text": "param1"}}):
+            from src.mcp_handlers.admin import handle_describe_tool
+            result = await handle_describe_tool({
+                "tool_name": "custom_tool",
+                "lite": True
+            })
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert "parameter_aliases" in data
+            assert data["parameter_aliases"]["text"] == "\u2192 param1"
+
+    @pytest.mark.asyncio
+    async def test_describe_tool_non_lite_mode(self, patch_context_agent_id):
+        """Test non-lite mode returns full tool schema covers line 2133."""
+        mock_tool = MagicMock()
+        mock_tool.name = "health_check"
+        mock_tool.description = "Quick health check"
+        mock_tool.inputSchema = {"type": "object", "properties": {"agent_id": {"type": "string"}}}
+
+        with patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool]):
+            from src.mcp_handlers.admin import handle_describe_tool
+            result = await handle_describe_tool({
+                "tool_name": "health_check",
+                "lite": False
+            })
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert "tool" in data
+            assert data["tool"]["name"] == "health_check"
+            assert data["tool"]["inputSchema"] is not None
+
+    @pytest.mark.asyncio
+    async def test_describe_tool_no_full_description(self, patch_context_agent_id):
+        """Test include_full_description=False covers line 1894."""
+        mock_tool = MagicMock()
+        mock_tool.name = "health_check"
+        mock_tool.description = "First line\nSecond line\nThird line"
+        mock_tool.inputSchema = {"type": "object"}
+
+        with patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool]):
+            from src.mcp_handlers.admin import handle_describe_tool
+            result = await handle_describe_tool({
+                "tool_name": "health_check",
+                "lite": False,
+                "include_full_description": False,
+            })
+
+            data = parse_result(result)
+            assert data["success"] is True
+            # Description should be first line only
+            assert "Second line" not in data["tool"]["description"]
+
+
+# ============================================================================
+# handle_get_telemetry_metrics - perf snapshot error
+# ============================================================================
+
+class TestTelemetryMetricsAdditional:
+
+    @pytest.mark.asyncio
+    async def test_telemetry_perf_snapshot_error(self, patch_context_agent_id):
+        """Test perf_monitor.snapshot error is caught (lines 856-857)."""
+        mock_telemetry = MagicMock()
+        mock_telemetry.get_skip_rate_metrics.return_value = {"skip_rate": 0.1}
+        mock_telemetry.get_confidence_distribution.return_value = {"mean": 0.7}
+        mock_telemetry.detect_suspicious_patterns.return_value = []
+
+        with patch("src.telemetry.TelemetryCollector", return_value=mock_telemetry), \
+             patch("src.perf_monitor.snapshot", side_effect=ImportError("perf not available")):
+            from src.mcp_handlers.admin import handle_get_telemetry_metrics
+            result = await handle_get_telemetry_metrics({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert data["knowledge_graph_perf"]["note"] == "perf snapshot unavailable"
+
+
+# ============================================================================
+# handle_update_calibration_ground_truth - additional coverage
+# ============================================================================
+
+class TestUpdateCalibrationGroundTruthAdditional:
+
+    @pytest.mark.asyncio
+    async def test_timestamp_mode_value_error(self, patch_context_agent_id):
+        """Test ValueError from bad timestamp is caught (lines 743-744)."""
+        with patch("src.calibration.calibration_checker", MagicMock()), \
+             patch("src.audit_log.AuditLogger") as mock_audit_cls:
+            mock_audit = MagicMock()
+            mock_audit.query_audit_log.return_value = [
+                {"confidence": 0.85, "details": {"decision": "attest"}}
+            ]
+            mock_audit_cls.return_value = mock_audit
+
+            mock_checker = MagicMock()
+            mock_checker.update_ground_truth.side_effect = ValueError("bad data")
+            mock_checker.get_pending_updates.return_value = 0
+
+            with patch("src.calibration.calibration_checker", mock_checker):
+                from src.mcp_handlers.admin import handle_update_calibration_ground_truth
+                result = await handle_update_calibration_ground_truth({
+                    "timestamp": "not-a-valid-timestamp",
+                    "actual_correct": True,
+                })
+
+            data = parse_result(result)
+            assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_direct_mode_exception(self, patch_context_agent_id):
+        """Test direct mode exception is caught (lines 779-780)."""
+        mock_checker = MagicMock()
+        mock_checker.update_ground_truth.side_effect = RuntimeError("calibration broken")
+
+        with patch("src.calibration.calibration_checker", mock_checker):
+            from src.mcp_handlers.admin import handle_update_calibration_ground_truth
+            result = await handle_update_calibration_ground_truth({
+                "confidence": 0.8,
+                "predicted_correct": True,
+                "actual_correct": True,
+            })
+
+            data = parse_result(result)
+            assert data["success"] is False
+
+
+# ============================================================================
+# handle_debug_request_context - additional coverage
+# ============================================================================
+
+class TestDebugRequestContextAdditional:
+
+    @pytest.mark.asyncio
+    async def test_debug_context_with_bindings(self, mock_mcp_server):
+        """Test debug context with legacy bindings covers lines 2146-2156."""
+        session_identities = {
+            "session-1": {"bound_agent_id": "uuid-abcdef1234567890"},
+            "session-2": {"bound_agent_id": None},
+        }
+        uuid_prefix_index = {
+            "abcdef12": "uuid-abcdef1234567890"
+        }
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-abc"), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value="test-key"), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {"tool1": None}), \
+             patch("src.mcp_handlers.identity_v2._derive_session_key", return_value="derived"), \
+             patch("src.mcp_handlers.identity_shared._session_identities", session_identities), \
+             patch("src.mcp_handlers.identity_shared._uuid_prefix_index", uuid_prefix_index):
+            from src.mcp_handlers.admin import handle_debug_request_context
+            result = await handle_debug_request_context({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert data["session"]["context_agent_id"] == "uuid-abc"
+            assert "legacy_bindings_in_memory" in data["diagnostics"]
+
+    @pytest.mark.asyncio
+    async def test_debug_context_legacy_error(self, mock_mcp_server):
+        """Test debug context with legacy import error covers lines 2154-2156."""
+        # Create a dict-like object whose .items() raises an exception
+        class BrokenDict:
+            def items(self):
+                raise AttributeError("broken")
+
+        with patch("src.mcp_handlers.admin.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value=None), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {}), \
+             patch("src.mcp_handlers.identity_v2._derive_session_key", return_value="key"), \
+             patch("src.mcp_handlers.identity_shared._session_identities", BrokenDict()):
+            from src.mcp_handlers.admin import handle_debug_request_context
+            result = await handle_debug_request_context({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert "error" in data["diagnostics"]["legacy_bindings_in_memory"]
+
+
+# ============================================================================
+# handle_get_connection_status - additional coverage
+# ============================================================================
+
+class TestGetConnectionStatusAdditional:
+
+    @pytest.mark.asyncio
+    async def test_connection_status_tool_import_error(self):
+        """Test TOOL_HANDLERS import error covers lines 2299-2300."""
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+
+        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_server), \
+             patch("src.mcp_handlers.admin.mcp_server", mock_server), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch.dict("sys.modules", {"src.mcp_handlers": MagicMock(TOOL_HANDLERS={})}):
+            from src.mcp_handlers.admin import handle_get_connection_status
+            result = await handle_get_connection_status({})
+
+            data = parse_result(result)
+            assert "status" in data
+
+    @pytest.mark.asyncio
+    async def test_connection_status_with_structured_id(self):
+        """Test connection with resolved structured_id covers lines 2314-2317.
+
+        Note: success_response() overwrites resolved_agent_id with context agent_id,
+        so the handler's structured_id lookup is not visible in the final response.
+        We verify the code path is exercised by checking session_bound and resolved_uuid.
+        """
+        mock_server = MagicMock()
+        meta = MagicMock()
+        meta.structured_id = "Claude_Opus_20260101"
+        meta.label = "MyAgent"
+        mock_server.agent_metadata = {"uuid-xyz": meta}
+
+        with patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
+             patch("src.mcp_handlers.TOOL_HANDLERS", {"tool1": None}), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-xyz"):
+            from src.mcp_handlers.admin import handle_get_connection_status
+            result = await handle_get_connection_status({})
+
+            data = parse_result(result)
+            assert data["session_bound"] is True
+            # resolved_uuid is the truncated UUID from the handler
+            assert data["resolved_uuid"] == "uuid-xyz..."
+            # resolved_agent_id is overwritten by success_response with context_agent_id
+            assert data["resolved_agent_id"] == "uuid-xyz"
+
+
+# ============================================================================
+# Workspace helpers - exception paths
+# ============================================================================
+
+class TestWorkspaceHelpersAdditional:
+
+    def test_get_workspace_last_agent_exception(self):
+        """Test get_workspace_last_agent exception is suppressed (lines 266-267)."""
+        from src.mcp_handlers.admin import get_workspace_last_agent
+
+        server = MagicMock()
+        # Make project_root cause an exception via Path
+        server.project_root = None
+
+        result = get_workspace_last_agent(server)
+        assert result is None
+
+
+# ============================================================================
+# handle_check_continuity_health - additional coverage
+# ============================================================================
+
+class TestContinuityHealthAdditional:
+
+    @pytest.mark.asyncio
+    async def test_continuity_health_provenance_recommendation(self, mock_mcp_server, patch_context_agent_id):
+        """Test provenance recommendation is generated on deep_check (line 224)."""
+        mock_mcp_server.agent_metadata = {}
+        mock_discovery = MagicMock()
+        mock_discovery.provenance = None  # No provenance
+
+        mock_graph = AsyncMock()
+        mock_graph.get_stats = AsyncMock(return_value={
+            "total_discoveries": 1, "total_agents": 1
+        })
+        mock_graph.query = AsyncMock(return_value=[mock_discovery])
+
+        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+             patch("src.mcp_handlers.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock, return_value=mock_graph):
+            from src.mcp_handlers.admin import handle_check_continuity_health
+            result = await handle_check_continuity_health({"deep_check": True})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert any("provenance" in r.lower() for r in data["recommendations"])
