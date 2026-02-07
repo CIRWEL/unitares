@@ -1,13 +1,14 @@
 """
 Tool schema and registry validation tests.
 
-Validates structural correctness of tool schemas and registry alignment
-without requiring any backend mocking.
+Validates structural correctness of tool schemas, handler registry alignment,
+alias integrity, and cross-registry consistency without requiring any backend
+services or mocking.
 """
 
-import json
-import pytest
+import re
 import sys
+import pytest
 from pathlib import Path
 
 project_root = Path(__file__).parent.parent
@@ -19,76 +20,160 @@ from src.mcp_handlers.decorators import (
     list_registered_tools,
     _TOOL_DEFINITIONS,
 )
-from src.mcp_handlers.tool_stability import _TOOL_ALIASES
+from src.mcp_handlers.tool_stability import (
+    _TOOL_ALIASES,
+    resolve_tool_alias,
+    list_all_aliases,
+)
 
 
 # ============================================================================
-# Schema Structure Validation
+# Registry Consistency
+# ============================================================================
+
+class TestRegistryConsistency:
+    """Validate the handler registry from decorators.py."""
+
+    def test_registry_is_non_empty(self):
+        """Sanity check: the tool registry should contain registered tools."""
+        registry = get_tool_registry()
+        assert len(registry) > 0, "Tool registry is empty -- decorators may not have run"
+
+    def test_every_handler_is_callable(self):
+        """Every handler value in the registry must be a non-None callable."""
+        registry = get_tool_registry()
+        for name, handler in registry.items():
+            assert handler is not None, f"Handler for '{name}' is None"
+            assert callable(handler), f"Handler for '{name}' is not callable"
+
+    def test_no_duplicate_registrations(self):
+        """Tool names in _TOOL_DEFINITIONS must be unique (dict enforces this,
+        but verify name field matches dict key)."""
+        for key, td in _TOOL_DEFINITIONS.items():
+            assert td.name == key, (
+                f"ToolDefinition key '{key}' doesn't match its name field '{td.name}'"
+            )
+
+    def test_handler_names_follow_convention(self):
+        """Tool names should be lowercase with underscores (snake_case)."""
+        registry = get_tool_registry()
+        pattern = re.compile(r"^[a-z][a-z0-9_]*$")
+        violations = [name for name in registry if not pattern.match(name)]
+        assert not violations, f"Tool names violating snake_case convention: {violations}"
+
+    def test_list_registered_tools_returns_strings(self):
+        """list_registered_tools() should return a list of non-empty strings."""
+        tools = list_registered_tools()
+        assert isinstance(tools, list), "list_registered_tools() should return a list"
+        assert len(tools) > 0, "list_registered_tools() returned empty list"
+        for t in tools:
+            assert isinstance(t, str), f"Expected str, got {type(t)}: {t}"
+            assert len(t) > 0, "list_registered_tools() returned empty string"
+
+    def test_list_registered_tools_sorted(self):
+        """list_registered_tools() should return sorted names."""
+        tools = list_registered_tools()
+        assert tools == sorted(tools), "list_registered_tools() should be sorted"
+
+    def test_list_registered_tools_with_hidden(self):
+        """Including hidden tools should return >= the default count."""
+        default = list_registered_tools()
+        with_hidden = list_registered_tools(include_hidden=True)
+        assert len(with_hidden) >= len(default), (
+            "Including hidden tools should not reduce the count"
+        )
+
+
+# ============================================================================
+# Schema Structure
 # ============================================================================
 
 class TestSchemaStructure:
+    """Validate the Tool objects returned by get_tool_definitions()."""
 
     @pytest.fixture(scope="class")
-    def tools(self):
+    def full_tools(self):
         return get_tool_definitions(verbosity="full")
 
-    def test_tool_definitions_returns_list(self, tools):
-        assert isinstance(tools, list)
-        assert len(tools) > 0
+    @pytest.fixture(scope="class")
+    def short_tools(self):
+        return get_tool_definitions(verbosity="short")
 
-    def test_every_tool_has_name(self, tools):
-        for tool in tools:
-            assert hasattr(tool, 'name'), f"Tool missing name: {tool}"
-            assert tool.name, f"Tool has empty name"
+    def test_tool_definitions_returns_non_empty_list(self, full_tools):
+        assert isinstance(full_tools, list)
+        assert len(full_tools) > 0, "get_tool_definitions() returned empty list"
 
-    def test_every_tool_has_description(self, tools):
-        missing = []
-        for tool in tools:
-            assert hasattr(tool, 'description'), f"Tool {tool.name} missing description"
-            if not tool.description:
-                missing.append(tool.name)
-        # Allow a few tools to have empty descriptions (some are auto-generated stubs)
-        assert len(missing) <= 5, (
-            f"Too many tools with empty descriptions ({len(missing)}): {missing}"
+    def test_every_tool_has_name(self, full_tools):
+        for tool in full_tools:
+            assert hasattr(tool, "name"), f"Tool missing 'name' attribute: {tool}"
+            assert isinstance(tool.name, str) and tool.name, (
+                f"Tool has empty or non-string name"
+            )
+
+    def test_every_tool_has_description(self, full_tools):
+        for tool in full_tools:
+            assert hasattr(tool, "description"), (
+                f"Tool {tool.name} missing 'description' attribute"
+            )
+            assert isinstance(tool.description, str), (
+                f"Tool {tool.name} description is not a string"
+            )
+
+    def test_all_descriptions_are_non_empty(self, full_tools):
+        """All descriptions should be non-empty strings."""
+        empty = [t.name for t in full_tools if not t.description.strip()]
+        # Allow a small number of auto-generated stubs
+        assert len(empty) <= 5, (
+            f"Too many tools with empty descriptions ({len(empty)}): {empty}"
         )
 
-    def test_every_tool_has_input_schema(self, tools):
-        for tool in tools:
-            assert hasattr(tool, 'inputSchema'), f"Tool {tool.name} missing inputSchema"
-            schema = tool.inputSchema
-            assert isinstance(schema, dict), f"Tool {tool.name} inputSchema is not a dict"
+    def test_every_tool_has_input_schema(self, full_tools):
+        for tool in full_tools:
+            assert hasattr(tool, "inputSchema"), (
+                f"Tool {tool.name} missing 'inputSchema' attribute"
+            )
+            assert isinstance(tool.inputSchema, dict), (
+                f"Tool {tool.name} inputSchema is not a dict"
+            )
 
-    def test_input_schema_has_type_object(self, tools):
-        for tool in tools:
+    def test_input_schema_type_is_object(self, full_tools):
+        """Every inputSchema must have type: 'object'."""
+        for tool in full_tools:
             schema = tool.inputSchema
             assert schema.get("type") == "object", (
-                f"Tool {tool.name} inputSchema type should be 'object', got {schema.get('type')}"
+                f"Tool {tool.name} inputSchema type should be 'object', "
+                f"got '{schema.get('type')}'"
             )
 
-    def test_input_schema_has_properties(self, tools):
-        for tool in tools:
+    def test_input_schema_has_properties_key(self, full_tools):
+        """Every inputSchema must have a 'properties' key."""
+        for tool in full_tools:
             schema = tool.inputSchema
             assert "properties" in schema, (
-                f"Tool {tool.name} inputSchema missing 'properties'"
+                f"Tool {tool.name} inputSchema missing 'properties' key"
             )
 
-    def test_no_duplicate_tool_names(self, tools):
-        names = [t.name for t in tools]
-        duplicates = [n for n in names if names.count(n) > 1]
-        assert len(duplicates) == 0, f"Duplicate tool names: {set(duplicates)}"
+    def test_no_duplicate_tool_names_in_schema(self, full_tools):
+        names = [t.name for t in full_tools]
+        seen = set()
+        duplicates = set()
+        for n in names:
+            if n in seen:
+                duplicates.add(n)
+            seen.add(n)
+        assert not duplicates, f"Duplicate tool names in schema: {duplicates}"
 
-    def test_description_length_reasonable(self, tools):
-        """Short-mode descriptions should be concise."""
-        short_tools = get_tool_definitions(verbosity="short")
-        for tool in short_tools:
-            # Short descriptions should be under 500 chars
-            assert len(tool.description) < 2000, (
-                f"Tool {tool.name} description too long ({len(tool.description)} chars)"
-            )
+    def test_schema_names_are_snake_case(self, full_tools):
+        """Tool names in schemas should be lowercase with underscores."""
+        pattern = re.compile(r"^[a-z][a-z0-9_]*$")
+        violations = [t.name for t in full_tools if not pattern.match(t.name)]
+        assert not violations, (
+            f"Schema tool names violating snake_case convention: {violations}"
+        )
 
-    def test_required_params_subset_of_properties(self, tools):
-        """Required params must exist in properties."""
-        for tool in tools:
+    def test_required_params_subset_of_properties(self, full_tools):
+        """If 'required' is present, every entry must exist in 'properties'."""
+        for tool in full_tools:
             schema = tool.inputSchema
             required = schema.get("required", [])
             properties = schema.get("properties", {})
@@ -99,104 +184,167 @@ class TestSchemaStructure:
 
 
 # ============================================================================
-# Registry Alignment
+# Alias Integrity
 # ============================================================================
 
-class TestRegistryAlignment:
+class TestAliasIntegrity:
+    """Validate the _TOOL_ALIASES registry from tool_stability.py."""
 
-    def test_registry_is_not_empty(self):
+    KNOWN_REASONS = {"renamed", "consolidated", "deprecated", "intuitive_alias"}
+
+    def test_aliases_registry_non_empty(self):
+        assert len(_TOOL_ALIASES) > 0, "Alias registry should not be empty"
+
+    def test_all_alias_targets_exist_in_handler_registry(self):
+        """Every alias new_name should point to a tool in the handler registry."""
         registry = get_tool_registry()
-        assert len(registry) > 0, "Tool registry should not be empty"
-
-    def test_all_registry_tools_are_callable(self):
-        registry = get_tool_registry()
-        for name, handler in registry.items():
-            assert callable(handler), f"Handler for '{name}' is not callable"
-
-    def test_schema_tools_have_handlers(self):
-        """Most tools in schema should have registered handlers."""
-        tools = get_tool_definitions()
-        registry = get_tool_registry()
-        tool_names = {t.name for t in tools}
-
         missing = []
-        for name in tool_names:
-            if name not in registry:
-                # Check if it's an alias
-                if name not in _TOOL_ALIASES:
-                    missing.append(name)
-
-        # Allow some slack - some schema tools may use the legacy elif chain
-        # but the majority should be registered
-        coverage = 1 - (len(missing) / len(tool_names)) if tool_names else 0
-        assert coverage > 0.5, (
-            f"Only {coverage:.0%} of schema tools have handlers. Missing: {missing[:10]}"
-        )
-
-
-# ============================================================================
-# Alias Validation
-# ============================================================================
-
-class TestAliasValidation:
-
-    def test_aliases_dict_not_empty(self):
-        assert len(_TOOL_ALIASES) > 0, "Tool aliases should not be empty"
-
-    def test_all_aliases_have_new_name(self):
-        for old_name, alias in _TOOL_ALIASES.items():
-            assert alias.new_name, f"Alias '{old_name}' has no new_name"
-
-    def test_alias_targets_exist_in_registry(self):
-        """Alias targets should point to existing tools."""
-        registry = get_tool_registry()
-        missing_targets = []
         for old_name, alias in _TOOL_ALIASES.items():
             if alias.new_name not in registry:
-                missing_targets.append(f"{old_name} -> {alias.new_name}")
+                missing.append(f"{old_name} -> {alias.new_name}")
 
-        # Allow some slack for aliases that target tools not yet migrated
-        if missing_targets:
-            # At least 80% of aliases should point to valid targets
-            coverage = 1 - (len(missing_targets) / len(_TOOL_ALIASES))
-            assert coverage > 0.5, (
-                f"Many alias targets missing from registry: {missing_targets[:5]}"
-            )
+        # At least 80% must resolve (some targets may be hidden or register=False)
+        coverage = 1 - (len(missing) / len(_TOOL_ALIASES)) if _TOOL_ALIASES else 0
+        assert coverage >= 0.80, (
+            f"Only {coverage:.0%} of alias targets exist in registry. "
+            f"Missing ({len(missing)}): {missing[:10]}"
+        )
 
-    def test_alias_old_name_matches_key(self):
-        """ToolAlias.old_name should match the dict key."""
+    def test_every_alias_has_required_fields(self):
+        """Each alias must have old_name, new_name, and reason."""
+        for key, alias in _TOOL_ALIASES.items():
+            assert alias.old_name, f"Alias '{key}' has empty old_name"
+            assert alias.new_name, f"Alias '{key}' has empty new_name"
+            assert alias.reason, f"Alias '{key}' has empty reason"
+
+    def test_alias_old_name_matches_dict_key(self):
+        """ToolAlias.old_name must match its dictionary key."""
         for key, alias in _TOOL_ALIASES.items():
             assert alias.old_name == key, (
-                f"Alias key '{key}' doesn't match old_name '{alias.old_name}'"
+                f"Alias dict key '{key}' doesn't match old_name '{alias.old_name}'"
             )
 
+    def test_reason_values_are_from_known_set(self):
+        """reason must be one of the known values."""
+        for key, alias in _TOOL_ALIASES.items():
+            assert alias.reason in self.KNOWN_REASONS, (
+                f"Alias '{key}' has unknown reason '{alias.reason}'. "
+                f"Known: {self.KNOWN_REASONS}"
+            )
+
+    def test_consolidated_aliases_with_inject_action_have_valid_values(self):
+        """Aliases with inject_action should have non-empty string actions."""
+        for key, alias in _TOOL_ALIASES.items():
+            if alias.inject_action is not None:
+                assert isinstance(alias.inject_action, str), (
+                    f"Alias '{key}' inject_action should be a string"
+                )
+                assert len(alias.inject_action) > 0, (
+                    f"Alias '{key}' inject_action is empty string"
+                )
+
+    def test_no_alias_chains(self):
+        """No alias should point to another alias (no transitive chains)."""
+        alias_names = set(_TOOL_ALIASES.keys())
+        chains = []
+        for key, alias in _TOOL_ALIASES.items():
+            if alias.new_name in alias_names:
+                chains.append(f"{key} -> {alias.new_name} (which is also an alias)")
+        assert not chains, f"Alias chains detected (alias pointing to alias): {chains}"
+
+    def test_resolve_tool_alias_returns_same_for_non_alias(self):
+        """resolve_tool_alias for a non-alias tool should return the same name."""
+        name, alias_info = resolve_tool_alias("process_agent_update")
+        assert name == "process_agent_update"
+        assert alias_info is None
+
+    def test_resolve_tool_alias_returns_target_for_alias(self):
+        """resolve_tool_alias for a known alias should return the target."""
+        name, alias_info = resolve_tool_alias("status")
+        assert name == "get_governance_metrics"
+        assert alias_info is not None
+        assert alias_info.old_name == "status"
+
+    def test_list_all_aliases_returns_copy(self):
+        """list_all_aliases should return a copy, not the original dict."""
+        result = list_all_aliases()
+        assert isinstance(result, dict)
+        assert len(result) == len(_TOOL_ALIASES)
+        # Mutating the copy should not affect the original
+        result["__test_injection__"] = "bad"
+        assert "__test_injection__" not in _TOOL_ALIASES
+
 
 # ============================================================================
-# Short vs Full Verbosity
+# Cross-Registry Validation
 # ============================================================================
 
-class TestVerbosityModes:
+class TestCrossRegistryValidation:
+    """Validate consistency across schema, handler, and alias registries."""
 
-    def test_short_mode_exists(self):
-        tools = get_tool_definitions(verbosity="short")
-        assert len(tools) > 0
+    def test_schema_tools_overlap_with_handler_registry(self):
+        """A significant portion of schema tools should exist in the handler
+        registry (either directly or via alias)."""
+        tools = get_tool_definitions()
+        registry = get_tool_registry()
+        schema_names = {t.name for t in tools}
 
-    def test_full_mode_exists(self):
-        tools = get_tool_definitions(verbosity="full")
-        assert len(tools) > 0
+        found = 0
+        for name in schema_names:
+            if name in registry or name in _TOOL_ALIASES:
+                found += 1
 
-    def test_same_tool_count(self):
+        coverage = found / len(schema_names) if schema_names else 0
+        assert coverage > 0.50, (
+            f"Only {coverage:.0%} of schema tools have handlers or are aliases"
+        )
+
+    def test_schema_tool_names_reasonable_length(self):
+        """Tool names should not be excessively short or long (basic typo guard)."""
+        tools = get_tool_definitions()
+        for tool in tools:
+            assert len(tool.name) >= 2, (
+                f"Tool name too short (possible typo): '{tool.name}'"
+            )
+            assert len(tool.name) <= 80, (
+                f"Tool name too long (possible typo): '{tool.name}'"
+            )
+
+    def test_full_verbosity_longer_than_short(self):
+        """Full verbosity descriptions should be longer on average than short."""
+        short_tools = get_tool_definitions(verbosity="short")
+        full_tools = get_tool_definitions(verbosity="full")
+
+        short_map = {t.name: len(t.description) for t in short_tools}
+        full_map = {t.name: len(t.description) for t in full_tools}
+
+        common_names = set(short_map.keys()) & set(full_map.keys())
+        assert len(common_names) > 0, "No common tool names between short and full"
+
+        longer_count = sum(
+            1 for name in common_names
+            if full_map[name] >= short_map[name]
+        )
+        # Full should be >= short for most tools
+        ratio = longer_count / len(common_names)
+        assert ratio >= 0.50, (
+            f"Full descriptions should be >= short for most tools. "
+            f"Only {ratio:.0%} ({longer_count}/{len(common_names)}) are."
+        )
+
+    def test_short_and_full_have_same_tool_count(self):
+        """Short and full verbosity should return the same number of tools."""
         short = get_tool_definitions(verbosity="short")
         full = get_tool_definitions(verbosity="full")
         assert len(short) == len(full), (
             f"Short ({len(short)}) and full ({len(full)}) should have same tool count"
         )
 
-    def test_short_descriptions_shorter_or_equal(self):
-        """Short mode descriptions should generally be <= full mode."""
-        short = {t.name: t.description for t in get_tool_definitions(verbosity="short")}
-        full = {t.name: t.description for t in get_tool_definitions(verbosity="full")}
-
-        shorter_count = sum(1 for name in short if len(short[name]) <= len(full.get(name, "")))
-        # Most should be shorter or equal
-        assert shorter_count > len(short) * 0.5
+    def test_short_descriptions_are_concise(self):
+        """Short-mode descriptions should not be excessively long."""
+        short_tools = get_tool_definitions(verbosity="short")
+        for tool in short_tools:
+            assert len(tool.description) < 2000, (
+                f"Tool {tool.name} short description is too long "
+                f"({len(tool.description)} chars)"
+            )

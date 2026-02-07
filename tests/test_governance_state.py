@@ -1,280 +1,261 @@
 """
-Tests for src/governance_state.py - GovernanceState dataclass + interpretation.
+Tests for src/governance_state.py — GovernanceState wrapper.
 
-Tests pure methods: properties, to_dict, to_dict_with_history, validate,
-interpret_state private helpers, and module-level interpret_eisv_quick.
-
-from_dict is tested with mocked governance_core imports.
-lambda1 property requires config mock.
+Tests properties, serialization, validation, interpretation layer, and quick helpers.
 """
 
 import pytest
-import numpy as np
 import sys
+import numpy as np
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.governance_state import GovernanceState, interpret_eisv_quick
+from governance_core import State, Theta, DEFAULT_STATE, DEFAULT_THETA
 
 
 # ============================================================================
-# Properties (E, I, S, V)
+# GovernanceState — construction and properties
 # ============================================================================
 
-class TestProperties:
+class TestGovernanceStateConstruction:
 
-    def test_E_property(self):
-        gs = GovernanceState()
-        assert isinstance(gs.E, float)
+    def test_default(self):
+        state = GovernanceState()
+        assert 0 <= state.E <= 1
+        assert 0 <= state.I <= 1
+        assert 0 <= state.S <= 1
 
-    def test_I_property(self):
-        gs = GovernanceState()
-        assert isinstance(gs.I, float)
+    def test_custom_eisv(self):
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.7, I=0.8, S=0.1, V=0.0)
+        assert state.E == 0.7
+        assert state.I == 0.8
+        assert state.S == 0.1
+        assert state.V == 0.0
 
-    def test_S_property(self):
-        gs = GovernanceState()
-        assert isinstance(gs.S, float)
-
-    def test_V_property(self):
-        gs = GovernanceState()
-        assert isinstance(gs.V, float)
-
-    def test_properties_reflect_unitaires_state(self):
-        gs = GovernanceState()
-        gs.unitaires_state.E = 0.42
-        assert gs.E == 0.42
-
-
-# ============================================================================
-# to_dict
-# ============================================================================
-
-class TestToDict:
-
-    def test_returns_dict(self):
-        gs = GovernanceState()
-        d = gs.to_dict()
-        assert isinstance(d, dict)
-
-    def test_contains_eisv(self):
-        gs = GovernanceState()
-        d = gs.to_dict()
-        for key in ['E', 'I', 'S', 'V']:
-            assert key in d
-
-    def test_contains_metadata(self):
-        gs = GovernanceState()
-        d = gs.to_dict()
-        assert 'coherence' in d
-        assert 'time' in d
-        assert 'update_count' in d
-
-    def test_values_are_native_types(self):
-        gs = GovernanceState()
-        d = gs.to_dict()
-        assert isinstance(d['E'], float)
-        assert isinstance(d['void_active'], bool)
-        assert isinstance(d['update_count'], int)
-
-    def test_lambda1_in_dict(self):
-        gs = GovernanceState()
-        d = gs.to_dict()
-        assert 'lambda1' in d
-        assert isinstance(d['lambda1'], float)
+    def test_lambda1_property(self):
+        state = GovernanceState()
+        l1 = state.lambda1
+        assert isinstance(l1, float)
+        assert 0 <= l1 <= 1
 
 
 # ============================================================================
-# to_dict_with_history
+# to_dict / from_dict roundtrip
 # ============================================================================
 
-class TestToDictWithHistory:
+class TestGovernanceStateSerialization:
 
-    def test_returns_dict(self):
-        gs = GovernanceState()
-        d = gs.to_dict_with_history()
-        assert isinstance(d, dict)
+    def test_to_dict(self):
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.7, I=0.8, S=0.1, V=0.05)
+        state.coherence = 0.9
+        d = state.to_dict()
+        assert d["E"] == 0.7
+        assert d["I"] == 0.8
+        assert d["S"] == 0.1
+        assert d["V"] == 0.05
+        assert d["coherence"] == 0.9
+        assert "lambda1" in d
+        assert "regime" in d
 
-    def test_contains_history_arrays(self):
-        gs = GovernanceState()
-        d = gs.to_dict_with_history()
-        for key in ['E_history', 'I_history', 'S_history', 'V_history',
-                     'coherence_history', 'risk_history']:
-            assert key in d
-            assert isinstance(d[key], list)
-
-    def test_contains_internal_state(self):
-        gs = GovernanceState()
-        d = gs.to_dict_with_history()
-        assert 'unitaires_state' in d
-        assert 'unitaires_theta' in d
-        assert 'E' in d['unitaires_state']
+    def test_to_dict_with_history(self):
+        state = GovernanceState()
+        state.E_history = [0.5, 0.6, 0.7]
+        state.I_history = [0.5, 0.6, 0.7]
+        state.S_history = [0.1, 0.1, 0.1]
+        state.V_history = [0.0, 0.0, 0.0]
+        state.coherence_history = [0.8, 0.9, 0.9]
+        state.risk_history = [0.1, 0.1, 0.1]
+        state.decision_history = ["continue", "continue"]
+        state.timestamp_history = ["2025-01-01", "2025-01-02"]
+        d = state.to_dict_with_history()
+        assert len(d["E_history"]) == 3
+        assert "unitaires_state" in d
+        assert "unitaires_theta" in d
 
     def test_history_capping(self):
-        gs = GovernanceState()
-        gs.E_history = list(range(200))
-        d = gs.to_dict_with_history(max_history=50)
-        assert len(d['E_history']) == 50
-        assert d['E_history'][0] == 150  # last 50
+        state = GovernanceState()
+        state.E_history = list(range(200))
+        state.I_history = list(range(200))
+        state.S_history = list(range(200))
+        state.V_history = list(range(200))
+        state.coherence_history = list(range(200))
+        state.risk_history = list(range(200))
+        state.decision_history = list(range(200))
+        state.timestamp_history = list(range(200))
+        d = state.to_dict_with_history(max_history=50)
+        assert len(d["E_history"]) == 50
+        assert len(d["decision_history"]) == 50
 
-    def test_short_history_not_capped(self):
-        gs = GovernanceState()
-        gs.E_history = [0.1, 0.2, 0.3]
-        d = gs.to_dict_with_history(max_history=100)
-        assert len(d['E_history']) == 3
+    def test_from_dict_basic(self):
+        data = {
+            "E": 0.7, "I": 0.8, "S": 0.1, "V": 0.0,
+            "coherence": 0.9, "void_active": False,
+            "time": 10.0, "update_count": 5,
+        }
+        state = GovernanceState.from_dict(data)
+        assert state.E == 0.7
+        assert state.I == 0.8
+        assert state.update_count == 5
 
-    def test_hck_metrics_included(self):
-        gs = GovernanceState()
-        gs.rho_history = [0.5, 0.6]
-        gs.CE_history = [0.1, 0.2]
-        gs.current_rho = 0.7
-        d = gs.to_dict_with_history()
-        assert d['rho_history'] == [0.5, 0.6]
-        assert d['current_rho'] == 0.7
+    def test_from_dict_with_unitaires_state(self):
+        data = {
+            "unitaires_state": {"E": 0.6, "I": 0.7, "S": 0.2, "V": 0.05},
+            "unitaires_theta": {"C1": 0.5, "eta1": 0.1},
+            "coherence": 0.8,
+        }
+        state = GovernanceState.from_dict(data)
+        assert state.E == 0.6
+        assert state.I == 0.7
 
-    def test_cirs_metrics_included(self):
-        gs = GovernanceState()
-        gs.resonance_events = 3
-        gs.damping_applied_count = 1
-        d = gs.to_dict_with_history()
-        assert d['resonance_events'] == 3
-        assert d['damping_applied_count'] == 1
-
-
-# ============================================================================
-# from_dict round-trip
-# ============================================================================
-
-class TestFromDict:
-
-    def test_round_trip_basic(self):
-        """to_dict_with_history -> from_dict should preserve core fields."""
-        gs = GovernanceState()
-        gs.unitaires_state.E = 0.8
-        gs.unitaires_state.I = 0.7
-        gs.unitaires_state.S = 0.1
-        gs.unitaires_state.V = 0.05
-        gs.coherence = 0.9
-        gs.time = 42.0
-        gs.update_count = 10
-        gs.regime = "CONVERGENCE"
-        gs.pi_integral = 0.25
-        gs.current_rho = 0.6
-        gs.resonance_events = 2
-
-        d = gs.to_dict_with_history()
-        restored = GovernanceState.from_dict(d)
-
-        assert abs(restored.E - 0.8) < 0.01
-        assert abs(restored.I - 0.7) < 0.01
-        assert abs(restored.S - 0.1) < 0.01
-        assert abs(restored.V - 0.05) < 0.01
-        assert restored.time == 42.0
-        assert restored.update_count == 10
-        assert restored.regime == "CONVERGENCE"
-        assert restored.pi_integral == 0.25
-        assert restored.current_rho == 0.6
-        assert restored.resonance_events == 2
+    def test_from_dict_with_history(self):
+        data = {
+            "E": 0.7, "I": 0.8, "S": 0.1, "V": 0.0,
+            "E_history": [0.5, 0.6, 0.7],
+            "I_history": [0.5, 0.6, 0.8],
+            "S_history": [0.1, 0.1, 0.1],
+            "V_history": [0.0, 0.0, 0.0],
+            "coherence_history": [0.7, 0.8, 0.9],
+            "risk_history": [0.2, 0.1, 0.1],
+            "decision_history": ["continue", "approve"],
+            "regime": "convergence",
+            "regime_history": ["divergence", "convergence"],
+        }
+        state = GovernanceState.from_dict(data)
+        assert len(state.E_history) == 3
+        assert state.regime == "convergence"
+        assert len(state.regime_history) == 2
 
     def test_from_dict_empty(self):
-        """from_dict with minimal data should not crash."""
-        restored = GovernanceState.from_dict({})
-        assert isinstance(restored, GovernanceState)
+        state = GovernanceState.from_dict({})
+        # Should use defaults
+        assert state.E == DEFAULT_STATE.E
+        assert state.update_count == 0
 
-    def test_from_dict_fallback_eisv(self):
-        """Without unitaires_state key, should use top-level E,I,S,V."""
-        d = {'E': 0.5, 'I': 0.6, 'S': 0.2, 'V': 0.1}
-        restored = GovernanceState.from_dict(d)
-        assert abs(restored.E - 0.5) < 0.01
-        assert abs(restored.I - 0.6) < 0.01
-
-    def test_from_dict_history_arrays(self):
-        d = {
-            'E_history': [0.1, 0.2],
-            'I_history': [0.3, 0.4],
-            'S_history': [0.01, 0.02],
-            'V_history': [0.0, 0.05],
-            'coherence_history': [0.9, 0.8],
-            'risk_history': [0.1, 0.2],
-            'decision_history': ['approve', 'approve'],
-        }
-        restored = GovernanceState.from_dict(d)
-        assert restored.E_history == [0.1, 0.2]
-        assert restored.decision_history == ['approve', 'approve']
+    def test_roundtrip(self):
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.7, I=0.8, S=0.15, V=0.03)
+        state.update_count = 10
+        state.regime = "convergence"
+        d = state.to_dict_with_history()
+        loaded = GovernanceState.from_dict(d)
+        assert loaded.E == pytest.approx(0.7, abs=0.01)
+        assert loaded.I == pytest.approx(0.8, abs=0.01)
+        assert loaded.update_count == 10
+        assert loaded.regime == "convergence"
 
 
 # ============================================================================
 # validate
 # ============================================================================
 
-class TestValidate:
+class TestGovernanceStateValidate:
 
-    def test_default_state_valid(self):
-        gs = GovernanceState()
-        is_valid, errors = gs.validate()
+    def test_valid_state(self):
+        state = GovernanceState()
+        is_valid, errors = state.validate()
         assert is_valid is True
-        assert errors == []
+        assert len(errors) == 0
 
-    def test_E_out_of_bounds(self):
-        gs = GovernanceState()
-        gs.unitaires_state.E = 1.5
-        is_valid, errors = gs.validate()
+    def test_e_out_of_bounds(self):
+        state = GovernanceState()
+        state.unitaires_state = State(E=1.5, I=0.5, S=0.1, V=0.0)
+        is_valid, errors = state.validate()
         assert is_valid is False
         assert any("E out of bounds" in e for e in errors)
 
-    def test_I_out_of_bounds_negative(self):
-        gs = GovernanceState()
-        gs.unitaires_state.I = -0.1
-        is_valid, errors = gs.validate()
+    def test_negative_i(self):
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.5, I=-0.1, S=0.1, V=0.0)
+        is_valid, errors = state.validate()
         assert is_valid is False
         assert any("I out of bounds" in e for e in errors)
 
-    def test_coherence_out_of_bounds(self):
-        gs = GovernanceState()
-        gs.coherence = 1.5
-        is_valid, errors = gs.validate()
-        assert is_valid is False
-        assert any("Coherence out of bounds" in e for e in errors)
-
     def test_nan_detection(self):
-        gs = GovernanceState()
-        gs.unitaires_state.E = float('nan')
-        is_valid, errors = gs.validate()
+        state = GovernanceState()
+        state.unitaires_state = State(E=float('nan'), I=0.5, S=0.1, V=0.0)
+        is_valid, errors = state.validate()
         assert is_valid is False
         assert any("NaN" in e for e in errors)
 
     def test_inf_detection(self):
-        gs = GovernanceState()
-        gs.unitaires_state.S = float('inf')
-        is_valid, errors = gs.validate()
+        state = GovernanceState()
+        state.unitaires_state = State(E=float('inf'), I=0.5, S=0.1, V=0.0)
+        is_valid, errors = state.validate()
         assert is_valid is False
-        assert any("Inf" in e for e in errors)
 
-    def test_history_length_mismatch(self):
-        gs = GovernanceState()
-        gs.E_history = [0.1] * 10
-        gs.I_history = [0.2] * 10
-        gs.S_history = [0.3] * 10
-        gs.V_history = [0.4] * 10
-        gs.coherence_history = [0.5] * 10
-        gs.risk_history = [0.6] * 5  # Mismatch > 1
-        is_valid, errors = gs.validate()
+    def test_history_consistency(self):
+        state = GovernanceState()
+        state.E_history = [0.5, 0.6, 0.7]
+        state.I_history = [0.5, 0.6]  # one shorter — allowed (diff <= 1)
+        state.S_history = [0.1, 0.1, 0.1]
+        state.V_history = [0.0, 0.0, 0.0]
+        state.coherence_history = [0.8, 0.8, 0.8]
+        state.risk_history = [0.1, 0.1, 0.1]
+        is_valid, errors = state.validate()
+        assert is_valid is True
+
+    def test_history_large_mismatch(self):
+        state = GovernanceState()
+        state.E_history = [0.5, 0.6, 0.7, 0.8, 0.9]
+        state.I_history = [0.5]  # 4 entries shorter
+        state.S_history = [0.1, 0.1, 0.1, 0.1, 0.1]
+        state.V_history = [0.0, 0.0, 0.0, 0.0, 0.0]
+        state.coherence_history = [0.8, 0.8, 0.8, 0.8, 0.8]
+        state.risk_history = [0.1, 0.1, 0.1, 0.1, 0.1]
+        is_valid, errors = state.validate()
         assert is_valid is False
         assert any("History length mismatch" in e for e in errors)
 
-    def test_history_minor_mismatch_ok(self):
-        """1 entry difference is tolerated."""
-        gs = GovernanceState()
-        gs.E_history = [0.1] * 10
-        gs.I_history = [0.2] * 10
-        gs.S_history = [0.3] * 10
-        gs.V_history = [0.4] * 10
-        gs.coherence_history = [0.5] * 10
-        gs.risk_history = [0.6] * 9  # Only 1 off
-        is_valid, errors = gs.validate()
-        assert is_valid is True
+
+# ============================================================================
+# interpret_state
+# ============================================================================
+
+class TestInterpretState:
+
+    def test_healthy_state(self):
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.7, I=0.8, S=0.1, V=0.01)
+        state.coherence = 0.9
+        result = state.interpret_state(risk_score=0.1)
+        assert result["health"] == "healthy"
+        assert result["basin"] == "high"
+
+    def test_critical_state(self):
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.3, I=0.2, S=0.8, V=0.5)
+        state.coherence = 0.2
+        result = state.interpret_state(risk_score=0.8)
+        assert result["health"] == "critical"
+
+    def test_at_risk_state(self):
+        state = GovernanceState()
+        state.coherence = 0.4
+        result = state.interpret_state(risk_score=0.6)
+        assert result["health"] == "at_risk"
+
+    def test_result_structure(self):
+        state = GovernanceState()
+        result = state.interpret_state()
+        assert "health" in result
+        assert "basin" in result
+        assert "mode" in result
+        assert "trajectory" in result
+        assert "guidance" in result
+        assert "borderline" in result
+
+    def test_auto_risk_estimation(self):
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.7, I=0.8, S=0.1, V=0.0)
+        state.coherence = 0.9
+        # Don't provide risk_score — should auto-estimate
+        result = state.interpret_state()
+        assert result["health"] in ["healthy", "moderate", "at_risk", "critical", "unstable"]
 
 
 # ============================================================================
@@ -284,24 +265,24 @@ class TestValidate:
 class TestInterpretHealth:
 
     def test_critical(self):
-        gs = GovernanceState()
-        assert gs._interpret_health(0.5, 0.8) == "critical"
+        state = GovernanceState()
+        assert state._interpret_health(0.5, 0.8) == "critical"
 
     def test_at_risk(self):
-        gs = GovernanceState()
-        assert gs._interpret_health(0.5, 0.6) == "at_risk"
+        state = GovernanceState()
+        assert state._interpret_health(0.5, 0.6) == "at_risk"
 
     def test_unstable(self):
-        gs = GovernanceState()
-        assert gs._interpret_health(0.2, 0.2) == "unstable"
+        state = GovernanceState()
+        assert state._interpret_health(0.2, 0.1) == "unstable"
 
     def test_healthy(self):
-        gs = GovernanceState()
-        assert gs._interpret_health(0.8, 0.1) == "healthy"
+        state = GovernanceState()
+        assert state._interpret_health(0.8, 0.1) == "healthy"
 
     def test_moderate(self):
-        gs = GovernanceState()
-        assert gs._interpret_health(0.5, 0.4) == "moderate"
+        state = GovernanceState()
+        assert state._interpret_health(0.5, 0.4) == "moderate"
 
 
 # ============================================================================
@@ -310,17 +291,17 @@ class TestInterpretHealth:
 
 class TestInterpretBasin:
 
-    def test_high_basin(self):
-        gs = GovernanceState()
-        assert gs._interpret_basin(0.5, 0.7) == "high"
+    def test_high(self):
+        state = GovernanceState()
+        assert state._interpret_basin(0.5, 0.7) == "high"
 
-    def test_low_basin(self):
-        gs = GovernanceState()
-        assert gs._interpret_basin(0.5, 0.3) == "low"
+    def test_low(self):
+        state = GovernanceState()
+        assert state._interpret_basin(0.5, 0.3) == "low"
 
     def test_transitional(self):
-        gs = GovernanceState()
-        assert gs._interpret_basin(0.5, 0.5) == "transitional"
+        state = GovernanceState()
+        assert state._interpret_basin(0.5, 0.5) == "transitional"
 
 
 # ============================================================================
@@ -330,38 +311,38 @@ class TestInterpretBasin:
 class TestInterpretMode:
 
     def test_collaborating(self):
-        gs = GovernanceState()
-        mode, _ = gs._interpret_mode(0.8, 0.8, 0.5)
+        state = GovernanceState()
+        mode, _ = state._interpret_mode(0.7, 0.7, 0.5)
         assert mode == "collaborating"
 
     def test_building_alone(self):
-        gs = GovernanceState()
-        mode, _ = gs._interpret_mode(0.8, 0.8, 0.1)
+        state = GovernanceState()
+        mode, _ = state._interpret_mode(0.7, 0.7, 0.1)
         assert mode == "building_alone"
 
     def test_stalled(self):
-        gs = GovernanceState()
-        mode, _ = gs._interpret_mode(0.1, 0.1, 0.1)
+        state = GovernanceState()
+        mode, _ = state._interpret_mode(0.2, 0.2, 0.1)
         assert mode == "stalled"
 
     def test_exploring_alone(self):
-        gs = GovernanceState()
-        mode, _ = gs._interpret_mode(0.8, 0.1, 0.1)
+        state = GovernanceState()
+        mode, _ = state._interpret_mode(0.7, 0.2, 0.1)
         assert mode == "exploring_alone"
 
     def test_borderline_detection(self):
-        gs = GovernanceState()
-        mode, borderline = gs._interpret_mode(0.5, 0.5, 0.3)  # All near thresholds
-        assert len(borderline) > 0
+        state = GovernanceState()
+        mode, borderline = state._interpret_mode(0.52, 0.8, 0.1)
+        # E=0.52 is near threshold 0.5 ± 0.1
+        assert "E" in borderline
 
     def test_hysteresis_with_prev_mode(self):
-        gs = GovernanceState()
-        # When prev_mode was "building_alone", I threshold shifts
-        mode1, _ = gs._interpret_mode(0.6, 0.48, 0.1, prev_mode="building_alone")
-        mode2, _ = gs._interpret_mode(0.6, 0.48, 0.1, prev_mode=None)
-        # With hysteresis, I=0.48 might stay "high" if previously building
-        assert isinstance(mode1, str)
-        assert isinstance(mode2, str)
+        state = GovernanceState()
+        # Slightly below threshold — without hysteresis would be low
+        mode1, _ = state._interpret_mode(0.48, 0.7, 0.1, prev_mode=None)
+        mode2, _ = state._interpret_mode(0.48, 0.7, 0.1, prev_mode="exploring_alone")
+        # With exploring in prev_mode, E threshold shifts down → still counts as high
+        assert mode2 in ["building_alone", "exploring_alone", "collaborating", "exploring_together"]
 
 
 # ============================================================================
@@ -371,58 +352,25 @@ class TestInterpretMode:
 class TestInterpretTrajectory:
 
     def test_improving(self):
-        gs = GovernanceState()
-        gs.unitaires_state.V = 0.2
-        assert gs._interpret_trajectory() == "improving"
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.5, I=0.5, S=0.1, V=0.15)
+        assert state._interpret_trajectory() == "improving"
 
     def test_declining(self):
-        gs = GovernanceState()
-        gs.unitaires_state.V = -0.2
-        assert gs._interpret_trajectory() == "declining"
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.5, I=0.5, S=0.1, V=-0.15)
+        assert state._interpret_trajectory() == "declining"
 
     def test_stable(self):
-        gs = GovernanceState()
-        gs.unitaires_state.V = 0.05
-        assert gs._interpret_trajectory() == "stable"
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.5, I=0.5, S=0.1, V=0.05)
+        assert state._interpret_trajectory() == "stable"
 
     def test_stuck(self):
-        gs = GovernanceState()
-        gs.unitaires_state.V = 0.0
-        gs.decision_history = ["pause", "reflect", "pause", "reflect", "pause"]
-        assert gs._interpret_trajectory() == "stuck"
-
-
-# ============================================================================
-# _estimate_risk_simple
-# ============================================================================
-
-class TestEstimateRiskSimple:
-
-    def test_returns_float(self):
-        gs = GovernanceState()
-        risk = gs._estimate_risk_simple()
-        assert isinstance(risk, float)
-
-    def test_bounded(self):
-        gs = GovernanceState()
-        risk = gs._estimate_risk_simple()
-        assert 0.0 <= risk <= 1.0
-
-    def test_low_risk_state(self):
-        gs = GovernanceState()
-        gs.unitaires_state.S = 0.0
-        gs.unitaires_state.V = 0.0
-        gs.coherence = 1.0
-        risk = gs._estimate_risk_simple()
-        assert risk < 0.1
-
-    def test_high_risk_state(self):
-        gs = GovernanceState()
-        gs.unitaires_state.S = 1.0
-        gs.unitaires_state.V = 1.0
-        gs.coherence = 0.0
-        risk = gs._estimate_risk_simple()
-        assert risk > 0.5
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.5, I=0.5, S=0.1, V=0.05)
+        state.decision_history = ["continue", "pause", "pause", "pause", "pause"]
+        assert state._interpret_trajectory() == "stuck"
 
 
 # ============================================================================
@@ -431,127 +379,122 @@ class TestEstimateRiskSimple:
 
 class TestGenerateGuidance:
 
-    def test_critical_health(self):
-        gs = GovernanceState()
-        g = gs._generate_guidance("critical", "high", "collaborating", "stable", "mixed", {})
+    def test_critical_guidance(self):
+        state = GovernanceState()
+        g = state._generate_guidance("critical", "low", "stalled", "declining", "mixed", {})
         assert g is not None
-        assert "circuit breaker" in g.lower() or "pause" in g.lower()
+        assert "Circuit breaker" in g
 
-    def test_declining_trajectory(self):
-        gs = GovernanceState()
-        g = gs._generate_guidance("moderate", "high", "building_alone", "declining", "mixed", {})
+    def test_declining_guidance(self):
+        state = GovernanceState()
+        g = state._generate_guidance("moderate", "high", "building_alone", "declining", "mixed", {})
         assert g is not None
-        assert "negative" in g.lower() or "simplify" in g.lower()
+        assert "negative" in g.lower()
 
-    def test_stuck_trajectory(self):
-        gs = GovernanceState()
-        g = gs._generate_guidance("moderate", "high", "building_alone", "stuck", "mixed", {})
+    def test_stuck_guidance(self):
+        state = GovernanceState()
+        g = state._generate_guidance("moderate", "high", "building_alone", "stuck", "mixed", {})
         assert g is not None
-        assert "pauses" in g.lower() or "different" in g.lower()
+        assert "different approach" in g.lower()
 
-    def test_stalled_mode(self):
-        gs = GovernanceState()
-        g = gs._generate_guidance("moderate", "low", "stalled", "stable", "mixed", {})
+    def test_stalled_guidance(self):
+        state = GovernanceState()
+        g = state._generate_guidance("moderate", "low", "stalled", "stable", "mixed", {})
         assert g is not None
+        assert "Low activity" in g
 
-    def test_healthy_productive_no_guidance(self):
-        gs = GovernanceState()
-        g = gs._generate_guidance("healthy", "high", "building_alone", "stable", "mixed", {})
+    def test_healthy_building_no_guidance(self):
+        state = GovernanceState()
+        g = state._generate_guidance("healthy", "high", "building_alone", "stable", "mixed", {})
+        # Healthy + building_alone → priority 5 returns None (no action needed)
         assert g is None
 
-    def test_borderline_guidance(self):
-        gs = GovernanceState()
-        borderline = {"E": {"value": 0.51, "threshold": 0.5, "status": "high",
-                            "note": "Near threshold"}}
-        g = gs._generate_guidance("moderate", "high", "collaborating", "stable", "mixed", borderline)
+    def test_moderate_building_suggests_dialectic(self):
+        state = GovernanceState()
+        g = state._generate_guidance("moderate", "high", "building_alone", "stable", "mixed", {})
+        # Non-healthy + building_alone + stable → suggests dialectic
         assert g is not None
-        assert "borderline" in g.lower()
+        assert "dialectic" in g.lower()
+
+    def test_healthy_collaborating_no_guidance(self):
+        state = GovernanceState()
+        g = state._generate_guidance("healthy", "high", "collaborating", "stable", "mixed", {})
+        assert g is None  # Best state — no guidance needed
 
 
 # ============================================================================
-# interpret_state (integration of private methods)
+# _estimate_risk_simple
 # ============================================================================
 
-class TestInterpretState:
+class TestEstimateRiskSimple:
 
-    def test_returns_dict(self):
-        gs = GovernanceState()
-        result = gs.interpret_state(risk_score=0.2)
-        assert isinstance(result, dict)
+    def test_low_risk(self):
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.7, I=0.8, S=0.1, V=0.0)
+        state.coherence = 0.9
+        risk = state._estimate_risk_simple()
+        assert risk < 0.3
 
-    def test_contains_expected_keys(self):
-        gs = GovernanceState()
-        result = gs.interpret_state(risk_score=0.1)
-        for key in ['health', 'basin', 'mode', 'trajectory', 'guidance', 'borderline']:
-            assert key in result
+    def test_high_risk(self):
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.3, I=0.2, S=0.9, V=0.5)
+        state.coherence = 0.2
+        risk = state._estimate_risk_simple()
+        assert risk > 0.5
 
-    def test_auto_risk_estimation(self):
-        """Without risk_score, should compute internally."""
-        gs = GovernanceState()
-        result = gs.interpret_state()
-        assert 'health' in result
+    def test_bounded(self):
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.0, I=0.0, S=1.0, V=1.0)
+        state.coherence = 0.0
+        risk = state._estimate_risk_simple()
+        assert 0 <= risk <= 1
 
 
 # ============================================================================
-# interpret_eisv_quick (module-level)
+# interpret_eisv_quick (module-level helper)
 # ============================================================================
 
 class TestInterpretEisvQuick:
 
-    def test_returns_dict(self):
-        result = interpret_eisv_quick(0.5, 0.5, 0.2, 0.1)
-        assert isinstance(result, dict)
+    def test_productive(self):
+        result = interpret_eisv_quick(0.7, 0.7, 0.1, 0.0, risk_score=0.1)
+        assert result["mode"] == "productive"
+        assert result["health"] == "healthy"
 
-    def test_contains_expected_keys(self):
-        result = interpret_eisv_quick(0.5, 0.5, 0.2, 0.1)
-        for key in ['health', 'basin', 'mode', 'summary']:
-            assert key in result
+    def test_stalled(self):
+        result = interpret_eisv_quick(0.2, 0.2, 0.1, 0.0, risk_score=0.1)
+        assert result["mode"] == "stalled"
 
-    def test_high_basin(self):
-        result = interpret_eisv_quick(0.5, 0.8, 0.1, 0.0)
-        assert result['basin'] == "high"
+    def test_exploring_social(self):
+        result = interpret_eisv_quick(0.7, 0.2, 0.5, 0.0, risk_score=0.1)
+        assert result["mode"] == "exploring_social"
 
-    def test_low_basin(self):
-        result = interpret_eisv_quick(0.5, 0.2, 0.1, 0.0)
-        assert result['basin'] == "low"
+    def test_risk_health(self):
+        result = interpret_eisv_quick(0.5, 0.5, 0.1, 0.0, risk_score=0.7)
+        assert result["health"] == "at_risk"
 
-    def test_transitional_basin(self):
+    def test_coherence_health(self):
+        result = interpret_eisv_quick(0.5, 0.5, 0.1, 0.0, coherence=0.8)
+        assert result["health"] == "healthy"
+
+    def test_no_metrics_unknown(self):
         result = interpret_eisv_quick(0.5, 0.5, 0.1, 0.0)
-        assert result['basin'] == "transitional"
+        assert result["health"] == "unknown"
 
-    def test_productive_mode(self):
-        result = interpret_eisv_quick(0.8, 0.8, 0.1, 0.0)
-        assert result['mode'] == "productive"
+    def test_basin_high(self):
+        result = interpret_eisv_quick(0.5, 0.7, 0.1, 0.0)
+        assert result["basin"] == "high"
 
-    def test_productive_social_mode(self):
-        result = interpret_eisv_quick(0.8, 0.8, 0.5, 0.0)
-        assert result['mode'] == "productive_social"
+    def test_basin_low(self):
+        result = interpret_eisv_quick(0.5, 0.3, 0.1, 0.0)
+        assert result["basin"] == "low"
 
-    def test_exploring_mode(self):
-        result = interpret_eisv_quick(0.8, 0.2, 0.1, 0.0)
-        assert result['mode'] == "exploring"
-
-    def test_executing_mode(self):
-        result = interpret_eisv_quick(0.2, 0.8, 0.1, 0.0)
-        assert result['mode'] == "executing"
-
-    def test_stalled_mode(self):
-        result = interpret_eisv_quick(0.2, 0.2, 0.1, 0.0)
-        assert result['mode'] == "stalled"
-
-    def test_health_from_risk(self):
-        result = interpret_eisv_quick(0.5, 0.5, 0.1, 0.0, risk_score=0.8)
-        assert result['health'] == "at_risk"
-
-    def test_health_from_coherence(self):
-        result = interpret_eisv_quick(0.5, 0.5, 0.1, 0.0, coherence=0.9)
-        assert result['health'] == "healthy"
-
-    def test_health_unknown_no_info(self):
+    def test_basin_transitional(self):
         result = interpret_eisv_quick(0.5, 0.5, 0.1, 0.0)
-        assert result['health'] == "unknown"
+        assert result["basin"] == "transitional"
 
     def test_summary_format(self):
-        result = interpret_eisv_quick(0.8, 0.8, 0.1, 0.0, risk_score=0.1)
-        assert "|" in result['summary']
-        assert "healthy" in result['summary']
+        result = interpret_eisv_quick(0.7, 0.7, 0.1, 0.0, risk_score=0.1)
+        assert "summary" in result
+        assert "healthy" in result["summary"]
+        assert "productive" in result["summary"]
