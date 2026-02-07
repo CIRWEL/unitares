@@ -75,7 +75,7 @@ You should see:
 1. **Check SSE server status:** `./scripts/mcp server`
 2. **Restart if needed:** `launchctl restart com.unitares.governance-mcp` (it runs via launchd!)
 3. **Check server manually:** `lsof -i :8767`
-4. **Check logs:** `tail -f data/logs/mcp_server_error.log`
+4. **Check logs:** `tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/mcp_server_error.log`
 5. **Read server info:** [.agent-guides/SERVER_INFO.md](SERVER_INFO.md)
 
 **Note:** The MCP server runs automatically via macOS launchd - you usually don't need to start it manually!
@@ -95,7 +95,7 @@ Single source of truth = canonical MCP = less confusion = better governance.
 ---
 
 **Written by:** Claude Code (Dec 10, 2025)
-**Updated:** v2.6.3 (Feb 6, 2026) - 30 registered tools, action_router, middleware pipeline
+**Updated:** v2.6.4 (Feb 7, 2026) - 30 tools, negative V, X-Agent-Name persistence, 5,501 tests
 **For:** Future Claude Code agents
 **Status:** This is the canonical approach - trust it!
 

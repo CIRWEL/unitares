@@ -47,7 +47,7 @@ That's it. Everything else is optional. See [Getting Started](docs/guides/GETTIN
 | **E** (Energy) | [0,1] | Productive capacity |
 | **I** (Integrity) | [0,1] | Information coherence |
 | **S** (Entropy) | [0,1] | Disorder / uncertainty |
-| **V** (Void) | [0,1] | Accumulated E-I imbalance |
+| **V** (Void) | [-1,1] | Accumulated E-I imbalance (negative when I > E) |
 
 ```
 Agent logs work → EISV update → Stability check → Decision (proceed/caution/pause) → Feedback
@@ -104,13 +104,27 @@ python src/mcp_server_std.py
 }
 ```
 
-For REST clients, include an `X-Session-ID` header to maintain identity across calls. See [MCP Setup Guide](docs/guides/MCP_SETUP.md) for ngrok, curl examples, and advanced configuration.
+For REST clients, include an `X-Session-ID` header to maintain identity across calls. For MCP clients, add an `X-Agent-Name` header to auto-resume identity across sessions:
+
+```json
+{
+  "mcpServers": {
+    "unitares": {
+      "type": "http",
+      "url": "http://localhost:8767/mcp/",
+      "headers": { "X-Agent-Name": "MyAgent" }
+    }
+  }
+}
+```
+
+See [MCP Setup Guide](docs/guides/MCP_SETUP.md) for ngrok, curl examples, and advanced configuration.
 
 ---
 
 ## Key Concepts
 
-**30 registered tools** — v2.6.2 reduced the public surface from 49 to 30 tools via consolidation (`action_router`). Use `list_tools()` or read [SKILL.md](skills/unitares-governance/SKILL.md) for the full catalog.
+**30 registered tools** — v2.6.2 reduced the public surface from 49 to 30 via consolidation (`action_router`). Use `list_tools()` or read [SKILL.md](skills/unitares-governance/SKILL.md) for the full catalog.
 
 **Three-tier identity:**
 
@@ -142,7 +156,7 @@ For REST clients, include an `X-Session-ID` header to maintain identity across c
 python -m pytest tests/ -v
 ```
 
-2,602 tests, 49% coverage. Core modules: governance_monitor 83%, trajectory_identity 88%, workspace_health 83%.
+5,501 tests, 61% coverage. Core modules: governance_monitor 83%, trajectory_identity 88%, workspace_health 83%.
 
 ---
 
@@ -163,4 +177,4 @@ Built by [@CIRWEL](https://github.com/CIRWEL). Also building [Lumen/anima-mcp](h
 
 MIT License with Attribution — see [LICENSE](LICENSE).
 
-**v2.6.3** | 2026-02-06
+**v2.6.4** | 2026-02-07

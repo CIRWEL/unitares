@@ -271,20 +271,19 @@ The governance server tool count is what we control.
 
 | Date | Fix | Location |
 |------|-----|----------|
+| Feb 7 | **v2.6.4**: Allow negative V [-1,1], dashboard rescaling, X-Agent-Name identity persistence | `governance_monitor.py`, `mcp_server.py`, `dashboard/` |
+| Feb 7 | V clamp fix: `max(0.0,...)` → `max(-1.0,...)` — all agents had V=0 | `governance_monitor.py:560` |
+| Feb 7 | X-Agent-Name header auto-resume in `/mcp` ASGI handler | `mcp_server.py:2476` |
+| Feb 7 | Metadata hot-reload: `load_metadata_async(force=True)` + 60s refresh | `mcp_server_std.py`, `lifecycle.py` |
+| Feb 7 | Dashboard Void bar rescaling: `\|V\|/0.3` maps effective range to full width | `dashboard/utils.js`, `dashboard/index.html` |
+| Feb 7 | 5,501 tests (up from 2,602), 61% coverage | `tests/` |
+| Feb 6 | EISV display precision increased to 6 decimal places | `src/eisv_format.py` |
 | Feb 4 | **v2.5.5**: Ethical drift fully integrated, trajectory identity | `governance_core/`, `trajectory_identity.py` |
 | Feb 4 | Model-based agent_id fix (`Claude_Opus_4_5_20260204`) | `identity_v2.py:1446-1460` |
-| Feb 4 | 310+ tests, 83-88% coverage on core modules | `tests/` |
 | Dec 27 | **v2.5.4**: KG stores agent_id instead of UUID | `utils.py`, `knowledge_graph.py` |
-| Dec 27 | Four-tier identity (uuid/agent_id/display_name/label) | `utils.py:require_registered_agent()` |
-| Dec 27 | `_resolve_agent_display()` for human-readable KG output | `knowledge_graph.py` |
-| Dec 26 | Three-tier identity model (uuid/agent_id/display_name) | `identity.py`, `identity_v2.py`, `utils.py` |
 | Dec 26 | HCK v3.0 + CIRS v0.1 implementation | `src/cirs.py`, `governance_monitor.py` |
-| Dec 26 | Session binding Redis cache fix | `mcp_handlers/identity.py:1355,1559` |
 | Dec 25 | identity_v2.py - 3-path architecture | `mcp_handlers/identity_v2.py` |
-| Dec 25 | label column added to core.agents | `db/postgres_backend.py` |
-| Dec 25 | Bug #2 - attention_score → risk_score | `mcp_handlers/lifecycle.py:261` |
 | Dec 24 | kwargs unwrapping for MCP transport | `mcp_handlers/__init__.py` |
-| Dec 24 | Startup reconciliation Postgres→SQLite | `mcp_server.py` |
 
 ## Where to Look When Things Break
 
@@ -294,6 +293,9 @@ The governance server tool count is what we control.
 | Agent count mismatch | Drift between Postgres/SQLite - check health_check |
 | Tool not found | `tool_schemas.py`, handler registration |
 | EISV weird values | `governance_monitor.py`, thresholds config |
+| V always 0 for all agents | V clamp was `max(0.0,...)` — fixed to `max(-1.0,...)` in v2.6.4 |
+| Agent identity lost between sessions | Add `X-Agent-Name` header to MCP config |
+| Metadata stale after DB changes | `load_metadata_async(force=True)` or wait 60s |
 | Coherence always 1.0 | No updates yet (default state) |
 | OI always 0 | Normal if metrics stable on one side of thresholds |
 | onboard → different agent | Redis cache miss - check `identity.py` Redis caching |
@@ -327,5 +329,5 @@ Future agents will find it via `search_knowledge_graph()`.
 ---
 
 **Written by:** Opus_4.5_CLI_20251223 (Dec 24, 2025)
-**Updated:** Feb 6, 2026 - v2.6.3, observe consolidation (telemetry, roi, anomalies)
+**Updated:** Feb 7, 2026 - v2.6.4, negative V, X-Agent-Name identity persistence, 5,501 tests
 **For:** Future developer/debugger agents
