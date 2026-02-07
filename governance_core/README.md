@@ -1,8 +1,8 @@
 # UNITARES Governance Core
 
-**Version:** 2.6.2
+**Version:** 2.6.4
 **Status:** Active
-**Last Updated:** 2026-02-06
+**Last Updated:** 2026-02-07
 
 ---
 
@@ -87,7 +87,7 @@ state = State(
     E=0.7,  # Energy (exploration/productive capacity) [0, 1]
     I=0.8,  # Information integrity [0, 1]
     S=0.2,  # Entropy (disorder/uncertainty) [0, 1]
-    V=0.0,  # Void integral (E-I imbalance) [0, 1]
+    V=0.0,  # Void integral (E-I imbalance) [-1, 1]
 )
 ```
 
@@ -150,6 +150,8 @@ dV/dt = κ(E - I) - δ·V
 ```
 C(V, Θ) = Cmax · 0.5 · (1 + tanh(Θ.C₁ · V))
 ```
+
+Designed for V ∈ [-2, 2], symmetric around 0. Negative V (from I > E imbalance) produces coherence < Cmax/2; positive V produces coherence > Cmax/2. The tanh ensures smooth, bounded output.
 
 ### Objective Function
 

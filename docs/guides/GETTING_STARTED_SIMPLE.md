@@ -56,7 +56,7 @@ get_governance_metrics()
 - Your Energy (E)
 - Your Integrity (I)
 - Your Entropy (S)
-- Your Void (V)
+- Your Void (V) — can be negative (I > E imbalance)
 - Your Coherence
 - Your Risk Score
 - Your Status

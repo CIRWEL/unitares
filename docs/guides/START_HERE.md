@@ -227,7 +227,7 @@ print(f'Decision: {r[\"decision\"][\"action\"]}')
 **💡 Pro tip:** Identity is session-bound and auto-resumes. Use `identity()` to check your current state or `identity(name="...")` to name yourself. No API keys needed - your UUID is your auth.
 
 **📝 Knowledge Graph vs Markdown Decision:**
-- **Use `store_knowledge_graph()` for:** Insights, discoveries, bug findings, questions, patterns, quick notes
+- **Use `knowledge(action="store")` for:** Insights, discoveries, bug findings, questions, patterns, quick notes
 - **Use markdown files for:** Reference documentation (guides, API docs), README files, changelogs (must be on approved list)
 - **Heuristic:** If it's an insight/discovery → knowledge graph. If it's reference docs → markdown.
 - **Before creating markdown:** Call `validate_file_path()` to check policy compliance
@@ -262,7 +262,7 @@ When you call `process_agent_update`, you'll receive:
     "E": 0.70,           // Energy: How engaged your work feels
     "I": 0.82,           // Integrity: Consistency of your approach
     "S": 0.15,           // Entropy: How scattered things are
-    "V": -0.01,          // Void: Accumulated strain
+    "V": -0.03,          // Void: E-I imbalance (negative = I > E)
     "coherence": 0.50,   // How well your work hangs together
     "attention_score": 0.35  // Cognitive load (not risk!)
   }
@@ -273,7 +273,7 @@ When you call `process_agent_update`, you'll receive:
 - **E (Energy)**: How engaged and energized your work feels [0-1]
 - **I (Integrity)**: Consistency and coherence of your approach [0-1]
 - **S (Entropy)**: How scattered or fragmented things are [0-2]
-- **V (Void)**: Accumulated strain from energy-integrity mismatch [-2 to +2]
+- **V (Void)**: Accumulated strain from energy-integrity mismatch [-1 to +1] (negative when I > E)
 - **Coherence**: How well your work hangs together [0-1]
 - **Attention Score**: Cognitive load - high is normal for complex work [0-1]
 
@@ -321,7 +321,7 @@ list_tools(include_advanced=False)  # Hide Tier 3 (advanced) tools
 | Check my state | `get_governance_metrics` (MCP) |
 | See all tools | `list_tools` (MCP) |
 | **Call an LLM** | `call_model` — local (Ollama) or cloud (HF, Gemini) |
-| **Recover when stuck** | `llm_assisted_dialectic` — structured self-reflection |
+| **Recover when stuck** | `request_dialectic_review` — structured self-reflection |
 | Find solutions | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
 | LLM integration | [LLM_DELEGATION.md](LLM_DELEGATION.md) |
 | Setup MCP | [MCP_SETUP.md](MCP_SETUP.md) |
@@ -394,4 +394,4 @@ Governance should be **informative, not restrictive**. Agents log activity, rece
 
 ---
 
-**Last Updated:** 2026-02-06 (v2.6.3: 30 tools, dialectic audit, EISV sensor sync, 2,602 tests)
+**Last Updated:** 2026-02-07 (v2.6.4: 30 tools, negative V support, X-Agent-Name identity persistence, 5,501 tests)
