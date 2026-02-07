@@ -1,6 +1,6 @@
 # Tool Surfacing Audit
 
-**Date:** 2026-02-04  
+**Date:** 2026-02-06 (updated)
 **Status:** ✅ Fixed
 
 ## Summary
@@ -23,7 +23,7 @@ These are the tools actually exposed via MCP:
 - `calibration` - Calibration operations (check, update, backfill, rebuild)
 - `config` - Configuration (get, set thresholds)
 - `export` - Export operations (history, file)
-- `observe` - Observability (agent, compare, similar, anomalies, aggregate)
+- `observe` - Observability (agent, compare, similar, anomalies, aggregate, telemetry, roi)
 - `pi` - Pi/Lumen orchestration (tools, context, health, sync_eisv, display, say, message, qa, query, workflow, git_pull, power)
 
 **Core Governance:**
@@ -43,8 +43,8 @@ These are the tools actually exposed via MCP:
 
 **Observability:**
 - `detect_stuck_agents` - Find stuck agents
-- `get_telemetry_metrics` - System telemetry
-- `get_roi_metrics` - ROI calculations
+- `observe(action='telemetry')` - System telemetry (via consolidated observe)
+- `observe(action='roi')` - ROI calculations (via consolidated observe)
 
 **Admin:**
 - `health_check` - System health
