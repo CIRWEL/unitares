@@ -209,6 +209,7 @@ async def create_agent(
             "notes": notes,
             "purpose": purpose,
             "source": "agent_storage.create_agent",
+            "total_updates": 0,  # Initialize counter for persistence
         },
     )
 
