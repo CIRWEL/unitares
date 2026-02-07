@@ -195,6 +195,8 @@ Use `list_tools()` for the full catalog with schemas. Here's the mental model:
 - `observe_agent(target_agent_id='Lumen')` — Observe another agent's patterns
 - `observe(action='compare', agent_ids=[...])` — Compare agents side by side
 - `observe(action='anomalies')` — Fleet-wide anomaly detection
+- `observe(action='telemetry')` — Skip rates, confidence distribution, suspicious patterns
+- `observe(action='roi')` — Time saved, cost savings, coordination efficiency
 
 ### Agent Lifecycle
 - `identity(name="YourName")` — Check/set your identity without full onboard
