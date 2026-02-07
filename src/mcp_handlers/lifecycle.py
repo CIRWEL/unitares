@@ -2006,27 +2006,49 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
                                         except Exception as e:
                                             logger.warning(f"[STUCK_AGENT_RECOVERY] Could not trigger dialectic for safe stuck {agent_id[:8]}...: {e}", exc_info=True)
                                     else:
-                                        # Stuck but not long enough - leave note (deduped by cooldown)
+                                        # Stuck but not long enough - leave note (deduped by KG check + cooldown)
                                         should_note = True
+
+                                        # DEDUP FIX: Check KG for existing open stuck-agent note for this agent
                                         try:
-                                            if note_cooldown_minutes > 0 and meta:
-                                                for event in reversed(meta.lifecycle_events or []):
-                                                    if event.get("event") != "stuck_note":
-                                                        continue
-                                                    ts = event.get("timestamp")
-                                                    if not ts:
-                                                        continue
-                                                    try:
-                                                        last_note = datetime.fromisoformat(ts)
-                                                        if last_note.tzinfo is None:
-                                                            last_note = last_note.replace(tzinfo=timezone.utc)
-                                                        if (datetime.now(timezone.utc) - last_note).total_seconds() < note_cooldown_minutes * 60:
-                                                            should_note = False
-                                                            break
-                                                    except Exception:
-                                                        continue
-                                        except Exception:
-                                            pass
+                                            from src.db import get_db
+                                            db = get_db()
+                                            if hasattr(db, '_pool') and db._pool:
+                                                async with db._pool.acquire() as conn:
+                                                    existing_note = await conn.fetchval("""
+                                                        SELECT 1 FROM knowledge.discoveries
+                                                        WHERE agent_id = $1
+                                                        AND tags @> ARRAY['stuck-agent']
+                                                        AND status = 'open'
+                                                        LIMIT 1
+                                                    """, agent_id)
+                                                    if existing_note:
+                                                        should_note = False
+                                                        logger.debug(f"[STUCK_AGENT] Skipped note for {agent_id[:8]}... - already has open stuck-agent note")
+                                        except Exception as e:
+                                            logger.debug(f"[STUCK_AGENT] Could not check KG for existing note: {e}")
+
+                                        # Also check lifecycle events as fallback
+                                        if should_note:
+                                            try:
+                                                if note_cooldown_minutes > 0 and meta:
+                                                    for event in reversed(meta.lifecycle_events or []):
+                                                        if event.get("event") != "stuck_note":
+                                                            continue
+                                                        ts = event.get("timestamp")
+                                                        if not ts:
+                                                            continue
+                                                        try:
+                                                            last_note = datetime.fromisoformat(ts)
+                                                            if last_note.tzinfo is None:
+                                                                last_note = last_note.replace(tzinfo=timezone.utc)
+                                                            if (datetime.now(timezone.utc) - last_note).total_seconds() < note_cooldown_minutes * 60:
+                                                                should_note = False
+                                                                break
+                                                        except Exception:
+                                                            continue
+                                            except Exception:
+                                                pass
 
                                         if should_note:
                                             try:
@@ -2056,27 +2078,48 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
                                             })
                                 except (ValueError, TypeError, AttributeError) as e:
                                     logger.debug(f"Could not calculate age for stuck agent: {e}")
-                                    # Fallback: just leave note
+                                    # Fallback: leave note (with KG dedup + cooldown check)
                                     should_note = True
+
+                                    # DEDUP FIX: Check KG for existing open stuck-agent note
                                     try:
-                                        if note_cooldown_minutes > 0 and meta:
-                                            for event in reversed(meta.lifecycle_events or []):
-                                                if event.get("event") != "stuck_note":
-                                                    continue
-                                                ts = event.get("timestamp")
-                                                if not ts:
-                                                    continue
-                                                try:
-                                                    last_note = datetime.fromisoformat(ts)
-                                                    if last_note.tzinfo is None:
-                                                        last_note = last_note.replace(tzinfo=timezone.utc)
-                                                    if (datetime.now(timezone.utc) - last_note).total_seconds() < note_cooldown_minutes * 60:
-                                                        should_note = False
-                                                        break
-                                                except Exception:
-                                                    continue
+                                        from src.db import get_db
+                                        db = get_db()
+                                        if hasattr(db, '_pool') and db._pool:
+                                            async with db._pool.acquire() as conn:
+                                                existing_note = await conn.fetchval("""
+                                                    SELECT 1 FROM knowledge.discoveries
+                                                    WHERE agent_id = $1
+                                                    AND tags @> ARRAY['stuck-agent']
+                                                    AND status = 'open'
+                                                    LIMIT 1
+                                                """, agent_id)
+                                                if existing_note:
+                                                    should_note = False
                                     except Exception:
                                         pass
+
+                                    # Also check lifecycle events as fallback
+                                    if should_note:
+                                        try:
+                                            if note_cooldown_minutes > 0 and meta:
+                                                for event in reversed(meta.lifecycle_events or []):
+                                                    if event.get("event") != "stuck_note":
+                                                        continue
+                                                    ts = event.get("timestamp")
+                                                    if not ts:
+                                                        continue
+                                                    try:
+                                                        last_note = datetime.fromisoformat(ts)
+                                                        if last_note.tzinfo is None:
+                                                            last_note = last_note.replace(tzinfo=timezone.utc)
+                                                        if (datetime.now(timezone.utc) - last_note).total_seconds() < note_cooldown_minutes * 60:
+                                                            should_note = False
+                                                            break
+                                                    except Exception:
+                                                        continue
+                                        except Exception:
+                                            pass
 
                                     if should_note:
                                         try:
