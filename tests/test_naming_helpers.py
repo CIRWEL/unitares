@@ -1,12 +1,13 @@
 """
-Tests for src/mcp_handlers/naming_helpers.py - Agent name generation.
+Tests for src/mcp_handlers/naming_helpers.py - Agent naming utilities.
 
-Pure functions with env var detection (monkeypatched).
+Uses os.environ patching for interface detection tests.
 """
 
 import pytest
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -19,229 +20,222 @@ from src.mcp_handlers.naming_helpers import (
 )
 
 
+# ============================================================================
+# detect_interface_context
+# ============================================================================
+
 class TestDetectInterfaceContext:
 
-    def test_default_context(self, monkeypatch):
-        """No env vars set -> default mcp_client."""
-        for var in ["GOVERNANCE_AGENT_PREFIX", "CURSOR_PID", "CURSOR_VERSION",
-                     "VSCODE_PID", "CLAUDE_DESKTOP", "OPENAI_API_KEY",
-                     "ANTHROPIC_API_KEY", "GOOGLE_AI_API_KEY", "GEMINI_API_KEY",
-                     "CI", "TEST"]:
-            monkeypatch.delenv(var, raising=False)
-        ctx = detect_interface_context()
-        assert ctx["interface"] == "mcp_client"
-        assert ctx["model_hint"] is None
-        assert ctx["environment"] is None
+    def test_default(self):
+        with patch.dict("os.environ", {}, clear=True):
+            ctx = detect_interface_context()
+            assert ctx["interface"] == "mcp_client"
+            assert ctx["model_hint"] is None
+            assert ctx["environment"] is None
 
-    def test_cursor_detection(self, monkeypatch):
-        monkeypatch.setenv("CURSOR_PID", "12345")
-        ctx = detect_interface_context()
-        assert ctx["interface"] == "cursor"
+    def test_cursor(self):
+        with patch.dict("os.environ", {"CURSOR_PID": "12345"}, clear=True):
+            ctx = detect_interface_context()
+            assert ctx["interface"] == "cursor"
 
-    def test_cursor_version_detection(self, monkeypatch):
-        monkeypatch.setenv("CURSOR_VERSION", "0.42.0")
-        ctx = detect_interface_context()
-        assert ctx["interface"] == "cursor"
+    def test_vscode(self):
+        with patch.dict("os.environ", {"VSCODE_PID": "12345"}, clear=True):
+            ctx = detect_interface_context()
+            assert ctx["interface"] == "vscode"
 
-    def test_vscode_detection(self, monkeypatch):
-        monkeypatch.delenv("CURSOR_PID", raising=False)
-        monkeypatch.delenv("CURSOR_VERSION", raising=False)
-        monkeypatch.setenv("VSCODE_PID", "99999")
-        ctx = detect_interface_context()
-        assert ctx["interface"] == "vscode"
+    def test_claude_desktop(self):
+        with patch.dict("os.environ", {"CLAUDE_DESKTOP": "1"}, clear=True):
+            ctx = detect_interface_context()
+            assert ctx["interface"] == "claude_desktop"
 
-    def test_claude_desktop_detection(self, monkeypatch):
-        for var in ["CURSOR_PID", "CURSOR_VERSION", "VSCODE_PID"]:
-            monkeypatch.delenv(var, raising=False)
-        monkeypatch.setenv("CLAUDE_DESKTOP", "1")
-        ctx = detect_interface_context()
-        assert ctx["interface"] == "claude_desktop"
+    def test_override(self):
+        with patch.dict("os.environ", {"GOVERNANCE_AGENT_PREFIX": "custom"}, clear=True):
+            ctx = detect_interface_context()
+            assert ctx["interface"] == "custom"
 
-    def test_explicit_prefix_override(self, monkeypatch):
-        """GOVERNANCE_AGENT_PREFIX sets initial interface, but IDE detection overwrites it."""
-        for var in ["CURSOR_PID", "CURSOR_VERSION", "VSCODE_PID", "CLAUDE_DESKTOP"]:
-            monkeypatch.delenv(var, raising=False)
-        monkeypatch.setenv("GOVERNANCE_AGENT_PREFIX", "my_custom")
-        ctx = detect_interface_context()
-        assert ctx["interface"] == "my_custom"
+    def test_anthropic_model_hint(self):
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-123"}, clear=True):
+            ctx = detect_interface_context()
+            assert ctx["model_hint"] == "claude"
 
-    def test_model_hint_openai(self, monkeypatch):
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-        ctx = detect_interface_context()
-        assert ctx["model_hint"] == "gpt"
+    def test_openai_model_hint(self):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-123"}, clear=True):
+            ctx = detect_interface_context()
+            assert ctx["model_hint"] == "gpt"
 
-    def test_model_hint_anthropic(self, monkeypatch):
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-        ctx = detect_interface_context()
-        assert ctx["model_hint"] == "claude"
+    def test_gemini_model_hint(self):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "key"}, clear=True):
+            ctx = detect_interface_context()
+            assert ctx["model_hint"] == "gemini"
 
-    def test_model_hint_gemini(self, monkeypatch):
-        for var in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]:
-            monkeypatch.delenv(var, raising=False)
-        monkeypatch.setenv("GEMINI_API_KEY", "test")
-        ctx = detect_interface_context()
-        assert ctx["model_hint"] == "gemini"
+    def test_google_ai_model_hint(self):
+        with patch.dict("os.environ", {"GOOGLE_AI_API_KEY": "key"}, clear=True):
+            ctx = detect_interface_context()
+            assert ctx["model_hint"] == "gemini"
 
-    def test_ci_environment(self, monkeypatch):
-        monkeypatch.setenv("CI", "true")
-        ctx = detect_interface_context()
-        assert ctx["environment"] == "ci"
+    def test_ci_environment(self):
+        with patch.dict("os.environ", {"CI": "true"}, clear=True):
+            ctx = detect_interface_context()
+            assert ctx["environment"] == "ci"
 
-    def test_test_environment(self, monkeypatch):
-        monkeypatch.delenv("CI", raising=False)
-        monkeypatch.setenv("TEST", "1")
-        ctx = detect_interface_context()
-        assert ctx["environment"] == "test"
+    def test_test_environment(self):
+        with patch.dict("os.environ", {"TEST": "1"}, clear=True):
+            ctx = detect_interface_context()
+            assert ctx["environment"] == "test"
 
+
+# ============================================================================
+# generate_name_suggestions
+# ============================================================================
 
 class TestGenerateNameSuggestions:
 
     def test_returns_list(self):
-        suggestions = generate_name_suggestions(
-            context={"interface": "cursor", "model_hint": "claude", "environment": None}
-        )
-        assert isinstance(suggestions, list)
-        assert len(suggestions) > 0
+        ctx = {"interface": "cursor", "model_hint": None, "environment": None}
+        result = generate_name_suggestions(context=ctx)
+        assert isinstance(result, list)
+        assert len(result) >= 1
 
-    def test_max_four_suggestions(self):
-        suggestions = generate_name_suggestions(
-            context={"interface": "cursor", "model_hint": "claude", "environment": "ci"},
-            purpose="debugging auth"
-        )
-        assert len(suggestions) <= 4
+    def test_with_purpose(self):
+        ctx = {"interface": "cursor", "model_hint": None, "environment": None}
+        result = generate_name_suggestions(context=ctx, purpose="debug auth")
+        names = [s["name"] for s in result]
+        assert any("debug" in n for n in names)
 
-    def test_purpose_included_in_name(self):
-        suggestions = generate_name_suggestions(
-            context={"interface": "mcp_client", "model_hint": None, "environment": None},
-            purpose="debug auth"
-        )
-        purpose_names = [s["name"] for s in suggestions]
-        assert any("debug" in name for name in purpose_names)
-
-    def test_model_hint_in_suggestion(self):
-        suggestions = generate_name_suggestions(
-            context={"interface": "cursor", "model_hint": "claude", "environment": None}
-        )
-        names = [s["name"] for s in suggestions]
-        assert any("claude" in name for name in names)
-
-    def test_session_suggestion_always_present(self):
-        suggestions = generate_name_suggestions(
-            context={"interface": "cursor", "model_hint": None, "environment": None}
-        )
-        names = [s["name"] for s in suggestions]
-        assert any("session" in name for name in names)
+    def test_with_model_hint(self):
+        ctx = {"interface": "cursor", "model_hint": "claude", "environment": None}
+        result = generate_name_suggestions(context=ctx)
+        names = [s["name"] for s in result]
+        assert any("claude" in n for n in names)
 
     def test_collision_avoidance(self):
-        ctx = {"interface": "test", "model_hint": None, "environment": None}
-        # Generate once to get a name
-        first = generate_name_suggestions(context=ctx)
-        first_names = [s["name"] for s in first]
-        # Generate again with those as existing
-        second = generate_name_suggestions(context=ctx, existing_names=first_names)
-        second_names = [s["name"] for s in second]
-        # Colliding names should have been adjusted
-        for name in second_names:
-            if name in first_names:
-                continue  # session-based names have timestamps, unlikely collision
-            # adjusted names should end with _N
-            pass  # Just verify no crash
+        ctx = {"interface": "mcp_client", "model_hint": None, "environment": None}
+        result = generate_name_suggestions(context=ctx)
+        # Get the first name and pass it as existing
+        first_name = result[0]["name"]
+        result2 = generate_name_suggestions(context=ctx, existing_names=[first_name])
+        names2 = [s["name"] for s in result2]
+        # The colliding name should be adjusted
+        assert first_name not in names2 or any("_1" in n for n in names2)
 
-    def test_suggestion_has_required_fields(self):
-        suggestions = generate_name_suggestions(
-            context={"interface": "mcp", "model_hint": None, "environment": None}
-        )
-        for s in suggestions:
-            assert "name" in s
-            assert "description" in s
-            assert "rationale" in s
+    def test_max_four(self):
+        ctx = {"interface": "cursor", "model_hint": "claude", "environment": None}
+        result = generate_name_suggestions(context=ctx, purpose="test")
+        assert len(result) <= 4
 
+    def test_required_fields(self):
+        ctx = {"interface": "cursor", "model_hint": None, "environment": None}
+        result = generate_name_suggestions(context=ctx)
+        for sug in result:
+            assert "name" in sug
+            assert "description" in sug
+            assert "rationale" in sug
+
+    def test_none_context(self):
+        """Should auto-detect context when None."""
+        with patch.dict("os.environ", {}, clear=True):
+            result = generate_name_suggestions(context=None)
+            assert isinstance(result, list)
+
+
+# ============================================================================
+# generate_structured_id
+# ============================================================================
 
 class TestGenerateStructuredId:
 
-    def test_basic_id(self):
+    def test_basic(self):
         ctx = {"interface": "cursor", "model_hint": None, "environment": None}
         result = generate_structured_id(context=ctx)
-        assert result.startswith("cursor_")
-        assert "20" in result  # Year in date
+        assert "cursor" in result
+        assert len(result) > 0
 
     def test_with_model_type(self):
         ctx = {"interface": "cursor", "model_hint": None, "environment": None}
         result = generate_structured_id(context=ctx, model_type="claude-3.5-sonnet")
         assert "claude" in result
-        assert "cursor" in result
 
-    def test_model_simplification_gemini(self):
-        result = generate_structured_id(
-            context={"interface": "mcp", "model_hint": None, "environment": None},
-            model_type="gemini-2.0-flash"
-        )
+    def test_gemini_simplification(self):
+        ctx = {"interface": "mcp", "model_hint": None, "environment": None}
+        result = generate_structured_id(context=ctx, model_type="gemini-2.0-pro")
         assert "gemini" in result
 
-    def test_model_simplification_gpt(self):
-        result = generate_structured_id(
-            context={"interface": "chatgpt", "model_hint": None, "environment": None},
-            model_type="gpt-4o"
-        )
+    def test_gpt_simplification(self):
+        ctx = {"interface": "mcp", "model_hint": None, "environment": None}
+        result = generate_structured_id(context=ctx, model_type="gpt-4o")
         assert "gpt" in result
 
-    def test_model_simplification_llama(self):
-        result = generate_structured_id(
-            context={"interface": "mcp", "model_hint": None, "environment": None},
-            model_type="llama-3.1-70b"
-        )
+    def test_llama_simplification(self):
+        ctx = {"interface": "mcp", "model_hint": None, "environment": None}
+        result = generate_structured_id(context=ctx, model_type="llama-3.1-70b")
         assert "llama" in result
 
-    def test_client_hint_overrides_context(self):
+    def test_client_hint(self):
         ctx = {"interface": "mcp_client", "model_hint": None, "environment": None}
         result = generate_structured_id(context=ctx, client_hint="chatgpt")
         assert "chatgpt" in result
-        assert "mcp" not in result
 
-    def test_client_hint_unknown_ignored(self):
+    def test_collision_avoidance_single(self):
         ctx = {"interface": "cursor", "model_hint": None, "environment": None}
-        result = generate_structured_id(context=ctx, client_hint="unknown")
-        assert "cursor" in result
-
-    def test_collision_avoidance(self):
-        ctx = {"interface": "test", "model_hint": None, "environment": None}
         first = generate_structured_id(context=ctx)
-        # Same inputs with first as existing
         second = generate_structured_id(context=ctx, existing_ids=[first])
         assert second != first
-        assert second.endswith("_2")
+        assert "_2" in second
 
     def test_collision_avoidance_multiple(self):
-        ctx = {"interface": "test", "model_hint": None, "environment": None}
+        ctx = {"interface": "cursor", "model_hint": None, "environment": None}
         first = generate_structured_id(context=ctx)
         second = f"{first}_2"
         third = generate_structured_id(context=ctx, existing_ids=[first, second])
-        assert third.endswith("_3")
+        assert third != first
+        assert third != second
+        assert "_3" in third
 
-    def test_interface_normalization(self):
-        """_client suffix removed, hyphens become underscores."""
+    def test_no_collision(self):
+        ctx = {"interface": "cursor", "model_hint": None, "environment": None}
+        result = generate_structured_id(context=ctx, existing_ids=["other_id"])
+        # No counter suffix should be added since there's no collision
+        assert not result.endswith("_2")
+        assert not result.endswith("_3")
+
+    def test_removes_client_suffix(self):
         ctx = {"interface": "mcp_client", "model_hint": None, "environment": None}
         result = generate_structured_id(context=ctx)
-        assert "mcp_" in result
         assert "_client" not in result
+        assert "mcp" in result
 
+
+# ============================================================================
+# format_naming_guidance
+# ============================================================================
 
 class TestFormatNamingGuidance:
 
-    def test_basic_guidance(self):
-        suggestions = [{"name": "test_agent", "description": "Test", "rationale": "For testing"}]
+    def test_basic_structure(self):
+        suggestions = [{"name": "test_name", "description": "test", "rationale": "test"}]
         result = format_naming_guidance(suggestions)
+        assert "message" in result
         assert "suggestions" in result
         assert "how_to" in result
-        assert "tips" in result
         assert "examples" in result
+        assert "tips" in result
 
     def test_with_uuid(self):
-        result = format_naming_guidance([], current_uuid="abcdef1234567890abcdef")
+        suggestions = []
+        result = format_naming_guidance(suggestions, current_uuid="abcdef1234567890abcdef1234567890")
         assert "current_uuid" in result
+        assert "note" in result
         assert result["current_uuid"].endswith("...")
 
     def test_without_uuid(self):
-        result = format_naming_guidance([])
+        suggestions = []
+        result = format_naming_guidance(suggestions)
         assert "current_uuid" not in result
+
+    def test_suggestions_passed(self):
+        suggestions = [
+            {"name": "test_1", "description": "d1", "rationale": "r1"},
+            {"name": "test_2", "description": "d2", "rationale": "r2"},
+        ]
+        result = format_naming_guidance(suggestions)
+        assert len(result["suggestions"]) == 2

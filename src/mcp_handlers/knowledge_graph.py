@@ -29,6 +29,44 @@ from .llm_delegation import synthesize_results
 logger = get_logger(__name__)
 
 
+async def _discovery_not_found(discovery_id: str, graph) -> TextContent:
+    """Build a 'not found' error with prefix-match suggestions.
+
+    LLMs sometimes truncate ISO-timestamp discovery IDs (e.g. '2025-12-20T15:43:51' → '2025').
+    When an exact match fails, search for IDs that start with the given prefix and offer
+    suggestions so the agent can retry with the correct full ID.
+    """
+    suggestions = []
+    try:
+        db = await graph._get_db()
+        cypher = f"""
+            MATCH (d:Discovery)
+            WHERE d.id STARTS WITH ${{prefix}}
+            RETURN d.id
+            LIMIT 5
+        """
+        rows = await db.graph_query(cypher, {"prefix": discovery_id})
+        for row in rows:
+            if isinstance(row, dict) and "d.id" in row:
+                suggestions.append(row["d.id"])
+            elif isinstance(row, str):
+                suggestions.append(row)
+    except Exception:
+        pass  # Best-effort suggestions
+
+    if suggestions:
+        return error_response(
+            f"Discovery '{discovery_id}' not found. Did you mean one of these?",
+            recovery={
+                "matching_ids": suggestions,
+                "action": "Retry with the full discovery_id from the list above",
+                "hint": "Discovery IDs are ISO timestamps (e.g. '2025-12-20T15:43:51.020454'). "
+                        "Pass the complete ID, not just the year.",
+            }
+        )
+    return error_response(f"Discovery '{discovery_id}' not found")
+
+
 def _check_display_name_required(agent_id: str, arguments: Dict[str, Any]) -> tuple[Optional[TextContent], Optional[str]]:
     """
     Check if agent has a meaningful display_name set for KG attribution.
@@ -973,7 +1011,7 @@ async def handle_update_discovery_status_graph(arguments: Dict[str, Any]) -> Seq
         # Get discovery to check severity and ownership
         discovery = await graph.get_discovery(discovery_id)
         if not discovery:
-            return [error_response(f"Discovery '{discovery_id}' not found")]
+            return [await _discovery_not_found(discovery_id, graph)]
         
         # SECURITY: Require session ownership for high-severity discoveries (UUID-based auth, Dec 2025)
         if discovery.severity in ["high", "critical"]:
@@ -1051,7 +1089,7 @@ async def handle_get_discovery_details(arguments: Dict[str, Any]) -> Sequence[Te
 
         discovery = await graph.get_discovery(discovery_id)
         if not discovery:
-            return [error_response(f"Discovery '{discovery_id}' not found")]
+            return [await _discovery_not_found(discovery_id, graph)]
 
         # UX FIX: Pagination support for long details
         offset = arguments.get("offset", 0)

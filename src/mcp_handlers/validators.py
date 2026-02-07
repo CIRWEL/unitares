@@ -900,6 +900,10 @@ def validate_discovery_id(discovery_id: Any) -> Tuple[Optional[str], Optional[Te
             recovery={"action": "Provide a non-empty discovery_id"}
         )
     
+    if isinstance(discovery_id, (int, float)):
+        # Defensive coercion: MCP clients sometimes pass numeric IDs (e.g. 2025 instead of "2025-12-20T...")
+        discovery_id = str(discovery_id)
+
     if not isinstance(discovery_id, str):
         return None, error_response(
             f"Invalid discovery_id: must be a string, got {type(discovery_id).__name__}",
