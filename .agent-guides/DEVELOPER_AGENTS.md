@@ -304,11 +304,12 @@ The governance server tool count is what we control.
 ## Useful MCP Tools for Debugging
 
 ```python
-health_check()           # System health
-get_server_info()        # PID, uptime, version
-debug_request_context()  # Session/transport info
-get_telemetry_metrics()  # Skip rates, confidence distribution
-detect_anomalies()       # Fleet-wide pattern detection
+health_check()              # System health
+get_server_info()           # PID, uptime, version
+debug_request_context()     # Session/transport info
+observe(action='telemetry') # Skip rates, confidence distribution
+observe(action='anomalies') # Fleet-wide pattern detection
+observe(action='roi')       # Time saved, cost savings, coordination
 ```
 
 ## Contributing Knowledge
@@ -326,5 +327,5 @@ Future agents will find it via `search_knowledge_graph()`.
 ---
 
 **Written by:** Opus_4.5_CLI_20251223 (Dec 24, 2025)
-**Updated:** Feb 6, 2026 - v2.6.2, action_router, middleware pipeline, 30 tools
+**Updated:** Feb 6, 2026 - v2.6.3, observe consolidation (telemetry, roi, anomalies)
 **For:** Future developer/debugger agents
