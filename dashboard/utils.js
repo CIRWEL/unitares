@@ -275,8 +275,13 @@ class DataProcessor {
             return { display: '-', interpretation: 'No data', color: 'var(--text-secondary)' };
         }
         
-        const clamped = Math.max(0, Math.min(1, value));
-        const percent = (clamped * 100).toFixed(0);
+        // V can be negative (I > E imbalance); other metrics are [0, 1]
+        const clamped = metricName === 'V'
+            ? Math.max(-1, Math.min(1, value))
+            : Math.max(0, Math.min(1, value));
+        // Bar uses |V| scaled from its effective range (dynamics keep V in ~[-0.1, 0.1])
+        const visualValue = metricName === 'V' ? Math.min(1, Math.abs(clamped) / 0.3) : clamped;
+        const percent = (visualValue * 100).toFixed(0);
         
         const interpretations = {
             E: {
@@ -296,7 +301,7 @@ class DataProcessor {
             },
             V: {
                 low: { text: 'Low void - good E-I balance', color: 'var(--accent-green)' },
-                medium: { text: 'Moderate void - some imbalance', color: 'var(--accent-yellow)' },
+                medium: { text: 'Moderate void - some E-I imbalance', color: 'var(--accent-yellow)' },
                 high: { text: 'High void - significant E-I imbalance', color: 'var(--accent-orange)' }
             },
             C: {
@@ -306,10 +311,12 @@ class DataProcessor {
             }
         };
         
+        // Use rescaled value for interpretation thresholds so V's 0-0.3 range
+        // maps to the same low/medium/high bands as other metrics
         let interpretation;
-        if (clamped < 0.33) {
+        if (visualValue < 0.33) {
             interpretation = interpretations[metricName]?.low || { text: 'Low', color: 'var(--text-secondary)' };
-        } else if (clamped < 0.67) {
+        } else if (visualValue < 0.67) {
             interpretation = interpretations[metricName]?.medium || { text: 'Moderate', color: 'var(--text-secondary)' };
         } else {
             interpretation = interpretations[metricName]?.high || { text: 'High', color: 'var(--text-secondary)' };
