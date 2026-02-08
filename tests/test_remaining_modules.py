@@ -1006,7 +1006,7 @@ class TestHandleCallModel:
         mock_client_cls.return_value = mock_client
 
         with patch("src.mcp_handlers.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.model_inference.OpenAI", mock_client_cls):
+             patch("src.mcp_handlers.model_inference.OpenAI", mock_client_cls, create=True):
             result = await handle_call_model({
                 "prompt": "test",
                 "provider": "ollama",
@@ -1053,7 +1053,7 @@ class TestHandleCallModel:
         mock_client_cls.return_value.chat.completions.create.side_effect = RuntimeError("timeout error")
 
         with patch("src.mcp_handlers.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.model_inference.OpenAI", mock_client_cls):
+             patch("src.mcp_handlers.model_inference.OpenAI", mock_client_cls, create=True):
             result = await handle_call_model({
                 "prompt": "test",
                 "provider": "ollama",
@@ -1068,7 +1068,7 @@ class TestHandleCallModel:
         mock_client_cls.return_value.chat.completions.create.side_effect = RuntimeError("rate limit exceeded")
 
         with patch("src.mcp_handlers.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.model_inference.OpenAI", mock_client_cls):
+             patch("src.mcp_handlers.model_inference.OpenAI", mock_client_cls, create=True):
             result = await handle_call_model({"prompt": "t", "provider": "ollama"})
             data = json.loads(result[0].text)
             assert data["error_code"] == "RATE_LIMIT_EXCEEDED"
@@ -1079,7 +1079,7 @@ class TestHandleCallModel:
         mock_client_cls.return_value.chat.completions.create.side_effect = RuntimeError("model not found")
 
         with patch("src.mcp_handlers.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.model_inference.OpenAI", mock_client_cls):
+             patch("src.mcp_handlers.model_inference.OpenAI", mock_client_cls, create=True):
             result = await handle_call_model({"prompt": "t", "provider": "ollama"})
             data = json.loads(result[0].text)
             assert data["error_code"] == "MODEL_NOT_AVAILABLE"
@@ -1091,7 +1091,9 @@ class TestCreateModelInferenceClient:
             assert create_model_inference_client() is None
 
     def test_no_api_key(self):
+        mock_openai_mod = MagicMock()
         with patch("src.mcp_handlers.model_inference.OPENAI_AVAILABLE", True), \
+             patch.dict("sys.modules", {"openai": mock_openai_mod}), \
              patch.dict(os.environ, {}, clear=True):
             os.environ.pop("NGROK_API_KEY", None)
             os.environ.pop("OPENAI_API_KEY", None)
@@ -1100,8 +1102,10 @@ class TestCreateModelInferenceClient:
     def test_successful_creation(self):
         mock_cls = MagicMock()
         mock_cls.return_value = MagicMock()
+        mock_openai_mod = MagicMock()
+        mock_openai_mod.OpenAI = mock_cls
         with patch("src.mcp_handlers.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.model_inference.OpenAI", mock_cls), \
+             patch.dict("sys.modules", {"openai": mock_openai_mod}), \
              patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
             client = create_model_inference_client()
             assert client is not None
