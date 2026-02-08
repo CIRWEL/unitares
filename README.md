@@ -4,9 +4,11 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**Stability monitoring for multi-agent AI systems.**
+**Your agents are running. Are they working?**
 
-UNITARES monitors AI agent behavior using continuous state variables. When agents get stuck, loop, or drift toward instability, you get early warning — not just crash alerts. Thermodynamic state modeling gives you trends, graduated responses, and physics-grounded intuition about agent health.
+Catch stuck loops, decision flip-flops, and silent drift before they cost you. UNITARES gives you continuous state monitoring - you see agents *trending* toward trouble, not just the crash. Drop-in MCP server, three-call integration.
+
+→ [Why UNITARES?](docs/WHY.md) — The problem this solves
 
 ---
 
