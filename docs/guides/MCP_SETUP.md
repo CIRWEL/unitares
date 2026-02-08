@@ -2,258 +2,169 @@
 
 **UNITARES Governance MCP Server v2.6.3**
 
-This guide shows you how to set up the custom MCP server for governance monitoring.
+This guide shows you how to connect to the governance MCP server from any MCP-compatible client.
 
 ---
 
 ## What is This?
 
-The MCP server provides governance monitoring tools that can be used directly from:
+The MCP server provides 30 governance tools accessible from:
+- **Claude Code** (via MCP integration)
 - **Cursor IDE** (via MCP integration)
 - **Claude Desktop** (via MCP integration)
-- **Any MCP-compatible client**
-
-You can call governance tools directly from your AI assistant!
+- **Any MCP-compatible client** (Streamable HTTP)
 
 ---
 
-## Installation
+## Installation (Self-Hosted)
 
 ### Step 1: Install Dependencies
 
 ```bash
 cd ~/projects/governance-mcp-v1
-pip install -r requirements-core.txt
-```
-
-Or install manually:
-```bash
-pip install mcp numpy
-```
-
-For HTTP (multi-client) mode:
-```bash
 pip install -r requirements-full.txt
 ```
 
-### Step 2: Verify Installation
+### Step 2: Start the Server
 
+**HTTP mode (multi-client, recommended):**
 ```bash
-python3 src/mcp_server_std.py --help
+python3 src/mcp_server.py --port 8767 --host 0.0.0.0
 ```
 
-You should see the server start (it will wait for stdio input).
+**Stdio mode (single-client, for local IDE):**
+```bash
+python3 src/mcp_server_std.py
+```
+
+### Step 3: Verify
+
+```bash
+curl http://localhost:8767/health
+```
 
 ---
 
-## Configuration
+## Client Configuration
 
-### Option A: Cursor IDE
+### Option A: Claude Code (`~/.claude.json`)
 
-1. **Find Cursor MCP config location:**
-   - macOS: `~/.cursor/mcp.json` (primary location - shown in Cursor UI)
-   - Alternative: `~/Library/Application Support/Cursor/User/globalStorage/mcp.json` (may also work)
-   - Linux: `~/.cursor/mcp.json` or `~/.config/Cursor/User/globalStorage/mcp.json`
-   - Windows: `%USERPROFILE%\.cursor\mcp.json` or `%APPDATA%\Cursor\User\globalStorage\mcp.json`
-   
-   **Note:** Cursor may check `~/.cursor/mcp.json` first. This is the location shown in Cursor's UI settings.
-   
-   **⚠️ Important:** If you have MCP configs in multiple locations, Cursor may load duplicates. Keep only ONE main config file:
-   - **Primary:** `~/.cursor/mcp.json` (recommended - shown in UI)
-   - **Remove:** `~/Library/Application Support/Cursor/User/globalStorage/mcp.json` (if exists, causes duplicates)
-   - **Remove:** `~/Library/Application Support/Cursor/mcp.json` (legacy, may cause duplicates)
-   
-   **Note:** Cursor also maintains project-specific `mcp-cache.json` files in `~/.cursor/projects/*/`. These are managed by Cursor automatically and may cause apparent duplicates in the UI. This is normal Cursor behavior and not necessarily a problem.
+```json
+{
+  "mcpServers": {
+    "unitares-governance": {
+      "type": "http",
+      "url": "http://127.0.0.1:8767/mcp/"
+    }
+  }
+}
+```
 
-2. **Add to config (Streamable HTTP):**
-   ```json
-   {
-     "mcpServers": {
-       "unitares-governance": {
-         "type": "http",
-         "url": "https://your-domain.ngrok.io/mcp/"
-       }
-     }
-   }
-   ```
+For remote access via ngrok:
+```json
+{
+  "mcpServers": {
+    "unitares-governance": {
+      "type": "http",
+      "url": "https://your-domain.ngrok.io/mcp/",
+      "headers": {
+        "Authorization": "Basic <base64-encoded-credentials>"
+      }
+    }
+  }
+}
+```
 
-   Or for local development:
-   ```json
-   {
-     "mcpServers": {
-       "unitares-governance": {
-         "type": "http",
-         "url": "http://127.0.0.1:8767/mcp/"
-       }
-     }
-   }
-   ```
+### Option B: Cursor IDE (`~/.cursor/mcp.json`)
 
-3. **Update the path** to match your system:
-   - Use absolute path to your `governance-mcp-v1` directory
-   - Or use `mcp_server_std.py` with relative path from project root
+Same JSON format as above. Use the primary config location:
+- macOS: `~/.cursor/mcp.json`
+- Linux: `~/.cursor/mcp.json`
+- Windows: `%USERPROFILE%\.cursor\mcp.json`
 
-4. **Restart Cursor**
+**Tip:** Keep only ONE config file. If you have configs in multiple Cursor locations, duplicates may appear.
 
-### Option B: Claude Desktop
+### Option C: Claude Desktop
 
-1. **Find Claude Desktop MCP config:**
-   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - Linux: `~/.config/Claude/claude_desktop_config.json`
-   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+Config location:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
-2. **Add Streamable HTTP config:**
-   ```json
-   {
-     "mcpServers": {
-       "unitares-governance": {
-         "type": "http",
-         "url": "https://your-domain.ngrok.io/mcp/"
-       }
-     }
-   }
-   ```
-
-3. **Restart Claude Desktop**
+Same JSON format as above. Restart Claude Desktop after changes.
 
 ---
 
 ## Available Tools
 
-Once configured, agents can access governance tools via MCP:
+The server exposes **30 registered tools**. Key tools:
 
-### 1. `process_agent_update`
-Log agent operations and receive governance feedback. Primary tool for governance cycle participation.
+| Tool | Purpose |
+|------|---------|
+| `onboard` | First call - creates identity, returns setup info |
+| `process_agent_update` | Check in work, get governance feedback |
+| `get_governance_metrics` | View EISV state, coherence, risk |
+| `identity` | Check or set your display name |
+| `knowledge` | Store/search/get knowledge graph entries |
+| `agent` | List, get, update, archive agents |
+| `observe` | Observe agent metrics, compare, find anomalies |
+| `calibration` | Check/update governance calibration |
+| `self_recovery` | Self-recovery for stuck/paused agents |
+| `call_model` | Delegate to local/free LLM |
 
-**⚠️ Authentication Required:** Existing agents must provide `api_key` parameter for ownership verification. New agents receive API key upon creation.
+**Identity is automatic** — no `api_key` or explicit registration needed. Identity binds on first tool call via session.
 
-**Example (New Agent - Auto-Registration):**
-```
-process_agent_update with:
-- agent_id: "<agent_identifier_YYYYMMDD_HHMM>"
-- parameters: [0.5, 0.6, 0.7, 0.8, 0.5, 0.1]  # Deprecated, ignored
-- ethical_drift: [0.05, 0.1, 0.15]  # Deprecated, ignored
-- response_text: "Operation summary"
-- complexity: 0.7
-```
+For the complete tool reference, see [SKILL.md](../../skills/unitares-governance/SKILL.md).
 
-**Example (Existing Agent - Authentication Required):**
-```
-process_agent_update with:
-- agent_id: "<agent_identifier_YYYYMMDD_HHMM>"
-- api_key: "<api_key_from_registration>"  # ← Required
-- parameters: [...]  # Deprecated
-- ethical_drift: [...]  # Deprecated
-- response_text: "Operation summary"
-- complexity: 0.7
-```
+---
 
-**Identity (v2.4.0+):**
-- Identity auto-creates on first tool call (no explicit registration needed)
-- Call `identity()` to check your UUID
-- Session binding handles authentication automatically
+## Testing Your Setup
 
-**Example Response:**
-```json
-{
-  "success": true,
-  "status": "moderate",
-  "decision": {
-    "action": "proceed",
-    "reason": "Low attention load (0.43) - within normal operating parameters",
-    "guidance": "Moderate complexity operations - continue current approach"
-  },
-  "metrics": {
-    "E": 0.70,
-    "I": 0.82,
-    "S": 0.15,
-    "V": -0.01,
-    "coherence": 0.50,
-    "attention_score": 0.43,
-    "health_status": "moderate",
-    "health_message": "Typical attention load (43%) - standard operational range"
-  },
-  "sampling_params": {
-    "temperature": 0.59,
-    "top_p": 0.86,
-    "max_tokens": 150
-  },
-  "sampling_params_note": "Optional generation parameters derived from current thermodynamic state. Advisory only - agents may use or ignore. Temperature 0.59 = balanced exploration. Max tokens 150 = suggested output length.",
-  "eisv_labels": {
-    "E": {"label": "Energy", "description": "Thermodynamic energy state - exploration/productive capacity"},
-    "I": {"label": "Information Integrity", "description": "Information preservation - coherence and consistency"},
-    "S": {"label": "Entropy", "description": "Uncertainty measure - ethical drift accumulation"},
-    "V": {"label": "Void Integral", "description": "E-I imbalance accumulator - thermodynamic strain"}
-  }
-}
+### 1. Health Check
+
+```bash
+curl http://localhost:8767/health
 ```
 
-### 2. `get_governance_metrics`
-Retrieve current thermodynamic state and governance metrics.
+### 2. From Your MCP Client
 
-**Example:**
-```
-get_governance_metrics with:
-- agent_id: "<agent_identifier>"
-```
+Ask your AI assistant: "Call `onboard` to connect to governance."
 
-### 3. `get_system_history`
-Export governance history time series.
+The response will include your agent ID and available tools.
 
-**Example:**
-```
-get_system_history with:
-- agent_id: "<agent_identifier>"
-- format: "json"
-```
+### 3. Run Test Suite
 
-### 4. `reset_monitor`
-Reset agent state to initial conditions (testing/development only).
-
-**Example:**
-```
-Use the governance-monitor tool reset_monitor with:
-- agent_id: "cursor_ide"
-```
-
-### 5. `list_agents`
-List all monitored agents.
-
-**Example:**
-```
-Use the governance-monitor tool list_agents
+```bash
+cd ~/projects/governance-mcp-v1
+python3 -m pytest tests/ -v
 ```
 
 ---
 
-## Testing
+## Architecture
 
-### Test 1: Direct Python Test
-
-```bash
-cd ~/projects/governance-mcp-v1
-python3 src/mcp_server_std.py
 ```
-
-The server will start and wait for stdio input (this is normal for MCP servers).
-
-### Test 2: Use from Cursor/Claude Desktop
-
-1. Open Cursor or Claude Desktop
-2. Ask: "What governance tools are available?"
-3. The AI should list the 5 tools above
-4. Try: "Use process_agent_update to monitor a test agent"
-
-### Test 3: Integration Test
-
-```bash
-cd ~/projects/governance-mcp-v1
-python3 -c "
-import asyncio
-from src.mcp_server_std import get_or_create_monitor
-monitor = get_or_create_monitor('test_agent')
-print('✅ Monitor created successfully')
-"
+┌──────────────────────────────────────────────┐
+│  MCP Clients                                 │
+│  (Claude Code, Cursor, Claude Desktop, etc.) │
+└──────────────────┬───────────────────────────┘
+                   │ MCP Streamable HTTP (/mcp/)
+                   ▼
+┌──────────────────────────────────────────────┐
+│  mcp_server.py (HTTP, multi-client)          │
+│  ┌────────────────────────────────────────┐  │
+│  │  Middleware Pipeline                    │  │
+│  │  identity → trajectory → alias →       │  │
+│  │  validate → rate limit → dispatch      │  │
+│  └────────────────────────────────────────┘  │
+└──────────────────┬───────────────────────────┘
+                   │
+          ┌────────┼────────┐
+          ▼        ▼        ▼
+    ┌──────────┐ ┌──────┐ ┌────────────┐
+    │PostgreSQL│ │Redis │ │governance_ │
+    │  + AGE   │ │Cache │ │core (EISV) │
+    └──────────┘ └──────┘ └────────────┘
 ```
 
 ---
@@ -262,117 +173,40 @@ print('✅ Monitor created successfully')
 
 ### "MCP SDK not installed"
 ```bash
-pip install mcp
+pip install -r requirements-full.txt
 ```
 
-### "Module not found: src.governance_monitor"
-Make sure `PYTHONPATH` includes the project root:
+### "Server not starting" / "Port already in use"
 ```bash
-export PYTHONPATH=$PYTHONPATH:~/projects/governance-mcp-v1
+lsof -i :8767   # Check what's using the port
 ```
-
-### "Server not starting"
-- Check Python path in config: `which python3`
-- Check file permissions: `chmod +x src/mcp_server_std.py`
-- Check logs in Cursor/Claude Desktop MCP panel
 
 ### "Tool not found"
-- Restart Cursor/Claude Desktop after config change
-- Check MCP server is running (should appear in MCP panel)
-- Verify config JSON is valid
+- Restart your MCP client after config changes
+- Verify the server is accessible: `curl http://localhost:8767/health`
+- Check config JSON is valid
+
+### Server Logs
+```bash
+tail -f data/logs/mcp_server.log
+tail -f data/logs/mcp_server_error.log
+```
+
+For more troubleshooting, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ---
 
-## Usage Examples
+## Deployment Options
 
-### Example 1: Monitor Cursor Interaction
+| Mode | Command | Use Case |
+|------|---------|----------|
+| **HTTP** | `python3 src/mcp_server.py --port 8767` | Multi-client, production |
+| **Stdio** | `python3 src/mcp_server_std.py` | Single IDE client |
+| **Launchd** | `launchctl load ~/Library/LaunchAgents/...` | macOS auto-start |
+| **ngrok** | See [NGROK_DEPLOYMENT.md](NGROK_DEPLOYMENT.md) | Remote access |
 
-From Cursor chat:
-```
-I just got a response from Cursor. Can you monitor it using governance?
-
-Use process_agent_update with:
-- agent_id: "cursor_ide"
-- response_text: "[paste the response]"
-- complexity: 0.6
-```
-
-### Example 2: Check Governance Status
-
-```
-What's the current governance status for cursor_ide?
-
-Use get_governance_metrics with agent_id: "cursor_ide"
-```
-
-### Example 3: Export History
-
-```
-Export the governance history for cursor_ide as JSON.
-
-Use get_system_history with:
-- agent_id: "cursor_ide"
-- format: "json"
-```
+For full deployment guide, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
 
-## Architecture
-
-```
-┌─────────────────────────────────────────┐
-│  Cursor / Claude Desktop                │
-│  (MCP Client)                          │
-└──────────────┬──────────────────────────┘
-               │ MCP Protocol (stdio)
-               ▼
-┌─────────────────────────────────────────┐
-│  mcp_server_std.py                      │
-│  (MCP Server)                           │
-└──────────────┬──────────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────────┐
-│  GovernanceMCPServer                    │
-│  (Business Logic)                        │
-└──────────────┬──────────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────────┐
-│  UNITARESMonitor                        │
-│  (Governance Framework)                 │
-└─────────────────────────────────────────┘
-```
-
----
-
-## Benefits
-
-✅ **Direct Integration**: Use governance tools directly from AI assistants  
-✅ **Real-time Monitoring**: Monitor interactions as they happen  
-✅ **Unified Interface**: Same tools work in Cursor and Claude Desktop  
-✅ **No Manual Logging**: AI can call tools automatically  
-✅ **Rich Context**: AI has access to governance metrics and decisions  
-
----
-
-## Next Steps
-
-1. ✅ Install dependencies
-2. ✅ Configure MCP client (Cursor/Claude Desktop)
-3. ✅ Execute test interaction
-4. ✅ Integrate into operational workflows
-5. ✅ Monitor multiple agent instances
-
----
-
-## Support
-
-- **Documentation**: See `README.md` for governance framework details
-- **Examples**: See `demo_complete_system.py` for usage examples
-- **Python API**: Use `from src.governance_monitor import UNITARESMonitor` for direct integration
-
----
-
-**Status**: Ready to use! 🚀
-
+*Last updated: February 7, 2026*

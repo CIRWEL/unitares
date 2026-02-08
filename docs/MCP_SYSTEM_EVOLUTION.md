@@ -1,4 +1,4 @@
-# MCP System Evolution: v1.0.0 → v2.6.3
+# MCP System Evolution: v1.0.0 → v2.6.3+
 
 **Complete history of how the UNITARES Governance MCP system has evolved**
 
@@ -390,7 +390,7 @@ v2.5.7:  Identity persistence fix
 v2.6.0:  Major cleanup, 49→29 tools, 1,798 tests
 v2.6.1:  Name-based identity (PATH 2.5), dashboard overhaul
 v2.6.2:  Architecture refactoring, 31 tools, 2,194 tests
-v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 2,602 tests
+v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 5,501 tests at 77% coverage
 ```
 
 ### Tool Count Evolution
@@ -404,7 +404,7 @@ v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 2,602 tests
 - **v2.5.5:** 85+ tools (+42 tools: Pi orchestration, trajectory, recovery, unified tools)
 - **v2.6.0:** 29 tools (85+ consolidated to 29 public, admin/internal hidden)
 - **v2.6.2:** 31 tools (+ 2 new registered tools, 49 consolidated sub-handlers)
-- **v2.6.3:** 30 tools (dialectic consolidated, -1 tool)
+- **v2.6.3:** 30 tools (dialectic consolidated, identity audit, dead code removal, 5,501 tests)
 
 ### Performance Improvements
 
@@ -432,7 +432,7 @@ v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 2,602 tests
 
 ---
 
-## Current State (v2.6.2)
+## Current State (v2.6.3)
 
 ### Core Features
 
@@ -441,16 +441,17 @@ v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 2,602 tests
 - ✅ Knowledge graph system (Apache AGE + semantic search)
 - ✅ Identity model (4-path: Redis → PG → Name Claim → Create)
 - ✅ Auto-healing infrastructure
-- ✅ **31 registered MCP tools** + aliases (49 consolidated sub-handlers)
+- ✅ **30 registered MCP tools** + aliases (consolidated sub-handlers)
 - ✅ Streamable HTTP transport (`/mcp/` endpoint)
 - ✅ Ethical drift (Δη) fully integrated
 - ✅ Trajectory identity (genesis signatures, lineage comparison, trust tiers)
 - ✅ Automatic calibration from objective outcomes
 - ✅ Web dashboard (EISV sparklines, dialectic timeline, trust tier badges)
 - ✅ Pi/Lumen orchestration via anima-mcp
-- ✅ **2,602 tests** with 49% overall coverage (core modules 83-88%)
+- ✅ PostgreSQL + AGE for all persistent data (dialectic migrated Feb 2026)
+- ✅ **5,501 tests** with 77% overall coverage (core modules 83-88%)
 
-### Architecture (v2.6.3)
+### Architecture
 
 - **Declarative tool registration** — `ToolDefinition` dataclass, `action_router()` for consolidated tools
 - **Middleware pipeline** — 8-step dispatch: identity → trajectory → kwargs → alias → inject → validate → rate limit → patterns
@@ -490,6 +491,6 @@ v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 2,602 tests
 
 ---
 
-**Last Updated:** February 6, 2026
+**Last Updated:** February 7, 2026
 **Current Version:** v2.6.3
 **Total Evolution:** 1.0.0 → 2.6.3 (22 versions)

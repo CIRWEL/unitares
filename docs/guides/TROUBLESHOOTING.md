@@ -1,8 +1,6 @@
 # Troubleshooting Guide
 
-**Created:** January 12, 2026  
-**Last Updated:** January 12, 2026  
-**Status:** Active
+**Last Updated:** February 7, 2026
 
 ---
 
@@ -17,17 +15,8 @@ curl http://localhost:8767/health | python3 -m json.tool
 ps aux | grep -E "(mcp_server|ngrok)"
 
 # Check logs
-tail -f /tmp/unitares.log
-tail -f /tmp/ngrok.log
-```
-
-### Run Health Monitor
-```bash
-# Single check
-./scripts/monitor_health.sh --once
-
-# Continuous monitoring
-./scripts/monitor_health.sh
+tail -f data/logs/mcp_server.log
+tail -f data/logs/mcp_server_error.log
 ```
 
 ---
@@ -37,33 +26,29 @@ tail -f /tmp/ngrok.log
 ### Issue 1: Server Won't Start
 
 **Symptoms:**
-- `./scripts/start_unitares.sh` fails
-- Error: "Server is already running"
 - Error: "Port 8767 already in use"
+- Server process not responding
 
 **Solutions:**
 
-1. **Clean up stale locks:**
+1. **Check what's using the port:**
    ```bash
-   cd /path/to/governance-mcp-v1
-   rm -f data/.mcp_server.*
+   lsof -i :8767
    ```
 
 2. **Kill existing processes:**
    ```bash
-   ./scripts/stop_unitares.sh
-   # Or manually:
    pkill -f "mcp_server"
    pkill -f "ngrok.*8767"
    ```
 
-3. **Check port availability:**
+3. **Restart via launchd (macOS production):**
    ```bash
-   lsof -i :8767
-   # If something is using it, kill that process
+   launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
+   launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
    ```
 
-4. **Use --force flag:**
+4. **Force start:**
    ```bash
    python3 src/mcp_server.py --port 8767 --host 0.0.0.0 --force
    ```
@@ -75,7 +60,6 @@ tail -f /tmp/ngrok.log
 **Symptoms:**
 - `https://your-domain.ngrok.io/mcp` returns 404
 - Ngrok log shows "connection refused"
-- Error: ERR_NGROK_3200
 
 **Solutions:**
 
@@ -84,7 +68,7 @@ tail -f /tmp/ngrok.log
    curl http://localhost:8767/health
    ```
 
-2. **Verify ngrok is pointing to correct port:**
+2. **Verify ngrok tunnel:**
    ```bash
    curl http://localhost:4040/api/tunnels | python3 -m json.tool | grep -A 5 "8767"
    ```
@@ -92,7 +76,7 @@ tail -f /tmp/ngrok.log
 3. **Restart ngrok:**
    ```bash
    pkill -f "ngrok.*8767"
-   ngrok http 8767 --url=your-domain.ngrok.io --log=stdout > /tmp/ngrok.log 2>&1 &
+   ngrok http 8767 --url=your-domain.ngrok.io
    ```
 
 4. **Check ngrok authentication:**
@@ -100,118 +84,95 @@ tail -f /tmp/ngrok.log
    ngrok config check
    ```
 
-5. **Verify custom domain:**
-   - Check ngrok dashboard: https://dashboard.ngrok.com
-   - Ensure `your-domain.ngrok.io` is configured
-   - Check Traffic Policy isn't blocking requests
-
 ---
 
-### Issue 3: MCP Tools Not Loading in Cursor
+### Issue 3: MCP Tools Not Loading in Client
 
 **Symptoms:**
-- Cursor shows "MCP server not connected"
-- Tools don't appear in Cursor
-- Connection errors in Cursor logs
+- Client shows "MCP server not connected"
+- Tools don't appear
 
 **Solutions:**
 
 1. **Verify MCP config:**
    ```bash
+   # Claude Code
+   cat ~/.claude.json | python3 -m json.tool
+
+   # Cursor
    cat ~/.cursor/mcp.json | python3 -m json.tool
-   ```
-   
-   Should contain:
-   ```json
-   {
-     "mcpServers": {
-       "unitares-governance": {
-         "type": "http",
-         "url": "http://localhost:8767/mcp"
-       }
-     }
-   }
    ```
 
 2. **Check server is accessible:**
    ```bash
    curl http://localhost:8767/health
-   curl http://localhost:8767/mcp
    ```
 
-3. **Restart Cursor:**
-   - Quit Cursor completely (Cmd+Q)
-   - Wait 5 seconds
-   - Reopen Cursor
+3. **Restart your client** (Cursor: Cmd+Q then reopen, Claude Desktop: quit and reopen)
 
-4. **Check Cursor logs:**
-   - Open Cursor Settings → MCP
-   - Check for connection errors
-   - Look for "unitares-governance" in server list
-
-5. **Try via ngrok:**
-   ```json
-   {
-     "mcpServers": {
-       "unitares-governance": {
-         "type": "http",
-         "url": "https://your-domain.ngrok.io/mcp/"
-       }
-     }
-   }
-   ```
+4. **Check client logs** for connection errors
 
 ---
 
 ### Issue 4: Database Connection Errors
 
 **Symptoms:**
-- Error: "Failed to initialize database"
 - PostgreSQL connection errors
-- SQLite lock errors
+- Error: "Failed to initialize database"
 
 **Solutions:**
 
-1. **Check PostgreSQL (if using):**
+1. **Check PostgreSQL container:**
    ```bash
-   # Check if Docker container is running
-   docker ps | grep postgres
-   
-   # Start if not running
-   docker start postgres-age
-   
-   # Check connection
+   docker ps | grep postgres-age
    docker exec postgres-age pg_isready -U postgres
    ```
 
-2. **Check SQLite (if using):**
+2. **Start if not running:**
    ```bash
-   # Check for lock files
-   ls -la data/*.db*
-   
-   # Remove stale locks (be careful!)
-   # Only if you're sure no process is using the DB
+   docker start postgres-age
    ```
 
 3. **Check environment variables:**
    ```bash
-   echo $DB_BACKEND  # Should be "postgres" or "sqlite"
+   echo $DB_BACKEND  # Should be "postgres"
+   echo $DB_POSTGRES_URL
    ```
 
-4. **Verify database permissions:**
+4. **Check container logs:**
    ```bash
-   ls -la data/
-   # Ensure write permissions
+   docker logs postgres-age --tail 50
    ```
 
 ---
 
-### Issue 5: High Memory Usage
+### Issue 5: Redis Connection Errors
+
+**Symptoms:**
+- Warning: "Redis unavailable"
+- Session binding not persisting across restarts
+
+**Solutions:**
+
+1. **Check Redis:**
+   ```bash
+   redis-cli ping  # Should return PONG
+   ```
+
+2. **Restart Redis:**
+   ```bash
+   brew services restart redis
+   ```
+
+3. **Note:** Redis is optional. If unavailable, the server falls back to in-memory session cache (sessions won't persist across restarts).
+
+---
+
+### Issue 6: High Memory Usage
 
 **Symptoms:**
 - Server becomes slow
 - High memory consumption
-- Out of memory errors
 
 **Solutions:**
 
@@ -222,92 +183,9 @@ tail -f /tmp/ngrok.log
 
 2. **Restart server:**
    ```bash
-   ./scripts/stop_unitares.sh
-   ./scripts/start_unitares.sh
+   launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
+   launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
    ```
-
-3. **Check for memory leaks:**
-   - Monitor memory over time
-   - Check logs for errors
-   - Review connection count (too many connections?)
-
-4. **Reduce connection limits:**
-   - Edit `src/mcp_server.py`
-   - Reduce `limit_concurrency` in uvicorn config
-
----
-
-### Issue 6: Lock File Conflicts
-
-**Symptoms:**
-- Error: "Server is already running"
-- Lock file exists but process not running
-- Can't start server
-
-**Solutions:**
-
-1. **Check if process is actually running:**
-   ```bash
-   ps aux | grep mcp_server
-   ```
-
-2. **Check lock file:**
-   ```bash
-   cat data/.mcp_server.lock
-   # Note the PID
-   ```
-
-3. **Verify PID is running:**
-   ```bash
-   ps -p <PID>
-   ```
-
-4. **Clean up stale locks:**
-   ```bash
-   rm -f data/.mcp_server.*
-   ```
-
-5. **Use --force flag:**
-   ```bash
-   python3 src/mcp_server.py --force
-   ```
-
----
-
-### Issue 7: Ngrok Tunnel Drops
-
-**Symptoms:**
-- Ngrok tunnel disconnects frequently
-- Connection errors from remote clients
-- Tunnel URL changes
-
-**Solutions:**
-
-1. **Use custom domain (prevents URL changes):**
-   ```bash
-   ngrok http 8767 --url=your-domain.ngrok.io
-   ```
-
-2. **Check ngrok status:**
-   ```bash
-   curl http://localhost:4040/api/tunnels
-   ```
-
-3. **Monitor ngrok logs:**
-   ```bash
-   tail -f /tmp/ngrok.log
-   ```
-
-4. **Restart ngrok:**
-   ```bash
-   pkill -f ngrok
-   ngrok http 8767 --url=your-domain.ngrok.io --log=stdout > /tmp/ngrok.log 2>&1 &
-   ```
-
-5. **Check network stability:**
-   - Ensure stable internet connection
-   - Check firewall settings
-   - Verify ngrok account limits
 
 ---
 
@@ -318,9 +196,6 @@ tail -f /tmp/ngrok.log
 ```bash
 # Server health
 curl http://localhost:8767/health
-
-# Metrics
-curl http://localhost:8767/metrics | head -20
 
 # Dashboard
 curl http://localhost:8767/dashboard | head -20
@@ -334,27 +209,26 @@ ps aux | grep -E "(mcp_server|ngrok|python.*governance)"
 
 # Check port usage
 lsof -i :8767
-lsof -i :4040  # ngrok web interface
 ```
 
 ### Step 3: Check Logs
 
 ```bash
 # Server logs
-tail -50 /tmp/unitares.log
+tail -50 data/logs/mcp_server.log
 
-# Ngrok logs
-tail -50 /tmp/ngrok.log
+# Error logs
+tail -50 data/logs/mcp_server_error.log
 
 # Look for errors
-grep -i error /tmp/unitares.log | tail -20
+grep -i error data/logs/mcp_server.log | tail -20
 ```
 
 ### Step 4: Verify Configuration
 
 ```bash
 # MCP config
-cat ~/.cursor/mcp.json
+cat ~/.claude.json | python3 -m json.tool
 
 # Environment variables
 env | grep -E "(DB_|UNITARES_|NGROK_)"
@@ -364,144 +238,56 @@ which python3
 python3 --version
 ```
 
-### Step 5: Test Individual Components
-
-```bash
-# Test server startup
-cd /path/to/governance-mcp-v1
-source .venv/bin/activate
-python3 src/mcp_server.py --port 8767 --host 0.0.0.0 --force
-
-# Test ngrok separately
-ngrok http 8767 --url=your-domain.ngrok.io
-```
-
 ---
 
 ## Recovery Procedures
 
-### Complete Reset
-
-If everything is broken:
+### Service Restart
 
 ```bash
-# 1. Stop everything
-./scripts/stop_unitares.sh
+# macOS launchd (production)
+launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
+launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
 
-# 2. Clean up
-rm -f data/.mcp_server.*
-rm -f /tmp/unitares.log
-rm -f /tmp/ngrok.log
-
-# 3. Verify nothing is running
-ps aux | grep -E "(mcp_server|ngrok.*8767)"
-
-# 4. Restart
-./scripts/start_unitares.sh
-
-# 5. Verify
+# Verify
 curl http://localhost:8767/health
 ```
 
-### Database Reset (DANGEROUS - Only if needed)
+### Database Reset (DANGEROUS)
 
-**⚠️ WARNING: This will delete all agent data!**
+**WARNING: This will delete all agent data!**
 
 ```bash
 # Backup first!
-cp -r data/ data_backup_$(date +%Y%m%d_%H%M%S)/
+docker exec postgres-age pg_dump -U postgres governance > backup_$(date +%Y%m%d).sql
 
-# Stop server
-./scripts/stop_unitares.sh
-
-# Reset database (SQLite)
-rm -f data/governance.db*
-
-# Or reset PostgreSQL
+# Reset PostgreSQL
 docker exec postgres-age psql -U postgres -c "DROP DATABASE IF EXISTS governance;"
 docker exec postgres-age psql -U postgres -c "CREATE DATABASE governance;"
 
-# Restart
-./scripts/start_unitares.sh
+# Restart server (schema auto-creates)
+launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
+launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
 ```
 
 ---
 
 ## Getting Help
 
-### Check Documentation
+### Documentation
 
-1. **README.md** - Overview and quick start
-2. **docs/guides/MCP_SETUP.md** - MCP configuration
-3. **docs/guides/START_HERE.md** - Agent onboarding
-4. **docs/guides/TROUBLESHOOTING.md** - This file
-
-### Check Logs
-
-```bash
-# Server logs
-tail -f /tmp/unitares.log
-
-# Ngrok logs
-tail -f /tmp/ngrok.log
-
-# System logs (macOS)
-log show --predicate 'process == "Python"' --last 1h
-```
+1. [START_HERE.md](START_HERE.md) — Agent onboarding
+2. [MCP_SETUP.md](MCP_SETUP.md) — Client configuration
+3. [DEPLOYMENT.md](DEPLOYMENT.md) — Deployment guide
+4. [database_architecture.md](../database_architecture.md) — Database details
 
 ### Health Monitoring
 
 ```bash
-# Run health monitor
-./scripts/monitor_health.sh --once
-
-# Check metrics
-curl http://localhost:8767/metrics | grep unitares_server
+# MCP health check tool
+curl http://localhost:8767/health | python3 -m json.tool
 ```
 
 ---
 
-## Prevention
-
-### Best Practices
-
-1. **Use startup scripts:**
-   ```bash
-   ./scripts/start_unitares.sh  # Always use this
-   ```
-
-2. **Monitor regularly:**
-   ```bash
-   ./scripts/monitor_health.sh  # Run in background
-   ```
-
-3. **Check logs periodically:**
-   ```bash
-   tail -20 /tmp/unitares.log  # Quick check
-   ```
-
-4. **Keep backups:**
-   ```bash
-   # Backup data directory regularly
-   tar -czf data_backup_$(date +%Y%m%d).tar.gz data/
-   ```
-
-5. **Update dependencies:**
-   ```bash
-   # Keep packages updated
-   pip install --upgrade -r requirements-full.txt
-   ```
-
----
-
-## Still Stuck?
-
-1. **Check all logs** (server, ngrok, system)
-2. **Verify configuration** (MCP config, environment variables)
-3. **Test components individually** (server, ngrok, database)
-4. **Check network** (firewall, connectivity)
-5. **Review recent changes** (what changed before issue started?)
-
----
-
-**Last Updated:** January 12, 2026
+*Last updated: February 7, 2026*

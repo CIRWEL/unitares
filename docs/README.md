@@ -21,7 +21,7 @@
 | `list_tools()` | Tool catalog (use MCP tool) |
 | [CIRCUIT_BREAKER_DIALECTIC](CIRCUIT_BREAKER_DIALECTIC.md) | Circuit breaker + recovery protocol |
 | [database_architecture](database_architecture.md) | PostgreSQL + Redis architecture |
-| [MCP_SYSTEM_EVOLUTION](MCP_SYSTEM_EVOLUTION.md) | Version history (v1.0 → v2.6.3) |
+| [MCP_SYSTEM_EVOLUTION](MCP_SYSTEM_EVOLUTION.md) | Version history (v1.0 → current) |
 
 ---
 
@@ -35,18 +35,11 @@
 
 ## Tool Count: 30 Registered Tools
 
-v2.6.2 has 30 tools + aliases (status, list_agents, observe_agent, checkin, etc.). Use `list_tools()` or read [SKILL.md](../skills/unitares-governance/SKILL.md).
+30 registered tools + aliases (status, list_agents, observe_agent, checkin, etc.). See [SKILL.md](../skills/unitares-governance/SKILL.md) for the full tool reference.
 
 ## Test Coverage
 
-| Module | Coverage |
-|--------|----------|
-| `governance_monitor.py` | 83% |
-| `trajectory_identity.py` | 88% |
-| `workspace_health.py` | 83% |
-| **Overall** | **49%** |
-
-2,602 tests passing as of v2.6.3 (Feb 2026).
+5,501 tests passing with **77% overall coverage** as of Feb 2026.
 
 ---
 
@@ -83,7 +76,7 @@ governance-mcp-v1/
 ├── skills/                     # SKILL.md for agent onboarding
 ├── docs/                       # Documentation
 ├── data/                       # Runtime data (agents/, knowledge/)
-└── tests/                      # 2,602 tests, 49% coverage
+└── tests/                      # 5,501 tests, 77% coverage
 ```
 
 ---
