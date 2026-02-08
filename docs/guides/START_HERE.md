@@ -394,4 +394,4 @@ Governance should be **informative, not restrictive**. Agents log activity, rece
 
 ---
 
-**Last Updated:** 2026-02-07 (v2.6.4: 30 tools, negative V support, X-Agent-Name identity persistence, 5,501 tests)
+**Last Updated:** 2026-02-08 (v2.6.4: 30 tools, negative V support, X-Agent-Name identity persistence, 6,306 tests at 80% coverage)

@@ -390,7 +390,7 @@ v2.5.7:  Identity persistence fix
 v2.6.0:  Major cleanup, 49→29 tools, 1,798 tests
 v2.6.1:  Name-based identity (PATH 2.5), dashboard overhaul
 v2.6.2:  Architecture refactoring, 31 tools, 2,194 tests
-v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 5,501 tests at 77% coverage
+v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 6,306 tests at 80% coverage
 ```
 
 ### Tool Count Evolution
@@ -404,7 +404,7 @@ v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 5,501 tests at 77% coverag
 - **v2.5.5:** 85+ tools (+42 tools: Pi orchestration, trajectory, recovery, unified tools)
 - **v2.6.0:** 29 tools (85+ consolidated to 29 public, admin/internal hidden)
 - **v2.6.2:** 31 tools (+ 2 new registered tools, 49 consolidated sub-handlers)
-- **v2.6.3:** 30 tools (dialectic consolidated, identity audit, dead code removal, 5,501 tests)
+- **v2.6.3:** 30 tools (dialectic consolidated, identity audit, dead code removal, 6,306 tests)
 
 ### Performance Improvements
 
@@ -449,7 +449,7 @@ v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 5,501 tests at 77% coverag
 - ✅ Web dashboard (EISV sparklines, dialectic timeline, trust tier badges)
 - ✅ Pi/Lumen orchestration via anima-mcp
 - ✅ PostgreSQL + AGE for all persistent data (dialectic migrated Feb 2026)
-- ✅ **5,501 tests** with 77% overall coverage (core modules 83-88%)
+- ✅ **6,306 tests** with 80% overall coverage (core modules 83-88%)
 
 ### Architecture
 

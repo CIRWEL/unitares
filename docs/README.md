@@ -39,7 +39,7 @@
 
 ## Test Coverage
 
-5,501 tests passing with **77% overall coverage** as of Feb 2026.
+6,306 tests passing with **80% overall coverage** as of Feb 2026.
 
 ---
 
@@ -76,7 +76,7 @@ governance-mcp-v1/
 ├── skills/                     # SKILL.md for agent onboarding
 ├── docs/                       # Documentation
 ├── data/                       # Runtime data (agents/, knowledge/)
-└── tests/                      # 5,501 tests, 77% coverage
+└── tests/                      # 6,306 tests, 80% coverage
 ```
 
 ---
