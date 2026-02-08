@@ -586,12 +586,15 @@ mcp = FastMCP(
         enable_dns_rebinding_protection=True,
         allowed_hosts=[
             "127.0.0.1:*", "localhost:*", "[::1]:*",  # Localhost
-            "192.168.1.164:*",  # Mac IP on local network
-            "unitares.ngrok.io",  # Ngrok tunnel
+            "192.168.1.151:*", "192.168.1.164:*",  # Mac LAN IPs
+            "100.96.201.46:*",  # Mac Tailscale IP
+            "unitares.ngrok.io",  # Ngrok tunnel (legacy, keep for fallback)
         ],
         allowed_origins=[
             "http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*",
-            "http://192.168.1.164:*", "https://unitares.ngrok.io",
+            "http://192.168.1.151:*", "http://192.168.1.164:*",
+            "http://100.96.201.46:*",  # Tailscale
+            "https://unitares.ngrok.io",
             "null", "*",  # Allow file:// access (origin is opaque 'null') and wildcards
         ],
     ),
