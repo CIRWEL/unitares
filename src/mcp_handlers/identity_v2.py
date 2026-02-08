@@ -853,8 +853,8 @@ async def ensure_agent_persisted(agent_uuid: str, session_key: str) -> bool:
     """
     try:
         db = get_db()
-        if hasattr(db, "init"):
-            await db.init()
+        # Note: db.init() is called once at startup (mcp_server.py:1306).
+        # Do NOT call it here — it was creating a new connection pool on every request.
 
         # Check if already persisted
         identity = await db.get_identity(agent_uuid)

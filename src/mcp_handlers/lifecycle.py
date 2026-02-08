@@ -39,6 +39,21 @@ from config.governance_config import GovernanceConfig
 logger = get_logger(__name__)
 
 
+def _is_test_agent(agent_id: str) -> bool:
+    """Identify test/demo agents by naming patterns.
+    
+    Used consistently across list_agents handlers to filter test agents.
+    """
+    agent_id_lower = agent_id.lower()
+    return (
+        agent_id.startswith("test_") or 
+        agent_id.startswith("demo_") or
+        agent_id.startswith("test") or
+        "test" in agent_id_lower or
+        "demo" in agent_id_lower
+    )
+
+
 @mcp_tool("list_agents", timeout=15.0, rate_limit_exempt=True, register=False)
 async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextContent]:
     """List all agents currently being monitored with lifecycle metadata and health status
@@ -74,16 +89,6 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
         if lite_mode:
             from datetime import datetime, timedelta, timezone
 
-            # Helper to identify test agents
-            def is_test_agent(agent_id: str) -> bool:
-                aid_lower = agent_id.lower()
-                return (
-                    agent_id.startswith("test_") or
-                    agent_id.startswith("demo_") or
-                    "test" in aid_lower or
-                    "demo" in aid_lower
-                )
-
             # Ultra-compact response - only real agents
             limit = arguments.get("limit", 20)
             status_filter = arguments.get("status_filter", "active")
@@ -109,7 +114,7 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                     continue
                 if min_updates and meta.total_updates < min_updates:
                     continue
-                if not include_test_agents and is_test_agent(agent_id):  # Filter test agents
+                if not include_test_agents and _is_test_agent(agent_id):  # Filter test agents
                     continue
                 if named_only is True and not getattr(meta, 'label', None):
                     continue
@@ -177,18 +182,6 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
 
         agents_list = []
         
-        # Helper function to identify test agents (consistent with auto_archive_old_test_agents)
-        def is_test_agent(agent_id: str) -> bool:
-            """Identify test/demo agents by naming patterns"""
-            agent_id_lower = agent_id.lower()
-            return (
-                agent_id.startswith("test_") or 
-                agent_id.startswith("demo_") or
-                agent_id.startswith("test") or
-                "test" in agent_id_lower or
-                "demo" in agent_id_lower
-            )
-        
         # First pass: collect all matching agents (without loading monitors)
         for agent_id, meta in mcp_server.agent_metadata.items():
             # Filter by status if requested
@@ -196,7 +189,7 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                 continue
             
             # Filter out test agents by default (unless explicitly requested)
-            if not include_test_agents and is_test_agent(agent_id):
+            if not include_test_agents and _is_test_agent(agent_id):
                 continue
             
             # Filter out low-activity agents (one-shot fragmentation cleanup)

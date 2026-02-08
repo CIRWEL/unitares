@@ -718,6 +718,9 @@ class UNITARESMonitor:
                 if not (0.0 <= self.state.S <= 1.0):
                     self.state.unitaires_state.S = np.clip(self.state.S, 0.0, 1.0)
                     logger.info(f"Auto-fixed S to {self.state.S}")
+                if not (-1.0 <= self.state.V <= 1.0):
+                    self.state.unitaires_state.V = np.clip(self.state.V, -1.0, 1.0)
+                    logger.info(f"Auto-fixed V to {self.state.V}")
                 if not (0.0 <= self.state.coherence <= 1.0):
                     self.state.coherence = np.clip(self.state.coherence, 0.0, 1.0)
                     logger.info(f"Auto-fixed coherence to {self.state.coherence}")

@@ -818,14 +818,11 @@ class CalibrationChecker:
             # PostgreSQL backend (recommended)
             if self._backend == "postgres":
                 async def _save(data):
-                    # Create fresh db instance for thread safety
                     from src.db import get_db
                     db = get_db()
-                    await db.init()
-                    try:
-                        return await db.update_calibration(data)
-                    finally:
-                        await db.close()
+                    # Note: do NOT call db.close() here — this is the shared singleton pool.
+                    # Closing it breaks all other concurrent users.
+                    return await db.update_calibration(data)
                 self._run_async(_save, state_data)
             # SQLite backend (legacy)
             elif self._backend == "sqlite":
@@ -849,14 +846,10 @@ class CalibrationChecker:
             if self._backend == "postgres":
                 try:
                     async def _load():
-                        # Create fresh db instance for thread safety
                         from src.db import get_db
                         db = get_db()
-                        await db.init()
-                        try:
-                            return await db.get_calibration()
-                        finally:
-                            await db.close()
+                        # Note: do NOT call db.close() — shared singleton pool
+                        return await db.get_calibration()
                     result = self._run_async(_load)
                     if result and isinstance(result, dict):
                         # PostgreSQL returns calibration state directly (bins, tactical_bins, etc.)

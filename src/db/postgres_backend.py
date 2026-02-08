@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -58,7 +59,7 @@ class PostgresBackend(DatabaseBackend):
         self._max_conn = int(os.environ.get("DB_POSTGRES_MAX_CONN", "25"))
         self._age_graph = os.environ.get("DB_AGE_GRAPH", "governance_graph")
         self._init_lock = None  # Will be created on first use
-        self._last_pool_check = 0.0
+        self._last_pool_check = time.time()  # Avoid immediate health check on first request
 
     async def _ensure_pool(self) -> asyncpg.Pool:
         """
@@ -91,7 +92,7 @@ class PostgresBackend(DatabaseBackend):
                             f"Consider increasing DB_POSTGRES_MAX_CONN or checking for connection leaks."
                         )
                 except Exception as e:
-                    logger.warning(f"Pool health check failed, recreating: {e}")
+                    logger.warning(f"Pool health check failed, destroying pool (backend={id(self)}): {e}")
                     try:
                         await self._pool.close()
                     except Exception:
@@ -203,6 +204,10 @@ class PostgresBackend(DatabaseBackend):
         """Initialize connection pool and verify schema."""
         import asyncio
         import time
+
+        # Guard: don't recreate pool if it already exists and is usable
+        if self._pool is not None:
+            return
 
         # Initialize lock if not already created
         if self._init_lock is None:

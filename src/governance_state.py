@@ -272,8 +272,8 @@ class GovernanceState:
             errors.append(f"I out of bounds: {self.I} (expected [0, 1])")
         if not (0.0 <= self.S <= 1.0):
             errors.append(f"S out of bounds: {self.S} (expected [0, 1])")
-        if not (0.0 <= self.V <= 1.0):
-            errors.append(f"V out of bounds: {self.V} (expected [0, 1])")
+        if not (-1.0 <= self.V <= 1.0):
+            errors.append(f"V out of bounds: {self.V} (expected [-1, 1])")
         if not (0.0 <= self.coherence <= 1.0):
             errors.append(f"Coherence out of bounds: {self.coherence} (expected [0, 1])")
         
