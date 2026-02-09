@@ -22,6 +22,12 @@ import pytest
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+# Ensure OpenAI attribute exists on the module for patching even when
+# the openai package is not installed (CI environment).
+import src.mcp_handlers.model_inference as _mi
+if not hasattr(_mi, 'OpenAI'):
+    _mi.OpenAI = None
+
 
 def _parse_text_content(result):
     """
@@ -1161,6 +1167,13 @@ class TestEnergyTracking:
 
 class TestCreateModelInferenceClient:
     """Tests for the create_model_inference_client factory function."""
+
+    # The factory function does `from openai import OpenAI` internally,
+    # so these tests need the actual openai package installed.
+    pytestmark = pytest.mark.skipif(
+        not _mi.OPENAI_AVAILABLE,
+        reason="openai package not installed"
+    )
 
     def test_returns_none_when_openai_not_available(self):
         """Returns None when OpenAI SDK is not installed."""

@@ -561,55 +561,61 @@ def _make_mocks(entries, agent_metadata_dict, use_dict_metadata=False):
     return mock_checker, mock_audit, mock_mcp_server
 
 
-def _patch_and_reload(mock_checker, mock_audit, mock_mcp_server):
+def _patch_modules(mock_checker, mock_audit, mock_mcp_server):
+    """
+    Patch sys.modules AND parent package attributes so that
+    collect_ground_truth_automatically's runtime imports resolve to our mocks.
+
+    Key subtlety: `import src.mcp_server_std as X` resolves via the parent
+    package's __dict__ (src.mcp_server_std attribute), NOT just sys.modules.
+    `from src.calibration import Y` resolves via sys.modules. We must patch both.
+    """
     import contextlib
+    import src as _src_pkg
 
     @contextlib.contextmanager
     def ctx():
-        # Save and restore original sys.modules entries
-        saved = {}
-        keys_to_patch = {
-            "src.calibration": MagicMock(calibration_checker=mock_checker),
+        mock_calibration = MagicMock(calibration_checker=mock_checker)
+        mock_audit_log = MagicMock(AuditLogger=MagicMock(return_value=mock_audit))
+
+        # Save originals from the parent package
+        orig_mcp = getattr(_src_pkg, 'mcp_server_std', None)
+        orig_cal = getattr(_src_pkg, 'calibration', None)
+        orig_aud = getattr(_src_pkg, 'audit_log', None)
+
+        with patch.dict(sys.modules, {
+            "src.calibration": mock_calibration,
             "src.mcp_server_std": mock_mcp_server,
-            "src.audit_log": MagicMock(AuditLogger=MagicMock(return_value=mock_audit)),
-        }
-        for k, v in keys_to_patch.items():
-            saved[k] = sys.modules.get(k)
-            sys.modules[k] = v
-        try:
-            from importlib import reload
-            import src.auto_ground_truth as agt_module
-            reload(agt_module)
-            yield agt_module
-        finally:
-            for k, orig in saved.items():
-                if orig is None:
-                    sys.modules.pop(k, None)
-                else:
-                    sys.modules[k] = orig
-            # Re-reload to restore original bindings
+            "src.audit_log": mock_audit_log,
+        }):
+            # Also patch the parent package attributes (for `import src.X as Y`)
+            _src_pkg.mcp_server_std = mock_mcp_server
+            _src_pkg.calibration = mock_calibration
+            _src_pkg.audit_log = mock_audit_log
             try:
-                from importlib import reload as _reload
-                import src.auto_ground_truth as _m
-                _reload(_m)
-            except Exception:
-                pass
+                yield
+            finally:
+                # Restore parent package attributes
+                if orig_mcp is not None:
+                    _src_pkg.mcp_server_std = orig_mcp
+                elif hasattr(_src_pkg, 'mcp_server_std'):
+                    delattr(_src_pkg, 'mcp_server_std')
+                if orig_cal is not None:
+                    _src_pkg.calibration = orig_cal
+                if orig_aud is not None:
+                    _src_pkg.audit_log = orig_aud
 
     return ctx()
 
 
-@pytest.mark.skipif(
-    "CI" not in os.environ,
-    reason="Module-reload mocking is fragile in full suite; run in isolation"
-)
 class TestCollectGroundTruthAutomatically:
     """Tests for the async collect_ground_truth_automatically function."""
 
     @pytest.mark.asyncio
     async def test_dry_run_no_entries(self):
         mock_checker, mock_audit, mock_mcp = _make_mocks([], {})
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            result = await agt.collect_ground_truth_automatically(dry_run=True)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            result = await collect_ground_truth_automatically(dry_run=True)
         assert result["updated"] == 0
         assert result["skipped"] == 0
         assert result["errors"] == 0
@@ -627,11 +633,10 @@ class TestCollectGroundTruthAutomatically:
             "a2": {"status": "archived"},
         }
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, metadata)
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            result = await agt.collect_ground_truth_automatically(dry_run=True)
-        assert result.get("dry_run") is True or result.get("updated", 0) == 0
-        # When mcp_server import fails (full suite), falls back to no metadata → updated=0
-        # When mcp_server import works (isolation), updated=2
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            result = await collect_ground_truth_automatically(dry_run=True)
+        assert result["dry_run"] is True
+        assert result["updated"] == 2
         assert result["errors"] == 0
         mock_checker.update_ground_truth.assert_not_called()
         mock_checker.save_state.assert_not_called()
@@ -643,8 +648,8 @@ class TestCollectGroundTruthAutomatically:
         ]
         metadata = {"a1": {"status": "active", "update_count": 3}}
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, metadata)
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            result = await agt.collect_ground_truth_automatically(dry_run=False)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            result = await collect_ground_truth_automatically(dry_run=False)
         assert result["dry_run"] is False
         assert result["updated"] == 1
         mock_checker.update_ground_truth.assert_called_once()
@@ -660,8 +665,8 @@ class TestCollectGroundTruthAutomatically:
         ]
         metadata = {"a1": {"status": "active", "update_count": 0}}
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, metadata)
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            await agt.collect_ground_truth_automatically(dry_run=False)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            await collect_ground_truth_automatically(dry_run=False)
         call_args = mock_checker.update_ground_truth.call_args
         assert call_args.kwargs["confidence"] == 0.3
         assert call_args.kwargs["predicted_correct"] is False
@@ -672,8 +677,8 @@ class TestCollectGroundTruthAutomatically:
             {"timestamp": "2026-01-01T00:00:00", "agent_id": "unknown_agent"},
         ]
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, {})
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            result = await agt.collect_ground_truth_automatically(dry_run=False)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            result = await collect_ground_truth_automatically(dry_run=False)
         assert result["skipped"] == 1
         assert result["updated"] == 0
         mock_checker.update_ground_truth.assert_not_called()
@@ -688,8 +693,8 @@ class TestCollectGroundTruthAutomatically:
         ]
         metadata = {"a1": {"status": "active", "update_count": 5}}
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, metadata)
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            result = await agt.collect_ground_truth_automatically(dry_run=False)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            result = await collect_ground_truth_automatically(dry_run=False)
         assert result["processed"] == 2
         assert result["updated"] == 2
 
@@ -698,8 +703,8 @@ class TestCollectGroundTruthAutomatically:
         entries = [{"confidence": 0.8, "agent_id": "a1"}]
         metadata = {"a1": {"status": "active"}}
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, metadata)
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            result = await agt.collect_ground_truth_automatically(dry_run=False)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            result = await collect_ground_truth_automatically(dry_run=False)
         assert result["processed"] == 0
         assert result["updated"] == 0
 
@@ -711,8 +716,8 @@ class TestCollectGroundTruthAutomatically:
         ]
         metadata = {"a1": {"status": "active", "update_count": 5}}
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, metadata)
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            result = await agt.collect_ground_truth_automatically(max_decisions=3, dry_run=False)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            result = await collect_ground_truth_automatically(max_decisions=3, dry_run=False)
         assert result["processed"] == 3
         assert result["updated"] == 3
 
@@ -724,8 +729,8 @@ class TestCollectGroundTruthAutomatically:
         ]
         metadata = {"a1": {"status": "active", "update_count": 5}}
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, metadata)
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            result = await agt.collect_ground_truth_automatically(
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            result = await collect_ground_truth_automatically(
                 rebuild=True, dry_run=False, max_decisions=2
             )
         mock_checker.reset.assert_called_once()
@@ -736,8 +741,8 @@ class TestCollectGroundTruthAutomatically:
     @pytest.mark.asyncio
     async def test_rebuild_dry_run_does_not_reset(self):
         mock_checker, mock_audit, mock_mcp = _make_mocks([], {})
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            await agt.collect_ground_truth_automatically(rebuild=True, dry_run=True)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            await collect_ground_truth_automatically(rebuild=True, dry_run=True)
         mock_checker.reset.assert_not_called()
 
     @pytest.mark.asyncio
@@ -748,8 +753,8 @@ class TestCollectGroundTruthAutomatically:
         metadata = {"a1": {"status": "active", "update_count": 5}}
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, metadata)
         mock_checker.update_ground_truth.side_effect = Exception("boom")
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            result = await agt.collect_ground_truth_automatically(dry_run=False)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            result = await collect_ground_truth_automatically(dry_run=False)
         assert result["errors"] == 1
         assert result["updated"] == 0
 
@@ -760,16 +765,16 @@ class TestCollectGroundTruthAutomatically:
         ]
         metadata = {"a1": {"status": "active", "update_count": 5}}
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, metadata, use_dict_metadata=True)
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            result = await agt.collect_ground_truth_automatically(dry_run=False)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            result = await collect_ground_truth_automatically(dry_run=False)
         assert result["updated"] == 1
 
     @pytest.mark.asyncio
     async def test_no_save_when_no_updates(self):
         entries = [{"timestamp": "2026-01-01T00:00:00", "agent_id": "unknown"}]
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, {})
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            result = await agt.collect_ground_truth_automatically(dry_run=False)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            result = await collect_ground_truth_automatically(dry_run=False)
         assert result["updated"] == 0
         mock_checker.save_state.assert_not_called()
 
@@ -791,28 +796,19 @@ class TestCollectGroundTruthAutomatically:
         data_dir.mkdir()
         (data_dir / "agent_metadata.json").write_text(json.dumps(metadata))
 
-        with patch.dict("sys.modules", {
-            "src.calibration": MagicMock(calibration_checker=mock_checker),
-            "src.audit_log": MagicMock(AuditLogger=MagicMock(return_value=mock_audit)),
-        }):
-            sys.modules.pop("src.mcp_server_std", None)
-            from importlib import reload
-            import src.auto_ground_truth as agt_module
-            reload(agt_module)
-            original_root = agt_module.project_root
-            agt_module.project_root = tmp_path
-            try:
-                import builtins
-                original_import = builtins.__import__
-                def selective_import(name, *args, **kwargs):
-                    if name == "src.mcp_server_std":
-                        raise ImportError("mocked")
-                    return original_import(name, *args, **kwargs)
-                with patch.object(builtins, "__import__", side_effect=selective_import):
-                    result = await agt_module.collect_ground_truth_automatically(dry_run=False)
-                assert result["updated"] == 1
-            finally:
-                agt_module.project_root = original_root
+        # Mock mcp_server_std to raise ImportError so the fallback path is tested
+        mock_mcp = MagicMock()
+        mock_mcp.load_metadata_async = AsyncMock(side_effect=Exception("import failed"))
+
+        import src.auto_ground_truth as agt_module
+        original_root = agt_module.project_root
+        agt_module.project_root = tmp_path
+        try:
+            with _patch_modules(mock_checker, mock_audit, mock_mcp):
+                result = await collect_ground_truth_automatically(dry_run=False)
+            assert result["updated"] == 1
+        finally:
+            agt_module.project_root = original_root
 
     @pytest.mark.asyncio
     async def test_metadata_fallback_no_json_file(self, tmp_path):
@@ -820,30 +816,21 @@ class TestCollectGroundTruthAutomatically:
         mock_checker.bin_stats = {}
         mock_audit = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "src.calibration": MagicMock(calibration_checker=mock_checker),
-            "src.audit_log": MagicMock(AuditLogger=MagicMock(return_value=mock_audit)),
-        }):
-            sys.modules.pop("src.mcp_server_std", None)
-            from importlib import reload
-            import src.auto_ground_truth as agt_module
-            reload(agt_module)
-            original_root = agt_module.project_root
-            agt_module.project_root = tmp_path
-            try:
-                import builtins
-                original_import = builtins.__import__
-                def selective_import(name, *args, **kwargs):
-                    if name == "src.mcp_server_std":
-                        raise ImportError("mocked")
-                    return original_import(name, *args, **kwargs)
-                with patch.object(builtins, "__import__", side_effect=selective_import):
-                    result = await agt_module.collect_ground_truth_automatically(dry_run=False)
-                assert result["updated"] == 0
-                assert result["skipped"] == 0
-                assert result["errors"] == 0
-            finally:
-                agt_module.project_root = original_root
+        # Mock mcp_server_std to raise ImportError so the fallback path is tested
+        mock_mcp = MagicMock()
+        mock_mcp.load_metadata_async = AsyncMock(side_effect=Exception("import failed"))
+
+        import src.auto_ground_truth as agt_module
+        original_root = agt_module.project_root
+        agt_module.project_root = tmp_path
+        try:
+            with _patch_modules(mock_checker, mock_audit, mock_mcp):
+                result = await collect_ground_truth_automatically(dry_run=False)
+            assert result["updated"] == 0
+            assert result["skipped"] == 0
+            assert result["errors"] == 0
+        finally:
+            agt_module.project_root = original_root
 
     @pytest.mark.asyncio
     async def test_mixed_evaluable_and_skipped_entries(self):
@@ -857,8 +844,8 @@ class TestCollectGroundTruthAutomatically:
             "a2": {"status": "paused"},
         }
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, metadata)
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            result = await agt.collect_ground_truth_automatically(dry_run=False)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            result = await collect_ground_truth_automatically(dry_run=False)
         assert result["processed"] == 3
         assert result["updated"] == 2
         assert result["skipped"] == 1
@@ -867,8 +854,8 @@ class TestCollectGroundTruthAutomatically:
     @pytest.mark.asyncio
     async def test_query_uses_correct_event_type(self):
         mock_checker, mock_audit, mock_mcp = _make_mocks([], {})
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            await agt.collect_ground_truth_automatically(dry_run=True)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            await collect_ground_truth_automatically(dry_run=True)
         mock_audit.query_audit_log.assert_called_once()
         call_kwargs = mock_audit.query_audit_log.call_args
         assert call_kwargs.kwargs.get("event_type") == "auto_attest"
@@ -880,8 +867,8 @@ class TestCollectGroundTruthAutomatically:
         ]
         metadata = {"a1": {"status": "paused"}}
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, metadata)
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            await agt.collect_ground_truth_automatically(dry_run=False)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            await collect_ground_truth_automatically(dry_run=False)
         call_args = mock_checker.update_ground_truth.call_args
         assert call_args.kwargs["actual_correct"] is False
 
@@ -892,7 +879,7 @@ class TestCollectGroundTruthAutomatically:
         ]
         metadata = {"a1": {"status": "archived"}}
         mock_checker, mock_audit, mock_mcp = _make_mocks(entries, metadata)
-        with _patch_and_reload(mock_checker, mock_audit, mock_mcp) as agt:
-            await agt.collect_ground_truth_automatically(dry_run=False)
+        with _patch_modules(mock_checker, mock_audit, mock_mcp):
+            await collect_ground_truth_automatically(dry_run=False)
         call_args = mock_checker.update_ground_truth.call_args
         assert call_args.kwargs["actual_correct"] is True
