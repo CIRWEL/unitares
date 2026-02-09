@@ -484,6 +484,8 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         dtype = arguments.get("discovery_type")
         severity = arguments.get("severity")
         status = arguments.get("status")
+        # Default: exclude archived entries unless explicitly requested
+        include_archived = arguments.get("include_archived", False)
 
         # Track semantic scores if semantic search is used
         semantic_scores_dict = {}
@@ -551,6 +553,9 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                     continue
                 if status and d.status != status:
                     continue
+                # Exclude archived entries by default (unless status filter or include_archived)
+                if not status and not include_archived and d.status == "archived":
+                    continue
                 if tags:
                     d_tags = set(d.tags or [])
                     if not any(t in d_tags for t in tags):
@@ -578,6 +583,9 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 status=status,
                 limit=limit
             )
+            # Exclude archived entries by default (unless status filter or include_archived)
+            if not status and not include_archived:
+                results = [d for d in results if d.status != "archived"]
             search_mode = "indexed_filters"
             operator_used = "N/A"  # No text search, just filters
             fields_searched = []
@@ -611,6 +619,8 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                         if severity and d.severity != severity:
                             continue
                         if status and d.status != status:
+                            continue
+                        if not status and not include_archived and d.status == "archived":
                             continue
                         if tags:
                             d_tags = set(d.tags or [])
@@ -653,6 +663,8 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                                 if severity and d.severity != severity:
                                     continue
                                 if status and d.status != status:
+                                    continue
+                                if not status and not include_archived and d.status == "archived":
                                     continue
                                 if tags:
                                     d_tags = set(d.tags or [])
@@ -1573,5 +1585,38 @@ async def handle_get_lifecycle_stats(arguments: Dict[str, Any]) -> Sequence[Text
 
     except Exception as e:
         return [error_response(f"Failed to get lifecycle stats: {str(e)}")]
+
+
+@mcp_tool("supersede_discovery", timeout=15.0, register=False)
+async def handle_supersede_discovery(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """Mark a discovery as superseding another.
+
+    Creates a SUPERSEDES edge in the knowledge graph. Superseded entries
+    receive a ranking penalty in search results.
+
+    Args:
+        discovery_id: The newer discovery (the one that replaces)
+        supersedes_id: The older discovery being replaced
+
+    Returns success/failure status.
+    """
+    new_id = arguments.get("discovery_id")
+    old_id = arguments.get("supersedes_id")
+
+    if not new_id or not old_id:
+        return [error_response("Both discovery_id and supersedes_id are required")]
+
+    try:
+        graph = await get_knowledge_graph()
+        if not hasattr(graph, "supersede_discovery"):
+            return [error_response("SUPERSEDES edges require AGE graph backend")]
+
+        result = await graph.supersede_discovery(new_id=new_id, old_id=old_id)
+        if result.get("success"):
+            return success_response(result, arguments=arguments)
+        else:
+            return [error_response(result.get("error", "Failed to create SUPERSEDES edge"))]
+    except Exception as e:
+        return [error_response(f"Failed to supersede discovery: {str(e)}")]
 
 

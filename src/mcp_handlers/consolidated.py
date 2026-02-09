@@ -2,7 +2,7 @@
 Consolidated MCP Tool Handlers
 
 Reduces cognitive load for AI agents by consolidating related tools:
-- knowledge: 9 actions → 1 tool (store, search, get, list, update, details, note, cleanup, stats)
+- knowledge: 10 actions → 1 tool (store, search, get, list, update, details, note, cleanup, stats, supersede)
 - agent: 5 actions → 1 tool (list, get, update, archive, delete)
 - calibration: 4 actions → 1 tool (check, update, backfill, rebuild)
 - config: 2 actions → 1 tool (get, set)
@@ -28,6 +28,7 @@ from .knowledge_graph import (
     handle_leave_note,
     handle_cleanup_knowledge_graph,
     handle_get_lifecycle_stats,
+    handle_supersede_discovery,
 )
 from .lifecycle import (
     handle_list_agents,
@@ -97,9 +98,10 @@ handle_knowledge = action_router(
         "note": handle_leave_note,
         "cleanup": handle_cleanup_knowledge_graph,
         "stats": handle_get_lifecycle_stats,
+        "supersede": handle_supersede_discovery,
     },
     timeout=30.0,
-    description="Unified knowledge graph operations: store, search, get, list, update, details, note, cleanup, stats",
+    description="Unified knowledge graph operations: store, search, get, list, update, details, note, cleanup, stats, supersede",
     param_maps={
         "search": {"query": "search_query"},
         "note": {"content": "note"},

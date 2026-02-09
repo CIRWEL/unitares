@@ -1685,6 +1685,223 @@ class TestBlendWithConnectivity:
         result = await kg._blend_with_connectivity(raw, 0.3, False, 3)
         assert len(result) == 3
 
+    @pytest.mark.asyncio
+    async def test_temporal_decay_penalizes_old_entries(self):
+        """Old entries should score lower than recent ones with same similarity."""
+        kg, _ = make_kg_with_mock_db()
+
+        now = datetime.now()
+        recent = make_discovery(discovery_id="recent", timestamp=now.isoformat())
+        old = make_discovery(
+            discovery_id="old",
+            timestamp=(now - timedelta(days=180)).isoformat(),
+        )
+
+        raw = [(recent, 0.9), (old, 0.9)]
+
+        kg.get_connectivity_scores_batch = AsyncMock(
+            return_value={"recent": 0.1, "old": 0.1}
+        )
+
+        result = await kg._blend_with_connectivity(
+            raw, 0.3, False, 10, temporal_decay=True, half_life_days=90.0
+        )
+
+        assert len(result) == 2
+        # Recent should score higher despite same similarity
+        assert result[0][0].id == "recent"
+        assert result[0][1] > result[1][1]
+
+    @pytest.mark.asyncio
+    async def test_temporal_decay_disabled(self):
+        """With temporal_decay=False, age should not affect scores."""
+        kg, _ = make_kg_with_mock_db()
+
+        now = datetime.now()
+        recent = make_discovery(discovery_id="recent", timestamp=now.isoformat())
+        old = make_discovery(
+            discovery_id="old",
+            timestamp=(now - timedelta(days=365)).isoformat(),
+        )
+
+        raw = [(recent, 0.9), (old, 0.9)]
+
+        kg.get_connectivity_scores_batch = AsyncMock(
+            return_value={"recent": 0.1, "old": 0.1}
+        )
+
+        result = await kg._blend_with_connectivity(
+            raw, 0.3, False, 10, temporal_decay=False
+        )
+
+        assert len(result) == 2
+        # Both should have same score when decay is disabled
+        assert abs(result[0][1] - result[1][1]) < 0.001
+
+    @pytest.mark.asyncio
+    async def test_status_weight_penalizes_archived(self):
+        """Archived entries should score lower than open ones."""
+        kg, _ = make_kg_with_mock_db()
+
+        now = datetime.now()
+        open_disc = make_discovery(
+            discovery_id="open", status="open", timestamp=now.isoformat()
+        )
+        archived = make_discovery(
+            discovery_id="archived", status="archived", timestamp=now.isoformat()
+        )
+
+        raw = [(open_disc, 0.9), (archived, 0.9)]
+
+        kg.get_connectivity_scores_batch = AsyncMock(
+            return_value={"open": 0.1, "archived": 0.1}
+        )
+
+        result = await kg._blend_with_connectivity(
+            raw, 0.3, False, 10, temporal_decay=False, status_weight=True
+        )
+
+        assert len(result) == 2
+        assert result[0][0].id == "open"
+        # archived gets 0.3 multiplier vs 1.0 for open
+        assert result[0][1] > result[1][1] * 2
+
+    @pytest.mark.asyncio
+    async def test_status_weight_disabled(self):
+        """With status_weight=False, status should not affect scores."""
+        kg, _ = make_kg_with_mock_db()
+
+        now = datetime.now()
+        open_disc = make_discovery(
+            discovery_id="open", status="open", timestamp=now.isoformat()
+        )
+        archived = make_discovery(
+            discovery_id="archived", status="archived", timestamp=now.isoformat()
+        )
+
+        raw = [(open_disc, 0.9), (archived, 0.9)]
+
+        kg.get_connectivity_scores_batch = AsyncMock(
+            return_value={"open": 0.1, "archived": 0.1}
+        )
+
+        result = await kg._blend_with_connectivity(
+            raw, 0.3, False, 10, temporal_decay=False, status_weight=False
+        )
+
+        assert len(result) == 2
+        assert abs(result[0][1] - result[1][1]) < 0.001
+
+    @pytest.mark.asyncio
+    async def test_status_multipliers_values(self):
+        """Verify status multiplier values match expected constants."""
+        kg = KnowledgeGraphAGE()
+        assert kg.STATUS_MULTIPLIERS["open"] == 1.0
+        assert kg.STATUS_MULTIPLIERS["resolved"] == 0.6
+        assert kg.STATUS_MULTIPLIERS["archived"] == 0.3
+        assert kg.STATUS_MULTIPLIERS["disputed"] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_decay_formula_at_half_life(self):
+        """At exactly one half-life, score should be ~0.5x."""
+        kg, _ = make_kg_with_mock_db()
+
+        now = datetime.now()
+        half_life = 90
+        d = make_discovery(
+            discovery_id="d1",
+            timestamp=(now - timedelta(days=half_life)).isoformat(),
+        )
+
+        raw = [(d, 1.0)]
+        kg.get_connectivity_scores_batch = AsyncMock(return_value={"d1": 0.0})
+
+        result = await kg._blend_with_connectivity(
+            raw, 0.0, False, 10, temporal_decay=True, half_life_days=half_life,
+            status_weight=False,
+        )
+
+        # At half_life, decay = 1/(1+1) = 0.5
+        assert len(result) == 1
+        assert abs(result[0][1] - 0.5) < 0.01
+
+
+class TestConnectivityCap:
+
+    @pytest.mark.asyncio
+    async def test_raw_score_capped_at_50(self):
+        """Connectivity raw score should be capped at 50."""
+        kg, mock_db = make_kg_with_mock_db()
+        # 100 related + 200 responds = 500 raw, but should be capped at 50
+        mock_db.graph_query.return_value = [
+            {"id": "d1", "related": 100, "responds": 100, "superseded_by": 0},
+        ]
+
+        result = await kg.get_connectivity_scores_batch(["d1"])
+        capped_score = math.log1p(50) / math.log1p(100)
+        assert abs(result["d1"] - capped_score) < 0.01
+
+    @pytest.mark.asyncio
+    async def test_superseded_entries_penalized(self):
+        """Entries with SUPERSEDES edges pointing to them should score lower."""
+        kg, mock_db = make_kg_with_mock_db()
+        mock_db.graph_query.return_value = [
+            {"id": "d1", "related": 5, "responds": 2, "superseded_by": 0},
+            {"id": "d2", "related": 5, "responds": 2, "superseded_by": 1},
+        ]
+
+        result = await kg.get_connectivity_scores_batch(["d1", "d2"])
+        # d2 should be exactly half of d1 (one supersession = 0.5x)
+        assert abs(result["d2"] - result["d1"] * 0.5) < 0.001
+
+    @pytest.mark.asyncio
+    async def test_multiple_supersessions_compound(self):
+        """Multiple supersessions should compound the penalty."""
+        kg, mock_db = make_kg_with_mock_db()
+        mock_db.graph_query.return_value = [
+            {"id": "d1", "related": 5, "responds": 2, "superseded_by": 2},
+        ]
+
+        result = await kg.get_connectivity_scores_batch(["d1"])
+        # 2 supersessions = 0.25x
+        base = math.log1p(min(5 + 4, 50)) / math.log1p(100)
+        assert abs(result["d1"] - base * 0.25) < 0.001
+
+
+class TestSupersedeDiscovery:
+
+    @pytest.mark.asyncio
+    async def test_supersede_success(self):
+        """Should create SUPERSEDES edge between two discoveries."""
+        kg, mock_db = make_kg_with_mock_db()
+
+        # Mock get_discovery to return nodes for both IDs
+        d1 = make_discovery(discovery_id="new-1")
+        d2 = make_discovery(discovery_id="old-1")
+        kg.get_discovery = AsyncMock(side_effect=lambda did: d1 if did == "new-1" else d2)
+
+        result = await kg.supersede_discovery(new_id="new-1", old_id="old-1")
+        assert result["success"] is True
+        assert mock_db.graph_query.call_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_supersede_missing_new(self):
+        """Should fail if new discovery doesn't exist."""
+        kg, mock_db = make_kg_with_mock_db()
+        kg.get_discovery = AsyncMock(return_value=None)
+
+        result = await kg.supersede_discovery(new_id="missing", old_id="old-1")
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_supersede_graph_unavailable(self):
+        """Should fail if graph is not available."""
+        kg, mock_db = make_kg_with_mock_db(graph_available=False)
+
+        result = await kg.supersede_discovery(new_id="new-1", old_id="old-1")
+        assert result["success"] is False
+
 
 # ============================================================================
 # semantic_search

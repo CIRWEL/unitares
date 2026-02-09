@@ -244,6 +244,32 @@ def create_tagged_edge(
     return cypher, params
 
 
+def create_supersedes_edge(
+    new_discovery_id: str,
+    old_discovery_id: str,
+) -> tuple[str, Dict[str, Any]]:
+    """
+    Build Cypher query to create SUPERSEDES edge.
+    new_discovery_id supersedes old_discovery_id.
+
+    Returns:
+        (cypher_query, params_dict)
+    """
+    params = {
+        "new_id": new_discovery_id,
+        "old_id": old_discovery_id,
+    }
+
+    cypher = """
+        MATCH (new:Discovery {id: ${new_id}})
+        MATCH (old:Discovery {id: ${old_id}})
+        MERGE (new)-[r:SUPERSEDES]->(old)
+        RETURN r
+    """
+
+    return cypher, params
+
+
 def query_response_chain(
     discovery_id: str,
     max_depth: int = 10,
