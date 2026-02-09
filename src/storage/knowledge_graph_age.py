@@ -24,6 +24,7 @@ from src.db.age_queries import (
     create_responds_to_edge,
     create_related_to_edge,
     create_tagged_edge,
+    create_supersedes_edge,
     query_agent_discoveries,
     query_response_chain,
     create_indexes,
@@ -1022,13 +1023,15 @@ class KnowledgeGraphAGE:
 
         # Batch query for all discovery IDs - return single column per row
         # Need WITH clause for proper grouping before RETURN
+        # Also count inbound SUPERSEDES edges to penalize superseded entries
         cypher = """
             UNWIND ${ids} as disc_id
             MATCH (d:Discovery {id: disc_id})
             OPTIONAL MATCH (other:Discovery)-[r:RELATED_TO]->(d)
             OPTIONAL MATCH (resp:Discovery)-[rt:RESPONDS_TO]->(d)
-            WITH d.id as id, count(DISTINCT other) as related, count(DISTINCT resp) as responds
-            RETURN {id: id, related: related, responds: responds}
+            OPTIONAL MATCH (newer:Discovery)-[s:SUPERSEDES]->(d)
+            WITH d.id as id, count(DISTINCT other) as related, count(DISTINCT resp) as responds, count(DISTINCT newer) as superseded_by
+            RETURN {id: id, related: related, responds: responds, superseded_by: superseded_by}
         """
 
         try:
@@ -1046,9 +1049,13 @@ class KnowledgeGraphAGE:
 
                 related_count = int(result.get("related", 0) or 0)
                 responds_count = int(result.get("responds", 0) or 0)
+                superseded_count = int(result.get("superseded_by", 0) or 0)
 
-                raw_score = related_count + (responds_count * 2)
+                raw_score = min(related_count + (responds_count * 2), 50)
                 normalized = math.log1p(raw_score) / math.log1p(100)
+                # Penalize superseded entries: halve score for each supersession
+                if superseded_count > 0:
+                    normalized *= 0.5 ** superseded_count
                 scores[disc_id] = min(1.0, normalized)
 
             # Fill in zeros for any missing IDs
@@ -1061,21 +1068,35 @@ class KnowledgeGraphAGE:
             logger.debug(f"Failed to get batch connectivity scores: {e}")
             return {d: 0.0 for d in discovery_ids}
 
+    # Status multipliers for search ranking - resolved/archived entries rank lower
+    STATUS_MULTIPLIERS = {
+        "open": 1.0,
+        "resolved": 0.6,
+        "archived": 0.3,
+        "disputed": 0.5,
+    }
+
     async def _blend_with_connectivity(
         self,
         raw_results: List[tuple[DiscoveryNode, float]],
         connectivity_weight: float,
         exclude_orphans: bool,
         limit: int,
+        temporal_decay: bool = True,
+        half_life_days: float = 90.0,
+        status_weight: bool = True,
     ) -> List[tuple[DiscoveryNode, float]]:
         """
-        Blend similarity scores with connectivity scores.
+        Blend similarity scores with connectivity scores, temporal decay, and status weighting.
 
         Args:
             raw_results: List of (discovery, similarity_score) tuples
             connectivity_weight: Weight for connectivity (0-1)
             exclude_orphans: If True, filter discoveries with 0 inbound links
             limit: Maximum results to return
+            temporal_decay: If True, apply age-based decay (newer entries rank higher)
+            half_life_days: Half-life for temporal decay in days (default 90)
+            status_weight: If True, apply status-based multipliers (archived ranks lower)
 
         Returns:
             List of (discovery, blended_score) tuples, sorted by score descending
@@ -1087,6 +1108,8 @@ class KnowledgeGraphAGE:
         discovery_ids = [d.id for d, _ in raw_results]
         connectivity_scores = await self.get_connectivity_scores_batch(discovery_ids)
 
+        now = datetime.now()
+
         # Blend scores
         blended_results = []
         for discovery, similarity in raw_results:
@@ -1096,9 +1119,27 @@ class KnowledgeGraphAGE:
             if exclude_orphans and connectivity == 0.0:
                 continue
 
-            # Blend: final = similarity * (1 - weight) + connectivity * weight
-            final_score = (similarity * (1 - connectivity_weight)) + (connectivity * connectivity_weight)
-            blended_results.append((discovery, final_score))
+            # Base blend: similarity * (1 - weight) + connectivity * weight
+            score = (similarity * (1 - connectivity_weight)) + (connectivity * connectivity_weight)
+
+            # Status multiplier: archived/resolved entries rank lower
+            if status_weight:
+                status_mult = self.STATUS_MULTIPLIERS.get(discovery.status, 1.0)
+                score *= status_mult
+
+            # Temporal decay: older entries rank lower
+            if temporal_decay and half_life_days > 0:
+                try:
+                    ts = discovery.timestamp
+                    if ts:
+                        created = datetime.fromisoformat(ts.replace("Z", "+00:00").replace("+00:00", ""))
+                        age_days = max(0, (now - created).total_seconds() / 86400)
+                        decay = 1.0 / (1.0 + age_days / half_life_days)
+                        score *= decay
+                except (ValueError, TypeError):
+                    pass  # Can't parse timestamp, skip decay
+
+            blended_results.append((discovery, score))
 
         # Sort by blended score descending
         blended_results.sort(key=lambda x: x[1], reverse=True)
@@ -1114,6 +1155,9 @@ class KnowledgeGraphAGE:
         agent_id: Optional[str] = None,
         connectivity_weight: float = 0.3,
         exclude_orphans: bool = False,
+        temporal_decay: bool = True,
+        half_life_days: float = 90.0,
+        status_weight: bool = True,
     ) -> List[tuple[DiscoveryNode, float]]:
         """
         Semantic search using sentence-transformer embeddings.
@@ -1122,7 +1166,9 @@ class KnowledgeGraphAGE:
         falls back to in-memory comparison otherwise.
 
         Blends semantic similarity with connectivity score to rank
-        well-connected knowledge above orphaned entries.
+        well-connected knowledge above orphaned entries. Applies
+        temporal decay and status-based weighting to prevent old
+        or archived entries from dominating results.
 
         Args:
             query: Search query text
@@ -1133,6 +1179,9 @@ class KnowledgeGraphAGE:
                                  Final = similarity*(1-weight) + connectivity*weight
                                  Default 0.3 = 70% similarity, 30% connectivity
             exclude_orphans: If True, filter out discoveries with zero inbound links
+            temporal_decay: If True, apply age-based decay (newer entries rank higher)
+            half_life_days: Half-life for temporal decay in days (default 90)
+            status_weight: If True, apply status multipliers (archived/resolved rank lower)
 
         Returns:
             List of (DiscoveryNode, final_score) tuples, sorted by score descending
@@ -1181,6 +1230,9 @@ class KnowledgeGraphAGE:
                         connectivity_weight=connectivity_weight,
                         exclude_orphans=exclude_orphans,
                         limit=limit,
+                        temporal_decay=temporal_decay,
+                        half_life_days=half_life_days,
+                        status_weight=status_weight,
                     )
             
             # Fall through to in-memory if pgvector returned nothing
@@ -1240,6 +1292,9 @@ class KnowledgeGraphAGE:
             connectivity_weight=connectivity_weight,
             exclude_orphans=exclude_orphans,
             limit=limit,
+            temporal_decay=temporal_decay,
+            half_life_days=half_life_days,
+            status_weight=status_weight,
         )
 
     async def link_discoveries(
@@ -1344,6 +1399,47 @@ class KnowledgeGraphAGE:
             "bidirectional": bidirectional,
             "message": f"Linked '{from_id[:30]}...' to '{to_id[:30]}...'" + (" (bidirectional)" if bidirectional else "")
         }
+
+    async def supersede_discovery(
+        self,
+        new_id: str,
+        old_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Mark a discovery as superseding another.
+
+        Creates a SUPERSEDES edge from new_id to old_id. Superseded entries
+        receive a connectivity penalty in search ranking.
+
+        Args:
+            new_id: The newer discovery that replaces the old one
+            old_id: The older discovery being superseded
+
+        Returns:
+            Dict with success status
+        """
+        db = await self._get_db()
+
+        if not await db.graph_available():
+            return {"success": False, "error": "Graph database not available"}
+
+        # Validate both exist
+        for did, label in [(new_id, "new"), (old_id, "old")]:
+            node = await self.get_discovery(did)
+            if not node:
+                return {"success": False, "error": f"{label.title()} discovery '{did}' not found"}
+
+        cypher, params = create_supersedes_edge(new_id, old_id)
+        try:
+            await db.graph_query(cypher, params)
+            return {
+                "success": True,
+                "new_id": new_id,
+                "old_id": old_id,
+                "message": f"'{new_id[:30]}...' now supersedes '{old_id[:30]}...'"
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Failed to create SUPERSEDES edge: {e}"}
 
     # =========================================================================
     # LIFECYCLE MANAGEMENT

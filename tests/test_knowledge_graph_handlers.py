@@ -2928,3 +2928,148 @@ class TestBatchStoreAdditional:
         assert data["success"] is True
         # find_similar should not have been called for this discovery
         # Since auto_link_related defaults to True, but we set False explicitly
+
+
+# ============================================================================
+# Archived filtering in search
+# ============================================================================
+
+
+class TestSearchArchivedFiltering:
+
+    @pytest.mark.asyncio
+    async def test_search_excludes_archived_by_default(self, patch_common):
+        """Archived entries should be excluded from search results by default."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge_graph import handle_search_knowledge_graph
+
+        discoveries = [
+            make_discovery(id="d-open", status="open"),
+            make_discovery(id="d-archived", status="archived"),
+            make_discovery(id="d-resolved", status="resolved"),
+        ]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        result_ids = [d["id"] for d in data["discoveries"]]
+        assert "d-open" in result_ids
+        assert "d-resolved" in result_ids
+        assert "d-archived" not in result_ids
+
+    @pytest.mark.asyncio
+    async def test_search_includes_archived_when_requested(self, patch_common):
+        """Archived entries should be included when include_archived=True."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge_graph import handle_search_knowledge_graph
+
+        discoveries = [
+            make_discovery(id="d-open", status="open"),
+            make_discovery(id="d-archived", status="archived"),
+        ]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({"include_archived": True})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        result_ids = [d["id"] for d in data["discoveries"]]
+        assert "d-open" in result_ids
+        assert "d-archived" in result_ids
+
+    @pytest.mark.asyncio
+    async def test_search_includes_archived_when_status_filter_set(self, patch_common):
+        """When status filter is explicitly set, don't apply archived exclusion."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge_graph import handle_search_knowledge_graph
+
+        discoveries = [
+            make_discovery(id="d-archived", status="archived"),
+        ]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({"status": "archived"})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        result_ids = [d["id"] for d in data["discoveries"]]
+        assert "d-archived" in result_ids
+
+    @pytest.mark.asyncio
+    async def test_search_fts_excludes_archived_by_default(self, patch_common):
+        """FTS search should also exclude archived entries by default."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge_graph import handle_search_knowledge_graph
+
+        discoveries = [
+            make_discovery(id="d-open", summary="matching text", status="open"),
+            make_discovery(id="d-archived", summary="matching text", status="archived"),
+        ]
+        mock_graph.full_text_search = AsyncMock(return_value=discoveries)
+        if hasattr(mock_graph, 'semantic_search'):
+            del mock_graph.semantic_search
+
+        result = await handle_search_knowledge_graph({"query": "matching"})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        result_ids = [d["id"] for d in data["discoveries"]]
+        assert "d-open" in result_ids
+        assert "d-archived" not in result_ids
+
+
+# ============================================================================
+# Supersede handler
+# ============================================================================
+
+
+class TestSupersedeHandler:
+
+    @pytest.mark.asyncio
+    async def test_supersede_success(self, patch_common):
+        """Should create SUPERSEDES edge via handler."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge_graph import handle_supersede_discovery
+
+        mock_graph.supersede_discovery = AsyncMock(return_value={
+            "success": True,
+            "new_id": "new-1",
+            "old_id": "old-1",
+            "message": "Superseded",
+        })
+
+        result = await handle_supersede_discovery({
+            "discovery_id": "new-1",
+            "supersedes_id": "old-1",
+        })
+        data = parse_result(result)
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_supersede_missing_params(self, patch_common):
+        """Should fail when required params are missing."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge_graph import handle_supersede_discovery
+
+        result = await handle_supersede_discovery({"discovery_id": "new-1"})
+        data = parse_result(result)
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_supersede_no_age_backend(self, patch_common):
+        """Should fail gracefully when AGE backend not available."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge_graph import handle_supersede_discovery
+
+        # Remove supersede_discovery to simulate non-AGE backend
+        if hasattr(mock_graph, 'supersede_discovery'):
+            del mock_graph.supersede_discovery
+
+        result = await handle_supersede_discovery({
+            "discovery_id": "new-1",
+            "supersedes_id": "old-1",
+        })
+        data = parse_result(result)
+        assert data["success"] is False
