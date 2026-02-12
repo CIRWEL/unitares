@@ -1082,13 +1082,13 @@ def validate_ethical_drift(value: Any) -> Tuple[Optional[List[float]], Optional[
             }
         )
 
-    if len(value) != 3:
+    if len(value) not in (3, 4):
         return None, error_response(
-            f"Invalid ethical_drift: must have exactly 3 components, got {len(value)}",
+            f"Invalid ethical_drift: must have 3 or 4 components, got {len(value)}",
             details={"error_type": "invalid_length", "param_name": "ethical_drift", "provided_value": value},
             recovery={
-                "action": "Provide exactly 3 numbers: [primary_drift, coherence_loss, complexity_contribution]",
-                "workflow": ["1. Format as list of 3 numbers: [0.01, 0.02, 0.03]", "2. Retry with correct format"]
+                "action": "Provide 3 or 4 numbers: [emotional_drift, epistemic_drift, behavioral_drift] or [calibration, complexity, coherence, stability]",
+                "workflow": ["1. Format as list of 3-4 numbers: [0.01, 0.02, 0.03]", "2. Retry with correct format"]
             }
         )
 

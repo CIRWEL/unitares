@@ -321,6 +321,18 @@ def compute_ethical_drift(
     # 4. Stability deviation (inverse of consistency)
     stability_dev = 1.0 - baseline.decision_consistency
 
+    # Warmup dampening: deviations from uninitialized baselines are meaningless.
+    # For the first few updates, the baseline is just defaults (0.6, 0.5, 0.8 etc.)
+    # so large "deviations" are artifacts, not real drift signals.
+    # Ramp from 0→1 over 5 updates so drift reflects actual observed patterns.
+    warmup_updates = 5
+    if baseline.update_count < warmup_updates:
+        warmup_factor = baseline.update_count / warmup_updates
+        calibration_deviation *= warmup_factor
+        # complexity_divergence is measured directly, not from baseline — no dampening needed
+        coherence_dev *= warmup_factor
+        stability_dev *= warmup_factor
+
     # Update baseline with current observations
     baseline.update(
         coherence=current_coherence,

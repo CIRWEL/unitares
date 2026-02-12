@@ -510,17 +510,15 @@ class UNITARESMonitor:
 
         # Extract agent information
         parameters = np.array(agent_state.get('parameters', []))
-        ethical_signals = np.array(agent_state.get('ethical_drift', [0.0, 0.0, 0.0]))
+        ethical_signals = np.array(agent_state.get('ethical_drift', [0.0, 0.0, 0.0, 0.0]))
 
         # Validate and normalize ethical_drift (delta_eta) to list
+        # Accept any length — drift_norm() handles variable-length vectors.
+        # Governance computes 4 components; agents may send 3. Both are valid.
         if len(ethical_signals) == 0:
             delta_eta = [0.0, 0.0, 0.0]
         else:
-            # Convert to list and ensure it's the right length (UNITARES expects list)
-            delta_eta = ethical_signals.tolist() if len(ethical_signals) <= 3 else ethical_signals[:3].tolist()
-            # Pad if needed
-            while len(delta_eta) < 3:
-                delta_eta.append(0.0)
+            delta_eta = ethical_signals.tolist()
 
         # Replace NaN/inf with zeros
         delta_eta = [0.0 if (np.isnan(x) or np.isinf(x)) else float(x) for x in delta_eta]
@@ -892,13 +890,11 @@ class UNITARESMonitor:
         """
         # Extract delta_eta (ethical drift) if score_result not provided
         if score_result is None:
-            ethical_signals = np.array(agent_state.get('ethical_drift', [0.0, 0.0, 0.0]))
+            ethical_signals = np.array(agent_state.get('ethical_drift', [0.0, 0.0, 0.0, 0.0]))
             if len(ethical_signals) == 0:
                 delta_eta = [0.0, 0.0, 0.0]
             else:
-                delta_eta = ethical_signals.tolist() if len(ethical_signals) <= 3 else ethical_signals[:3].tolist()
-                while len(delta_eta) < 3:
-                    delta_eta.append(0.0)
+                delta_eta = ethical_signals.tolist()
 
             # Use governance_core phi_objective and verdict_from_phi
             phi = phi_objective(
@@ -1200,7 +1196,7 @@ class UNITARESMonitor:
         active_params = get_active_params()
         current_coherence = coherence(self.state.V, self.state.unitaires_theta, active_params)
 
-        # Compute concrete drift vector
+        # Compute concrete drift vector from governance-observed signals
         drift_vector = compute_ethical_drift(
             agent_id=self.agent_id,
             baseline=agent_baseline,
@@ -1211,10 +1207,38 @@ class UNITARESMonitor:
             decision=None,  # Will be updated after decision is made
         )
 
+        # Blend agent-sent drift with governance-computed drift.
+        # Agent drift captures proprioceptive signals (e.g. Lumen's warmth/clarity/stability
+        # changes) that governance can't observe. Governance drift captures system-level
+        # deviations (calibration, complexity divergence, coherence, stability).
+        # Both matter — combine them so agent signals actually affect dynamics.
+        agent_drift_raw = agent_state.get('ethical_drift', [0.0, 0.0, 0.0])
+        if isinstance(agent_drift_raw, (list, tuple)) and len(agent_drift_raw) >= 1:
+            agent_drift_norm = sum(d * d for d in agent_drift_raw) ** 0.5
+        else:
+            agent_drift_norm = 0.0
+
+        # If agent sent non-trivial drift, blend it into the governance vector.
+        # Agent drift maps to: [0]=emotional→calibration, [1]=epistemic→coherence,
+        # [2]=behavioral→stability. Weight: 30% agent signal, 70% governance signal.
+        # This ensures agent signals matter but governance ground-truth dominates.
+        if agent_drift_norm > 0.01:
+            ad = list(agent_drift_raw) + [0.0] * max(0, 3 - len(agent_drift_raw))
+            blend = 0.3
+            drift_vector.calibration_deviation = (
+                (1 - blend) * drift_vector.calibration_deviation + blend * min(1.0, abs(ad[0]))
+            )
+            drift_vector.coherence_deviation = (
+                (1 - blend) * drift_vector.coherence_deviation + blend * min(1.0, abs(ad[1]))
+            )
+            drift_vector.stability_deviation = (
+                (1 - blend) * drift_vector.stability_deviation + blend * min(1.0, abs(ad[2]))
+            )
+
         # Store for later access and time-series logging
         self._last_drift_vector = drift_vector
 
-        # Convert to list format for dynamics engine
+        # Convert to list format for dynamics engine (all 4 components)
         grounded_agent_state['ethical_drift'] = drift_vector.to_list()
 
         # Log drift if significant
@@ -1226,6 +1250,7 @@ class UNITARESMonitor:
                 f"cpx={drift_vector.complexity_divergence:.3f}, "
                 f"coh={drift_vector.coherence_deviation:.3f}, "
                 f"stab={drift_vector.stability_deviation:.3f}]"
+                f"{' (blended with agent signal)' if agent_drift_norm > 0.01 else ''}"
             )
 
         # Step 1: Update thermodynamic state with GROUNDED inputs
@@ -1296,16 +1321,14 @@ class UNITARESMonitor:
                 )
         
         # Step 4: Estimate risk (also gets UNITARES verdict)
-        # Get UNITARES verdict for decision making using governance_core
-        ethical_signals = np.array(agent_state.get('ethical_drift', [0.0, 0.0, 0.0]))
-        if len(ethical_signals) == 0:
-            delta_eta = [0.0, 0.0, 0.0]
-        else:
-            delta_eta = ethical_signals.tolist() if len(ethical_signals) <= 3 else ethical_signals[:3].tolist()
-            while len(delta_eta) < 3:
-                delta_eta.append(0.0)
+        # Use GROUNDED ethical drift (governance-computed + agent-blended, all 4 components)
+        # Previously used agent_state (raw 3-element) and truncated to 3, dropping stability.
+        delta_eta = grounded_agent_state.get('ethical_drift', [0.0, 0.0, 0.0, 0.0])
+        if not delta_eta:
+            delta_eta = [0.0, 0.0, 0.0, 0.0]
 
         # Use governance_core phi_objective and verdict_from_phi
+        # drift_norm() handles any-length lists — no truncation needed
         phi = phi_objective(
             state=self.state.unitaires_state,
             delta_eta=delta_eta,

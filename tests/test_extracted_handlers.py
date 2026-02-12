@@ -73,7 +73,12 @@ async def test_process_agent_update():
     assert result is not None, "Should return result"
     response_data = json.loads(result[0].text)
     assert response_data.get("success") == True, "Should succeed"
-    assert "action" in response_data, "Should have governance action"
+    # Action location depends on response mode: minimal → top-level, compact → under decision
+    has_action = (
+        "action" in response_data
+        or "action" in response_data.get("decision", {})
+    )
+    assert has_action, "Should have governance action (top-level or in decision)"
     print("✅ process_agent_update with parameters works")
 
     print("✅ process_agent_update handler tests passed")

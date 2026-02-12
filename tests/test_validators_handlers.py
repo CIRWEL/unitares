@@ -1154,8 +1154,14 @@ class TestValidateEthicalDriftExtended:
         assert val == [-1.0, 0.0, 1.0]
         assert err is None
 
-    def test_too_many_elements(self):
+    def test_four_elements_accepted(self):
+        """4-element drift is valid (governance-computed EthicalDriftVector)."""
         val, err = validate_ethical_drift([0.1, 0.2, 0.3, 0.4])
+        assert val == [0.1, 0.2, 0.3, 0.4]
+        assert err is None
+
+    def test_too_many_elements(self):
+        val, err = validate_ethical_drift([0.1, 0.2, 0.3, 0.4, 0.5])
         assert val is None
         assert err is not None
 
