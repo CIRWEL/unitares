@@ -477,6 +477,12 @@ class GovernanceConfig:
     SIGNIFICANCE_HISTORY_WINDOW = 10  # Use last 10 updates for baseline comparison
     
     # =================================================================
+    # CIRS v2 Feature Flag
+    # =================================================================
+    # When True, use AdaptiveGovernor instead of static thresholds
+    ADAPTIVE_GOVERNOR_ENABLED = False
+
+    # =================================================================
     # Error Handling Constants
     # =================================================================
     MAX_ERROR_MESSAGE_LENGTH = 500  # Maximum error message length (prevents info leakage)

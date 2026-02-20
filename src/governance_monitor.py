@@ -235,19 +235,28 @@ class UNITARESMonitor:
         self._prev_E: Optional[float] = None
         self._prev_I: Optional[float] = None
 
-        # CIRS v0.1: Initialize oscillation detector and resonance damper
-        self.oscillation_detector = OscillationDetector(
-            window=CIRS_DEFAULTS['window'],
-            ema_lambda=CIRS_DEFAULTS['ema_lambda'],
-            oi_threshold=CIRS_DEFAULTS['oi_threshold'],
-            flip_threshold=CIRS_DEFAULTS['flip_threshold']
-        )
-        self.resonance_damper = ResonanceDamper(
-            kappa_r=CIRS_DEFAULTS['kappa_r'],
-            delta_tau=CIRS_DEFAULTS['delta_tau'],
-            tau_bounds=CIRS_DEFAULTS['tau_bounds'],
-            beta_bounds=CIRS_DEFAULTS['beta_bounds']
-        )
+        # CIRS: Initialize oscillation detector / adaptive governor
+        from config.governance_config import GovernanceConfig as GovConfig
+        if GovConfig.ADAPTIVE_GOVERNOR_ENABLED:
+            from governance_core.adaptive_governor import AdaptiveGovernor
+            self.adaptive_governor = AdaptiveGovernor()
+            self.oscillation_detector = None
+            self.resonance_damper = None
+        else:
+            # Legacy v0.1 path
+            self.adaptive_governor = None
+            self.oscillation_detector = OscillationDetector(
+                window=CIRS_DEFAULTS['window'],
+                ema_lambda=CIRS_DEFAULTS['ema_lambda'],
+                oi_threshold=CIRS_DEFAULTS['oi_threshold'],
+                flip_threshold=CIRS_DEFAULTS['flip_threshold']
+            )
+            self.resonance_damper = ResonanceDamper(
+                kappa_r=CIRS_DEFAULTS['kappa_r'],
+                delta_tau=CIRS_DEFAULTS['delta_tau'],
+                tau_bounds=CIRS_DEFAULTS['tau_bounds'],
+                beta_bounds=CIRS_DEFAULTS['beta_bounds']
+            )
         self._last_oscillation_state: Optional[OscillationState] = None
         self._gains_modulated: bool = False  # Track if gains were modulated this cycle
         
@@ -1373,61 +1382,84 @@ class UNITARESMonitor:
                 }
 
         # =================================================================
-        # CIRS v0.1: Oscillation detection and resonance damping
+        # CIRS: Oscillation detection and resonance damping
         # =================================================================
-        # Update oscillation detector with current state
-        oscillation_state = self.oscillation_detector.update(
-            coherence=float(self.state.coherence),
-            risk=float(risk_score),
-            route=unitares_verdict,  # Use verdict as route proxy
-            threshold_coherence=config.COHERENCE_CRITICAL_THRESHOLD,
-            threshold_risk=config.RISK_REVISE_THRESHOLD
-        )
-        self._last_oscillation_state = oscillation_state
+        from config.governance_config import GovernanceConfig as GovConfig
 
-        # Track OI in history
-        if not hasattr(self.state, 'oi_history'):
-            self.state.oi_history = []
-        self.state.oi_history.append(oscillation_state.oi)
-
-        # Apply resonance damping if needed
-        damping_result = None
-        if oscillation_state.resonant:
-            # Increment resonance event counter
-            if not hasattr(self.state, 'resonance_events'):
-                self.state.resonance_events = 0
-            self.state.resonance_events += 1
-
-            # Apply damping (threshold adjustment)
-            damping_result = self.resonance_damper.apply_damping(
-                current_coherence=float(self.state.coherence),
-                current_risk=float(risk_score),
-                tau=config.COHERENCE_CRITICAL_THRESHOLD,
-                beta=config.RISK_REVISE_THRESHOLD,
-                oscillation_state=oscillation_state
+        if GovConfig.ADAPTIVE_GOVERNOR_ENABLED and self.adaptive_governor is not None:
+            # CIRS v2: Adaptive Governor — PID-based threshold management
+            cirs_result = self.adaptive_governor.update(
+                coherence=float(self.state.coherence),
+                risk=float(risk_score),
+                verdict=unitares_verdict,
+                E_history=list(getattr(self.state, 'E_history', [0.5]*6)),
+                I_history=list(getattr(self.state, 'I_history', [0.5]*6)),
+                S_history=list(getattr(self.state, 'S_history', [0.5]*6)),
+                complexity_history=list(getattr(self.state, 'complexity_history', [0.3]*6)),
             )
+            oscillation_state = OscillationState(
+                oi=cirs_result['oi'],
+                flips=cirs_result['flips'],
+                resonant=cirs_result['resonant'],
+                trigger=cirs_result['trigger'],
+            )
+            self._last_oscillation_state = oscillation_state
+            response_tier = cirs_result['verdict']
+            damping_result = None  # Damping is built into the PID cycle
+        else:
+            # Legacy v0.1 path (unchanged)
+            oscillation_state = self.oscillation_detector.update(
+                coherence=float(self.state.coherence),
+                risk=float(risk_score),
+                route=unitares_verdict,  # Use verdict as route proxy
+                threshold_coherence=config.COHERENCE_CRITICAL_THRESHOLD,
+                threshold_risk=config.RISK_REVISE_THRESHOLD
+            )
+            self._last_oscillation_state = oscillation_state
 
-            if damping_result.damping_applied:
-                if not hasattr(self.state, 'damping_applied_count'):
-                    self.state.damping_applied_count = 0
-                self.state.damping_applied_count += 1
+            # Track OI in history
+            if not hasattr(self.state, 'oi_history'):
+                self.state.oi_history = []
+            self.state.oi_history.append(oscillation_state.oi)
 
-                logger.info(
-                    f"CIRS resonance damping for {self.agent_id}: "
-                    f"OI={oscillation_state.oi:.3f}, flips={oscillation_state.flips}, "
-                    f"trigger={oscillation_state.trigger}"
+            # Apply resonance damping if needed
+            damping_result = None
+            if oscillation_state.resonant:
+                # Increment resonance event counter
+                if not hasattr(self.state, 'resonance_events'):
+                    self.state.resonance_events = 0
+                self.state.resonance_events += 1
+
+                # Apply damping (threshold adjustment)
+                damping_result = self.resonance_damper.apply_damping(
+                    current_coherence=float(self.state.coherence),
+                    current_risk=float(risk_score),
+                    tau=config.COHERENCE_CRITICAL_THRESHOLD,
+                    beta=config.RISK_REVISE_THRESHOLD,
+                    oscillation_state=oscillation_state
                 )
 
-        # Classify response tier (proceed/soft_dampen/hard_block)
-        response_tier = classify_response(
-            coherence=float(self.state.coherence),
-            risk=float(risk_score),
-            tau=config.COHERENCE_CRITICAL_THRESHOLD,
-            beta=config.RISK_REVISE_THRESHOLD,
-            tau_low=CIRS_DEFAULTS['tau_low'],
-            beta_high=CIRS_DEFAULTS['beta_high'],
-            oscillation_state=oscillation_state
-        )
+                if damping_result.damping_applied:
+                    if not hasattr(self.state, 'damping_applied_count'):
+                        self.state.damping_applied_count = 0
+                    self.state.damping_applied_count += 1
+
+                    logger.info(
+                        f"CIRS resonance damping for {self.agent_id}: "
+                        f"OI={oscillation_state.oi:.3f}, flips={oscillation_state.flips}, "
+                        f"trigger={oscillation_state.trigger}"
+                    )
+
+            # Classify response tier (proceed/soft_dampen/hard_block)
+            response_tier = classify_response(
+                coherence=float(self.state.coherence),
+                risk=float(risk_score),
+                tau=config.COHERENCE_CRITICAL_THRESHOLD,
+                beta=config.RISK_REVISE_THRESHOLD,
+                tau_low=CIRS_DEFAULTS['tau_low'],
+                beta_high=CIRS_DEFAULTS['beta_high'],
+                oscillation_state=oscillation_state
+            )
 
         # Step 5: Make decision (using UNITARES verdict)
         decision = self.make_decision(risk_score, unitares_verdict=unitares_verdict)
@@ -1641,22 +1673,25 @@ class UNITARESMonitor:
             'gains_modulated': getattr(self, '_gains_modulated', False)
         }
 
-        result['cirs'] = {
-            'oi': float(oscillation_state.oi),
-            'flips': int(oscillation_state.flips),
-            'resonant': bool(oscillation_state.resonant),
-            'trigger': oscillation_state.trigger,
-            'response_tier': response_tier,
-            'resonance_events': int(getattr(self.state, 'resonance_events', 0)),
-            'damping_applied_count': int(getattr(self.state, 'damping_applied_count', 0))
-        }
-
-        # Add damping details if applied this cycle
-        if damping_result and damping_result.damping_applied:
-            result['cirs']['damping'] = {
-                'd_tau': damping_result.adjustments.get('d_tau', 0),
-                'd_beta': damping_result.adjustments.get('d_beta', 0)
+        if GovConfig.ADAPTIVE_GOVERNOR_ENABLED and self.adaptive_governor is not None:
+            result['cirs'] = cirs_result  # Full observability from governor
+        else:
+            result['cirs'] = {
+                'oi': float(oscillation_state.oi),
+                'flips': int(oscillation_state.flips),
+                'resonant': bool(oscillation_state.resonant),
+                'trigger': oscillation_state.trigger,
+                'response_tier': response_tier,
+                'resonance_events': int(getattr(self.state, 'resonance_events', 0)),
+                'damping_applied_count': int(getattr(self.state, 'damping_applied_count', 0))
             }
+
+            # Add damping details if applied this cycle
+            if damping_result and damping_result.damping_applied:
+                result['cirs']['damping'] = {
+                    'd_tau': damping_result.adjustments.get('d_tau', 0),
+                    'd_beta': damping_result.adjustments.get('d_beta', 0)
+                }
 
         return result
     
