@@ -252,26 +252,23 @@ class TestPIDUpdate:
         assert "i_beta" in ctrl
         assert "d_beta" in ctrl
 
-    def test_neighbor_pressure_tightens_tau(self):
-        """Neighbor pressure should raise tau (tighten coherence requirement)."""
+    def test_neighbor_pressure_tightens_thresholds(self):
+        """Neighbor pressure should raise tau and lower beta (tighten governance)."""
         config = GovernorConfig(K_p=0.0, K_i=0.0, K_d=0.0, decay_rate=0.0)
         gov = AdaptiveGovernor(config=config)
         gov.state.neighbor_pressure = 0.05
         initial_tau = gov.state.tau  # 0.40
+        initial_beta = gov.state.beta  # 0.60
         gov.update(
             coherence=0.65, risk=0.30, verdict="safe",
             **_stable_histories(),
         )
-        # neighbor_pressure subtracts from tau adjustment -> tau goes up
-        # Wait, design says: tightens means tau gets higher, beta gets lower.
-        # adjustment_tau -= neighbor_pressure (negative, so tau goes down? No.)
-        # Re-read design: "tightens: tau gets higher, beta gets lower"
-        # So neighbor pressure should be ADDED to tau and SUBTRACTED from beta
-        # in the update. Let's verify the direction is correct per spec.
-        # We check the state moved in the tightening direction.
-        # "tightens" for coherence threshold means higher tau (harder to pass).
-        # With only neighbor_pressure active and no PID, tau should increase.
-        assert gov.state.tau > initial_tau or gov.state.tau == pytest.approx(initial_tau, abs=0.01)
+        # "Tightens" means: higher coherence bar (tau UP), lower risk tolerance (beta DOWN).
+        # With PID zeroed and only neighbor_pressure active:
+        #   adjustment_tau += neighbor_pressure  -> tau increases
+        #   adjustment_beta -= neighbor_pressure -> beta decreases
+        assert gov.state.tau > initial_tau, f"tau should increase: {gov.state.tau} vs {initial_tau}"
+        assert gov.state.beta < initial_beta, f"beta should decrease: {gov.state.beta} vs {initial_beta}"
 
 
 # ===========================================================================
@@ -472,6 +469,29 @@ class TestOscillationConvergence:
 
         assert gov.state.resonant is True
         assert gov.state.trigger in ("oi", "flips")
+
+    def test_oi_based_resonance(self):
+        """Resonance triggered specifically by OI threshold (not just flips)."""
+        # Use high flip_threshold so flips won't trigger, only OI can.
+        # Use low oi_threshold so OI can realistically trigger.
+        config = GovernorConfig(flip_threshold=100, oi_threshold=0.3)
+        gov = AdaptiveGovernor(config=config)
+        histories = _stable_histories()
+
+        # Oscillate coherence around tau while keeping risk stable.
+        # This creates coherence sign transitions without cancelling risk transitions.
+        # OI = ema_coherence + ema_risk; if only coherence oscillates,
+        # ema_coherence grows while ema_risk stays near 0 → OI > 0.
+        for i in range(15):
+            c = 0.65 if i % 2 == 0 else 0.30  # oscillates around tau
+            r = 0.30  # stable below beta
+            v = "safe"  # same verdict each time → no flips
+            gov.update(coherence=c, risk=r, verdict=v, **histories)
+
+        # OI should be elevated via coherence oscillation alone
+        assert abs(gov.state.oi) >= 0.3
+        assert gov.state.resonant is True
+        assert gov.state.trigger == "oi"
 
 
 # ===========================================================================

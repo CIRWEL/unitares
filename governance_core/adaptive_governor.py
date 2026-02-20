@@ -118,7 +118,12 @@ class GovernorState:
 
 
 class Verdict:
-    """Governance verdict constants."""
+    """Governance verdict constants.
+
+    Note: string values match existing codebase conventions:
+    - "high-risk" uses hyphen (matches governance_monitor.py, tool_schemas.py)
+    - "hard_block" uses underscore (matches src/cirs.py response tiers)
+    """
 
     SAFE = "safe"
     CAUTION = "caution"
