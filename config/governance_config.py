@@ -480,7 +480,7 @@ class GovernanceConfig:
     # CIRS v2 Feature Flag
     # =================================================================
     # When True, use AdaptiveGovernor instead of static thresholds
-    ADAPTIVE_GOVERNOR_ENABLED = False
+    ADAPTIVE_GOVERNOR_ENABLED = True
 
     # =================================================================
     # Error Handling Constants

@@ -86,11 +86,15 @@ class TestInit:
         assert monitor._prev_I is None
 
     def test_cirs_initial_state(self, monitor):
-        """CIRS v0.1 oscillation detector should be initialized."""
-        assert monitor.oscillation_detector is not None
-        assert monitor.resonance_damper is not None
-        assert monitor._last_oscillation_state is None
-        assert monitor._gains_modulated is False
+        """CIRS v2 AdaptiveGovernor should be initialized when flag is on."""
+        from config.governance_config import GovernanceConfig
+        if GovernanceConfig.ADAPTIVE_GOVERNOR_ENABLED:
+            assert monitor.adaptive_governor is not None
+        else:
+            assert monitor.oscillation_detector is not None
+            assert monitor.resonance_damper is not None
+            assert monitor._last_oscillation_state is None
+            assert monitor._gains_modulated is False
 
     def test_load_state_false_skips_disk(self):
         """load_state=False should not try to load from disk."""

@@ -561,10 +561,10 @@ class TestClamp:
 class TestMonitorIntegration:
     """Test AdaptiveGovernor wired into GovernanceMonitor."""
 
-    def test_feature_flag_off_uses_static(self):
-        """When flag is off, behavior is identical to current."""
+    def test_feature_flag_on_uses_adaptive(self):
+        """When flag is on, AdaptiveGovernor is the active CIRS path."""
         from config.governance_config import GovernanceConfig
-        assert GovernanceConfig.ADAPTIVE_GOVERNOR_ENABLED is False
+        assert GovernanceConfig.ADAPTIVE_GOVERNOR_ENABLED is True
 
     def test_governor_config_matches_monitor_defaults(self):
         """AdaptiveGovernor defaults match GovernanceMonitor's static config."""
