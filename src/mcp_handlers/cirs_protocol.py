@@ -28,6 +28,14 @@ Message Types (per UARG spec) - ALL IMPLEMENTED:
    - Void interventions, coherence boosts
    - Task delegation requests/responses
    - Coordination sync between agents
+
+6. RESONANCE_ALERT: Notify peers of sustained oscillation
+   - Emitted when governor detects resonance
+   - Peers with high similarity tighten thresholds defensively
+
+7. STABILITY_RESTORED: Signal exit from resonance
+   - Emitted when agent stabilizes after resonance
+   - Peers decay their defensive neighbor pressure
 """
 
 from typing import Dict, Any, Sequence, Optional, List
@@ -153,6 +161,52 @@ class StateAnnounce:
         if self.trust_tier:
             result["trust_tier"] = self.trust_tier
         return result
+
+
+@dataclass
+class ResonanceAlert:
+    """RESONANCE_ALERT: Emitted when agent's governor detects sustained oscillation."""
+    agent_id: str
+    timestamp: str
+    oi: float
+    phase: str
+    tau_current: float
+    beta_current: float
+    flips: int
+    duration_updates: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": "RESONANCE_ALERT",
+            "agent_id": self.agent_id,
+            "timestamp": self.timestamp,
+            "oi": self.oi,
+            "phase": self.phase,
+            "tau_current": self.tau_current,
+            "beta_current": self.beta_current,
+            "flips": self.flips,
+            "duration_updates": self.duration_updates,
+        }
+
+
+@dataclass
+class StabilityRestored:
+    """STABILITY_RESTORED: Emitted when agent exits resonance."""
+    agent_id: str
+    timestamp: str
+    oi: float
+    tau_settled: float
+    beta_settled: float
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": "STABILITY_RESTORED",
+            "agent_id": self.agent_id,
+            "timestamp": self.timestamp,
+            "oi": self.oi,
+            "tau_settled": self.tau_settled,
+            "beta_settled": self.beta_settled,
+        }
 
 
 # =============================================================================
@@ -293,6 +347,42 @@ def _get_state_announces(
     results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
 
     return results[:limit]
+
+
+# =============================================================================
+# Resonance Alert / Stability Restored Storage
+# =============================================================================
+
+_resonance_alert_buffer: deque = deque(maxlen=100)
+
+
+def _emit_resonance_alert(alert: ResonanceAlert):
+    """Store a resonance alert."""
+    _resonance_alert_buffer.append(alert.to_dict())
+
+
+def _emit_stability_restored(restored: StabilityRestored):
+    """Store a stability restored signal."""
+    _resonance_alert_buffer.append(restored.to_dict())
+
+
+def _get_recent_resonance_signals(
+    max_age_minutes: int = 30,
+    agent_id: Optional[str] = None,
+    signal_type: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Get recent resonance-related signals."""
+    cutoff = (datetime.utcnow() - timedelta(minutes=max_age_minutes)).isoformat()
+    results = []
+    for signal in reversed(_resonance_alert_buffer):
+        if signal["timestamp"] < cutoff:
+            break
+        if agent_id and signal["agent_id"] != agent_id:
+            continue
+        if signal_type and signal["type"] != signal_type:
+            continue
+        results.append(signal)
+    return results
 
 
 # =============================================================================
@@ -1977,6 +2067,116 @@ async def _handle_governance_action_status(arguments: Dict[str, Any]) -> Sequenc
 
 
 # =============================================================================
+# RESONANCE_ALERT Tool Handler
+# =============================================================================
+
+@mcp_tool("resonance_alert", timeout=10.0, register=False, description="CIRS Protocol: Emit or query resonance alerts for multi-agent oscillation coordination")
+async def handle_resonance_alert(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    CIRS RESONANCE_ALERT - Multi-agent oscillation coordination.
+
+    Emitted when an agent's governor detects sustained oscillation.
+    Peers with high similarity should tighten thresholds defensively.
+
+    Two modes:
+    1. EMIT mode (action='emit'): Broadcast a resonance alert
+    2. QUERY mode (action='query'): Get recent resonance alerts
+
+    Args:
+        action: 'emit' | 'query' (default: 'query')
+
+        For emit:
+            oi: Oscillation index (default: 0.0)
+            phase: Current phase (default: 'unknown')
+            tau_current: Current tau threshold (default: 0.4)
+            beta_current: Current beta threshold (default: 0.6)
+            flips: Number of verdict flips (default: 0)
+            duration_updates: How long oscillation has persisted (default: 0)
+
+        For query:
+            max_age_minutes: Look back window in minutes (default: 30)
+            agent_id: Filter by source agent (optional)
+    """
+    action = arguments.get("action", "query").lower()
+
+    if action == "emit":
+        # Require registered agent
+        agent_id, error = require_registered_agent(arguments)
+        if error:
+            return [error]
+
+        alert = ResonanceAlert(
+            agent_id=agent_id,
+            timestamp=datetime.utcnow().isoformat(),
+            oi=float(arguments.get("oi", 0.0)),
+            phase=str(arguments.get("phase", "unknown")),
+            tau_current=float(arguments.get("tau_current", 0.4)),
+            beta_current=float(arguments.get("beta_current", 0.6)),
+            flips=int(arguments.get("flips", 0)),
+            duration_updates=int(arguments.get("duration_updates", 0)),
+        )
+        _emit_resonance_alert(alert)
+        return success_response(
+            f"RESONANCE_ALERT emitted for {agent_id}",
+            alert.to_dict()
+        )
+
+    elif action == "query":
+        signals = _get_recent_resonance_signals(
+            max_age_minutes=int(arguments.get("max_age_minutes", 30)),
+            agent_id=arguments.get("agent_id"),
+            signal_type="RESONANCE_ALERT",
+        )
+        return success_response({
+            "action": "query",
+            "alerts": signals,
+            "count": len(signals),
+            "cirs_protocol": "RESONANCE_ALERT",
+        })
+
+    else:
+        return [error_response(
+            f"Invalid action: {action}",
+            recovery={"valid_actions": ["emit", "query"]}
+        )]
+
+
+# =============================================================================
+# STABILITY_RESTORED Tool Handler
+# =============================================================================
+
+@mcp_tool("stability_restored", timeout=10.0, register=False, description="CIRS Protocol: Emit stability restored signal when agent exits resonance")
+async def handle_stability_restored(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    CIRS STABILITY_RESTORED - Signal that agent has exited resonance.
+
+    Emitted when a previously-resonating agent stabilizes. Peers should
+    decay their defensive neighbor pressure.
+
+    Args:
+        oi: Current oscillation index (default: 0.0)
+        tau_settled: Settled tau threshold (default: 0.4)
+        beta_settled: Settled beta threshold (default: 0.6)
+    """
+    agent_id, error = require_registered_agent(arguments)
+    if error:
+        return [error]
+
+    restored = StabilityRestored(
+        agent_id=agent_id,
+        timestamp=datetime.utcnow().isoformat(),
+        oi=float(arguments.get("oi", 0.0)),
+        tau_settled=float(arguments.get("tau_settled", 0.4)),
+        beta_settled=float(arguments.get("beta_settled", 0.6)),
+    )
+    _emit_stability_restored(restored)
+    return success_response(
+        f"STABILITY_RESTORED emitted for {agent_id}",
+        restored.to_dict()
+    )
+
+
+# =============================================================================
 # CONSOLIDATED ENTRY POINT
 # =============================================================================
 
@@ -1987,6 +2187,8 @@ _CIRS_DISPATCHERS = {
     "coherence_report": handle_coherence_report,
     "boundary_contract": handle_boundary_contract,
     "governance_action": handle_governance_action,
+    "resonance_alert": handle_resonance_alert,
+    "stability_restored": handle_stability_restored,
 }
 
 
@@ -2004,6 +2206,8 @@ async def handle_cirs_protocol(arguments: Dict[str, Any]) -> Sequence[TextConten
         - coherence_report: Compute pairwise agent similarity
         - boundary_contract: Declare trust policies
         - governance_action: Coordinate interventions
+        - resonance_alert: Emit/query oscillation alerts
+        - stability_restored: Signal exit from resonance
 
     Args:
         protocol: Which CIRS protocol to use (required)

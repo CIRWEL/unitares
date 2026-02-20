@@ -309,6 +309,40 @@ class AdaptiveGovernor:
             return Verdict.CAUTION
         return Verdict.HIGH_RISK
 
+    def apply_neighbor_pressure(
+        self, similarity: float, pressure_factor: float = 0.02,
+        similarity_threshold: float = 0.5
+    ):
+        """Apply defensive threshold tightening from neighbor resonance.
+
+        When a neighbor emits RESONANCE_ALERT and this agent has high
+        similarity with them (shared state surface), we tighten our own
+        thresholds defensively.
+
+        Args:
+            similarity: Coherence report similarity with resonating neighbor [0, 1]
+            pressure_factor: Base pressure amount (default 0.02)
+            similarity_threshold: Minimum similarity to react (default 0.5)
+        """
+        if similarity < similarity_threshold:
+            return
+        self.state.neighbor_pressure += pressure_factor * similarity
+        self.state.agents_in_resonance += 1
+
+    def decay_neighbor_pressure(self, decay_factor: float = 0.2):
+        """Decay neighbor pressure after STABILITY_RESTORED.
+
+        Called when a previously-resonating neighbor signals stability.
+        Decays the defensive bias over multiple updates.
+
+        Args:
+            decay_factor: Fraction of pressure to remove per call (default 0.2)
+        """
+        self.state.neighbor_pressure *= (1 - decay_factor)
+        if self.state.neighbor_pressure < 0.001:
+            self.state.neighbor_pressure = 0.0
+            self.state.agents_in_resonance = max(0, self.state.agents_in_resonance - 1)
+
     def _update_oscillation(
         self, coherence: float, risk: float, verdict: str
     ):

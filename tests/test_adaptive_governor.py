@@ -551,3 +551,96 @@ class TestClamp:
     def test_clamp_at_boundary(self):
         assert _clamp(0.0, 0.0, 1.0) == 0.0
         assert _clamp(1.0, 0.0, 1.0) == 1.0
+
+
+# ===========================================================================
+# TestMonitorIntegration
+# ===========================================================================
+
+
+class TestMonitorIntegration:
+    """Test AdaptiveGovernor wired into GovernanceMonitor."""
+
+    def test_feature_flag_off_uses_static(self):
+        """When flag is off, behavior is identical to current."""
+        from config.governance_config import GovernanceConfig
+        assert GovernanceConfig.ADAPTIVE_GOVERNOR_ENABLED is False
+
+    def test_governor_config_matches_monitor_defaults(self):
+        """AdaptiveGovernor defaults match GovernanceMonitor's static config."""
+        from config.governance_config import GovernanceConfig
+        gc = GovernorConfig()
+        assert gc.tau_default == GovernanceConfig.COHERENCE_CRITICAL_THRESHOLD
+        assert gc.beta_default == GovernanceConfig.RISK_REVISE_THRESHOLD
+
+
+# ===========================================================================
+# TestNeighborPressure
+# ===========================================================================
+
+
+class TestNeighborPressure:
+    """Multi-agent neighbor pressure system."""
+
+    def test_apply_neighbor_pressure(self):
+        """High-similarity neighbor triggers pressure."""
+        gov = AdaptiveGovernor()
+        gov.apply_neighbor_pressure(similarity=0.8, pressure_factor=0.02)
+        assert gov.state.neighbor_pressure > 0
+        assert gov.state.agents_in_resonance == 1
+
+    def test_low_similarity_ignored(self):
+        """Low-similarity neighbor is ignored."""
+        gov = AdaptiveGovernor()
+        gov.apply_neighbor_pressure(similarity=0.3, pressure_factor=0.02)
+        assert gov.state.neighbor_pressure == 0.0
+        assert gov.state.agents_in_resonance == 0
+
+    def test_decay_neighbor_pressure(self):
+        """Pressure decays after stability restored."""
+        gov = AdaptiveGovernor()
+        gov.apply_neighbor_pressure(similarity=0.8, pressure_factor=0.02)
+        initial = gov.state.neighbor_pressure
+        for _ in range(5):
+            gov.decay_neighbor_pressure()
+        assert gov.state.neighbor_pressure < initial
+
+    def test_decay_to_zero_clears_agent_count(self):
+        """Full decay clears agents_in_resonance count."""
+        gov = AdaptiveGovernor()
+        gov.apply_neighbor_pressure(similarity=0.8, pressure_factor=0.02)
+        assert gov.state.agents_in_resonance == 1
+        # Decay until pressure is effectively zero
+        for _ in range(50):
+            gov.decay_neighbor_pressure()
+        assert gov.state.neighbor_pressure == 0.0
+        assert gov.state.agents_in_resonance == 0
+
+    def test_multiple_neighbors_accumulate(self):
+        """Multiple resonating neighbors accumulate pressure."""
+        gov = AdaptiveGovernor()
+        gov.apply_neighbor_pressure(similarity=0.6)
+        gov.apply_neighbor_pressure(similarity=0.9)
+        assert gov.state.agents_in_resonance == 2
+        assert gov.state.neighbor_pressure > 0.02  # More than single neighbor
+
+    def test_pressure_affects_update(self):
+        """Neighbor pressure actually tightens thresholds during update."""
+        config = GovernorConfig(K_p=0.0, K_i=0.0, K_d=0.0, decay_rate=0.0)
+        gov = AdaptiveGovernor(config=config)
+
+        # Baseline update with no pressure
+        gov_baseline = AdaptiveGovernor(config=config)
+        histories = dict(
+            E_history=[0.5]*6, I_history=[0.5]*6,
+            S_history=[0.5]*6, complexity_history=[0.3]*6,
+        )
+        gov_baseline.update(coherence=0.65, risk=0.30, verdict="safe", **histories)
+
+        # Update with pressure
+        gov.apply_neighbor_pressure(similarity=0.8, pressure_factor=0.05)
+        gov.update(coherence=0.65, risk=0.30, verdict="safe", **histories)
+
+        # Pressure should tighten: tau higher, beta lower
+        assert gov.state.tau > gov_baseline.state.tau
+        assert gov.state.beta < gov_baseline.state.beta
