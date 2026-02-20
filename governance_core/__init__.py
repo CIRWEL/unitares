@@ -54,13 +54,6 @@ from .ethical_drift import (
     get_all_baselines,
 )
 
-from .cirs_damping import (
-    OscillationState,
-    OscillationDetector,
-    DampingResult,
-    ResonanceDamper,
-)
-
 from .adaptive_governor import (
     AdaptiveGovernor,
     GovernorConfig,
@@ -116,12 +109,6 @@ __all__ = [
     'Phase',
     'detect_phase',
     'get_phase_aware_thresholds',
-
-    # CIRS Oscillation Damping
-    'OscillationState',
-    'OscillationDetector',
-    'DampingResult',
-    'ResonanceDamper',
 
     # CIRS v2 Adaptive Governor
     'AdaptiveGovernor',
