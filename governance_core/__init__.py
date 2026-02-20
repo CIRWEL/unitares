@@ -61,6 +61,13 @@ from .cirs_damping import (
     ResonanceDamper,
 )
 
+from .adaptive_governor import (
+    AdaptiveGovernor,
+    GovernorConfig,
+    GovernorState,
+    Verdict,
+)
+
 from .phase_aware import (
     Phase,
     detect_phase,
@@ -115,6 +122,12 @@ __all__ = [
     'OscillationDetector',
     'DampingResult',
     'ResonanceDamper',
+
+    # CIRS v2 Adaptive Governor
+    'AdaptiveGovernor',
+    'GovernorConfig',
+    'GovernorState',
+    'Verdict',
 ]
 
-__version__ = '2.2.0'  # Added CIRS Phase-Aware smoothing
+__version__ = '2.3.0'  # CIRS v2 Adaptive Governor
