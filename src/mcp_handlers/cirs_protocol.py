@@ -986,6 +986,66 @@ def auto_emit_state_announce(
         return None
 
 
+def maybe_emit_resonance_signal(
+    agent_id: str,
+    cirs_result: Dict[str, Any],
+    was_resonant: bool,
+) -> Optional[Dict[str, Any]]:
+    """
+    Auto-emit RESONANCE_ALERT or STABILITY_RESTORED on state transitions.
+
+    Called from process_agent_update after the AdaptiveGovernor runs.
+    Only emits on transitions to avoid flooding the buffer.
+
+    Args:
+        agent_id: Agent identifier
+        cirs_result: Result dict from AdaptiveGovernor.update()
+        was_resonant: Previous resonant state (from GovernorState.was_resonant)
+
+    Returns:
+        Signal dict if emitted, None otherwise
+    """
+    resonant = cirs_result.get("resonant", False)
+
+    # Only emit on transitions
+    if resonant == was_resonant:
+        return None
+
+    if resonant and not was_resonant:
+        # Entering resonance -> emit RESONANCE_ALERT
+        alert = ResonanceAlert(
+            agent_id=agent_id,
+            timestamp=datetime.utcnow().isoformat(),
+            oi=float(cirs_result.get("oi", 0.0)),
+            phase=str(cirs_result.get("phase", "unknown")),
+            tau_current=float(cirs_result.get("tau", 0.40)),
+            beta_current=float(cirs_result.get("beta", 0.60)),
+            flips=int(cirs_result.get("flips", 0)),
+        )
+        _emit_resonance_alert(alert)
+        logger.info(
+            f"[CIRS/AUTO_EMIT] RESONANCE_ALERT: agent={agent_id}, "
+            f"OI={alert.oi:.3f}, trigger={cirs_result.get('trigger')}"
+        )
+        return alert.to_dict()
+
+    else:
+        # Exiting resonance -> emit STABILITY_RESTORED
+        restored = StabilityRestored(
+            agent_id=agent_id,
+            timestamp=datetime.utcnow().isoformat(),
+            oi=float(cirs_result.get("oi", 0.0)),
+            tau_settled=float(cirs_result.get("tau", 0.40)),
+            beta_settled=float(cirs_result.get("beta", 0.60)),
+        )
+        _emit_stability_restored(restored)
+        logger.info(
+            f"[CIRS/AUTO_EMIT] STABILITY_RESTORED: agent={agent_id}, "
+            f"OI={restored.oi:.3f}"
+        )
+        return restored.to_dict()
+
+
 # =============================================================================
 # COHERENCE_REPORT Data Structures
 # =============================================================================
