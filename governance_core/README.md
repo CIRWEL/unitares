@@ -1,8 +1,8 @@
 # UNITARES Governance Core
 
-**Version:** 2.6.4
+**Version:** 2.7.0
 **Status:** Active
-**Last Updated:** 2026-02-07
+**Last Updated:** 2026-02-20
 
 ---
 
@@ -23,6 +23,7 @@ This module contains **only math** — no infrastructure, no I/O, no MCP. Pure f
 | **Φ Objective** | ✅ Implemented | `scoring.py` — weighted objective function |
 | **Verdict Logic** | ✅ Implemented | `scoring.py` — safe/caution/high-risk |
 | **Ethical Drift Vector** | ✅ Implemented | `ethical_drift.py` — computed from observable signals |
+| **Adaptive Governor** | ✅ Implemented | `adaptive_governor.py` — CIRS v2 PID controller |
 
 ### About Ethical Drift (Δη)
 
@@ -57,6 +58,25 @@ The system does NOT require a human "oracle" to determine ground truth. Instead:
 
 This is the "self-governance" principle: the system calibrates from observable outcomes, not human judgment.
 
+### About Adaptive Governor (CIRS v2)
+
+The `AdaptiveGovernor` is a PID controller that detects oscillation in the governance loop and coordinates damping across agents.
+
+**What it tracks:**
+- `tau` / `beta` — adaptive coherence and risk thresholds (PID-controlled)
+- `oi` — oscillation index (exponential moving average of |Δcoherence|)
+- `flips` — verdict flip count (safe→high-risk transitions)
+- `resonant` — True when OI ≥ 2.5 or flips ≥ 4 (oscillation detected)
+- `was_resonant` — previous cycle's resonant state (for transition detection)
+- `neighbor_pressure` — accumulated defensive bias from peer resonance alerts
+
+**How it connects to CIRS protocol:**
+When the governor detects a resonance transition, `maybe_emit_resonance_signal()` in `cirs_protocol.py` emits either:
+- `RESONANCE_ALERT` (entering oscillation) — peers with high similarity tighten thresholds
+- `STABILITY_RESTORED` (oscillation resolved) — peers relax thresholds
+
+This implements the distributed damping mechanism from UARG paper §8.
+
 ---
 
 ## Module Structure
@@ -70,6 +90,7 @@ governance_core/
 ├── scoring.py           # Objective function Φ and verdicts
 ├── ethical_drift.py     # Δη vector (fully integrated)
 ├── phase_aware.py       # Phase-aware dynamics
+├── adaptive_governor.py # CIRS v2 PID controller
 ├── utils.py             # Helper functions
 └── README.md            # This file
 ```
@@ -278,10 +299,11 @@ The math is complete. The *interpretation* is domain-specific — a model learni
 ## See Also
 
 - `src/governance_monitor.py` — Production monitor using this module
-- `src/cirs.py` — Oscillation detection (CIRS v0.1)
+- `src/cirs.py` — Oscillation detection (legacy, CIRS v0.1)
+- `src/mcp_handlers/cirs_protocol.py` — CIRS v2 multi-agent protocol
 - `docs/guides/START_HERE.md` — Agent onboarding
 
 ---
 
-**Maintainer:** @CIRWEL  
-**Last Updated:** 2026-02-06
+**Maintainer:** @CIRWEL
+**Last Updated:** 2026-02-20

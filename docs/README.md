@@ -1,6 +1,6 @@
 # UNITARES Documentation
 
-**Last Updated:** 2026-02-08
+**Last Updated:** 2026-02-20
 
 ---
 
@@ -39,7 +39,7 @@
 
 ## Test Coverage
 
-6,344 tests passing with **80% overall coverage** as of Feb 2026.
+6,407 tests passing with **80% overall coverage** as of Feb 2026.
 
 ---
 
@@ -49,7 +49,8 @@
 governance-mcp-v1/
 ├── src/
 │   ├── governance_monitor.py   # Core EISV dynamics
-│   ├── cirs.py                 # Oscillation detection
+│   ├── cirs.py                 # Oscillation detection (legacy)
+│   │   └── cirs_protocol.py   # CIRS v2 multi-agent protocol + auto-emit hooks
 │   ├── mcp_server.py           # HTTP server (multi-client)
 │   ├── mcp_server_std.py       # Stdio server (single-client)
 │   ├── mcp_handlers/           # Tool implementations
@@ -71,12 +72,13 @@ governance-mcp-v1/
 │   ├── dynamics.py             # Differential equations
 │   ├── coherence.py            # C(V,Θ) function
 │   ├── ethical_drift.py        # Δη vector computation
-│   └── scoring.py              # Φ objective, verdicts
+│   ├── scoring.py              # Φ objective, verdicts
+│   └── adaptive_governor.py    # CIRS v2 PID controller (oscillation → neighbor pressure)
 ├── dashboard/                  # Web dashboard (HTML/CSS/JS)
 ├── skills/                     # SKILL.md for agent onboarding
 ├── docs/                       # Documentation
 ├── data/                       # Runtime data (agents/, knowledge/)
-└── tests/                      # 6,344 tests, 80% coverage
+└── tests/                      # 6,407 tests, 80% coverage
 ```
 
 ---

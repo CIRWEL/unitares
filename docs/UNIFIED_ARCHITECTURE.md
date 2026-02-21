@@ -229,4 +229,6 @@ The key difference: one EISV instance, fed by both sensors and drawing behavior,
 | `src/mcp_handlers/lifecycle.py` | Stuck detection, auto-recovery |
 | `src/mcp_handlers/dialectic.py` | Thesis/antithesis/synthesis |
 | `src/calibration.py` | Confidence → correctness mapping |
-| `src/cirs.py` | Multi-agent coordination (CIRS) |
+| `src/cirs.py` | Oscillation detection (legacy CIRS v0.1) |
+| `src/mcp_handlers/cirs_protocol.py` | CIRS v2 protocol (7 message types, auto-emit hooks) |
+| `governance_core/adaptive_governor.py` | PID controller — oscillation detection, neighbor pressure |
