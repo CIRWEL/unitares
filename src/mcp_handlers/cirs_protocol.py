@@ -1046,6 +1046,79 @@ def maybe_emit_resonance_signal(
         return restored.to_dict()
 
 
+def maybe_apply_neighbor_pressure(
+    agent_id: str,
+    governor,  # AdaptiveGovernor instance
+) -> None:
+    """
+    Apply neighbor pressure from peer resonance alerts.
+
+    Reads recent RESONANCE_ALERT signals from other agents.
+    For each alert, looks up coherence similarity. If similar enough,
+    applies defensive threshold tightening to the local governor.
+
+    Also decays pressure on STABILITY_RESTORED signals.
+
+    Args:
+        agent_id: This agent's identifier (to exclude self-alerts)
+        governor: The agent's AdaptiveGovernor instance
+    """
+    if governor is None:
+        return
+
+    # Get recent resonance signals (last 30 min)
+    signals = _get_recent_resonance_signals(max_age_minutes=30)
+
+    for signal in signals:
+        peer_id = signal.get("agent_id")
+
+        # Skip self
+        if peer_id == agent_id:
+            continue
+
+        signal_type = signal.get("type")
+
+        if signal_type == "RESONANCE_ALERT":
+            # Look up coherence similarity (check both directions)
+            similarity = _lookup_similarity(agent_id, peer_id)
+            if similarity is not None:
+                governor.apply_neighbor_pressure(similarity=similarity)
+                logger.debug(
+                    f"[CIRS/NEIGHBOR] Pressure applied to {agent_id} "
+                    f"from {peer_id} (similarity={similarity:.3f})"
+                )
+
+        elif signal_type == "STABILITY_RESTORED":
+            # Decay pressure from this stabilized peer
+            governor.decay_neighbor_pressure()
+            logger.debug(
+                f"[CIRS/NEIGHBOR] Pressure decayed for {agent_id} "
+                f"(peer {peer_id} stabilized)"
+            )
+
+
+def _lookup_similarity(agent_id: str, peer_id: str) -> Optional[float]:
+    """
+    Look up pairwise coherence similarity between two agents.
+
+    Checks both directions in the coherence report buffer.
+    Returns None if no report exists (conservative: don't guess).
+    """
+    # Check agent->peer direction
+    key = f"{agent_id}:{peer_id}"
+    report = _coherence_report_buffer.get(key)
+    if report:
+        return report.get("similarity_score")
+
+    # Check peer->agent direction
+    key_reverse = f"{peer_id}:{agent_id}"
+    report_reverse = _coherence_report_buffer.get(key_reverse)
+    if report_reverse:
+        return report_reverse.get("similarity_score")
+
+    return None
+
+
 # =============================================================================
 # COHERENCE_REPORT Data Structures
 # =============================================================================
