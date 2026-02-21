@@ -115,10 +115,10 @@ class TestNormalizeCondition:
         assert words == sorted(words)
 
     def test_filters_short_words(self):
-        """Words with 2 or fewer characters are removed."""
+        """Single-character words and filler words are removed; 2+ char non-filler words kept."""
         result = self.session._normalize_condition("do it or go on")
-        # "do", "it", "or", "go", "on" are all <= 2 chars or filler words
-        assert result == ""
+        # "do", "it", "or", "on" are filler words; "go" is 2 chars, non-filler → kept
+        assert result == "go"
 
     def test_empty_string(self):
         result = self.session._normalize_condition("")

@@ -400,7 +400,12 @@ class DialecticSession:
         self.session_id = self._generate_session_id()
         
         # Set instance-level timeouts based on session type
-        if self.session_type == "exploration":
+        if self.session_type == "design_review":
+            # Design reviews are long-lived collaborative sessions
+            self._max_antithesis_wait = timedelta(days=7)
+            self._max_synthesis_wait = timedelta(days=3)
+            self._max_total_time = timedelta(days=30)
+        elif self.session_type == "exploration":
             # Exploration sessions get longer timeouts
             self._max_antithesis_wait = timedelta(hours=24)
             self._max_synthesis_wait = timedelta(hours=6)
@@ -564,17 +569,24 @@ class DialecticSession:
         """
         # Get last synthesis messages from both agents
         recent_synthesis = [msg for msg in self.transcript[-6:] if msg.phase == "synthesis"]
-        
+
+        # Self-review shortcut: when paused_agent == reviewer, a single agrees=True is sufficient
+        if self.paused_agent_id == self.reviewer_agent_id:
+            for msg in reversed(recent_synthesis):
+                if msg.agrees and msg.agent_id == self.paused_agent_id:
+                    return True
+            return False
+
         if len(recent_synthesis) < 2:
             return False
-        
+
         # Get most recent message from each agent
         agent_a_messages = [msg for msg in recent_synthesis if msg.agent_id == self.paused_agent_id]
         agent_b_messages = [msg for msg in recent_synthesis if msg.agent_id == self.reviewer_agent_id]
-        
+
         if not agent_a_messages or not agent_b_messages:
             return False
-        
+
         msg_a = agent_a_messages[-1]
         msg_b = agent_b_messages[-1]
         
@@ -652,9 +664,9 @@ class DialecticSession:
         # Remove parenthetical notes
         condition = re.sub(r'\([^)]*\)', '', condition)
         # Remove common filler words
-        filler_words = {'the', 'a', 'an', 'and', 'or', 'but', 'to', 'for', 'of', 'in', 'on', 'at', 'by', 'with', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can'}
-        words = re.findall(r'\b[a-z]+\b', condition.lower())
-        key_words = [w for w in words if w not in filler_words and len(w) > 2]
+        filler_words = {'the', 'a', 'an', 'and', 'or', 'but', 'to', 'for', 'of', 'in', 'on', 'at', 'by', 'with', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'it', 'its'}
+        words = re.findall(r'\b[a-zA-Z][a-zA-Z/]*\b', condition)
+        key_words = [w.lower() for w in words if w.lower() not in filler_words and len(w) > 1]
         return ' '.join(sorted(key_words))  # Sort for consistent comparison
     
     def _semantic_similarity(self, text1: str, text2: str) -> float:
