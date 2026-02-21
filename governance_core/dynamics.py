@@ -1,7 +1,7 @@
 """
 UNITARES Governance Core - Dynamics Engine
 
-Canonical implementation of UNITARES Phase-3 thermodynamic dynamics.
+Canonical implementation of UNITARES v5 thermodynamic dynamics.
 
 This module contains the differential equations that govern the evolution
 of the UNITARES state (E, I, S, V). This is the single source of truth
@@ -9,7 +9,8 @@ for all dynamics computations.
 
 Mathematical Framework:
     dE/dt = α(I - E) - βE·S + γE·‖Δη‖²
-    dI/dt = -k·S + βI·C(V,Θ) - γI·I·(1-I)
+    dI/dt = -k·S + βI·C(V,Θ) - γI·I          [linear mode, default since v5]
+         or -k·S + βI·C(V,Θ) - γI·I·(1-I)    [logistic mode, legacy]
     dS/dt = -μ·S + λ₁(Θ)·‖Δη‖² - λ₂(Θ)·C(V,Θ) + β_complexity·C + noise
     dV/dt = κ(E - I) - δ·V
 
@@ -141,17 +142,17 @@ def compute_dynamics(
     # Forcing term A (isolated for clarity and future extensibility)
     A = params.beta_I * C - params.k * S
     
-    # Check dynamics mode (v4.1 logistic vs v4.2-P linear)
+    # Check dynamics mode (linear default since v5, logistic legacy)
     from .parameters import get_i_dynamics_mode
     i_mode = get_i_dynamics_mode()
-    
+
     if i_mode == "linear":
-        # v4.2-P: Linear damping prevents boundary saturation
+        # v5 default: Linear damping prevents boundary saturation
         # dI/dt = A - γ_I·I → stable equilibrium at I* = A/γ_I
         dI_dt = A - params.gamma_I * I
     else:
-        # v4.1: Logistic self-regulation (default)
-        # dI/dt = A - γ_I·I·(1-I) → can saturate to I=1 if A > γ/4
+        # Legacy logistic: can saturate to I=1 if A > γ/4
+        # dI/dt = A - γ_I·I·(1-I) → two equilibria, boundary risk
         dI_dt = A - params.gamma_I * I * (1 - I)
 
     # S dynamics: decay, drift drive, coherence reduction, complexity drive, noise

@@ -709,14 +709,20 @@ class TestParameters:
     """Tests for parameters.py - parameter handling."""
 
     def test_get_i_dynamics_mode_default(self, monkeypatch):
-        """Default should be 'logistic'."""
+        """Default should be 'linear' (v5 change)."""
         # Remove env var if set (correct name: UNITARES_I_DYNAMICS, not _MODE)
         monkeypatch.delenv("UNITARES_I_DYNAMICS", raising=False)
         mode = get_i_dynamics_mode()
+        assert mode == "linear"
+
+    def test_get_i_dynamics_mode_logistic(self, monkeypatch):
+        """Should return 'logistic' when explicitly set (legacy mode)."""
+        monkeypatch.setenv("UNITARES_I_DYNAMICS", "logistic")
+        mode = get_i_dynamics_mode()
         assert mode == "logistic"
 
-    def test_get_i_dynamics_mode_linear(self, monkeypatch):
-        """Should return 'linear' when env var set."""
+    def test_get_i_dynamics_mode_linear_explicit(self, monkeypatch):
+        """Should return 'linear' when explicitly set."""
         monkeypatch.setenv("UNITARES_I_DYNAMICS", "linear")
         mode = get_i_dynamics_mode()
         assert mode == "linear"

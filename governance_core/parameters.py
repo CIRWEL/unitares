@@ -123,14 +123,18 @@ V42P_PARAMS: DynamicsParams = DynamicsParams(
 def get_i_dynamics_mode() -> str:
     """
     Returns the I-channel dynamics mode.
-    
+
     Supported:
-    - UNITARES_I_DYNAMICS=logistic (default, v4.1 style: -γ_I·I·(1-I))
-    - UNITARES_I_DYNAMICS=linear (v4.2-P style: -γ_I·I)
-    
-    Linear mode prevents boundary saturation and guarantees stable interior equilibrium.
+    - UNITARES_I_DYNAMICS=linear (default, v5: -γ_I·I, prevents boundary saturation)
+    - UNITARES_I_DYNAMICS=logistic (legacy v4.1: -γ_I·I·(1-I), can saturate to I=1)
+
+    Linear mode is the default since UNITARES v5. It prevents boundary saturation
+    (m_sat = -1.23 under logistic with production parameters) and guarantees a
+    stable interior equilibrium at I* = A/γ_I ≈ 0.80.
+
+    See: papers/unitares-v5, Section 4 (I-Channel Saturation Analysis).
     """
-    return os.getenv("UNITARES_I_DYNAMICS", "logistic").strip().lower()
+    return os.getenv("UNITARES_I_DYNAMICS", "linear").strip().lower()
 
 
 def get_params_profile_name() -> str:
@@ -151,9 +155,21 @@ def get_active_params() -> DynamicsParams:
     Resolution order:
     1) UNITARES_PARAMS_JSON (full/partial override as JSON object)
     2) UNITARES_PARAMS_PROFILE (default|v41)
+    3) Auto-adjust γ_I when linear mode + default profile (v5 behavior)
+
+    When linear I-dynamics mode is active with the default profile,
+    γ_I is automatically set to 0.169 (V42P tuning) for the designed
+    equilibrium at I* ≈ 0.80. Override with UNITARES_PARAMS_JSON if needed.
     """
     profile = get_params_profile_name()
     base = V41_PARAMS if profile == "v41" else DEFAULT_PARAMS
+
+    # Auto-apply linear-tuned γ_I when using linear mode + default profile
+    if profile != "v41" and get_i_dynamics_mode() == "linear":
+        base = DynamicsParams(**{
+            **base.__dict__,
+            'gamma_I': V42P_PARAMS.gamma_I,  # 0.169, tuned for I*≈0.80
+        })
 
     raw = os.getenv("UNITARES_PARAMS_JSON")
     if not raw:

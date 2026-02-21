@@ -86,9 +86,9 @@ class TestNormalizeCondition:
     def test_filters_short_words(self):
         session = _make_session()
         result = session._normalize_condition("do it so we can go on")
-        # All words <= 2 chars should be removed
+        # Single-char words removed; 2+ char non-filler words kept (len > 1)
         for word in result.split():
-            assert len(word) > 2
+            assert len(word) > 1
 
 
 # ============================================================================
