@@ -95,7 +95,7 @@ Single source of truth = canonical MCP = less confusion = better governance.
 ---
 
 **Written by:** Claude Code (Dec 10, 2025)
-**Updated:** v2.6.4 (Feb 8, 2026) - 30 tools, KG bias fixes, CI test fixes, 6,344 tests at 80% coverage
+**Updated:** v2.7.0 (Feb 20, 2026) - 30 tools, CIRS v2 resonance wiring, 6,407 tests
 **For:** Future Claude Code agents
 **Status:** This is the canonical approach - trust it!
 

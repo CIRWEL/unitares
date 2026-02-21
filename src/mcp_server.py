@@ -564,7 +564,7 @@ def _load_version():
     version_file = project_root / "VERSION"
     if version_file.exists():
         return version_file.read_text().strip()
-    return "2.6.3"  # Fallback if VERSION file missing
+    return "2.7.0"  # Fallback if VERSION file missing
 
 SERVER_VERSION = _load_version()
 

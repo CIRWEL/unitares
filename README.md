@@ -126,7 +126,7 @@ See [MCP Setup Guide](docs/guides/MCP_SETUP.md) for ngrok, curl examples, and ad
 
 ## Key Concepts
 
-**30 registered tools** — v2.6.2 reduced the public surface from 49 to 30 via consolidation (`action_router`). Use `list_tools()` or read [SKILL.md](skills/unitares-governance/SKILL.md) for the full catalog.
+**30 registered tools** — v2.7.0 (consolidated from 49 via `action_router`). Use `list_tools()` or read [SKILL.md](skills/unitares-governance/SKILL.md) for the full catalog.
 
 **Three-tier identity:**
 
@@ -179,4 +179,4 @@ Built by [@CIRWEL](https://github.com/CIRWEL). Also building [Lumen/anima-mcp](h
 
 MIT License with Attribution — see [LICENSE](LICENSE).
 
-**v2.6.4** | 2026-02-08
+**v2.7.0** | 2026-02-19

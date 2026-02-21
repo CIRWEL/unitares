@@ -1,4 +1,4 @@
-# MCP System Evolution: v1.0.0 → v2.6.3+
+# MCP System Evolution: v1.0.0 → v2.7.0+
 
 **Complete history of how the UNITARES Governance MCP system has evolved**
 
@@ -27,6 +27,8 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 - **v2.6.1** (Feb 2026) - Name-based identity (PATH 2.5), observe tool fix, dashboard overhaul, trust tiers
 - **v2.6.2** (Feb 2026) - Architecture refactoring: ToolDefinition dataclass, action_router, dispatch middleware, response formatter. 31 tools, 2,194 tests at 43% coverage
 - **v2.6.3** (Feb 2026) - Dialectic audit: sqlite→pg aliases, LLM reviewer, dialectic consolidation (30 tools), EISV sensor sync, dead code removal. 2,602 tests at 49% coverage
+- **v2.6.4** (Feb 2026) - KG bias fixes (temporal decay, status scoring, SUPERSEDES edge), CI test fixes. 6,344 tests at 80% coverage
+- **v2.7.0** (Feb 2026) - CIRS v2 resonance wiring (AdaptiveGovernor PID, auto-emit hooks, neighbor pressure), I-dynamics linear mode (v5 paper), dialectic fixes. 6,407 tests at 80% coverage
 
 ---
 
@@ -392,6 +394,7 @@ v2.6.1:  Name-based identity (PATH 2.5), dashboard overhaul
 v2.6.2:  Architecture refactoring, 31 tools, 2,194 tests
 v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 6,306 tests at 80% coverage
 v2.6.4:  KG bias fixes, CI test fixes, 6,344 tests at 80% coverage
+v2.7.0:  CIRS v2 resonance wiring, I-dynamics linear, 6,407 tests at 80% coverage
 ```
 
 ### Tool Count Evolution
@@ -407,6 +410,7 @@ v2.6.4:  KG bias fixes, CI test fixes, 6,344 tests at 80% coverage
 - **v2.6.2:** 31 tools (+ 2 new registered tools, 49 consolidated sub-handlers)
 - **v2.6.3:** 30 tools (dialectic consolidated, identity audit, dead code removal, 6,306 tests)
 - **v2.6.4:** 30 tools (KG bias fixes: temporal decay, status scoring, SUPERSEDES edge, 6,344 tests)
+- **v2.7.0:** 30 tools (CIRS v2 resonance wiring, I-dynamics linear mode, 6,407 tests)
 
 ### Performance Improvements
 
@@ -434,7 +438,7 @@ v2.6.4:  KG bias fixes, CI test fixes, 6,344 tests at 80% coverage
 
 ---
 
-## Current State (v2.6.4)
+## Current State (v2.7.0)
 
 ### Core Features
 
@@ -494,6 +498,6 @@ v2.6.4:  KG bias fixes, CI test fixes, 6,344 tests at 80% coverage
 
 ---
 
-**Last Updated:** February 7, 2026
-**Current Version:** v2.6.3
-**Total Evolution:** 1.0.0 → 2.6.3 (22 versions)
+**Last Updated:** February 19, 2026
+**Current Version:** v2.7.0
+**Total Evolution:** 1.0.0 → 2.7.0 (23 versions)

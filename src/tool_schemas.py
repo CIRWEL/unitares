@@ -316,7 +316,7 @@ EXAMPLE RESPONSE:
 {
   "success": true,
   "status": "healthy",
-  "version": "2.6.3",
+  "version": "2.7.0",
   "components": {
     "calibration": {"status": "healthy", "pending_updates": 5},
     "telemetry": {"status": "healthy", "metrics_count": 1234},
@@ -630,7 +630,7 @@ EXAMPLE REQUEST:
 EXAMPLE RESPONSE:
 {
   "success": true,
-  "server_version": "2.6.3",
+  "server_version": "2.7.0",
   "build_date": "2025-11-25",
   "current_pid": 12345,
   "current_uptime_seconds": 3600,
@@ -3041,7 +3041,7 @@ EXAMPLE REQUEST:
 EXAMPLE RESPONSE:
 {
   "success": true,
-  "server_version": "2.6.3",
+  "server_version": "2.7.0",
   "tools": [...],
   "categories": {...},
   "total_tools": 44,

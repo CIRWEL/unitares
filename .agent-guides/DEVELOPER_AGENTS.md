@@ -8,7 +8,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                    MCP Server (mcp_server.py)                   │
 │  - Streamable HTTP transport                                    │
-│  - 30 registered tools + aliases (v2.6.3)                       │
+│  - 30 registered tools + aliases (v2.7.0)                       │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Handlers (mcp_handlers/)                      │
 │  - core.py: process_agent_update, get_governance_metrics        │
@@ -329,5 +329,5 @@ Future agents will find it via `search_knowledge_graph()`.
 ---
 
 **Written by:** Opus_4.5_CLI_20251223 (Dec 24, 2025)
-**Updated:** Feb 8, 2026 - v2.6.4, KG bias fixes, CI test fixes, 6,344 tests at 80% coverage
+**Updated:** Feb 20, 2026 - v2.7.0, CIRS v2 resonance wiring, 6,407 tests at 80% coverage
 **For:** Future developer/debugger agents

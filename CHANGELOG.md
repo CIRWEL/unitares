@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.7.0] - 2026-02-20
+
+### Added — CIRS v2 Resonance Wiring
+- **AdaptiveGovernor** PID controller: phase-aware tau/beta thresholds, oscillation detection (OI + flip counting)
+- **Resonance → CIRS protocol loop**: `maybe_emit_resonance_signal()` emits RESONANCE_ALERT / STABILITY_RESTORED on state transitions
+- **Neighbor pressure**: `maybe_apply_neighbor_pressure()` reads peer resonance alerts, applies defensive threshold tightening via coherence similarity
+- **`was_resonant` tracking**: GovernorState tracks previous cycle for transition detection
+- 13 new tests (3 governor + 4 signal + 5 pressure + 1 integration), 6,407 tests total at 80% coverage
+
+### Changed — I-Channel Dynamics (v5 Paper Alignment)
+- Default I-dynamics mode flipped from logistic to linear (`UNITARES_I_DYNAMICS=linear`)
+- Linear mode prevents boundary saturation (m_sat = -1.23 under logistic), stable equilibrium at I* ≈ 0.80
+- Auto-applies γ_I = 0.169 (V42P tuning) when using linear mode + default profile
+- Dialectic protocol: added `design_review` session type with 7-day/30-day timeouts
+- Dialectic protocol: self-review shortcut (single agrees=True sufficient when paused_agent == reviewer)
+- Condition normalization: fixed to keep 2-char words, handle mixed-case, added "it"/"its" to filler list
+
+### Changed — Version Governance
+- Bumped all version references from 2.6.x to 2.7.0
+
+---
+
 ## [2.6.4] - 2026-02-08
 
 ### Added — KG Search Bias Fixes

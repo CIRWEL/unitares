@@ -119,7 +119,7 @@ class TestLoadVersion:
         from src.mcp_server_std import _load_version
         with patch("src.mcp_server_std.project_root", tmp_path):
             result = _load_version()
-        assert result == "2.6.3"
+        assert result == "2.7.0"
 
     def test_strips_whitespace(self, tmp_path):
         from src.mcp_server_std import _load_version

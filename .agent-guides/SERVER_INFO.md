@@ -159,6 +159,6 @@ If the server code changes:
 
 ---
 
-**Last Updated:** 2026-02-06 (v2.6.2 - 30 tools, Streamable HTTP)
+**Last Updated:** 2026-02-19 (v2.7.0 - 30 tools, Streamable HTTP)
 **Service Status:** Active via launchd
 **Onboarding Impact:** Simplified - no manual server management needed
