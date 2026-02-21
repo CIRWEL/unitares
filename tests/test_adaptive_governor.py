@@ -495,6 +495,63 @@ class TestOscillationConvergence:
 
 
 # ===========================================================================
+# TestWasResonantTracking
+# ===========================================================================
+
+
+class TestWasResonantTracking:
+    """was_resonant tracks previous resonance state for transition detection."""
+
+    def test_was_resonant_starts_false(self):
+        """Initial state: was_resonant is False."""
+        gov = AdaptiveGovernor()
+        assert gov.state.was_resonant is False
+
+    def test_was_resonant_set_after_resonance_detected(self):
+        """After resonance detected, was_resonant is True on next update."""
+        config = GovernorConfig(flip_threshold=3)
+        gov = AdaptiveGovernor(config=config)
+        histories = _stable_histories()
+
+        # Drive into resonance via oscillation
+        for i in range(10):
+            v = "safe" if i % 2 == 0 else "high-risk"
+            c = 0.65 if i % 2 == 0 else 0.30
+            r = 0.20 if i % 2 == 0 else 0.65
+            gov.update(coherence=c, risk=r, verdict=v, **histories)
+
+        assert gov.state.resonant is True
+        # was_resonant should reflect the state BEFORE this update
+        # After resonance is detected, the NEXT call should have was_resonant=True
+        gov.update(coherence=0.65, risk=0.20, verdict="safe", **histories)
+        assert gov.state.was_resonant is True
+
+    def test_was_resonant_false_to_true_transition(self):
+        """Detect the exact transition from not-resonant to resonant."""
+        config = GovernorConfig(flip_threshold=3)
+        gov = AdaptiveGovernor(config=config)
+        histories = _stable_histories()
+
+        # First few updates: not resonant
+        for _ in range(3):
+            gov.update(coherence=0.65, risk=0.20, verdict="safe", **histories)
+        assert gov.state.resonant is False
+        assert gov.state.was_resonant is False
+
+        # Oscillate to trigger resonance
+        for i in range(10):
+            v = "safe" if i % 2 == 0 else "high-risk"
+            c = 0.65 if i % 2 == 0 else 0.30
+            r = 0.20 if i % 2 == 0 else 0.65
+            gov.update(coherence=c, risk=r, verdict=v, **histories)
+
+        # Now resonant=True but was_resonant should reflect pre-transition
+        # The transition happens within the oscillation loop
+        assert gov.state.resonant is True
+        assert gov.state.was_resonant is True  # was_resonant captured resonant from prior cycle
+
+
+# ===========================================================================
 # TestFuzzBounds
 # ===========================================================================
 

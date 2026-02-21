@@ -100,6 +100,7 @@ class GovernorState:
     flips: int = 0
     resonant: bool = False
     trigger: Optional[str] = None
+    was_resonant: bool = False
     ema_coherence: float = 0.0
     ema_risk: float = 0.0
     history: List[Dict] = field(default_factory=list)
@@ -351,6 +352,9 @@ class AdaptiveGovernor:
         Uses incremental EMA on sign transitions and counts verdict flips
         within the rolling window.
         """
+        # Track previous resonant state for transition detection
+        self.state.was_resonant = self.state.resonant
+
         delta_coh = coherence - self.state.tau
         delta_risk = risk - self.state.beta
 
