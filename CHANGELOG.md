@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dialectic protocol: self-review shortcut (single agrees=True sufficient when paused_agent == reviewer)
 - Condition normalization: fixed to keep 2-char words, handle mixed-case, added "it"/"its" to filler list
 
+### Changed — Database Architecture
+- **Removed SQLite backend** — deleted `sqlite_backend.py` (1,116 lines), `dual_backend.py` (697 lines), and test files (2,299 lines). PostgreSQL is the sole backend.
+- Removed `DB_BACKEND` environment variable — no more sqlite/postgres/dual switching
+- Simplified `db/__init__.py` to always return `PostgresBackend`
+- Removed SQLite paths from `audit_log.py`, `calibration.py`, `mcp_server.py`, `mcp_server_std.py`
+- Total: **4,697 lines deleted**, 79 lines added
+
 ### Changed — Version Governance
 - Bumped all version references from 2.6.x to 2.7.0
 

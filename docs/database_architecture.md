@@ -1,13 +1,14 @@
 # Database Architecture
 
-**Last Updated**: 2026-02-07
-**Status**: Production-ready PostgreSQL + AGE architecture
+**Last Updated**: 2026-02-20
+**Status**: PostgreSQL-only (SQLite backend removed Feb 2026)
 
 ## Overview
 
-The governance MCP uses a **two-database architecture**:
+The governance MCP uses PostgreSQL as the sole database backend:
 - **Durability**: PostgreSQL + Apache AGE for all persistent data
 - **Performance**: Redis for ephemeral session cache
+- **Audit trail**: `audit_log.jsonl` append-only compliance log
 
 ---
 
@@ -86,18 +87,17 @@ The governance MCP uses a **two-database architecture**:
 
 ## Configuration
 
-**Environment Variable**: `DB_BACKEND`
+**Required Environment Variable**: `DB_POSTGRES_URL`
 
 ```bash
-# Production (default)
-export DB_BACKEND=postgres
 export DB_POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/governance"
 ```
 
-**Code Location**: `src/db/__init__.py`
+**Code Location**: `src/db/__init__.py` — `get_db()` always returns `PostgresBackend`.
 
-> **Note**: SQLite backend (`data/governance.db`) exists as legacy fallback for dev/testing
-> but is not used in production. All data lives in PostgreSQL.
+> **Note**: The SQLite backend was removed in Feb 2026 (v2.7.0). PostgreSQL is the sole
+> database backend. If PostgreSQL is unavailable, the server exits honestly rather than
+> silently degrading.
 
 ---
 

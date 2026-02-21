@@ -74,11 +74,10 @@ See `.env.example` for the full list. Key variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DB_BACKEND` | `postgres` | Database backend (`postgres` or `sqlite`) |
-| `DB_POSTGRES_URL` | — | PostgreSQL connection URL |
+| `DB_POSTGRES_URL` | — | PostgreSQL connection URL (required) |
 | `DB_POSTGRES_MIN_CONN` | `2` | Min pool connections |
 | `DB_POSTGRES_MAX_CONN` | `10` | Max pool connections |
-| `UNITARES_KNOWLEDGE_BACKEND` | `auto` | Knowledge graph backend (`age`, `postgres`, `sqlite`, `auto`) |
+| `UNITARES_KNOWLEDGE_BACKEND` | `auto` | Knowledge graph backend (`age`, `postgres`, `auto`) |
 | `UNITARES_DIALECTIC_BACKEND` | `postgres` | Dialectic session backend |
 
 ---

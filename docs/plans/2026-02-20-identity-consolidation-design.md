@@ -38,7 +38,7 @@ The script runs in **dry-run mode** by default, printing what it would do. Must 
 
 ### Task 2: Fix `find_agent_by_label`
 
-In both `src/db/postgres_backend.py` and `src/db/sqlite_backend.py`, update the query:
+In `src/db/postgres_backend.py`, update the query:
 
 ```sql
 -- Before (buggy):

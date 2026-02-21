@@ -107,7 +107,7 @@ Recommended conditions:
 
 ## Storage + Auditing
 
-Dialectic sessions are stored in PostgreSQL when `DB_BACKEND=postgres`:
+Dialectic sessions are stored in PostgreSQL:
 - `core.dialectic_sessions`
 - `core.dialectic_messages`
 

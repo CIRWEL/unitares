@@ -135,8 +135,7 @@ tail -f data/logs/mcp_server_error.log
 
 3. **Check environment variables:**
    ```bash
-   echo $DB_BACKEND  # Should be "postgres"
-   echo $DB_POSTGRES_URL
+   echo $DB_POSTGRES_URL  # Should be set
    ```
 
 4. **Check container logs:**

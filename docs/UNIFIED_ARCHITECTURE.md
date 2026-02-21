@@ -207,6 +207,32 @@ Not a proposal — just a picture of what "one nervous system" means:
 
 The key difference: one EISV instance, fed by both sensors and drawing behavior, whose coherence drives both drawing decisions and governance margin. Currently there are two instances that share math but not state.
 
+## Database Architecture
+
+```
+Pi (anima-mcp)                              Mac (governance-mcp)
+┌────────────────────────┐                  ┌────────────────────────┐
+│  SQLite: ~/.anima/anima.db                │  PostgreSQL: governance │
+│  ├─ state_history (206K rows)             │  ├─ core.identities    │
+│  ├─ drawing_history (NEW)  │  HTTP bridge │  ├─ core.agent_state   │
+│  ├─ memories (8.8K)        │ ──────────►  │  ├─ audit.events       │
+│  ├─ events (3.7K)          │  ~60s        │  ├─ core.discoveries   │
+│  ├─ growth tables          │  check-in    │  ├─ dialectic.*        │
+│  ├─ primitives             │              │  ├─ core.calibration   │
+│  └─ trajectory_events      │              │  └─ core.tool_usage    │
+│                            │              │                        │
+│  canvas.json (pixels)      │              │  Redis (sessions only) │
+│  trajectory_genesis.json   │              │  audit_log.jsonl (raw) │
+└────────────────────────────┘              └────────────────────────┘
+```
+
+**Ownership rule:** "Where does X live?" has one answer:
+- Anima state, DrawingEISV → Pi (SQLite, authoritative)
+- Governance state, audit, knowledge graph → Mac (PostgreSQL, authoritative)
+- DrawingEISV snapshots cross the bridge in check-ins → Mac stores in `agent_state.state_json` (copy, not authoritative)
+
+See `docs/plans/2026-02-20-unified-db-architecture-design.md` for full details.
+
 ## Files Reference
 
 ### Pi (anima-mcp)
