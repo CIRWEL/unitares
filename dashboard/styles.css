@@ -9,6 +9,11 @@
     --border-highlight: rgba(255, 255, 255, 0.15);
     --text-primary: #f0f0f5;
     --text-secondary: #9aa0af;
+    --text-muted: #6e7681;
+
+    /* Transitions & Dynamics */
+    --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-standard: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 
     /* Neon/Bioluminescent Accents */
     --accent-cyan: #00f0ff;
@@ -207,6 +212,90 @@ body {
     color: var(--text-secondary);
     font-size: 0.9em;
     margin-bottom: 8px;
+}
+
+/* ============================================
+   Animations & Dynamics
+   ============================================ */
+@keyframes axis-pulse-warning {
+    0% {
+        filter: drop-shadow(0 0 2px rgba(255, 61, 0, 0.4));
+        opacity: 1;
+    }
+
+    50% {
+        filter: drop-shadow(0 0 12px rgba(255, 61, 0, 0.8));
+        opacity: 0.85;
+    }
+
+    100% {
+        filter: drop-shadow(0 0 2px rgba(255, 61, 0, 0.4));
+        opacity: 1;
+    }
+}
+
+@keyframes axis-pulse-critical {
+    0% {
+        filter: drop-shadow(0 0 4px #ef4444);
+        transform: scale(1);
+    }
+
+    50% {
+        filter: drop-shadow(0 0 20px #ef4444);
+        transform: scale(1.02);
+    }
+
+    100% {
+        filter: drop-shadow(0 0 4px #ef4444);
+        transform: scale(1);
+    }
+}
+
+@keyframes slide-in-right {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes fade-in-up {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes scanline {
+    0% {
+        transform: translateY(-100%);
+    }
+
+    100% {
+        transform: translateY(100%);
+    }
+}
+
+.drift-axis.warning {
+    animation: axis-pulse-warning 2s infinite ease-in-out;
+}
+
+.drift-axis.critical {
+    animation: axis-pulse-critical 1.5s infinite ease-in-out;
+    color: #ef4444 !important;
+}
+
+.pulse-log-entries>div {
+    animation: slide-in-right 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .metric-tooltip-trend {
@@ -575,6 +664,57 @@ body {
     background: radial-gradient(circle at top right, rgba(255, 61, 0, 0.08), transparent 70%);
 }
 
+/* Stuck agents card - 6th card */
+.stat-card:nth-child(6)::after {
+    background: var(--text-secondary);
+    box-shadow: none;
+}
+
+.stat-card:nth-child(6)::before {
+    background: radial-gradient(circle at top right, rgba(128, 128, 128, 0.05), transparent 70%);
+}
+
+/* Warning state for stat cards */
+.stat-card.stat-warning {
+    border-color: rgba(245, 158, 11, 0.5);
+}
+
+.stat-card.stat-warning::after {
+    background: #f59e0b !important;
+    box-shadow: 0 0 10px #f59e0b !important;
+}
+
+.stat-card.stat-warning .value {
+    color: #f59e0b;
+}
+
+/* Critical state for stat cards */
+.stat-card.stat-critical {
+    border-color: rgba(239, 68, 68, 0.5);
+    animation: pulse-critical-card 2s ease-in-out infinite;
+}
+
+.stat-card.stat-critical::after {
+    background: #ef4444 !important;
+    box-shadow: 0 0 15px #ef4444 !important;
+}
+
+.stat-card.stat-critical .value {
+    color: #ef4444;
+}
+
+@keyframes pulse-critical-card {
+
+    0%,
+    100% {
+        background-color: var(--card-bg);
+    }
+
+    50% {
+        background-color: rgba(239, 68, 68, 0.05);
+    }
+}
+
 .stat-card:hover {
     transform: translateY(-4px);
     box-shadow: var(--shadow-md);
@@ -735,6 +875,32 @@ body {
     border-color: var(--text-primary);
     color: var(--text-primary);
     background: rgba(255, 255, 255, 0.08);
+}
+
+.panel-select-label {
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.panel-select {
+    background: var(--input-bg);
+    border: 1px solid var(--accent-cyan);
+    color: var(--text-primary);
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.75em;
+    font-weight: 500;
+    cursor: pointer;
+    min-width: 140px;
+}
+
+.panel-select:focus {
+    border-color: var(--accent-cyan);
+    outline: none;
 }
 
 /* ============================================
@@ -1703,6 +1869,56 @@ body {
     border-bottom: 1px solid var(--border-color);
 }
 
+/* Simplified pulse layout */
+.pulse-grid-simple {
+    grid-template-columns: 1.2fr 0.8fr 1fr;
+}
+
+.pulse-metric-large {
+    margin-bottom: 1rem;
+}
+
+.pulse-metric-large .pulse-metric-value {
+    font-size: 1.1rem;
+}
+
+.risk-thresholds {
+    position: relative;
+    height: 12px;
+    margin-top: 2px;
+}
+
+.risk-thresholds .threshold {
+    position: absolute;
+    font-size: 0.6rem;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    transform: translateX(-50%);
+    opacity: 0.6;
+}
+
+.pulse-metric-row {
+    display: flex;
+    gap: 1rem;
+}
+
+.pulse-metric-mini {
+    flex: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.pulse-metric-mini .pulse-metric-label {
+    font-size: 0.7rem;
+}
+
+.pulse-metric-mini .pulse-metric-value {
+    font-size: 0.75rem;
+}
+
 /* Pulse metric rows */
 .pulse-metric {
     margin-bottom: 0.75rem;
@@ -1878,6 +2094,14 @@ body {
     color: var(--text-secondary);
 }
 
+.drift-trend {
+    width: 16px;
+    text-align: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: opacity 0.3s, color 0.3s;
+}
+
 /* Decision log */
 .pulse-log-entries {
     display: flex;
@@ -1958,6 +2182,50 @@ body {
     white-space: nowrap;
 }
 
+/* Event-based log styling */
+.event-icon {
+    font-size: 0.85rem;
+    flex-shrink: 0;
+    width: 1.2em;
+    text-align: center;
+}
+
+.event-message {
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.event-info {
+    border-left: 2px solid var(--text-secondary);
+}
+
+.event-warning {
+    border-left: 2px solid var(--color-entropy);
+    background: rgba(245, 158, 11, 0.05);
+}
+
+.event-critical {
+    border-left: 2px solid var(--color-volatility);
+    background: rgba(239, 68, 68, 0.1);
+    animation: pulse-critical 2s ease-in-out infinite;
+}
+
+@keyframes pulse-critical {
+
+    0%,
+    100% {
+        background: rgba(239, 68, 68, 0.1);
+    }
+
+    50% {
+        background: rgba(239, 68, 68, 0.2);
+    }
+}
+
 .pulse-log-empty {
     color: var(--text-secondary);
     font-size: 0.8rem;
@@ -1965,6 +2233,88 @@ body {
     text-align: center;
     padding: 20px 10px;
     opacity: 0.6;
+}
+
+/* Recent Decisions log entries */
+.decision-entry {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.25rem 0.4rem;
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    animation: fadeSlideUp 0.2s ease-out;
+}
+
+.decision-entry:first-child {
+    background: rgba(0, 255, 255, 0.03);
+}
+
+.decision-badge {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 0.65rem;
+    width: 1.2em;
+    height: 1.2em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.verdict-approve {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
+
+.verdict-proceed {
+    background: rgba(245, 158, 11, 0.2);
+    color: #f59e0b;
+}
+
+.verdict-pause {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.verdict-critical {
+    background: rgba(239, 68, 68, 0.35);
+    color: #ef4444;
+    animation: pulse-critical 1.5s ease-in-out infinite;
+}
+
+.decision-agent {
+    color: var(--text-primary);
+    font-weight: 500;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.decision-count {
+    color: var(--accent-cyan);
+    font-size: 0.65rem;
+    font-weight: 600;
+    margin-left: 0.15rem;
+}
+
+.decision-risk {
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    flex-shrink: 0;
+}
+
+.decision-time {
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    flex-shrink: 0;
+    min-width: 2em;
+    text-align: right;
 }
 
 .panel-subtitle {

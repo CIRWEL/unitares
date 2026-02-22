@@ -24,8 +24,8 @@ class DashboardAPI {
      * Get API token from localStorage or URL params
      */
     getAuthToken() {
-        return localStorage.getItem('unitares_api_token') || 
-               new URLSearchParams(window.location.search).get('token');
+        return localStorage.getItem('unitares_api_token') ||
+            new URLSearchParams(window.location.search).get('token');
     }
 
     /**
@@ -75,11 +75,11 @@ class DashboardAPI {
         // Make request with retry logic
         let lastError;
         const maxRetries = retry ? this.retryConfig.maxRetries : 1;
-        
+
         for (let attempt = 0; attempt < maxRetries; attempt++) {
             try {
                 const result = await this._makeRequest(toolName, toolArguments);
-                
+
                 // Cache successful result
                 if (useCache) {
                     const cacheKey = this.getCacheKey(toolName, toolArguments);
@@ -88,16 +88,16 @@ class DashboardAPI {
                         timestamp: Date.now()
                     });
                 }
-                
+
                 return result;
             } catch (error) {
                 lastError = error;
-                
+
                 // Don't retry on certain errors
                 if (error.status === 401 || error.status === 403 || error.status === 404) {
                     throw error;
                 }
-                
+
                 // Exponential backoff
                 if (attempt < maxRetries - 1) {
                     const delay = Math.min(
@@ -108,7 +108,7 @@ class DashboardAPI {
                 }
             }
         }
-        
+
         throw lastError;
     }
 
@@ -119,47 +119,47 @@ class DashboardAPI {
         const headers = {
             'Content-Type': 'application/json',
         };
-        
+
         const token = this.getAuthToken();
         if (token) {
             headers['Authorization'] = `Bearer ${token}`;
         }
-        
+
         // Ensure toolArguments is a plain object
         if (!toolArguments || typeof toolArguments !== 'object' || Array.isArray(toolArguments)) {
             toolArguments = {};
         }
-        
+
         const requestBody = {
             name: String(toolName || ''),
             arguments: toolArguments
         };
-        
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-        
+
         try {
             const requestBodyStr = JSON.stringify(requestBody);
-            console.log(`[API] Calling ${toolName}:`, { 
+            console.log(`[API] Calling ${toolName}:`, {
                 url: `${this.baseURL}/v1/tools/call`,
                 body: requestBodyStr.substring(0, 200) + (requestBodyStr.length > 200 ? '...' : '')
             });
-            
+
             const response = await fetch(`${this.baseURL}/v1/tools/call`, {
                 method: 'POST',
                 headers: headers,
                 body: requestBodyStr,
                 signal: controller.signal
             });
-            
+
             clearTimeout(timeoutId);
-            
+
             const responseText = await response.text();
             console.log(`[API] Response status: ${response.status}`, responseText.substring(0, 200));
-            
+
             if (!response.ok) {
                 let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-                
+
                 try {
                     const errorData = JSON.parse(responseText);
                     if (errorData.error) {
@@ -171,12 +171,12 @@ class DashboardAPI {
                         errorMessage = responseText.substring(0, 200);
                     }
                 }
-                
+
                 const error = new Error(errorMessage);
                 error.status = response.status;
                 throw error;
             }
-            
+
             let data;
             try {
                 data = JSON.parse(responseText);
@@ -184,7 +184,7 @@ class DashboardAPI {
                 console.error('[API] Failed to parse response as JSON:', responseText.substring(0, 200));
                 throw new Error(`Invalid JSON response from server: ${parseError.message}`);
             }
-            
+
             // Check for error in response even if HTTP 200
             if (data.success === false || data.error) {
                 const errorMsg = data.error || data.message || 'Tool call failed';
@@ -192,7 +192,7 @@ class DashboardAPI {
                 error.status = data.status || 500;
                 throw error;
             }
-            
+
             // Handle result - could be string JSON or already parsed
             if (typeof data.result === 'string') {
                 try {
@@ -205,19 +205,19 @@ class DashboardAPI {
             return data.result;
         } catch (error) {
             clearTimeout(timeoutId);
-            
+
             if (error.name === 'AbortError' || error.name === 'TimeoutError') {
                 const timeoutError = new Error(`Request timeout after 30s. The server may be overloaded.`);
                 timeoutError.status = 504;
                 throw timeoutError;
             }
-            
+
             if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
                 const networkError = new Error(`Network error: Cannot reach server at ${this.baseURL}. Is the server running?`);
                 networkError.status = 0;
                 throw networkError;
             }
-            
+
             throw error;
         }
     }
@@ -249,7 +249,7 @@ class DataProcessor {
     /**
      * Utilities for processing and formatting dashboard data
      */
-    
+
     /**
      * Calculate trend from current and previous values
      */
@@ -268,13 +268,25 @@ class DataProcessor {
     }
 
     /**
+     * Categorize drift significance for UI styling
+     * @param {number} val - Drift value
+     * @returns {string} - 'normal', 'warning', or 'critical'
+     */
+    static getDriftStatus(val) {
+        const abs = Math.abs(val);
+        if (abs > 0.15) return 'critical';
+        if (abs > 0.05) return 'warning';
+        return 'normal';
+    }
+
+    /**
      * Format EISV metric with context
      */
     static formatEISVMetric(value, metricName) {
         if (value === null || value === undefined || isNaN(value)) {
             return { display: '-', interpretation: 'No data', color: 'var(--text-secondary)' };
         }
-        
+
         // V can be negative (I > E imbalance); other metrics are [0, 1]
         const clamped = metricName === 'V'
             ? Math.max(-1, Math.min(1, value))
@@ -282,7 +294,7 @@ class DataProcessor {
         // Bar uses |V| scaled from its effective range (dynamics keep V in ~[-0.1, 0.1])
         const visualValue = metricName === 'V' ? Math.min(1, Math.abs(clamped) / 0.3) : clamped;
         const percent = (visualValue * 100).toFixed(0);
-        
+
         const interpretations = {
             E: {
                 low: { text: 'Low energy - limited productive capacity', color: 'var(--accent-orange)' },
@@ -310,7 +322,7 @@ class DataProcessor {
                 high: { text: 'High coherence - well-aligned state', color: 'var(--accent-green)' }
             }
         };
-        
+
         // Use rescaled value for interpretation thresholds so V's 0-0.3 range
         // maps to the same low/medium/high bands as other metrics
         let interpretation;
@@ -321,7 +333,7 @@ class DataProcessor {
         } else {
             interpretation = interpretations[metricName]?.high || { text: 'High', color: 'var(--text-secondary)' };
         }
-        
+
         return {
             display: clamped.toFixed(6),
             percent: percent,
@@ -338,25 +350,25 @@ class DataProcessor {
         if (!timestampMs) return null;
         const diffMs = Date.now() - timestampMs;
         if (diffMs <= 0) return 'just now';
-        
+
         const seconds = Math.floor(diffMs / 1000);
         if (seconds < 60) return `${seconds}s ago`;
-        
+
         const minutes = Math.floor(seconds / 60);
         if (minutes < 60) return `${minutes}m ago`;
-        
+
         const hours = Math.floor(minutes / 60);
         if (hours < 24) return `${hours}h ago`;
-        
+
         const days = Math.floor(hours / 24);
         if (days < 7) return `${days}d ago`;
-        
+
         const weeks = Math.floor(days / 7);
         if (weeks < 5) return `${weeks}w ago`;
-        
+
         const months = Math.floor(days / 30);
         if (months < 12) return `${months}mo ago`;
-        
+
         const years = Math.floor(days / 365);
         return `${years}y ago`;
     }
@@ -414,11 +426,11 @@ class DataProcessor {
      */
     static exportToCSV(data, filename) {
         if (!data || data.length === 0) return;
-        
+
         const headers = Object.keys(data[0]);
         const csv = [
             headers.join(','),
-            ...data.map(row => 
+            ...data.map(row =>
                 headers.map(header => {
                     const value = row[header];
                     if (value === null || value === undefined) return '';
@@ -431,7 +443,7 @@ class DataProcessor {
                 }).join(',')
             )
         ].join('\n');
-        
+
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -462,7 +474,7 @@ class DataProcessor {
         if (navigator.clipboard && window.isSecureContext) {
             return navigator.clipboard.writeText(text);
         }
-        
+
         // Fallback for older browsers
         return new Promise((resolve, reject) => {
             const textarea = document.createElement('textarea');
@@ -485,6 +497,19 @@ class DataProcessor {
                 reject(error);
             }
         });
+    }
+
+    /**
+     * Format environmental data from shared memory if available
+     */
+    static processEnvData(raw) {
+        if (!raw) return { temp: 0, humidity: 0, lux: 0, status: 'unknown' };
+        return {
+            temp: raw.temp || raw.temperature || 0,
+            humidity: raw.humidity || 0,
+            lux: raw.lux || raw.light || 0,
+            status: (raw.temp > 30 || raw.temp < 10) ? 'warning' : 'stable'
+        };
     }
 }
 
@@ -530,7 +555,7 @@ class EISVWebSocket {
      */
     constructor(onUpdate, onStatusChange) {
         this.onUpdate = onUpdate;
-        this.onStatusChange = onStatusChange || (() => {});
+        this.onStatusChange = onStatusChange || (() => { });
         this.ws = null;
         this.reconnectDelay = 1000;
         this.maxReconnectDelay = 30000;

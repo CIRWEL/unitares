@@ -1067,9 +1067,9 @@ async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[Te
     import re
     UUID_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
 
-    zero_update_hours = float(arguments.get("zero_update_hours", 4.0))
-    low_update_hours = float(arguments.get("low_update_hours", 12.0))
-    unlabeled_hours = float(arguments.get("unlabeled_hours", 24.0))
+    zero_update_hours = float(arguments.get("zero_update_hours", 1.0))
+    low_update_hours = float(arguments.get("low_update_hours", 3.0))
+    unlabeled_hours = float(arguments.get("unlabeled_hours", 6.0))
     dry_run = arguments.get("dry_run", False)
 
     # Reload metadata to ensure we have latest state
@@ -1597,23 +1597,25 @@ def _detect_stuck_agents(
     critical_margin_timeout_minutes: float = 5.0,
     tight_margin_timeout_minutes: float = 15.0,
     include_pattern_detection: bool = True,
-    min_updates: int = 1,
+    min_updates: int = 3,
 ) -> list:
     """
     Detect stuck agents using proprioceptive margin + timeout.
-    
+
     Uses the margin system we built - proprioception becomes stuck detection!
-    
+
     Detection rules:
     1. Critical margin + no updates > 5 min → stuck
-    2. Tight margin + no updates > 15 min → potentially stuck  
+    2. Tight margin + no updates > 15 min → potentially stuck
     3. No updates > 30 min → stuck
-    
+
     Args:
         max_age_minutes: Maximum age in minutes before agent is considered stuck
         critical_margin_timeout_minutes: Timeout for critical margin state
         tight_margin_timeout_minutes: Timeout for tight margin state
-    
+        min_updates: Minimum updates before an agent can be considered stuck.
+            Agents with fewer updates are likely orphans/one-shots, not stuck.
+
     Returns:
         List of stuck agents with detection reasons
     """
