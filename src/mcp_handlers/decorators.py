@@ -98,6 +98,12 @@ def mcp_tool(
                         f"Tool '{tool_name}' took {elapsed:.2f}s "
                         f"({elapsed/timeout*100:.1f}% of {timeout}s timeout)"
                     )
+                # Normalize: MCP SDK 1.26.0 calls list() on return value.
+                # Pydantic v2 models are iterable (yield field tuples), so a
+                # bare TextContent would be destructured into invalid tuples,
+                # causing 20 CallToolResult validation errors.
+                if isinstance(result, TextContent):
+                    result = [result]
                 return result
             except asyncio.TimeoutError:
                 logger.warning(f"Tool '{tool_name}' timed out after {timeout}s")

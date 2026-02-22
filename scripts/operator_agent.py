@@ -24,11 +24,8 @@ Usage:
 
 Environment Variables:
     GOVERNANCE_TOOL_MODE=operator_recovery  # Set automatically when --enable-recovery
-    MCP_SERVER_URL=http://127.0.0.1:8767/sse  # Override default
+    MCP_SERVER_URL=http://127.0.0.1:8767/mcp  # Override default
     OPERATOR_LABEL=Operator  # Override operator label
-
-Note: Uses legacy SSE transport (/sse). The server still supports it.
-      For new scripts, prefer mcp_agent.py which uses Streamable HTTP (/mcp/).
 """
 
 import asyncio
@@ -49,8 +46,25 @@ sys.path.insert(0, str(project_root))
 # Will be overridden to operator_recovery if --enable-recovery is passed
 os.environ["GOVERNANCE_TOOL_MODE"] = "operator_readonly"
 
-from mcp.client.sse import sse_client
 from mcp.client.session import ClientSession
+from contextlib import asynccontextmanager
+
+
+def _mcp_connect(url: str):
+    """Auto-detect transport: /mcp → Streamable HTTP, otherwise SSE (legacy)."""
+    if "/mcp" in url:
+        import httpx
+        from mcp.client.streamable_http import streamable_http_client
+
+        @asynccontextmanager
+        async def _connect():
+            async with httpx.AsyncClient(http2=False, timeout=30) as http_client:
+                async with streamable_http_client(url, http_client=http_client) as (read, write, _):
+                    yield read, write
+        return _connect()
+    else:
+        from mcp.client.sse import sse_client
+        return sse_client(url)
 
 
 class OperatorAgent:
@@ -58,7 +72,7 @@ class OperatorAgent:
 
     def __init__(
         self,
-        mcp_url: str = "http://127.0.0.1:8767/sse",
+        mcp_url: str = "http://127.0.0.1:8767/mcp",
         operator_label: str = "Operator",
         stuck_interval: int = 300,  # 5 minutes
         health_interval: int = 3600,  # 1 hour
@@ -455,7 +469,7 @@ class OperatorAgent:
         print(f"   Tool Mode: {'operator_recovery' if self.enable_recovery else 'operator_readonly'}")
         print()
         
-        async with sse_client(self.mcp_url) as (read, write):
+        async with _mcp_connect(self.mcp_url) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 
@@ -492,7 +506,7 @@ class OperatorAgent:
         
         while self.running:
             try:
-                async with sse_client(self.mcp_url) as (read, write):
+                async with _mcp_connect(self.mcp_url) as (read, write):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
                         
@@ -558,8 +572,8 @@ async def main():
     
     parser.add_argument(
         "--url",
-        default=os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8767/sse"),
-        help="MCP server URL (default: http://127.0.0.1:8767/sse)"
+        default=os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8767/mcp"),
+        help="MCP server URL (default: http://127.0.0.1:8767/mcp)"
     )
     
     parser.add_argument(

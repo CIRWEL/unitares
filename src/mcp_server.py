@@ -64,8 +64,8 @@ from src.logging_utils import get_logger
 logger = get_logger(__name__)
 
 # Process management (prevent multiple instances)
-SSE_PID_FILE = Path(project_root) / "data" / ".mcp_server.pid"
-SSE_LOCK_FILE = Path(project_root) / "data" / ".mcp_server.lock"
+SERVER_PID_FILE = Path(project_root) / "data" / ".mcp_server.pid"
+SERVER_LOCK_FILE = Path(project_root) / "data" / ".mcp_server.lock"
 CURRENT_PID = os.getpid()
 
 # Server readiness flag - prevents "request before initialization" errors
@@ -1064,7 +1064,7 @@ DEFAULT_PORT = 8767  # Standard port for unitares governance on Mac (8766 is ani
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="UNITARES Governance MCP Server (SSE Transport)"
+        description="UNITARES Governance MCP Server (Streamable HTTP)"
     )
     parser.add_argument(
         "--host", 
@@ -1099,18 +1099,18 @@ def is_process_alive(pid: int) -> bool:
         return False
 
 
-def cleanup_existing_sse_processes():
-    """Kill any existing SSE server processes before starting new one"""
-    if not SSE_PID_FILE.exists():
+def cleanup_existing_server_processes():
+    """Kill any existing server processes before starting new one"""
+    if not SERVER_PID_FILE.exists():
         return []
     
     killed = []
     try:
-        with open(SSE_PID_FILE, 'r') as f:
+        with open(SERVER_PID_FILE, 'r') as f:
             existing_pid = int(f.read().strip())
         
         if existing_pid != CURRENT_PID and is_process_alive(existing_pid):
-            logger.info(f"Found existing SSE server (PID {existing_pid}), terminating...")
+            logger.info(f"Found existing server (PID {existing_pid}), terminating...")
             try:
                 os.kill(existing_pid, signal.SIGTERM)
                 # Wait a bit for graceful shutdown
@@ -1118,70 +1118,70 @@ def cleanup_existing_sse_processes():
                 if is_process_alive(existing_pid):
                     os.kill(existing_pid, signal.SIGKILL)
                 killed.append(existing_pid)
-                logger.info(f"Terminated existing SSE server (PID {existing_pid})")
+                logger.info(f"Terminated existing server (PID {existing_pid})")
             except (OSError, ProcessLookupError):
                 # Process already dead, just clean up PID file
                 pass
         
         # Clean up PID file if process is dead
         if not is_process_alive(existing_pid):
-            SSE_PID_FILE.unlink(missing_ok=True)
+            SERVER_PID_FILE.unlink(missing_ok=True)
     except (ValueError, IOError) as e:
         logger.warning(f"Could not read existing PID file: {e}")
         # Clean up invalid PID file
-        SSE_PID_FILE.unlink(missing_ok=True)
+        SERVER_PID_FILE.unlink(missing_ok=True)
     
     return killed
 
 
-def write_sse_pid_file():
-    """Write PID file for SSE server process tracking"""
+def write_server_pid_file():
+    """Write PID file for server process tracking"""
     try:
-        SSE_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(SSE_PID_FILE, 'w') as f:
+        SERVER_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(SERVER_PID_FILE, 'w') as f:
             f.write(f"{CURRENT_PID}\n")
-        logger.debug(f"Wrote SSE PID file: {SSE_PID_FILE} (PID: {CURRENT_PID})")
+        logger.debug(f"Wrote server PID file: {SERVER_PID_FILE} (PID: {CURRENT_PID})")
     except Exception as e:
-        logger.warning(f"Could not write SSE PID file: {e}", exc_info=True)
+        logger.warning(f"Could not write server PID file: {e}", exc_info=True)
 
 
-def remove_sse_pid_file():
+def remove_server_pid_file():
     """Remove PID file on shutdown"""
     try:
-        if SSE_PID_FILE.exists():
-            SSE_PID_FILE.unlink()
-            logger.debug(f"Removed SSE PID file: {SSE_PID_FILE}")
+        if SERVER_PID_FILE.exists():
+            SERVER_PID_FILE.unlink()
+            logger.debug(f"Removed server PID file: {SERVER_PID_FILE}")
     except Exception as e:
-        logger.warning(f"Could not remove SSE PID file: {e}", exc_info=True)
+        logger.warning(f"Could not remove server PID file: {e}", exc_info=True)
 
 
-def acquire_sse_lock():
-    """Acquire lock file to prevent multiple SSE server instances.
+def acquire_server_lock():
+    """Acquire lock file to prevent multiple server instances.
 
     Automatically cleans up stale locks from dead processes.
     """
     lock_fd = None
     try:
-        SSE_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SERVER_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
 
         # Check for stale lock file before trying to acquire
-        if SSE_LOCK_FILE.exists():
+        if SERVER_LOCK_FILE.exists():
             try:
-                with open(SSE_LOCK_FILE, 'r') as f:
+                with open(SERVER_LOCK_FILE, 'r') as f:
                     lock_info = json.load(f)
                     old_pid = lock_info.get("pid")
                     if old_pid and not is_process_alive(old_pid):
                         logger.info(f"Cleaning up stale lock from dead process (PID: {old_pid})")
-                        SSE_LOCK_FILE.unlink()
+                        SERVER_LOCK_FILE.unlink()
             except (json.JSONDecodeError, KeyError, IOError):
                 # Corrupt lock file - safe to remove
                 logger.info("Cleaning up corrupt lock file")
                 try:
-                    SSE_LOCK_FILE.unlink()
+                    SERVER_LOCK_FILE.unlink()
                 except FileNotFoundError:
                     pass
 
-        lock_fd = os.open(str(SSE_LOCK_FILE), os.O_CREAT | os.O_RDWR)
+        lock_fd = os.open(str(SERVER_LOCK_FILE), os.O_CREAT | os.O_RDWR)
 
         try:
             # Try to acquire exclusive lock (non-blocking)
@@ -1197,7 +1197,7 @@ def acquire_sse_lock():
             os.write(lock_fd, json.dumps(lock_info).encode())
             os.fsync(lock_fd)
 
-            logger.debug(f"Acquired SSE lock file: {SSE_LOCK_FILE} (PID: {CURRENT_PID})")
+            logger.debug(f"Acquired server lock file: {SERVER_LOCK_FILE} (PID: {CURRENT_PID})")
             return lock_fd
         except IOError:
             # Lock is held by another process
@@ -1207,8 +1207,8 @@ def acquire_sse_lock():
                 except (OSError, ValueError):
                     pass
             raise RuntimeError(
-                f"SSE server is already running (lock file: {SSE_LOCK_FILE}). "
-                f"Only one SSE server instance can run at a time."
+                f"Server is already running (lock file: {SERVER_LOCK_FILE}). "
+                f"Only one server instance can run at a time."
             )
     except RuntimeError:
         # Re-raise RuntimeError (already running) without cleanup
@@ -1220,70 +1220,70 @@ def acquire_sse_lock():
                 os.close(lock_fd)
             except (OSError, ValueError):
                 pass
-        logger.warning(f"Could not acquire SSE lock: {e}", exc_info=True)
+        logger.warning(f"Could not acquire server lock: {e}", exc_info=True)
         return None
 
 
-def release_sse_lock(lock_fd):
+def release_server_lock(lock_fd):
     """Release lock file"""
     if lock_fd is not None:
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             os.close(lock_fd)
-            if SSE_LOCK_FILE.exists():
-                SSE_LOCK_FILE.unlink()
-            logger.debug(f"Released SSE lock file: {SSE_LOCK_FILE}")
+            if SERVER_LOCK_FILE.exists():
+                SERVER_LOCK_FILE.unlink()
+            logger.debug(f"Released server lock file: {SERVER_LOCK_FILE}")
         except Exception as e:
-            logger.warning(f"Could not release SSE lock: {e}", exc_info=True)
+            logger.warning(f"Could not release server lock: {e}", exc_info=True)
 
 
 async def main():
-    """Main entry point for SSE server."""
+    """Main entry point for governance MCP server."""
     args = parse_args()
 
     # --force: Explicitly clean up lock file and PID file before starting
     if args.force:
         logger.info("--force: Cleaning up stale lock and PID files")
         try:
-            if SSE_LOCK_FILE.exists():
-                SSE_LOCK_FILE.unlink()
-                logger.info(f"Removed lock file: {SSE_LOCK_FILE}")
+            if SERVER_LOCK_FILE.exists():
+                SERVER_LOCK_FILE.unlink()
+                logger.info(f"Removed lock file: {SERVER_LOCK_FILE}")
         except Exception as e:
             logger.warning(f"Could not remove lock file: {e}")
         try:
-            if SSE_PID_FILE.exists():
+            if SERVER_PID_FILE.exists():
                 # Check if PID is actually running before removing
                 try:
-                    with open(SSE_PID_FILE, 'r') as f:
+                    with open(SERVER_PID_FILE, 'r') as f:
                         old_pid = int(f.read().strip())
                     if not is_process_alive(old_pid):
-                        SSE_PID_FILE.unlink()
-                        logger.info(f"Removed stale PID file: {SSE_PID_FILE} (PID {old_pid} not running)")
+                        SERVER_PID_FILE.unlink()
+                        logger.info(f"Removed stale PID file: {SERVER_PID_FILE} (PID {old_pid} not running)")
                     else:
                         logger.warning(f"PID file exists for running process {old_pid}, will terminate it")
                 except (ValueError, IOError):
                     # Invalid PID file, safe to remove
-                    SSE_PID_FILE.unlink()
-                    logger.info(f"Removed invalid PID file: {SSE_PID_FILE}")
+                    SERVER_PID_FILE.unlink()
+                    logger.info(f"Removed invalid PID file: {SERVER_PID_FILE}")
         except Exception as e:
             logger.warning(f"Could not remove PID file: {e}")
 
-    # Process deduplication: Check for and kill existing SSE processes
-    killed = cleanup_existing_sse_processes()
+    # Process deduplication: Check for and kill existing server processes
+    killed = cleanup_existing_server_processes()
     if killed:
-        logger.info(f"Cleaned up {len(killed)} existing SSE server process(es)")
+        logger.info(f"Cleaned up {len(killed)} existing server process(es)")
 
     # Acquire lock to prevent multiple instances
     lock_fd = None
     try:
-        lock_fd = acquire_sse_lock()
+        lock_fd = acquire_server_lock()
     except RuntimeError as e:
         print(f"\n❌ Error: {e}", file=sys.stderr)
         print("💡 Tip: Use --force to clean up stale locks", file=sys.stderr)
         sys.exit(1)
     
     # Write PID file
-    write_sse_pid_file()
+    write_server_pid_file()
 
     # Clean up stale agent locks from crashed processes
     try:
@@ -1326,39 +1326,36 @@ async def main():
             loop.close()
         except Exception as e:
             logger.warning(f"Error closing database: {e}")
-        release_sse_lock(lock_fd)
-        remove_sse_pid_file()
+        release_server_lock(lock_fd)
+        remove_server_pid_file()
     
     atexit.register(cleanup)
     signal.signal(signal.SIGINT, lambda s, f: (cleanup(), sys.exit(0)))
     signal.signal(signal.SIGTERM, lambda s, f: (cleanup(), sys.exit(0)))
     
-    endpoint = f"http://{args.host}:{args.port}/sse"
+    endpoint = f"http://{args.host}:{args.port}/mcp"
     config_json = f'{{"url": "{endpoint}"}}'
-    
+
     print(f"""
 ╔════════════════════════════════════════════════════════════════════╗
 ║       UNITARES Governance MCP Server                               ║
 ╠════════════════════════════════════════════════════════════════════╣
 ║  Version:  {SERVER_VERSION}                                                   ║
 ║                                                                    ║
-║  MCP Transports:                                                   ║
-║    SSE (legacy):       {endpoint:<46}║
-║    Streamable HTTP:    http://{args.host}:{args.port}/mcp                              ║
+║  MCP Transport:                                                    ║
+║    Streamable HTTP:    {endpoint:<46}║
 ║                                                                    ║
 ║  REST API:                                                         ║
 ║    List tools:         GET  /v1/tools                              ║
 ║    Call tool:          POST /v1/tools/call                         ║
 ║    Health:             GET  /health                                ║
 ║    Metrics:            GET  /metrics                               ║
-║                                                                    ║
-║  One server, all transports.                                       ║
 ╚════════════════════════════════════════════════════════════════════╝
 """)
     
-    logger.info(f"Starting SSE server on http://{args.host}:{args.port}/sse")
-    
-    # Run the FastMCP SSE server
+    logger.info(f"Starting governance server on http://{args.host}:{args.port}/mcp")
+
+    # Run the governance MCP server
     try:
         import uvicorn
         from starlette.routing import Route, WebSocketRoute
@@ -1654,7 +1651,7 @@ async def main():
                     if consecutive_failures >= max_consecutive_failures:
                         logger.error(
                             f"[HEARTBEAT] Failed {consecutive_failures} times consecutively. "
-                            f"Connection monitoring degraded. Consider restarting SSE server."
+                            f"Connection monitoring degraded. Consider restarting the server."
                         )
                         consecutive_failures = 0  # Reset to avoid spam
         
@@ -2212,16 +2209,15 @@ async def main():
                     "healthy": sum(1 for c in connection_tracker.connections.values() if c.get("health_status") == "healthy")
                 },
                 "transports": {
-                    "sse": "/sse (legacy, stable)",
-                    "streamable_http": "/mcp (new, with resumability)" if HAS_STREAMABLE_HTTP else "not available"
+                    "streamable_http": "/mcp (primary, with resumability)" if HAS_STREAMABLE_HTTP else "not available",
+                    "sse": "/sse (legacy, deprecated)"
                 },
                 "endpoints": {
                     "list_tools": "GET /v1/tools",
                     "call_tool": "POST /v1/tools/call",
                     "health": "GET /health",
                     "metrics": "GET /metrics",
-                    "dashboard": "GET /dashboard",
-                    "sse_probe": "GET /sse?probe=true (quick connectivity test)"
+                    "dashboard": "GET /dashboard"
                 },
                 "auth": {
                     "enabled": bool(HTTP_API_TOKEN),
@@ -2234,7 +2230,7 @@ async def main():
                     "header": "X-Agent-Id",
                     "description": "CLI/GPT identity - pass your agent name to maintain identity across REST requests"
                 },
-                "note": "Use /sse for legacy MCP clients, /mcp for new Streamable HTTP clients (Cursor 0.43+)"
+                "note": "Use /mcp for MCP clients (Streamable HTTP). Legacy /sse still works but is deprecated."
             })
         
         async def http_metrics(request):
@@ -2593,13 +2589,13 @@ async def main():
         
     except ImportError:
         print("Error: uvicorn not installed. Install with: pip install uvicorn", file=sys.stderr)
-        release_sse_lock(lock_fd)
-        remove_sse_pid_file()
+        release_server_lock(lock_fd)
+        remove_server_pid_file()
         sys.exit(1)
     except Exception as e:
         logger.error(f"Server error: {e}", exc_info=True)
-        release_sse_lock(lock_fd)
-        remove_sse_pid_file()
+        release_server_lock(lock_fd)
+        remove_server_pid_file()
         sys.exit(1)
 
 
@@ -2608,11 +2604,11 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nServer stopped.")
-        release_sse_lock(None)  # Cleanup will be handled by atexit, but try here too
-        remove_sse_pid_file()
+        release_server_lock(None)  # Cleanup will be handled by atexit, but try here too
+        remove_server_pid_file()
         sys.exit(0)
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
-        release_sse_lock(None)
-        remove_sse_pid_file()
+        release_server_lock(None)
+        remove_server_pid_file()
         sys.exit(1)

@@ -2040,9 +2040,27 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                     # Explicit None check for coherence
                     coherence_val = metrics.get("coherence") if metrics.get("coherence") is not None else 0
 
+                    # Get display name: prefer label over UUID
+                    display_name = label if label else declared_agent_id
+                    # If still looks like UUID, try to get label from metadata
+                    if display_name and len(display_name) == 36 and '-' in display_name:
+                        try:
+                            if agent_uuid in mcp_server.agent_metadata:
+                                cached_label = getattr(mcp_server.agent_metadata[agent_uuid], 'label', None)
+                                if cached_label:
+                                    display_name = cached_label
+                        except Exception:
+                            pass
+
+                    # Extract risk values for dashboard clarity
+                    risk_adjusted = metrics.get("risk_score", 0)
+                    risk_raw = metrics.get("current_risk") or metrics.get("latest_risk_score") or risk_adjusted
+                    trajectory_adj = metrics.get("trajectory_risk_adjustment", {})
+
                     await broadcaster_instance.broadcast({
                         "type": "eisv_update",
-                        "agent_id": declared_agent_id,  # User-facing name
+                        "agent_id": agent_uuid,  # UUID for internal use
+                        "agent_name": display_name,  # Human-readable name for dashboard
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         # Restructure for frontend: eisv nested, coherence at top level
                         "eisv": eisv_data,
@@ -2054,7 +2072,10 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                             "confidence": confidence,
                             "ethical_drift": ethical_drift if isinstance(ethical_drift, list) else [0, 0, 0]
                         },
-                        "risk": metrics.get("risk_score", 0)
+                        "risk": risk_adjusted,
+                        "risk_raw": risk_raw,
+                        "risk_adjustment": trajectory_adj.get("delta", 0) if trajectory_adj else 0,
+                        "risk_reason": trajectory_adj.get("reason", "") if trajectory_adj else ""
                     })
                     logger.debug(f"Broadcast EISV update for agent {declared_agent_id}: eisv={eisv_data}, coherence={coherence_val}")
             except Exception as e:

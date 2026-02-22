@@ -92,7 +92,7 @@ EOF
       exit 0
     fi
 
-    # Claude Desktop: stdio client (recommended to proxy to SSE for shared state)
+    # Claude Desktop: stdio client (proxies to shared governance server)
     cat <<EOF
 {
   "mcpServers": {
@@ -103,7 +103,7 @@ EOF
       ],
       "env": {
         "PYTHONPATH": "${PROJECT_DIR}",
-        "UNITARES_STDIO_PROXY_SSE_URL": "${SSE_URL}",
+        "UNITARES_PROXY_URL": "${SSE_URL}",
         "UNITARES_STDIO_PROXY_STRICT": "1"
       }
     }

@@ -1799,6 +1799,25 @@ body {
     color: var(--color-entropy);
 }
 
+/* Agent name in pulse header */
+.pulse-agent-name {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--accent-cyan);
+    padding: 0.2rem 0.5rem;
+    background: rgba(6, 182, 212, 0.1);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+}
+
+/* Risk adjustment detail */
+.pulse-metric-detail {
+    font-size: 0.7rem;
+    font-family: var(--font-mono);
+    margin-left: 0.3rem;
+    opacity: 0.9;
+}
+
 /* Drift gauges — bidirectional */
 .drift-vector {
     display: flex;

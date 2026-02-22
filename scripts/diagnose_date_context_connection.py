@@ -87,24 +87,24 @@ async def test_date_context_stdio():
 
 
 async def test_sse_keepalive():
-    """Test SSE connection with keepalive monitoring."""
-    print("\n🔍 Testing SSE connection keepalive...")
-    
+    """Test governance server connection."""
+    print("\n🔍 Testing governance server connection...")
+
     try:
         import httpx
-        
-        # Test governance server SSE endpoint
-        url = "http://127.0.0.1:8767/sse?probe=true"
-        
+
+        # Test governance server health endpoint
+        url = "http://127.0.0.1:8767/health"
+
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(url)
             if response.status_code == 200:
-                print("✅ Governance SSE server is reachable")
+                print("✅ Governance server is reachable")
                 data = response.json()
                 print(f"   Status: {data.get('status')}")
-                print(f"   Version: {data.get('server_version')}")
+                print(f"   Version: {data.get('version')}")
             else:
-                print(f"⚠️  Governance SSE server returned {response.status_code}")
+                print(f"⚠️  Governance server returned {response.status_code}")
                 
     except Exception as e:
         print(f"⚠️  Could not test SSE: {e}")

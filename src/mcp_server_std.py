@@ -158,24 +158,26 @@ async def read_resource(uri):
     raise ValueError(f"Unknown resource: {uri}")
 
 # -----------------------------------------------------------------------------
-# Optional: STDIO -> SSE Proxy Mode
+# Optional: STDIO -> Server Proxy Mode
 #
 # Motivation:
-# - Claude Desktop is stdio-only, but we want it to participate in the shared SSE
+# - Claude Desktop is stdio-only, but we want it to participate in the shared
 #   server "world" (shared monitors, dialectic sessions, shared state).
 # - When enabled, stdio server becomes a thin proxy that forwards list_tools and
-#   call_tool to an already-running SSE server.
+#   call_tool to an already-running governance server.
 #
 # Enable by setting:
-#   UNITARES_STDIO_PROXY_SSE_URL=http://127.0.0.1:8765/sse
-# OR (preferred standardization path):
-#   UNITARES_STDIO_PROXY_HTTP_URL=http://127.0.0.1:8765
+#   UNITARES_PROXY_URL=http://127.0.0.1:8767/mcp
+# OR (REST-based, preferred for non-MCP clients):
+#   UNITARES_STDIO_PROXY_HTTP_URL=http://127.0.0.1:8767
 #   (also accepts full endpoints ending in /v1/tools or /v1/tools/call)
 # Optional:
-#   UNITARES_STDIO_PROXY_STRICT=1  (default) -> fail if SSE unavailable
+#   UNITARES_STDIO_PROXY_STRICT=1  (default) -> fail if server unavailable
+#
+# Legacy env var UNITARES_STDIO_PROXY_URL is still supported as fallback.
 # -----------------------------------------------------------------------------
 STDIO_PROXY_HTTP_URL = os.getenv("UNITARES_STDIO_PROXY_HTTP_URL")
-STDIO_PROXY_SSE_URL = os.getenv("UNITARES_STDIO_PROXY_SSE_URL")
+STDIO_PROXY_URL = os.getenv("UNITARES_PROXY_URL") or os.getenv("UNITARES_STDIO_PROXY_URL")
 STDIO_PROXY_STRICT = os.getenv("UNITARES_STDIO_PROXY_STRICT", "1").strip().lower() not in ("0", "false", "no")
 STDIO_PROXY_HTTP_BEARER_TOKEN = os.getenv("UNITARES_STDIO_PROXY_HTTP_BEARER_TOKEN")  # optional
 
@@ -286,7 +288,7 @@ def _create_http1_only_client_factory():
 
 async def _proxy_list_tools() -> list[Tool]:
     """
-    Proxy list_tools to remote MCP server (auto-detects SSE vs Streamable HTTP).
+    Proxy list_tools to remote MCP server (auto-detects Streamable HTTP vs legacy SSE).
 
     NOTE: We intentionally use per-request connections to avoid anyio cancel-scope
     edge cases on stdio client disconnect/teardown.
@@ -295,12 +297,12 @@ async def _proxy_list_tools() -> list[Tool]:
     http1_factory = _create_http1_only_client_factory()
 
     # Auto-detect transport based on URL path
-    if "/mcp" in STDIO_PROXY_SSE_URL:
+    if "/mcp" in STDIO_PROXY_URL:
         # Use Streamable HTTP transport
         import httpx
         from mcp.client.streamable_http import streamable_http_client
         async with httpx.AsyncClient(http2=False, timeout=15) as http_client:
-            async with streamable_http_client(STDIO_PROXY_SSE_URL, http_client=http_client) as (read, write, _):
+            async with streamable_http_client(STDIO_PROXY_URL, http_client=http_client) as (read, write, _):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     res = await session.list_tools()
@@ -308,7 +310,7 @@ async def _proxy_list_tools() -> list[Tool]:
     else:
         # Use SSE transport (legacy)
         from mcp.client.sse import sse_client
-        async with sse_client(STDIO_PROXY_SSE_URL, httpx_client_factory=http1_factory) as (read, write):
+        async with sse_client(STDIO_PROXY_URL, httpx_client_factory=http1_factory) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 res = await session.list_tools()
@@ -323,12 +325,12 @@ async def _proxy_call_tool(name: str, arguments: dict[str, Any]) -> Sequence[Tex
     http1_factory = _create_http1_only_client_factory()
 
     # Auto-detect transport based on URL path
-    if "/mcp" in STDIO_PROXY_SSE_URL:
+    if "/mcp" in STDIO_PROXY_URL:
         # Use Streamable HTTP transport
         import httpx
         from mcp.client.streamable_http import streamable_http_client
         async with httpx.AsyncClient(http2=False, timeout=15) as http_client:
-            async with streamable_http_client(STDIO_PROXY_SSE_URL, http_client=http_client) as (read, write, _):
+            async with streamable_http_client(STDIO_PROXY_URL, http_client=http_client) as (read, write, _):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     res = await session.call_tool(name, arguments)
@@ -336,7 +338,7 @@ async def _proxy_call_tool(name: str, arguments: dict[str, Any]) -> Sequence[Tex
     else:
         # Use SSE transport (legacy)
         from mcp.client.sse import sse_client
-        async with sse_client(STDIO_PROXY_SSE_URL, httpx_client_factory=http1_factory) as (read, write):
+        async with sse_client(STDIO_PROXY_URL, httpx_client_factory=http1_factory) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 res = await session.call_tool(name, arguments)
@@ -2800,11 +2802,11 @@ async def list_tools() -> list[Tool]:
             if STDIO_PROXY_STRICT:
                 raise
             return _filtered_local_tools()
-    if STDIO_PROXY_SSE_URL:
+    if STDIO_PROXY_URL:
         try:
             return await _proxy_list_tools()
         except Exception as e:
-            logger.error(f"STDIO proxy list_tools failed ({STDIO_PROXY_SSE_URL}): {e}", exc_info=True)
+            logger.error(f"STDIO proxy list_tools failed ({STDIO_PROXY_URL}): {e}", exc_info=True)
             if STDIO_PROXY_STRICT:
                 raise
             # Non-strict fallback: expose local tools (creates transport silo again; use only for debugging).
@@ -2901,30 +2903,30 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> Sequence[Tex
                             "proxy_url": STDIO_PROXY_HTTP_URL,
                             "tool": name,
                             "exception": str(e),
-                            "note": "Start the HTTP/SSE server or unset UNITARES_STDIO_PROXY_HTTP_URL to run locally (local mode is transport-siloed)."
+                            "note": "Start the governance server or unset UNITARES_STDIO_PROXY_HTTP_URL to run locally (local mode is transport-siloed)."
                         }
                     }, indent=2)
                 )]
             # Non-strict fallback: allow local execution (debug only).
 
-    # Optional stdio->SSE proxy mode (forward to shared SSE server)
-    if STDIO_PROXY_SSE_URL:
+    # Optional stdio->server proxy mode (forward to shared governance server)
+    if STDIO_PROXY_URL:
         try:
             return await _proxy_call_tool(name, arguments)
         except Exception as e:
-            logger.error(f"STDIO proxy call_tool failed ({STDIO_PROXY_SSE_URL}) name={name}: {e}", exc_info=True)
+            logger.error(f"STDIO proxy call_tool failed ({STDIO_PROXY_URL}) name={name}: {e}", exc_info=True)
             # In strict mode, return a clear JSON error instead of falling back to local execution.
             if STDIO_PROXY_STRICT:
                 return [TextContent(
                     type="text",
                     text=json.dumps({
                         "success": False,
-                        "error": f"STDIO proxy mode enabled but SSE server unavailable or errored for tool '{name}'.",
+                        "error": f"STDIO proxy mode enabled but governance server unavailable or errored for tool '{name}'.",
                         "details": {
-                            "proxy_url": STDIO_PROXY_SSE_URL,
+                            "proxy_url": STDIO_PROXY_URL,
                             "tool": name,
                             "exception": str(e),
-                            "note": "Start the SSE server or unset UNITARES_STDIO_PROXY_SSE_URL to run locally (local mode is transport-siloed)."
+                            "note": "Start the governance server or unset UNITARES_PROXY_URL to run locally (local mode is transport-siloed)."
                         }
                     }, indent=2)
                 )]
@@ -3169,7 +3171,7 @@ async def main():
             
             # In stdio proxy mode we intentionally do NOT start local background tasks.
             # Rationale: This process is a thin transport shim; the upstream server owns shared state.
-            if not (STDIO_PROXY_SSE_URL or STDIO_PROXY_HTTP_URL):
+            if not (STDIO_PROXY_URL or STDIO_PROXY_HTTP_URL):
                 # Create background task with error handling
                 bg_task = asyncio.create_task(safe_startup_background_tasks())
                 # Don't await - let it run in background

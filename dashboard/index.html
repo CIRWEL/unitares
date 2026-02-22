@@ -126,6 +126,7 @@
         <div class="panel-header">
             <h2>Governance Pulse</h2>
             <div class="vitals-header-right">
+                <span class="pulse-agent-name" id="pulse-agent-name" title="Current agent">—</span>
                 <span class="governance-verdict" id="gov-verdict">
                     <span class="verdict-dot"></span>
                     <span class="verdict-label">—</span>
@@ -140,6 +141,7 @@
                     <div class="pulse-metric-header">
                         <span class="pulse-metric-label">Risk Score</span>
                         <span class="pulse-metric-value" id="vv-risk">—</span>
+                        <span class="pulse-metric-detail" id="vv-risk-detail" title="Risk adjustment from trajectory analysis"></span>
                     </div>
                     <div class="vital-bar-track"><div class="vital-bar" id="v-risk" style="width:0%;background:#ef4444"></div></div>
                 </div>
@@ -2730,7 +2732,8 @@ ${escapeHtml(details)}</div>
 
             const risk = data.risk ?? 0;
             const action = data.action || 'unknown';
-            const name = data.agent_name || 'unknown';
+            // Prefer agent_name, fallback to agent_id, then 'unknown'
+            const name = data.agent_name || data.agent_id || 'unknown';
             const ts = data.timestamp ? new Date(data.timestamp) : new Date();
             const drift = data.inputs?.ethical_drift;
             const maxDrift = drift ? Math.max(...drift.map(Math.abs)) : 0;
@@ -2758,13 +2761,40 @@ ${escapeHtml(details)}</div>
         }
 
         function updateGovernancePulse(data) {
-            // Risk bar
+            // Agent name display
+            const agentNameEl = document.getElementById('pulse-agent-name');
+            const agentName = data.agent_name || data.agent_id || 'unknown';
+            if (agentNameEl) {
+                // Truncate long names
+                const displayName = agentName.length > 20 ? agentName.substring(0, 17) + '...' : agentName;
+                agentNameEl.textContent = displayName;
+                agentNameEl.title = agentName;
+            }
+
+            // Risk bar with adjustment info
             const risk = data.risk;
             if (risk != null) {
                 const rBar = document.getElementById('v-risk');
                 const rVal = document.getElementById('vv-risk');
+                const rDetail = document.getElementById('vv-risk-detail');
                 if (rBar) rBar.style.width = (risk * 100).toFixed(0) + '%';
                 if (rVal) rVal.textContent = risk.toFixed(3);
+
+                // Show risk adjustment if present
+                if (rDetail) {
+                    const adjustment = data.risk_adjustment || 0;
+                    const rawRisk = data.risk_raw || risk;
+                    const reason = data.risk_reason || '';
+                    if (adjustment !== 0) {
+                        const sign = adjustment > 0 ? '+' : '';
+                        rDetail.textContent = `(${sign}${(adjustment * 100).toFixed(0)}%)`;
+                        rDetail.title = reason || `Base: ${(rawRisk * 100).toFixed(1)}%, Adjusted: ${(risk * 100).toFixed(1)}%`;
+                        rDetail.style.color = adjustment > 0 ? 'var(--risk-high, #ef4444)' : 'var(--risk-low, #22c55e)';
+                    } else {
+                        rDetail.textContent = '';
+                        rDetail.title = '';
+                    }
+                }
             }
 
             // Governance input signals

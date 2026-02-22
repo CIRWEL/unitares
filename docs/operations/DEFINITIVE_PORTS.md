@@ -30,7 +30,7 @@ parser.add_argument("--port", type=int, default=8766, help="HTTP server port (de
 DEFAULT_PORT = 8767  # Standard port for unitares governance on Mac (8766 is anima, 8765 was old default)
 ```
 
-**URL:** `http://localhost:8767/sse` (or via Tailscale: `http://100.96.201.46:8767/sse`)
+**URL:** `http://localhost:8767/mcp` (or via Tailscale: `http://100.96.201.46:8767/mcp`)
 
 ## Configuration Files That Must Match
 

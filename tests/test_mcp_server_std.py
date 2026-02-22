@@ -1308,7 +1308,7 @@ class TestListToolsHandler:
         """When no proxy is configured, should return local tool definitions."""
         from src.mcp_server_std import list_tools
         with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None):
-            with patch("src.mcp_server_std.STDIO_PROXY_SSE_URL", None):
+            with patch("src.mcp_server_std.STDIO_PROXY_URL", None):
                 tools = await list_tools()
                 assert isinstance(tools, list)
                 assert len(tools) > 0
@@ -1333,7 +1333,7 @@ class TestListToolsHandler:
         """When HTTP proxy fails in strict mode, should raise."""
         from src.mcp_server_std import list_tools
         with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", "http://broken:9999"):
-            with patch("src.mcp_server_std.STDIO_PROXY_SSE_URL", None):
+            with patch("src.mcp_server_std.STDIO_PROXY_URL", None):
                 with patch("src.mcp_server_std.STDIO_PROXY_STRICT", True):
                     with patch("src.mcp_server_std._proxy_http_list_tools", new_callable=AsyncMock, side_effect=Exception("connection failed")):
                         with pytest.raises(Exception, match="connection failed"):
@@ -1356,7 +1356,7 @@ class TestCallToolHandler:
         mock_result = [TextContent(type="text", text=json.dumps({"success": True}))]
 
         with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None):
-            with patch("src.mcp_server_std.STDIO_PROXY_SSE_URL", None):
+            with patch("src.mcp_server_std.STDIO_PROXY_URL", None):
                 with patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock, return_value=mock_result) as mock_dispatch:
                     result = await call_tool("health_check", {})
                     assert result == mock_result
@@ -1368,7 +1368,7 @@ class TestCallToolHandler:
         from src.mcp_server_std import call_tool
 
         with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None):
-            with patch("src.mcp_server_std.STDIO_PROXY_SSE_URL", None):
+            with patch("src.mcp_server_std.STDIO_PROXY_URL", None):
                 with patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock, return_value=None):
                     result = await call_tool("nonexistent_tool_xyz", {})
                     assert isinstance(result, list)
@@ -1385,7 +1385,7 @@ class TestCallToolHandler:
         mock_result = [TextContent(type="text", text=json.dumps({"success": True}))]
 
         with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None):
-            with patch("src.mcp_server_std.STDIO_PROXY_SSE_URL", None):
+            with patch("src.mcp_server_std.STDIO_PROXY_URL", None):
                 with patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock, return_value=mock_result) as mock_dispatch:
                     await call_tool("health_check", None)
                     mock_dispatch.assert_called_once_with("health_check", {})
@@ -1396,7 +1396,7 @@ class TestCallToolHandler:
         from src.mcp_server_std import call_tool
 
         with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None):
-            with patch("src.mcp_server_std.STDIO_PROXY_SSE_URL", None):
+            with patch("src.mcp_server_std.STDIO_PROXY_URL", None):
                 with patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock, side_effect=RuntimeError("handler crashed")):
                     result = await call_tool("broken_tool", {})
                     assert isinstance(result, list)
@@ -1409,7 +1409,7 @@ class TestCallToolHandler:
         from src.mcp_server_std import call_tool
 
         with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None):
-            with patch("src.mcp_server_std.STDIO_PROXY_SSE_URL", None):
+            with patch("src.mcp_server_std.STDIO_PROXY_URL", None):
                 with patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock, side_effect=ImportError("module not found")):
                     # dispatch_tool raises ImportError which is caught in call_tool
                     result = await call_tool("some_tool", {})
@@ -1437,7 +1437,7 @@ class TestCallToolHandler:
         from src.mcp_server_std import call_tool
 
         with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None):
-            with patch("src.mcp_server_std.STDIO_PROXY_SSE_URL", "http://broken:9999"):
+            with patch("src.mcp_server_std.STDIO_PROXY_URL", "http://broken:9999"):
                 with patch("src.mcp_server_std.STDIO_PROXY_STRICT", True):
                     with patch("src.mcp_server_std._proxy_call_tool", new_callable=AsyncMock, side_effect=Exception("sse fail")):
                         result = await call_tool("some_tool", {})

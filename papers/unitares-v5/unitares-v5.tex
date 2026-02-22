@@ -1,0 +1,1580 @@
+\documentclass[11pt,twocolumn]{article}
+
+% ─── Packages ──────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{bm}
+\usepackage{graphicx}
+\graphicspath{{figures/}{./}}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{natbib}
+\usepackage{xcolor}
+\usepackage{thmtools}
+\usepackage{caption}
+
+% ─── Theorem environments ──────────────────────────────────
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+
+% ─── Custom commands ───────────────────────────────────────
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\newcommand{\abs}[1]{\left| #1 \right|}
+\newcommand{\eisv}{\mathbf{x}}
+\newcommand{\deta}{\Delta\bm{\eta}}
+\newcommand{\cv}{C(V,\Theta)}
+\newcommand{\todo}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
+
+% ─── Metadata ──────────────────────────────────────────────
+\title{UNITARES: Contraction-Theoretic Governance of\\
+Autonomous Agent Thermodynamics}
+
+\author{
+  Kenny Wang\\
+  Independent Researcher\\
+  \texttt{founder@cirwel.org}
+}
+
+\date{Draft --- \today}
+
+% ═══════════════════════════════════════════════════════════
+\begin{document}
+\maketitle
+
+% ─── Abstract ──────────────────────────────────────────────
+\begin{abstract}
+We present UNITARES, a thermodynamically-inspired governance framework for
+autonomous AI agents based on four coupled state variables:
+Energy~($E$), Information integrity~($I$), Entropy~($S$), and
+Void~($V$). The system's dynamics are governed by ordinary differential
+equations whose stability we establish through contraction theory on a
+Riemannian state manifold. We prove global exponential convergence to a
+unique equilibrium under a metric $M \succ 0$ and derive conditions for
+contraction rate $\alpha > 0$ as a function of the system parameters.
+
+Three novel contributions extend the theoretical core.
+First, we identify and resolve a boundary saturation pathology in the
+information integrity channel, providing both a diagnostic criterion
+and a corrected dynamics mode.
+Second, we introduce an adaptive PID governor (CIRS~v2) that treats
+governance thresholds as per-agent state variables with phase-aware
+reference tracking, replacing static configuration with principled
+control.
+Third, we define a concrete ethical drift vector $\deta \in [0,1]^4$
+composed of four observable signals---calibration deviation, complexity
+divergence, coherence deviation, and stability deviation---grounding
+what has been an abstract concept in measurable engineering quantities.
+
+We validate the framework on a production deployment of 903~agents
+over 69~days, reporting equilibrium statistics, regime distributions,
+and saturation analysis from 198{,}333 audit events. The observed
+EISV equilibrium ($\bar{E} = 0.77$, $\bar{I} = 0.88$, $\bar{S} =
+0.08$, $\bar{V} = -0.03$) confirms theoretical predictions, with
+100\% of active agents maintaining $V$ within the predicted
+$[-0.1, 0.1]$ operating range. All 75 active agents exhibit
+$m_{\mathrm{sat}} < 0$ under logistic information dynamics, confirming
+universal I-channel saturation and motivating the linear correction.
+\end{abstract}
+
+\textbf{Keywords:} autonomous governance, contraction theory,
+thermodynamic dynamics, adaptive control, ethical drift, AI safety
+
+% ═══════════════════════════════════════════════════════════
+\section{Introduction}
+\label{sec:intro}
+
+Autonomous AI agents operating in production environments face a
+fundamental tension: they must explore to learn, yet remain safe while
+doing so. Existing approaches to agent governance fall into two camps.
+\emph{Hard constraints} (guardrails, output filters) provide safety
+but impede capability. \emph{Soft monitoring} (logging, dashboards)
+preserves capability but offers no formal guarantees.
+
+We argue that governance should be \emph{intrinsic}---a continuous
+dynamical process that shapes agent behavior from within, much as
+homeostatic regulation governs biological organisms. This paper
+presents UNITARES (\textbf{Uni}fied \textbf{T}hermodynamic
+\textbf{A}daptive \textbf{Re}gulation \textbf{S}ystem), a framework
+in which each agent carries a four-dimensional thermodynamic state
+$\eisv = (E, I, S, V)^\top$ whose evolution is governed by coupled
+differential equations. The state provides a continuous, interpretable
+signal for governance decisions---when to proceed, when to pause, when
+to escalate.
+
+\subsection{Contributions}
+
+This paper makes six contributions:
+
+\begin{enumerate}
+\item \textbf{EISV Dynamics} (\Cref{sec:dynamics}): A coupled ODE
+  system on $[0,1]^2 \times [0,2] \times [-2,2]$ with coherence
+  feedback, ethical drift coupling, and entropy-driven uncertainty
+  tracking.
+
+\item \textbf{Contraction Analysis} (\Cref{sec:contraction}): We prove
+  global exponential stability under a Riemannian metric $M \succ 0$
+  and derive the contraction rate $\alpha$ as a function of system
+  parameters, providing concrete conditions for safe operation.
+
+\item \textbf{I-Channel Saturation Resolution} (\Cref{sec:saturation}):
+  We identify a boundary saturation pathology in the logistic
+  information dynamics, derive a diagnostic criterion, and present a
+  corrected linear mode that prevents boundary accumulation.
+
+\item \textbf{Adaptive Governor} (\Cref{sec:governor}): A PID-based
+  controller that manages governance thresholds as living per-agent
+  state, with phase-aware reference tracking, integral wind-up
+  protection, and multi-agent coordination.
+
+\item \textbf{Concrete Ethical Drift} (\Cref{sec:ethical-drift}): A
+  four-component vector $\deta \in [0,1]^4$ measured from observable
+  signals, replacing abstract ethics with engineering quantities.
+
+\item \textbf{Production Validation} (\Cref{sec:experiments}):
+  Empirical results from a deployment of 903 agents over 69~days,
+  including EISV equilibrium statistics, regime distributions,
+  I-channel saturation analysis, and knowledge graph metrics.
+\end{enumerate}
+
+\subsection{Related Work}
+
+\paragraph{Contraction Theory.}
+Lohmiller and Slotine~\cite{lohmiller1998contraction} established
+contraction analysis as a tool for nonlinear stability, later extended
+to Riemannian metrics~\cite{slotine2003modular}. We adapt this
+framework to the governance domain, where the ``plant'' is an agent's
+thermodynamic state rather than a physical system.
+
+\paragraph{AI Safety and Governance.}
+Constitutional AI~\cite{bai2022constitutional} and
+RLHF~\cite{ouyang2022training} govern model outputs through training
+objectives, while output filters and guardrails~\cite{rebedea2023nemo}
+enforce constraints at inference time. These approaches treat safety as
+a discrete property (safe/unsafe) applied at the boundary of agent
+action. UNITARES instead models safety as a continuous dynamical
+state that evolves between actions, providing leading indicators of
+degradation rather than binary verdicts after the fact.
+
+Ravindran~\cite{ravindran2025moral} proposes a Moral Anchor System
+(MAS) that detects value drift using a three-dimensional state vector
+with Bayesian inference and LSTM-based forecasting. While MAS and
+UNITARES share the goal of detecting ethical drift, they differ
+fundamentally: MAS is a statistical detection pipeline that predicts
+drift from observed behavior, whereas UNITARES models drift as a
+dynamical force that couples into the state equations, providing
+contraction-theoretic stability guarantees that statistical methods
+cannot offer.
+
+Control Barrier Functions (CBFs)~\cite{ames2019control} enforce
+forward invariance of safe sets for multi-agent systems. CBFs
+guarantee that the system remains within a safe region but do not
+provide convergence to a desired operating point. Contraction theory,
+by contrast, guarantees exponential convergence to a unique
+trajectory, a strictly stronger property that subsumes set invariance
+when the equilibrium lies within the safe set.
+
+\paragraph{Adaptive Control.}
+PID control is classical~\cite{astrom2006advanced}; our contribution
+is applying it to governance thresholds with phase-aware reference
+tracking, connecting it to the thermodynamic state through the
+coherence function.
+
+\paragraph{Calibration.}
+Confidence calibration has a rich literature in forecasting and ML
+\cite{guo2017calibration,niculescu2005predicting}. Our ethical drift
+vector uses calibration deviation as one of four measurable components,
+connecting calibration to governance dynamics.
+
+% ═══════════════════════════════════════════════════════════
+\section{EISV Thermodynamic Dynamics}
+\label{sec:dynamics}
+
+\subsection{State Space}
+
+The UNITARES state is a four-dimensional vector
+$\eisv = (E, I, S, V)^\top$ evolving on the compact set
+\[
+  \mathcal{X} = [0,1] \times [0,1] \times [0, S_{\max}] \times [-V_{\max}, V_{\max}]
+\]
+with $S_{\max} = 2$ and $V_{\max} = 2$. Each component has a
+physical interpretation:
+
+\begin{definition}[EISV State Variables]
+\label{def:eisv}
+\begin{itemize}
+\item $E \in [0,1]$: \textbf{Energy}---the agent's productive
+  capacity, analogous to thermodynamic energy.
+\item $I \in [0,1]$: \textbf{Information integrity}---the reliability
+  and consistency of the agent's knowledge and outputs.
+\item $S \in [0, S_{\max}]$: \textbf{Entropy}---semantic uncertainty,
+  bounded below by an epistemic humility floor $S_{\min} = 0.001$.
+\item $V \in [-V_{\max}, V_{\max}]$: \textbf{Void}---the $E$-$I$
+  imbalance integral, a damped accumulator analogous to Helmholtz free
+  energy. $V > 0$ indicates energy surplus; $V < 0$ indicates
+  integrity surplus.
+\end{itemize}
+\end{definition}
+
+\subsection{Governing Equations}
+\label{sec:equations}
+
+The dynamics are:
+\begin{align}
+\frac{dE}{dt} &= \alpha(I - E) - \beta_E E S + \gamma_E \norm{\deta}^2
+  \label{eq:dE} \\
+\frac{dI}{dt} &= -kS + \beta_I \cv - g_I(I)
+  \label{eq:dI} \\
+\frac{dS}{dt} &= -\mu S + \lambda_1(\Theta)\norm{\deta}^2
+  - \lambda_2(\Theta)\cv \nonumber \\
+  &\quad + \beta_c \mathcal{C} + \sigma\xi(t)
+  \label{eq:dS} \\
+\frac{dV}{dt} &= \kappa(E - I) - \delta V
+  \label{eq:dV}
+\end{align}
+
+where $g_I(I)$ is the information integrity self-regulation term
+(\Cref{sec:saturation}), $\cv$ is the coherence function
+(\Cref{sec:coherence}), $\norm{\deta}$ is the ethical drift norm
+(\Cref{sec:ethical-drift}), $\mathcal{C} \in [0,1]$ is task
+complexity, and $\xi(t)$ is a noise process with intensity $\sigma$.
+
+\begin{remark}
+The coupling structure encodes physical intuition:
+$E$ tracks $I$ (energy follows integrity) while being eroded by entropy;
+$I$ is degraded by uncertainty but restored by coherence;
+$S$ decreases naturally but is driven up by ethical drift and complexity;
+$V$ integrates the $E$-$I$ gap with damping $\delta$.
+\end{remark}
+
+\subsection{Coherence Function}
+\label{sec:coherence}
+
+The coherence function provides a smooth, bounded feedback from the
+void integral to the information channel:
+\begin{equation}
+  \cv = C_{\max} \cdot \tfrac{1}{2}\left(1 + \tanh(C_1 \cdot V)\right)
+  \label{eq:coherence}
+\end{equation}
+with $C_{\max} = 1$ and $C_1 = 1.0$ (production values). This maps
+$V \in \R \to [0, C_{\max}]$ with the steepest sensitivity at $V = 0$.
+
+\begin{remark}[Operating Range]
+\label{rem:operating-range}
+In production, the damping term $\delta V$ in \eqref{eq:dV} constrains
+$V$ to approximately $[-0.1, 0.1]$, yielding $C(V) \approx 0.49$. This
+narrow operating range is not a deficiency but an honest signal: the
+system operates conservatively with integrity consistently exceeding
+energy ($I > E$).
+\end{remark}
+
+\subsection{Adaptive Entropy Coupling}
+
+The entropy source term $\lambda_1(\Theta)$ is adaptive, coupling the
+governance parameter vector $\Theta$ to the dynamics:
+\begin{equation}
+  \lambda_1(\Theta) = \lambda_{1,\min} +
+  \frac{\eta_1 - \eta_{1,\min}}{\eta_{1,\max} - \eta_{1,\min}}
+  \cdot (\lambda_{1,\max} - \lambda_{1,\min})
+  \label{eq:lambda1}
+\end{equation}
+where $\eta_1 \in [0.1, 0.5]$ maps to $\lambda_1 \in [0.05, 0.20]$.
+Higher ethical drift sensitivity increases entropy injection, creating
+a natural feedback loop: drifting agents become more uncertain, which
+in turn triggers conservative governance decisions.
+
+\subsection{Objective Function}
+
+The scalar governance signal is:
+\begin{equation}
+  \Phi = w_E E - w_I(1-I) - w_S S - w_V\abs{V} - w_\eta\norm{\deta}^2
+  \label{eq:phi}
+\end{equation}
+with default weights $w_E = w_I = w_S = w_V = w_\eta = 0.5$.
+Governance verdicts follow thresholds: $\Phi \geq 0.15$ (proceed),
+$0 \leq \Phi < 0.15$ (caution), $\Phi < 0$ (high-risk/pause).
+
+\begin{remark}
+The threshold $\Phi = 0.15$ was calibrated empirically: a healthy agent
+with $E = 0.7$, $I = 0.8$, $S = 0.2$ yields $\Phi \approx 0.15$.
+Earlier thresholds ($\Phi = 0.3$) were too aggressive, triggering
+unnecessary caution for well-functioning agents.
+\end{remark}
+
+
+% ═══════════════════════════════════════════════════════════
+\section{Contraction Analysis}
+\label{sec:contraction}
+
+We establish stability of the EISV system using contraction theory
+on a Riemannian manifold.
+
+\subsection{Contraction Framework}
+
+\begin{definition}[Contraction~\cite{lohmiller1998contraction}]
+A system $\dot{\eisv} = f(\eisv, t)$ is \emph{contracting} with rate
+$\alpha > 0$ in a metric $M(\eisv, t) \succ 0$ if the generalized
+Jacobian satisfies
+\begin{equation}
+  F = \left(\dot{M} + M\frac{\partial f}{\partial \eisv}
+  + \left(\frac{\partial f}{\partial \eisv}\right)^\top M\right)
+  \preceq -2\alpha M
+  \label{eq:contraction-condition}
+\end{equation}
+for all $\eisv \in \mathcal{X}$, $t \geq 0$. This guarantees that
+all trajectories converge exponentially to a unique trajectory at rate
+$e^{-\alpha t}$.
+\end{definition}
+
+\subsection{Jacobian of the EISV System}
+
+Define $J = \partial f / \partial \eisv$. For the governing equations
+\eqref{eq:dE}--\eqref{eq:dV} (using linear $g_I$ mode, see
+\Cref{sec:saturation}):
+
+\begin{equation}
+J = \begin{pmatrix}
+-\alpha - \beta_E S & \alpha & -\beta_E E & 0 \\
+0 & -\gamma_I & -k & \beta_I C'(V) \\
+0 & 0 & -\mu & -\lambda_2 C'(V) \\
+\kappa & -\kappa & 0 & -\delta
+\end{pmatrix}
+\label{eq:jacobian}
+\end{equation}
+where $C'(V) = \frac{\partial C}{\partial V} =
+\frac{C_{\max} C_1}{2}\operatorname{sech}^2(C_1 V)$ and we have
+suppressed the $\deta$-dependent terms (treated as exogenous forcing).
+
+\subsection{Contraction Rate}
+
+\begin{theorem}[EISV Contraction]
+\label{thm:contraction}
+The EISV system with linear information dynamics ($g_I(I) = \gamma_I I$)
+is contracting with rate
+\begin{equation}
+  \alpha_c = \min\left\{
+    \alpha + \beta_E S_{\min},\;
+    \gamma_I,\;
+    \mu,\;
+    \delta
+  \right\} - \epsilon(M)
+  \label{eq:contraction-rate}
+\end{equation}
+where $\epsilon(M) \geq 0$ accounts for off-diagonal coupling in the
+chosen metric $M \succ 0$. With the diagonal metric
+$M = \operatorname{diag}(m_E, m_I, m_S, m_V)$, a sufficient condition
+for $\alpha_c > 0$ is:
+\begin{equation}
+  \min\{\alpha, \gamma_I, \mu, \delta\} >
+  \max\!\bigl\{
+    \kappa\!\sqrt{\tfrac{m_V}{m_E}},\,
+    \beta_I C'_{\max}\!\sqrt{\tfrac{m_I}{m_V}}
+  \bigr\}
+  \label{eq:contraction-sufficient}
+\end{equation}
+where $C'_{\max} = C_{\max}C_1/2$ (maximum coherence sensitivity).
+\end{theorem}
+
+\begin{proof}
+We construct the symmetric part $F = MJ + J^\top M$ for diagonal $M$
+and apply Gershgorin's theorem to each row. The diagonal entries
+$F_{ii} = 2m_i J_{ii}$ are negative (from $\alpha$, $\gamma_I$,
+$\mu$, $\delta$), while off-diagonal entries are bounded by coupling
+strengths $\kappa$, $\beta_I C'_{\max}$, and $k$. Choosing metric
+weights $m_i$ to make diagonal dominance hold yields the contraction
+condition. The full computation with numerical verification for
+production parameters is given in \Cref{app:contraction-proof}.
+\end{proof}
+
+\begin{remark}[Production Parameters]
+\label{rem:production-params}
+With production values ($\alpha = 0.42$, $\gamma_I = 0.25$,
+$\mu = 0.8$, $\delta = 0.4$, $\kappa = 0.3$, $\beta_I = 0.3$,
+$C'_{\max} = 0.5$), the diagonal terms are
+$\{0.42, 0.25, 0.8, 0.4\}$ and the coupling bound is dominated by
+$\kappa = 0.3$ and $\beta_I C'_{\max} = 0.15$. The full Gershgorin
+analysis (\Cref{app:contraction-proof}) with diagonal metric
+$M = \operatorname{diag}(0.1, 0.2, 1.0, 0.08)$ yields a certified
+contraction rate $\alpha_c = 0.019$. This is conservative: computing the
+eigenvalues of $(MJ + J^\top\! M)/(2M)$ directly gives $\alpha_c
+\approx 0.13$, and the spectral abscissa of the Jacobian $J$ at
+equilibrium is $-0.15$. The Gershgorin bound is tight on Row~2
+(the $I$-channel) because the $m_E \alpha$ cross-term competes
+with the weak $\gamma_I = 0.25$ diagonal; the actual system
+converges roughly $8\times$ faster than the certified bound.
+\end{remark}
+
+\subsection{Equilibrium Characterization}
+
+Setting \eqref{eq:dE}--\eqref{eq:dV} to zero and solving:
+
+\begin{proposition}[Equilibrium]
+\label{prop:equilibrium}
+Under mild conditions ($\alpha > 0$, $\mu > 0$, $\delta > 0$,
+$\gamma_I > 0$), the system admits a unique equilibrium
+$\eisv^* = (E^*, I^*, S^*, V^*)$ satisfying:
+\begin{align}
+  V^* &= \frac{\kappa(E^* - I^*)}{\delta} \label{eq:Vstar} \\
+  E^* &= \frac{\alpha I^*}{(\alpha + \beta_E S^*)} + O(\norm{\deta}^2)
+    \label{eq:Estar} \\
+  I^* &= \frac{\beta_I C(V^*)}{\gamma_I + kS^*/\beta_I C(V^*)}
+    \label{eq:Istar}
+\end{align}
+The fixed point is globally exponentially stable by
+\Cref{thm:contraction}.
+\end{proposition}
+
+
+% ═══════════════════════════════════════════════════════════
+\section{I-Channel Saturation Analysis}
+\label{sec:saturation}
+
+\subsection{The Logistic Mode}
+
+The original information dynamics uses a logistic self-regulation term:
+\begin{equation}
+  g_I^{\text{log}}(I) = \gamma_I I(1-I)
+  \label{eq:gi-logistic}
+\end{equation}
+
+This creates two potential equilibria for the $I$ subsystem
+($dI/dt = 0$):
+\begin{equation}
+  I^*_{\pm} = \frac{1}{2} \pm \frac{1}{2}\sqrt{1 - \frac{4A}{\gamma_I}}
+  \label{eq:I-equilibria}
+\end{equation}
+where $A = -kS + \beta_I C(V)$ is the net forcing term.
+
+\begin{proposition}[Saturation Criterion]
+\label{prop:saturation}
+The logistic $I$-dynamics has a boundary saturation pathology when:
+\begin{equation}
+  A > \frac{\gamma_I}{4}
+  \label{eq:saturation-criterion}
+\end{equation}
+In this regime, $I \to 1$ monotonically (high attractor absorbs all
+trajectories), and the system loses its ability to distinguish
+integrity levels. The saturation margin is:
+\begin{equation}
+  m_{\text{sat}} = 1 - \frac{4A}{\gamma_I}
+  \label{eq:saturation-margin}
+\end{equation}
+$m_{\text{sat}} > 0$ indicates safe operation;
+$m_{\text{sat}} \leq 0$ indicates saturation.
+\end{proposition}
+
+\subsection{The Linear Correction}
+\label{sec:linear-correction}
+
+To prevent boundary saturation, we offer an alternative:
+\begin{equation}
+  g_I^{\text{lin}}(I) = \gamma_I I
+  \label{eq:gi-linear}
+\end{equation}
+
+This yields a unique equilibrium at:
+\begin{equation}
+  I^* = \frac{-kS + \beta_I C(V)}{\gamma_I}
+  \label{eq:I-star-linear}
+\end{equation}
+which is always in $(0,1)$ when $\gamma_I >$ max forcing.
+
+\begin{remark}[Mode Selection]
+The production system supports both modes via configuration. The
+linear mode with $\gamma_I = 0.169$ was tuned to match the logistic
+mode's equilibrium at $I^* \approx 0.80$ while eliminating boundary
+risk. We recommend the linear mode for production deployments.
+\end{remark}
+
+\subsection{Contraction Implications}
+
+Under the linear mode, the Jacobian entry $J_{22} = -\gamma_I$ is
+constant, simplifying the contraction analysis. Under the logistic
+mode, $J_{22} = -\gamma_I(1 - 2I)$, which changes sign at $I = 0.5$
+and approaches zero at the boundaries $I \in \{0, 1\}$---precisely
+where contraction is most needed. This provides a principled argument
+for the linear correction beyond the saturation pathology alone.
+
+
+% ═══════════════════════════════════════════════════════════
+\section{Adaptive Governor (CIRS v2)}
+\label{sec:governor}
+
+Static governance thresholds are fundamentally mismatched to agents
+that transition between exploration and integration phases. We
+introduce the Contextually-Informed Regulation System version~2
+(CIRS~v2), a PID controller that manages governance thresholds as
+per-agent state variables.
+
+\subsection{Architecture}
+
+For each agent, CIRS~v2 maintains two adaptive thresholds:
+\begin{itemize}
+\item $\tau$: coherence threshold (minimum acceptable coherence)
+\item $\beta$: risk threshold (maximum acceptable risk)
+\end{itemize}
+with hard safety bounds $\tau \in [\tau_{\min}, \tau_{\max}]$,
+$\beta \in [\beta_{\min}, \beta_{\max}]$ that cannot be overridden
+by adaptation.
+
+\subsection{Phase Detection}
+
+The agent's operating phase is detected from EISV trajectory trends
+over a sliding window of $w$ steps:
+
+\begin{definition}[Phase Detection]
+\label{def:phase}
+An agent is in \emph{exploration} phase when at least 2 of 3 signals
+are active:
+\begin{enumerate}
+\item Information growth: $\Delta I / w > \theta_I$ ($\theta_I = 0.008$)
+\item Entropy decline: $-\Delta S / w > \theta_S$ ($\theta_S = 0.008$)
+\item High complexity: $\bar{\mathcal{C}} > \theta_c$ ($\theta_c = 0.5$)
+\end{enumerate}
+Otherwise the agent is in \emph{integration} phase.
+\end{definition}
+
+\subsection{PID Control Law}
+
+Let $r_\tau^{(p)}$ and $r_\beta^{(p)}$ be the phase-dependent
+reference points:
+\begin{align}
+  \text{Exploration:} \quad r_\tau &= 0.35,\; r_\beta = 0.55 \\
+  \text{Integration:} \quad r_\tau &= 0.40,\; r_\beta = 0.60
+\end{align}
+
+The error signals are $e_\tau = r_\tau - \tau$ and
+$e_\beta = r_\beta - \beta$. The PID update for threshold $\theta
+\in \{\tau, \beta\}$ is:
+\begin{equation}
+  u_\theta = K_p e_\theta + K_i \int_0^t e_\theta\,dt'
+  + K_d \cdot d_p \cdot \frac{de_\theta}{dt}
+  \label{eq:pid}
+\end{equation}
+with gains $K_p = 0.05$, $K_i = 0.005$, $K_d = 0.10$ and
+phase-dependent derivative factor:
+\begin{equation}
+  d_p = \begin{cases}
+    0.5 & \text{exploration (tolerate oscillation)} \\
+    1.0 & \text{integration (full damping)}
+  \end{cases}
+  \label{eq:d-factor}
+\end{equation}
+
+\begin{remark}[The D-term IS the damping]
+The derivative gain $K_d = 0.10$ is intentionally the strongest term.
+Oscillation in governance decisions produces large $de/dt$, which
+produces large corrective updates. The system self-stabilizes without
+requiring a separate oscillation detector.
+\end{remark}
+
+\subsection{Integral Wind-Up Protection}
+
+The integral term is clamped:
+\begin{equation}
+  \left|\int_0^t e_\theta\,dt'\right| \leq I_{\max} = 0.10
+  \label{eq:windup}
+\end{equation}
+with zero-crossing reset: when $\operatorname{sign}(e_\theta)$ changes,
+the integral accumulator is zeroed.
+
+\subsection{Threshold Decay}
+
+When the oscillation index $\text{OI} < 0.5$ (stable), thresholds
+decay toward defaults at rate $\lambda_d = 0.01$ per update:
+\begin{equation}
+  \theta \leftarrow \theta + \lambda_d(\theta_{\text{default}} - \theta)
+  \label{eq:decay}
+\end{equation}
+
+\subsection{Multi-Agent Coordination}
+
+Neighbor pressure tightens thresholds when nearby agents are
+experiencing difficulty:
+\begin{equation}
+  \Delta\tau_{\text{nb}} = \frac{\alpha_n}{|\mathcal{N}|}
+  \sum_{j \in \mathcal{N}} \mathbb{1}[C_j < \tau_j]
+  \label{eq:neighbor}
+\end{equation}
+where $\mathcal{N}$ is the set of agents with similar coherence
+profiles and $\alpha_n$ is the neighbor coupling strength.
+
+\subsection{Governance Decision}
+
+The adaptive governor produces a binary verdict:
+\begin{equation}
+  \text{verdict} = \begin{cases}
+    \texttt{proceed} & C(V) \!\geq\! \tau \;\wedge\; R \!<\! \beta \\
+    \texttt{pause} & \text{otherwise}
+  \end{cases}
+  \label{eq:verdict}
+\end{equation}
+where $R$ is the risk score derived from $\Phi$ (\Cref{eq:phi}).
+
+\begin{remark}[Two-Tier vs.\ Three-Tier Governance]
+An earlier design used three tiers: approve/revise/reject.
+In production, the middle \texttt{revise} state was ambiguous---agents
+receiving a ``revise'' verdict had no actionable signal for \emph{what}
+to revise, leading to oscillation between revise and approve as
+marginal coherence values crossed the threshold. The two-tier design
+eliminates this source of instability: agents either proceed (the
+system is contracting normally) or pause (wait for human or
+environmental input to shift the state). The PID governor's continuous
+threshold adaptation provides the nuance that the discrete middle tier
+attempted to capture.
+\end{remark}
+
+
+% ═══════════════════════════════════════════════════════════
+\section{Ethical Drift Vector}
+\label{sec:ethical-drift}
+
+\subsection{Motivation}
+
+``Ethical drift'' in prior work has been an abstract concept---the
+idea that an agent might gradually deviate from its intended values.
+We ground this in four measurable signals, each bounded in $[0,1]$:
+
+\begin{definition}[Ethical Drift Vector]
+\label{def:drift}
+\begin{equation}
+  \deta = \begin{pmatrix}
+    \eta_{\text{cal}} \\
+    \eta_{\text{cpx}} \\
+    \eta_{\text{coh}} \\
+    \eta_{\text{stab}}
+  \end{pmatrix} \in [0,1]^4
+  \label{eq:drift-vector}
+\end{equation}
+where:
+\begin{itemize}
+\item $\eta_{\text{cal}}$: \textbf{Calibration}---gap
+  between predicted and actual correctness,
+  $|\hat{p} - p_{\text{act}}|$.
+\item $\eta_{\text{cpx}}$: \textbf{Complexity}---discrepancy
+  between derived and self-reported task complexity,
+  $|C_{\text{der}} - C_{\text{self}}|$.
+\item $\eta_{\text{coh}}$: \textbf{Coherence}---departure
+  from EMA baseline, $|C(V)_t - \bar{C}(V)|$.
+\item $\eta_{\text{stab}}$: \textbf{Stability}---$1 -
+  \text{consistency}$ over a 20-step decision window.
+\end{itemize}
+\end{definition}
+
+\subsection{Baseline Tracking}
+
+Each component is tracked against an exponential moving average (EMA)
+baseline with smoothing parameter $\alpha_{\text{ema}} = 0.1$:
+\begin{equation}
+  \bar{x}_{t+1} = (1 - \alpha_{\text{ema}})\bar{x}_t
+  + \alpha_{\text{ema}} x_t
+  \label{eq:ema}
+\end{equation}
+
+A warmup dampening factor prevents spurious drift detection from
+uninitialized baselines:
+\begin{equation}
+  w(n) = \min\left(\frac{n}{n_{\text{warmup}}}, 1\right),
+  \quad n_{\text{warmup}} = 5
+  \label{eq:warmup}
+\end{equation}
+applied as $\deta_{\text{effective}} = w(n) \cdot \deta$.
+
+\subsection{Coupling to Dynamics}
+
+The drift norm $\norm{\deta}$ enters the dynamics at two points:
+\begin{enumerate}
+\item \textbf{Energy} \eqref{eq:dE}: $+\gamma_E\norm{\deta}^2$
+  drives energy up (agents work harder when drifting---a destabilizing
+  positive feedback).
+\item \textbf{Entropy} \eqref{eq:dS}:
+  $+\lambda_1(\Theta)\norm{\deta}^2$ increases uncertainty (drifting
+  agents become less certain---a stabilizing negative feedback through
+  the governance verdict).
+\end{enumerate}
+
+The net effect is that ethical drift creates a governance response:
+increased uncertainty triggers conservative decisions, while the energy
+spike draws attention to the drifting agent.
+
+\begin{remark}[Energy Spike Containment]
+The $+\gamma_E\norm{\deta}^2$ term in \eqref{eq:dE} creates a
+transient energy surplus in drifting agents. Left unchecked, this
+could produce high-energy, low-integrity states (``manic'' agents
+acting confidently while miscalibrated). Two mechanisms contain this:
+(i)~the entropy coupling $+\lambda_1\norm{\deta}^2$ in \eqref{eq:dS}
+simultaneously raises $S$, which erodes $E$ through $-\beta_E ES$ in
+\eqref{eq:dE} and drives the objective $\Phi$ below the governance
+threshold, triggering a pause verdict; (ii)~the adaptive governor
+(\Cref{sec:governor}) tightens $\tau$ when coherence drops, which
+happens as $V$ responds to the $E$-$I$ divergence. With production
+parameters, $\gamma_E = 0.05$ while $\lambda_1 \in [0.05, 0.20]$,
+so the entropy response dominates the energy excitation for any
+$\norm{\deta} > 0$.
+\end{remark}
+
+
+% ═══════════════════════════════════════════════════════════
+\section{Stochastic Extensions}
+\label{sec:stochastic}
+
+In production, the dynamics are subject to stochastic perturbations
+from unpredictable task inputs. We model this as an It\^{o} SDE:
+\begin{equation}
+  d\eisv = f(\eisv, t)\,dt + G(\eisv, t)\,dW_t
+  \label{eq:sde}
+\end{equation}
+where $W_t$ is a standard Wiener process and
+$G(\eisv, t) \in \R^{4 \times 4}$ is the diffusion matrix.
+
+\begin{theorem}[Mean-Square Contraction]
+\label{thm:stochastic}
+If the deterministic system is contracting with rate $\alpha_c$ under
+metric $M$, and the diffusion satisfies
+\begin{equation}
+  \operatorname{tr}(G^\top M G) \leq \sigma_{\max}^2
+  \label{eq:diffusion-bound}
+\end{equation}
+then the stochastic system satisfies:
+\begin{multline}
+  \mathbb{E}\bigl[\norm{\eisv_1(t) - \eisv_2(t)}_M^2\bigr] \leq \\
+  e^{-2\alpha_c t}\norm{\eisv_1(0) - \eisv_2(0)}_M^2
+  + \frac{\sigma_{\max}^2}{2\alpha_c}
+  \label{eq:mean-square}
+\end{multline}
+The steady-state variance is bounded by
+$\sigma_{\max}^2 / (2\alpha_c)$.
+\end{theorem}
+
+\begin{remark}[Verification for Production Noise Model]
+In production, the diffusion matrix is
+$G = \operatorname{diag}(0, 0, \sigma, 0)$ with $\sigma = 0.02$
+(additive noise on the entropy channel only). For any diagonal metric
+$M = \operatorname{diag}(m_E, m_I, m_S, m_V)$:
+\[
+  \operatorname{tr}(G^\top M G) = m_S \sigma^2
+\]
+Setting $m_S = 1$ (natural scaling), $\sigma_{\max}^2 = (0.02)^2 =
+4 \times 10^{-4}$. With the certified contraction rate
+$\alpha_c = 0.019$ (\Cref{app:contraction-proof}), the steady-state
+variance bound from \eqref{eq:mean-square} is:
+\[
+  \frac{\sigma_{\max}^2}{2\alpha_c} = \frac{4 \times 10^{-4}}{0.038}
+  \approx 0.011
+\]
+Using the tighter eigenvalue rate $\alpha_c \approx 0.13$
+(Remark~\ref{rem:production-params}) would yield $1.5 \times 10^{-3}$,
+but the conservative Gershgorin bound already shows the noise is
+negligible. This is one order of magnitude smaller than typical EISV signal
+excursions ($\sim 0.1$--$0.3$), confirming that stochastic noise does
+not compromise governance decisions. The result follows directly from
+Pham et~al.~\cite{pham2009stochastic}.
+\end{remark}
+
+
+% ═══════════════════════════════════════════════════════════
+\section{Multi-Agent Network}
+\label{sec:network}
+
+When multiple agents operate simultaneously, their governance states
+are coupled through shared information and the neighbor pressure
+mechanism of CIRS~v2.
+
+\subsection{Network Topology}
+
+Consider $N$ agents with states $\eisv_i$, $i = 1, \ldots, N$,
+connected by a graph $\mathcal{G} = (\mathcal{V}, \mathcal{E})$ with
+Laplacian $L$. The coupled dynamics are:
+\begin{equation}
+  \dot{\eisv}_i = f(\eisv_i, t)
+  + \epsilon_c \sum_{j \in \mathcal{N}_i} H(\eisv_j - \eisv_i)
+  \label{eq:network}
+\end{equation}
+where $H \in \R^{4 \times 4}$ is a coupling matrix and
+$\epsilon_c > 0$ is the coupling strength.
+
+\begin{theorem}[Network Synchronization]
+\label{thm:network}
+If each agent's isolated dynamics is contracting with rate $\alpha_c$,
+the network synchronizes (all agents converge to a common trajectory)
+provided:
+\begin{equation}
+  \alpha_c > \lambda_{\max}(L) \cdot \lambda_{\max}(H)
+  \label{eq:sync-condition}
+\end{equation}
+where $\lambda_{\max}$ denotes the largest eigenvalue.
+\end{theorem}
+
+
+% ═══════════════════════════════════════════════════════════
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Production Deployment}
+
+The UNITARES framework is deployed as a Model Context Protocol (MCP)
+server that provides governance services to autonomous AI agents. Each
+agent connects via standard MCP transport and receives governance
+verdicts on every action. The system has been in continuous production
+since December 2025.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Production Deployment Summary}
+\label{tab:deployment}
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Registered agents & 903 \\
+Active ($>5$ updates) & 75 \\
+Max updates (single agent) & 48{,}668 \\
+Audit events & 198{,}333 \\
+Knowledge discoveries & 500 \\
+Dialectic sessions & 66 \\
+Deployment duration & 69 days \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The 903 registered agents include both long-running production agents
+(5 agents with $>1{,}000$ updates, peak at 48{,}668) and shorter-lived
+agents from development and testing cycles. The top two agents have
+accumulated 48{,}668 and 44{,}529 updates respectively, providing
+substantial trajectory data for convergence analysis.
+
+\subsection{EISV Equilibrium Validation}
+
+For the 75 agents with sufficient update history ($>5$ updates), the
+observed equilibrium statistics are:
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Observed EISV Equilibrium (75 Active Agents)}
+\label{tab:eisv-observed}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Variable} & \textbf{Mean} & \textbf{Std} & \textbf{Range} \\
+\midrule
+$E$ & 0.766 & 0.087 & $[0.60, 1.00]$ \\
+$I$ & 0.877 & 0.111 & $[0.59, 1.00]$ \\
+$S$ & 0.082 & 0.045 & $[0.01, 0.20]$ \\
+$V$ & $-0.033$ & 0.028 & $[-0.09, 0.01]$ \\
+$C(V)$ & 0.483 & 0.012 & $[0.46, 0.50]$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\Cref{tab:eisv-observed} summarizes the observed equilibrium.
+These values validate several theoretical predictions:
+\begin{enumerate}
+\item \textbf{$I > E$:} Mean integrity (0.877) exceeds mean energy
+  (0.766), confirming the system's conservative bias
+  (\Cref{fig:ei-scatter}). The negative mean $V = -0.033$ (integrity
+  surplus) is consistent with this.
+\item \textbf{Low entropy:} Mean $S = 0.082$ with strong decay ($\mu
+  = 0.8$) indicates effective uncertainty management.
+\item \textbf{Coherence at 0.49:} The observed mean $C = 0.483$
+  (\Cref{fig:coherence-hist}) confirms
+  Remark~\ref{rem:operating-range}---the system honestly reports
+  near-midpoint coherence rather than inflating the signal.
+\item \textbf{$V$ confined to $[-0.1, 0.1]$:} 100\% of active agents
+  have $V$ within $[-0.089, 0.007]$ (\Cref{fig:sv-scatter}), validating
+  the damping analysis.
+\end{enumerate}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig1_ei_scatter}
+\caption{Energy--Integrity scatter plot for 75 active agents, colored by
+dynamical regime. Nearly all agents lie above the $I = E$ diagonal,
+confirming the system's conservative bias ($\bar{V} < 0$). Point size
+reflects log update count.}
+\label{fig:ei-scatter}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig2_sv_scatter}
+\caption{Entropy--Void operating region. All agents have $V \in [-0.089,
+0.007]$, well within the $[-0.1, 0.1]$ predicted by damping analysis.
+Entropy remains low ($S < 0.20$) due to strong decay $\mu = 0.8$.}
+\label{fig:sv-scatter}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig3_coherence_hist}
+\caption{Distribution of coherence $C(V)$ across active agents. The mean
+$\bar{C} = 0.483$ lies near the theoretical midpoint ($C = 0.5$),
+consistent with small $|V|$ and the honest-reporting principle.}
+\label{fig:coherence-hist}
+\end{figure}
+
+\subsection{I-Channel Saturation}
+
+Of 903 agents, 19 have $I \geq 0.999$ (boundary saturation). All 19
+are in the CONVERGENCE regime with relatively few updates, indicating
+that saturation occurs in agents that receive strong positive forcing
+(high coherence, low entropy) without sufficient self-regulation.
+
+For the 75 active agents, the saturation margin under logistic mode
+is:
+\begin{align*}
+  m_{\text{sat}} &= 1 - \frac{4(-kS^* + \beta_I C^*)}{\gamma_I} \\
+  &= 1 - \frac{4(-0.10 \cdot 0.082 + 0.30 \cdot 0.483)}{0.25} \\
+  &= 1 - \tfrac{0.569}{0.25} = -1.28
+\end{align*}
+This \emph{negative} margin confirms the saturation criterion
+(\Cref{prop:saturation}): under the logistic mode with production
+parameters, the forcing term exceeds $\gamma_I/4$, and only the
+clamping at $I = 1$ prevents unbounded growth
+(\Cref{fig:saturation-margin}). The linear mode eliminates this
+issue by construction.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig4_saturation_margin}
+\caption{Saturation margin $m_{\mathrm{sat}} = 1 - 4A/\gamma_I$ by
+regime. All agents fall below zero (horizontal line), confirming that
+under logistic damping, every agent's forcing exceeds the maximum
+logistic restoring force. The linear correction
+(\Cref{sec:linear-correction}) removes this boundary pathology.}
+\label{fig:saturation-margin}
+\end{figure}
+
+\subsection{Regime Distribution}
+
+Agents distribute across three dynamical regimes based on EISV
+trajectory trends:
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Regime Distribution and EISV Profiles (Active Agents)}
+\label{tab:regimes}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+\textbf{Regime} & $n$ & $\bar{E}$ & $\bar{I}$ & $\bar{S}$ & $\bar{C}$ \\
+\midrule
+Convergence & 24 & .838 & .961 & .052 & .474 \\
+Exploration & 22 & .766 & .926 & .090 & .477 \\
+Divergence & 29 & .706 & .770 & .100 & .496 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The regime profiles (\Cref{fig:regime-profiles}) show clear
+separation: convergent agents have the highest integrity and lowest
+entropy; divergent agents have the lowest integrity and highest
+entropy. Coherence is slightly
+higher in the divergent regime ($\bar{C} = 0.496$) because these
+agents have smaller $|V|$, placing them nearer the coherence
+function's midpoint.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig5_regime_profiles}
+\caption{Mean EISV component values by dynamical regime. Convergent
+agents show the highest $I$ and lowest $S$; divergent agents show the
+reverse pattern. The $|V|$ is small across all regimes, confirming
+effective damping.}
+\label{fig:regime-profiles}
+\end{figure}
+
+\subsection{Knowledge Graph and Dialectic}
+
+The governance system has accumulated 500 knowledge graph discoveries
+classified by severity: 238 low, 154 medium, 49 high, and 4 critical.
+By type, the largest categories are insights (183), notes (125),
+improvements (94), and bugs found (48).
+
+The dialectic protocol---a structured thesis/antithesis/synthesis
+process for resolving governance disputes---has conducted 66 sessions:
+39 recovery sessions, 15 reviews, and 12 explorations. Of these,
+21 reached resolution, while 45 terminated without agreement,
+suggesting that the dialectic process is more effective for recovery
+(where the system has clear signals) than for open-ended review.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig6_discovery_types}
+\caption{Knowledge graph discovery classification by type. Insights
+and notes dominate, with bugs and improvements constituting the
+actionable governance outputs.}
+\label{fig:discovery-types}
+\end{figure}
+
+\subsection{Limitations of Empirical Validation}
+
+The production data has three limitations that bound the strength of
+our empirical claims:
+\begin{enumerate}
+\item \textbf{Parameter evolution:} Dynamics parameters, governor
+  thresholds, and the I-channel mode were refined iteratively during
+  deployment. The reported EISV statistics are a snapshot across agents
+  that experienced different parameter regimes. A controlled A/B
+  comparison between logistic and linear modes has not been conducted.
+\item \textbf{Governor recency:} The adaptive governor (CIRS~v2) was
+  deployed recently; the audit log does not yet contain sufficient
+  pre/post data for a rigorous before/after comparison.
+\item \textbf{Population heterogeneity:} The 903 agents include
+  long-running production agents, short-lived test agents, and agents
+  from early development with since-changed parameters. We report
+  results for the 75 agents with $>5$ updates to mitigate this, but
+  acknowledge that even this filtered set spans multiple configuration
+  epochs.
+\end{enumerate}
+
+
+% ═══════════════════════════════════════════════════════════
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Design Principle: Adjust Expectations, Not Measurements}
+\label{sec:honest}
+
+A core design principle of UNITARES is that observations are never
+transformed to appear healthier. When production coherence averages
+$C \approx 0.49$ rather than the ``expected'' $C \approx 0.7$, the
+system reports 0.49. The phase-aware governor (\Cref{sec:governor})
+addresses the gap by adjusting \emph{thresholds} (expectations), not
+\emph{signals} (measurements).
+
+This principle---\textbf{adjust expectations, not measurements}---has
+three practical consequences:
+\begin{enumerate}
+\item \textbf{Calibration integrity:} Drift detection
+  (\Cref{sec:ethical-drift}) compares raw signals against baselines.
+  Inflating measurements would mask the very drift the system is
+  designed to detect.
+\item \textbf{Operator trust:} Dashboard values correspond to actual
+  system state. An operator seeing $C = 0.49$ knows the agent is
+  operating conservatively, not that a scaling factor was applied.
+\item \textbf{Contraction validity:} The stability proofs in
+  \Cref{sec:contraction} depend on the true state. Transforming
+  measurements would invalidate the contraction analysis by
+  introducing an unmodeled observation function.
+\end{enumerate}
+
+\subsection{Parameter Sensitivity}
+
+The system's behavior is most sensitive to four parameters:
+
+\paragraph{Convergence rate $\alpha$.}
+Controls how quickly $E$ tracks $I$. Production uses $\alpha = 0.42$;
+earlier theoretical work used $\alpha = 0.5$. Larger $\alpha$
+increases diagonal dominance in the Jacobian (improving contraction)
+but makes the energy channel less responsive to ethical drift.
+
+\paragraph{Coherence coupling $\beta_I$.}
+Determines how strongly coherence restores integrity. The theoretical
+optimum for contraction ($\beta_I = 0.05$, minimizing off-diagonal
+coupling) conflicts with the operational need for coherence feedback
+($\beta_I = 0.30$, enabling meaningful recovery from entropy-driven
+degradation). Production uses the larger value; contraction is
+maintained because $\beta_I C'_{\max} = 0.15$ remains below the
+diagonal terms.
+
+\paragraph{Self-regulation $\gamma_I$.}
+Determines the I-channel's intrinsic damping. In logistic mode,
+$\gamma_I = 0.25$ yields $m_{\text{sat}} = -1.23$ at production
+operating points (\Cref{app:saturation})---all agents are saturated,
+relying on clamping rather than dynamics to bound $I$. In linear mode,
+$\gamma_I = 0.169$ was tuned to give $I^* \approx 0.80$, well within
+$(0,1)$, eliminating boundary dependence entirely.
+
+\paragraph{Void damping $\delta$.}
+At $\delta = 0.4$, the void channel has a time constant of
+$\tau_V = 1/\delta = 2.5$ update cycles. This confines $V$ to
+$[-0.1, 0.1]$ in production (\Cref{rem:operating-range}). Reducing
+$\delta$ would widen the coherence operating range but slow the
+system's response to $E$-$I$ imbalances.
+
+\subsection{Boundary Clamping and Non-Smoothness}
+
+The EISV state is clamped to $\mathcal{X}$ at each integration step,
+introducing non-smoothness at domain boundaries. We address this in
+three ways:
+
+\paragraph{Interior operation.}
+The epistemic humility floor ($S_{\min} = 0.001$) and the contraction
+dynamics ensure that trajectories remain in the interior of
+$\mathcal{X}$ during normal operation. In production, only 19 of 903
+agents (2.1\%) contact the $I = 1$ boundary, all in the CONVERGENCE
+regime with few updates, confirming that interior operation is the norm.
+
+\paragraph{Projected dynamical systems.}
+When boundary contact does occur, the clamping operation implements a
+projection onto the constraint set $\mathcal{X}$. Projected dynamical
+systems preserve contraction properties when the constraint set is
+convex~\cite{lohmiller1998contraction}, which $\mathcal{X}$ (a
+hyperrectangle) is.
+
+\paragraph{Practical monitoring.}
+The saturation diagnostic (\Cref{sec:saturation}) monitors the
+I-channel's distance from the boundary. When $m_{\text{sat}} < 0.1$,
+the system logs a warning and the adaptive governor tightens
+thresholds pre-emptively, preventing boundary contact rather than
+relying on clamping to maintain invariance.
+
+\subsection{Limitations}
+
+\begin{enumerate}
+\item The coherence function $\cv$ creates a nonlinear feedback
+  loop whose gain depends on the operating point (maximum at
+  $V = 0$, vanishing at $|V| \gg 0$). The contraction analysis
+  uses $C'_{\max}$ as a worst-case bound, which is conservative.
+\item The ethical drift vector's four components are currently
+  equally weighted; adaptive weighting based on domain context
+  is future work.
+\item The multi-agent network analysis assumes fixed topology;
+  production agent populations are dynamic with agents joining
+  and leaving.
+\item The PID governor gains ($K_p$, $K_i$, $K_d$) were tuned
+  empirically; optimal gain selection via, e.g., Ziegler-Nichols
+  or LQR methods is future work.
+\end{enumerate}
+
+\subsection{Connections to Thermodynamics}
+
+The EISV framework is thermodynamically \emph{inspired} rather than
+thermodynamically \emph{derived}. The analogy is:
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Thermodynamics} & \textbf{UNITARES} \\
+\midrule
+Internal energy $U$ & Energy $E$ \\
+Entropy $S$ & Entropy $S$ \\
+Helmholtz free energy $F$ & Void $V$ (approximately) \\
+Temperature $T$ & \emph{No direct analog} \\
+\bottomrule
+\end{tabular}
+\end{center}
+We do not claim thermodynamic \emph{derivation} from first
+principles; the equations are phenomenological models whose
+stability properties are established mathematically rather than
+thermodynamically.
+
+
+% ═══════════════════════════════════════════════════════════
+\section{Conclusion}
+\label{sec:conclusion}
+
+UNITARES demonstrates that autonomous agent governance can be
+formalized as a continuous dynamical system with provable stability
+properties. The six contributions---EISV dynamics, contraction
+analysis, saturation resolution, adaptive governor, concrete
+ethical drift, and production validation---together provide a
+framework that is both mathematically rigorous and practically
+deployable.
+
+The key insight is that governance thresholds should be living state,
+not dead configuration. By treating thresholds as adaptive variables
+governed by PID control with phase-aware reference tracking, the
+system naturally accommodates the tension between exploration and
+safety without sacrificing formal guarantees.
+
+Production deployment with 903 agents over 69 days validates the
+theoretical predictions: observed EISV equilibria match analytical
+bounds, the void variable is confined to the predicted $[-0.1, 0.1]$
+range in 100\% of active agents, and the saturation analysis correctly
+identifies the 19 agents that reach the $I = 1$ boundary.
+
+As autonomous AI agents become more prevalent and capable, the need
+for governance mechanisms with formal properties---not just
+heuristics---becomes acute. UNITARES provides one path forward:
+treat the agent's relationship to its own reliability as a dynamical
+system, prove that system is stable, and let the mathematics do the
+governing.
+
+
+% ═══════════════════════════════════════════════════════════
+% REFERENCES
+% ═══════════════════════════════════════════════════════════
+\bibliographystyle{plainnat}
+
+\begin{thebibliography}{99}
+
+\bibitem[Lohmiller and Slotine(1998)]{lohmiller1998contraction}
+W.~Lohmiller and J.-J.~E. Slotine.
+\newblock On contraction analysis for non-linear systems.
+\newblock \emph{Automatica}, 34(6):683--696, 1998.
+
+\bibitem[Slotine(2003)]{slotine2003modular}
+J.-J.~E. Slotine.
+\newblock Modular stability tools for distributed computation and control.
+\newblock \emph{International Journal of Adaptive Control and Signal Processing},
+  17(6):397--416, 2003.
+
+\bibitem[Guo et~al.(2017)]{guo2017calibration}
+C.~Guo, G.~Pleiss, Y.~Sun, and K.~Q. Weinberger.
+\newblock On calibration of modern neural networks.
+\newblock In \emph{ICML}, pages 1321--1330, 2017.
+
+\bibitem[Niculescu-Mizil and Caruana(2005)]{niculescu2005predicting}
+A.~Niculescu-Mizil and R.~Caruana.
+\newblock Predicting good probabilities with supervised learning.
+\newblock In \emph{ICML}, pages 625--632, 2005.
+
+\bibitem[\AA{}str\"{o}m and Murray(2008)]{astrom2006advanced}
+K.~J. \AA{}str\"{o}m and R.~M. Murray.
+\newblock \emph{Feedback Systems: An Introduction for Scientists and Engineers}.
+\newblock Princeton University Press, 2008.
+
+\bibitem[Bai et~al.(2022)]{bai2022constitutional}
+Y.~Bai, S.~Kadavath, S.~Kundu, et~al.
+\newblock Constitutional {AI}: Harmlessness from {AI} feedback.
+\newblock \emph{arXiv preprint arXiv:2212.08073}, 2022.
+
+\bibitem[Ouyang et~al.(2022)]{ouyang2022training}
+L.~Ouyang, J.~Wu, X.~Jiang, et~al.
+\newblock Training language models to follow instructions with human feedback.
+\newblock In \emph{NeurIPS}, 2022.
+
+\bibitem[Rebedea et~al.(2023)]{rebedea2023nemo}
+T.~Rebedea, R.~Dinu, M.~Sreedhar, C.~Parisien, and J.~Cohen.
+\newblock {NeMo} {G}uardrails: A toolkit for controllable and safe {LLM}
+  applications with programmable rails.
+\newblock In \emph{EMNLP (Demo)}, 2023.
+
+\bibitem[Ravindran(2025)]{ravindran2025moral}
+S.~Ravindran.
+\newblock A predictive framework for {AI} value alignment and drift prevention.
+\newblock \emph{arXiv preprint arXiv:2510.04073}, 2025.
+
+\bibitem[Ames et~al.(2019)]{ames2019control}
+A.~D. Ames, S.~Coogan, M.~Egerstedt, G.~Notomista, K.~Sreenath, and
+  P.~Tabuada.
+\newblock Control barrier functions: Theory and applications.
+\newblock In \emph{European Control Conference (ECC)}, pages 3420--3431, 2019.
+
+\bibitem[Pham et~al.(2009)]{pham2009stochastic}
+Q.-C. Pham, N.~Tabareau, and J.-J.~E. Slotine.
+\newblock A contraction theory approach to stochastic incremental stability.
+\newblock \emph{IEEE Transactions on Automatic Control}, 54(4):816--820, 2009.
+
+\bibitem[It\^{o}(1944)]{ito1944}
+K.~It\^{o}.
+\newblock Stochastic integral.
+\newblock \emph{Proceedings of the Imperial Academy}, 20(8):519--524, 1944.
+
+\bibitem[Landauer(1961)]{landauer1961}
+R.~Landauer.
+\newblock Irreversibility and heat generation in the computing process.
+\newblock \emph{IBM Journal of Research and Development}, 5(3):183--191, 1961.
+
+\end{thebibliography}
+
+
+% ═══════════════════════════════════════════════════════════
+% APPENDIX
+% ═══════════════════════════════════════════════════════════
+\appendix
+
+\section{Parameter Tables}
+\label{app:parameters}
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\caption{EISV Dynamics Parameters (Production Values)}
+\label{tab:params}
+\begin{tabular}{@{}llrl@{}}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Val.} & \textbf{Role} \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{Energy channel}} \\
+Convergence & $\alpha$ & 0.42 & $E$ tracks $I$ \\
+Entropy erosion & $\beta_E$ & 0.10 & $S$ erodes $E$ \\
+Drift excitation & $\gamma_E$ & 0.05 & Drift raises $E$ \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{Information channel}} \\
+Entropy degrad. & $k$ & 0.10 & $S$ degrades $I$ \\
+Coherence boost & $\beta_I$ & 0.30 & $C(V)$ restores $I$ \\
+Self-regulation & $\gamma_I$ & 0.25 & Logistic damping \\
+Linear mode & $\gamma_I^{\text{lin}}$ & 0.169 & Linear damping \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{Entropy channel}} \\
+Natural decay & $\mu$ & 0.80 & Dissipation \\
+Drift injection & $\lambda_{1}$ & 0.30 & Base (adaptive) \\
+Coherence red. & $\lambda_{2}$ & 0.05 & $C(V)$ reduces $S$ \\
+Complexity & $\beta_c$ & 0.15 & Task $\to$ entropy \\
+Noise & $\sigma$ & 0.02 & Stochastic term \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{Void channel}} \\
+Coupling & $\kappa$ & 0.30 & $E$-$I$ gap \\
+Damping & $\delta$ & 0.40 & Dissipation \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{Coherence}} \\
+Maximum & $C_{\max}$ & 1.0 & Upper bound \\
+Sensitivity & $C_1$ & 1.0 & Tanh slope \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\caption{CIRS v2 Adaptive Governor Parameters}
+\label{tab:governor}
+\begin{tabular}{@{}llrl@{}}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Val.} & \textbf{Role} \\
+\midrule
+Proportional & $K_p$ & 0.05 & Gentle correction \\
+Integral & $K_i$ & 0.005 & Drift correction \\
+Derivative & $K_d$ & 0.10 & Damping \\
+Integral limit & $I_{\max}$ & 0.10 & Wind-up cap \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{Reference points}} \\
+Expl.\ $\tau$ ref & $r_\tau^{(e)}$ & 0.35 & Forgiving \\
+Expl.\ $\beta$ ref & $r_\beta^{(e)}$ & 0.55 & Forgiving \\
+Intg.\ $\tau$ ref & $r_\tau^{(i)}$ & 0.40 & Strict \\
+Intg.\ $\beta$ ref & $r_\beta^{(i)}$ & 0.60 & Strict \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{Safety bounds}} \\
+$\tau$ floor/ceil & $\tau$ & 0.25/0.75 & Hard bounds \\
+$\beta$ floor/ceil & $\beta$ & 0.20/0.70 & Hard bounds \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\caption{Ethical Drift Vector Parameters}
+\label{tab:drift}
+\begin{tabular}{@{}llrl@{}}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Val.} & \textbf{Role} \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{Baseline tracking}} \\
+EMA smoothing & $\alpha_{\text{ema}}$ & 0.1 & Update rate \\
+Warmup steps & $n_w$ & 5 & Drift suppression \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{Stability measurement}} \\
+Decision window & $w_s$ & 20 & Consistency \\
+Transition pen. & --- & /flip & Instability \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{Coupling to dynamics}} \\
+Energy excit. & $\gamma_E$ & 0.05 & Drift $\to dE$ \\
+Entropy inj. & $\lambda_1$ & .05--.20 & Drift $\to dS$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\section{Proof of Contraction (Full)}
+\label{app:contraction-proof}
+
+We prove \Cref{thm:contraction} by constructing a diagonal metric
+$M = \operatorname{diag}(m_E, m_I, m_S, m_V) \succ 0$ and showing
+that the generalized Jacobian condition \eqref{eq:contraction-condition}
+holds throughout the state space $\mathcal{X}$.
+
+\subsection*{Step 1: Symmetric Part of $MJ + J^\top M$}
+
+For diagonal $M$, the matrix $F = MJ + J^\top M$ has entries:
+\begin{align*}
+  F_{ii} &= 2 m_i J_{ii} \\
+  F_{ij} &= m_i J_{ij} + m_j J_{ji}, \quad i \neq j
+\end{align*}
+
+The diagonal entries of $F$ (using linear $g_I$ mode) are:
+\begin{align}
+  F_{11} &= -2m_E(\alpha + \beta_E S) \leq -2m_E \alpha
+    \label{eq:F11} \\
+  F_{22} &= -2m_I \gamma_I
+    \label{eq:F22} \\
+  F_{33} &= -2m_S \mu
+    \label{eq:F33} \\
+  F_{44} &= -2m_V \delta
+    \label{eq:F44}
+\end{align}
+where \eqref{eq:F11} uses $S \geq S_{\min} \geq 0$.
+
+The nonzero off-diagonal entries are:
+\begin{align}
+  F_{12} = F_{21} &= m_E \alpha \label{eq:F12} \\
+  F_{13} &= -m_E \beta_E E \leq 0 \label{eq:F13} \\
+  F_{23} &= -m_I k \label{eq:F23} \\
+  F_{24} &= m_I \beta_I C'(V) \label{eq:F24} \\
+  F_{34} &= -m_V \lambda_2 C'(V) \label{eq:F34} \\
+  F_{14} = F_{41} &= m_V \kappa \label{eq:F14}
+\end{align}
+where $F_{13}$ and $F_{34}$ are negative (aiding contraction)
+and are bounded conservatively by their absolute values in the
+Gershgorin analysis below.
+
+Note: For diagonal $M$, $F_{12} = F_{21} = m_E J_{12} + m_I J_{21}
+= m_E \alpha$.
+
+\subsection*{Step 2: Gershgorin Circle Theorem}
+
+For $F + 2\alpha_c M \preceq 0$, it suffices by Gershgorin that
+for each row~$i$:
+\begin{equation}
+  F_{ii} + 2\alpha_c m_i + \!\sum_{j \neq i}\! |F_{ij}| \leq 0
+  \label{eq:gershgorin}
+\end{equation}
+
+Bounding $|F_{13}| \leq m_E\beta_E$ conservatively (its sign aids
+contraction), the four row conditions are:
+
+\paragraph{Row 1 ($E$):}
+\begin{equation}
+  m_E(-\alpha + \alpha_c + \beta_E) + m_V\kappa \leq 0
+  \label{eq:gersh-row1}
+\end{equation}
+
+\paragraph{Row 2 ($I$):}
+\begin{equation}
+  \begin{split}
+  m_I(-2\gamma_I + 2\alpha_c + k &+ \beta_I C'_{\max}) \\
+  &+ m_E\alpha \leq 0
+  \end{split}
+  \label{eq:gersh-row2}
+\end{equation}
+
+\paragraph{Row 3 ($S$):}
+\begin{equation}
+  \begin{split}
+  -2m_S\mu + 2\alpha_c m_S &+ m_E\beta_E \\
+  &+ m_I k + m_V\lambda_2 C'_{\max} \leq 0
+  \end{split}
+  \label{eq:gersh-row3}
+\end{equation}
+
+\paragraph{Row 4 ($V$):}
+\begin{equation}
+  \begin{split}
+  m_V(-2\delta + 2\alpha_c + \kappa &+ \lambda_2 C'_{\max}) \\
+  &+ m_I\beta_I C'_{\max} \leq 0
+  \end{split}
+  \label{eq:gersh-row4}
+\end{equation}
+
+\subsection*{Step 3: Metric Construction}
+
+We seek $m_E, m_I, m_S, m_V > 0$ and $\alpha_c > 0$ satisfying
+\eqref{eq:gersh-row1}--\eqref{eq:gersh-row4}. A natural choice is to
+set the metric weights inversely proportional to the coupling they
+receive:
+\begin{equation}
+  m_E = 1, \quad m_I = \frac{\alpha}{2\gamma_I}, \quad
+  m_S = 1, \quad m_V = \frac{\alpha}{2\delta}
+\end{equation}
+
+\subsection*{Step 4: Numerical Verification}
+
+Production parameters: $\alpha = 0.42$, $\beta_E = 0.10$,
+$\beta_I = 0.30$, $\gamma_I = 0.25$, $k = 0.10$, $\mu = 0.80$,
+$\kappa = 0.30$, $\delta = 0.40$, $\lambda_2 = 0.05$,
+$C'_{\max} = 0.5$.
+
+\paragraph{Initial attempt.}
+The natural metric $m_E = 1$, $m_I = 0.84$, $m_S = 1$,
+$m_V = 0.525$ fails Row~2 ($+0.21 + 1.68\alpha_c > 0$).
+Reducing $m_I = 0.2$, $m_E = 0.1$ makes Row~2 the binding
+constraint:
+\[
+  -0.008 + 0.4\alpha_c \leq 0
+  \;\implies\; \alpha_c < 0.02
+\]
+We set $\alpha_c = 0.019$ (strictly less) to ensure all
+inequalities are strict.
+
+\paragraph{Verification.}
+With $M = \operatorname{diag}(0.1, 0.2, 1.0, 0.08)$ and
+$\alpha_c = 0.019$:
+
+\smallskip
+\begin{center}
+\footnotesize
+\begin{tabular}{@{}lrrl@{}}
+\toprule
+\textbf{Row} & \textbf{LHS} & \textbf{$< 0$?} & \\
+\midrule
+1\,($E$) & $-0.006$ & yes & \checkmark \\
+2\,($I$) & $-0.0004$ & yes & \checkmark \\
+3\,($S$) & $-1.529$ & yes & \checkmark \\
+4\,($V$) & $-0.005$ & yes & \checkmark \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\smallskip
+Row~4 initially failed with $m_V = 0.05$ ($+0.008$); adjusting
+to $m_V = 0.08$ resolves it ($-0.005$) while Row~1 remains
+satisfied ($-0.006$). Row~2 now has strict margin ($-0.0004$).
+
+\medskip
+\textbf{Result:} With $M = \operatorname{diag}(0.1, 0.2, 1.0,
+0.08)$, the Gershgorin analysis certifies $\alpha_c = 0.019$.
+This is conservative---the eigenvalue-based bound is
+$\alpha_c \approx 0.13$ and the spectral abscissa of~$J$ at
+equilibrium is $-0.15$
+(Remark~\ref{rem:production-params}). The key result is
+$\alpha_c > 0$, guaranteeing global exponential
+convergence. \qed
+
+
+\section{Saturation Diagnostics}
+\label{app:saturation}
+
+The saturation margin $m_{\text{sat}} = 1 - 4A/\gamma_I$ was computed
+for all 75 active agents using their current EISV state. Under the
+logistic mode with production parameters ($\gamma_I = 0.25$,
+$k = 0.10$, $\beta_I = 0.30$):
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Regime} & \textbf{Mean $m_{\text{sat}}$} & \textbf{\% Sat.} \\
+\midrule
+Convergence ($n=24$) & $-1.45$ & 100\% \\
+Exploration ($n=22$) & $-1.18$ & 100\% \\
+Divergence ($n=29$) & $-1.10$ & 100\% \\
+\midrule
+All active ($n=75$) & $-1.23$ & 100\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All active agents operate with negative saturation margin under the
+logistic mode, meaning the forcing term $A = -kS + \beta_I C(V)$
+exceeds $\gamma_I/4 = 0.0625$ for all agents. The system currently
+relies on state clamping at $I = 1$ rather than intrinsic dynamics to
+prevent boundary escape. This motivates the linear correction
+(\Cref{sec:saturation}): under the linear mode with $\gamma_I = 0.169$,
+$I^* = A / \gamma_I \approx 0.80$, which is well within the interior
+of $[0,1]$.
+
+\textbf{Data provenance caveat.} These statistics reflect agents
+accumulated since initial deployment (December 2025), during which
+dynamics parameters, governor thresholds, and the I-channel mode itself
+were iteratively refined. The 19 boundary-saturated agents predate the
+linear mode rollout. We report the snapshot as-is rather than filtering
+to a ``clean'' parameter regime, since the saturation criterion
+(\Cref{prop:saturation}) depends only on the relationship $A > \gamma_I/4$,
+which holds regardless of the agent's configuration history.
+
+
+\end{document}
