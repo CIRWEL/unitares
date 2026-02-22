@@ -59,7 +59,7 @@ class MetricTooltip {
     static create(metricName, value, trend = null) {
         const formatted = DataProcessor.formatEISVMetric(value, metricName);
         const trendHtml = trend ? this._formatTrend(trend) : '';
-        
+
         return `
             <div class="metric-tooltip">
                 <div class="metric-tooltip-header">
@@ -113,10 +113,10 @@ class StatCard {
             formatValue = (v) => v,
             showChange = true
         } = options;
-        
+
         const trendHtml = trend && showChange ? this._formatChange(trend) : '';
         const formattedValue = formatValue(value);
-        
+
         return `
             <div class="stat-card" id="${id}">
                 ${icon ? `<div class="stat-card-icon">${icon}</div>` : ''}
@@ -143,34 +143,63 @@ class AnimaGauge {
         const percent = Math.max(0, Math.min(100, value * 100));
         const circumference = 2 * Math.PI * (size / 2 - 5);
         const offset = circumference - (percent / 100) * circumference;
-        
+
         return `
             <div class="anima-gauge" style="width: ${size}px; height: ${size}px;">
                 <svg width="${size}" height="${size}">
                     <circle
-                        cx="${size/2}"
-                        cy="${size/2}"
-                        r="${size/2 - 5}"
+                        cx="${size / 2}"
+                        cy="${size / 2}"
+                        r="${size / 2 - 5}"
                         fill="none"
                         stroke="var(--border-color)"
                         stroke-width="4"
                     />
                     <circle
-                        cx="${size/2}"
-                        cy="${size/2}"
-                        r="${size/2 - 5}"
+                        cx="${size / 2}"
+                        cy="${size / 2}"
+                        r="${size / 2 - 5}"
                         fill="none"
                         stroke="${color}"
                         stroke-width="4"
                         stroke-dasharray="${circumference}"
                         stroke-dashoffset="${offset}"
                         stroke-linecap="round"
-                        transform="rotate(-90 ${size/2} ${size/2})"
+                        transform="rotate(-90 ${size / 2} ${size / 2})"
                         class="gauge-progress"
                     />
                 </svg>
                 <div class="gauge-value">${(value * 100).toFixed(0)}%</div>
                 <div class="gauge-label">${DataProcessor.escapeHtml(label)}</div>
+            </div>
+        `;
+    }
+}
+
+class EnvironmentalCard {
+    /**
+     * Creates a card for Pi sensor data (AHT20, VEML7700)
+     */
+    static create(data) {
+        const { temp = 0, humidity = 0, lux = 0 } = data;
+
+        return `
+            <div class="stat-card environmental-card">
+                <h3>Sensory Context</h3>
+                <div class="env-grid">
+                    <div class="env-item">
+                        <span class="env-label">Temp</span>
+                        <span class="env-value">${temp.toFixed(1)}°C</span>
+                    </div>
+                    <div class="env-item">
+                        <span class="env-label">Humidity</span>
+                        <span class="env-value">${humidity.toFixed(0)}%</span>
+                    </div>
+                    <div class="env-item">
+                        <span class="env-label">Light</span>
+                        <span class="env-value">${lux.toFixed(0)} lx</span>
+                    </div>
+                </div>
             </div>
         `;
     }
@@ -182,4 +211,5 @@ if (typeof window !== 'undefined') {
     window.MetricTooltip = MetricTooltip;
     window.StatCard = StatCard;
     window.AnimaGauge = AnimaGauge;
+    window.EnvironmentalCard = EnvironmentalCard;
 }

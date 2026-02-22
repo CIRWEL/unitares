@@ -79,6 +79,11 @@
             <div class="value" id="fleet-coherence">-</div>
             <div class="change" id="fleet-health-detail"></div>
         </div>
+        <div class="stat-card" id="stuck-agents-card">
+            <h3>Stuck Agents</h3>
+            <div class="value" id="stuck-agents-count">-</div>
+            <div class="change" id="stuck-agents-detail"></div>
+        </div>
     </div>
 
     <!-- Live EISV Charts -->
@@ -86,6 +91,11 @@
         <div class="panel-header">
             <h2>Live EISV</h2>
             <div class="panel-controls">
+                <label class="panel-select-label">View:</label>
+                <select id="eisv-agent-select" class="panel-select" title="Select agent or fleet view">
+                    <option value="__fleet__">Fleet Average</option>
+                    <option value="__all__">All (raw)</option>
+                </select>
                 <span class="eisv-chart-info" id="eisv-chart-info"></span>
                 <button id="eisv-chart-clear" class="panel-button" type="button">Clear</button>
             </div>
@@ -121,12 +131,12 @@
         </div>
     </div>
 
-    <!-- Governance Pulse — what the governance system is actually deciding -->
+    <!-- Latest Check-in — shows last agent's governance decision -->
     <div class="live-chart-panel" id="governance-pulse-panel">
         <div class="panel-header">
-            <h2>Governance Pulse</h2>
+            <h2>Latest Check-in</h2>
             <div class="vitals-header-right">
-                <span class="pulse-agent-name" id="pulse-agent-name" title="Current agent">—</span>
+                <span class="pulse-agent-name" id="pulse-agent-name" title="Last agent to check in">—</span>
                 <span class="governance-verdict" id="gov-verdict">
                     <span class="verdict-dot"></span>
                     <span class="verdict-label">—</span>
@@ -134,58 +144,62 @@
                 <span class="data-freshness" id="data-freshness">No data yet</span>
             </div>
         </div>
-        <div class="pulse-grid">
-            <!-- Left: Key metrics -->
+        <div class="pulse-grid pulse-grid-simple">
+            <!-- Left: Risk (the main output) + verdict context -->
             <div class="pulse-metrics">
-                <div class="pulse-metric">
+                <div class="pulse-metric pulse-metric-large">
                     <div class="pulse-metric-header">
-                        <span class="pulse-metric-label">Risk Score</span>
+                        <span class="pulse-metric-label">Risk → Verdict</span>
                         <span class="pulse-metric-value" id="vv-risk">—</span>
                         <span class="pulse-metric-detail" id="vv-risk-detail" title="Risk adjustment from trajectory analysis"></span>
                     </div>
                     <div class="vital-bar-track"><div class="vital-bar" id="v-risk" style="width:0%;background:#ef4444"></div></div>
+                    <div class="risk-thresholds">
+                        <span class="threshold" style="left:35%" title="Approve threshold">A</span>
+                        <span class="threshold" style="left:60%" title="Proceed threshold">P</span>
+                        <span class="threshold" style="left:70%" title="Pause threshold">!</span>
+                    </div>
                 </div>
-                <div class="pulse-metric">
-                    <div class="pulse-metric-header">
+                <div class="pulse-metric-row">
+                    <div class="pulse-metric-mini">
                         <span class="pulse-metric-label">Confidence</span>
                         <span class="pulse-metric-value" id="vv-confidence">—</span>
                     </div>
-                    <div class="vital-bar-track"><div class="vital-bar" id="v-confidence" style="width:0%;background:#06b6d4"></div></div>
-                </div>
-                <div class="pulse-metric">
-                    <div class="pulse-metric-header">
+                    <div class="pulse-metric-mini">
                         <span class="pulse-metric-label">Complexity</span>
                         <span class="pulse-metric-value" id="vv-complexity">—</span>
                     </div>
-                    <div class="vital-bar-track"><div class="vital-bar" id="v-complexity" style="width:0%;background:#f59e0b"></div></div>
                 </div>
             </div>
-            <!-- Center: Ethical Drift gauges -->
+            <!-- Ethical Drift: 70% governance-computed, 30% agent-reported -->
             <div class="pulse-drift">
-                <h3>Ethical Drift</h3>
+                <h3>Drift</h3>
                 <div class="drift-vector">
                     <div class="drift-axis">
-                        <span class="drift-axis-label">Emotional</span>
+                        <span class="drift-axis-label" title="Emotional drift (maps to calibration)">Emo</span>
                         <div class="drift-gauge"><div class="drift-gauge-fill" id="drift-g-0"></div><div class="drift-gauge-center"></div></div>
                         <span class="drift-axis-val" id="drift-v-0">0</span>
+                        <span class="drift-trend" id="drift-trend-0" title="Trend"></span>
                     </div>
                     <div class="drift-axis">
-                        <span class="drift-axis-label">Epistemic</span>
+                        <span class="drift-axis-label" title="Epistemic drift (maps to coherence)">Epi</span>
                         <div class="drift-gauge"><div class="drift-gauge-fill" id="drift-g-1"></div><div class="drift-gauge-center"></div></div>
                         <span class="drift-axis-val" id="drift-v-1">0</span>
+                        <span class="drift-trend" id="drift-trend-1" title="Trend"></span>
                     </div>
                     <div class="drift-axis">
-                        <span class="drift-axis-label">Behavioral</span>
+                        <span class="drift-axis-label" title="Behavioral drift (maps to stability)">Beh</span>
                         <div class="drift-gauge"><div class="drift-gauge-fill" id="drift-g-2"></div><div class="drift-gauge-center"></div></div>
                         <span class="drift-axis-val" id="drift-v-2">0</span>
+                        <span class="drift-trend" id="drift-trend-2" title="Trend"></span>
                     </div>
                 </div>
             </div>
-            <!-- Right: Recent governance decisions log -->
+            <!-- Right: Events log (significant events only) -->
             <div class="pulse-log">
-                <h3>Recent Decisions</h3>
-                <div class="pulse-log-entries" id="pulse-log-entries">
-                    <div class="pulse-log-empty">Awaiting first check-in...</div>
+                <h3>Events</h3>
+                <div class="pulse-log-entries" id="events-log-entries">
+                    <div class="pulse-log-empty">No events yet</div>
                 </div>
             </div>
         </div>
@@ -1169,7 +1183,8 @@
                     action: 'list',
                     include_metrics: true,
                     recent_days: 30,
-                    limit: 100
+                    limit: 100,
+                    min_updates: 2
                 });
 
                 console.log('Agents loaded:', result ? (result.summary?.total || 'ok') : 'null');
@@ -1326,6 +1341,45 @@
             }
         }
 
+        // Stuck agents monitoring
+        async function loadStuckAgents() {
+            try {
+                const result = await callTool('detect_stuck_agents', {});
+                const countEl = document.getElementById('stuck-agents-count');
+                const detailEl = document.getElementById('stuck-agents-detail');
+                const cardEl = document.getElementById('stuck-agents-card');
+
+                if (!countEl || !detailEl || !cardEl) return;
+
+                if (result && result.success) {
+                    const stuck = result.stuck_agents || [];
+                    const count = stuck.length;
+                    countEl.textContent = count;
+
+                    // Style card based on count
+                    cardEl.classList.remove('stat-warning', 'stat-critical');
+                    if (count > 10) {
+                        cardEl.classList.add('stat-critical');
+                    } else if (count > 0) {
+                        cardEl.classList.add('stat-warning');
+                    }
+
+                    // Show breakdown by reason
+                    const byReason = result.summary?.by_reason || {};
+                    const parts = [];
+                    if (byReason.critical_margin_timeout > 0) parts.push(`${byReason.critical_margin_timeout} critical`);
+                    if (byReason.tight_margin_timeout > 0) parts.push(`${byReason.tight_margin_timeout} tight`);
+                    if (byReason.activity_timeout > 0) parts.push(`${byReason.activity_timeout} inactive`);
+                    detailEl.innerHTML = count > 0 ? parts.join(', ') : 'All agents healthy';
+                } else {
+                    countEl.textContent = '-';
+                    detailEl.innerHTML = 'Could not check';
+                }
+            } catch (e) {
+                console.debug('Could not load stuck agents:', e);
+            }
+        }
+
         async function loadDiscoveries(searchQuery = '') {
             try {
                 console.log('Loading discoveries...', searchQuery ? `(search: ${searchQuery})` : '');
@@ -1341,7 +1395,7 @@
                 }
 
                 const searchResult = await callTool('search_knowledge_graph', toolArgs);
-                
+
                 // Handle null/undefined result
                 if (!searchResult) {
                     throw new Error('No response from server');
@@ -1737,14 +1791,16 @@
                 const results = await Promise.allSettled([
                     loadAgents(),
                     loadDiscoveries(),
-                    loadDialecticSessions()
+                    loadDialecticSessions(),
+                    loadStuckAgents()
                 ]);
                 console.log('Load results:', results);
-                
+
                 // Check if critical operations failed (agents and discoveries)
                 const agentsResult = results[0];
                 const discoveriesResult = results[1];
                 const dialecticResult = results[2];
+                // results[3] is loadStuckAgents - non-critical
                 
                 const criticalFailures = [
                     agentsResult.status === 'rejected' || (agentsResult.status === 'fulfilled' && agentsResult.value === false),
@@ -2468,6 +2524,172 @@ ${escapeHtml(details)}</div>
         let eisvWebSocket = null;
         const EISV_WINDOW_MS = 30 * 60 * 1000; // 30 minute rolling window
 
+        // Per-agent EISV tracking for hybrid view
+        const agentEISVHistory = {}; // { agent_id: [{ts, E, I, S, V, coherence}, ...] }
+        const knownAgents = new Set(); // For dropdown population
+        let selectedAgentView = '__fleet__'; // '__fleet__', '__all__', or agent_id
+
+        function updateAgentDropdown() {
+            const select = document.getElementById('eisv-agent-select');
+            if (!select) return;
+            const currentValue = select.value;
+
+            // Preserve special options, add agents
+            const specialOpts = ['__fleet__', '__all__'];
+            const agentOpts = Array.from(knownAgents).sort();
+
+            // Only update if agents changed
+            const existingAgents = Array.from(select.options)
+                .filter(o => !specialOpts.includes(o.value))
+                .map(o => o.value);
+
+            if (JSON.stringify(existingAgents) === JSON.stringify(agentOpts)) return;
+
+            // Rebuild options
+            select.innerHTML = '';
+            select.add(new Option('Fleet Average', '__fleet__'));
+            select.add(new Option('All (raw)', '__all__'));
+
+            if (agentOpts.length > 0) {
+                const sep = new Option('───────────', '');
+                sep.disabled = true;
+                select.add(sep);
+                agentOpts.forEach(agentId => {
+                    // Use short display name
+                    const history = agentEISVHistory[agentId];
+                    const name = history?.[0]?.name || agentId;
+                    const shortName = name.length > 20 ? name.substring(0, 17) + '...' : name;
+                    select.add(new Option(shortName, agentId));
+                });
+            }
+
+            // Restore selection if still valid
+            if (Array.from(select.options).some(o => o.value === currentValue)) {
+                select.value = currentValue;
+            }
+        }
+
+        function computeFleetAverage() {
+            const now = Date.now();
+            const cutoff = now - EISV_WINDOW_MS;
+
+            // Collect all recent data points
+            const allPoints = [];
+            for (const agentId of Object.keys(agentEISVHistory)) {
+                const history = agentEISVHistory[agentId];
+                for (const pt of history) {
+                    if (pt.ts >= cutoff) {
+                        allPoints.push(pt);
+                    }
+                }
+            }
+
+            if (allPoints.length === 0) return null;
+
+            // Group by time buckets (30 second intervals)
+            const buckets = {};
+            const BUCKET_MS = 30000;
+            for (const pt of allPoints) {
+                const bucket = Math.floor(pt.ts / BUCKET_MS) * BUCKET_MS;
+                if (!buckets[bucket]) {
+                    buckets[bucket] = { E: [], I: [], S: [], V: [], coherence: [] };
+                }
+                buckets[bucket].E.push(pt.E);
+                buckets[bucket].I.push(pt.I);
+                buckets[bucket].S.push(pt.S);
+                buckets[bucket].V.push(pt.V);
+                buckets[bucket].coherence.push(pt.coherence);
+            }
+
+            // Compute averages per bucket
+            const result = [];
+            for (const [ts, vals] of Object.entries(buckets).sort((a,b) => a[0] - b[0])) {
+                const avg = (arr) => arr.reduce((a,b) => a+b, 0) / arr.length;
+                result.push({
+                    x: new Date(parseInt(ts)),
+                    E: avg(vals.E),
+                    I: avg(vals.I),
+                    S: avg(vals.S),
+                    V: avg(vals.V),
+                    coherence: avg(vals.coherence)
+                });
+            }
+            return result;
+        }
+
+        function rebuildChartFromSelection() {
+            if (!eisvChartUpper || !eisvChartLower) return;
+
+            // Clear existing data
+            eisvChartUpper.data.datasets.forEach(ds => ds.data = []);
+            eisvChartLower.data.datasets.forEach(ds => ds.data = []);
+
+            const now = Date.now();
+            const cutoff = now - EISV_WINDOW_MS;
+
+            if (selectedAgentView === '__fleet__') {
+                // Fleet average
+                const avgData = computeFleetAverage();
+                if (avgData) {
+                    avgData.forEach(pt => {
+                        eisvChartUpper.data.datasets[0].data.push({ x: pt.x, y: pt.E });
+                        eisvChartUpper.data.datasets[1].data.push({ x: pt.x, y: pt.I });
+                        eisvChartUpper.data.datasets[2].data.push({ x: pt.x, y: pt.coherence });
+                        eisvChartLower.data.datasets[0].data.push({ x: pt.x, y: pt.S });
+                        eisvChartLower.data.datasets[1].data.push({ x: pt.x, y: pt.V });
+                    });
+                }
+            } else if (selectedAgentView === '__all__') {
+                // All raw data (original behavior)
+                for (const history of Object.values(agentEISVHistory)) {
+                    for (const pt of history) {
+                        if (pt.ts >= cutoff) {
+                            const x = new Date(pt.ts);
+                            eisvChartUpper.data.datasets[0].data.push({ x, y: pt.E });
+                            eisvChartUpper.data.datasets[1].data.push({ x, y: pt.I });
+                            eisvChartUpper.data.datasets[2].data.push({ x, y: pt.coherence });
+                            eisvChartLower.data.datasets[0].data.push({ x, y: pt.S });
+                            eisvChartLower.data.datasets[1].data.push({ x, y: pt.V });
+                        }
+                    }
+                }
+                // Sort by time
+                [eisvChartUpper, eisvChartLower].forEach(chart => {
+                    chart.data.datasets.forEach(ds => {
+                        ds.data.sort((a, b) => a.x - b.x);
+                    });
+                });
+            } else {
+                // Specific agent
+                const history = agentEISVHistory[selectedAgentView] || [];
+                for (const pt of history) {
+                    if (pt.ts >= cutoff) {
+                        const x = new Date(pt.ts);
+                        eisvChartUpper.data.datasets[0].data.push({ x, y: pt.E });
+                        eisvChartUpper.data.datasets[1].data.push({ x, y: pt.I });
+                        eisvChartUpper.data.datasets[2].data.push({ x, y: pt.coherence });
+                        eisvChartLower.data.datasets[0].data.push({ x, y: pt.S });
+                        eisvChartLower.data.datasets[1].data.push({ x, y: pt.V });
+                    }
+                }
+            }
+
+            eisvChartUpper.update('none');
+            eisvChartLower.update('none');
+        }
+
+        // Wire up dropdown and drift toggle
+        document.addEventListener('DOMContentLoaded', () => {
+            const select = document.getElementById('eisv-agent-select');
+            if (select) {
+                select.addEventListener('change', (e) => {
+                    selectedAgentView = e.target.value;
+                    rebuildChartFromSelection();
+                });
+            }
+
+        });
+
         function makeChartOptions(extraYOpts) {
             return {
                 responsive: true,
@@ -2592,42 +2814,73 @@ ${escapeHtml(details)}</div>
         function addEISVDataPoint(data) {
             if (!eisvChartUpper || !eisvChartLower) return;
             const ts = new Date(data.timestamp);
+            const tsMs = ts.getTime();
             const eisv = data.eisv || {};
+            const agentId = data.agent_id || 'unknown';
+            const agentName = data.agent_name || agentId;
 
-            // DEBUG: Log received data
-            console.log('[EISV] Received:', {
-                E: eisv.E, I: eisv.I, S: eisv.S, V: eisv.V,
-                coherence: data.coherence,
-                has_eisv: !!data.eisv,
-                has_metrics: !!data.metrics
+            // Store in per-agent history
+            if (!agentEISVHistory[agentId]) {
+                agentEISVHistory[agentId] = [];
+            }
+            agentEISVHistory[agentId].push({
+                ts: tsMs,
+                name: agentName,
+                E: eisv.E ?? 0,
+                I: eisv.I ?? 0,
+                S: eisv.S ?? 0,
+                V: eisv.V ?? 0,
+                coherence: data.coherence ?? 0
             });
 
-            // Upper chart: E, I, Coherence
-            eisvChartUpper.data.datasets[0].data.push({ x: ts, y: eisv.E ?? 0 });
-            eisvChartUpper.data.datasets[1].data.push({ x: ts, y: eisv.I ?? 0 });
-            eisvChartUpper.data.datasets[2].data.push({ x: ts, y: data.coherence ?? 0 });
+            // Track known agents for dropdown
+            if (!knownAgents.has(agentId)) {
+                knownAgents.add(agentId);
+                updateAgentDropdown();
+            }
 
-            // Lower chart: S, V
-            eisvChartLower.data.datasets[0].data.push({ x: ts, y: eisv.S ?? 0 });
-            eisvChartLower.data.datasets[1].data.push({ x: ts, y: eisv.V ?? 0 });
+            // Trim old data from all agent histories
+            const cutoff = tsMs - EISV_WINDOW_MS;
+            for (const aid of Object.keys(agentEISVHistory)) {
+                agentEISVHistory[aid] = agentEISVHistory[aid].filter(pt => pt.ts >= cutoff);
+                if (agentEISVHistory[aid].length === 0) {
+                    delete agentEISVHistory[aid];
+                    knownAgents.delete(aid);
+                }
+            }
 
-            // Trim to rolling window
-            const cutoff = new Date(ts.getTime() - EISV_WINDOW_MS);
-            [eisvChartUpper, eisvChartLower].forEach(chart => {
-                chart.data.datasets.forEach(ds => {
-                    while (ds.data.length > 0 && ds.data[0].x < cutoff) {
-                        ds.data.shift();
-                    }
+            // Update chart based on selected view
+            if (selectedAgentView === '__fleet__') {
+                // Rebuild with fleet average (includes new data point)
+                rebuildChartFromSelection();
+            } else if (selectedAgentView === '__all__' || selectedAgentView === agentId) {
+                // Add point directly to chart
+                eisvChartUpper.data.datasets[0].data.push({ x: ts, y: eisv.E ?? 0 });
+                eisvChartUpper.data.datasets[1].data.push({ x: ts, y: eisv.I ?? 0 });
+                eisvChartUpper.data.datasets[2].data.push({ x: ts, y: data.coherence ?? 0 });
+                eisvChartLower.data.datasets[0].data.push({ x: ts, y: eisv.S ?? 0 });
+                eisvChartLower.data.datasets[1].data.push({ x: ts, y: eisv.V ?? 0 });
+
+                // Trim chart data
+                const cutoffDate = new Date(cutoff);
+                [eisvChartUpper, eisvChartLower].forEach(chart => {
+                    chart.data.datasets.forEach(ds => {
+                        while (ds.data.length > 0 && ds.data[0].x < cutoffDate) {
+                            ds.data.shift();
+                        }
+                    });
+                    chart.update('none');
                 });
-                chart.update('none');
-            });
+            }
+            // If viewing a different specific agent, don't update chart
 
-            // Update info label with agent name + latest values
+            // Update info label with latest values
             const info = document.getElementById('eisv-chart-info');
             if (info) {
-                const name = data.agent_name || 'unknown';
-                const shortName = name.length > 16 ? name.substring(0, 16) + '...' : name;
-                info.innerHTML = `<span class="eisv-agent-label">${escapeHtml(shortName)}</span>` +
+                const shortName = agentName.length > 16 ? agentName.substring(0, 16) + '...' : agentName;
+                const viewLabel = selectedAgentView === '__fleet__' ? '(fleet avg)' :
+                                  selectedAgentView === '__all__' ? '(all)' : '';
+                info.innerHTML = `<span class="eisv-agent-label">${escapeHtml(shortName)} ${viewLabel}</span>` +
                     ` <span class="eisv-value" style="color:#7c3aed">E ${(eisv.E ?? 0).toFixed(3)}</span>` +
                     ` <span class="eisv-value" style="color:#10b981">I ${(eisv.I ?? 0).toFixed(3)}</span>` +
                     ` <span class="eisv-value" style="color:#f59e0b">S ${(eisv.S ?? 0).toFixed(4)}</span>` +
@@ -2645,9 +2898,24 @@ ${escapeHtml(details)}</div>
         let lastVitalsTimestamp = null;
         const MAX_LOG_ENTRIES = 8;
 
-        function updateDriftGauge(index, value) {
+        const DRIFT_AXES = ['emotional', 'epistemic', 'behavioral'];
+        const TREND_ICONS = {
+            stable: '',
+            oscillating: '~',
+            drifting_up: '\u2197',   // ↗
+            drifting_down: '\u2198'  // ↘
+        };
+        const TREND_COLORS = {
+            stable: '#6b7280',
+            oscillating: '#06b6d4',
+            drifting_up: '#ef4444',
+            drifting_down: '#3b82f6'
+        };
+
+        function updateDriftGauge(index, value, trendInfo) {
             const fill = document.getElementById('drift-g-' + index);
             const valEl = document.getElementById('drift-v-' + index);
+            const trendEl = document.getElementById('drift-trend-' + index);
             if (!fill) return;
 
             const clamped = Math.max(-0.5, Math.min(0.5, value));
@@ -2667,6 +2935,18 @@ ${escapeHtml(details)}</div>
                 valEl.textContent = (clamped >= 0 ? '+' : '') + clamped.toFixed(3);
                 valEl.style.color = Math.abs(clamped) < 0.005 ? '' :
                     clamped > 0 ? '#ef4444' : '#3b82f6';
+            }
+
+            // Update trend indicator
+            if (trendEl && trendInfo) {
+                const trend = trendInfo.trend || 'stable';
+                const strength = trendInfo.strength || 0;
+                trendEl.textContent = TREND_ICONS[trend] || '';
+                trendEl.style.color = TREND_COLORS[trend] || '#6b7280';
+                trendEl.style.opacity = 0.5 + (strength * 0.5);  // Scale opacity by confidence
+                trendEl.title = trend.replace('_', ' ') + (strength > 0.5 ? ' (strong)' : '');
+            } else if (trendEl) {
+                trendEl.textContent = '';
             }
         }
 
@@ -2722,41 +3002,180 @@ ${escapeHtml(details)}</div>
 
         setInterval(updateFreshnessDisplay, 5000);
 
-        function addDecisionLogEntry(data) {
-            const container = document.getElementById('pulse-log-entries');
+        // Event icons by type
+        const EVENT_ICONS = {
+            verdict_change: '⚡',
+            risk_threshold: '📊',
+            trajectory_adjustment: '🎯',
+            drift_alert: '🌊',
+            agent_new: '✨',
+            agent_idle: '💤'
+        };
+
+        // Severity to CSS class mapping
+        const SEVERITY_CLASSES = {
+            info: 'event-info',
+            warning: 'event-warning',
+            critical: 'event-critical'
+        };
+
+        // ============================================
+        // Recent Decisions Log (coalesced check-ins)
+        // ============================================
+        const MAX_DECISIONS = 8;
+        const COALESCE_WINDOW_MS = 30000; // 30 seconds
+        const recentDecisions = []; // {agent_id, agent_name, verdict, risk, timestamp, count}
+
+        function getVerdictBadge(verdict, risk) {
+            // Determine verdict from risk if not provided
+            let v = verdict || 'safe';
+            if (!verdict && risk != null) {
+                if (risk < 0.35) v = 'approve';
+                else if (risk < 0.60) v = 'proceed';
+                else if (risk < 0.70) v = 'pause';
+                else v = 'critical';
+            }
+            const badges = {
+                'safe': { text: 'A', cls: 'verdict-approve', title: 'Approve' },
+                'approve': { text: 'A', cls: 'verdict-approve', title: 'Approve' },
+                'caution': { text: 'P', cls: 'verdict-proceed', title: 'Proceed' },
+                'proceed': { text: 'P', cls: 'verdict-proceed', title: 'Proceed' },
+                'elevated': { text: 'P', cls: 'verdict-proceed', title: 'Proceed with caution' },
+                'pause': { text: '!', cls: 'verdict-pause', title: 'Pause' },
+                'high-risk': { text: '!', cls: 'verdict-pause', title: 'High Risk' },
+                'critical': { text: 'X', cls: 'verdict-critical', title: 'Critical' }
+            };
+            return badges[v] || badges['safe'];
+        }
+
+        function formatCompactTime(timestamp) {
+            const now = Date.now();
+            const ts = new Date(timestamp).getTime();
+            const diff = Math.floor((now - ts) / 1000);
+            if (diff < 5) return 'now';
+            if (diff < 60) return diff + 's';
+            if (diff < 3600) return Math.floor(diff / 60) + 'm';
+            if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+            return Math.floor(diff / 86400) + 'd';
+        }
+
+        function truncateAgentName(name, maxLen = 15) {
+            if (!name) return 'unknown';
+            if (name.length <= maxLen) return name;
+            return name.substring(0, maxLen - 3) + '...';
+        }
+
+        function addDecision(data) {
+            const agentId = data.agent_id || 'unknown';
+            const agentName = data.agent_name || agentId;
+            const verdict = data.metrics?.verdict || data.decision?.action || 'safe';
+            const risk = data.risk != null ? data.risk : 0;
+            const timestamp = data.timestamp || new Date().toISOString();
+            const now = Date.now();
+
+            // Check if we should coalesce with existing entry
+            const existing = recentDecisions.find(d =>
+                d.agent_id === agentId &&
+                (now - new Date(d.timestamp).getTime()) < COALESCE_WINDOW_MS
+            );
+
+            if (existing) {
+                // Coalesce: update values and increment count
+                existing.verdict = verdict;
+                existing.risk = risk;
+                existing.timestamp = timestamp;
+                existing.count++;
+            } else {
+                // Add new entry at start
+                recentDecisions.unshift({
+                    agent_id: agentId,
+                    agent_name: agentName,
+                    verdict: verdict,
+                    risk: risk,
+                    timestamp: timestamp,
+                    count: 1
+                });
+                // Trim to max
+                while (recentDecisions.length > MAX_DECISIONS) {
+                    recentDecisions.pop();
+                }
+            }
+
+            renderDecisionsLog();
+        }
+
+        function renderDecisionsLog() {
+            const container = document.getElementById('decisions-log-entries');
+            if (!container) return;
+
+            if (recentDecisions.length === 0) {
+                container.innerHTML = '<div class="pulse-log-empty">No decisions yet</div>';
+                return;
+            }
+
+            container.innerHTML = recentDecisions.map(d => {
+                const badge = getVerdictBadge(d.verdict, d.risk);
+                const countStr = d.count > 1 ? ` <span class="decision-count">×${d.count}</span>` : '';
+                const nameDisplay = truncateAgentName(d.agent_name);
+                const timeStr = formatCompactTime(d.timestamp);
+                const riskStr = d.risk != null ? d.risk.toFixed(2) : '—';
+
+                return `
+                    <div class="decision-entry" title="${escapeHtml(d.agent_name)} • Risk: ${riskStr} • ${badge.title}">
+                        <span class="decision-badge ${badge.cls}" title="${badge.title}">${badge.text}</span>
+                        <span class="decision-agent">${escapeHtml(nameDisplay)}${countStr}</span>
+                        <span class="decision-risk">(${riskStr})</span>
+                        <span class="decision-time">${timeStr}</span>
+                    </div>`;
+            }).join('');
+        }
+
+        // Update decisions log timestamps every 5 seconds
+        setInterval(renderDecisionsLog, 5000);
+
+        function addEventEntry(event) {
+            const container = document.getElementById('events-log-entries');
             if (!container) return;
 
             // Remove empty placeholder
             const empty = container.querySelector('.pulse-log-empty');
             if (empty) empty.remove();
 
-            const risk = data.risk ?? 0;
-            const action = data.action || 'unknown';
-            // Prefer agent_name, fallback to agent_id, then 'unknown'
-            const name = data.agent_name || data.agent_id || 'unknown';
-            const ts = data.timestamp ? new Date(data.timestamp) : new Date();
-            const drift = data.inputs?.ethical_drift;
-            const maxDrift = drift ? Math.max(...drift.map(Math.abs)) : 0;
-
-            let verdictText, verdictClass;
-            if (risk < 0.35) { verdictText = 'APPROVE'; verdictClass = 'log-approve'; }
-            else if (risk < 0.60) { verdictText = 'PROCEED'; verdictClass = 'log-proceed'; }
-            else if (risk < 0.70) { verdictText = 'PAUSE'; verdictClass = 'log-pause'; }
-            else { verdictText = 'CRITICAL'; verdictClass = 'log-critical'; }
+            const ts = event.timestamp ? new Date(event.timestamp) : new Date();
+            const icon = EVENT_ICONS[event.type] || '📌';
+            const severityClass = SEVERITY_CLASSES[event.severity] || 'event-info';
 
             const entry = document.createElement('div');
-            entry.className = 'pulse-log-entry';
+            entry.className = `pulse-log-entry ${severityClass}`;
             entry.innerHTML =
+                `<span class="event-icon">${icon}</span>` +
                 `<span class="log-time">${ts.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</span>` +
-                `<span class="log-verdict ${verdictClass}">${verdictText}</span>` +
-                `<span class="log-agent">${escapeHtml(name.length > 10 ? name.substring(0, 10) : name)}</span>` +
-                `<span class="log-detail">risk ${risk.toFixed(3)}${maxDrift > 0.05 ? ' · drift ' + maxDrift.toFixed(2) : ''}</span>`;
+                `<span class="event-message">${escapeHtml(event.message || event.type)}</span>`;
+
+            // Add tooltip with details
+            if (event.reason) {
+                entry.title = event.reason;
+            }
 
             container.insertBefore(entry, container.firstChild);
 
             // Trim to max entries
             while (container.children.length > MAX_LOG_ENTRIES) {
                 container.removeChild(container.lastChild);
+            }
+        }
+
+        // Fetch initial events on page load
+        async function fetchInitialEvents() {
+            try {
+                const response = await fetch('/api/events?limit=20');
+                const data = await response.json();
+                if (data.success && data.events && data.events.length > 0) {
+                    // Add events in reverse order (oldest first) so newest end up on top
+                    data.events.slice().reverse().forEach(event => addEventEntry(event));
+                }
+            } catch (e) {
+                console.debug('Could not fetch initial events:', e);
             }
         }
 
@@ -2811,9 +3230,12 @@ ${escapeHtml(details)}</div>
                 if (cfVal && inputs.confidence != null) cfVal.textContent = inputs.confidence.toFixed(2);
 
                 const drift = inputs.ethical_drift;
+                const driftTrends = data.drift_trends || {};
                 if (drift && drift.length === 3) {
                     for (let i = 0; i < 3; i++) {
-                        updateDriftGauge(i, drift[i]);
+                        const axis = DRIFT_AXES[i];
+                        const trendInfo = driftTrends[axis] || null;
+                        updateDriftGauge(i, drift[i], trendInfo);
                     }
                 }
             }
@@ -2821,8 +3243,8 @@ ${escapeHtml(details)}</div>
             // Verdict badge
             updateGovernanceVerdict(data);
 
-            // Decision log
-            addDecisionLogEntry(data);
+            // Recent Decisions log - add every check-in with coalescing
+            addDecision(data);
 
             // Data freshness
             updateDataFreshness(data.timestamp);
@@ -3070,10 +3492,12 @@ ${escapeHtml(details)}</div>
             document.addEventListener('DOMContentLoaded', () => {
                 console.log('DOM ready, starting initial load');
                 setTimeout(() => { refresh(); }, 100);
+                fetchInitialEvents();  // Load recent events
             });
         } else {
             console.log('DOM already ready, starting initial load');
             setTimeout(() => { refresh(); }, 100);
+            fetchInitialEvents();  // Load recent events
         }
 
         // Auto-refresh every 30 seconds
