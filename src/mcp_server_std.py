@@ -2554,16 +2554,21 @@ async def process_update_authenticated_async(
             meta.recent_decisions = meta.recent_decisions[-10:]
 
         # Persist counters to PostgreSQL (in-memory is not enough — survives restarts)
-        try:
-            from src import agent_storage
-            db = agent_storage.get_db()
-            await db.update_identity_metadata(agent_id, {
-                "total_updates": meta.total_updates,
-                "recent_update_timestamps": meta.recent_update_timestamps,
-                "recent_decisions": meta.recent_decisions,
-            }, merge=True)
-        except Exception as e:
-            logger.debug(f"Could not persist update counters for {agent_id[:8]}...: {e}")
+        for _attempt in range(2):
+            try:
+                from src import agent_storage
+                db = agent_storage.get_db()
+                await db.update_identity_metadata(agent_id, {
+                    "total_updates": meta.total_updates,
+                    "recent_update_timestamps": meta.recent_update_timestamps,
+                    "recent_decisions": meta.recent_decisions,
+                }, merge=True)
+                break  # success
+            except Exception as e:
+                if _attempt == 0:
+                    await asyncio.sleep(0.1)  # brief retry
+                else:
+                    logger.warning(f"Failed to persist update counters for {agent_id[:8]}... after 2 attempts: {e}")
 
         # Enforce pause decisions (circuit breaker)
         # SELF-GOVERNANCE: When paused, automatically initiate dialectic recovery
@@ -2677,7 +2682,9 @@ def build_standardized_agent_info(
         else:
             last_update_ts = meta.last_update
         
-        update_count = int(monitor.state.update_count)
+        # Always use meta.total_updates (Postgres-backed) as authoritative count.
+        # monitor.state.update_count is a separate counter that can drift.
+        update_count = meta.total_updates
     else:
         created_ts = meta.created_at
         last_update_ts = meta.last_update

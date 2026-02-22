@@ -103,7 +103,14 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
                 "update_count": monitor.state.update_count
             }
         }
-    
+
+    # Use meta.total_updates as authoritative count (Postgres-backed, survives restarts)
+    meta = mcp_server.agent_metadata.get(agent_id)
+    if meta and observation.get("current_state"):
+        observation["current_state"]["update_count"] = meta.total_updates
+        observation["summary"] = observation.get("summary", {})
+        observation["summary"]["total_updates"] = meta.total_updates
+
     # Add EISV labels for API documentation
     response_data = {
         "agent_id": agent_id,
@@ -665,8 +672,9 @@ async def handle_aggregate_metrics(arguments: Dict[str, Any]) -> Sequence[TextCo
             decision_counts["reflect"] = decision_stats.get("reflect", 0) + decision_stats.get("revise", 0)
             decision_counts["reject"] = decision_stats.get("reject", 0)
             
-            # Count total updates
-            total_updates += monitor.state.update_count
+            # Count total updates — prefer meta.total_updates (Postgres-backed)
+            meta = mcp_server.agent_metadata.get(agent_id)
+            total_updates += meta.total_updates if meta else monitor.state.update_count
     
     # Compute aggregate statistics
     aggregate_data = {
