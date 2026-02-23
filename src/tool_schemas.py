@@ -4550,7 +4550,8 @@ EXAMPLE: knowledge(action="search", query="authentication bugs")
                         "description": "Operation to perform"
                     },
                     "query": {"type": "string", "description": "Search query (for action=search)"},
-                    "content": {"type": "string", "description": "Note content (for action=note)"},
+                    "content": {"type": "string", "description": "Extended content/details (for action=store or action=note)"},
+                    "details": {"type": "string", "description": "Extended details for discovery (for action=store). Alias: content"},
                     "summary": {"type": "string", "description": "Discovery summary (for action=store)"},
                     "discovery_type": {"type": "string", "description": "Type: bug, insight, pattern, question (for action=store)"},
                     "discovery_id": {"type": "string", "description": "Discovery ID (for action=details, update)"},
