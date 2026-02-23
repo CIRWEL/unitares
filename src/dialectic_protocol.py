@@ -396,7 +396,7 @@ class DialecticSession:
         self.synthesis_round = 0
         self.resolution: Optional[Resolution] = None
 
-        self.created_at = datetime.now()
+        self.created_at = datetime.now(timezone.utc)
         self.session_id = self._generate_session_id()
         
         # Set instance-level timeouts based on session type
@@ -429,13 +429,13 @@ class DialecticSession:
         session_data = f"{self.paused_agent_id}:{self.reviewer_agent_id}:{self.created_at.isoformat()}"
         return hashlib.sha256(session_data.encode()).hexdigest()[:16]
 
-    def submit_thesis(self, message: DialecticMessage, api_key: str) -> Dict[str, Any]:
+    def submit_thesis(self, message: DialecticMessage, api_key: str = "") -> Dict[str, Any]:
         """
         Agent A submits thesis: "What I did, what I think happened"
 
         Args:
             message: Thesis message with root_cause, proposed_conditions
-            api_key: Agent A's API key for authentication
+            api_key: Deprecated, unused. Auth handled at handler layer.
 
         Returns:
             Status dict
@@ -448,9 +448,6 @@ class DialecticSession:
         if self.phase != DialecticPhase.THESIS:
             return {"success": False, "error": f"Cannot submit thesis in phase {self.phase.value}"}
 
-        # Verify signature
-        signature = message.sign(api_key)
-
         # Store message
         self.transcript.append(message)
         self.phase = DialecticPhase.ANTITHESIS
@@ -459,16 +456,15 @@ class DialecticSession:
             "success": True,
             "phase": self.phase.value,
             "session_id": self.session_id,
-            "signature": signature
         }
 
-    def submit_antithesis(self, message: DialecticMessage, api_key: str) -> Dict[str, Any]:
+    def submit_antithesis(self, message: DialecticMessage, api_key: str = "") -> Dict[str, Any]:
         """
         Agent B submits antithesis: "What I observe, my concerns"
 
         Args:
             message: Antithesis message with observations, concerns
-            api_key: Agent B's API key for authentication
+            api_key: Deprecated, unused. Auth handled at handler layer.
 
         Returns:
             Status dict
@@ -481,9 +477,6 @@ class DialecticSession:
         if self.phase != DialecticPhase.ANTITHESIS:
             return {"success": False, "error": f"Cannot submit antithesis in phase {self.phase.value}"}
 
-        # Verify signature
-        signature = message.sign(api_key)
-
         # Store message
         self.transcript.append(message)
         self.phase = DialecticPhase.SYNTHESIS
@@ -493,17 +486,16 @@ class DialecticSession:
             "success": True,
             "phase": self.phase.value,
             "session_id": self.session_id,
-            "signature": signature,
             "max_rounds": self.max_synthesis_rounds
         }
 
-    def submit_synthesis(self, message: DialecticMessage, api_key: str) -> Dict[str, Any]:
+    def submit_synthesis(self, message: DialecticMessage, api_key: str = "") -> Dict[str, Any]:
         """
         Either agent submits synthesis proposal during negotiation.
 
         Args:
             message: Synthesis message with proposed resolution
-            api_key: Agent's API key for authentication
+            api_key: Deprecated, unused. Auth handled at handler layer.
 
         Returns:
             Status dict with convergence info
@@ -526,9 +518,6 @@ class DialecticSession:
                 "rounds": self.synthesis_round - 1
             }
 
-        # Verify signature
-        signature = message.sign(api_key)
-
         # Store message
         self.transcript.append(message)
 
@@ -540,7 +529,6 @@ class DialecticSession:
                 "converged": True,
                 "phase": self.phase.value,
                 "rounds": self.synthesis_round,
-                "signature": signature
             }
 
         # No convergence yet, continue negotiation
@@ -552,7 +540,6 @@ class DialecticSession:
             "phase": self.phase.value,
             "round": self.synthesis_round,
             "max_rounds": self.max_synthesis_rounds,
-            "signature": signature
         }
 
     def _check_both_agree(self) -> bool:
@@ -880,9 +867,10 @@ class DialecticSession:
             if re.search(pattern, conditions_str):
                 return False, reason
         
-        # Check risk threshold values - require decimal point to avoid false matches like "3" from "every 3 updates"
-        # Pattern matches "risk threshold to 0.47" or "risk threshold 0.47" but requires decimal point
-        risk_threshold_pattern = r"risk.*?threshold.*?([0-9]\.[0-9]+)"
+        # Check risk threshold values
+        # Non-greedy matching to capture the full decimal number closest to "threshold"
+        # Word boundary ensures we capture "0.95" not just "5"
+        risk_threshold_pattern = r"risk.*?threshold.*?\b([0-9]+\.?[0-9]*)\b"
         matches = re.findall(risk_threshold_pattern, conditions_str, re.IGNORECASE)
         
         for match in matches:
@@ -898,10 +886,11 @@ class DialecticSession:
                 continue
         
         # Check coherence threshold (should be reasonable)
+        # Non-greedy matching with word boundary to capture full decimal number
         coherence_patterns = [
-            r"coherence.*threshold.*([0-9.]+)",
-            r"coherence.*<.*([0-9.]+)",
-            r"coherence.*=.*([0-9.]+)"
+            r"coherence.*?threshold.*?\b([0-9]+\.?[0-9]*)\b",
+            r"coherence.*?<.*?\b([0-9]+\.?[0-9]*)\b",
+            r"coherence.*?=.*?\b([0-9]+\.?[0-9]*)\b",
         ]
         
         for pattern in coherence_patterns:
@@ -932,16 +921,22 @@ class DialecticSession:
         
         return True, None
 
+    @staticmethod
+    def _ensure_utc(dt: datetime) -> datetime:
+        """Ensure a datetime is timezone-aware (UTC). Assumes naive datetimes are UTC."""
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+
     def check_timeout(self) -> Optional[str]:
         """
         Check if session has timed out at any phase.
-        
+
         Returns:
             Timeout reason string if timed out, None otherwise
         """
-        # Use timezone-aware now if created_at is timezone-aware (from PostgreSQL)
-        now = datetime.now(timezone.utc) if self.created_at.tzinfo else datetime.now()
-        elapsed = now - self.created_at
+        now = datetime.now(timezone.utc)
+        elapsed = now - self._ensure_utc(self.created_at)
         
         # Use instance-level timeouts (set in __init__ based on session_type)
         max_total = getattr(self, '_max_total_time', self.MAX_TOTAL_TIME)
@@ -957,7 +952,7 @@ class DialecticSession:
         if self.phase == DialecticPhase.ANTITHESIS:
             thesis_time = self.get_thesis_timestamp()
             if thesis_time:
-                wait_time = now - thesis_time
+                wait_time = now - self._ensure_utc(thesis_time)
                 if wait_time > max_antithesis:
                     return f"Reviewer timeout - waited {wait_time.total_seconds()/3600:.1f} hours for antithesis"
 
@@ -965,7 +960,7 @@ class DialecticSession:
         elif self.phase == DialecticPhase.SYNTHESIS:
             last_update = self.get_last_update_timestamp()
             if last_update:
-                wait_time = now - last_update
+                wait_time = now - self._ensure_utc(last_update)
                 if wait_time > max_synthesis:
                     return f"Synthesis timeout - waited {wait_time.total_seconds()/3600:.1f} hours for next synthesis"
         

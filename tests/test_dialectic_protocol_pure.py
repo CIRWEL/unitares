@@ -411,15 +411,11 @@ class TestCheckHardLimits:
         assert is_safe is True
 
     def test_coherence_threshold_too_low_unsafe(self):
-        # The regex coherence.*threshold.*([0-9.]+) has a greedy .* before
-        # the capture group, so "coherence threshold 0.05" captures "5" -> 5.0.
-        # Use coherence = 0.05 pattern which also has the greedy issue but
-        # captures single-digit values that exceed 1.0, triggering the check.
+        # Non-greedy regex correctly captures "0.05" → float(0.05) < 0.1 minimum
         res = _make_resolution(conditions=["set coherence threshold 0.05"])
         is_safe, reason = self.session.check_hard_limits(res)
         assert is_safe is False
-        # The greedy regex captures "5" -> 5.0 which exceeds maximum 1.0
-        assert "exceeds" in reason.lower() or "too low" in reason.lower()
+        assert "too low" in reason.lower()
 
     def test_coherence_threshold_above_10_unsafe(self):
         res = _make_resolution(conditions=["set coherence threshold 1.5"])

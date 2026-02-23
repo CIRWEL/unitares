@@ -6,8 +6,9 @@ Implements MCP tools for peer-review dialectic resolution of circuit breaker sta
 
 from typing import Dict, Any, Sequence, Optional, List
 from mcp.types import TextContent
+import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import random
 
 # Import type definitions
@@ -108,40 +109,49 @@ except ImportError:
 
 async def check_reviewer_stuck(session: DialecticSession) -> bool:
     """
-    Check if reviewer is stuck (paused or hasn't responded to session assignment).
-    
+    Check if reviewer is stuck (paused or hasn't responded after thesis submission).
+
+    Only meaningful during ANTITHESIS phase — that's when the reviewer needs to respond.
+    Uses thesis submission time (not session creation time) and aligns with
+    the protocol's MAX_ANTITHESIS_WAIT (2 hours).
+
     Returns:
         True if reviewer is stuck, False otherwise
     """
+    # Only check during ANTITHESIS phase — reviewer hasn't been asked in other phases
+    if session.phase != DialecticPhase.ANTITHESIS:
+        return False
+
     reviewer_id = session.reviewer_agent_id
-    
-    # Reload metadata to ensure we have latest state (non-blocking)
-    import asyncio
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
-    
+    if not reviewer_id:
+        return False  # No reviewer assigned yet — not stuck, just unassigned
+
+    # Reload metadata from PostgreSQL (async)
+    await mcp_server.load_metadata_async(force=True)
+
     reviewer_meta = mcp_server.agent_metadata.get(reviewer_id)
     if not reviewer_meta:
         return True  # Reviewer doesn't exist = stuck
-    
+
     # Check if reviewer is paused
     if reviewer_meta.status == "paused":
         return True
-    
-    # Check time since reviewer was assigned to this session (not governance last_update)
-    # FIXED: Previously checked reviewer_meta.last_update (governance time), which caused
-    # sessions to abort prematurely if reviewer hadn't updated governance state recently.
-    # Now correctly checks time since session creation (when reviewer was assigned).
+
+    # Measure from thesis submission time (when reviewer was actually asked to respond)
+    # Aligned with protocol's MAX_ANTITHESIS_WAIT (2 hours)
     try:
-        session_created = session.created_at
-        if isinstance(session_created, str):
-            session_created = datetime.fromisoformat(session_created)
-        stuck_threshold = timedelta(minutes=30)
-        time_since_assignment = datetime.now() - session_created
-        return time_since_assignment > stuck_threshold
+        thesis_time = session.get_thesis_timestamp()
+        if thesis_time is None:
+            return False  # No thesis yet — reviewer can't be stuck
+        # Handle timezone mismatch
+        if thesis_time.tzinfo is None:
+            wait_time = datetime.now() - thesis_time
+        else:
+            wait_time = datetime.now(timezone(timedelta(0))) - thesis_time
+        stuck_threshold = timedelta(hours=2)
+        return wait_time > stuck_threshold
     except (ValueError, TypeError, AttributeError):
-        # Can't parse timestamp or session has no created_at - assume stuck
-        return True
+        return False  # Can't determine — don't kill the session
 
 
 @mcp_tool("request_dialectic_review", timeout=10.0, register=True)
@@ -332,7 +342,7 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
     try:
         session_id = arguments.get('session_id')
         agent_id = arguments.get('agent_id')
-        check_timeout = arguments.get('check_timeout', True)
+        check_timeout = arguments.get('check_timeout', False)
 
         # If session_id provided, use it directly
         if session_id:
@@ -363,13 +373,18 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                     timeout_msg = DialecticMessage(
                         phase="synthesis",
                         agent_id="system",
-                        timestamp=datetime.now().isoformat(),
+                        timestamp=datetime.now(timezone.utc).isoformat(),
                         reasoning=f"Session auto-failed: {timeout_reason}"
                     )
                     session.transcript.append(timeout_msg)
                     # Persist to PostgreSQL
                     try:
-                        await pg_add_message(session_id, timeout_msg.to_dict())
+                        await pg_add_message(
+                            session_id=session_id,
+                            agent_id="system",
+                            message_type="failed",
+                            reasoning=f"Session auto-failed: {timeout_reason}",
+                        )
                         await pg_update_phase(session_id, "failed")
                     except Exception as e:
                         logger.error(f"Failed to persist timeout to PostgreSQL: {e}")
@@ -397,13 +412,18 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                     stuck_msg = DialecticMessage(
                         phase="failed",
                         agent_id="system",
-                        timestamp=datetime.now().isoformat(),
+                        timestamp=datetime.now(timezone.utc).isoformat(),
                         reasoning="Reviewer stuck - session aborted"
                     )
                     session.transcript.append(stuck_msg)
                     # Persist to PostgreSQL
                     try:
-                        await pg_add_message(session_id, stuck_msg.to_dict())
+                        await pg_add_message(
+                            session_id=session_id,
+                            agent_id="system",
+                            message_type="failed",
+                            reasoning="Reviewer stuck - session aborted",
+                        )
                         await pg_update_phase(session_id, "failed")
                     except Exception as e:
                         logger.error(f"Failed to persist reviewer stuck to PostgreSQL: {e}")
@@ -431,10 +451,8 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
         
         # If agent_id provided, find all sessions for this agent
         if agent_id:
-            # Reload metadata to ensure we have latest state (non-blocking)
-            import asyncio
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, mcp_server.load_metadata)
+            # Reload metadata from PostgreSQL (async)
+            await mcp_server.load_metadata_async(force=True)
             
             # Check if agent exists
             if agent_id not in mcp_server.agent_metadata:
@@ -656,7 +674,7 @@ async def handle_submit_thesis(arguments: Dict[str, Any]) -> Sequence[TextConten
         message = DialecticMessage(
             phase="thesis",
             agent_id=agent_id,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             root_cause=arguments.get('root_cause'),
             proposed_conditions=arguments.get('proposed_conditions', []),
             reasoning=arguments.get('reasoning')
@@ -752,7 +770,7 @@ async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextCo
         message = DialecticMessage(
             phase="antithesis",
             agent_id=agent_id,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             observed_metrics=arguments.get('observed_metrics', {}),
             concerns=arguments.get('concerns', []),
             reasoning=arguments.get('reasoning')
@@ -849,7 +867,7 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
         message = DialecticMessage(
             phase="synthesis",
             agent_id=agent_id,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             proposed_conditions=arguments.get('proposed_conditions', []),
             root_cause=arguments.get('root_cause'),
             reasoning=arguments.get('reasoning'),
@@ -860,7 +878,9 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
         result = session.submit_synthesis(message, api_key)
 
         if result.get("success"):
-            # Persist to PostgreSQL
+            # Persist synthesis message to PostgreSQL
+            # NOTE: Defer phase update for converged sessions until after finalize_resolution
+            # succeeds, to avoid "resolved" phase in PG without a resolution if finalize fails.
             try:
                 await pg_add_message(
                     session_id=session_id,
@@ -871,7 +891,8 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
                     reasoning=arguments.get('reasoning'),
                     agrees=arguments.get('agrees', False),
                 )
-                await pg_update_phase(session_id, session.phase.value)
+                if not result.get("converged"):
+                    await pg_update_phase(session_id, session.phase.value)
             except Exception as e:
                 logger.warning(f"Could not update PostgreSQL after synthesis: {e}")
 
@@ -1029,7 +1050,7 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
         "proposed_conditions": proposed_conditions,
         "reasoning": reasoning,
         "agent_id": agent_uuid,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
     # Get agent state for context

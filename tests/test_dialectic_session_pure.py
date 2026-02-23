@@ -504,11 +504,11 @@ class TestDialecticProtocolFlow:
         assert result["success"] is False
         assert "Cannot submit thesis" in result["error"]
 
-    def test_thesis_returns_signature(self):
+    def test_thesis_returns_session_id(self):
         session = self._make_session()
         result = session.submit_thesis(self._thesis_msg(), "api-key-a")
-        assert "signature" in result
-        assert len(result["signature"]) == 64
+        assert "session_id" in result
+        assert result["session_id"] == session.session_id
 
     # --- submit_antithesis ---
 
