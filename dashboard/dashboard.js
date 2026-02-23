@@ -567,6 +567,12 @@ function openSlidePanel(title, content, options = {}) {
  * Close the slide panel.
  */
 function closeSlidePanel() {
+    // Cleanup chart if present
+    if (agentTrendChart) {
+        agentTrendChart.destroy();
+        agentTrendChart = null;
+    }
+
     const panel = document.getElementById('slide-panel');
     panel.classList.remove('open');
     document.body.classList.remove('panel-open');
