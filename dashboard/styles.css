@@ -3836,3 +3836,50 @@ body.me-mode-active .agent-item.is-me {
 .empty-state-action:hover {
     background: #00c8d9;
 }
+
+/* ============================================================================
+   LOADING SKELETONS
+   ============================================================================ */
+
+.skeleton {
+    background: linear-gradient(
+        90deg,
+        var(--item-bg) 25%,
+        var(--card-bg) 50%,
+        var(--item-bg) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s infinite;
+    border-radius: 4px;
+}
+
+@keyframes skeleton-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.skeleton-card {
+    height: 120px;
+    border-radius: 8px;
+}
+
+.skeleton-row {
+    height: 20px;
+    margin-bottom: 8px;
+}
+
+.skeleton-row:last-child {
+    margin-bottom: 0;
+    width: 60%;
+}
+
+.skeleton-chart {
+    height: 200px;
+    border-radius: 8px;
+}
+
+.skeleton-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}

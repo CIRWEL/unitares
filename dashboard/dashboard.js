@@ -969,6 +969,12 @@ function showToast(message, type = 'info') {
  * @param {string} range - Time range (1h, 24h, 7d, 30d)
  */
 async function loadAgentEisvTrend(agentId, range = '24h') {
+    // Show skeleton loading state for chart
+    const chartContainer = document.querySelector('.eisv-trend-chart-container');
+    if (chartContainer) {
+        chartContainer.innerHTML = renderSkeleton('chart');
+    }
+
     try {
         const response = await fetch(`/dashboard/fragments/eisv-history/${agentId}?range=${range}`);
         if (!response.ok) throw new Error('Failed to load EISV history');
@@ -1418,6 +1424,31 @@ function renderEmptyState(type, context = {}) {
             ${state.action || ''}
         </div>
     `;
+}
+
+/**
+ * Render loading skeletons.
+ * @param {string} type - Type of skeleton (card, list, chart, rows)
+ * @param {number} count - Number of items for list type
+ * @returns {string} HTML
+ */
+function renderSkeleton(type, count = 3) {
+    switch (type) {
+        case 'card':
+            return '<div class="skeleton skeleton-card"></div>';
+        case 'list':
+            return `<div class="skeleton-list">
+                ${Array(count).fill('<div class="skeleton skeleton-card"></div>').join('')}
+            </div>`;
+        case 'chart':
+            return '<div class="skeleton skeleton-chart"></div>';
+        case 'rows':
+            return `<div>
+                ${Array(count).fill('<div class="skeleton skeleton-row"></div>').join('')}
+            </div>`;
+        default:
+            return '<div class="skeleton skeleton-card"></div>';
+    }
 }
 
 function showError(message) {
@@ -1992,6 +2023,12 @@ function clearDiscoveryFilters() {
  * @returns {Promise<void>}
  */
 async function loadAgents() {
+    // Show skeleton loading state
+    const container = document.getElementById('agents-container');
+    if (container && container.children.length === 0) {
+        container.innerHTML = renderSkeleton('list', 5);
+    }
+
     try {
         console.log('Loading agents...');
         // Use unified agent() tool with action='list'
@@ -2254,6 +2291,12 @@ async function loadSystemHealth() {
  * @returns {Promise<void>}
  */
 async function loadDiscoveries(searchQuery = '') {
+    // Show skeleton loading state
+    const discoveriesContainer = document.getElementById('discoveries-container');
+    if (discoveriesContainer && discoveriesContainer.children.length === 0) {
+        discoveriesContainer.innerHTML = renderSkeleton('list', 4);
+    }
+
     try {
         console.log('Loading discoveries...', searchQuery ? `(search: ${searchQuery})` : '');
 
@@ -2442,6 +2485,12 @@ async function loadDiscoveries(searchQuery = '') {
 let cachedDialecticSessions = [];
 
 async function loadDialecticSessions() {
+    // Show skeleton loading state
+    const dialecticContainer = document.getElementById('dialectic-container');
+    if (dialecticContainer && dialecticContainer.children.length === 0) {
+        dialecticContainer.innerHTML = renderSkeleton('list', 3);
+    }
+
     try {
         console.log('Loading dialectic sessions...');
         const result = await callTool('list_dialectic_sessions', {
