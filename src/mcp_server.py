@@ -2271,7 +2271,7 @@ async def main():
                 return JSONResponse({"error": "Invalid file path"}, status_code=400)
             
             # Only allow specific files for security
-            allowed_files = ["utils.js", "components.js", "styles.css", "dashboard.js"]
+            allowed_files = ["utils.js", "components.js", "styles.css", "dashboard.js", "help.json"]
             if file_path not in allowed_files:
                 return JSONResponse({
                     "error": "File not allowed",

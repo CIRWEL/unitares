@@ -1,0 +1,137 @@
+{
+  "eisv": {
+    "energy": {
+      "short": "Agent's available capacity",
+      "long": "Energy represents the agent's current processing capacity. High energy means the agent can handle complex tasks. Low energy may indicate the agent is overwhelmed or needs rest.",
+      "range": "0.0 to 1.0 (higher is better)",
+      "thresholds": {
+        "good": ">= 0.6",
+        "warning": "0.3 - 0.6",
+        "critical": "< 0.3"
+      }
+    },
+    "integrity": {
+      "short": "Decision consistency",
+      "long": "Integrity measures how consistently the agent makes decisions aligned with its principles. High integrity means reliable, predictable behavior.",
+      "range": "0.0 to 1.0 (higher is better)",
+      "thresholds": {
+        "good": ">= 0.7",
+        "warning": "0.5 - 0.7",
+        "critical": "< 0.5"
+      }
+    },
+    "entropy": {
+      "short": "Behavioral randomness",
+      "long": "Entropy measures unpredictability in agent behavior. Some entropy is healthy (creativity), but too much suggests instability or confusion.",
+      "range": "0.0 to 1.0 (lower is usually better)",
+      "thresholds": {
+        "good": "< 0.2",
+        "warning": "0.2 - 0.4",
+        "critical": "> 0.4"
+      }
+    },
+    "void": {
+      "short": "Unprocessed uncertainty",
+      "long": "Void represents areas where the agent lacks knowledge or confidence. High void may indicate the agent is operating outside its expertise.",
+      "range": "0.0 to 1.0 (lower is better)",
+      "thresholds": {
+        "good": "< 0.15",
+        "warning": "0.15 - 0.3",
+        "critical": "> 0.3"
+      }
+    }
+  },
+  "metrics": {
+    "coherence": {
+      "short": "Overall agent health",
+      "long": "Coherence is a composite score derived from EISV values. It represents how well the agent is functioning overall. Calculated as: (Energy + Integrity) / 2 - (Entropy + Void) / 4",
+      "range": "0.0 to 1.0 (higher is better)"
+    },
+    "risk": {
+      "short": "Governance intervention likelihood",
+      "long": "Risk score determines whether governance should intervene. Based on coherence, confidence, complexity, and ethical drift. Higher risk means more likely to pause or halt the agent.",
+      "range": "0.0 to 1.0 (lower is better)",
+      "thresholds": {
+        "approve": "< 0.35 (auto-approve)",
+        "proceed": "0.35 - 0.60 (proceed with monitoring)",
+        "pause": "0.60 - 0.70 (pause for review)",
+        "halt": "> 0.70 (halt and escalate)"
+      }
+    },
+    "confidence": {
+      "short": "Agent's self-reported certainty",
+      "long": "How confident the agent is in its current task. Low confidence with high complexity may trigger governance intervention.",
+      "range": "0.0 to 1.0"
+    },
+    "complexity": {
+      "short": "Task difficulty estimate",
+      "long": "How complex the current task appears. High complexity combined with low confidence increases risk.",
+      "range": "0.0 to 1.0"
+    }
+  },
+  "drift": {
+    "emotional": {
+      "short": "Calibration deviation",
+      "long": "How far the agent's emotional responses deviate from its calibrated baseline. Positive means more reactive, negative means more suppressed.",
+      "range": "-1.0 to 1.0 (closer to 0 is better)"
+    },
+    "epistemic": {
+      "short": "Knowledge consistency",
+      "long": "How consistently the agent applies its knowledge. Drift here may indicate confusion or conflicting information.",
+      "range": "-1.0 to 1.0 (closer to 0 is better)"
+    },
+    "behavioral": {
+      "short": "Action pattern stability",
+      "long": "How stable the agent's action patterns are compared to baseline. High drift may indicate the agent is adapting (good) or destabilizing (bad).",
+      "range": "-1.0 to 1.0 (closer to 0 is better)"
+    }
+  },
+  "status": {
+    "active": {
+      "short": "Agent is running",
+      "long": "The agent is actively processing tasks and checking in with governance."
+    },
+    "paused": {
+      "short": "Temporarily stopped",
+      "long": "The agent has been paused by governance or an operator. It will not process tasks until resumed."
+    },
+    "waiting_input": {
+      "short": "Needs human input",
+      "long": "The agent is waiting for human guidance before proceeding. This may be due to high-risk decisions or explicit requests for review."
+    },
+    "archived": {
+      "short": "No longer active",
+      "long": "The agent has been archived and is no longer participating in governance. Historical data is preserved."
+    }
+  },
+  "actions": {
+    "pause": {
+      "short": "Stop agent temporarily",
+      "long": "Pausing an agent prevents it from processing new tasks. Use this when you need to investigate issues or the agent is behaving unexpectedly.",
+      "reversible": true
+    },
+    "resume": {
+      "short": "Restart paused agent",
+      "long": "Resuming returns a paused agent to active status. The agent will continue from where it left off.",
+      "reversible": true
+    },
+    "archive": {
+      "short": "Permanently deactivate",
+      "long": "Archiving removes an agent from active governance. Use this for agents that are no longer needed. Can be undone by an administrator.",
+      "reversible": false
+    },
+    "recalibrate": {
+      "short": "Reset baseline metrics",
+      "long": "Recalibration rebuilds the agent's baseline EISV values from recent history. Use this if the agent's environment has fundamentally changed.",
+      "reversible": false
+    }
+  },
+  "keyboard": {
+    "/": "Focus search",
+    "Escape": "Close panel or clear search",
+    "j": "Move down in list",
+    "k": "Move up in list",
+    "Enter": "Open selected item",
+    "?": "Show keyboard shortcuts"
+  }
+}
