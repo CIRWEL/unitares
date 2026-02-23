@@ -2251,11 +2251,31 @@ async def main():
         
         # Dashboard endpoint
         async def http_dashboard(request):
-            """Serve the web dashboard"""
+            """Serve the web dashboard with identity context"""
+            # Extract agent identity from headers
+            agent_name = request.headers.get("X-Agent-Name", "")
+            agent_id = request.headers.get("X-Agent-ID", "")
+
             dashboard_path = Path(__file__).parent.parent / "dashboard" / "index.html"
             if dashboard_path.exists():
+                content = dashboard_path.read_text()
+
+                # Inject identity context into the page
+                identity_script = f'''
+                <script>
+                    window.DASHBOARD_IDENTITY = {{
+                        agentName: {json.dumps(agent_name)},
+                        agentId: {json.dumps(agent_id)},
+                        isAgent: {json.dumps(bool(agent_name or agent_id))}
+                    }};
+                </script>
+                '''
+
+                # Insert before closing </head>
+                content = content.replace('</head>', identity_script + '</head>')
+
                 return Response(
-                    content=dashboard_path.read_text(),
+                    content=content,
                     media_type="text/html"
                 )
             return JSONResponse({
