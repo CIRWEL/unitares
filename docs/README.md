@@ -39,7 +39,7 @@
 
 ## Test Coverage
 
-6,407 tests passing with **80% overall coverage** as of Feb 2026.
+5,733 tests passing with **80% overall coverage** as of Feb 2026 (after SQLite backend removal).
 
 ---
 
@@ -78,7 +78,7 @@ governance-mcp-v1/
 ├── skills/                     # SKILL.md for agent onboarding
 ├── docs/                       # Documentation
 ├── data/                       # Runtime data (agents/, knowledge/)
-└── tests/                      # 6,407 tests, 80% coverage
+└── tests/                      # 5,733 tests, 80% coverage
 ```
 
 ---

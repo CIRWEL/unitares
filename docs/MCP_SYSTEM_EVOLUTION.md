@@ -456,7 +456,7 @@ v2.7.0:  CIRS v2 resonance wiring, I-dynamics linear, 6,407 tests at 80% coverag
 - ✅ Pi/Lumen orchestration via anima-mcp
 - ✅ PostgreSQL + AGE for all persistent data (dialectic migrated Feb 2026)
 - ✅ KG search bias mitigation (temporal decay, status scoring, connectivity cap, SUPERSEDES edges)
-- ✅ **6,344 tests** with 80% overall coverage (core modules 83-88%)
+- ✅ **5,733 tests** with 80% overall coverage (after SQLite backend removal)
 
 ### Architecture
 

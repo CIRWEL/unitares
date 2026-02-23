@@ -1,7 +1,7 @@
 # UNITARES Governance
 
 [![Tests](https://github.com/CIRWEL/governance-mcp-v1-backup/actions/workflows/tests.yml/badge.svg)](https://github.com/CIRWEL/governance-mcp-v1-backup/actions/workflows/tests.yml)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 **Your agents are running. Are they working?**
@@ -48,8 +48,8 @@ That's it. Everything else is optional. See [Getting Started](docs/guides/GETTIN
 |----------|-------|--------|
 | **E** (Energy) | [0,1] | Productive capacity |
 | **I** (Integrity) | [0,1] | Information coherence |
-| **S** (Entropy) | [0,1] | Disorder / uncertainty |
-| **V** (Void) | [-1,1] | Accumulated E-I imbalance (negative when I > E) |
+| **S** (Entropy) | [0,2] | Disorder / uncertainty |
+| **V** (Void) | [-2,2] | Accumulated E-I imbalance (negative when I > E) |
 
 ```
 Agent logs work → EISV update → Stability check → Decision (proceed/caution/pause) → Feedback
@@ -61,7 +61,7 @@ Continuous variables mean you see an agent *trending* toward trouble before it c
 
 ## Installation
 
-**Prerequisites:** Python 3.10+, PostgreSQL 16+, Redis (optional)
+**Prerequisites:** Python 3.11+, PostgreSQL 16+, Redis (optional)
 
 ```bash
 git clone https://github.com/CIRWEL/governance-mcp-v1-backup.git
@@ -158,7 +158,7 @@ See [MCP Setup Guide](docs/guides/MCP_SETUP.md) for ngrok, curl examples, and ad
 python -m pytest tests/ -v
 ```
 
-6,344 tests, 80% coverage.
+5,733 tests, 80% coverage.
 
 ---
 

@@ -262,7 +262,7 @@ When you call `process_agent_update`, you'll receive:
 - **E (Energy)**: How engaged and energized your work feels [0-1]
 - **I (Integrity)**: Consistency and coherence of your approach [0-1]
 - **S (Entropy)**: How scattered or fragmented things are [0-2]
-- **V (Void)**: Accumulated strain from energy-integrity mismatch [-1 to +1] (negative when I > E)
+- **V (Void)**: Accumulated strain from energy-integrity mismatch [-2 to +2] (negative when I > E)
 - **Coherence**: How well your work hangs together [0-1]
 - **Attention Score**: Cognitive load - high is normal for complex work [0-1]
 
