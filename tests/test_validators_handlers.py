@@ -185,13 +185,15 @@ class TestGenericCoercionEdgeCases:
         result = _apply_generic_coercion({"confidence": 0.75})
         assert result["confidence"] == 0.75
 
-    def test_float_01_clamp_negative_int(self):
+    def test_float_01_no_clamp_negative_int(self):
+        """Generic coercion no longer clamps - schema validation rejects instead."""
         result = _apply_generic_coercion({"complexity": -2})
-        assert result["complexity"] == 0.0
+        assert result["complexity"] == -2.0
 
-    def test_float_01_clamp_large_int(self):
+    def test_float_01_no_clamp_large_int(self):
+        """Generic coercion no longer clamps - schema validation rejects instead."""
         result = _apply_generic_coercion({"complexity": 5})
-        assert result["complexity"] == 1.0
+        assert result["complexity"] == 5.0
 
     def test_float_from_int(self):
         result = _apply_generic_coercion({"max_age_days": 7})
@@ -251,9 +253,10 @@ class TestGenericCoercionEdgeCases:
         result = _apply_generic_coercion({"min_similarity": "0.8"})
         assert result["min_similarity"] == 0.8
 
-    def test_connectivity_weight_clamp(self):
+    def test_connectivity_weight_no_clamp(self):
+        """Generic coercion no longer clamps - only coerces type."""
         result = _apply_generic_coercion({"connectivity_weight": "2.0"})
-        assert result["connectivity_weight"] == 1.0
+        assert result["connectivity_weight"] == 2.0
 
     def test_similarity_threshold_float_01(self):
         result = _apply_generic_coercion({"similarity_threshold": "0.3"})
@@ -331,23 +334,21 @@ class TestValidateAndCoerceParamsExtended:
         assert error is None
         assert result["confidence"] == 0.9
 
-    def test_process_agent_update_confidence_out_of_range_clamped(self):
-        """Generic coercion clamps float_01 before schema validation."""
+    def test_process_agent_update_confidence_out_of_range_rejected(self):
+        """Out-of-range confidence is rejected by schema validation."""
         result, error, fixes = validate_and_coerce_params(
             "process_agent_update", {"confidence": 1.5}
         )
-        # Generic coercion clamps 1.5 -> 1.0, so no error
-        assert error is None
-        assert result["confidence"] == 1.0
+        assert error is not None
+        assert "between 0.0 and 1.0" in error.text
 
-    def test_process_agent_update_complexity_out_of_range_clamped(self):
-        """Generic coercion clamps float_01 before schema validation."""
+    def test_process_agent_update_complexity_out_of_range_rejected(self):
+        """Out-of-range complexity is rejected by schema validation."""
         result, error, fixes = validate_and_coerce_params(
             "process_agent_update", {"complexity": -0.1}
         )
-        # Generic coercion clamps -0.1 -> 0.0, so no error
-        assert error is None
-        assert result["complexity"] == 0.0
+        assert error is not None
+        assert "between 0.0 and 1.0" in error.text
 
     def test_process_agent_update_complexity_boundary_zero(self):
         result, error, fixes = validate_and_coerce_params(
