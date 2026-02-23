@@ -1752,7 +1752,7 @@ function renderAgentsList(agents, searchTerm = '') {
         const meClass = isMe ? 'is-me' : '';
 
         return `
-            <div class="agent-item ${statusClass} ${meClass}" data-agent-uuid="${escapeHtml(agentId)}" style="cursor: pointer;" title="Click to view details">
+            <div class="agent-item ${statusClass} ${meClass}" data-agent-uuid="${escapeHtml(agentId)}">
                 <div class="agent-meta">
                     <div class="agent-title">
                         ${statusIndicator}
@@ -1797,8 +1797,8 @@ function renderAgentsList(agents, searchTerm = '') {
         `;
     }).join('');
 
-    // Wire up click handlers for agent cards
-    wireAgentCardClicks();
+    // Note: Slide panel disabled - duplicate metrics display was unhelpful
+    // wireAgentCardClicks();
 }
 
 /**

@@ -245,13 +245,7 @@
             <div class="panel-header">
                 <h2>Agents</h2>
                 <div class="panel-controls">
-                    <div class="search-wrapper">
-                        <span class="search-scope" id="search-scope" title="Search scope">Agents</span>
-                        <input id="agent-search" type="text" placeholder="Search agents..." aria-label="Search agents by name or ID">
-                        <button id="search-scope-toggle" class="search-scope-btn" type="button" title="Expand search scope">
-                            <span class="scope-expand-icon">▼</span>
-                        </button>
-                    </div>
+                    <input id="agent-search" type="text" placeholder="Search agents" aria-label="Search agents by name or ID">
                     <select id="agent-status-filter" aria-label="Filter agents by status">
                         <option value="all">All statuses</option>
                         <option value="active">Active</option>
@@ -362,16 +356,7 @@
         </div>
     </div>
 
-    <!-- Slide Panel for detail views -->
-    <aside id="slide-panel" class="slide-panel" role="complementary" aria-labelledby="panel-title">
-        <div class="slide-panel-header">
-            <h2 id="panel-title">Details</h2>
-            <button class="slide-panel-close" type="button" aria-label="Close panel">&times;</button>
-        </div>
-        <div class="slide-panel-body" id="panel-body">
-            <!-- Content loaded dynamically -->
-        </div>
-    </aside>
+    <!-- Slide panel removed - expanding cards in-place is better UX -->
 
     <script src="/dashboard/dashboard.js"></script>
 </body>
