@@ -3603,3 +3603,22 @@ body.panel-open main {
     padding-top: 16px;
     border-top: 1px solid var(--border-color);
 }
+
+/* EISV Trend Chart in Agent Detail */
+.eisv-trend-controls {
+    margin-bottom: 12px;
+}
+
+.trend-range-select {
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+
+.eisv-trend-chart-container {
+    height: 200px;
+    position: relative;
+}

@@ -698,6 +698,19 @@ function openAgentDetailPanel(agentId) {
 
     const content = renderAgentDetailContent(agent);
     openSlidePanel(agent.label || agent.agent_id, content, { html: true });
+
+    // Load trend chart after panel opens
+    setTimeout(() => {
+        loadAgentEisvTrend(agentId, '24h');
+
+        // Wire up range selector
+        const rangeSelect = document.getElementById('eisv-trend-range');
+        if (rangeSelect) {
+            rangeSelect.addEventListener('change', (e) => {
+                loadAgentEisvTrend(agentId, e.target.value);
+            });
+        }
+    }, 100);
 }
 
 /**
@@ -756,6 +769,21 @@ function renderAgentDetailContent(agent) {
             </div>
 
             <div class="agent-detail-section">
+                <h3>EISV Trend</h3>
+                <div class="eisv-trend-controls">
+                    <select id="eisv-trend-range" class="trend-range-select">
+                        <option value="1h">Last hour</option>
+                        <option value="24h" selected>Last 24h</option>
+                        <option value="7d">Last 7 days</option>
+                        <option value="30d">Last 30 days</option>
+                    </select>
+                </div>
+                <div class="eisv-trend-chart-container">
+                    <canvas id="agent-eisv-trend-chart"></canvas>
+                </div>
+            </div>
+
+            <div class="agent-detail-section">
                 <h3>Info</h3>
                 <dl class="agent-detail-info">
                     <dt>ID</dt>
@@ -773,6 +801,117 @@ function renderAgentDetailContent(agent) {
             </div>
         </div>
     `;
+}
+
+/**
+ * Load and render EISV trend chart for an agent.
+ * @param {string} agentId - Agent UUID
+ * @param {string} range - Time range (1h, 24h, 7d, 30d)
+ */
+async function loadAgentEisvTrend(agentId, range = '24h') {
+    try {
+        const response = await fetch(`/dashboard/fragments/eisv-history/${agentId}?range=${range}`);
+        if (!response.ok) throw new Error('Failed to load EISV history');
+
+        const data = await response.json();
+        if (data.error) throw new Error(data.error);
+
+        renderAgentTrendChart(data);
+    } catch (e) {
+        console.error('Failed to load EISV trend:', e);
+        const container = document.querySelector('.eisv-trend-chart-container');
+        if (container) {
+            container.innerHTML = '<div class="empty-state"><p>Failed to load trend data</p></div>';
+        }
+    }
+}
+
+/**
+ * Render the EISV trend chart with Chart.js.
+ * @param {Object} data - Chart data from server
+ */
+function renderAgentTrendChart(data) {
+    const canvas = document.getElementById('agent-eisv-trend-chart');
+    if (!canvas) return;
+
+    // Destroy existing chart
+    if (agentTrendChart) {
+        agentTrendChart.destroy();
+        agentTrendChart = null;
+    }
+
+    const ctx = canvas.getContext('2d');
+
+    // Parse timestamps
+    const labels = data.labels.map(ts => new Date(ts));
+
+    // Get colors from CSS variables with fallbacks
+    const getColor = (varName, fallback) => {
+        const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        return value || fallback;
+    };
+
+    agentTrendChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Energy',
+                    data: data.datasets.energy,
+                    borderColor: getColor('--color-energy', '#9d4edd'),
+                    backgroundColor: 'transparent',
+                    tension: 0.3,
+                    pointRadius: 0
+                },
+                {
+                    label: 'Integrity',
+                    data: data.datasets.integrity,
+                    borderColor: getColor('--color-integrity', '#00e676'),
+                    backgroundColor: 'transparent',
+                    tension: 0.3,
+                    pointRadius: 0
+                },
+                {
+                    label: 'Coherence',
+                    data: data.datasets.coherence,
+                    borderColor: getColor('--color-coherence', '#00f0ff'),
+                    backgroundColor: 'transparent',
+                    borderDash: [5, 5],
+                    tension: 0.3,
+                    pointRadius: 0
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        displayFormats: {
+                            hour: 'HH:mm',
+                            day: 'MMM d'
+                        }
+                    },
+                    grid: { display: false }
+                },
+                y: {
+                    min: 0,
+                    max: 1,
+                    grid: { color: 'rgba(128,128,128,0.1)' }
+                }
+            },
+            plugins: {
+                legend: { display: false }
+            }
+        }
+    });
 }
 
 /**
@@ -3050,6 +3189,7 @@ if (exportDiscoveriesJson) exportDiscoveriesJson.addEventListener('click', () =>
 // ========================================
 let eisvChartUpper = null;  // E, I, Coherence
 let eisvChartLower = null;  // S, V
+let agentTrendChart = null;  // Agent detail EISV trend chart
 let eisvWebSocket = null;
 // Per-agent EISV tracking for hybrid view
 const agentEISVHistory = {}; // { agent_id: [{ts, E, I, S, V, coherence}, ...] }
