@@ -2536,6 +2536,15 @@ function rebuildChartFromSelection() {
         }
     }
 
+    // Limit chart data to CONFIG.EISV_MAX_POINTS to prevent unbounded memory growth
+    [eisvChartUpper, eisvChartLower].forEach(chart => {
+        chart.data.datasets.forEach(ds => {
+            while (ds.data.length > CONFIG.EISV_MAX_POINTS) {
+                ds.data.shift();  // Remove oldest point
+            }
+        });
+    });
+
     eisvChartUpper.update('none');
     eisvChartLower.update('none');
 }
@@ -2723,11 +2732,16 @@ function addEISVDataPoint(data) {
         eisvChartLower.data.datasets[0].data.push({ x: ts, y: eisv.S ?? 0 });
         eisvChartLower.data.datasets[1].data.push({ x: ts, y: eisv.V ?? 0 });
 
-        // Trim chart data
+        // Trim chart data by time and point count
         const cutoffDate = new Date(cutoff);
         [eisvChartUpper, eisvChartLower].forEach(chart => {
             chart.data.datasets.forEach(ds => {
+                // Remove old data points by time
                 while (ds.data.length > 0 && ds.data[0].x < cutoffDate) {
+                    ds.data.shift();
+                }
+                // Limit to max points to prevent unbounded memory growth
+                while (ds.data.length > CONFIG.EISV_MAX_POINTS) {
                     ds.data.shift();
                 }
             });
