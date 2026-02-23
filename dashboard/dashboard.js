@@ -48,6 +48,51 @@ if (typeof DashboardAPI === 'undefined' || typeof DataProcessor === 'undefined' 
 }
 
 // ============================================================================
+// ERROR HANDLING UTILITIES
+// ============================================================================
+
+/**
+ * Wrap API calls with error handling and retry logic.
+ * @param {Function} fn - Async function to wrap
+ * @param {Object} options - Options (retries, onError)
+ * @returns {Function} Wrapped function
+ */
+function withErrorHandling(fn, options = {}) {
+    const { retries = 2, onError } = options;
+
+    return async function(...args) {
+        let lastError;
+
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            try {
+                return await fn.apply(this, args);
+            } catch (e) {
+                lastError = e;
+
+                // Don't retry on 4xx errors
+                if (e.status >= 400 && e.status < 500) {
+                    break;
+                }
+
+                // Wait before retry
+                if (attempt < retries) {
+                    await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 500));
+                }
+            }
+        }
+
+        // All retries failed
+        if (onError) {
+            onError(lastError);
+        } else {
+            showToast(`Operation failed: ${lastError.message}`, 'error');
+        }
+
+        throw lastError;
+    };
+}
+
+// ============================================================================
 // ALPINE.JS HELP STORE
 // ============================================================================
 
@@ -4477,6 +4522,47 @@ function updateWSStatusLabel(status) {
     const titles = { connected: 'Connected via WebSocket', polling: 'Polling (WebSocket unavailable)', reconnecting: 'Reconnecting...', disconnected: 'Offline' };
     container.title = titles[status] || 'Offline';
 }
+
+// ============================================
+// Connection health check
+// ============================================
+
+/**
+ * Update connection status indicator based on API health.
+ */
+async function checkConnectionHealth() {
+    const statusEl = document.getElementById('ws-status');
+    if (!statusEl) return;
+
+    const dotEl = statusEl.querySelector('.ws-dot');
+    const labelEl = statusEl.querySelector('.ws-label');
+
+    try {
+        const response = await fetch('/health', {
+            method: 'GET',
+            signal: AbortSignal.timeout(5000)
+        });
+        if (response.ok) {
+            dotEl?.classList.remove('disconnected');
+            dotEl?.classList.add('connected');
+            if (labelEl) labelEl.textContent = 'Online';
+            statusEl.title = 'Connected to server';
+        } else {
+            throw new Error('Health check failed');
+        }
+    } catch (e) {
+        dotEl?.classList.remove('connected');
+        dotEl?.classList.add('disconnected');
+        if (labelEl) labelEl.textContent = 'Offline';
+        statusEl.title = 'Connection lost — retrying...';
+    }
+}
+
+// Check connection periodically
+setInterval(checkConnectionHealth, 30000);
+
+// Initial check
+checkConnectionHealth();
 
 // Patch EISV WebSocket to update status label
 if (typeof EISVWebSocket !== 'undefined') {
