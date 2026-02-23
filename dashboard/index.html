@@ -235,7 +235,13 @@
             <div class="panel-header">
                 <h2>Agents</h2>
                 <div class="panel-controls">
-                    <input id="agent-search" type="text" placeholder="Search agents" aria-label="Search agents by name or ID">
+                    <div class="search-wrapper">
+                        <span class="search-scope" id="search-scope" title="Search scope">Agents</span>
+                        <input id="agent-search" type="text" placeholder="Search agents..." aria-label="Search agents by name or ID">
+                        <button id="search-scope-toggle" class="search-scope-btn" type="button" title="Expand search scope">
+                            <span class="scope-expand-icon">▼</span>
+                        </button>
+                    </div>
                     <select id="agent-status-filter" aria-label="Filter agents by status">
                         <option value="all">All statuses</option>
                         <option value="active">Active</option>

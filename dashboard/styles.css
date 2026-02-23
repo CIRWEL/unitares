@@ -3411,3 +3411,63 @@ body.panel-open main {
     height: 200px;
     color: var(--text-secondary);
 }
+
+/* ============================================================================
+   SCOPED SEARCH
+   ============================================================================ */
+
+.search-wrapper {
+    display: flex;
+    align-items: center;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.search-wrapper:focus-within {
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.2);
+}
+
+.search-scope {
+    padding: 6px 10px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-right: 1px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.search-wrapper input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 6px 10px;
+    font-size: 0.9rem;
+    min-width: 120px;
+}
+
+.search-wrapper input:focus {
+    outline: none;
+}
+
+.search-scope-btn {
+    background: none;
+    border: none;
+    padding: 6px 10px;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: color 0.15s ease;
+}
+
+.search-scope-btn:hover {
+    color: var(--text-primary);
+}
+
+.scope-expand-icon {
+    font-size: 0.7rem;
+}

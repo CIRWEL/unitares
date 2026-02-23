@@ -613,6 +613,68 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+// ============================================================================
+// SCOPED SEARCH
+// ============================================================================
+
+const SearchScope = {
+    current: 'agents',
+
+    scopes: {
+        agents: {
+            label: 'Agents',
+            placeholder: 'Search agents...',
+            filter: (query, data) => {
+                if (!query) return data;
+                const q = query.toLowerCase();
+                return data.filter(a =>
+                    a.label?.toLowerCase().includes(q) ||
+                    a.agent_id?.toLowerCase().includes(q) ||
+                    a.tags?.some(t => t.toLowerCase().includes(q))
+                );
+            }
+        },
+        all: {
+            label: 'All',
+            placeholder: 'Search everything...',
+            filter: (query, data) => {
+                // TODO: Search across agents, discoveries, sessions
+                return data;
+            }
+        }
+    },
+
+    setScope(scope) {
+        if (!this.scopes[scope]) return;
+        this.current = scope;
+
+        const scopeLabel = document.getElementById('search-scope');
+        const searchInput = document.getElementById('agent-search');
+
+        if (scopeLabel) scopeLabel.textContent = this.scopes[scope].label;
+        if (searchInput) searchInput.placeholder = this.scopes[scope].placeholder;
+    },
+
+    filter(query, data) {
+        return this.scopes[this.current].filter(query, data);
+    }
+};
+
+// Initialize search scope toggle
+document.addEventListener('DOMContentLoaded', () => {
+    const toggleBtn = document.getElementById('search-scope-toggle');
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', () => {
+            // Toggle between agents and all
+            const next = SearchScope.current === 'agents' ? 'all' : 'agents';
+            SearchScope.setScope(next);
+            // Re-trigger search
+            const searchInput = document.getElementById('agent-search');
+            if (searchInput) searchInput.dispatchEvent(new Event('input'));
+        });
+    }
+});
+
 /**
  * Render discoveries list for modal view.
  * @param {Array<Object>} discoveries - Discovery objects from API
