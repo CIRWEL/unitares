@@ -31,7 +31,7 @@
 
     <div class="toolbar">
         <div class="toolbar-group">
-            <button id="refresh-now" class="toolbar-button" type="button" aria-label="Refresh dashboard data now">Refresh now</button>
+            <button id="refresh-now" class="toolbar-button" type="button">Refresh now</button>
             <label class="toolbar-toggle">
                 <input id="pause-refresh" type="checkbox">
                 Pause auto-refresh
@@ -54,39 +54,40 @@
 
     <div id="error-container"></div>
 
+    <main>
     <div class="stats-grid">
         <div class="stat-card">
-            <h3>Total Agents</h3>
+            <h2>Total Agents</h2>
             <div class="value" id="total-agents">-</div>
             <div class="change" id="agents-change"></div>
         </div>
         <div class="stat-card">
-            <h3>Active Agents</h3>
+            <h2>Active Agents</h2>
             <div class="value" id="active-agents">-</div>
             <div class="change" id="active-change"></div>
         </div>
         <div class="stat-card">
-            <h3>Knowledge Discoveries</h3>
+            <h2>Knowledge Discoveries</h2>
             <div class="value" id="discoveries-count">-</div>
             <div class="change" id="discoveries-change"></div>
         </div>
         <div class="stat-card">
-            <h3>Dialectic Sessions</h3>
+            <h2>Dialectic Sessions</h2>
             <div class="value" id="dialectic-sessions">-</div>
             <div class="change" id="dialectic-change"></div>
         </div>
         <div class="stat-card">
-            <h3>Fleet Health</h3>
+            <h2>Fleet Health</h2>
             <div class="value" id="fleet-coherence">-</div>
             <div class="change" id="fleet-health-detail"></div>
         </div>
         <div class="stat-card" id="stuck-agents-card">
-            <h3>Stuck Agents</h3>
+            <h2>Stuck Agents</h2>
             <div class="value" id="stuck-agents-count">-</div>
             <div class="change" id="stuck-agents-detail"></div>
         </div>
         <div class="stat-card" id="system-health-card">
-            <h3>System Health</h3>
+            <h2>System Health</h2>
             <div class="value" id="system-health-value">-</div>
             <div class="change" id="system-health-detail"></div>
         </div>
@@ -103,7 +104,7 @@
                     <option value="__all__">All (raw)</option>
                 </select>
                 <span class="eisv-chart-info" id="eisv-chart-info"></span>
-                <button id="eisv-chart-clear" class="panel-button" type="button" aria-label="Clear EISV chart data">Clear</button>
+                <button id="eisv-chart-clear" class="panel-button" type="button">Clear</button>
             </div>
         </div>
         <!-- Upper chart: E, I, Coherence (clustered around 0.5-0.6) -->
@@ -184,7 +185,7 @@
             </div>
             <!-- Ethical Drift: 70% governance-computed, 30% agent-reported -->
             <div class="pulse-drift">
-                <h3>Drift</h3>
+                <h4>Drift</h4>
                 <div class="drift-vector">
                     <div class="drift-axis">
                         <span class="drift-axis-label" title="Emotional drift — calibration deviation from baseline">Emotional</span>
@@ -208,7 +209,7 @@
             </div>
             <!-- Right: Events log (significant events only) -->
             <div class="pulse-log">
-                <h3>Events</h3>
+                <h4>Events</h4>
                 <div class="pulse-log-entries" id="events-log-entries">
                     <div class="pulse-log-empty">No events yet</div>
                 </div>
@@ -265,7 +266,7 @@
                         <button id="export-agents-csv" class="export-button" type="button" title="Export as CSV">📥 CSV</button>
                         <button id="export-agents-json" class="export-button" type="button" title="Export as JSON">📥 JSON</button>
                     </div>
-                    <button id="agent-clear-filters" class="panel-button" type="button" aria-label="Clear agent filters">Clear</button>
+                    <button id="agent-clear-filters" class="panel-button" type="button">Clear</button>
                 </div>
             </div>
             <div id="agents-filter-info" class="filter-info"></div>
@@ -299,7 +300,7 @@
                         <option value="7d">Last 7 days</option>
                         <option value="30d">Last 30 days</option>
                     </select>
-                    <button id="discovery-clear-filters" class="panel-button" type="button" aria-label="Clear discovery filters">Clear</button>
+                    <button id="discovery-clear-filters" class="panel-button" type="button">Clear</button>
                 </div>
             </div>
             <div id="discoveries-filter-info" class="filter-info"></div>
@@ -336,6 +337,7 @@
     <div class="refresh-info">
         Tip: use search and filters to narrow results quickly.
     </div>
+    </main>
 
     <!-- Detail modal for expandable items -->
     <div id="panel-modal" class="panel-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
