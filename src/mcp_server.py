@@ -2447,11 +2447,14 @@ async def main():
                 limit = int(request.query_params.get("limit", 50))
                 agent_id = request.query_params.get("agent_id")
                 event_type = request.query_params.get("type")
+                since_raw = request.query_params.get("since")
+                since = int(since_raw) if since_raw is not None else None
 
                 events = event_detector.get_recent_events(
                     limit=limit,
                     agent_id=agent_id,
-                    event_type=event_type
+                    event_type=event_type,
+                    since=since
                 )
 
                 return JSONResponse({
