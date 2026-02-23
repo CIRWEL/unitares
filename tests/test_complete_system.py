@@ -11,7 +11,7 @@ from datetime import datetime
 
 sys.path.insert(0, '/Users/cirwel/projects/governance-mcp-v1')
 
-from src.mcp_server_std import monitors, agent_metadata, save_metadata, load_metadata
+from src.mcp_server_std import monitors, agent_metadata, load_metadata
 from src.governance_monitor import UNITARESMonitor
 
 # Configuration
@@ -58,7 +58,7 @@ def setup_agent():
         f"Initialized for {NUM_ITERATIONS}-iteration test"
     )
 
-    save_metadata()
+
 
     print(f"✅ Agent initialized with metadata")
     print(f"   Status: {agent_metadata[AGENT_ID].status}")
@@ -149,7 +149,7 @@ def run_iterations():
                   f"decision={r['decision']:8s} "
                   f"status={r['status']}")
 
-    save_metadata()
+
 
     return results
 
@@ -161,7 +161,7 @@ def add_lifecycle_event_milestone(iteration):
         "milestone",
         f"Completed {iteration} iterations successfully"
     )
-    save_metadata()
+
 
 
 def analyze_results(results):
@@ -278,7 +278,7 @@ def pause_and_resume_test():
     meta.status = "paused"
     meta.paused_at = datetime.now().isoformat()
     meta.add_lifecycle_event("paused", "Testing lifecycle management")
-    save_metadata()
+
     print(f"   Status: {meta.status}")
     print(f"   Paused at: {meta.paused_at}")
 
@@ -286,7 +286,7 @@ def pause_and_resume_test():
     meta.status = "active"
     meta.paused_at = None
     meta.add_lifecycle_event("resumed", "Lifecycle test complete")
-    save_metadata()
+
     print(f"   Status: {meta.status}")
 
 

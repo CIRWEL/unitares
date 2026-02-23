@@ -162,8 +162,8 @@ class TestDetectStuckAgentsFiltering:
 class TestDetectStuckAgentsTimeout:
 
     @patch(_PATCHES["mcp_server"])
-    def test_activity_timeout_no_monitor(self, mock_server):
-        """Agent with no monitor state, past max_age → stuck."""
+    def test_no_monitor_no_stuck(self, mock_server):
+        """Agent with no monitor state is NOT flagged as stuck (can't determine margin)."""
         old_time = datetime.now(timezone.utc) - timedelta(minutes=45)
         mock_server.agent_metadata = {
             "a1": _make_agent_meta(last_update=old_time),
@@ -173,10 +173,9 @@ class TestDetectStuckAgentsTimeout:
 
         from src.mcp_handlers.lifecycle import _detect_stuck_agents
         result = _detect_stuck_agents(max_age_minutes=30)
-        assert len(result) == 1
-        assert result[0]["agent_id"] == "a1"
-        assert result[0]["reason"] == "activity_timeout"
-        assert result[0]["age_minutes"] > 40
+        # Without margin info, we can't determine if agent is stuck
+        # Inactivity alone does NOT mean stuck
+        assert len(result) == 0
 
     @patch(_PATCHES["mcp_server"])
     def test_recent_agent_not_stuck(self, mock_server):
@@ -194,8 +193,8 @@ class TestDetectStuckAgentsTimeout:
 
     @patch(_PATCHES["gov_config"])
     @patch(_PATCHES["mcp_server"])
-    def test_activity_timeout_with_monitor(self, mock_server, mock_config):
-        """Agent past max_age with comfortable margin → activity_timeout."""
+    def test_comfortable_margin_not_stuck(self, mock_server, mock_config):
+        """Agent past max_age with comfortable margin → NOT stuck (inactivity ≠ stuck)."""
         old_time = datetime.now(timezone.utc) - timedelta(minutes=45)
         mock_server.agent_metadata = {
             "a1": _make_agent_meta(last_update=old_time),
@@ -206,8 +205,8 @@ class TestDetectStuckAgentsTimeout:
 
         from src.mcp_handlers.lifecycle import _detect_stuck_agents
         result = _detect_stuck_agents(max_age_minutes=30, include_pattern_detection=False)
-        assert len(result) == 1
-        assert result[0]["reason"] == "activity_timeout"
+        # Inactivity alone does NOT mean stuck - comfortable margin means healthy
+        assert len(result) == 0
 
 
 class TestDetectStuckAgentsMarginBased:
@@ -262,7 +261,7 @@ class TestDetectStuckAgentsMarginBased:
         """Tight margin + timeout → tight_margin_timeout."""
         old_time = datetime.now(timezone.utc) - timedelta(minutes=20)
         mock_server.agent_metadata = {
-            "a1": _make_agent_meta(last_update=old_time),
+            "a1": _make_agent_meta(last_update=old_time, total_updates=100),
         }
         monitor = _make_monitor()
         mock_server.monitors = {"a1": monitor}
@@ -306,19 +305,19 @@ class TestDetectStuckAgentsMultiple:
     @patch(_PATCHES["gov_config"])
     @patch(_PATCHES["mcp_server"])
     def test_multiple_agents_mixed(self, mock_server, mock_config):
-        """Multiple agents with different states."""
+        """Multiple agents with different states - only margin-based issues = stuck."""
         old_45 = datetime.now(timezone.utc) - timedelta(minutes=45)
         old_10 = datetime.now(timezone.utc) - timedelta(minutes=10)
         recent_2 = datetime.now(timezone.utc) - timedelta(minutes=2)
 
         mock_server.agent_metadata = {
-            "stale": _make_agent_meta(last_update=old_45),
-            "critical": _make_agent_meta(last_update=old_10),
+            "idle": _make_agent_meta(last_update=old_45),  # Inactive but healthy margin = NOT stuck
+            "critical": _make_agent_meta(last_update=old_10),  # Critical margin = stuck
             "healthy": _make_agent_meta(last_update=recent_2),
             "archived": _make_agent_meta(status="archived", last_update=old_45),
         }
         mock_server.monitors = {
-            "stale": _make_monitor(),
+            "idle": _make_monitor(),
             "critical": _make_monitor(risk=0.9),
             "healthy": _make_monitor(),
         }
@@ -335,7 +334,9 @@ class TestDetectStuckAgentsMultiple:
         result = _detect_stuck_agents(include_pattern_detection=False)
 
         ids = {r["agent_id"] for r in result}
-        assert "stale" in ids  # activity_timeout
+        # "idle" has comfortable margin - inactivity alone is NOT stuck
+        assert "idle" not in ids
+        # "critical" has critical margin + timeout - IS stuck
         assert "critical" in ids  # critical_margin_timeout
         assert "healthy" not in ids
         assert "archived" not in ids
@@ -354,39 +355,45 @@ class TestDetectStuckAgentsEdgeCases:
         result = _detect_stuck_agents()
         assert result == []
 
+    @patch(_PATCHES["gov_config"])
     @patch(_PATCHES["mcp_server"])
-    def test_none_last_update_uses_created_at(self, mock_server):
-        """When last_update is None, uses created_at."""
-        old_time = datetime.now(timezone.utc) - timedelta(minutes=45)
+    def test_none_last_update_uses_created_at_with_margin(self, mock_server, mock_config):
+        """When last_update is None, uses created_at for age calculation."""
+        old_time = datetime.now(timezone.utc) - timedelta(minutes=10)
         meta = _make_agent_meta(created_at=old_time)
         meta.last_update = None
         meta.created_at = old_time.isoformat()
         mock_server.agent_metadata = {"a1": meta}
-        mock_server.monitors = {}
+        mock_server.monitors = {"a1": _make_monitor(risk=0.9)}
         mock_server.load_monitor_state.return_value = None
+        mock_config.compute_proprioceptive_margin.return_value = _margin_info("critical", "risk")
 
         from src.mcp_handlers.lifecycle import _detect_stuck_agents
-        result = _detect_stuck_agents(max_age_minutes=30)
+        result = _detect_stuck_agents(critical_margin_timeout_minutes=5)
         assert len(result) == 1
-
-    @patch(_PATCHES["mcp_server"])
-    def test_z_suffix_timestamp_handled(self, mock_server):
-        """Timestamps with Z suffix are correctly parsed."""
-        old_time = datetime.now(timezone.utc) - timedelta(minutes=45)
-        meta = _make_agent_meta()
-        meta.last_update = old_time.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
-        mock_server.agent_metadata = {"a1": meta}
-        mock_server.monitors = {}
-        mock_server.load_monitor_state.return_value = None
-
-        from src.mcp_handlers.lifecycle import _detect_stuck_agents
-        result = _detect_stuck_agents(max_age_minutes=30)
-        assert len(result) == 1
+        assert result[0]["reason"] == "critical_margin_timeout"
 
     @patch(_PATCHES["gov_config"])
     @patch(_PATCHES["mcp_server"])
-    def test_monitor_exception_falls_back_to_timeout(self, mock_server, mock_config):
-        """If monitor.get_metrics raises, falls back to timeout detection."""
+    def test_z_suffix_timestamp_handled(self, mock_server, mock_config):
+        """Timestamps with Z suffix are correctly parsed."""
+        old_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+        meta = _make_agent_meta()
+        meta.last_update = old_time.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+        mock_server.agent_metadata = {"a1": meta}
+        mock_server.monitors = {"a1": _make_monitor(risk=0.9)}
+        mock_server.load_monitor_state.return_value = None
+        mock_config.compute_proprioceptive_margin.return_value = _margin_info("critical", "risk")
+
+        from src.mcp_handlers.lifecycle import _detect_stuck_agents
+        result = _detect_stuck_agents(critical_margin_timeout_minutes=5)
+        assert len(result) == 1
+        assert result[0]["reason"] == "critical_margin_timeout"
+
+    @patch(_PATCHES["gov_config"])
+    @patch(_PATCHES["mcp_server"])
+    def test_monitor_exception_does_not_flag_stuck(self, mock_server, mock_config):
+        """If monitor.get_metrics raises, agent is NOT flagged as stuck (can't determine margin)."""
         old_time = datetime.now(timezone.utc) - timedelta(minutes=45)
         mock_server.agent_metadata = {
             "a1": _make_agent_meta(last_update=old_time),
@@ -397,12 +404,16 @@ class TestDetectStuckAgentsEdgeCases:
 
         from src.mcp_handlers.lifecycle import _detect_stuck_agents
         result = _detect_stuck_agents(max_age_minutes=30, include_pattern_detection=False)
-        assert len(result) == 1
-        assert result[0]["reason"] == "activity_timeout"
+        # Without margin info, we can't know if agent is stuck - don't assume
+        assert len(result) == 0
 
     @patch(_PATCHES["mcp_server"])
     def test_none_tags_handled(self, mock_server):
-        """Agent with tags=None should not crash."""
+        """Agent with tags=None should not crash.
+
+        Also verifies that without monitor state (and therefore no margin info),
+        we don't spuriously flag agents as stuck. Inactivity ≠ stuck.
+        """
         old_time = datetime.now(timezone.utc) - timedelta(minutes=45)
         meta = _make_agent_meta(last_update=old_time)
         meta.tags = None
@@ -411,8 +422,10 @@ class TestDetectStuckAgentsEdgeCases:
         mock_server.load_monitor_state.return_value = None
 
         from src.mcp_handlers.lifecycle import _detect_stuck_agents
+        # Function should not crash with tags=None
         result = _detect_stuck_agents(max_age_minutes=30)
-        assert len(result) == 1
+        # Without margin info, can't determine if stuck - don't assume
+        assert len(result) == 0
 
     @patch(_PATCHES["gov_config"])
     @patch(_PATCHES["mcp_server"])

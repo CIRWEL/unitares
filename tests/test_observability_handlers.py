@@ -130,6 +130,7 @@ def _build_mock_server(
     - monitors (dict)
     - get_or_create_monitor(agent_id)
     - load_metadata()
+    - load_metadata_async(force=True)
     - load_monitor_state(agent_id)
     - analyze_agent_patterns(monitor, include_history)
     - health_checker.get_health_status(...)
@@ -157,6 +158,7 @@ def _build_mock_server(
 
     server.get_or_create_monitor = MagicMock(side_effect=_get_or_create_monitor)
     server.load_metadata = MagicMock()
+    server.load_metadata_async = AsyncMock()
     server.load_monitor_state = MagicMock(return_value=None)
 
     # analyze_agent_patterns returns an observation dict
@@ -1071,7 +1073,7 @@ class TestHandleAggregateMetrics:
 
     @pytest.mark.asyncio
     async def test_total_updates_aggregated(self):
-        """total_updates across agents are summed."""
+        """total_updates across agents are summed (from meta.total_updates)."""
         id1 = "aaaaaaaa-bbbb-cccc-dddd-111111111111"
         id2 = "aaaaaaaa-bbbb-cccc-dddd-222222222222"
 
@@ -1082,7 +1084,7 @@ class TestHandleAggregateMetrics:
 
         server = _build_mock_server(
             monitors_dict={id1: m1, id2: m2},
-            metadata_dict={id1: _make_metadata(id1), id2: _make_metadata(id2)},
+            metadata_dict={id1: _make_metadata(id1, total_updates=10), id2: _make_metadata(id2, total_updates=20)},
         )
 
         with patch(_PATCH_SERVER, server), \

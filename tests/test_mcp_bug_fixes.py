@@ -7,7 +7,7 @@ import json
 import sys
 sys.path.insert(0, '/Users/cirwel/projects/governance-mcp-v1')
 
-from src.mcp_server_std import monitors, agent_metadata, save_metadata
+from src.mcp_server_std import monitors, agent_metadata
 
 def reset_test_state():
     """Clear test agents"""
@@ -15,7 +15,7 @@ def reset_test_state():
         del monitors["mcp_coherence_test"]
     if "mcp_coherence_test" in agent_metadata:
         del agent_metadata["mcp_coherence_test"]
-    save_metadata()
+
 
 
 def test_coherence_bug_fix():

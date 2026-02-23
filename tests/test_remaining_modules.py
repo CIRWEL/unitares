@@ -2,13 +2,12 @@
 Tests for modules with low coverage:
   - llm_delegation, model_inference, dialectic_reviewer,
     dialectic_calibration, dialectic_resolution, condition_parser,
-    utils, middleware, audit_db, audit_log
+    utils, middleware, audit_log
 """
 
 import asyncio
 import json
 import os
-import sqlite3
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -137,6 +136,7 @@ class TestApplyCondition:
         server = MagicMock()
         server.agent_metadata = {"agent-1": FakeMeta()}
         server.load_metadata = MagicMock()
+        server.load_metadata_async = AsyncMock()
         return server
 
     @pytest.mark.asyncio
@@ -197,147 +197,7 @@ class TestApplyCondition:
 
 
 # ---------------------------------------------------------------------------
-# 2. audit_db  (36 % -> higher)
-# ---------------------------------------------------------------------------
-from src.audit_db import AuditDB, _json_dumps, _json_loads
-
-
-class TestJsonHelpers:
-    def test_json_dumps(self):
-        assert json.loads(_json_dumps({"a": 1})) == {"a": 1}
-
-    def test_json_loads_valid(self):
-        assert _json_loads('{"a":1}', {}) == {"a": 1}
-
-    def test_json_loads_none(self):
-        assert _json_loads(None, []) == []
-
-    def test_json_loads_empty(self):
-        assert _json_loads("", {}) == {}
-
-    def test_json_loads_invalid(self):
-        assert _json_loads("not json", "default") == "default"
-
-
-class TestAuditDB:
-    @pytest.fixture()
-    def db(self, tmp_path):
-        return AuditDB(tmp_path / "test_audit.db")
-
-    def _make_entry(self, **overrides):
-        base = {
-            "timestamp": datetime.now().isoformat(),
-            "agent_id": "agent-1",
-            "event_type": "auto_attest",
-            "confidence": 0.9,
-            "details": {"key": "value"},
-        }
-        base.update(overrides)
-        return base
-
-    def test_init_creates_tables(self, db):
-        health = db.health_check()
-        assert health["integrity_check"] == "ok"
-        assert health["schema_version"] == 1
-        assert health["event_count"] == 0
-
-    def test_append_and_query(self, db):
-        db.append_event(self._make_entry())
-        rows = db.query()
-        assert len(rows) == 1
-        assert rows[0]["agent_id"] == "agent-1"
-
-    def test_append_skips_malformed(self, db):
-        db.append_event({"details": {}})  # missing ts / agent / event_type
-        assert db.query() == []
-
-    def test_query_filter_agent(self, db):
-        db.append_event(self._make_entry(agent_id="a1"))
-        db.append_event(self._make_entry(agent_id="a2"))
-        rows = db.query(agent_id="a1")
-        assert len(rows) == 1
-        assert rows[0]["agent_id"] == "a1"
-
-    def test_query_filter_event_type(self, db):
-        db.append_event(self._make_entry(event_type="auto_attest"))
-        db.append_event(self._make_entry(event_type="lambda1_skip"))
-        rows = db.query(event_type="lambda1_skip")
-        assert len(rows) == 1
-
-    def test_query_filter_time_range(self, db):
-        old = (datetime.now() - timedelta(hours=2)).isoformat()
-        new = datetime.now().isoformat()
-        db.append_event(self._make_entry(timestamp=old))
-        db.append_event(self._make_entry(timestamp=new))
-        cutoff = (datetime.now() - timedelta(hours=1)).isoformat()
-        rows = db.query(start_time=cutoff)
-        assert len(rows) == 1
-
-    def test_query_order_desc(self, db):
-        db.append_event(self._make_entry(timestamp="2025-01-01T00:00:00"))
-        db.append_event(self._make_entry(timestamp="2025-01-02T00:00:00"))
-        rows = db.query(order="desc")
-        assert rows[0]["timestamp"] > rows[1]["timestamp"]
-
-    def test_query_limit(self, db):
-        for _ in range(5):
-            db.append_event(self._make_entry())
-        rows = db.query(limit=2)
-        assert len(rows) == 2
-
-    def test_raw_hash_dedup(self, db):
-        entry = self._make_entry()
-        db.append_event(entry, raw_hash="abc123")
-        db.append_event(entry, raw_hash="abc123")  # duplicate
-        rows = db.query()
-        assert len(rows) == 1
-
-    def test_skip_rate_metrics(self, db):
-        now = datetime.now().isoformat()
-        for _ in range(3):
-            db.append_event(self._make_entry(event_type="auto_attest", timestamp=now))
-        for _ in range(2):
-            db.append_event(self._make_entry(event_type="lambda1_skip", timestamp=now, confidence=0.4))
-        cutoff = (datetime.now() - timedelta(hours=1)).isoformat()
-        stats = db.skip_rate_metrics(agent_id=None, cutoff_iso=cutoff)
-        assert stats["total_updates"] == 3
-        assert stats["total_skips"] == 2
-        assert stats["skip_rate"] == pytest.approx(0.4)
-
-    def test_fts_search(self, db):
-        db.append_event(self._make_entry(details={"msg": "hello world"}))
-        results = db.fts_search("hello")
-        # FTS may or may not be available; either way, no crash
-        assert isinstance(results, list)
-
-    def test_backfill_fts(self, db):
-        db.append_event(self._make_entry())
-        result = db.backfill_fts(limit=10)
-        assert result["success"] is True
-
-    def test_backfill_from_jsonl(self, db, tmp_path):
-        jsonl_file = tmp_path / "audit.jsonl"
-        entries = [self._make_entry(agent_id=f"a{i}") for i in range(3)]
-        with open(jsonl_file, "w") as f:
-            for e in entries:
-                f.write(json.dumps(e) + "\n")
-        result = db.backfill_from_jsonl(jsonl_file, max_lines=100)
-        assert result["success"] is True
-        assert result["inserted"] == 3
-
-    def test_backfill_jsonl_missing_file(self, db, tmp_path):
-        result = db.backfill_from_jsonl(tmp_path / "missing.jsonl")
-        assert result["success"] is False
-
-    def test_health_check_fields(self, db):
-        h = db.health_check()
-        assert "backend" in h
-        assert "event_count" in h
-        assert "fts_enabled" in h
-
-
-# ---------------------------------------------------------------------------
-# 3. audit_log  (41 % -> higher)
+# 2. audit_log  (41 % -> higher)
 # ---------------------------------------------------------------------------
 from src.audit_log import AuditLogger, AuditEntry
 
@@ -1408,6 +1268,7 @@ class TestExecuteResolution:
         mock_server = MagicMock()
         mock_server.agent_metadata = {"agent-1": meta}
         mock_server.load_metadata = MagicMock()
+        mock_server.load_metadata_async = AsyncMock()
 
         return session, resolution, mock_server
 

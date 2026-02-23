@@ -63,6 +63,7 @@ class TestListAgentsLite:
         server.agent_metadata = {}
         server.monitors = {}
         server.load_metadata = MagicMock()
+        server.load_metadata_async = AsyncMock()
         return server
 
     @pytest.mark.asyncio
@@ -186,6 +187,7 @@ class TestArchiveAgent:
         server.agent_metadata = {}
         server.monitors = {}
         server.load_metadata = MagicMock()
+        server.load_metadata_async = AsyncMock()
         return server
 
     @pytest.mark.asyncio
@@ -262,6 +264,7 @@ class TestDeleteAgent:
         server.agent_metadata = {}
         server.monitors = {}
         server.load_metadata = MagicMock()
+        server.load_metadata_async = AsyncMock()
         server.project_root = str(project_root)
         return server
 
@@ -337,6 +340,7 @@ class TestMarkResponseComplete:
         server.agent_metadata = {}
         server.monitors = {}
         server.load_metadata = MagicMock()
+        server.load_metadata_async = AsyncMock()
         return server
 
     @pytest.mark.asyncio
@@ -517,6 +521,7 @@ class TestArchiveOldTestAgents:
         server.agent_metadata = {}
         server.monitors = {}
         server.load_metadata = MagicMock()
+        server.load_metadata_async = AsyncMock()
         return server
 
     @pytest.mark.asyncio

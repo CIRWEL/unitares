@@ -60,24 +60,19 @@ def test_telemetry():
 
 
 def test_knowledge_layer():
-    """Test that knowledge graph (SQLite) works
-    
-    Note: Original knowledge_layer was archived (2025-11-28).
-    Now testing the replacement: knowledge_graph.
-    """
+    """Test that knowledge graph (PostgreSQL/AGE) works"""
     import asyncio
-    
+
     async def _get_stats():
-        from src.knowledge_graph import KnowledgeGraph
-        kg = KnowledgeGraph()
+        from src.knowledge_graph import get_knowledge_graph
+        kg = await get_knowledge_graph()
         return await kg.get_stats()
-    
+
     print("\nTesting knowledge graph...")
-    # get_stats is async, so we run it properly
     stats = asyncio.run(_get_stats())
     assert 'total_discoveries' in stats
-    assert 'total_agents' in stats  # Note: key is 'total_agents' not 'unique_agents'
-    print(f"  ✅ Knowledge graph works")
+    assert 'total_agents' in stats
+    print(f"  Knowledge graph works")
     print(f"     Total discoveries: {stats.get('total_discoveries', 0)}")
     print(f"     Unique agents: {stats.get('unique_agents', 0)}")
 

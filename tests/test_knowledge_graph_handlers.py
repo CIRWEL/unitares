@@ -88,7 +88,7 @@ def mock_mcp_server():
     server = MagicMock()
     server.agent_metadata = {}
     server.monitors = {}
-    server.save_metadata = MagicMock()
+
     return server
 
 
@@ -204,11 +204,11 @@ class TestStoreKnowledgeGraph:
 
     @pytest.mark.asyncio
     async def test_store_truncates_long_summary(self, patch_common, registered_agent):
-        """Long summaries are truncated to 300 chars."""
+        """Long summaries are truncated to 1000 chars."""
         mock_mcp_server, mock_graph = patch_common
         from src.mcp_handlers.knowledge_graph import handle_store_knowledge_graph
 
-        long_summary = "A" * 500
+        long_summary = "A" * 1100  # Exceeds 1000 char limit
         result = await handle_store_knowledge_graph({
             "agent_id": registered_agent,
             "summary": long_summary,
@@ -221,11 +221,11 @@ class TestStoreKnowledgeGraph:
 
     @pytest.mark.asyncio
     async def test_store_truncates_long_details(self, patch_common, registered_agent):
-        """Long details are truncated to 2000 chars."""
+        """Long details are truncated to 5000 chars."""
         mock_mcp_server, mock_graph = patch_common
         from src.mcp_handlers.knowledge_graph import handle_store_knowledge_graph
 
-        long_details = "B" * 3000
+        long_details = "B" * 5500  # Exceeds 5000 char limit
         result = await handle_store_knowledge_graph({
             "agent_id": registered_agent,
             "summary": "Test",
@@ -2948,7 +2948,14 @@ class TestSearchArchivedFiltering:
             make_discovery(id="d-archived", status="archived"),
             make_discovery(id="d-resolved", status="resolved"),
         ]
-        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        # Mock query to respect exclude_archived parameter (like real backend)
+        async def query_with_filtering(**kwargs):
+            if kwargs.get("exclude_archived", False):
+                return [d for d in discoveries if d.status != "archived"]
+            return discoveries
+
+        mock_graph.query = AsyncMock(side_effect=query_with_filtering)
 
         result = await handle_search_knowledge_graph({})
         data = parse_result(result)

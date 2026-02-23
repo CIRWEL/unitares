@@ -52,6 +52,7 @@ def _make_mock_server(agents=None):
     mock.agent_metadata = agents or {}
     mock.monitors = {}
     mock.load_metadata = MagicMock()
+    mock.load_metadata_async = AsyncMock()
     mock.project_root = str(project_root)
     return mock
 
@@ -1243,7 +1244,12 @@ class TestHandleGetDialecticSession:
         )
         ACTIVE_SESSIONS[session.session_id] = session
 
-        with mock_context_agent:
+        # Mock disk session listing to return empty (only test in-memory)
+        with mock_context_agent, \
+             patch(f"{DIALECTIC}.SESSION_STORAGE_DIR") as mock_dir:
+            mock_dir.mkdir = MagicMock()
+            mock_dir.exists.return_value = True
+            mock_dir.glob.return_value = []  # No disk sessions
             result = await handle_get_dialectic_session({
                 "agent_id": "agent-active",
             })
@@ -1270,7 +1276,12 @@ class TestHandleGetDialecticSession:
         """Returns error when agent exists but has no sessions."""
         from src.mcp_handlers.dialectic import handle_get_dialectic_session
 
-        with mock_context_agent:
+        # Mock disk session listing to return empty
+        with mock_context_agent, \
+             patch(f"{DIALECTIC}.SESSION_STORAGE_DIR") as mock_dir:
+            mock_dir.mkdir = MagicMock()
+            mock_dir.exists.return_value = True
+            mock_dir.glob.return_value = []  # No disk sessions
             result = await handle_get_dialectic_session({
                 "agent_id": "agent-active",
             })
@@ -1304,10 +1315,10 @@ class TestCheckReviewerStuck:
 
     @pytest.mark.asyncio
     async def test_reviewer_not_found_is_stuck(self, mock_server):
-        """Reviewer not in metadata is considered stuck."""
+        """Reviewer not in metadata is considered stuck (ANTITHESIS phase)."""
         from src.mcp_handlers.dialectic import check_reviewer_stuck
 
-        session = _make_session()
+        session = _make_session(phase=DialecticPhase.ANTITHESIS)
         session.reviewer_agent_id = "nonexistent-reviewer"
 
         result = await check_reviewer_stuck(session)
@@ -1315,33 +1326,45 @@ class TestCheckReviewerStuck:
 
     @pytest.mark.asyncio
     async def test_paused_reviewer_is_stuck(self, mock_server):
-        """Paused reviewer is considered stuck."""
+        """Paused reviewer is considered stuck (ANTITHESIS phase)."""
         from src.mcp_handlers.dialectic import check_reviewer_stuck
 
         mock_server.agent_metadata["agent-reviewer"] = _make_agent_meta(status="paused")
-        session = _make_session()
+        session = _make_session(phase=DialecticPhase.ANTITHESIS)
 
         result = await check_reviewer_stuck(session)
         assert result is True
 
     @pytest.mark.asyncio
     async def test_active_recent_reviewer_not_stuck(self, mock_server):
-        """Active reviewer with recent session is not stuck."""
+        """Active reviewer with recent thesis is not stuck."""
         from src.mcp_handlers.dialectic import check_reviewer_stuck
+        from src.dialectic_protocol import DialecticMessage
 
-        session = _make_session()
-        session.created_at = datetime.now()  # Recent creation
+        session = _make_session(phase=DialecticPhase.ANTITHESIS)
+        # Add a recent thesis to transcript so get_thesis_timestamp() returns now
+        session.transcript.append(DialecticMessage(
+            phase="thesis", agent_id="agent-paused",
+            timestamp=datetime.now().isoformat(),
+            reasoning="test thesis"
+        ))
 
         result = await check_reviewer_stuck(session)
         assert result is False
 
     @pytest.mark.asyncio
     async def test_active_old_session_is_stuck(self, mock_server):
-        """Active reviewer but session created >30min ago is stuck."""
+        """Active reviewer but thesis submitted >2h ago is stuck."""
         from src.mcp_handlers.dialectic import check_reviewer_stuck
+        from src.dialectic_protocol import DialecticMessage
 
-        session = _make_session()
-        session.created_at = datetime.now() - timedelta(minutes=45)
+        session = _make_session(phase=DialecticPhase.ANTITHESIS)
+        # Add an old thesis to transcript (>2h threshold)
+        session.transcript.append(DialecticMessage(
+            phase="thesis", agent_id="agent-paused",
+            timestamp=(datetime.now() - timedelta(hours=3)).isoformat(),
+            reasoning="test thesis"
+        ))
 
         result = await check_reviewer_stuck(session)
         assert result is True

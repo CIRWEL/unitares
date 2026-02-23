@@ -1544,40 +1544,6 @@ class TestPidFile:
 # Test: deprecated no-op functions
 # ============================================================================
 
-class TestDeprecatedNoOps:
-    """Verify deprecated functions are true no-ops that don't crash."""
-
-    @pytest.mark.asyncio
-    async def test_schedule_metadata_save(self):
-        from src.mcp_server_std import schedule_metadata_save
-        await schedule_metadata_save()
-        await schedule_metadata_save(force=True)
-
-    @pytest.mark.asyncio
-    async def test_batched_metadata_save(self):
-        from src.mcp_server_std import _batched_metadata_save
-        await _batched_metadata_save()
-
-    @pytest.mark.asyncio
-    async def test_flush_metadata_save(self):
-        from src.mcp_server_std import flush_metadata_save
-        await flush_metadata_save()
-
-    def test_schedule_metadata_save_sync(self):
-        from src.mcp_server_std import _schedule_metadata_save_sync
-        _schedule_metadata_save_sync()
-        _schedule_metadata_save_sync(force=True)
-
-    @pytest.mark.asyncio
-    async def test_save_metadata_async(self):
-        from src.mcp_server_std import save_metadata_async
-        await save_metadata_async()
-
-    def test_save_metadata(self):
-        from src.mcp_server_std import save_metadata
-        save_metadata()
-
-
 # ============================================================================
 # Test: dispatch_tool middleware pipeline
 # ============================================================================

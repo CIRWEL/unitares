@@ -55,23 +55,13 @@ def test_history_export_path():
         return False
 
 def test_knowledge_layer_paths():
-    """Test that knowledge graph uses correct paths
-    
-    Note: Original knowledge_layer was archived (2025-11-28).
-    Now testing the replacement: knowledge_graph which uses SQLite.
-    """
-    print("Testing knowledge graph paths...")
-    
-    from src.knowledge_graph import KnowledgeGraph
-    
-    kg = KnowledgeGraph()
-    # Knowledge graph now uses SQLite in data/governance.db
-    expected_db = project_root / "data" / "governance.db"
-    
-    if expected_db.exists():
-        print("  ✅ Knowledge graph uses data/governance.db")
-    else:
-        print(f"  ⚠️  Knowledge graph DB not found (will be created on first use)")
+    """Test that knowledge graph module imports correctly (PostgreSQL/AGE backend)."""
+    print("Testing knowledge graph imports...")
+
+    from src.knowledge_graph import DiscoveryNode, ResponseTo, get_knowledge_graph
+    assert DiscoveryNode is not None
+    assert get_knowledge_graph is not None
+    print("  Knowledge graph module imports correctly")
 
 def test_dialectic_sessions_path():
     """Test that dialectic sessions use correct path"""
@@ -166,7 +156,7 @@ def test_imports():
     
     modules_to_test = [
         ("src.mcp_server_std", "get_state_file"),
-        ("src.knowledge_graph", "KnowledgeGraph"),  # Replaces knowledge_layer
+        ("src.knowledge_graph", "get_knowledge_graph"),
         ("src.workspace_health", "get_workspace_health"),
     ]
     

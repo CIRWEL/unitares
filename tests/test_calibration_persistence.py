@@ -12,6 +12,7 @@ These tests verify:
 4. load_state() does NOT call db.init()
 """
 
+import asyncio
 import json
 import pytest
 import sys
@@ -68,11 +69,18 @@ class TestCalibrationSaveNoClose:
             checker.save_state()
         mock_db.init.assert_not_called()
 
-    def test_save_calls_update_calibration(self, calibration_checker):
-        """save_state() should still call db.update_calibration()."""
+    @pytest.mark.asyncio
+    async def test_save_calls_update_calibration(self, calibration_checker):
+        """save_state() should still call db.update_calibration().
+
+        _run_async uses asyncio.get_running_loop() + create_task, so we must
+        be inside an async context for the DB call to fire.
+        """
         checker, mock_db = calibration_checker
         with patch("src.db.get_db", return_value=mock_db):
             checker.save_state()
+            # Allow the created task to execute
+            await asyncio.sleep(0)
         mock_db.update_calibration.assert_called_once()
 
 
@@ -93,9 +101,16 @@ class TestCalibrationLoadNoClose:
             checker.load_state()
         mock_db.init.assert_not_called()
 
-    def test_load_calls_get_calibration(self, calibration_checker):
-        """load_state() should still call db.get_calibration()."""
+    @pytest.mark.asyncio
+    async def test_load_calls_get_calibration(self, calibration_checker):
+        """load_state() should still call db.get_calibration().
+
+        _run_async uses asyncio.get_running_loop() + create_task, so we must
+        be inside an async context for the DB call to fire.
+        """
         checker, mock_db = calibration_checker
         with patch("src.db.get_db", return_value=mock_db):
             checker.load_state()
+            # Allow the created task to execute
+            await asyncio.sleep(0)
         mock_db.get_calibration.assert_called()

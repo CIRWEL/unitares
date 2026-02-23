@@ -11,7 +11,7 @@ from datetime import datetime
 
 sys.path.insert(0, '/Users/cirwel/projects/governance-mcp-v1')
 
-from src.mcp_server_std import monitors, agent_metadata, save_metadata, load_metadata
+from src.mcp_server_std import monitors, agent_metadata, load_metadata
 from src.governance_monitor import UNITARESMonitor
 from src.mcp_server_std import AgentMetadata
 
@@ -51,7 +51,7 @@ def create_validation_agent():
         "Production validation agent with enhanced MCP tools"
     )
 
-    save_metadata()
+
 
     print(f"✅ Created: {agent_id}")
     print(f"   Tags: {agent_metadata[agent_id].tags}")
@@ -112,7 +112,7 @@ def run_enhanced_updates(agent_id):
         # Update metadata
         meta.last_update = datetime.now().isoformat()
         meta.total_updates += 1
-        save_metadata()
+    
 
         # Display key results
         print(f"\n📊 Results:")
@@ -150,7 +150,7 @@ def demonstrate_lifecycle(agent_id):
     meta.status = "paused"
     meta.paused_at = datetime.now().isoformat()
     meta.add_lifecycle_event("paused", "Demonstrating lifecycle controls")
-    save_metadata()
+
     print(f"   Status: {meta.status}")
 
     # Get metadata
@@ -166,7 +166,7 @@ def demonstrate_lifecycle(agent_id):
     meta.status = "active"
     meta.paused_at = None
     meta.add_lifecycle_event("resumed", "Lifecycle demonstration complete")
-    save_metadata()
+
     print(f"   Status: {meta.status}")
 
     # Add tags
@@ -175,7 +175,7 @@ def demonstrate_lifecycle(agent_id):
     meta.tags.append("production-ready")
     original_notes = meta.notes
     meta.notes = f"{original_notes}\n\n[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Successfully validated with enhanced tools. All systems operational."
-    save_metadata()
+
     print(f"   Tags: {', '.join(meta.tags)}")
 
 

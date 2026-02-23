@@ -2809,6 +2809,7 @@ class TestHandleOnboardV2:
         result = await handle_onboard_v2({
             "client_session_id": "onboard-name-claim",
             "name": "NamedAgent",
+            "resume": True,
         })
         data = _parse(result)
 

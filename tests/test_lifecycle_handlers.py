@@ -1634,19 +1634,33 @@ class TestDetectStuckAgentsInternal:
             result = _detect_stuck_agents(min_updates=1)
             assert len(result) == 0
 
-    def test_detects_timeout(self, server):
-        old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    def test_detects_critical_margin_timeout(self, server):
+        """Agents with critical margin + timeout are detected as stuck.
+
+        Note: Activity timeout alone does NOT trigger stuck detection.
+        Agents must be in a critical state (margin-based) to be flagged as stuck.
+        """
+        old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()  # > 5 min threshold
         meta = make_agent_meta(status="active", last_update=old, total_updates=5)
         meta.created_at = old
         server.agent_metadata = {"agent-1": meta}
-        server.monitors = {}
-        server.load_monitor_state = MagicMock(return_value=None)
 
-        with patch("src.mcp_handlers.lifecycle.mcp_server", server):
+        # Provide monitor with critical margin state
+        mock_monitor = MagicMock()
+        mock_monitor.state = SimpleNamespace(
+            coherence=0.8, void_active=False,
+            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1,
+        )
+        mock_monitor.get_metrics.return_value = {"mean_risk": 0.3}
+        server.monitors = {"agent-1": mock_monitor}
+
+        with patch("src.mcp_handlers.lifecycle.mcp_server", server), \
+             patch("src.mcp_handlers.lifecycle.GovernanceConfig") as mock_config:
+            mock_config.compute_proprioceptive_margin.return_value = {"margin": "critical", "nearest_edge": "E"}
             from src.mcp_handlers.lifecycle import _detect_stuck_agents
-            result = _detect_stuck_agents(max_age_minutes=30)
+            result = _detect_stuck_agents(critical_margin_timeout_minutes=5, include_pattern_detection=False)
             assert len(result) >= 1
-            assert result[0]["reason"] == "activity_timeout"
+            assert result[0]["reason"] == "critical_margin_timeout"
 
 
 # ============================================================================
@@ -2287,20 +2301,15 @@ class TestGetAgentMetadataEdgeCases:
 
         server.monitors = {}
 
-        # Patch the import that happens inside the function (line 509)
-        import src.metadata_db as metadata_db_mod
-        metadata_db_mod.AgentMetadata = MagicMock(return_value=mock_meta)
-        try:
-            with patch("src.mcp_handlers.lifecycle.mcp_server", server), \
-                 patch("src.cache.get_metadata_cache", return_value=mock_cache), \
-                 patch("src.mcp_handlers.lifecycle.UNITARESMonitor") as mock_um:
-                mock_um.get_eisv_labels.return_value = {"E": "Entropy"}
-                result = await handle_get_agent_metadata({"target_agent": "agent-uuid-123"})
-                data = _parse(result)
-                assert data["status"] == "active"
-        finally:
-            if hasattr(metadata_db_mod, 'AgentMetadata'):
-                delattr(metadata_db_mod, 'AgentMetadata')
+        # Patch AgentMetadata at the import target (src.mcp_server_std)
+        with patch("src.mcp_server_std.AgentMetadata", MagicMock(return_value=mock_meta)), \
+             patch("src.mcp_handlers.lifecycle.mcp_server", server), \
+             patch("src.cache.get_metadata_cache", return_value=mock_cache), \
+             patch("src.mcp_handlers.lifecycle.UNITARESMonitor") as mock_um:
+            mock_um.get_eisv_labels.return_value = {"E": "Entropy"}
+            result = await handle_get_agent_metadata({"target_agent": "agent-uuid-123"})
+            data = _parse(result)
+            assert data["status"] == "active"
 
     @pytest.mark.asyncio
     async def test_get_metadata_redis_cache_hit_with_monitor(self, server):
@@ -2325,21 +2334,16 @@ class TestGetAgentMetadataEdgeCases:
         )
         server.monitors = {"agent-uuid-123": mock_monitor}
 
-        import src.metadata_db as metadata_db_mod
-        metadata_db_mod.AgentMetadata = MagicMock(return_value=mock_meta)
-        try:
-            with patch("src.mcp_handlers.lifecycle.mcp_server", server), \
-                 patch("src.cache.get_metadata_cache", return_value=mock_cache), \
-                 patch("src.mcp_handlers.lifecycle.UNITARESMonitor") as mock_um:
-                mock_um.get_eisv_labels.return_value = {"E": "Entropy"}
-                from src.mcp_handlers.lifecycle import handle_get_agent_metadata
-                result = await handle_get_agent_metadata({"target_agent": "agent-uuid-123"})
-                data = _parse(result)
-                assert "current_state" in data
-                assert data["current_state"]["coherence"] == 0.9
-        finally:
-            if hasattr(metadata_db_mod, 'AgentMetadata'):
-                delattr(metadata_db_mod, 'AgentMetadata')
+        with patch("src.mcp_server_std.AgentMetadata", MagicMock(return_value=mock_meta)), \
+             patch("src.mcp_handlers.lifecycle.mcp_server", server), \
+             patch("src.cache.get_metadata_cache", return_value=mock_cache), \
+             patch("src.mcp_handlers.lifecycle.UNITARESMonitor") as mock_um:
+            mock_um.get_eisv_labels.return_value = {"E": "Entropy"}
+            from src.mcp_handlers.lifecycle import handle_get_agent_metadata
+            result = await handle_get_agent_metadata({"target_agent": "agent-uuid-123"})
+            data = _parse(result)
+            assert "current_state" in data
+            assert data["current_state"]["coherence"] == 0.9
 
     @pytest.mark.asyncio
     async def test_get_metadata_label_lookup_after_reload(self, server):
@@ -2921,19 +2925,33 @@ class TestDetectStuckAgentsInternalEdgeCases:
         return make_mock_server()
 
     def test_last_update_not_string_used_directly(self, server):
-        """Lines 1659-1661: when last_update is not a string, uses it directly."""
-        old_dt = datetime.now(timezone.utc) - timedelta(hours=2)
+        """Lines 1659-1661: when last_update is not a string, uses it directly.
+
+        Tests that datetime objects work correctly as last_update values.
+        Uses critical margin to trigger stuck detection (inactivity alone ≠ stuck).
+        """
+        old_dt = datetime.now(timezone.utc) - timedelta(minutes=10)  # 10 min > 5 min critical threshold
         meta = make_agent_meta(status="active", last_update=old_dt, total_updates=5)
         meta.created_at = old_dt.isoformat()
         server.agent_metadata = {"agent-1": meta}
-        server.monitors = {}
-        server.load_monitor_state = MagicMock(return_value=None)
 
-        with patch("src.mcp_handlers.lifecycle.mcp_server", server):
+        # Provide monitor with critical margin state
+        mock_monitor = MagicMock()
+        mock_monitor.state = SimpleNamespace(
+            coherence=0.8, void_active=False,
+            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1,
+        )
+        mock_monitor.get_metrics.return_value = {"mean_risk": 0.3}
+        server.monitors = {"agent-1": mock_monitor}
+
+        with patch("src.mcp_handlers.lifecycle.mcp_server", server), \
+             patch("src.mcp_handlers.lifecycle.GovernanceConfig") as mock_config:
+            mock_config.compute_proprioceptive_margin.return_value = {"margin": "critical", "nearest_edge": "E"}
             from src.mcp_handlers.lifecycle import _detect_stuck_agents
-            result = _detect_stuck_agents(max_age_minutes=30)
+            result = _detect_stuck_agents(critical_margin_timeout_minutes=5, include_pattern_detection=False)
+            # Critical margin + 10 min inactivity → stuck
             assert len(result) >= 1
-            assert result[0]["reason"] == "activity_timeout"
+            assert result[0]["reason"] == "critical_margin_timeout"
 
     def test_pattern_detection_cognitive_loop(self, server):
         """Lines 1691-1719: pattern tracker detects cognitive loops."""
@@ -2998,7 +3016,13 @@ class TestDetectStuckAgentsInternalEdgeCases:
             assert len(time_box_detections) >= 1
 
     def test_pattern_detection_failure_handled(self, server):
-        """Lines 1718-1719: pattern detection failure is caught gracefully."""
+        """Lines 1718-1719: pattern detection failure is caught gracefully.
+
+        When pattern detection fails (ImportError), the function should:
+        1. NOT raise an exception (graceful handling)
+        2. NOT fall back to activity_timeout (inactivity ≠ stuck)
+        3. Return empty if margin is comfortable
+        """
         old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         meta = make_agent_meta(status="active", last_update=old, total_updates=5)
         meta.created_at = old
@@ -3019,8 +3043,8 @@ class TestDetectStuckAgentsInternalEdgeCases:
             from src.mcp_handlers.lifecycle import _detect_stuck_agents
             # Should not raise, just log the error
             result = _detect_stuck_agents(max_age_minutes=30, include_pattern_detection=True)
-            # Should still detect by timeout
-            assert len(result) >= 1
+            # Comfortable margin + pattern failure = NOT stuck (inactivity ≠ stuck)
+            assert len(result) == 0
 
     def test_skips_waiting_input_status(self, server):
         """Line 1637-1638: skips agents not in 'active' status."""
@@ -3066,7 +3090,7 @@ class TestDetectStuckAgentsInternalEdgeCases:
     def test_tight_margin_detection(self, server):
         """Lines 1752-1763: tight margin + timeout detected."""
         old = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
-        meta = make_agent_meta(status="active", last_update=old, total_updates=5)
+        meta = make_agent_meta(status="active", last_update=old, total_updates=100)
         meta.created_at = old
         server.agent_metadata = {"agent-1": meta}
 
