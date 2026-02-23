@@ -104,6 +104,7 @@ handle_knowledge = action_router(
     description="Unified knowledge graph operations: store, search, get, list, update, details, note, cleanup, stats, supersede",
     param_maps={
         "search": {"query": "search_query"},
+        "store": {"content": "details"},  # Allow 'content' as alias for 'details'
         "note": {"content": "note"},
     },
     examples=[
