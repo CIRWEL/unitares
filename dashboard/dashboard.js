@@ -2545,8 +2545,10 @@ function rebuildChartFromSelection() {
         });
     });
 
-    eisvChartUpper.update('none');
-    eisvChartLower.update('none');
+    requestAnimationFrame(() => {
+        eisvChartUpper.update('none');
+        eisvChartLower.update('none');
+    });
 }
 
 // Wire up dropdown and drift toggle
@@ -2745,7 +2747,10 @@ function addEISVDataPoint(data) {
                     ds.data.shift();
                 }
             });
-            chart.update('none');
+        });
+        requestAnimationFrame(() => {
+            eisvChartUpper.update('none');
+            eisvChartLower.update('none');
         });
     }
     // If viewing a different specific agent, don't update chart
@@ -3220,8 +3225,11 @@ document.getElementById('eisv-chart-clear')?.addEventListener('click', () => {
     [eisvChartUpper, eisvChartLower].forEach(chart => {
         if (chart) {
             chart.data.datasets.forEach(ds => { ds.data = []; });
-            chart.update();
         }
+    });
+    requestAnimationFrame(() => {
+        if (eisvChartUpper) eisvChartUpper.update();
+        if (eisvChartLower) eisvChartLower.update();
     });
     const emptyMsg = document.getElementById('eisv-chart-empty');
     if (emptyMsg) emptyMsg.style.display = '';
