@@ -47,6 +47,48 @@ if (typeof DashboardAPI === 'undefined' || typeof DataProcessor === 'undefined' 
     console.error('Dashboard utilities not loaded. Make sure utils.js and components.js are accessible.');
 }
 
+// ============================================================================
+// ALPINE.JS HELP STORE
+// ============================================================================
+
+/**
+ * Initialize Alpine.js help store for tooltip data.
+ * Loads help definitions from help.json and provides accessor methods.
+ */
+document.addEventListener('alpine:init', () => {
+    Alpine.store('help', {
+        data: {},
+        loaded: false,
+        async load() {
+            if (this.loaded) return;
+            try {
+                const response = await fetch('/dashboard/help.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                this.data = await response.json();
+                this.loaded = true;
+            } catch (e) {
+                console.error('Failed to load help data:', e);
+            }
+        },
+        get(path) {
+            const parts = path.split('.');
+            let obj = this.data;
+            for (const part of parts) {
+                obj = obj?.[part];
+            }
+            return obj;
+        },
+        short(path) {
+            return this.get(path)?.short || '';
+        },
+        long(path) {
+            return this.get(path)?.long || '';
+        }
+    });
+});
+
 // Core instances
 const api = typeof DashboardAPI !== 'undefined' ? new DashboardAPI(window.location.origin) : null;
 const themeManager = typeof ThemeManager !== 'undefined' ? new ThemeManager() : null;
