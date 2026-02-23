@@ -2,8 +2,7 @@
 Audit Log for Governance System
 Records all skipped lambda1 updates and auto-attestations for analysis.
 
-JSONL is the raw truth log. PostgreSQL provides queryable indexing
-through the DB backend layer (not direct SQLite).
+JSONL is the raw truth log. PostgreSQL provides queryable indexing.
 """
 
 import json

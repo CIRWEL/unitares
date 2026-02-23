@@ -2,7 +2,6 @@
 PostgreSQL Backend for Dialectic Sessions
 
 Provides storage for dialectic sessions with PostgreSQL.
-Migrated from dual SQLite/PostgreSQL to PostgreSQL-only (Feb 2026).
 """
 
 import json

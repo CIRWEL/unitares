@@ -1,8 +1,7 @@
 """
 PostgreSQL-Only Agent Storage
 
-Single source of truth for agent data. Replaces the old dual-write pattern
-where data was written to both SQLite/JSON and PostgreSQL.
+Single source of truth for agent data. PostgreSQL-only.
 
 Usage:
     from src.agent_storage import (
