@@ -965,6 +965,7 @@ body {
     transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     position: relative;
     overflow: hidden;
+    contain: layout style;
 }
 
 .agent-item::before {
@@ -1281,6 +1282,7 @@ body {
     padding: 16px 18px;
     margin-bottom: 14px;
     transition: all 0.2s ease;
+    contain: layout style;
 }
 
 .discovery-item:hover {
@@ -1519,6 +1521,7 @@ body {
     border-radius: 8px;
     padding: 12px 14px;
     transition: all 0.2s ease;
+    contain: layout style;
 }
 
 .dialectic-item:hover {
@@ -1969,6 +1972,7 @@ body {
 .eisv-chart-container {
     position: relative;
     height: 220px;
+    contain: strict;
 }
 
 .eisv-chart-empty {
