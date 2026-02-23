@@ -249,7 +249,8 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
         MAX_DETAILS_LEN = 5000
 
         raw_summary = summary
-        raw_details = arguments.get("details", "")
+        # Accept both 'details' and 'content' as parameter names
+        raw_details = arguments.get("details") or arguments.get("content") or ""
 
         # Track truncation for visibility (v2.5.0+)
         truncation_info = {}
@@ -1252,7 +1253,8 @@ async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_i
                             truncated = truncated[:last_space]
                     summary = truncated.rstrip() + "..."
 
-                details = disc_data.get("details", "")
+                # Accept both 'details' and 'content' as parameter names
+                details = disc_data.get("details") or disc_data.get("content") or ""
                 if len(details) > MAX_DETAILS_LEN:
                     truncated_fields.append(f"details ({len(details)} → {MAX_DETAILS_LEN})")
                     details = details[:MAX_DETAILS_LEN] + "... [truncated]"
