@@ -13,15 +13,20 @@
 
 **Service File:** `/etc/systemd/system/anima.service` (on Pi)
 ```bash
-ExecStart=/home/unitares-anima/anima-mcp/.venv/bin/anima --sse --host 0.0.0.0 --port 8766
+ExecStart=/home/unitares-anima/anima-mcp/.venv/bin/anima --http --host 0.0.0.0 --port 8766
 ```
 
-**Code Default:** `anima-mcp/src/anima_mcp/server.py` line 5355
+**Code Default:** `anima-mcp/src/anima_mcp/server.py`
 ```python
 parser.add_argument("--port", type=int, default=8766, help="HTTP server port (default: 8766)")
 ```
 
-**URL:** `http://192.168.1.165:8766/mcp/` (or via Tailscale: `http://100.111.166.37:8766/mcp/`)
+**URLs:**
+- LAN: `http://192.168.1.165:8766/mcp/` (may change via DHCP)
+- Tailscale: `http://100.79.215.83:8766/mcp/` (verify with `tailscale status` — IPs can change)
+- ngrok: `https://lumen-anima.ngrok.io/mcp/`
+
+**Auth:** OAuth 2.1 enforced only via ngrok host (`lumen-anima.ngrok.io`). LAN and Tailscale are open.
 
 ## Unitares Governance (Mac) - Port 8767
 
@@ -30,16 +35,16 @@ parser.add_argument("--port", type=int, default=8766, help="HTTP server port (de
 DEFAULT_PORT = 8767  # Standard port for unitares governance on Mac (8766 is anima, 8765 was old default)
 ```
 
-**URL:** `http://localhost:8767/mcp` (or via Tailscale: `http://100.96.201.46:8767/mcp`)
+**URL:** `http://localhost:8767/mcp` (or via Tailscale: `http://100.96.201.46:8767/mcp` — verify with `tailscale status`)
 
 ## Configuration Files That Must Match
 
 ### 1. Governance → Anima Connection
-**File:** `governance-mcp-v1/src/mcp_handlers/pi_orchestration.py` line 37
+**File:** `governance-mcp-v1/src/mcp_handlers/pi_orchestration.py`
 ```python
-PI_MCP_URL = os.environ.get("PI_MCP_URL", "http://192.168.1.165:8766/mcp/")
+PI_MCP_URL = os.environ.get("PI_MCP_URL", "http://100.79.215.83:8766/mcp/")
 ```
-**MUST BE:** Port **8766** (matches anima service)
+**MUST BE:** Port **8766** (matches anima service). IP set via `PI_MCP_URL` env var — update if Tailscale IP changes (`tailscale status`).
 
 ### 2. Anima Service File (on Pi)
 **File:** `/etc/systemd/system/anima.service` (on Pi)
@@ -64,15 +69,16 @@ DEFAULT_PORT = 8767
 ## Verification Commands
 
 ```bash
-# Check anima service on Pi
-ssh unitares-anima@lumen "systemctl status anima | grep -E '--port|8766'"
+# Get current Tailscale IPs
+tailscale status
 
 # Check governance on Mac
 lsof -i :8767 | grep python
 
-# Test connection
-curl http://192.168.1.165:8766/mcp/health
-curl http://localhost:8767/health
+# Test connections (verify IPs with `tailscale status` first)
+curl http://localhost:8767/health                    # governance (local)
+curl http://100.79.215.83:8766/health                # anima (via Tailscale)
+curl https://lumen-anima.ngrok.io/health             # anima (via ngrok)
 ```
 
 ## If Ports Don't Match

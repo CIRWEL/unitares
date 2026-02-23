@@ -878,7 +878,7 @@ function renderDiscoveriesList(discoveries, searchTerm = '') {
         const summaryHtml = highlightMatch(displaySummary, searchTerm);
         const relative = d._relativeTime ? ` (${d._relativeTime})` : '';
         const displayDate = escapeHtml(`${d._displayDate || 'Unknown'}${relative}`);
-        const tags = (d.tags || []).slice(0, 5).map(t => `<span class="discovery-tag">${escapeHtml(t)}</span>`).join('');
+        const tags = (d.tags || []).slice(0, 5).map(t => `<span class="discovery-tag" data-tag="${escapeHtml(t)}" title="Click to filter by tag">${escapeHtml(t)}</span>`).join('');
         const expandHint = (isTruncated || hasDetails) ? '<span class="discovery-expand-hint">click to expand</span>' : '';
 
         return `
@@ -1049,27 +1049,20 @@ async function loadAgents() {
             ...(agentsObj.unknown || [])
         ];
 
-        // Update stats
+        // Update stats - combined agents display shows Active/Total
         document.getElementById('total-agents').textContent = total;
         document.getElementById('active-agents').textContent = active;
 
-        const agentsChange = formatChange(total, previousStats.totalAgents);
-        // Show breakdown: active, paused, archived, deleted, unknown
+        // Show breakdown in the change line
         const breakdown = [];
-        if (active > 0) breakdown.push(`${active} active`);
         if (paused > 0) breakdown.push(`${paused} paused`);
         if (archived > 0) breakdown.push(`${archived} archived`);
         if (deleted > 0) breakdown.push(`${deleted} deleted`);
         if (unknown > 0) breakdown.push(`${unknown} unknown`);
-        document.getElementById('agents-change').innerHTML = agentsChange || (total > 0 ? breakdown.join(', ') || 'All agents' : 'No agents yet');
-
-        const activeChange = formatChange(active, previousStats.activeAgents);
-        // Show what's not active
-        const inactiveBreakdown = [];
-        if (paused > 0) inactiveBreakdown.push(`${paused} paused`);
-        if (archived > 0) inactiveBreakdown.push(`${archived} archived`);
-        if (deleted > 0) inactiveBreakdown.push(`${deleted} deleted`);
-        document.getElementById('active-change').innerHTML = activeChange || (total > 0 ? (inactiveBreakdown.join(', ') || 'All active') : 'Start by calling onboard()');
+        const changeText = total > 0
+            ? (breakdown.length > 0 ? breakdown.join(', ') : 'All active')
+            : 'Start by calling onboard()';
+        document.getElementById('agents-change').innerHTML = changeText;
 
         previousStats.totalAgents = total;
         previousStats.activeAgents = active;
@@ -1144,12 +1137,18 @@ async function loadStuckAgents() {
             const count = stuck.length;
             countEl.textContent = count;
 
-            // Style card based on count
-            cardEl.classList.remove('stat-warning', 'stat-critical');
-            if (count > 10) {
-                cardEl.classList.add('stat-critical');
-            } else if (count > 0) {
-                cardEl.classList.add('stat-warning');
+            // Hide card when no stuck agents, show when there are stuck agents
+            if (count === 0) {
+                cardEl.classList.add('hidden');
+            } else {
+                cardEl.classList.remove('hidden');
+                // Style card based on severity
+                cardEl.classList.remove('stat-warning', 'stat-critical');
+                if (count > 10) {
+                    cardEl.classList.add('stat-critical');
+                } else {
+                    cardEl.classList.add('stat-warning');
+                }
             }
 
             // Show breakdown by reason
@@ -1158,10 +1157,10 @@ async function loadStuckAgents() {
             if (byReason.critical_margin_timeout > 0) parts.push(`${byReason.critical_margin_timeout} critical`);
             if (byReason.tight_margin_timeout > 0) parts.push(`${byReason.tight_margin_timeout} tight`);
             if (byReason.activity_timeout > 0) parts.push(`${byReason.activity_timeout} inactive`);
-            detailEl.innerHTML = count > 0 ? parts.join(', ') : 'All agents healthy';
+            detailEl.innerHTML = parts.join(', ') || 'Stuck';
         } else {
-            countEl.textContent = '-';
-            detailEl.innerHTML = 'Could not check';
+            // Hide card on error too
+            cardEl.classList.add('hidden');
         }
     } catch (e) {
         console.debug('Could not load stuck agents:', e);
@@ -1867,10 +1866,21 @@ if (dialecticContainer) {
     });
 }
 
-// Click handler for discovery items to show full details
+// Click handler for discovery items to show full details (and tag filtering)
 const discoveriesContainer = document.getElementById('discoveries-container');
 if (discoveriesContainer) {
     discoveriesContainer.addEventListener('click', (event) => {
+        // Check if a tag was clicked - filter by that tag
+        const tagEl = event.target.closest('.discovery-tag');
+        if (tagEl && tagEl.dataset.tag) {
+            const searchInput = document.getElementById('discovery-search');
+            if (searchInput) {
+                searchInput.value = tagEl.dataset.tag;
+                applyDiscoveryFilters();
+            }
+            return; // Don't open modal when clicking tag
+        }
+
         const item = event.target.closest('.discovery-item');
         if (!item) return;
         const index = parseInt(item.getAttribute('data-discovery-index'), 10);

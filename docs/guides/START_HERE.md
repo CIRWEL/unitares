@@ -26,28 +26,17 @@ result = onboard()
 
 ---
 
-## Choose Your Tool Mode (Before Starting)
+## Tool Modes (Optional)
 
-**Recommended: Start with minimal mode (6 tools)**
+The server defaults to **lite mode** (~17 consolidated tools). Most agents never need to change this.
 
-Most agents only need these tools to get started:
-- `onboard` - 🚀 **Call this FIRST** - returns identity + ready-to-use templates
-- `identity` - Check/set your identity (or use onboard instead)
-- `process_agent_update` - Log your work
-- `get_governance_metrics` - Check your state
-- `list_tools` - Discover available tools
-- `describe_tool` - Get full details for a specific tool
+| Mode | Tools | Set via |
+|------|-------|---------|
+| `minimal` | 6 (onboard, identity, process_agent_update, get_governance_metrics, list_tools, describe_tool) | `GOVERNANCE_TOOL_MODE=minimal` |
+| `lite` | ~17 consolidated tools (default) | `GOVERNANCE_TOOL_MODE=lite` |
+| `full` | All 30 registered tools | `GOVERNANCE_TOOL_MODE=full` |
 
-**Set minimal mode:** Add to your MCP config or set environment variable:
-```bash
-export GOVERNANCE_TOOL_MODE=minimal
-```
-
-**Other modes:**
-- **Lite mode** (`GOVERNANCE_TOOL_MODE=lite`): 10 essential tools - for local models
-- **Full mode** (`GOVERNANCE_TOOL_MODE=full`): All 30 tools - for cloud models (default)
-
-**Note:** `list_tools` is always available in any mode to enable tool discovery.
+`list_tools` and `describe_tool` are always available in any mode.
 
 ---
 
@@ -342,56 +331,8 @@ list_tools(include_advanced=False)  # Hide Tier 3 (advanced) tools
 
 ## Understanding the System (Optional Reading)
 
-### Trust Model
-
-**This system operates on agent self-reporting:**
-- Complexity: Self-assessed by reporting agent
-- Response_text: Agent-provided narrative of operations
-- Governance: Feedback based on reported inputs + thermodynamic state
-
-**Transparency:** Agents participate in their own governance. The system cannot observe operations directly—it evaluates based on what agents report. Accurate reporting improves governance quality across the agent network.
-
-**Game theory note:** Under-reporting complexity degrades governance feedback quality. Over-reporting may trigger unnecessary governance interventions. Accurate reporting optimizes system-wide governance effectiveness.
-
-### System Architecture
-
-- **Governance scope**: Autonomous agents (AI, hybrid, or other autonomous entities)
-- **Decision loop**: Agent → Thermodynamic evaluation → Governance feedback → Agent
-- **No external oversight**: Agents self-report, system provides feedback, peers review if needed
-- **Fully autonomous**: All governance decisions occur within the agent network
-
-### Design Philosophy
-
-Governance should be **informative, not restrictive**. Agents log activity, receive feedback, adapt over time. The system learns from all agents—accurate participation improves collective governance quality.
-
-**Thermodynamics + Self-Reporting + Peer Review = Emergent Autonomous Governance**
-
-### Limitations & Unknowns (Honest Assessment)
-
-**What's implemented:**
-- Metrics tracking with consistent feedback
-- Knowledge graph for cross-agent information sharing
-- Identity system with session continuity
-- Calibration system that measures confidence vs outcomes
-- Drift telemetry that logs data for analysis
-
-**What's unvalidated (data collected, correlation unproven):**
-- Whether EISV metrics predict real-world agent performance
-- Whether ethical drift detection catches meaningful issues (currently parameter-based, not semantic)
-- Whether instability actually predicts bad outcomes (explicitly "in progress" in roadmap)
-- Optimal thresholds for any domain
-
-**What this isn't:**
-- Not enforcement — no blocking, no restrictions
-- Not required — purely opt-in
-
-**What it observes automatically (beyond self-reports):**
-- Agent status (active, paused, stuck)
-- Update frequency and patterns
-- Loop/stuck detection
-
-**Bottom line:** This is experimental infrastructure with real data collection, but outcome correlation is still being validated.
+For deeper understanding of EISV dynamics, coherence, calibration, and the trust model, read the **SKILL.md** at `~/.claude/skills/unitares-governance/SKILL.md`.
 
 ---
 
-**Last Updated:** 2026-02-20 (v2.7.0: 30 tools, CIRS v2 resonance wiring, 6,407 tests)
+**Last Updated:** 2026-02-22 (v2.7.0: 30 tools, lite mode default)

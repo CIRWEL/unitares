@@ -1,102 +1,61 @@
-# Hey Future Claude Code! 👋
+# Hey Future Claude Code!
 
-If you're reading this, you're probably wondering how to use the governance system. **Great news - it's simple!**
+If you're reading this, you're probably wondering how to use the governance system. **It's simple!**
 
-## TL;DR - The One Command
+## TL;DR
 
-```bash
-cd /Users/cirwel/projects/governance-mcp-v1
-./scripts/mcp log "your_agent_id" "what you did" 0.5
+```
+1. onboard()                    -> Get your identity
+2. process_agent_update()       -> Log your work
+3. get_governance_metrics()     -> Check your state
 ```
 
-**That's it!** This unified script gives you canonical MCP governance feedback.
+That's it. Read the SKILL.md at `~/.claude/skills/unitares-governance/SKILL.md` for concepts.
 
-**⚠️ IMPORTANT:** Use ONLY `./scripts/mcp` - do not create new scripts! We have a strict anti-proliferation policy.
+**IMPORTANT:** Use ONLY `./scripts/mcp` for CLI operations - do not create new scripts! We have a strict anti-proliferation policy.
 
-## Why This File Exists
+## Database: ONE PostgreSQL, That's It
 
-In December 2025, we solved TWO problems:
+- **Docker container `postgres-age`** on port **5432** - this is the only database
+- PostgreSQL + AGE (graph) + pgvector (embeddings)
+- Redis on port 6379 for session cache (optional)
+- **NO SQLite on Mac. NO Homebrew PostgreSQL. NO dual backends.**
+- Homebrew PostgreSQL (port 5433) is a separate violin auction project - DO NOT TOUCH
 
-1. **Interpretation Layer Conflicts:** Too many interpretation layers caused conflicting feedback. The governance system would say "PROCEED" but custom scripts would warn about "low coherence". Confusing!
+## What NOT to Do
 
-2. **Script Proliferation:** Every time an agent worked on MCP integration, they'd create new scripts instead of using existing ones. We ended up with `governance_cli.sh`, `governance_mcp_cli.sh`, `mcp_explore.sh`, etc.
-
-**Solution:** Built ONE unified `scripts/mcp` tool that connects to MCP SSE for canonical feedback and prevents script proliferation with clear anti-proliferation warnings.
-
-## What NOT to Use
-
-- ❌ `governance_cli_deprecated.sh` - Old version with custom warnings
-- ❌ `governance_mcp_cli.sh` - Old separate script (replaced by unified `mcp`)
-- ❌ `mcp_explore.sh` - Old separate script (use `mcp explore` instead)
-- ❌ `cli_helper.py` - Bypasses canonical MCP feedback
-- ❌ Direct Python `UNITARESMonitor` - Unless you know what you're doing
-- ❌ **Creating new scripts** - This violates anti-proliferation policy!
+- Do NOT create new scripts (use `./scripts/mcp`)
+- Do NOT add custom interpretation layers with arbitrary thresholds
+- Do NOT connect to port 5433 or any Homebrew PostgreSQL
+- Do NOT reference SQLite, `governance.db`, or dual data stores
+- Do NOT use port 8765 or `/sse` endpoint (deprecated)
 
 ## What TO Use
 
-- ✅ `scripts/mcp` - THE canonical unified tool (all functionality in one)
-- ✅ `mcp_sse_client.py` - Python module (for advanced usage only)
+- `./scripts/mcp` - THE canonical unified CLI tool
+- Port **8767** with `/mcp/` endpoint for MCP connections
+- Port **8767** with `/health` for health checks
 
 ## The Key Insight
 
 **Coherence 0.499 is NOT "low coherence"!**
 
-The system uses thermodynamic principles. A coherence of 0.499 with a "PROCEED" decision means you're doing fine - you're at the exploration phase, navigating complexity mindfully.
-
-The old custom scripts would warn at < 0.5, but that's arbitrary! The actual MCP handlers say "moderate health - typical attention for development work" - which is supportive, not punitive.
-
-## Full Documentation
-
-Everything you need is in:
-- [CLAUDE_CODE_START_HERE.md](../CLAUDE_CODE_START_HERE.md) - Your specific guide
-- [scripts/README.md](../scripts/README.md) - Script navigation
-- [docs/MCP_SSE_MIGRATION.md](../docs/MCP_SSE_MIGRATION.md) - Why we migrated
-
-## Quick Test
-
-```bash
-# This should work and give you supportive feedback
-./scripts/mcp log "test_$(date +%s)" "testing" 0.5
-
-# You can also explore the system
-./scripts/mcp status    # Check system health
-./scripts/mcp agents    # List active agents
-./scripts/mcp explore   # Full system check
-```
-
-You should see:
-- ✅ "PROCEED" decision
-- ✅ "moderate" health status
-- ✅ Supportive message like "typical attention - normal for development work"
-- ❌ NO punitive warnings about "low coherence"
+The system uses thermodynamic principles. A coherence of 0.499 with a "PROCEED" decision means you're doing fine - you're at the exploration phase, navigating complexity mindfully. The actual MCP handlers say "moderate health - typical attention for development work" - which is supportive, not punitive.
 
 ## If Something Breaks
 
-1. **Check SSE server status:** `./scripts/mcp server`
-2. **Restart if needed:** `launchctl restart com.unitares.governance-mcp` (it runs via launchd!)
-3. **Check server manually:** `lsof -i :8767`
+1. **Check health:** `curl http://localhost:8767/health | jq`
+2. **Restart:** `launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist && launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist`
+3. **Check port:** `lsof -i :8767`
 4. **Check logs:** `tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/mcp_server_error.log`
-5. **Read server info:** [.agent-guides/SERVER_INFO.md](SERVER_INFO.md)
 
-**Note:** The MCP server runs automatically via macOS launchd - you usually don't need to start it manually!
+The MCP server runs automatically via macOS launchd - you usually don't need to start it manually.
 
 ## Philosophy
 
-The governance system is **supportive, not restrictive**. It gives you feedback based on thermodynamic state (Energy, Integrity, Entropy, Void), not arbitrary thresholds.
-
-Trust the canonical MCP handlers - they understand context!
-
-## Final Note
-
-If you're tempted to add your own interpretation layer or custom warnings - **don't!** That's what caused the original problem. The MCP handlers already provide nuanced, context-aware feedback.
-
-Single source of truth = canonical MCP = less confusion = better governance.
+The governance system is **supportive, not restrictive**. It gives you feedback based on thermodynamic state (Energy, Integrity, Entropy, Void), not arbitrary thresholds. Trust the canonical MCP handlers.
 
 ---
 
-**Written by:** Claude Code (Dec 10, 2025)
-**Updated:** v2.7.0 (Feb 20, 2026) - 30 tools, CIRS v2 resonance wiring, 6,407 tests
+**Updated:** Feb 22, 2026
 **For:** Future Claude Code agents
-**Status:** This is the canonical approach - trust it!
-
-🚀 Good luck, future me!
