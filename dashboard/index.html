@@ -149,7 +149,7 @@
             <div class="pulse-metrics">
                 <div class="pulse-metric pulse-metric-large">
                     <div class="pulse-metric-header">
-                        <span class="pulse-metric-label">Risk → Verdict</span>
+                        <span class="pulse-metric-label"><span x-tooltip="metrics.risk">Risk</span> → Verdict</span>
                         <span class="pulse-metric-value" id="vv-risk">—</span>
                         <span class="pulse-metric-detail" id="vv-risk-detail" title="Risk adjustment from trajectory analysis"></span>
                     </div>
@@ -163,14 +163,14 @@
                 <div class="pulse-metric-row">
                     <div class="pulse-metric-mini pulse-metric-with-bar">
                         <div class="pulse-metric-header">
-                            <span class="pulse-metric-label">Confidence</span>
+                            <span class="pulse-metric-label"><span x-tooltip="metrics.confidence">Confidence</span></span>
                             <span class="pulse-metric-value" id="vv-confidence">—</span>
                         </div>
                         <div class="vital-bar-track vital-bar-mini"><div class="vital-bar" id="v-confidence" style="width:0%"></div></div>
                     </div>
                     <div class="pulse-metric-mini pulse-metric-with-bar">
                         <div class="pulse-metric-header">
-                            <span class="pulse-metric-label">Complexity</span>
+                            <span class="pulse-metric-label"><span x-tooltip="metrics.complexity">Complexity</span></span>
                             <span class="pulse-metric-value" id="vv-complexity">—</span>
                         </div>
                         <div class="vital-bar-track vital-bar-mini"><div class="vital-bar" id="v-complexity" style="width:0%"></div></div>
@@ -182,19 +182,19 @@
                 <h3>Drift</h3>
                 <div class="drift-vector">
                     <div class="drift-axis">
-                        <span class="drift-axis-label" title="Emotional drift — calibration deviation from baseline">Emotional</span>
+                        <span class="drift-axis-label" title="Emotional drift — calibration deviation from baseline"><span x-tooltip="drift.emotional">Emotional</span></span>
                         <div class="drift-gauge"><div class="drift-gauge-fill" id="drift-g-0"></div><div class="drift-gauge-center"></div></div>
                         <span class="drift-axis-val" id="drift-v-0">0</span>
                         <span class="drift-trend" id="drift-trend-0" title="Trend"></span>
                     </div>
                     <div class="drift-axis">
-                        <span class="drift-axis-label" title="Epistemic drift — coherence deviation from baseline">Epistemic</span>
+                        <span class="drift-axis-label" title="Epistemic drift — coherence deviation from baseline"><span x-tooltip="drift.epistemic">Epistemic</span></span>
                         <div class="drift-gauge"><div class="drift-gauge-fill" id="drift-g-1"></div><div class="drift-gauge-center"></div></div>
                         <span class="drift-axis-val" id="drift-v-1">0</span>
                         <span class="drift-trend" id="drift-trend-1" title="Trend"></span>
                     </div>
                     <div class="drift-axis">
-                        <span class="drift-axis-label" title="Behavioral drift — stability deviation from baseline">Behavioral</span>
+                        <span class="drift-axis-label" title="Behavioral drift — stability deviation from baseline"><span x-tooltip="drift.behavioral">Behavioral</span></span>
                         <div class="drift-gauge"><div class="drift-gauge-fill" id="drift-g-2"></div><div class="drift-gauge-center"></div></div>
                         <span class="drift-axis-val" id="drift-v-2">0</span>
                         <span class="drift-trend" id="drift-trend-2" title="Trend"></span>
