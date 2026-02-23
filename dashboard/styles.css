@@ -94,6 +94,22 @@
     box-sizing: border-box;
 }
 
+/* Skip link for keyboard navigation */
+.skip-link {
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: var(--accent-cyan);
+    color: var(--bg-color);
+    padding: 8px 16px;
+    z-index: 9999;
+    transition: top 0.2s;
+}
+
+.skip-link:focus {
+    top: 0;
+}
+
 /* Smooth transitions for theme toggle — scoped to avoid jank on DOM updates */
 body,
 .stat-card,
