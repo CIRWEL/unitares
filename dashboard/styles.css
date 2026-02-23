@@ -23,6 +23,18 @@
     --accent-yellow: #ffea00;
     --accent-glow: 0 0 20px rgba(0, 240, 255, 0.4);
 
+    /* Status colors (semantic) */
+    --color-error: #ef4444;
+    --color-warning: #f59e0b;
+    --color-success: #22c55e;
+    --color-info: #3b82f6;
+    --color-muted: #6b7280;
+
+    /* Drift indicators */
+    --drift-positive: #ef4444;
+    --drift-negative: #3b82f6;
+    --drift-neutral: #6b7280;
+
     --font-family: 'Outfit', system-ui, -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
     --item-bg: rgba(24, 24, 34, 0.5);
