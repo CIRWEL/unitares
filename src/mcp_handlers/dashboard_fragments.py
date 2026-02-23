@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 import html
 import json
+import uuid as uuid_module
 
 # Import database and utilities
 from src.db.postgres_backend import PostgresBackend
@@ -32,6 +33,12 @@ async def get_eisv_history_fragment(
     Returns:
         JSON string with chart data
     """
+    # Validate agent_id is a proper UUID
+    try:
+        uuid_module.UUID(agent_id, version=4)
+    except (ValueError, AttributeError):
+        return '{"error": "Invalid agent_id format"}'
+
     # Parse range
     range_hours = {
         "1h": 1,
@@ -110,6 +117,12 @@ async def get_agent_incidents_fragment(
     Returns:
         HTML fragment with incident list
     """
+    # Validate agent_id is a proper UUID
+    try:
+        uuid_module.UUID(agent_id, version=4)
+    except (ValueError, AttributeError):
+        return '<div class="error">Invalid agent ID</div>'
+
     try:
         # Query significant events (all types, then filter)
         events = await db.query_audit_events(

@@ -2300,6 +2300,9 @@ async def main():
         # Dashboard fragment routes (for htmx)
         async def http_dashboard_eisv_history(request):
             """Get EISV history data for an agent"""
+            if not _check_http_auth(request):
+                return _http_unauthorized()
+
             agent_id = request.path_params.get("agent_id", "")
             range_str = request.query_params.get("range", "24h")
 
@@ -2312,6 +2315,9 @@ async def main():
 
         async def http_dashboard_incidents(request):
             """Get incident history for an agent"""
+            if not _check_http_auth(request):
+                return _http_unauthorized()
+
             agent_id = request.path_params.get("agent_id", "")
 
             from src.db import get_db
