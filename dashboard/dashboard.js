@@ -298,6 +298,127 @@ function showKeyboardShortcuts() {
     document.body.style.overflow = 'hidden';
 }
 
+// ============================================================================
+// HASH-BASED ROUTING
+// ============================================================================
+
+/**
+ * Simple hash router for deep-linking.
+ * Routes:
+ *   #agent/{uuid}      - Open agent detail panel
+ *   #discovery/{id}    - Open discovery detail
+ *   #search?q={query}  - Set search query
+ */
+const Router = {
+    routes: {},
+
+    /**
+     * Register a route handler.
+     * @param {string} pattern - Route pattern (e.g., 'agent/:id')
+     * @param {Function} handler - Function to call with params
+     */
+    on(pattern, handler) {
+        this.routes[pattern] = handler;
+    },
+
+    /**
+     * Navigate to a route.
+     * @param {string} hash - Hash without # prefix
+     */
+    navigate(hash) {
+        window.location.hash = hash;
+    },
+
+    /**
+     * Parse current hash and call matching handler.
+     */
+    handleRoute() {
+        const hash = window.location.hash.slice(1);  // Remove #
+        if (!hash) return;
+
+        // Try each route pattern
+        for (const [pattern, handler] of Object.entries(this.routes)) {
+            const match = this.matchRoute(pattern, hash);
+            if (match) {
+                handler(match.params, match.query);
+                return;
+            }
+        }
+
+        console.warn('No route matched:', hash);
+    },
+
+    /**
+     * Match a route pattern against a hash.
+     * @param {string} pattern - Pattern like 'agent/:id'
+     * @param {string} hash - Hash like 'agent/abc-123?foo=bar'
+     * @returns {Object|null} - {params: {id: 'abc-123'}, query: {foo: 'bar'}} or null
+     */
+    matchRoute(pattern, hash) {
+        // Split hash into path and query
+        const [path, queryString] = hash.split('?');
+        const query = queryString ? Object.fromEntries(new URLSearchParams(queryString)) : {};
+
+        // Split pattern and path into segments
+        const patternParts = pattern.split('/');
+        const pathParts = path.split('/');
+
+        if (patternParts.length !== pathParts.length) return null;
+
+        // Reject empty segments
+        if (pathParts.some(part => !part)) return null;
+
+        const params = {};
+        for (let i = 0; i < patternParts.length; i++) {
+            if (patternParts[i].startsWith(':')) {
+                // This is a parameter
+                params[patternParts[i].slice(1)] = pathParts[i];
+            } else if (patternParts[i] !== pathParts[i]) {
+                // Literal mismatch
+                return null;
+            }
+        }
+
+        return { params, query };
+    },
+
+    /**
+     * Initialize router and listen for hash changes.
+     */
+    init() {
+        window.addEventListener('hashchange', () => this.handleRoute());
+        // Handle initial hash on page load
+        if (window.location.hash) {
+            this.handleRoute();
+        }
+    }
+};
+
+// Register routes (handlers will be added as features are built)
+Router.on('agent/:id', (params) => {
+    console.log('Route: agent', params.id);
+    // TODO: openAgentPanel(params.id)
+});
+
+Router.on('discovery/:id', (params) => {
+    console.log('Route: discovery', params.id);
+    // TODO: openDiscoveryPanel(params.id)
+});
+
+Router.on('search', (params, query) => {
+    console.log('Route: search', query.q);
+    const searchInput = document.getElementById('agent-search');
+    if (searchInput && query.q) {
+        searchInput.value = query.q;
+        searchInput.dispatchEvent(new Event('input'));
+    }
+});
+
+// Initialize router when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    Router.init();
+});
+
 // Core instances
 const api = typeof DashboardAPI !== 'undefined' ? new DashboardAPI(window.location.origin) : null;
 const themeManager = typeof ThemeManager !== 'undefined' ? new ThemeManager() : null;
