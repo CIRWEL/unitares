@@ -15,6 +15,10 @@
     <!-- Chart.js for visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <!-- htmx for server-driven updates -->
+    <script src="https://unpkg.com/htmx.org@2.0.0"></script>
+    <!-- Alpine.js for client-side reactivity -->
+    <script src="https://unpkg.com/alpinejs@3.14.0" defer></script>
     <!-- Dashboard utilities -->
     <script src="/dashboard/utils.js"></script>
     <script src="/dashboard/components.js"></script>
@@ -57,14 +61,9 @@
     <main>
     <div class="stats-grid">
         <div class="stat-card">
-            <h2>Total Agents</h2>
-            <div class="value" id="total-agents">-</div>
+            <h2>Agents</h2>
+            <div class="value"><span id="active-agents">-</span><span class="value-separator">/</span><span id="total-agents" class="value-secondary">-</span></div>
             <div class="change" id="agents-change"></div>
-        </div>
-        <div class="stat-card">
-            <h2>Active Agents</h2>
-            <div class="value" id="active-agents">-</div>
-            <div class="change" id="active-change"></div>
         </div>
         <div class="stat-card">
             <h2>Knowledge Discoveries</h2>
@@ -72,22 +71,17 @@
             <div class="change" id="discoveries-change"></div>
         </div>
         <div class="stat-card">
-            <h2>Dialectic Sessions</h2>
-            <div class="value" id="dialectic-sessions">-</div>
-            <div class="change" id="dialectic-change"></div>
-        </div>
-        <div class="stat-card">
-            <h2>Fleet Health</h2>
+            <h2>Agent Coherence</h2>
             <div class="value" id="fleet-coherence">-</div>
             <div class="change" id="fleet-health-detail"></div>
         </div>
-        <div class="stat-card" id="stuck-agents-card">
+        <div class="stat-card hidden" id="stuck-agents-card">
             <h2>Stuck Agents</h2>
             <div class="value" id="stuck-agents-count">-</div>
             <div class="change" id="stuck-agents-detail"></div>
         </div>
         <div class="stat-card" id="system-health-card">
-            <h2>System Health</h2>
+            <h2>Infrastructure</h2>
             <div class="value" id="system-health-value">-</div>
             <div class="change" id="system-health-detail"></div>
         </div>
