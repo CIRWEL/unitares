@@ -65,6 +65,10 @@ let cachedDiscoveries = [];
 // ============================================================================
 let modalTriggerElement = null;
 
+/**
+ * Expand a panel into a modal view.
+ * @param {'discoveries'|'dialectic'|'stuck-agents'} panelType - Panel to expand
+ */
 function expandPanel(panelType) {
     modalTriggerElement = document.activeElement;
     const modal = document.getElementById('panel-modal');
@@ -90,6 +94,9 @@ function expandPanel(panelType) {
     if (firstFocusable) firstFocusable.focus();
 }
 
+/**
+ * Close the modal and return focus to trigger element.
+ */
 function closeModal() {
     const modal = document.getElementById('panel-modal');
     if (!modal) return;
@@ -139,6 +146,11 @@ document.getElementById('panel-modal')?.addEventListener('click', (e) => {
 // Close button handler
 document.querySelector('.panel-modal-close')?.addEventListener('click', closeModal);
 
+/**
+ * Render discoveries list for modal view.
+ * @param {Array<Object>} discoveries - Discovery objects from API
+ * @returns {string} HTML string
+ */
 function renderDiscoveriesForModal(discoveries) {
     if (!discoveries || discoveries.length === 0) {
         return '<div class="loading">No discoveries found</div>';
@@ -530,6 +542,11 @@ function updateAgentFilterInfo(filteredCount) {
 // AGENT RENDERING & FILTERING
 // ============================================================================
 
+/**
+ * Render a list of agent cards with EISV metrics and status indicators.
+ * @param {Array<Object>} agents - Agent data from API
+ * @param {string} [searchTerm] - Optional term to highlight in results
+ */
 function renderAgentsList(agents, searchTerm = '') {
     const container = document.getElementById('agents-container');
     if (cachedAgents.length === 0) {
@@ -675,6 +692,10 @@ function renderAgentsList(agents, searchTerm = '') {
     }).join('');
 }
 
+/**
+ * Apply all active filters to the agent list and re-render.
+ * Reads filter state from DOM inputs.
+ */
 function applyAgentFilters() {
     const searchInput = document.getElementById('agent-search');
     const statusFilterInput = document.getElementById('agent-status-filter');
@@ -868,6 +889,10 @@ function renderDiscoveriesList(discoveries, searchTerm = '') {
     }).join('');
 }
 
+/**
+ * Apply all active filters to discoveries and re-render.
+ * Reads filter state from DOM inputs.
+ */
 function applyDiscoveryFilters() {
     const searchInput = document.getElementById('discovery-search');
     const typeFilterInput = document.getElementById('discovery-type-filter');
@@ -923,6 +948,11 @@ function clearDiscoveryFilters() {
 // DATA LOADING
 // ============================================================================
 
+/**
+ * Load agents from API and render to panel.
+ * Updates cachedAgents and stats.
+ * @returns {Promise<void>}
+ */
 async function loadAgents() {
     try {
         console.log('Loading agents...');
@@ -1181,6 +1211,11 @@ async function loadSystemHealth() {
     }
 }
 
+/**
+ * Load discoveries from API and render to panel.
+ * Updates cachedDiscoveries and stats.
+ * @returns {Promise<void>}
+ */
 async function loadDiscoveries(searchQuery = '') {
     try {
         console.log('Loading discoveries...', searchQuery ? `(search: ${searchQuery})` : '');
@@ -1584,6 +1619,12 @@ function applyDialecticFilters() {
 // MAIN REFRESH & INITIALIZATION
 // ============================================================================
 
+/**
+ * Main refresh function - loads all dashboard data.
+ * @param {Object} [options]
+ * @param {boolean} [options.force=false] - Force refresh even if paused
+ * @returns {Promise<void>}
+ */
 async function refresh(options = {}) {
     const force = options.force === true;
     if (autoRefreshPaused && !force) {
