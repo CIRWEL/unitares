@@ -2296,9 +2296,36 @@ async def main():
                 "error": "File not found",
                 "path": str(static_path)
             }, status_code=404)
-        
+
+        # Dashboard fragment routes (for htmx)
+        async def http_dashboard_eisv_history(request):
+            """Get EISV history data for an agent"""
+            agent_id = request.path_params.get("agent_id", "")
+            range_str = request.query_params.get("range", "24h")
+
+            from src.db import get_db
+            from src.mcp_handlers.dashboard_fragments import get_eisv_history_fragment
+            db = get_db()
+            data = await get_eisv_history_fragment(db, agent_id, range_str)
+
+            return Response(content=data, media_type="application/json")
+
+        async def http_dashboard_incidents(request):
+            """Get incident history for an agent"""
+            agent_id = request.path_params.get("agent_id", "")
+
+            from src.db import get_db
+            from src.mcp_handlers.dashboard_fragments import get_agent_incidents_fragment
+            db = get_db()
+            html_content = await get_agent_incidents_fragment(db, agent_id)
+
+            return Response(content=html_content, media_type="text/html")
+
         # Register HTTP endpoints
         # IMPORTANT: Static file route must come BEFORE dashboard route to match /dashboard/utils.js, etc.
+        # Dashboard fragment routes (htmx) must come before catch-all dashboard routes
+        app.routes.append(Route("/dashboard/fragments/eisv-history/{agent_id}", http_dashboard_eisv_history, methods=["GET"]))
+        app.routes.append(Route("/dashboard/fragments/incidents/{agent_id}", http_dashboard_incidents, methods=["GET"]))
         app.routes.append(Route("/dashboard/{file}", http_dashboard_static, methods=["GET"]))
         app.routes.append(Route("/dashboard", http_dashboard, methods=["GET"]))
         app.routes.append(Route("/", http_dashboard, methods=["GET"]))  # Root also serves dashboard
