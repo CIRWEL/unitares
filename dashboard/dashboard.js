@@ -87,6 +87,62 @@ document.addEventListener('alpine:init', () => {
             return this.get(path)?.long || '';
         }
     });
+
+    // Tooltip directive: x-tooltip="eisv.energy" or x-tooltip="'Custom text'"
+    Alpine.directive('tooltip', (el, { expression }, { evaluate }) => {
+        let content;
+
+        // Check if it's a help path or direct string
+        if (expression.startsWith("'") || expression.startsWith('"')) {
+            content = evaluate(expression);
+        } else {
+            // It's a help path
+            const helpItem = Alpine.store('help').get(expression);
+            if (helpItem) {
+                content = `<strong>${helpItem.short}</strong>`;
+                if (helpItem.long) {
+                    content += `<br><span class="tooltip-detail">${helpItem.long}</span>`;
+                }
+                if (helpItem.range) {
+                    content += `<br><span class="tooltip-range">Range: ${helpItem.range}</span>`;
+                }
+            } else {
+                content = expression;
+            }
+        }
+
+        // Create tooltip element
+        const tooltip = document.createElement('div');
+        tooltip.className = 'tooltip';
+        tooltip.innerHTML = content;
+        document.body.appendChild(tooltip);
+
+        // Position and show on hover/focus
+        const show = () => {
+            const rect = el.getBoundingClientRect();
+            tooltip.style.left = `${rect.left + rect.width / 2}px`;
+            tooltip.style.top = `${rect.bottom + 8}px`;
+            tooltip.classList.add('visible');
+        };
+
+        const hide = () => {
+            tooltip.classList.remove('visible');
+        };
+
+        el.addEventListener('mouseenter', show);
+        el.addEventListener('mouseleave', hide);
+        el.addEventListener('focus', show);
+        el.addEventListener('blur', hide);
+
+        // Cleanup on element removal
+        el._tooltipCleanup = () => {
+            tooltip.remove();
+            el.removeEventListener('mouseenter', show);
+            el.removeEventListener('mouseleave', hide);
+            el.removeEventListener('focus', show);
+            el.removeEventListener('blur', hide);
+        };
+    });
 });
 
 // Core instances
