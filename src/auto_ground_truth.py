@@ -308,8 +308,7 @@ async def collect_ground_truth_automatically(
     
     audit_logger = AuditLogger()
     
-    # Load agent metadata (prefer server loader, which supports SQLite backend).
-    # This avoids hard dependency on data/agent_metadata.json snapshots.
+    # Load agent metadata from PostgreSQL via server loader.
     metadata = {}
     try:
         import src.mcp_server_std as mcp_server

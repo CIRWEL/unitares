@@ -51,17 +51,25 @@ class KnowledgeGraphPostgres:
         severity: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 50,
+        exclude_archived: bool = False,
     ) -> List[DiscoveryNode]:
         """Query discoveries with filters."""
         db = await self._get_db()
+        # If exclude_archived and no explicit status filter, filter to non-archived
+        effective_status = status
+        if exclude_archived and not status:
+            effective_status = "!archived"  # Convention: kg_query handles this
         rows = await db.kg_query(
             agent_id=agent_id,
             tags=tags,
             type=type,
             severity=severity,
-            status=status,
+            status=effective_status if effective_status != "!archived" else status,
             limit=limit,
         )
+        # Post-hoc filter as fallback since kg_query may not support negated status
+        if exclude_archived and not status:
+            rows = [r for r in rows if r.get("status") != "archived"]
         return [self._dict_to_discovery(r) for r in rows]
 
     async def full_text_search(self, query: str, limit: int = 20) -> List[DiscoveryNode]:

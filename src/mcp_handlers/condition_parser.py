@@ -175,10 +175,8 @@ async def apply_condition(parsed: ParsedCondition, agent_id: str, mcp_server) ->
         "changes": {}
     }
     
-    # Load metadata
-    import asyncio
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
+    # Load metadata from PostgreSQL (async)
+    await mcp_server.load_metadata_async(force=True)
     
     if agent_id not in mcp_server.agent_metadata:
         result["status"] = "failed"

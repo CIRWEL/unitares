@@ -745,6 +745,13 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             except Exception as e:
                 logger.warning(f"PostgreSQL auto-resume failed: {e}", exc_info=True)
 
+            # Invalidate Redis cache so other processes see the update
+            try:
+                from src.cache import get_metadata_cache
+                await get_metadata_cache().invalidate(agent_uuid)
+            except Exception:
+                pass
+
             # Audit log the auto-resume event (Priority 1)
             try:
                 from src.audit_log import audit_logger

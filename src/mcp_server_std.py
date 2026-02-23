@@ -2777,24 +2777,16 @@ async def main():
             logger.warning(f"Could not load metadata in background: {e}", exc_info=True)
         
         try:
-            # Auto-archive old test agents in background (now async)
-            archived = await auto_archive_old_test_agents(6.0)
-            if archived > 0:
-                logger.info(f"Auto-archived {archived} old test/demo agents")
-        except Exception as e:
-            logger.warning(f"Could not auto-archive old test agents: {e}", exc_info=True)
-
-        try:
-            # Aggressive orphan cleanup to prevent agent proliferation
+            # Only archive true ghosts: 0-update agents older than 24h
             orphans_archived = await auto_archive_orphan_agents(
-                zero_update_hours=1.0,  # UUID agents with 0 updates after 1h
-                low_update_hours=3.0,   # Unlabeled agents with 0-1 updates after 3h
-                unlabeled_hours=6.0     # Stale UUID agents with 2+ updates after 6h
+                zero_update_hours=24.0,  # UUID agents with 0 updates after 24h
+                low_update_hours=0,      # Disabled: don't archive agents with activity
+                unlabeled_hours=0        # Disabled: don't archive agents with activity
             )
             if orphans_archived > 0:
-                logger.info(f"Auto-archived {orphans_archived} orphan agents")
+                logger.info(f"Auto-archived {orphans_archived} zero-update ghost agents (24h+)")
         except Exception as e:
-            logger.warning(f"Could not auto-archive orphan agents: {e}", exc_info=True)
+            logger.warning(f"Could not auto-archive ghost agents: {e}", exc_info=True)
 
         try:
             # Auto-collect ground truth for calibration (runs periodically)

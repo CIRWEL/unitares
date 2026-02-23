@@ -651,11 +651,9 @@ async def handle_update_agent_metadata(arguments: Dict[str, Any]) -> Sequence[Te
     if error:
         return [error]
     
-    # Reload metadata to ensure we have latest state (non-blocking)
-    import asyncio
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
-    
+    # Reload metadata from PostgreSQL (async)
+    await mcp_server.load_metadata_async(force=True)
+
     if agent_id not in mcp_server.agent_metadata:
         return agent_not_found_error(agent_id)
     
@@ -764,10 +762,8 @@ async def handle_archive_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
     # require_registered_agent sets this after validating registration
     agent_uuid = arguments.get("_agent_uuid") or agent_id
 
-    # Reload metadata to ensure we have latest state (non-blocking)
-    import asyncio
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
+    # Reload metadata from PostgreSQL (async)
+    await mcp_server.load_metadata_async(force=True)
     
     if agent_uuid not in mcp_server.agent_metadata:
         return agent_not_found_error(agent_id)
@@ -856,10 +852,8 @@ async def handle_delete_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
     # Use authoritative UUID for internal lookups
     agent_uuid = arguments.get("_agent_uuid") or agent_id
 
-    # Reload metadata to ensure we have latest state (non-blocking)
-    import asyncio
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
+    # Reload metadata from PostgreSQL (async)
+    await mcp_server.load_metadata_async(force=True)
     
     if agent_uuid not in mcp_server.agent_metadata:
         return agent_not_found_error(agent_id)
@@ -977,10 +971,8 @@ async def handle_archive_old_test_agents(arguments: Dict[str, Any]) -> Sequence[
     if max_age_hours < 0.1:
         return [error_response("max_age_hours must be at least 0.1 (6 minutes)")]
     
-    # Reload metadata to ensure we have latest state (non-blocking)
-    import asyncio
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
+    # Reload metadata from PostgreSQL (async)
+    await mcp_server.load_metadata_async(force=True)
     
     archived_agents = []
     cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
@@ -1072,10 +1064,8 @@ async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[Te
     unlabeled_hours = float(arguments.get("unlabeled_hours", 6.0))
     dry_run = arguments.get("dry_run", False)
 
-    # Reload metadata to ensure we have latest state
-    import asyncio
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
+    # Reload metadata from PostgreSQL (async)
+    await mcp_server.load_metadata_async(force=True)
 
     archived_agents = []
     current_time = datetime.now()
@@ -1312,10 +1302,8 @@ async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[Te
     # Use authoritative UUID for internal lookups
     agent_uuid = arguments.get("_agent_uuid") or agent_id
 
-    # Reload metadata to ensure we have latest state (non-blocking)
-    import asyncio
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
+    # Reload metadata from PostgreSQL (async)
+    await mcp_server.load_metadata_async(force=True)
     
     meta = mcp_server.agent_metadata.get(agent_uuid)
     if not meta:

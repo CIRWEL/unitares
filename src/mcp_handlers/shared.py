@@ -27,7 +27,6 @@ get_agent_or_error = None
 require_agent_auth = None
 generate_api_key = None
 get_or_create_metadata = None
-save_metadata_async = None
 load_monitor_state = None
 check_agent_id_default = None
 build_standardized_agent_info = None
@@ -39,7 +38,7 @@ def initialize_context(context_dict: dict):
     global project_root, CURRENT_PID, PSUTIL_AVAILABLE, MAX_KEEP_PROCESSES
     global PID_FILE, SERVER_VERSION, SERVER_BUILD_DATE
     global get_or_create_monitor, get_agent_or_error, require_agent_auth
-    global generate_api_key, get_or_create_metadata, save_metadata_async
+    global generate_api_key, get_or_create_metadata
     global load_monitor_state, check_agent_id_default, build_standardized_agent_info
     global analyze_agent_patterns
     
@@ -61,7 +60,6 @@ def initialize_context(context_dict: dict):
     require_agent_auth = context_dict.get('require_agent_auth')
     generate_api_key = context_dict.get('generate_api_key')
     get_or_create_metadata = context_dict.get('get_or_create_metadata')
-    save_metadata_async = context_dict.get('save_metadata_async')
     load_monitor_state = context_dict.get('load_monitor_state')
     check_agent_id_default = context_dict.get('check_agent_id_default')
     build_standardized_agent_info = context_dict.get('build_standardized_agent_info')

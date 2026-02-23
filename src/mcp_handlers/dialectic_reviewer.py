@@ -39,7 +39,7 @@ async def _has_recently_reviewed(reviewer_id: str, paused_agent_id: str, hours: 
 
     Prevents collusion by ensuring reviewers don't repeatedly review the same agent.
 
-    Uses SQLite for cross-process visibility (CLI and SSE can see each other's sessions).
+    Uses PostgreSQL for cross-process visibility (CLI and SSE can see each other's sessions).
 
     Args:
         reviewer_id: Potential reviewer agent ID
@@ -49,11 +49,11 @@ async def _has_recently_reviewed(reviewer_id: str, paused_agent_id: str, hours: 
     Returns:
         True if reviewer reviewed paused agent within the time window, False otherwise
     """
-    # PRIMARY: Use SQLite for cross-process visibility
+    # PRIMARY: Use PostgreSQL for cross-process visibility
     try:
         return await pg_has_recently_reviewed(reviewer_id, paused_agent_id, hours)
     except Exception as e:
-        logger.warning(f"SQLite check failed for _has_recently_reviewed, falling back to disk: {e}")
+        logger.warning(f"PostgreSQL check failed for _has_recently_reviewed, falling back to disk: {e}")
 
     # FALLBACK: Check JSON files on disk (backward compat)
     cutoff_time = datetime.now() - timedelta(hours=hours)
@@ -107,9 +107,9 @@ async def is_agent_in_active_session(agent_id: str) -> bool:
     Prevents recursive assignment where an agent reviewing someone else
     gets assigned as a reviewer in another session.
 
-    Uses SQLite for cross-process visibility (CLI and SSE can see each other's sessions).
+    Uses PostgreSQL for cross-process visibility (CLI and SSE can see each other's sessions).
     Falls back to in-memory + disk for backward compat.
-    
+
     QUICK WIN A: Auto-resolves stuck sessions before checking to prevent false positives.
 
     Args:
@@ -131,7 +131,7 @@ async def is_agent_in_active_session(agent_id: str) -> bool:
         # Best-effort: don't block reviewer selection if auto-resolve fails
         logger.warning(f"Auto-resolve pre-check failed in is_agent_in_active_session: {e}")
 
-    # PRIMARY: Use SQLite for cross-process visibility
+    # PRIMARY: Use PostgreSQL for cross-process visibility
     # This is the key fix - CLI and SSE processes now share session state
     try:
         result = await pg_is_agent_in_active_session(agent_id)
@@ -143,7 +143,7 @@ async def is_agent_in_active_session(agent_id: str) -> bool:
                 'session_ids': []  # Could query for IDs if needed
             }
             return True
-        # CRITICAL: If SQLite says "not active", override any stale local cache.
+        # CRITICAL: If PostgreSQL says "not active", override any stale local cache.
         # Otherwise, we can incorrectly treat RESOLVED sessions as active for _CACHE_TTL.
         _SESSION_METADATA_CACHE[agent_id] = {
             'in_session': False,
@@ -151,7 +151,7 @@ async def is_agent_in_active_session(agent_id: str) -> bool:
             'session_ids': []
         }
     except Exception as e:
-        logger.warning(f"SQLite check failed for is_agent_in_active_session, falling back: {e}")
+        logger.warning(f"PostgreSQL check failed for is_agent_in_active_session, falling back: {e}")
 
     # FALLBACK Step 1: Check in-memory sessions (process-local cache)
     for session in ACTIVE_SESSIONS.values():

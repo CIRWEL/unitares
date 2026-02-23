@@ -487,6 +487,38 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
             "error": str(e)
         }
     
+    # Check Pi (anima-mcp) connectivity — lightweight probe, warning (not error) if unreachable
+    try:
+        from .pi_orchestration import call_pi_tool, PI_MCP_URLS
+        import time as _time
+        pi_start = _time.time()
+        pi_result = await asyncio.wait_for(
+            call_pi_tool("get_health", {}, timeout=5.0),
+            timeout=6.0
+        )
+        pi_latency = (_time.time() - pi_start) * 1000
+        if isinstance(pi_result, dict) and "error" not in pi_result:
+            checks["pi_connectivity"] = {
+                "status": "healthy",
+                "reachable": True,
+                "latency_ms": round(pi_latency, 1),
+                "urls_configured": PI_MCP_URLS,
+            }
+        else:
+            error_msg = str(pi_result.get("error", "unknown")) if isinstance(pi_result, dict) else str(pi_result)
+            checks["pi_connectivity"] = {
+                "status": "warning",
+                "reachable": False,
+                "error": error_msg,
+                "urls_configured": PI_MCP_URLS,
+            }
+    except (asyncio.TimeoutError, Exception) as e:
+        checks["pi_connectivity"] = {
+            "status": "warning",
+            "reachable": False,
+            "error": str(e),
+        }
+
     # Overall health status - three-tier logic:
     # - healthy: all checks pass
     # - moderate: some warnings/deprecated but no errors

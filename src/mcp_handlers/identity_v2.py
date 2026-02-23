@@ -1572,15 +1572,15 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     existing_identity = None
     created_fresh_identity = False  # Track if we got a fresh identity to persist
     if not force_new:
-        # Try name-based resolution first (PATH 2.5) — allows reconnection by name
-        if name:
+        # Name-based reconnection ONLY if resume=True is explicitly passed
+        # This prevents accidental identity collision when multiple sessions use same name
+        if name and resume:
             existing_by_name = await resolve_by_name_claim(name, base_session_key)
             if existing_by_name:
                 existing_identity = existing_by_name
                 agent_uuid = existing_by_name["agent_uuid"]
                 agent_id = existing_by_name["agent_id"]
                 label = existing_by_name.get("label")
-                resume = True
                 logger.info(f"[ONBOARD] Resumed '{name}' via name claim -> {agent_uuid[:8]}...")
             else:
                 existing_identity = await resolve_session_identity(base_session_key, persist=False)

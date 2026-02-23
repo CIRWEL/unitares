@@ -89,7 +89,7 @@ logger = get_logger(__name__)
 # Primary: LAN connection (faster when on same network)
 # Fallback: Tailscale connection (works when LAN unreachable)
 PI_MCP_URL_LAN = os.environ.get("PI_MCP_URL", "http://192.168.1.165:8766/mcp/")
-PI_MCP_URL_TAILSCALE = os.environ.get("PI_MCP_URL_TAILSCALE", "http://100.89.201.36:8766/mcp/")
+PI_MCP_URL_TAILSCALE = os.environ.get("PI_MCP_URL_TAILSCALE", "http://unitares-anima.tail76aee6.ts.net:8766/mcp/")
 PI_MCP_URLS = [PI_MCP_URL_LAN, PI_MCP_URL_TAILSCALE]  # Try in order
 PI_MCP_URL = PI_MCP_URL_LAN  # Default for backwards compat
 PI_MCP_TIMEOUT = 30.0  # Default timeout for Pi calls

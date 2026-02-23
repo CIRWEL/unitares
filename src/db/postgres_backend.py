@@ -596,6 +596,57 @@ class PostgresBackend(DatabaseBackend):
                 )
             return "UPDATE 1" in result
 
+    async def increment_update_count(
+        self,
+        agent_id: str,
+        extra_metadata: Dict[str, Any] | None = None,
+    ) -> int:
+        """Atomically increment total_updates in PostgreSQL and return the new value.
+
+        This is the ONLY way total_updates should be modified. No in-memory
+        counter, no batch sync, no merge logic. One atomic SQL operation.
+
+        Args:
+            agent_id: Agent identifier
+            extra_metadata: Optional additional metadata to merge (e.g., recent_decisions)
+
+        Returns:
+            The new total_updates value after increment
+        """
+        async with self.acquire() as conn:
+            # Atomic increment + merge extra metadata in a single statement
+            if extra_metadata:
+                new_count = await conn.fetchval(
+                    """
+                    UPDATE core.identities
+                    SET metadata = jsonb_set(
+                            metadata || $2::jsonb,
+                            '{total_updates}',
+                            (COALESCE((metadata->>'total_updates')::int, 0) + 1)::text::jsonb
+                        ),
+                        updated_at = now()
+                    WHERE agent_id = $1
+                    RETURNING (metadata->>'total_updates')::int
+                    """,
+                    agent_id, json.dumps(extra_metadata),
+                )
+            else:
+                new_count = await conn.fetchval(
+                    """
+                    UPDATE core.identities
+                    SET metadata = jsonb_set(
+                            metadata,
+                            '{total_updates}',
+                            (COALESCE((metadata->>'total_updates')::int, 0) + 1)::text::jsonb
+                        ),
+                        updated_at = now()
+                    WHERE agent_id = $1
+                    RETURNING (metadata->>'total_updates')::int
+                    """,
+                    agent_id,
+                )
+            return new_count or 0
+
     async def verify_api_key(self, agent_id: str, api_key: str) -> bool:
         async with self.acquire() as conn:
             result = await conn.fetchval(

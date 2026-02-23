@@ -977,106 +977,6 @@ async def debug_request_context(ctx: Context = None) -> dict:
     # SSE transport deprecated by MCP — use Streamable HTTP (/mcp/) instead.
 
 
-# ============================================================================
-# Startup Reconciliation: Postgres → SQLite Metadata
-# ============================================================================
-
-async def _reconcile_postgres_to_metadata(db) -> Dict[str, Any]:
-    """
-    Reconcile Postgres identities to SQLite agent_metadata on startup.
-
-    Finds identities in Postgres that don't exist in SQLite metadata and
-    creates minimal metadata entries for them. This catches drift from:
-    - state_db creating identities without metadata
-    - Failed async metadata saves
-    - Direct Postgres operations
-
-    Returns:
-        Dict with reconciliation statistics
-    """
-    from src.metadata_db import AgentMetadataDB
-    from datetime import datetime
-
-    result = {
-        "success": True,
-        "postgres_count": 0,
-        "metadata_count": 0,
-        "missing_in_metadata": 0,
-        "synced": 0,
-        "failed": 0,
-    }
-
-    try:
-        # Get all Postgres identities
-        postgres_identities = await db.list_identities(limit=10000)
-        postgres_ids = {i.agent_id for i in postgres_identities}
-        result["postgres_count"] = len(postgres_ids)
-
-        # Get all SQLite metadata agent_ids
-        metadata_db = AgentMetadataDB(Path(project_root) / "data" / "governance.db")
-        existing_metadata = metadata_db.load_all()
-        metadata_ids = set(existing_metadata.keys())
-        result["metadata_count"] = len(metadata_ids)
-
-        # Find missing
-        missing_in_metadata = postgres_ids - metadata_ids
-        result["missing_in_metadata"] = len(missing_in_metadata)
-
-        if not missing_in_metadata:
-            logger.info("Startup reconciliation: Postgres and metadata are in sync")
-            return result
-
-        logger.info(
-            f"Startup reconciliation: Found {len(missing_in_metadata)} identities "
-            f"in Postgres missing from metadata"
-        )
-
-        # Create minimal metadata for missing agents
-        now = datetime.utcnow().isoformat()
-        new_metadata = {}
-        for agent_id in missing_in_metadata:
-            # Find the identity to get created_at
-            identity = await db.get_identity(agent_id)
-            created = identity.created_at.isoformat() if identity and identity.created_at else now
-
-            new_metadata[agent_id] = {
-                "agent_id": agent_id,
-                "agent_uuid": agent_id,
-                "label": None,
-                "status": "active",
-                "created_at": created,
-                "last_update": created,
-                "version": "v1.0",
-                "total_updates": 0,
-                "tags": [],
-                "notes": "[Reconciled from Postgres on startup]",
-                "lifecycle_events": [
-                    {"event": "reconciled", "timestamp": now, "reason": "missing_from_metadata"}
-                ],
-                "health_status": "unknown",
-                "api_key": "",
-            }
-
-        # Upsert to metadata
-        try:
-            metadata_db.upsert_many(new_metadata)
-            result["synced"] = len(new_metadata)
-            logger.info(
-                f"Startup reconciliation: Synced {len(new_metadata)} agents "
-                f"from Postgres to metadata"
-            )
-        except Exception as e:
-            logger.error(f"Failed to sync metadata: {e}")
-            result["failed"] = len(new_metadata)
-            result["success"] = False
-
-        return result
-
-    except Exception as e:
-        logger.error(f"Reconciliation error: {e}")
-        result["success"] = False
-        result["error"] = str(e)
-        return result
 
 
 # ============================================================================
@@ -1332,14 +1232,6 @@ async def main():
         logger.error(f"Failed to initialize database: {e}")
         print(f"\n❌ Database initialization failed: {e}", file=sys.stderr)
         sys.exit(1)
-
-    # PostgreSQL is now the sole backend - reconciliation no longer needed
-    # SQLite metadata is legacy and not being written to
-    logger.debug("PostgreSQL-only backend: skipping SQLite reconciliation (deprecated)")
-    # try:
-    #     await _reconcile_postgres_to_metadata(db)
-    # except Exception as e:
-    #     logger.warning(f"Startup reconciliation failed (non-fatal): {e}")
 
     # Register cleanup handlers
     def cleanup():
@@ -2379,7 +2271,7 @@ async def main():
                 return JSONResponse({"error": "Invalid file path"}, status_code=400)
             
             # Only allow specific files for security
-            allowed_files = ["utils.js", "components.js", "styles.css"]
+            allowed_files = ["utils.js", "components.js", "styles.css", "dashboard.js"]
             if file_path not in allowed_files:
                 return JSONResponse({
                     "error": "File not allowed",

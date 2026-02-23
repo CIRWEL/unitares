@@ -1,7 +1,7 @@
 """
 Abstract Base Class for Database Backends
 
-Defines the interface that SQLite and PostgreSQL backends must implement.
+Defines the interface that database backends must implement.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ class DatabaseBackend(ABC):
     """
     Abstract base class for database backends.
 
-    All methods are async to support both sync SQLite (wrapped) and async PostgreSQL.
+    All methods are async to support async PostgreSQL.
     """
 
     # =========================================================================
@@ -341,7 +341,7 @@ class DatabaseBackend(ABC):
         pass
 
     # =========================================================================
-    # GRAPH OPERATIONS (AGE-specific, graceful fallback on SQLite)
+    # GRAPH OPERATIONS (AGE-specific)
     # =========================================================================
 
     async def graph_query(
@@ -492,7 +492,7 @@ class DatabaseBackend(ABC):
         Used for pull-based discovery: agents check for pending reviews on status().
         This enables human-in-the-loop and async review without requiring persistent agent pools.
 
-        Default implementation returns empty list (SQLite doesn't support this).
+        Default implementation returns empty list.
         PostgreSQL backend overrides with actual query.
 
         Returns:

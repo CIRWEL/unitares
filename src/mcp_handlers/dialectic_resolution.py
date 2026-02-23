@@ -32,10 +32,8 @@ async def execute_resolution(session: DialecticSession, resolution: Resolution) 
     agent_id = session.paused_agent_id
     mcp_server = get_mcp_server()
     
-    # Load agent metadata (non-blocking)
-    import asyncio
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
+    # Load agent metadata from PostgreSQL (async)
+    await mcp_server.load_metadata_async(force=True)
     
     if agent_id not in mcp_server.agent_metadata:
         raise ValueError(f"Agent '{agent_id}' not found")

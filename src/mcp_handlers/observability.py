@@ -2,6 +2,7 @@
 Observability tool handlers.
 """
 
+import asyncio
 from typing import Dict, Any, Sequence
 from mcp.types import TextContent
 import sys
@@ -115,9 +116,7 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
 async def handle_compare_agents(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Compare governance patterns across multiple agents"""
     # Reload metadata to get latest state (handles multi-process sync) - non-blocking
-    import asyncio
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
+    await mcp_server.load_metadata_async(force=True)
     
     agent_ids = arguments.get("agent_ids", [])
     if not agent_ids or len(agent_ids) < 2:
@@ -264,9 +263,7 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
         return [error]
     
     # Reload metadata to get latest state
-    import asyncio
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
+    await mcp_server.load_metadata_async(force=True)
     
     # Get current agent's metrics
     monitor = mcp_server.get_or_create_monitor(agent_id)
@@ -507,9 +504,8 @@ async def handle_detect_anomalies(arguments: Dict[str, Any]) -> Sequence[TextCon
     """Detect anomalies across agents"""
     import asyncio
     
-    # Reload metadata to get latest state (handles multi-process sync) - non-blocking
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
+    # Reload metadata from PostgreSQL (async)
+    await mcp_server.load_metadata_async(force=True)
     
     agent_ids = arguments.get("agent_ids")
     anomaly_types = arguments.get("anomaly_types", ["risk_spike", "coherence_drop"])
@@ -606,9 +602,7 @@ async def handle_aggregate_metrics(arguments: Dict[str, Any]) -> Sequence[TextCo
     import numpy as np
     
     # Reload metadata to get latest state (handles multi-process sync) - non-blocking
-    import asyncio
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, mcp_server.load_metadata)
+    await mcp_server.load_metadata_async(force=True)
     
     agent_ids = arguments.get("agent_ids")
     include_health_breakdown = arguments.get("include_health_breakdown", True)
