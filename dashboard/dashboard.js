@@ -179,10 +179,16 @@ document.addEventListener('keydown', (e) => {
             break;
 
         case 'Escape':
-            // Close panel or clear search
             e.preventDefault();
+            // Check for modal first
+            const modal = document.getElementById('panel-modal');
+            if (modal?.classList.contains('visible')) {
+                closeModal();
+                return;
+            }
+            // Slide panel (will be implemented in Task 2.2)
             const panel = document.querySelector('.slide-panel.open');
-            if (panel) {
+            if (panel && typeof closeSlidePanel === 'function') {
                 closeSlidePanel();
             } else {
                 // Clear search if there's content
@@ -260,7 +266,9 @@ function openSelectedAgent() {
  * Show keyboard shortcuts help modal.
  */
 function showKeyboardShortcuts() {
-    const shortcuts = helpData?.keyboard || {
+    // Use help.json keyboard section via Alpine store if loaded, otherwise fallback
+    const helpStore = typeof Alpine !== 'undefined' ? Alpine.store('help') : null;
+    const shortcuts = helpStore?.data?.keyboard || {
         '/': 'Focus search',
         'Escape': 'Close panel or clear search',
         'j': 'Move down in list',

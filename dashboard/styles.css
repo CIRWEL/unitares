@@ -3285,7 +3285,7 @@ body {
 
 /* Keyboard navigation selection */
 .agent-card.keyboard-selected {
-    outline: 2px solid var(--accent-color);
+    outline: 2px solid var(--accent-cyan);
     outline-offset: 2px;
 }
 
