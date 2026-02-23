@@ -42,10 +42,6 @@ const CONFIG = {
     COALESCE_WINDOW_MS: 30000
 };
 
-// Backwards compatibility (will be removed in Task 3.2)
-const REFRESH_INTERVAL_MS = CONFIG.REFRESH_INTERVAL_MS;
-const maxRefreshFailures = CONFIG.MAX_REFRESH_FAILURES;
-
 // Verify dependencies loaded
 if (typeof DashboardAPI === 'undefined' || typeof DataProcessor === 'undefined' || typeof ThemeManager === 'undefined') {
     console.error('Dashboard utilities not loaded. Make sure utils.js and components.js are accessible.');
@@ -303,7 +299,7 @@ document.addEventListener('click', async (event) => {
             archiveBtn.innerHTML = '<span>Failed</span>';
             setTimeout(() => {
                 archiveBtn.innerHTML = '<span>Archive</span>';
-            }, 2000);
+            }, CONFIG.SCROLL_FEEDBACK_MS);
         }
         return;
     }
@@ -331,7 +327,7 @@ document.addEventListener('click', async (event) => {
             await navigator.clipboard.writeText(id);
             const original = idEl.textContent;
             idEl.textContent = 'Copied!';
-            setTimeout(() => { idEl.textContent = original; }, 1500);
+            setTimeout(() => { idEl.textContent = original; }, CONFIG.COPY_FEEDBACK_MS);
         } catch (e) {
             console.error('Copy failed:', e);
         }
@@ -389,7 +385,7 @@ function updateConnectionBanner(hasError) {
     }
 
     // Only show banner after multiple consecutive failures
-    if (refreshFailures >= maxRefreshFailures) {
+    if (refreshFailures >= CONFIG.MAX_REFRESH_FAILURES) {
         banner.textContent = `Connection issues detected (${refreshFailures} failures). Check server status or network. Click "Refresh now" to retry.`;
         banner.classList.remove('hidden');
     } else {
@@ -402,7 +398,7 @@ function updateRefreshStatus() {
     if (!status) return;
     status.textContent = autoRefreshPaused
         ? 'Auto-refresh paused'
-        : `Auto-refresh every ${Math.round(REFRESH_INTERVAL_MS / 1000)} seconds`;
+        : `Auto-refresh every ${Math.round(CONFIG.REFRESH_INTERVAL_MS / 1000)} seconds`;
 }
 
 function getAgentStatus(agent) {
@@ -842,11 +838,11 @@ function applyDiscoveryFilters() {
     const timeFilter = timeFilterInput ? timeFilterInput.value : 'all';
     let cutoff = null;
     if (timeFilter === '24h') {
-        cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        cutoff = Date.now() - CONFIG.DAY_MS;
     } else if (timeFilter === '7d') {
-        cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        cutoff = Date.now() - CONFIG.WEEK_MS;
     } else if (timeFilter === '30d') {
-        cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        cutoff = Date.now() - CONFIG.MONTH_MS;
     }
 
     const filtered = cachedDiscoveries.filter(d => {
@@ -1726,14 +1722,14 @@ if (agentsContainer) {
                     button.textContent = 'Copied';
                     setTimeout(() => {
                         button.textContent = originalLabel;
-                    }, 1500);
+                    }, CONFIG.COPY_FEEDBACK_MS);
                 })
                 .catch(() => {
                     const originalLabel = button.textContent;
                     button.textContent = 'Copy failed';
                     setTimeout(() => {
                         button.textContent = originalLabel;
-                    }, 1500);
+                    }, CONFIG.COPY_FEEDBACK_MS);
                 });
             return;
         }
@@ -2321,8 +2317,6 @@ if (exportDiscoveriesJson) exportDiscoveriesJson.addEventListener('click', () =>
 let eisvChartUpper = null;  // E, I, Coherence
 let eisvChartLower = null;  // S, V
 let eisvWebSocket = null;
-const EISV_WINDOW_MS = 30 * 60 * 1000; // 30 minute rolling window
-
 // Per-agent EISV tracking for hybrid view
 const agentEISVHistory = {}; // { agent_id: [{ts, E, I, S, V, coherence}, ...] }
 const knownAgents = new Set(); // For dropdown population
@@ -2370,7 +2364,7 @@ function updateAgentDropdown() {
 
 function computeFleetAverage() {
     const now = Date.now();
-    const cutoff = now - EISV_WINDOW_MS;
+    const cutoff = now - CONFIG.EISV_WINDOW_MS;
 
     // Collect all recent data points
     const allPoints = [];
@@ -2387,9 +2381,8 @@ function computeFleetAverage() {
 
     // Group by time buckets (30 second intervals)
     const buckets = {};
-    const BUCKET_MS = 30000;
     for (const pt of allPoints) {
-        const bucket = Math.floor(pt.ts / BUCKET_MS) * BUCKET_MS;
+        const bucket = Math.floor(pt.ts / CONFIG.EISV_BUCKET_MS) * CONFIG.EISV_BUCKET_MS;
         if (!buckets[bucket]) {
             buckets[bucket] = { E: [], I: [], S: [], V: [], coherence: [] };
         }
@@ -2424,7 +2417,7 @@ function rebuildChartFromSelection() {
     eisvChartLower.data.datasets.forEach(ds => ds.data = []);
 
     const now = Date.now();
-    const cutoff = now - EISV_WINDOW_MS;
+    const cutoff = now - CONFIG.EISV_WINDOW_MS;
 
     if (selectedAgentView === '__fleet__') {
         // Fleet average
@@ -2639,7 +2632,7 @@ function addEISVDataPoint(data) {
     }
 
     // Trim old data from all agent histories
-    const cutoff = tsMs - EISV_WINDOW_MS;
+    const cutoff = tsMs - CONFIG.EISV_WINDOW_MS;
     for (const aid of Object.keys(agentEISVHistory)) {
         agentEISVHistory[aid] = agentEISVHistory[aid].filter(pt => pt.ts >= cutoff);
         if (agentEISVHistory[aid].length === 0) {
@@ -2822,7 +2815,6 @@ const SEVERITY_CLASSES = {
 // Recent Decisions Log (coalesced check-ins)
 // ============================================
 const MAX_DECISIONS = 8;
-const COALESCE_WINDOW_MS = 30000; // 30 seconds
 const recentDecisions = []; // {agent_id, agent_name, verdict, risk, timestamp, count}
 
 function getVerdictBadge(verdict, risk) {
@@ -2875,7 +2867,7 @@ function addDecision(data) {
     // Check if we should coalesce with existing entry
     const existing = recentDecisions.find(d =>
         d.agent_id === agentId &&
-        (now - new Date(d.timestamp).getTime()) < COALESCE_WINDOW_MS
+        (now - new Date(d.timestamp).getTime()) < CONFIG.COALESCE_WINDOW_MS
     );
 
     if (existing) {
@@ -3133,7 +3125,7 @@ function updateAgentCardFromWS(data) {
             setTimeout(() => {
                 card.style.borderLeftColor = '';
                 card.style.boxShadow = '';
-            }, 2000);
+            }, CONFIG.SCROLL_FEEDBACK_MS);
             break;
         }
     }
@@ -3204,9 +3196,9 @@ function renderTimeline() {
     // Build timeline events from cached agents
     const now = Date.now();
     let cutoff = 0;
-    if (range === '1h') cutoff = now - 60 * 60 * 1000;
-    else if (range === '24h') cutoff = now - 24 * 60 * 60 * 1000;
-    else if (range === '7d') cutoff = now - 7 * 24 * 60 * 60 * 1000;
+    if (range === '1h') cutoff = now - CONFIG.HOUR_MS;
+    else if (range === '24h') cutoff = now - CONFIG.DAY_MS;
+    else if (range === '7d') cutoff = now - CONFIG.WEEK_MS;
 
     const events = cachedAgents
         .filter(agent => {
@@ -3311,7 +3303,7 @@ if (typeof EISVWebSocket !== 'undefined') {
             else if (currentClass.includes('polling')) updateWSStatusLabel('polling');
             else if (currentClass.includes('reconnecting')) updateWSStatusLabel('reconnecting');
             else updateWSStatusLabel('disconnected');
-        }, 2000);
+        }, CONFIG.SCROLL_FEEDBACK_MS);
     };
 }
 
@@ -3339,4 +3331,4 @@ setInterval(() => {
     if (!autoRefreshPaused) {
         refresh();
     }
-}, REFRESH_INTERVAL_MS);
+}, CONFIG.REFRESH_INTERVAL_MS);
