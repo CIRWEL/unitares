@@ -18,7 +18,7 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 - **v2.5.0** (Dec 2025) - HCK/CIRS stability monitoring
 - **v2.5.1** (Dec 2025) - Three-tier identity model
 - **v2.5.4** (Dec 2025) - Meaningful identity in knowledge graph
-- **v2.5.5** (Feb 2026) - Ethical drift, trajectory identity, 85+ tools
+- **v2.5.5** (Feb 2026) - Ethical drift, trajectory identity, Pi orchestration (peak 85 tools before consolidation)
 - **v2.5.6** (Feb 2026) - UX friction fixes, consolidated tools, 38+ tool aliases
 - **v2.5.7** (Feb 2026) - Three-tier identity (merged label→display_name), identity_shared.py module, 416 tests
 - **v2.5.8** (Feb 2026) - Production Redis resilience (circuit breaker, pooling, retry)
@@ -296,7 +296,7 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 
 **Tool Expansion:**
 
-- Tool count expanded from 43 to **85+ tools**
+- Tool count expanded from 43 to 85 (later consolidated to 29 in v2.6.0)
 - New categories: Pi Orchestration, Trajectory, CIRS, Recovery
 - Unified tools: `self_recovery`, `cirs_protocol`, `agent`, `knowledge`, `calibration`
 
@@ -405,8 +405,8 @@ v2.7.0:  CIRS v2 resonance wiring, I-dynamics linear, 6,407 tests at 80% coverag
 - **v2.2.0:** 35 tools (+6 knowledge graph tools)
 - **v2.3.0:** 43 tools (+8 more tools)
 - **v2.4.0:** 43 tools (refinements)
-- **v2.5.5:** 85+ tools (+42 tools: Pi orchestration, trajectory, recovery, unified tools)
-- **v2.6.0:** 29 tools (85+ consolidated to 29 public, admin/internal hidden)
+- **v2.5.5:** 85 tools (+42: Pi orchestration, trajectory, recovery — peak before consolidation)
+- **v2.6.0:** 29 tools (consolidated to 29 public, admin/internal hidden)
 - **v2.6.2:** 31 tools (+ 2 new registered tools, 49 consolidated sub-handlers)
 - **v2.6.3:** 30 tools (dialectic consolidated, identity audit, dead code removal, 6,306 tests)
 - **v2.6.4:** 30 tools (KG bias fixes: temporal decay, status scoring, SUPERSEDES edge, 6,344 tests)

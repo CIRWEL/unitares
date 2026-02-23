@@ -773,6 +773,19 @@ body {
     font-family: var(--font-mono);
 }
 
+/* Combined stat display (e.g., Active/Total agents) */
+.stat-card .value-separator {
+    color: var(--text-muted);
+    margin: 0 0.15em;
+    font-weight: 400;
+}
+
+.stat-card .value-secondary {
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 0.85em;
+}
+
 .stat-card .change {
     font-size: 0.8em;
     margin-top: 5px;
@@ -1362,6 +1375,13 @@ body {
     border-radius: 3px;
     background: var(--metric-track);
     color: var(--text-secondary);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.discovery-tag:hover {
+    background: var(--color-info);
+    color: var(--text-primary);
 }
 
 .discovery-expand-hint {

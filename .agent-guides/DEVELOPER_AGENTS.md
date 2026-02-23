@@ -7,7 +7,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    MCP Server (mcp_server.py)                   │
-│  - Streamable HTTP transport                                    │
+│  - Streamable HTTP transport (port 8767)                       │
 │  - 30 registered tools + aliases (v2.7.0)                       │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Handlers (mcp_handlers/)                      │
@@ -25,9 +25,9 @@
 │  - name: User-chosen via identity(name="...")                   │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Database Layer                                │
-│  - PostgreSQL: identities, sessions, EISV state (primary)       │
-│  - Redis: session cache, rate limiting (optional)               │
-│  - AGE extension: knowledge graph with semantic search           │
+│  - PostgreSQL + AGE: ALL persistent data (Docker, port 5432)    │
+│  - Redis: session cache, rate limiting (Docker, port 6379)      │
+│  - NO SQLite. NO Homebrew PostgreSQL. NO dual backends.         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -41,19 +41,18 @@
 | Identity/session | `src/mcp_handlers/identity_v2.py` (v2.4.0+) |
 | Identity utilities | `src/mcp_handlers/utils.py` - `require_registered_agent()` |
 | Knowledge graph | `src/mcp_handlers/knowledge_graph.py` - `_resolve_agent_display()` |
-| KG storage | `src/storage/knowledge_graph_postgres.py` |
+| KG storage (AGE) | `src/storage/knowledge_graph_age.py` |
+| KG storage (FTS) | `src/storage/knowledge_graph_postgres.py` |
 | EISV dynamics | `src/governance_monitor.py`, `governance_core/` |
 | HCK/CIRS | `src/cirs.py` (v2.5.0+) - oscillation detection, resonance damping |
-| Database | `src/db/postgres_backend.py`, `src/db/dual_backend.py` |
-| Metadata store | `src/metadata_db.py` |
+| Database backend | `src/db/postgres_backend.py` |
+| Agent storage | `src/agent_storage.py` |
 
 ## Common Debugging Tasks
 
 ### 1. Check System Health
 ```bash
-./scripts/mcp status
-# or
-curl http://localhost:8765/health | jq
+curl http://localhost:8767/health | jq
 ```
 
 ### 2. View Server Logs
@@ -63,27 +62,22 @@ tail -f /Users/cirwel/projects/governance-mcp-v1/data/logs/mcp_server_error.log
 
 ### 3. Restart Server
 ```bash
-pkill -9 -f mcp_server
+launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
 launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
 ```
 
 ### 4. Check Database Counts
 ```bash
-# SQLite metadata
-sqlite3 /Users/cirwel/projects/governance-mcp-v1/data/governance.db \
-  "SELECT COUNT(*) FROM agent_metadata;"
+# PostgreSQL (Docker container: postgres-age, port 5432)
+docker exec postgres-age psql -U postgres -d governance \
+  -c "SELECT COUNT(*) FROM core.identities;"
 
-# Postgres (via docker)
-docker exec unitares-postgres psql -U unitares -d governance \
-  -c "SELECT COUNT(*) FROM governance.identities;"
+# Knowledge graph
+docker exec postgres-age psql -U postgres -d governance \
+  -c "SELECT COUNT(*) FROM core.discoveries;"
 ```
 
 ## Known Architectural Quirks
-
-### Dual Data Stores
-- **Postgres `identities`**: Main identity store (616 agents)
-- **SQLite `agent_metadata`**: Separate metadata/audit store (619 agents)
-- **They can drift!** Startup reconciliation syncs Postgres → SQLite
 
 ### kwargs Unwrapping
 MCP transport passes kwargs as dict, not string. Both must be handled:
@@ -115,11 +109,11 @@ See `mcp_handlers/__init__.py:dispatch_tool()` for the fix.
 - **name**: Your chosen name via `identity(name="...")` (label/display_name merged)
 
 ### Session Binding (v2.4.0+, fixed v2.5.0)
-- Session key auto-derived from SSE connection or stdio PID
+- Session key auto-derived from MCP Streamable HTTP `mcp-session-id` header or stdio PID
 - Identity auto-creates on first tool call (no explicit registration)
 - Same session = same UUID (consistent identity)
 - `identity()` tool to check your UUID, `identity(name="...")` to set your name
-- **v2.5.0 fix**: `onboard`/`identity` now cache in Redis so `identity_v2` finds the binding
+- `onboard`/`identity` cache in Redis so `identity_v2` finds the binding
 
 ### Knowledge Graph Attribution (v2.5.4)
 - KG stores `agent_id` (model+date) instead of UUID
@@ -129,7 +123,7 @@ See `mcp_handlers/__init__.py:dispatch_tool()` for the fix.
 - Display names included in KG query responses for human readability
 
 ### HCK/CIRS (v2.5.0+)
-- **HCK v3.0**: Coherence ρ(t) via directional E/I alignment, Continuity Energy (CE), PI gain modulation
+- **HCK v3.0**: Coherence rho(t) via directional E/I alignment, Continuity Energy (CE), PI gain modulation
 - **CIRS v0.1**: Oscillation Index (OI) via EMA of threshold crossings, flip counting, resonance damping
 - `src/cirs.py` contains `OscillationDetector`, `ResonanceDamper`, `classify_response`
 - Three response tiers: `proceed`, `soft_dampen`, `hard_block`
@@ -173,7 +167,7 @@ if missing_handlers:
 if missing_schemas:
     print(f'ERROR - Handlers without schemas: {missing_schemas}')
 if not missing_handlers and not missing_schemas:
-    print('✓ All tools synchronized')
+    print('All tools synchronized')
 "
 ```
 
@@ -211,14 +205,6 @@ launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
 
 5. **Verify** with the quick check above
 
-### Removing a Tool (Checklist)
-
-1. Remove from `tool_schemas.py`
-2. Remove from handler file (or comment out)
-3. Remove export from `__init__.py`
-4. **Restart server**
-5. Verify with quick check
-
 ### Common Pitfalls
 
 | Problem | Cause | Fix |
@@ -234,7 +220,7 @@ launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
 **Always restart after tool changes:**
 ```bash
 # Check for syntax errors first
-PYTHONPATH=src python3 -c "import mcp_server; print('✓ Compiles')"
+PYTHONPATH=src python3 -c "import mcp_server; print('Compiles')"
 
 # Then restart
 launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
@@ -243,17 +229,8 @@ launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
 sleep 2
 
 # Verify server is up
-curl -s http://127.0.0.1:8767/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'✓ Server {d[\"version\"]} up')"
+curl -s http://127.0.0.1:8767/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Server {d[\"version\"]} up')"
 ```
-
-### Why Claude Code Shows Different Count
-
-Claude Code shows tools from **all** connected MCP servers combined:
-- `unitares-governance`: 30 tools
-- `anima` (if connected): ~30 tools
-- Total shown: ~109 tools
-
-The governance server tool count is what we control.
 
 ## Anti-Proliferation Policy
 
@@ -267,51 +244,28 @@ The governance server tool count is what we control.
 - Check `validate_file_path()` before creating files
 - Document changes in knowledge graph via `leave_note()`
 
-## Recent Fixes
-
-| Date | Fix | Location |
-|------|-----|----------|
-| Feb 7 | **v2.6.4**: Allow negative V [-1,1], dashboard rescaling, X-Agent-Name identity persistence | `governance_monitor.py`, `mcp_server.py`, `dashboard/` |
-| Feb 7 | V clamp fix: `max(0.0,...)` → `max(-1.0,...)` — all agents had V=0 | `governance_monitor.py:560` |
-| Feb 7 | X-Agent-Name header auto-resume in `/mcp` ASGI handler | `mcp_server.py:2476` |
-| Feb 7 | Metadata hot-reload: `load_metadata_async(force=True)` + 60s refresh | `mcp_server_std.py`, `lifecycle.py` |
-| Feb 7 | Dashboard Void bar rescaling: `\|V\|/0.3` maps effective range to full width | `dashboard/utils.js`, `dashboard/index.html` |
-| Feb 8 | 6,344 tests, 80% coverage (KG bias fixes, CI test fixes) | `tests/` |
-| Feb 6 | EISV display precision increased to 6 decimal places | `src/eisv_format.py` |
-| Feb 4 | **v2.5.5**: Ethical drift fully integrated, trajectory identity | `governance_core/`, `trajectory_identity.py` |
-| Feb 4 | Model-based agent_id fix (`Claude_Opus_4_5_20260204`) | `identity_v2.py:1446-1460` |
-| Dec 27 | **v2.5.4**: KG stores agent_id instead of UUID | `utils.py`, `knowledge_graph.py` |
-| Dec 26 | HCK v3.0 + CIRS v0.1 implementation | `src/cirs.py`, `governance_monitor.py` |
-| Dec 25 | identity_v2.py - 3-path architecture | `mcp_handlers/identity_v2.py` |
-| Dec 24 | kwargs unwrapping for MCP transport | `mcp_handlers/__init__.py` |
-
 ## Where to Look When Things Break
 
 | Symptom | Check |
 |---------|-------|
 | "No valid session ID" | Session binding failed - check `identity_v2.py` |
-| Agent count mismatch | Drift between Postgres/SQLite - check health_check |
 | Tool not found | `tool_schemas.py`, handler registration |
 | EISV weird values | `governance_monitor.py`, thresholds config |
-| V always 0 for all agents | V clamp was `max(0.0,...)` — fixed to `max(-1.0,...)` in v2.6.4 |
+| V always 0 for all agents | V clamp was `max(0.0,...)` - fixed to `max(-1.0,...)` in v2.6.4 |
 | Agent identity lost between sessions | Add `X-Agent-Name` header to MCP config |
 | Metadata stale after DB changes | `load_metadata_async(force=True)` or wait 60s |
 | Coherence always 1.0 | No updates yet (default state) |
 | OI always 0 | Normal if metrics stable on one side of thresholds |
-| onboard → different agent | Redis cache miss - check `identity.py` Redis caching |
+| onboard -> different agent | Redis cache miss - check `identity_v2.py` Redis caching |
 | KG shows UUID instead of name | Legacy data - `_resolve_agent_display()` handles this |
-| agent_id missing in KG | Check `require_registered_agent()` in `utils.py` |
-| display_name not showing | Check `_agent_display` in arguments, metadata lookup |
 
 ## Useful MCP Tools for Debugging
 
 ```python
 health_check()              # System health
-get_server_info()           # PID, uptime, version
 debug_request_context()     # Session/transport info
 observe(action='telemetry') # Skip rates, confidence distribution
 observe(action='anomalies') # Fleet-wide pattern detection
-observe(action='roi')       # Time saved, cost savings, coordination
 ```
 
 ## Contributing Knowledge
@@ -328,6 +282,5 @@ Future agents will find it via `search_knowledge_graph()`.
 
 ---
 
-**Written by:** Opus_4.5_CLI_20251223 (Dec 24, 2025)
-**Updated:** Feb 20, 2026 - v2.7.0, CIRS v2 resonance wiring, 6,407 tests at 80% coverage
+**Updated:** Feb 22, 2026
 **For:** Future developer/debugger agents
