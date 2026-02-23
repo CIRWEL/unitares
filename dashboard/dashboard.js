@@ -1348,6 +1348,78 @@ const formatTimestamp = DataProcessor.formatTimestamp;
 // UI HELPERS
 // ============================================================================
 
+/**
+ * Render an empty state with helpful context.
+ * @param {string} type - Type of empty state
+ * @param {Object} context - Additional context
+ * @returns {string} HTML
+ */
+function renderEmptyState(type, context = {}) {
+    const states = {
+        'no-agents': {
+            icon: '🤖',
+            title: 'No agents yet',
+            description: 'Agents will appear here when they connect to governance.',
+            hint: 'Agents check in when they start processing tasks.'
+        },
+        'no-agents-filtered': {
+            icon: '🔍',
+            title: 'No matching agents',
+            description: `No agents match "${escapeHtml(context.query || 'your search')}".`,
+            hint: 'Try a different search term or clear filters.',
+            action: '<button onclick="clearAgentFilters()" class="empty-state-action">Clear filters</button>'
+        },
+        'no-discoveries': {
+            icon: '💡',
+            title: 'No discoveries yet',
+            description: 'Knowledge discoveries appear when agents learn something new.',
+            hint: 'Discoveries include insights, patterns, and questions.'
+        },
+        'no-stuck-agents': {
+            icon: '✅',
+            title: 'No stuck agents',
+            description: 'All agents are checking in normally.',
+            hint: 'Agents are considered "stuck" if they haven\'t checked in for 30+ minutes.'
+        },
+        'chart-no-data': {
+            icon: '📊',
+            title: 'No data yet',
+            description: 'Chart data will appear after the first agent check-in.',
+            hint: 'EISV metrics are recorded with each governance check-in.'
+        },
+        'panel-loading': {
+            icon: '⏳',
+            title: 'Loading...',
+            description: 'Fetching data from the server.',
+            hint: ''
+        },
+        'panel-error': {
+            icon: '⚠️',
+            title: 'Failed to load',
+            description: escapeHtml(context.error || 'An error occurred.'),
+            hint: 'Try refreshing the page or check the server connection.',
+            action: '<button onclick="location.reload()" class="empty-state-action">Refresh</button>'
+        }
+    };
+
+    const state = states[type] || {
+        icon: '📭',
+        title: 'Nothing here',
+        description: '',
+        hint: ''
+    };
+
+    return `
+        <div class="empty-state">
+            <div class="empty-state-icon">${state.icon}</div>
+            <div class="empty-state-title">${state.title}</div>
+            ${state.description ? `<div class="empty-state-description">${state.description}</div>` : ''}
+            ${state.hint ? `<div class="empty-state-hint">${state.hint}</div>` : ''}
+            ${state.action || ''}
+        </div>
+    `;
+}
+
 function showError(message) {
     const container = document.getElementById('error-container');
     container.innerHTML = `<div class="error">Error: ${escapeHtml(message)}</div>`;
@@ -1493,13 +1565,18 @@ function updateAgentFilterInfo(filteredCount) {
 function renderAgentsList(agents, searchTerm = '') {
     const container = document.getElementById('agents-container');
     if (cachedAgents.length === 0) {
-        container.innerHTML = '<div class="loading">No agents found. Agents will appear here after calling onboard() or any tool.</div>';
+        container.innerHTML = renderEmptyState('no-agents');
         updateAgentFilterInfo(0);
         return;
     }
 
     if (agents.length === 0) {
-        container.innerHTML = '<div class="loading">No agents match the current filters.</div>';
+        const searchQuery = document.getElementById('agent-search')?.value;
+        if (searchQuery) {
+            container.innerHTML = renderEmptyState('no-agents-filtered', { query: searchQuery });
+        } else {
+            container.innerHTML = renderEmptyState('no-agents');
+        }
         updateAgentFilterInfo(0);
         return;
     }
