@@ -1751,118 +1751,88 @@ function renderAgentsList(agents, searchTerm = '') {
         );
         const meClass = isMe ? 'is-me' : '';
 
-        // Build quick actions for expanded view
+        // Build quick actions (shown on hover)
         const quickActions = [];
         if (status === 'active') {
-            quickActions.push(`<button class="quick-action pause" data-action="pause" data-agent-id="${escapeHtml(agentId)}">⏸ Pause</button>`);
+            quickActions.push(`<button class="quick-action pause" data-action="pause" data-agent-id="${escapeHtml(agentId)}" title="Pause agent">⏸</button>`);
         }
         if (status === 'paused') {
-            quickActions.push(`<button class="quick-action resume" data-action="resume" data-agent-id="${escapeHtml(agentId)}">▶ Resume</button>`);
+            quickActions.push(`<button class="quick-action resume" data-action="resume" data-agent-id="${escapeHtml(agentId)}" title="Resume agent">▶</button>`);
         }
         if (status !== 'archived') {
-            quickActions.push(`<button class="quick-action archive" data-action="archive" data-agent-id="${escapeHtml(agentId)}">📦 Archive</button>`);
+            quickActions.push(`<button class="quick-action archive" data-action="archive" data-agent-id="${escapeHtml(agentId)}" title="Archive agent">📦</button>`);
         }
 
         return `
             <div class="agent-item ${statusClass} ${meClass}" data-agent-uuid="${escapeHtml(agentId)}">
-                <div class="agent-header" role="button" tabindex="0" aria-expanded="false">
-                    <div class="agent-meta">
-                        <div class="agent-title">
-                            ${statusIndicator}
-                            <span class="agent-name">${nameHtml}</span>
-                            <span class="status-chip ${status}">${statusLabel}</span>
-                            ${trustTierHtml}
-                            ${actionsHtml}
-                        </div>
-                        ${subtitleHtml}
-                        ${purposeHtml}
+                <div class="agent-meta">
+                    <div class="agent-title">
+                        ${statusIndicator}
+                        <span class="agent-name">${nameHtml}</span>
+                        <span class="status-chip ${status}">${statusLabel}</span>
+                        ${trustTierHtml}
+                        ${actionsHtml}
                     </div>
-                    ${hasMetrics ? `
-                        <div class="agent-metrics">
-                            <div class="metric e" title="Energy (divergence/productive capacity)">
-                                <div class="label">E</div>
-                                <div class="val">${e}</div>
-                                <div class="metric-bar"><div class="metric-bar-fill" style="width: ${ePct}%; ${eColor ? `background: ${eColor}` : ''}"></div></div>
-                            </div>
-                            <div class="metric i" title="Information Integrity">
-                                <div class="label">I</div>
-                                <div class="val">${i}</div>
-                                <div class="metric-bar"><div class="metric-bar-fill" style="width: ${iPct}%; ${iColor ? `background: ${iColor}` : ''}"></div></div>
-                            </div>
-                            <div class="metric s" title="Entropy (disorder/uncertainty)">
-                                <div class="label">S</div>
-                                <div class="val">${s}</div>
-                                <div class="metric-bar"><div class="metric-bar-fill" style="width: ${sPct}%; ${sColor ? `background: ${sColor}` : ''}"></div></div>
-                            </div>
-                            <div class="metric v" title="Void Integral (E-I imbalance)">
-                                <div class="label">V</div>
-                                <div class="val">${v}</div>
-                                <div class="metric-bar"><div class="metric-bar-fill" style="width: ${vPct}%; ${vColor ? `background: ${vColor}` : ''}"></div></div>
-                            </div>
-                            <div class="metric c" title="Coherence">
-                                <div class="label">C</div>
-                                <div class="val">${coherence}</div>
-                                <div class="metric-bar"><div class="metric-bar-fill" style="width: ${cPct}%; ${cColor ? `background: ${cColor}` : ''}"></div></div>
-                            </div>
-                        </div>
-                    ` : '<div class="agent-metrics"><span style="color: #8a9ba8; font-size: 0.9em;">No metrics yet</span></div>'}
-                    <span class="expand-indicator">▼</span>
+                    <div class="agent-id-row">
+                        <code class="agent-id" title="Click to copy">${escapeHtml(agentId)}</code>
+                        <span class="quick-actions">${quickActions.join('')}</span>
+                    </div>
+                    ${subtitleHtml}
+                    ${purposeHtml}
                 </div>
-                <div class="agent-expanded">
-                    <div class="expanded-row">
-                        <div class="expanded-id">
-                            <span class="id-label">Agent ID</span>
-                            <code class="id-value">${escapeHtml(agentId)}</code>
+                ${hasMetrics ? `
+                    <div class="agent-metrics">
+                        <div class="metric e" title="Energy (divergence/productive capacity)">
+                            <div class="label">E</div>
+                            <div class="val">${e}</div>
+                            <div class="metric-bar"><div class="metric-bar-fill" style="width: ${ePct}%; ${eColor ? `background: ${eColor}` : ''}"></div></div>
                         </div>
-                        <div class="expanded-actions">
-                            ${quickActions.join('')}
+                        <div class="metric i" title="Information Integrity">
+                            <div class="label">I</div>
+                            <div class="val">${i}</div>
+                            <div class="metric-bar"><div class="metric-bar-fill" style="width: ${iPct}%; ${iColor ? `background: ${iColor}` : ''}"></div></div>
+                        </div>
+                        <div class="metric s" title="Entropy (disorder/uncertainty)">
+                            <div class="label">S</div>
+                            <div class="val">${s}</div>
+                            <div class="metric-bar"><div class="metric-bar-fill" style="width: ${sPct}%; ${sColor ? `background: ${sColor}` : ''}"></div></div>
+                        </div>
+                        <div class="metric v" title="Void Integral (E-I imbalance)">
+                            <div class="label">V</div>
+                            <div class="val">${v}</div>
+                            <div class="metric-bar"><div class="metric-bar-fill" style="width: ${vPct}%; ${vColor ? `background: ${vColor}` : ''}"></div></div>
+                        </div>
+                        <div class="metric c" title="Coherence">
+                            <div class="label">C</div>
+                            <div class="val">${coherence}</div>
+                            <div class="metric-bar"><div class="metric-bar-fill" style="width: ${cPct}%; ${cColor ? `background: ${cColor}` : ''}"></div></div>
                         </div>
                     </div>
-                </div>
+                ` : '<div class="agent-metrics"><span style="color: #8a9ba8; font-size: 0.9em;">No metrics yet</span></div>'}
             </div>
         `;
     }).join('');
 
-    // Wire up accordion expand/collapse
-    wireAgentAccordion();
+    // Wire up quick actions and click-to-copy
+    wireAgentCards();
 }
 
 /**
- * Wire up agent card accordion behavior.
+ * Wire up agent card interactions.
  */
-function wireAgentAccordion() {
-    document.querySelectorAll('.agent-item').forEach(card => {
-        const header = card.querySelector('.agent-header');
-        if (!header || header.dataset.wired) return;
+function wireAgentCards() {
+    // Click-to-copy agent ID
+    document.querySelectorAll('.agent-id').forEach(el => {
+        if (el.dataset.wired) return;
+        el.dataset.wired = 'true';
+        el.style.cursor = 'pointer';
 
-        header.dataset.wired = 'true';
-
-        // Click to toggle
-        header.addEventListener('click', (e) => {
-            // Don't toggle if clicking on a button or link
-            if (e.target.closest('button, a, .agent-actions')) return;
-
-            const wasExpanded = card.classList.contains('expanded');
-
-            // Collapse any other expanded cards
-            document.querySelectorAll('.agent-item.expanded').forEach(other => {
-                if (other !== card) {
-                    other.classList.remove('expanded');
-                    other.querySelector('.agent-header')?.setAttribute('aria-expanded', 'false');
-                }
+        el.addEventListener('click', () => {
+            navigator.clipboard.writeText(el.textContent).then(() => {
+                const original = el.textContent;
+                el.textContent = 'Copied!';
+                setTimeout(() => { el.textContent = original; }, 1000);
             });
-
-            // Toggle this card
-            card.classList.toggle('expanded');
-            header.setAttribute('aria-expanded', !wasExpanded);
-        });
-
-        // Keyboard support
-        header.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                header.click();
-            }
         });
     });
 
@@ -1884,15 +1854,16 @@ function wireAgentAccordion() {
             }
 
             btn.disabled = true;
+            const original = btn.textContent;
             btn.textContent = '...';
 
             try {
                 await executeQuickAction(agentId, action);
-                // Refresh agents list
                 loadAgents();
             } catch (err) {
                 console.error('Action failed:', err);
                 alert('Action failed: ' + err.message);
+                btn.textContent = original;
             } finally {
                 btn.disabled = false;
             }
