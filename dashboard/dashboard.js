@@ -803,10 +803,140 @@ function renderAgentDetailContent(agent) {
             </div>
 
             <div class="agent-detail-actions">
-                <!-- Quick actions will be added in Phase 4 -->
+                ${status === 'active' ? `
+                    <button class="action-btn action-pause"
+                            onclick="confirmAgentAction('${escapeHtml(agent.agent_id)}', 'pause')"
+                            title="Pause this agent">
+                        Pause
+                    </button>
+                ` : ''}
+                ${status === 'paused' ? `
+                    <button class="action-btn action-resume"
+                            onclick="executeAgentAction('${escapeHtml(agent.agent_id)}', 'resume')"
+                            title="Resume this agent">
+                        Resume
+                    </button>
+                ` : ''}
+                ${status !== 'archived' ? `
+                    <button class="action-btn action-archive"
+                            onclick="confirmAgentAction('${escapeHtml(agent.agent_id)}', 'archive')"
+                            title="Archive this agent">
+                        Archive
+                    </button>
+                ` : ''}
+                <button class="action-btn action-secondary"
+                        onclick="confirmAgentAction('${escapeHtml(agent.agent_id)}', 'recalibrate')"
+                        title="Recalibrate baseline metrics">
+                    Recalibrate
+                </button>
             </div>
         </div>
     `;
+}
+
+// ============================================================================
+// QUICK ACTIONS
+// ============================================================================
+
+/**
+ * Show confirmation dialog for an agent action.
+ * @param {string} agentId - Agent UUID
+ * @param {string} action - Action type (pause, archive, recalibrate)
+ */
+function confirmAgentAction(agentId, action) {
+    const messages = {
+        pause: 'Pause this agent? It will stop processing tasks until resumed.',
+        archive: 'Archive this agent? It will be removed from active governance.',
+        recalibrate: 'Recalibrate this agent? This will rebuild baseline metrics from recent history.'
+    };
+
+    if (confirm(messages[action] || `Execute ${action}?`)) {
+        executeAgentAction(agentId, action);
+    }
+}
+
+/**
+ * Execute an agent action via API.
+ * @param {string} agentId - Agent UUID
+ * @param {string} action - Action type
+ */
+async function executeAgentAction(agentId, action) {
+    // Find and disable the button
+    const btn = document.querySelector(`.action-btn.action-${action}`);
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+    }
+
+    try {
+        let toolName, toolArgs;
+
+        switch (action) {
+            case 'pause':
+                toolName = 'agent';
+                toolArgs = { action: 'update', agent_id: agentId, status: 'paused' };
+                break;
+            case 'resume':
+                toolName = 'agent';
+                toolArgs = { action: 'update', agent_id: agentId, status: 'active' };
+                break;
+            case 'archive':
+                toolName = 'agent';
+                toolArgs = { action: 'archive', agent_id: agentId };
+                break;
+            case 'recalibrate':
+                toolName = 'calibration';
+                toolArgs = { action: 'rebuild', agent_id: agentId };
+                break;
+            default:
+                throw new Error(`Unknown action: ${action}`);
+        }
+
+        const result = await callTool(toolName, toolArgs);
+
+        if (result.error) {
+            throw new Error(result.error);
+        }
+
+        // Refresh data and re-render panel
+        await loadAgents();
+
+        // Re-open panel with updated data
+        openAgentDetailPanel(agentId);
+
+        // Show success feedback
+        showToast(`Agent ${action} successful`, 'success');
+
+    } catch (e) {
+        console.error(`Failed to ${action} agent:`, e);
+        showToast(`Failed to ${action}: ${e.message}`, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('loading');
+        }
+    }
+}
+
+/**
+ * Show a toast notification.
+ * @param {string} message - Message to show
+ * @param {string} type - 'success' or 'error'
+ */
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    // Animate in
+    requestAnimationFrame(() => toast.classList.add('visible'));
+
+    // Remove after delay
+    setTimeout(() => {
+        toast.classList.remove('visible');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
 }
 
 /**

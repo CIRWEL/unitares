@@ -3599,9 +3599,117 @@ body.panel-open main {
 
 .agent-detail-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 12px;
     padding-top: 16px;
     border-top: 1px solid var(--border-color);
+}
+
+.action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--panel-bg);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.action-btn:hover {
+    background: var(--item-bg);
+    border-color: var(--text-secondary);
+}
+
+.action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.action-btn.action-pause {
+    border-color: var(--color-warning);
+    color: var(--color-warning);
+}
+
+.action-btn.action-pause:hover {
+    background: rgba(245, 158, 11, 0.1);
+}
+
+.action-btn.action-resume {
+    border-color: var(--color-success);
+    color: var(--color-success);
+}
+
+.action-btn.action-resume:hover {
+    background: rgba(34, 197, 94, 0.1);
+}
+
+.action-btn.action-archive {
+    border-color: var(--color-muted);
+    color: var(--color-muted);
+}
+
+.action-btn.action-archive:hover {
+    background: rgba(107, 114, 128, 0.1);
+}
+
+.action-btn.action-secondary {
+    color: var(--text-secondary);
+}
+
+/* Loading state */
+.action-btn.loading {
+    position: relative;
+    color: transparent;
+}
+
+.action-btn.loading::after {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--accent-cyan);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Toast notifications */
+.toast {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 12px 20px;
+    border-radius: 6px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    transform: translateY(100px);
+    opacity: 0;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    z-index: 10001;
+}
+
+.toast.visible {
+    transform: translateY(0);
+    opacity: 1;
+}
+
+.toast-success {
+    border-color: var(--color-success);
+    background: rgba(34, 197, 94, 0.1);
+}
+
+.toast-error {
+    border-color: var(--color-error);
+    background: rgba(239, 68, 68, 0.1);
 }
 
 /* EISV Trend Chart in Agent Detail */
