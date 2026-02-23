@@ -346,14 +346,14 @@ class TestValidateParams:
         assert args.get("summary") == "my discovery"
 
     @pytest.mark.asyncio
-    async def test_float_range_clamping(self):
-        """Float values clamped to [0, 1] range for float_01 params."""
+    async def test_float_range_rejected(self):
+        """Out-of-range float_01 values are rejected by schema validation."""
         ctx = _make_ctx()
-        name, args, ctx_out = await validate_params(
+        result = await validate_params(
             "process_agent_update", {"confidence": "1.5"}, ctx
         )
-        # Generic coercion applies first, clamping to 1.0
-        assert args["confidence"] <= 1.0
+        # Schema validation rejects out-of-range values (returns error list)
+        assert isinstance(result, list), "Should return error for out-of-range confidence"
 
     @pytest.mark.asyncio
     async def test_coercions_tracked(self):
@@ -492,17 +492,17 @@ class TestValidateAndCoerceParams:
         )
         assert args["confirm"] is True
 
-    def test_float_01_clamping(self):
-        """Float_01 params are clamped to [0, 1]."""
+    def test_float_01_type_coercion_no_clamp(self):
+        """Generic coercion converts type (str→float) but does not clamp range."""
         args, err, _ = validate_and_coerce_params(
             "unknown_tool", {"complexity": "2.0"}
         )
-        assert args["complexity"] == 1.0
+        assert args["complexity"] == 2.0  # Type coerced, not clamped
 
         args, err, _ = validate_and_coerce_params(
             "unknown_tool", {"complexity": "-0.5"}
         )
-        assert args["complexity"] == 0.0
+        assert args["complexity"] == -0.5  # Type coerced, not clamped
 
     def test_int_coercion_from_float_string(self):
         """Integer param from float string (e.g., "5.0" -> 5)."""

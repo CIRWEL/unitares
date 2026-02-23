@@ -109,13 +109,15 @@ class TestApplyGenericCoercion:
         result = _apply_generic_coercion({"complexity": "0.7"})
         assert result["complexity"] == 0.7
 
-    def test_float_01_clamp_high(self):
+    def test_float_01_coerce_high(self):
+        """Generic coercion converts type but does not clamp range."""
         result = _apply_generic_coercion({"complexity": "1.5"})
-        assert result["complexity"] == 1.0
+        assert result["complexity"] == 1.5
 
-    def test_float_01_clamp_low(self):
+    def test_float_01_coerce_low(self):
+        """Generic coercion converts type but does not clamp range."""
         result = _apply_generic_coercion({"complexity": "-0.5"})
-        assert result["complexity"] == 0.0
+        assert result["complexity"] == -0.5
 
     def test_float_from_string(self):
         result = _apply_generic_coercion({"max_age_days": "3.5"})

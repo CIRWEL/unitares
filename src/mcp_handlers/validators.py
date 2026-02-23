@@ -278,11 +278,12 @@ def _apply_generic_coercion(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
         try:
             if param_type == "float_01":
-                # Float with 0.0-1.0 range - coerce and clamp
+                # Float with 0.0-1.0 range - coerce type only
+                # Range validation is done by schema (with proper error messages)
                 if isinstance(value, str):
-                    coerced[param] = max(0.0, min(1.0, float(value)))
+                    coerced[param] = float(value)
                 elif isinstance(value, (int, float)):
-                    coerced[param] = max(0.0, min(1.0, float(value)))
+                    coerced[param] = float(value)
 
             elif param_type == "float":
                 # Float without range restriction
