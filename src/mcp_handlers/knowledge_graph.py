@@ -526,9 +526,8 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             
             if use_semantic:
                 # Semantic search using vector embeddings
-                # UX FIX: Lower default threshold for better discovery (0.25 instead of 0.3)
-                # 0.3 was too strict, causing many queries to return 0 results
-                min_similarity = arguments.get("min_similarity", 0.25)
+                # Default 0.3 for precision; auto-fallback to 0.2 catches edge cases
+                min_similarity = arguments.get("min_similarity", 0.3)
                 semantic_results = await graph.semantic_search(
                     str(query_text),
                     limit=limit * 2,  # Get extra for filtering
@@ -746,6 +745,11 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         dt_ms = (time.perf_counter() - t0) * 1000.0
         record_ms(f"knowledge.search.{search_mode}", dt_ms)
         
+        # Auto-include details when result set is small (saves a round-trip)
+        auto_details = not include_details and 0 < len(results) <= 3
+        if auto_details:
+            include_details = True
+
         # Build discovery list with optional provenance
         # UX FIX (Dec 2025): Display name FIRST for human readability
         # Format: {"by": "DisplayName", "summary": "...", ...}
@@ -789,9 +793,9 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             "query": query_text,
             "discoveries": discovery_list,
             "count": len(results),
-            "message": f"Found {len(results)} discovery(ies)" + ("" if include_details else " (summaries only)")
+            "message": f"Found {len(results)} discovery(ies)" + (" (details auto-included for small result set)" if auto_details else "" if include_details else " (summaries only)")
         }
-        
+
         # UX FIX: Make fallback behavior explicit and transparent
         if fallback_used:
             response_data["fallback_used"] = True
@@ -860,7 +864,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         
         # UX ENHANCEMENT: Add threshold explanations for semantic search
         if search_mode in ["semantic", "semantic_fallback_lower_threshold"] and query_text:
-            threshold_used = arguments.get("min_similarity", 0.25)
+            threshold_used = arguments.get("min_similarity", 0.3)
             if search_mode == "semantic_fallback_lower_threshold":
                 threshold_used = 0.2  # Fallback threshold
             

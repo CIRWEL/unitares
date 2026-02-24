@@ -3479,7 +3479,9 @@ DEPENDENCIES:
         ),
         Tool(
             name="search_knowledge_graph",
-            description="""Search knowledge graph - returns summaries only (use get_discovery_details for full content).
+            description="""DEPRECATED: Prefer knowledge(action="search", query="...") instead — same backend, simpler interface.
+
+Search knowledge graph - returns summaries only (use get_discovery_details for full content).
 
 USE CASES:
 - Find discoveries by tags
@@ -3589,8 +3591,8 @@ DEPENDENCIES:
                     },
                     "min_similarity": {
                         "type": "number",
-                        "description": "Minimum cosine similarity threshold for semantic search (0.0-1.0). Higher values return more similar results. Default: 0.25 (lowered from 0.3 for better discovery). If 0 results, automatically retries with 0.2 threshold.",
-                        "default": 0.25,
+                        "description": "Minimum cosine similarity threshold for semantic search (0.0-1.0). Higher values return more similar results. Default: 0.3. If 0 results, automatically retries with 0.2 threshold.",
+                        "default": 0.3,
                         "minimum": 0.0,
                         "maximum": 1.0
                     },

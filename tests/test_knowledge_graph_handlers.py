@@ -2442,18 +2442,19 @@ class TestSearchKnowledgeGraphAdditional:
 
     @pytest.mark.asyncio
     async def test_search_no_details_tip(self, patch_common):
-        """Search without include_details shows tip (line 829)."""
+        """Search without include_details shows tip when >3 results (auto-detail for ≤3)."""
         mock_mcp_server, mock_graph = patch_common
         from src.mcp_handlers.knowledge_graph import handle_search_knowledge_graph
 
-        discoveries = [make_discovery(id="d-1")]
+        # >3 results avoids auto-detail promotion
+        discoveries = [make_discovery(id=f"d-{i}") for i in range(5)]
         mock_graph.query = AsyncMock(return_value=discoveries)
 
         result = await handle_search_knowledge_graph({})
 
         data = parse_result(result)
         assert data["success"] is True
-        if data["count"] > 0:
+        if data["count"] > 3:
             assert "_tip" in data
 
 
