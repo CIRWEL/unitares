@@ -179,4 +179,4 @@ Built by [@CIRWEL](https://github.com/CIRWEL). Also building [Lumen/anima-mcp](h
 
 MIT License with Attribution — see [LICENSE](LICENSE).
 
-**v2.7.0** | 2026-02-19
+**v2.7.0** | 2026-02-20

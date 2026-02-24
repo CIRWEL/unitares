@@ -4,8 +4,6 @@ Test MCP server with bug fixes through the tool interface
 """
 
 import json
-import sys
-sys.path.insert(0, '/Users/cirwel/projects/governance-mcp-v1')
 
 from src.mcp_server_std import monitors, agent_metadata
 

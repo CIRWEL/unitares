@@ -51,14 +51,23 @@ if (typeof DashboardAPI === 'undefined' || typeof DataProcessor === 'undefined' 
 const api = typeof DashboardAPI !== 'undefined' ? new DashboardAPI(window.location.origin) : null;
 const themeManager = typeof ThemeManager !== 'undefined' ? new ThemeManager() : null;
 
-// Refresh state
-let refreshFailures = 0;
-let autoRefreshPaused = false;
-
-// Cached data
-let previousStats = {};
-let cachedAgents = [];
-let cachedDiscoveries = [];
+// State bridges — route globals through state.js for module access
+// Each property getter/setter delegates to state.get()/state.set()
+// so existing code like `cachedAgents = x` still works transparently.
+if (typeof state !== 'undefined') {
+    ['refreshFailures', 'autoRefreshPaused', 'previousStats',
+     'cachedAgents', 'cachedDiscoveries', 'cachedStuckAgents',
+     'cachedDialecticSessions', 'eisvChartUpper', 'eisvChartLower',
+     'eisvWebSocket', 'agentEISVHistory', 'knownAgents',
+     'selectedAgentView', 'lastVitalsTimestamp', 'recentDecisions'
+    ].forEach(function (key) {
+        Object.defineProperty(window, key, {
+            get: function () { return state.get(key); },
+            set: function (v) { var u = {}; u[key] = v; state.set(u); },
+            configurable: true
+        });
+    });
+}
 
 // ============================================================================
 // MODAL FUNCTIONS
@@ -405,6 +414,14 @@ const formatTimestamp = DataProcessor.formatTimestamp;
 // UI HELPERS
 // ============================================================================
 
+/** Strip dashboard-internal keys (prefixed with _) from objects before display. */
+function filterInternalKeys(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    return Object.fromEntries(
+        Object.entries(obj).filter(([k]) => !k.startsWith('_'))
+    );
+}
+
 function showError(message) {
     const container = document.getElementById('error-container');
     container.innerHTML = `<div class="error">Error: ${escapeHtml(message)}</div>`;
@@ -418,9 +435,10 @@ function formatChange(current, previous) {
     if (previous === undefined || previous === null) return '';
     const diff = current - previous;
     if (diff === 0) return '';
+    const arrow = diff > 0 ? '▲' : '▼';
+    const dir = diff > 0 ? 'up' : 'down';
     const sign = diff > 0 ? '+' : '';
-    const color = diff > 0 ? '#4ade80' : '#ff6b6b';
-    return `<span style="color: ${color}">${sign}${diff}</span>`;
+    return `<span class="change-arrow ${dir}">${arrow}</span><span class="change-arrow ${dir}">${sign}${diff}</span>`;
 }
 
 function updateConnectionBanner(hasError) {
@@ -452,497 +470,29 @@ function updateRefreshStatus() {
         : `Auto-refresh every ${Math.round(CONFIG.REFRESH_INTERVAL_MS / 1000)} seconds`;
 }
 
-function getAgentStatus(agent) {
-    return agent.lifecycle_status || agent.status || 'unknown';
-}
+// Agent utilities, rendering, filtering, detail modal, and export
+// are now in agents.js → AgentsModule
+var getAgentStatus = AgentsModule.getAgentStatus;
+var getAgentDisplayName = AgentsModule.getAgentDisplayName;
+var agentHasMetrics = AgentsModule.agentHasMetrics;
+var formatStatusLabel = AgentsModule.formatStatusLabel;
+var updateStatusLegend = AgentsModule.updateStatusLegend;
+var updateAgentFilterInfo = AgentsModule.updateAgentFilterInfo;
+var applyAgentFilters = AgentsModule.applyAgentFilters;
+var clearAgentFilters = AgentsModule.clearAgentFilters;
+var showAgentDetail = AgentsModule.showAgentDetail;
+var exportAgents = AgentsModule.exportAgents;
 
-function getAgentDisplayName(agent) {
-    return agent.label || agent.display_name || agent.name || agent.agent_id || 'Unknown';
-}
-
-function agentHasMetrics(agent) {
-    const metrics = agent.metrics || {};
-    return metrics && (metrics.E !== undefined || metrics.I !== undefined || metrics.S !== undefined);
-}
-
-function formatStatusLabel(status) {
-    const normalized = String(status || 'unknown').toLowerCase();
-    const labels = {
-        active: 'Active',
-        waiting_input: 'Waiting',
-        paused: 'Paused',
-        archived: 'Archived',
-        deleted: 'Deleted',
-        unknown: 'Unknown'
-    };
-    return labels[normalized] || normalized.replace(/_/g, ' ');
-}
-
-// formatTimestamp and formatRelativeTime are already defined above as const variables
-// These duplicate definitions are removed to avoid conflicts
-
-function formatAgentTimestamp(agent) {
-    const lastUpdateDate = agent.last_update ? new Date(agent.last_update) : null;
-    if (lastUpdateDate && !isNaN(lastUpdateDate.getTime())) {
-        const lastUpdate = lastUpdateDate.toLocaleString();
-        const relative = formatRelativeTime(lastUpdateDate.getTime());
-        return relative ? `Updated ${lastUpdate} (${relative})` : `Updated ${lastUpdate}`;
-    }
-    const createdDate = agent.created_at ? new Date(agent.created_at) : null;
-    if (createdDate && !isNaN(createdDate.getTime())) {
-        const created = createdDate.toLocaleString();
-        const relative = formatRelativeTime(createdDate.getTime());
-        return relative ? `Created ${created} (${relative})` : `Created ${created}`;
-    }
-    return null;
-}
-
-function updateStatusLegend(statusCounts) {
-    const container = document.getElementById('agents-status-legend');
-    if (!container) return;
-    if (!statusCounts) {
-        container.textContent = '';
-        return;
-    }
-
-    const entries = [
-        { key: 'active', label: 'Active', count: statusCounts.active || 0 },
-        { key: 'waiting_input', label: 'Waiting', count: statusCounts.waiting_input || 0 },
-        { key: 'paused', label: 'Paused', count: statusCounts.paused || 0 },
-        { key: 'archived', label: 'Archived', count: statusCounts.archived || 0 },
-        { key: 'deleted', label: 'Deleted', count: statusCounts.deleted || 0 },
-        { key: 'unknown', label: 'Unknown', count: statusCounts.unknown || 0 }
-    ];
-
-    const chips = entries
-        .filter(entry => entry.count > 0)
-        .map(entry => `<button class="status-chip ${entry.key}" data-status="${entry.key}" type="button">${entry.label} ${entry.count}</button>`)
-        .join(' ');
-
-    container.innerHTML = chips || '';
-}
-
-function updateAgentFilterInfo(filteredCount) {
-    const info = document.getElementById('agents-filter-info');
-    if (!info) return;
-    const total = cachedAgents.length;
-    if (!total) {
-        info.textContent = '';
-        return;
-    }
-    if (filteredCount === 0) {
-        info.textContent = `No agents match filters (${total} loaded)`;
-        return;
-    }
-    const showingCount = Math.min(filteredCount, 20);
-    info.textContent = `Showing ${showingCount} of ${filteredCount} filtered (${total} loaded)`;
-}
-
-// ============================================================================
-// AGENT RENDERING & FILTERING
-// ============================================================================
-
-/**
- * Render a list of agent cards with EISV metrics and status indicators.
- * @param {Array<Object>} agents - Agent data from API
- * @param {string} [searchTerm] - Optional term to highlight in results
- */
-function renderAgentsList(agents, searchTerm = '') {
-    const container = document.getElementById('agents-container');
-    if (cachedAgents.length === 0) {
-        container.innerHTML = '<div class="loading">No agents found. Agents will appear here after calling onboard() or any tool.</div>';
-        updateAgentFilterInfo(0);
-        return;
-    }
-
-    if (agents.length === 0) {
-        container.innerHTML = '<div class="loading">No agents match the current filters.</div>';
-        updateAgentFilterInfo(0);
-        return;
-    }
-
-    updateAgentFilterInfo(agents.length);
-    container.innerHTML = agents.slice(0, 20).map(agent => {
-        // Use lifecycle_status from agent object (more reliable than array membership)
-        const status = getAgentStatus(agent);
-        const statusClass = status === 'paused' ? 'paused' :
-            status === 'archived' ? 'archived' :
-                status === 'deleted' ? 'archived' : '';  // Deleted agents styled like archived
-        const statusIndicator = `<span class="status-indicator ${status}"></span>`;
-        const statusLabel = escapeHtml(formatStatusLabel(status));
-
-        const metrics = agent.metrics || {};
-        const eValue = metrics.E !== undefined && metrics.E !== null ? Number(metrics.E) : null;
-        const iValue = metrics.I !== undefined && metrics.I !== null ? Number(metrics.I) : null;
-        const sValue = metrics.S !== undefined && metrics.S !== null ? Number(metrics.S) : null;
-        const vValue = metrics.V !== undefined && metrics.V !== null ? Number(metrics.V) : null;
-        const cValue = metrics.coherence !== undefined && metrics.coherence !== null ? Number(metrics.coherence) : null;
-        // EISV metrics - show all four core metrics
-        const e = eValue !== null && !Number.isNaN(eValue) ? eValue.toFixed(6) : '-';
-        const i = iValue !== null && !Number.isNaN(iValue) ? iValue.toFixed(6) : '-';
-        const s = sValue !== null && !Number.isNaN(sValue) ? sValue.toFixed(6) : '-';
-        const v = vValue !== null && !Number.isNaN(vValue) ? vValue.toFixed(6) : '-';
-        const coherence = cValue !== null && !Number.isNaN(cValue) ? cValue.toFixed(6) : '-';
-        const clampPercent = value => {
-            if (value === null || Number.isNaN(value)) return 0;
-            return Math.max(0, Math.min(100, value * 100));
-        };
-        const ePct = clampPercent(eValue);
-        const iPct = clampPercent(iValue);
-        const sPct = clampPercent(sValue);
-        // Void can be negative (I>E); bar shows |V| rescaled from effective range
-        const vPct = vValue !== null && !Number.isNaN(vValue)
-            ? Math.max(0, Math.min(100, (Math.abs(vValue) / 0.3) * 100))
-            : 0;
-        const cPct = clampPercent(cValue);
-        const displayName = getAgentDisplayName(agent);
-        const agentId = agent.agent_id || '';
-        const timestampLabel = formatAgentTimestamp(agent);
-        const nameHtml = highlightMatch(displayName, searchTerm);
-        const idHtml = searchTerm ? highlightMatch(agentId, searchTerm) : escapeHtml(agentId);
-        const subtitleParts = [];
-        if (timestampLabel) {
-            subtitleParts.push(escapeHtml(timestampLabel));
-        }
-        const totalUpdates = agent.total_updates || 0;
-        if (totalUpdates > 0) {
-            subtitleParts.push(`${totalUpdates} update${totalUpdates !== 1 ? 's' : ''}`);
-        }
-        const subtitleHtml = subtitleParts.length ? `<div class="agent-subtitle">${subtitleParts.join(' &bull; ')}</div>` : '';
-
-        // Purpose line
-        const purpose = agent.purpose ? escapeHtml(agent.purpose) : '';
-        const purposeHtml = purpose ? `<div class="agent-purpose" title="${purpose}">${purpose}</div>` : '';
-
-        // Trust tier badge — API returns string names: "unknown", "emerging", "established", "verified"
-        const tierRaw = agent.trust_tier;
-        const tierNameToNum = { unknown: 0, emerging: 1, established: 2, verified: 3 };
-        const tierNames = { 0: 'unknown', 1: 'emerging', 2: 'established', 3: 'verified' };
-        const tierNum = tierRaw !== undefined && tierRaw !== null
-            ? (typeof tierRaw === 'number' ? tierRaw : (tierNameToNum[String(tierRaw).toLowerCase()] ?? 0))
-            : 0;
-        const tierDisplayNames = { 0: 'T0', 1: 'T1', 2: 'T2', 3: 'T3' };
-        const trustTierHtml = `<span class="trust-tier tier-${tierNum}" title="Trust Tier ${tierNum}: ${tierNames[tierNum] || 'unknown'}">${tierDisplayNames[tierNum]}</span>`;
-
-        // Show metrics only if we have at least one metric value
-        const hasMetrics = agentHasMetrics(agent);
-
-        const actionsHtml = agentId
-            ? `<div class="agent-actions"><button class="agent-action" type="button" data-action="copy-id" data-agent-id="${escapeHtml(agentId)}">Copy ID</button></div>`
-            : '';
-
-        // Contextual metric bar colors: E/I high=green, S/V low=green
-        const metricColor = (val, inverted) => {
-            if (val === null || Number.isNaN(val)) return '';
-            if (inverted) {
-                return val < 0.3 ? 'var(--accent-green)' : val < 0.6 ? 'var(--accent-yellow)' : 'var(--accent-orange)';
-            }
-            return val > 0.6 ? 'var(--accent-green)' : val > 0.3 ? 'var(--accent-yellow)' : 'var(--accent-orange)';
-        };
-        const eColor = metricColor(eValue, false);
-        const iColor = metricColor(iValue, false);
-        const sColor = metricColor(sValue, true);
-        const vColor = metricColor(vValue, true);
-        const cColor = metricColor(cValue, false);
-
-        return `
-            <div class="agent-item ${statusClass}" data-agent-uuid="${escapeHtml(agentId)}" style="cursor: pointer;" title="Click to view details">
-                <div class="agent-meta">
-                    <div class="agent-title">
-                        ${statusIndicator}
-                        <span class="agent-name">${nameHtml}</span>
-                        <span class="status-chip ${status}">${statusLabel}</span>
-                        ${trustTierHtml}
-                        ${actionsHtml}
-                    </div>
-                    ${subtitleHtml}
-                    ${purposeHtml}
-                </div>
-                ${hasMetrics ? `
-                    <div class="agent-metrics">
-                        <div class="metric e" title="Energy (divergence/productive capacity)">
-                            <div class="label">E</div>
-                            <div class="val">${e}</div>
-                            <div class="metric-bar"><div class="metric-bar-fill" style="width: ${ePct}%; ${eColor ? `background: ${eColor}` : ''}"></div></div>
-                        </div>
-                        <div class="metric i" title="Information Integrity">
-                            <div class="label">I</div>
-                            <div class="val">${i}</div>
-                            <div class="metric-bar"><div class="metric-bar-fill" style="width: ${iPct}%; ${iColor ? `background: ${iColor}` : ''}"></div></div>
-                        </div>
-                        <div class="metric s" title="Entropy (disorder/uncertainty)">
-                            <div class="label">S</div>
-                            <div class="val">${s}</div>
-                            <div class="metric-bar"><div class="metric-bar-fill" style="width: ${sPct}%; ${sColor ? `background: ${sColor}` : ''}"></div></div>
-                        </div>
-                        <div class="metric v" title="Void Integral (E-I imbalance)">
-                            <div class="label">V</div>
-                            <div class="val">${v}</div>
-                            <div class="metric-bar"><div class="metric-bar-fill" style="width: ${vPct}%; ${vColor ? `background: ${vColor}` : ''}"></div></div>
-                        </div>
-                        <div class="metric c" title="Coherence">
-                            <div class="label">C</div>
-                            <div class="val">${coherence}</div>
-                            <div class="metric-bar"><div class="metric-bar-fill" style="width: ${cPct}%; ${cColor ? `background: ${cColor}` : ''}"></div></div>
-                        </div>
-                    </div>
-                ` : '<div class="agent-metrics"><span style="color: #8a9ba8; font-size: 0.9em;">No metrics yet</span></div>'}
-            </div>
-        `;
-    }).join('');
-}
-
-/**
- * Apply all active filters to the agent list and re-render.
- * Reads filter state from DOM inputs.
- */
-function applyAgentFilters() {
-    const searchInput = document.getElementById('agent-search');
-    const statusFilterInput = document.getElementById('agent-status-filter');
-    const metricsOnlyInput = document.getElementById('agent-metrics-only');
-    const sortInput = document.getElementById('agent-sort');
-
-    const searchTerm = searchInput ? searchInput.value.trim().toLowerCase() : '';
-    const statusFilter = statusFilterInput ? statusFilterInput.value : 'all';
-    const metricsOnly = metricsOnlyInput ? metricsOnlyInput.checked : false;
-    const sortBy = sortInput ? sortInput.value : 'recent';
-
-    let filteredAgents = cachedAgents.filter(agent => {
-        const status = getAgentStatus(agent);
-        if (statusFilter !== 'all' && status !== statusFilter) {
-            return false;
-        }
-
-        if (metricsOnly && !agentHasMetrics(agent)) {
-            return false;
-        }
-
-        if (searchTerm) {
-            const displayName = getAgentDisplayName(agent);
-            const agentId = agent.agent_id || '';
-            const purpose = agent.purpose || '';
-            const haystack = `${displayName} ${agentId} ${purpose}`.toLowerCase();
-            if (!haystack.includes(searchTerm)) {
-                return false;
-            }
-        }
-
-        return true;
-    });
-
-    // Sort
-    filteredAgents = [...filteredAgents].sort((a, b) => {
-        switch (sortBy) {
-            case 'name':
-                return getAgentDisplayName(a).localeCompare(getAgentDisplayName(b));
-            case 'coherence': {
-                const aC = (a.metrics || {}).coherence ?? -1;
-                const bC = (b.metrics || {}).coherence ?? -1;
-                return bC - aC; // high first
-            }
-            case 'risk': {
-                const aR = (a.metrics || {}).risk_score ?? -1;
-                const bR = (b.metrics || {}).risk_score ?? -1;
-                return bR - aR; // high first
-            }
-            case 'updates':
-                return (b.total_updates || 0) - (a.total_updates || 0);
-            case 'recent':
-            default: {
-                const aTime = new Date(a.last_update || a.created_at || 0);
-                const bTime = new Date(b.last_update || b.created_at || 0);
-                return bTime - aTime;
-            }
-        }
-    });
-
-    renderAgentsList(filteredAgents, searchTerm);
-}
-
-function clearAgentFilters() {
-    const searchInput = document.getElementById('agent-search');
-    const statusFilterInput = document.getElementById('agent-status-filter');
-    const metricsOnlyInput = document.getElementById('agent-metrics-only');
-    const sortInput = document.getElementById('agent-sort');
-    if (searchInput) searchInput.value = '';
-    if (statusFilterInput) statusFilterInput.value = 'all';
-    if (metricsOnlyInput) metricsOnlyInput.checked = false;
-    if (sortInput) sortInput.value = 'recent';
-    applyAgentFilters();
-}
-
-// ============================================================================
-// DISCOVERY RENDERING & FILTERING
-// ============================================================================
-
-function normalizeDiscoveryType(type) {
-    if (!type) return 'note';
-    return String(type).trim().toLowerCase();
-}
-
-function formatDiscoveryType(type) {
-    const value = normalizeDiscoveryType(type);
-    const labelMap = {
-        bug_found: 'Bug',
-        improvement: 'Improvement',
-        insight: 'Insight',
-        pattern: 'Pattern',
-        question: 'Question',
-        answer: 'Answer',
-        note: 'Note',
-        exploration: 'Exploration',
-        analysis: 'Analysis'
-    };
-    return labelMap[value] || value.replace(/_/g, ' ');
-}
-
-function updateDiscoveryFilterInfo(filteredCount) {
-    const info = document.getElementById('discoveries-filter-info');
-    if (!info) return;
-    const total = cachedDiscoveries.length;
-    if (!total) {
-        info.textContent = '';
-        return;
-    }
-    if (filteredCount === 0) {
-        info.textContent = `No discoveries match filters (${total} loaded)`;
-        return;
-    }
-    const showingCount = Math.min(filteredCount, 10);
-    info.textContent = `Showing ${showingCount} of ${filteredCount} filtered (${total} loaded)`;
-}
-
-function updateDiscoveryLegend(discoveries) {
-    const container = document.getElementById('discoveries-type-legend');
-    if (!container) return;
-    if (!discoveries || discoveries.length === 0) {
-        container.textContent = '';
-        return;
-    }
-
-    const counts = {};
-    discoveries.forEach(d => {
-        const type = normalizeDiscoveryType(d.type || d.discovery_type || 'note');
-        counts[type] = (counts[type] || 0) + 1;
-    });
-
-    const total = discoveries.length;
-    const chips = [];
-    chips.push(`<button class="discovery-type" data-type="all" type="button">All ${total}</button>`);
-
-    const orderedTypes = ['insight', 'improvement', 'bug_found', 'pattern', 'question', 'answer', 'analysis', 'note', 'exploration'];
-    orderedTypes.forEach(type => {
-        if (!counts[type]) return;
-        const label = escapeHtml(formatDiscoveryType(type));
-        const count = counts[type];
-        chips.push(`<button class="discovery-type ${type}" data-type="${type}" type="button">${label} ${count}</button>`);
-        delete counts[type];
-    });
-
-    Object.keys(counts).sort().forEach(type => {
-        const label = escapeHtml(formatDiscoveryType(type));
-        const count = counts[type];
-        chips.push(`<button class="discovery-type ${type}" data-type="${type}" type="button">${label} ${count}</button>`);
-    });
-
-    container.innerHTML = chips.join(' ');
-}
-
-function renderDiscoveriesList(discoveries, searchTerm = '') {
-    const container = document.getElementById('discoveries-container');
-    if (cachedDiscoveries.length === 0) {
-        container.innerHTML = '<div class="loading">No recent discoveries. Use store_knowledge_graph() to add discoveries.</div>';
-        updateDiscoveryFilterInfo(0);
-        return;
-    }
-
-    if (discoveries.length === 0) {
-        container.innerHTML = '<div class="loading">No discoveries match the current filters.</div>';
-        updateDiscoveryFilterInfo(0);
-        return;
-    }
-
-    updateDiscoveryFilterInfo(discoveries.length);
-    const displayDiscoveries = discoveries.slice(0, 10);
-    container.innerHTML = displayDiscoveries.map((d, idx) => {
-        const type = normalizeDiscoveryType(d.type || d.discovery_type || 'note');
-        const typeLabel = escapeHtml(formatDiscoveryType(type));
-        const agent = escapeHtml(d.by || d.agent_id || d._agent_id || 'Unknown');
-        const details = String(d.details || d.content || d.discovery || '');
-        const summaryText = d.summary || 'Untitled';
-        const summaryHtml = highlightMatch(summaryText, searchTerm);
-        const relative = d._relativeTime ? ` (${d._relativeTime})` : '';
-        const displayDate = escapeHtml(`${d._displayDate || 'Unknown'}${relative}`);
-        const tags = (d.tags || []).slice(0, 5).map(t => `<span class="discovery-tag">${escapeHtml(t)}</span>`).join('');
-
-        return `
-            <div class="discovery-item" data-discovery-index="${idx}" style="cursor: pointer;" title="Click to view full details">
-                <div class="discoveries-meta-line">
-                    <span class="discovery-type ${type}">${typeLabel}</span>
-                    <span class="meta-item">By: ${agent}</span>
-                    <span class="meta-item">${displayDate}</span>
-                </div>
-                <div class="discovery-summary">${summaryHtml}</div>
-                ${tags ? `<div class="discovery-tags">${tags}</div>` : ''}
-            </div>
-        `;
-    }).join('');
-}
-
-/**
- * Apply all active filters to discoveries and re-render.
- * Reads filter state from DOM inputs.
- */
-function applyDiscoveryFilters() {
-    const searchInput = document.getElementById('discovery-search');
-    const typeFilterInput = document.getElementById('discovery-type-filter');
-    const timeFilterInput = document.getElementById('discovery-time-filter');
-    const searchTerm = searchInput ? searchInput.value.trim().toLowerCase() : '';
-    const typeFilter = typeFilterInput ? typeFilterInput.value : 'all';
-    const timeFilter = timeFilterInput ? timeFilterInput.value : 'all';
-    let cutoff = null;
-    if (timeFilter === '24h') {
-        cutoff = Date.now() - CONFIG.DAY_MS;
-    } else if (timeFilter === '7d') {
-        cutoff = Date.now() - CONFIG.WEEK_MS;
-    } else if (timeFilter === '30d') {
-        cutoff = Date.now() - CONFIG.MONTH_MS;
-    }
-
-    const filtered = cachedDiscoveries.filter(d => {
-        const type = normalizeDiscoveryType(d.type || d.discovery_type || 'note');
-        if (typeFilter !== 'all' && type !== typeFilter) {
-            return false;
-        }
-
-        if (cutoff !== null) {
-            if (!d._timestampMs || d._timestampMs < cutoff) {
-                return false;
-            }
-        }
-
-        if (searchTerm) {
-            const haystack = `${d.summary || ''} ${d.details || ''} ${d.content || ''} ${d.discovery || ''}`.toLowerCase();
-            if (!haystack.includes(searchTerm)) {
-                return false;
-            }
-        }
-
-        return true;
-    });
-
-    renderDiscoveriesList(filtered, searchTerm);
-}
-
-function clearDiscoveryFilters() {
-    const searchInput = document.getElementById('discovery-search');
-    const typeFilterInput = document.getElementById('discovery-type-filter');
-    const timeFilterInput = document.getElementById('discovery-time-filter');
-    if (searchInput) searchInput.value = '';
-    if (typeFilterInput) typeFilterInput.value = 'all';
-    if (timeFilterInput) timeFilterInput.value = 'all';
-    applyDiscoveryFilters();
-}
+// Discovery utilities, rendering, filtering, detail modal, and export
+// are now in discoveries.js → DiscoveriesModule
+var normalizeDiscoveryType = DiscoveriesModule.normalizeDiscoveryType;
+var formatDiscoveryType = DiscoveriesModule.formatDiscoveryType;
+var updateDiscoveryFilterInfo = DiscoveriesModule.updateDiscoveryFilterInfo;
+var updateDiscoveryLegend = DiscoveriesModule.updateDiscoveryLegend;
+var applyDiscoveryFilters = DiscoveriesModule.applyDiscoveryFilters;
+var clearDiscoveryFilters = DiscoveriesModule.clearDiscoveryFilters;
+var showDiscoveryDetail = DiscoveriesModule.showDiscoveryDetail;
+var exportDiscoveries = DiscoveriesModule.exportDiscoveries;
 
 // ============================================================================
 // DATA LOADING
@@ -1042,9 +592,9 @@ async function loadAgents() {
             ...(agentsObj.unknown || [])
         ];
 
-        // Update stats
-        document.getElementById('total-agents').textContent = total;
-        document.getElementById('active-agents').textContent = active;
+        // Update stats with animated counters
+        animateValue(document.getElementById('total-agents'), total);
+        animateValue(document.getElementById('active-agents'), active);
 
         const agentsChange = formatChange(total, previousStats.totalAgents);
         // Show breakdown: active, paused, archived, deleted, unknown
@@ -1077,7 +627,7 @@ async function loadAgents() {
             });
             if (agentsWithMetrics.length > 0) {
                 const avgCoherence = agentsWithMetrics.reduce((sum, a) => sum + Number(a.metrics.coherence), 0) / agentsWithMetrics.length;
-                fleetCoherenceEl.textContent = avgCoherence.toFixed(3);
+                animateValue(fleetCoherenceEl, avgCoherence, { decimals: 3 });
                 const criticalCount = allAgents.filter(a => a.health_status === 'critical').length;
                 const highRiskCount = allAgents.filter(a => {
                     const rs = a.metrics && a.metrics.risk_score;
@@ -1120,7 +670,7 @@ async function loadAgents() {
 }
 
 // Stuck agents monitoring
-let cachedStuckAgents = [];
+// cachedStuckAgents managed by state.js bridge
 
 async function loadStuckAgents() {
     try {
@@ -1135,7 +685,7 @@ async function loadStuckAgents() {
             const stuck = result.stuck_agents || [];
             cachedStuckAgents = stuck;
             const count = stuck.length;
-            countEl.textContent = count;
+            animateValue(countEl, count);
 
             // Style card based on count
             cardEl.classList.remove('stat-warning', 'stat-critical');
@@ -1341,7 +891,7 @@ async function loadDiscoveries(searchQuery = '') {
             console.debug('Could not fetch knowledge stats, using loaded count');
         }
         const countEl = document.getElementById('discoveries-count');
-        if (countEl) countEl.textContent = totalDiscoveries;
+        if (countEl) animateValue(countEl, totalDiscoveries);
         const discoveriesChange = formatChange(totalDiscoveries, previousStats.discoveries);
         const changeEl = document.getElementById('discoveries-change');
         if (changeEl) {
@@ -1402,7 +952,7 @@ async function loadDiscoveries(searchQuery = '') {
 // DIALECTIC SESSIONS
 // ============================================================================
 
-let cachedDialecticSessions = [];
+// cachedDialecticSessions managed by state.js bridge
 
 async function loadDialecticSessions() {
     try {
@@ -1441,7 +991,7 @@ async function loadDialecticSessions() {
         const sessionsEl = document.getElementById('dialectic-sessions');
         const changeEl = document.getElementById('dialectic-change');
         if (sessionsEl) {
-            sessionsEl.textContent = sessions.length;
+            animateValue(sessionsEl, sessions.length);
         }
         if (changeEl) {
             const resolved = sessions.filter(s => s.phase === 'resolved' || s.status === 'resolved').length;
@@ -1460,160 +1010,15 @@ async function loadDialecticSessions() {
     }
 }
 
-function updateDialecticDisplay(sessions, message) {
-    const sessionsEl = document.getElementById('dialectic-sessions');
-    const changeEl = document.getElementById('dialectic-change');
-    if (sessionsEl) {
-        sessionsEl.textContent = sessions.length || '?';
-    }
-    if (changeEl) {
-        changeEl.innerHTML = message || '';
-    }
-}
-
-function updateDialecticFilterInfo(count) {
-    const filterInfo = document.getElementById('dialectic-filter-info');
-    if (filterInfo) {
-        filterInfo.textContent = `Showing ${count} session${count !== 1 ? 's' : ''}`;
-    }
-}
-
-function getPhaseColor(phase) {
-    const colors = {
-        'resolved': 'var(--accent-green)',
-        'failed': 'var(--accent-orange)',
-        'thesis': 'var(--accent-cyan)',
-        'antithesis': 'var(--accent-purple)',
-        'synthesis': 'var(--accent-yellow)'
-    };
-    return colors[phase] || 'var(--text-secondary)';
-}
-
-function formatDialecticPhase(phase) {
-    const labels = {
-        'resolved': 'Resolved',
-        'failed': 'Failed',
-        'thesis': 'Thesis',
-        'antithesis': 'Antithesis',
-        'synthesis': 'Synthesis'
-    };
-    return labels[phase] || phase || 'Unknown';
-}
-
-function renderDialecticList(sessions) {
-    const container = document.getElementById('dialectic-container');
-    if (!container) return;
-
-    if (!sessions || sessions.length === 0) {
-        container.innerHTML = `
-            <div class="dialectic-empty">
-                <div class="dialectic-empty-icon">🔄</div>
-                <div>No active dialectic sessions</div>
-                <div style="font-size: 0.85em; margin-top: 5px; opacity: 0.7">
-                    Sessions appear when agents request recovery reviews
-                </div>
-            </div>`;
-        return;
-    }
-
-
-    // Limit to 25 sessions for display
-    const displaySessions = sessions.slice(0, 25);
-    const hasMore = sessions.length > 25;
-
-    container.innerHTML = displaySessions.map(session => {
-        const phase = session.phase || session.status || 'unknown';
-        const phaseColor = getPhaseColor(phase);
-        const requestorId = session.paused_agent || session.requestor_id || session.agent_id || 'Unknown';
-        const reviewerId = session.reviewer || session.reviewer_id || 'None';
-        const sessionType = session.session_type || session.type || 'verification';
-        const topic = session.topic || session.reason || `${sessionType} session`;
-        const created = session.created || session.created_at || session.timestamp || '';
-
-        // Format timestamp
-        let timeAgo = '';
-        if (created) {
-            try {
-                const date = new Date(created);
-                const now = new Date();
-                const diffMs = now - date;
-                const diffMins = Math.floor(diffMs / 60000);
-                const diffHours = Math.floor(diffMins / 60);
-                const diffDays = Math.floor(diffHours / 24);
-
-                if (diffDays > 0) {
-                    timeAgo = `${diffDays}d ago`;
-                } else if (diffHours > 0) {
-                    timeAgo = `${diffHours}h ago`;
-                } else if (diffMins > 0) {
-                    timeAgo = `${diffMins}m ago`;
-                } else {
-                    timeAgo = 'Just now';
-                }
-            } catch (e) {
-                timeAgo = created;
-            }
-        }
-
-        // Resolution info
-        let resolutionInfo = '';
-        if (session.resolution) {
-            const res = session.resolution;
-            resolutionInfo = `<div class="dialectic-resolution">
-                Resolution: ${escapeHtml(res.action || res.type || 'Unknown')}
-                ${res.confidence ? ` (${(res.confidence * 100).toFixed(0)}% conf)` : ''}
-            </div>`;
-        }
-
-        return `
-            <div class="dialectic-item ${phase}" data-session-id="${session.session_id || ''}" style="cursor: pointer;" title="Click to view details">
-                <div class="dialectic-header">
-                    <span class="dialectic-type" style="border-color: ${phaseColor}; color: ${phaseColor}">
-                        ${escapeHtml(formatDialecticPhase(phase))}
-                    </span>
-                    <span class="dialectic-session-type">${escapeHtml(sessionType)}</span>
-                    <span class="dialectic-time">${escapeHtml(timeAgo)}</span>
-                </div>
-                <div class="dialectic-topic">${escapeHtml(topic)}</div>
-                <div class="dialectic-agents">
-                    <span class="agent-label">Requestor:</span> ${escapeHtml(requestorId.length > 15 ? requestorId.substring(0, 12) + '...' : requestorId)}
-                    ${reviewerId && reviewerId !== 'None' ? `<span class="agent-label" style="margin-left: 10px;">Reviewer:</span> ${escapeHtml(reviewerId.length > 15 ? reviewerId.substring(0, 12) + '...' : reviewerId)}` : ''}
-                    <span class="agent-label" style="margin-left: 10px; color: var(--accent-cyan);">📝 ${session.message_count || 0} messages</span>
-                </div>
-                ${resolutionInfo}
-            </div>
-        `;
-    }).join('');
-
-    // Add "more" indicator if truncated
-    if (hasMore) {
-        container.innerHTML += `<div class="loading" style="text-align: center; padding: 10px;">
-            ...and ${sessions.length - 25} more sessions (use filter to narrow down)
-        </div>`;
-    }
-}
-
-function applyDialecticFilters() {
-    const statusFilter = document.getElementById('dialectic-status-filter');
-    const filter = statusFilter ? statusFilter.value : 'substantive';
-
-    let filtered = cachedDialecticSessions;
-    if (filter === 'substantive') {
-        // Only sessions with real dialectic content (thesis+antithesis+synthesis = 3+ messages)
-        filtered = cachedDialecticSessions.filter(s => (s.message_count || 0) >= 3);
-    } else if (filter !== 'all') {
-        filtered = cachedDialecticSessions.filter(s => {
-            const phase = s.phase || s.status || '';
-            if (filter === 'active') {
-                return ['thesis', 'antithesis', 'synthesis'].includes(phase);
-            }
-            return phase === filter;
-        });
-    }
-
-    updateDialecticFilterInfo(filtered.length);
-    renderDialecticList(filtered);
-}
+// Dialectic utilities, rendering, filtering, detail modal
+// are now in dialectic.js → DialecticModule
+var getPhaseColor = DialecticModule.getPhaseColor;
+var formatDialecticPhase = DialecticModule.formatDialecticPhase;
+var updateDialecticDisplay = DialecticModule.updateDialecticDisplay;
+var updateDialecticFilterInfo = DialecticModule.updateDialecticFilterInfo;
+var renderDialecticList = DialecticModule.renderDialecticList;
+var applyDialecticFilters = DialecticModule.applyDialecticFilters;
+var showDialecticDetail = DialecticModule.showDialecticDetail;
 
 // ============================================================================
 // MAIN REFRESH & INITIALIZATION
@@ -1860,6 +1265,46 @@ if (dialecticContainer) {
     });
 }
 
+// Click handler for tags — sets them as the search term in the relevant panel
+document.addEventListener('click', (event) => {
+    const tag = event.target.closest('.clickable-tag');
+    if (!tag) return;
+    event.stopPropagation(); // Don't trigger parent click (e.g. discovery detail modal)
+    const tagText = tag.getAttribute('data-tag') || tag.textContent.trim();
+    if (!tagText) return;
+
+    // Figure out which search to populate: discovery or agent
+    const inDiscovery = tag.closest('.discoveries-list, .discovery-detail');
+    const inAgent = tag.closest('.agents-panel, .agent-detail');
+
+    if (inDiscovery || (!inAgent)) {
+        // Default: search discoveries
+        const searchInput = document.getElementById('discovery-search');
+        if (searchInput) {
+            searchInput.value = tagText;
+            applyDiscoveryFilters();
+            searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            searchInput.focus();
+        }
+    } else {
+        // Agent panel
+        const searchInput = document.getElementById('agent-search');
+        if (searchInput) {
+            searchInput.value = tagText;
+            applyAgentFilters();
+            searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            searchInput.focus();
+        }
+    }
+
+    // Close modal if open (tag was clicked inside a detail view)
+    const modal = document.getElementById('panel-modal');
+    if (modal && modal.classList.contains('visible')) {
+        modal.classList.remove('visible');
+        document.body.style.overflow = '';
+    }
+});
+
 // Click handler for discovery items to show full details
 const discoveriesContainer = document.getElementById('discoveries-container');
 if (discoveriesContainer) {
@@ -1885,360 +1330,13 @@ if (stuckAgentsCard) {
     });
 }
 
-function showAgentDetail(agent) {
-    const modal = document.getElementById('panel-modal');
-    const modalTitle = document.getElementById('modal-title');
-    const modalBody = document.getElementById('modal-body');
-    if (!modal || !modalTitle || !modalBody) return;
+// showAgentDetail is now in agents.js → AgentsModule.showAgentDetail
 
-    const displayName = getAgentDisplayName(agent);
-    const status = getAgentStatus(agent);
-    const agentId = agent.agent_id || 'Unknown';
-    const metrics = agent.metrics || {};
-    const tierNameToNum = { unknown: 0, emerging: 1, established: 2, verified: 3 };
-    const tierRaw = agent.trust_tier;
-    const trustTier = tierRaw !== undefined && tierRaw !== null
-        ? (typeof tierRaw === 'number' ? tierRaw : (tierNameToNum[String(tierRaw).toLowerCase()] ?? 0))
-        : 0;
-    const tierNames = { 0: 'Unknown', 1: 'Emerging', 2: 'Established', 3: 'Verified' };
-    const tierDescriptions = {
-        0: 'New agent, no trajectory history. +5% risk adjustment.',
-        1: 'Some history, building consistency. +5% risk adjustment.',
-        2: 'Consistent behavioral trajectory. No risk adjustment.',
-        3: 'Strong trajectory match + operator endorsement. -5% risk reduction.'
-    };
+// showDiscoveryDetail is now in discoveries.js → DiscoveriesModule.showDiscoveryDetail
 
-    // EISV with interpretations using DataProcessor
-    const eisvMetrics = ['E', 'I', 'S', 'V', 'C'];
-    const metricValues = {
-        E: metrics.E, I: metrics.I, S: metrics.S, V: metrics.V,
-        C: metrics.coherence
-    };
-    const eisvHtml = eisvMetrics.map(name => {
-        const val = metricValues[name];
-        if (val === undefined || val === null) return '';
-        const formatted = typeof DataProcessor !== 'undefined'
-            ? DataProcessor.formatEISVMetric(Number(val), name)
-            : { display: Number(val).toFixed(6), interpretation: '', color: 'var(--text-primary)' };
-        return `
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-color);">
-                <div>
-                    <strong style="color: ${formatted.color}; font-family: var(--font-mono);">${name}</strong>
-                    <span style="color: var(--text-secondary); font-size: 0.85em; margin-left: 8px;">${escapeHtml(formatted.interpretation)}</span>
-                </div>
-                <span style="font-family: var(--font-mono); font-weight: 600; color: ${formatted.color};">${formatted.display}</span>
-            </div>`;
-    }).filter(Boolean).join('');
+// showDialecticDetail is now in dialectic.js → DialecticModule.showDialecticDetail
 
-    // Governance section
-    const healthStatus = agent.health_status || 'unknown';
-    const verdict = metrics.verdict || '-';
-    const riskScore = metrics.risk_score !== undefined && metrics.risk_score !== null ? (Number(metrics.risk_score) * 100).toFixed(1) + '%' : '-';
-    const phi = metrics.phi !== undefined && metrics.phi !== null ? Number(metrics.phi).toFixed(4) : '-';
-    const meanRisk = metrics.mean_risk !== undefined && metrics.mean_risk !== null ? (Number(metrics.mean_risk) * 100).toFixed(1) + '%' : '-';
-
-    // Tags and notes
-    const tags = agent.tags && agent.tags.length > 0 ? agent.tags.map(t => `<span style="background: rgba(0,255,255,0.1); color: var(--accent-cyan); padding: 2px 8px; border-radius: 3px; font-size: 0.85em;">${escapeHtml(t)}</span>`).join(' ') : '<span style="color: var(--text-secondary);">None</span>';
-    const notes = agent.notes ? escapeHtml(agent.notes) : '';
-    const purpose = agent.purpose ? escapeHtml(agent.purpose) : '';
-
-    let html = `
-        <div class="agent-detail">
-            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px; flex-wrap: wrap;">
-                <span class="status-indicator ${status}" style="width: 10px; height: 10px;"></span>
-                <span style="font-size: 1.2em; font-weight: 600;">${escapeHtml(displayName)}</span>
-                <span class="status-chip ${status}">${escapeHtml(formatStatusLabel(status))}</span>
-                ${trustTier !== null ? `<span class="trust-tier tier-${trustTier}">Tier ${trustTier}: ${tierNames[trustTier] || 'Unknown'}</span>` : ''}
-            </div>
-
-            ${purpose ? `<div style="color: var(--text-secondary); font-style: italic; margin-bottom: 15px;">${purpose}</div>` : ''}
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
-                <div>
-                    <strong style="color: var(--text-secondary);">Agent ID:</strong><br>
-                    <code style="font-size: 0.85em; word-break: break-all;">${escapeHtml(agentId)}</code>
-                </div>
-                <div>
-                    <strong style="color: var(--text-secondary);">Total Updates:</strong><br>
-                    ${agent.total_updates || 0}
-                </div>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
-                <div>
-                    <strong style="color: var(--text-secondary);">Created:</strong><br>
-                    ${agent.created_at || agent.created || '-'}
-                </div>
-                <div>
-                    <strong style="color: var(--text-secondary);">Last Update:</strong><br>
-                    ${agent.last_update || '-'}
-                </div>
-            </div>
-
-            ${trustTier !== null ? `
-                <div style="margin-bottom: 15px; padding: 10px; background: rgba(0,255,255,0.05); border-radius: 6px; border-left: 3px solid var(--accent-cyan);">
-                    <strong style="color: var(--accent-cyan);">Trust Tier ${trustTier}: ${tierNames[trustTier] || 'Unknown'}</strong><br>
-                    <span style="color: var(--text-secondary); font-size: 0.9em;">${tierDescriptions[trustTier] || ''}</span>
-                </div>
-            ` : ''}
-
-            ${eisvHtml ? `
-                <div style="margin-bottom: 15px;">
-                    <strong style="color: var(--accent-cyan);">EISV Metrics:</strong>
-                    <div style="margin-top: 8px;">${eisvHtml}</div>
-                </div>
-            ` : ''}
-
-            <div style="margin-bottom: 15px;">
-                <strong style="color: var(--accent-cyan);">Governance:</strong>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-top: 8px;">
-                    <div style="padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
-                        <div style="font-size: 0.75em; color: var(--text-secondary); text-transform: uppercase;">Health</div>
-                        <div class="health-badge ${healthStatus}" style="font-size: 1.1em; font-weight: 600;">${escapeHtml(healthStatus)}</div>
-                    </div>
-                    <div style="padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
-                        <div style="font-size: 0.75em; color: var(--text-secondary); text-transform: uppercase;">Verdict</div>
-                        <div style="font-size: 1.1em; font-weight: 600;">${escapeHtml(verdict)}</div>
-                    </div>
-                    <div style="padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
-                        <div style="font-size: 0.75em; color: var(--text-secondary); text-transform: uppercase;">Risk</div>
-                        <div style="font-size: 1.1em; font-weight: 600;">${riskScore}</div>
-                    </div>
-                    <div style="padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
-                        <div style="font-size: 0.75em; color: var(--text-secondary); text-transform: uppercase;">Phi</div>
-                        <div style="font-size: 1.1em; font-weight: 600; font-family: var(--font-mono);">${phi}</div>
-                    </div>
-                    <div style="padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; text-align: center;">
-                        <div style="font-size: 0.75em; color: var(--text-secondary); text-transform: uppercase;">Mean Risk</div>
-                        <div style="font-size: 1.1em; font-weight: 600;">${meanRisk}</div>
-                    </div>
-                </div>
-            </div>
-
-            <div style="margin-bottom: 15px;">
-                <strong style="color: var(--text-secondary);">Tags:</strong>
-                <div style="margin-top: 5px;">${tags}</div>
-            </div>
-
-            ${notes ? `
-                <div style="margin-bottom: 15px;">
-                    <strong style="color: var(--text-secondary);">Notes:</strong>
-                    <div style="margin-top: 5px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; white-space: pre-wrap;">${notes}</div>
-                </div>
-            ` : ''}
-
-            <details style="margin-top: 15px;">
-                <summary style="cursor: pointer; color: var(--text-secondary);">Raw data</summary>
-                <pre style="font-size: 0.75em; max-height: 200px; overflow: auto; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 4px; margin-top: 8px;">${escapeHtml(JSON.stringify(agent, null, 2))}</pre>
-            </details>
-        </div>`;
-
-    modalTitle.textContent = `Agent: ${displayName}`;
-    modalBody.innerHTML = html;
-    modal.classList.add('visible');
-    document.body.style.overflow = 'hidden';
-}
-
-function showDiscoveryDetail(discovery) {
-    const modal = document.getElementById('panel-modal');
-    const modalTitle = document.getElementById('modal-title');
-    const modalBody = document.getElementById('modal-body');
-    if (!modal || !modalTitle || !modalBody) return;
-
-    const type = normalizeDiscoveryType(discovery.type || discovery.discovery_type || 'note');
-    const typeLabel = formatDiscoveryType(type);
-    const agent = discovery.by || discovery.agent_id || discovery._agent_id || 'Unknown';
-    const summary = discovery.summary || 'Untitled';
-    const details = discovery.details || discovery.content || discovery.discovery || '';
-    const displayDate = discovery._displayDate || 'Unknown';
-    const relativeTime = discovery._relativeTime || '';
-
-    let html = `
-        <div class="discovery-detail">
-            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px;">
-                <span class="discovery-type ${type}" style="font-size: 1em;">${escapeHtml(typeLabel)}</span>
-                <span style="color: var(--text-secondary);">${escapeHtml(displayDate)}${relativeTime ? ` (${relativeTime})` : ''}</span>
-            </div>
-
-            <div style="margin-bottom: 15px;">
-                <strong style="color: var(--text-secondary);">Summary:</strong><br>
-                <span style="font-size: 1.1em;">${escapeHtml(summary)}</span>
-            </div>
-
-            ${details ? `
-                <div style="margin-bottom: 15px;">
-                    <strong style="color: var(--text-secondary);">Details:</strong>
-                    <div style="margin-top: 8px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 6px; white-space: pre-wrap; word-wrap: break-word; font-size: 0.95em; max-height: 300px; overflow-y: auto;">
-${escapeHtml(details)}</div>
-                </div>
-            ` : ''}
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 15px 0;">
-                <div>
-                    <strong style="color: var(--text-secondary);">Agent:</strong><br>
-                    <code style="font-size: 0.9em; word-break: break-all;">${escapeHtml(agent)}</code>
-                </div>
-                ${discovery.id ? `
-                    <div>
-                        <strong style="color: var(--text-secondary);">ID:</strong><br>
-                        <code style="font-size: 0.85em; word-break: break-all;">${escapeHtml(discovery.id)}</code>
-                    </div>
-                ` : ''}
-            </div>
-
-            <details style="margin-top: 15px;">
-                <summary style="cursor: pointer; color: var(--text-secondary);">Raw data</summary>
-                <pre style="font-size: 0.75em; max-height: 200px; overflow: auto; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 4px; margin-top: 8px;">${escapeHtml(JSON.stringify(discovery, null, 2))}</pre>
-            </details>
-        </div>`;
-
-    modalTitle.textContent = `Discovery: ${typeLabel}`;
-    modalBody.innerHTML = html;
-    modal.classList.add('visible');
-    document.body.style.overflow = 'hidden';
-}
-
-async function showDialecticDetail(session) {
-    const modal = document.getElementById('panel-modal');
-    const modalTitle = document.getElementById('modal-title');
-    const modalBody = document.getElementById('modal-body');
-    if (!modal || !modalTitle || !modalBody) return;
-
-    const sessionId = session.session_id || 'Unknown';
-    const phase = session.phase || session.status || 'unknown';
-
-    // Show modal with loading state
-    modalTitle.textContent = `Dialectic Session: ${formatDialecticPhase(phase)}`;
-    modalBody.innerHTML = `<div class="loading">Loading full session details...</div>`;
-    modal.classList.add('visible');
-    document.body.style.overflow = 'hidden';
-
-    // Try to fetch full session with transcript
-    let fullSession = session;
-    if (sessionId && sessionId !== 'Unknown') {
-        try {
-            const result = await callTool('get_dialectic_session', {
-                session_id: sessionId,
-                check_timeout: false
-            });
-            if (result && result.session) {
-                fullSession = result.session;
-            } else if (result && !result.error) {
-                fullSession = result;
-            }
-        } catch (e) {
-            console.warn('Failed to fetch full session, using cached:', e);
-        }
-    }
-
-    // Render with potentially full data
-    renderDialecticDetailContent(modalBody, fullSession);
-}
-
-function renderDialecticDetailContent(container, session) {
-    const phase = session.phase || session.status || 'unknown';
-    const phaseColor = getPhaseColor(phase);
-    const requestorId = session.paused_agent || session.requestor_id || session.agent_id || 'Unknown';
-    const reviewerId = session.reviewer || session.reviewer_id || 'None';
-    const sessionType = session.session_type || session.type || 'verification';
-    const topic = session.topic || session.reason || `${sessionType} session`;
-    const sessionId = session.session_id || 'Unknown';
-    const created = session.created || session.created_at || session.timestamp || '';
-
-    // Build full details HTML
-    let html = `
-        <div class="dialectic-detail">
-            <div class="dialectic-detail-header">
-                <span class="dialectic-type" style="border-color: ${phaseColor}; color: ${phaseColor}; font-size: 1.1em;">
-                    ${escapeHtml(formatDialecticPhase(phase))}
-                </span>
-                <span class="dialectic-session-type" style="font-size: 1em;">${escapeHtml(sessionType)}</span>
-            </div>
-
-            <div style="margin: 15px 0;">
-                <strong style="color: var(--text-secondary);">Topic:</strong><br>
-                <span style="font-size: 1.1em;">${escapeHtml(topic)}</span>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 15px 0;">
-                <div>
-                    <strong style="color: var(--text-secondary);">Session ID:</strong><br>
-                    <code style="font-size: 0.85em; word-break: break-all;">${escapeHtml(sessionId)}</code>
-                </div>
-                <div>
-                    <strong style="color: var(--text-secondary);">Created:</strong><br>
-                    ${escapeHtml(created)}
-                </div>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 15px 0;">
-                <div>
-                    <strong style="color: var(--text-secondary);">Requestor:</strong><br>
-                    <code style="font-size: 0.9em; word-break: break-all;">${escapeHtml(requestorId)}</code>
-                </div>
-                <div>
-                    <strong style="color: var(--text-secondary);">Reviewer:</strong><br>
-                    ${reviewerId !== 'None' ? `<code style="font-size: 0.9em; word-break: break-all;">${escapeHtml(reviewerId)}</code>` : '<span style="color: var(--text-secondary);">Not assigned</span>'}
-                </div>
-            </div>`;
-
-    // Add resolution if present
-    if (session.resolution) {
-        const res = session.resolution;
-        html += `
-            <div style="margin: 15px 0; padding: 10px; background: rgba(0,100,0,0.2); border-radius: 6px; border-left: 3px solid var(--accent-green);">
-                <strong style="color: var(--accent-green);">Resolution:</strong><br>
-                <span>Action: ${escapeHtml(res.action || res.type || 'Unknown')}</span>
-                ${res.confidence ? `<br>Confidence: ${(res.confidence * 100).toFixed(0)}%` : ''}
-                ${res.reason ? `<br>Reason: ${escapeHtml(res.reason)}` : ''}
-            </div>`;
-    }
-
-    // Add transcript - this is the key data we want to show
-    const transcript = session.transcript || [];
-    if (transcript.length > 0) {
-        html += `
-            <div style="margin: 15px 0;">
-                <strong style="color: var(--accent-cyan);">Discussion Transcript (${transcript.length} messages):</strong>
-                <div style="margin-top: 10px; max-height: 350px; overflow-y: auto;">
-                    ${transcript.map((entry, idx) => {
-                        const role = entry.role || entry.agent_id || entry.phase || 'system';
-                        const content = entry.content || entry.reasoning || entry.message || '';
-                        const timestamp = entry.timestamp || '';
-                        const isSystem = role === 'system' || role === 'synthesis';
-                        const roleColor = isSystem ? 'var(--accent-yellow)' : 'var(--accent-cyan)';
-
-                        return `
-                            <div style="margin-bottom: 12px; padding: 10px 12px; background: rgba(0,0,0,0.25); border-radius: 6px; border-left: 2px solid ${roleColor};">
-                                <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-                                    <strong style="color: ${roleColor}; text-transform: uppercase; font-size: 0.8em;">${escapeHtml(role)}</strong>
-                                    ${timestamp ? `<span style="color: var(--text-secondary); font-size: 0.75em;">${escapeHtml(timestamp)}</span>` : ''}
-                                </div>
-                                <div style="color: var(--text-primary); white-space: pre-wrap; word-wrap: break-word; font-size: 0.9em; line-height: 1.5;">${escapeHtml(content)}</div>
-                            </div>
-                        `;
-                    }).join('')}
-                </div>
-            </div>`;
-    } else {
-        html += `
-            <div style="margin: 15px 0; padding: 20px; background: rgba(0,0,0,0.15); border-radius: 6px; text-align: center; color: var(--text-secondary);">
-                <div style="font-size: 1.5em; margin-bottom: 8px;">📭</div>
-                No transcript recorded for this session.<br>
-                <small>This may be an auto-resolved or system-generated session.</small>
-            </div>`;
-    }
-
-    // Show raw JSON for debugging
-    html += `
-        <details style="margin-top: 15px;">
-            <summary style="cursor: pointer; color: var(--text-secondary);">Raw session data</summary>
-            <pre style="font-size: 0.75em; max-height: 200px; overflow: auto; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 4px; margin-top: 8px;">${escapeHtml(JSON.stringify(session, null, 2))}</pre>
-        </details>
-        </div>`;
-
-    container.innerHTML = html;
-}
+// renderDialecticDetailContent is now in dialectic.js → DialecticModule.renderDialecticDetailContent
 
 // Theme toggle
 const themeToggle = document.getElementById('theme-toggle');
@@ -2260,116 +1358,9 @@ if (themeToggle && themeManager) {
 }
 
 
-// Export functionality
-function exportAgents(format) {
-    if (cachedAgents.length === 0) {
-        showError('No agents to export');
-        return;
-    }
+// exportAgents is now in agents.js → AgentsModule.exportAgents
 
-    const exportData = cachedAgents.map(agent => ({
-        agent_id: agent.agent_id || '',
-        name: getAgentDisplayName(agent),
-        status: getAgentStatus(agent),
-        E: agent.metrics?.E || null,
-        I: agent.metrics?.I || null,
-        S: agent.metrics?.S || null,
-        V: agent.metrics?.V || null,
-        coherence: agent.metrics?.coherence || null,
-        last_update: agent.last_update || '',
-        created_at: agent.created_at || ''
-    }));
-
-    if (format === 'csv') {
-        if (typeof DataProcessor !== 'undefined' && DataProcessor.exportToCSV) {
-            DataProcessor.exportToCSV(exportData, `agents_${new Date().toISOString().split('T')[0]}.csv`);
-        } else {
-            // Fallback CSV export
-            const headers = Object.keys(exportData[0]);
-            const csv = [
-                headers.join(','),
-                ...exportData.map(row => headers.map(h => {
-                    const v = row[h];
-                    return v === null || v === undefined ? '' : String(v).replace(/"/g, '""');
-                }).join(','))
-            ].join('\n');
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `agents_${new Date().toISOString().split('T')[0]}.csv`;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-    } else {
-        if (typeof DataProcessor !== 'undefined' && DataProcessor.exportToJSON) {
-            DataProcessor.exportToJSON(exportData, `agents_${new Date().toISOString().split('T')[0]}.json`);
-        } else {
-            // Fallback JSON export
-            const json = JSON.stringify(exportData, null, 2);
-            const blob = new Blob([json], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `agents_${new Date().toISOString().split('T')[0]}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-    }
-}
-
-function exportDiscoveries(format) {
-    if (cachedDiscoveries.length === 0) {
-        showError('No discoveries to export');
-        return;
-    }
-
-    const exportData = cachedDiscoveries.map(d => ({
-        id: d.id || '',
-        type: d.type || d.discovery_type || 'note',
-        summary: d.summary || '',
-        content: d.details || d.content || d.discovery || '',
-        agent: d.by || d.agent_id || d._agent_id || '',
-        timestamp: d._timestampMs ? new Date(d._timestampMs).toISOString() : ''
-    }));
-
-    if (format === 'csv') {
-        if (typeof DataProcessor !== 'undefined' && DataProcessor.exportToCSV) {
-            DataProcessor.exportToCSV(exportData, `discoveries_${new Date().toISOString().split('T')[0]}.csv`);
-        } else {
-            // Fallback CSV export
-            const headers = Object.keys(exportData[0]);
-            const csv = [
-                headers.join(','),
-                ...exportData.map(row => headers.map(h => {
-                    const v = row[h];
-                    return v === null || v === undefined ? '' : String(v).replace(/"/g, '""');
-                }).join(','))
-            ].join('\n');
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `discoveries_${new Date().toISOString().split('T')[0]}.csv`;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-    } else {
-        if (typeof DataProcessor !== 'undefined' && DataProcessor.exportToJSON) {
-            DataProcessor.exportToJSON(exportData, `discoveries_${new Date().toISOString().split('T')[0]}.json`);
-        } else {
-            // Fallback JSON export
-            const json = JSON.stringify(exportData, null, 2);
-            const blob = new Blob([json], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `discoveries_${new Date().toISOString().split('T')[0]}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-    }
-}
+// exportDiscoveries is now in discoveries.js → DiscoveriesModule.exportDiscoveries
 
 const exportAgentsCsv = document.getElementById('export-agents-csv');
 const exportAgentsJson = document.getElementById('export-agents-json');
@@ -2382,979 +1373,37 @@ if (exportDiscoveriesCsv) exportDiscoveriesCsv.addEventListener('click', () => e
 if (exportDiscoveriesJson) exportDiscoveriesJson.addEventListener('click', () => exportDiscoveries('json'));
 
 // ========================================
-// Live EISV Chart + WebSocket
+// EISV Charts Module (eisv-charts.js)
 // ========================================
-let eisvChartUpper = null;  // E, I, Coherence
-let eisvChartLower = null;  // S, V
-let eisvWebSocket = null;
-// Per-agent EISV tracking for hybrid view
-const agentEISVHistory = {}; // { agent_id: [{ts, E, I, S, V, coherence}, ...] }
-const knownAgents = new Set(); // For dropdown population
-let selectedAgentView = '__fleet__'; // '__fleet__', '__all__', or agent_id
+// Chart init, WebSocket, governance pulse, decisions log, drift gauges,
+// and value animations are now in EISVChartsModule.
+var animateValue = EISVChartsModule.animateValue;
+var updateValueWithGlow = EISVChartsModule.updateValueWithGlow;
+var addEISVDataPoint = EISVChartsModule.addEISVDataPoint;
+var addDecision = EISVChartsModule.addDecision;
+var addEventEntry = EISVChartsModule.addEventEntry;
+var fetchInitialEvents = EISVChartsModule.fetchInitialEvents;
+var getVerdictBadge = EISVChartsModule.getVerdictBadge;
+var renderDecisionsLog = EISVChartsModule.renderDecisionsLog;
+var rebuildChartFromSelection = EISVChartsModule.rebuildChartFromSelection;
+var updateAgentDropdown = EISVChartsModule.updateAgentDropdown;
+var initEISVChart = EISVChartsModule.initEISVChart;
+var initWebSocket = EISVChartsModule.initWebSocket;
+var updateGovernancePulse = EISVChartsModule.updateGovernancePulse;
+var updateAgentCardFromWS = EISVChartsModule.updateAgentCardFromWS;
 
-function updateAgentDropdown() {
-    const select = document.getElementById('eisv-agent-select');
-    if (!select) return;
-    const currentValue = select.value;
-
-    // Preserve special options, add agents
-    const specialOpts = ['__fleet__', '__all__'];
-    const agentOpts = Array.from(knownAgents).sort();
-
-    // Only update if agents changed
-    const existingAgents = Array.from(select.options)
-        .filter(o => !specialOpts.includes(o.value))
-        .map(o => o.value);
-
-    if (JSON.stringify(existingAgents) === JSON.stringify(agentOpts)) return;
-
-    // Rebuild options
-    select.innerHTML = '';
-    select.add(new Option('Fleet Average', '__fleet__'));
-    select.add(new Option('All (raw)', '__all__'));
-
-    if (agentOpts.length > 0) {
-        const sep = new Option('───────────', '');
-        sep.disabled = true;
-        select.add(sep);
-        agentOpts.forEach(agentId => {
-            // Use short display name
-            const history = agentEISVHistory[agentId];
-            const name = history?.[0]?.name || agentId;
-            const shortName = name.length > 20 ? name.substring(0, 17) + '...' : name;
-            select.add(new Option(shortName, agentId));
-        });
-    }
-
-    // Restore selection if still valid
-    if (Array.from(select.options).some(o => o.value === currentValue)) {
-        select.value = currentValue;
-    }
-}
-
-function computeFleetAverage() {
-    const now = Date.now();
-    const cutoff = now - CONFIG.EISV_WINDOW_MS;
-
-    // Collect all recent data points
-    const allPoints = [];
-    for (const agentId of Object.keys(agentEISVHistory)) {
-        const history = agentEISVHistory[agentId];
-        for (const pt of history) {
-            if (pt.ts >= cutoff) {
-                allPoints.push(pt);
-            }
-        }
-    }
-
-    if (allPoints.length === 0) return null;
-
-    // Group by time buckets (30 second intervals)
-    const buckets = {};
-    for (const pt of allPoints) {
-        const bucket = Math.floor(pt.ts / CONFIG.EISV_BUCKET_MS) * CONFIG.EISV_BUCKET_MS;
-        if (!buckets[bucket]) {
-            buckets[bucket] = { E: [], I: [], S: [], V: [], coherence: [] };
-        }
-        buckets[bucket].E.push(pt.E);
-        buckets[bucket].I.push(pt.I);
-        buckets[bucket].S.push(pt.S);
-        buckets[bucket].V.push(pt.V);
-        buckets[bucket].coherence.push(pt.coherence);
-    }
-
-    // Compute averages per bucket
-    const result = [];
-    for (const [ts, vals] of Object.entries(buckets).sort((a,b) => a[0] - b[0])) {
-        const avg = (arr) => arr.reduce((a,b) => a+b, 0) / arr.length;
-        result.push({
-            x: new Date(parseInt(ts)),
-            E: avg(vals.E),
-            I: avg(vals.I),
-            S: avg(vals.S),
-            V: avg(vals.V),
-            coherence: avg(vals.coherence)
-        });
-    }
-    return result;
-}
-
-function rebuildChartFromSelection() {
-    if (!eisvChartUpper || !eisvChartLower) return;
-
-    // Clear existing data
-    eisvChartUpper.data.datasets.forEach(ds => ds.data = []);
-    eisvChartLower.data.datasets.forEach(ds => ds.data = []);
-
-    const now = Date.now();
-    const cutoff = now - CONFIG.EISV_WINDOW_MS;
-
-    if (selectedAgentView === '__fleet__') {
-        // Fleet average
-        const avgData = computeFleetAverage();
-        if (avgData) {
-            avgData.forEach(pt => {
-                eisvChartUpper.data.datasets[0].data.push({ x: pt.x, y: pt.E });
-                eisvChartUpper.data.datasets[1].data.push({ x: pt.x, y: pt.I });
-                eisvChartUpper.data.datasets[2].data.push({ x: pt.x, y: pt.coherence });
-                eisvChartLower.data.datasets[0].data.push({ x: pt.x, y: pt.S });
-                eisvChartLower.data.datasets[1].data.push({ x: pt.x, y: pt.V });
-            });
-        }
-    } else if (selectedAgentView === '__all__') {
-        // All raw data (original behavior)
-        for (const history of Object.values(agentEISVHistory)) {
-            for (const pt of history) {
-                if (pt.ts >= cutoff) {
-                    const x = new Date(pt.ts);
-                    eisvChartUpper.data.datasets[0].data.push({ x, y: pt.E });
-                    eisvChartUpper.data.datasets[1].data.push({ x, y: pt.I });
-                    eisvChartUpper.data.datasets[2].data.push({ x, y: pt.coherence });
-                    eisvChartLower.data.datasets[0].data.push({ x, y: pt.S });
-                    eisvChartLower.data.datasets[1].data.push({ x, y: pt.V });
-                }
-            }
-        }
-        // Sort by time
-        [eisvChartUpper, eisvChartLower].forEach(chart => {
-            chart.data.datasets.forEach(ds => {
-                ds.data.sort((a, b) => a.x - b.x);
-            });
-        });
-    } else {
-        // Specific agent
-        const history = agentEISVHistory[selectedAgentView] || [];
-        for (const pt of history) {
-            if (pt.ts >= cutoff) {
-                const x = new Date(pt.ts);
-                eisvChartUpper.data.datasets[0].data.push({ x, y: pt.E });
-                eisvChartUpper.data.datasets[1].data.push({ x, y: pt.I });
-                eisvChartUpper.data.datasets[2].data.push({ x, y: pt.coherence });
-                eisvChartLower.data.datasets[0].data.push({ x, y: pt.S });
-                eisvChartLower.data.datasets[1].data.push({ x, y: pt.V });
-            }
-        }
-    }
-
-    // Limit chart data to CONFIG.EISV_MAX_POINTS to prevent unbounded memory growth
-    [eisvChartUpper, eisvChartLower].forEach(chart => {
-        chart.data.datasets.forEach(ds => {
-            while (ds.data.length > CONFIG.EISV_MAX_POINTS) {
-                ds.data.shift();  // Remove oldest point
-            }
-        });
-    });
-
-    requestAnimationFrame(() => {
-        eisvChartUpper.update('none');
-        eisvChartLower.update('none');
-    });
-}
-
-// Wire up dropdown and drift toggle
-document.addEventListener('DOMContentLoaded', () => {
-    const select = document.getElementById('eisv-agent-select');
-    if (select) {
-        select.addEventListener('change', (e) => {
-            selectedAgentView = e.target.value;
-            rebuildChartFromSelection();
-        });
-    }
-
-});
-
-function makeChartOptions(extraYOpts) {
-    return {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: { duration: 300 },
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-            legend: { display: false },
-            tooltip: {
-                backgroundColor: 'rgba(13,13,18,0.9)',
-                titleFont: { family: "'Inter', sans-serif" },
-                bodyFont: { family: "'JetBrains Mono', monospace", size: 12 },
-                padding: 10,
-                borderColor: '#333',
-                borderWidth: 1,
-                callbacks: {
-                    label: function(ctx) {
-                        return `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(4)}`;
-                    }
-                }
-            }
-        },
-        scales: {
-            x: {
-                type: 'time',
-                time: { unit: 'minute', displayFormats: { minute: 'HH:mm' }, tooltipFormat: 'HH:mm:ss' },
-                grid: { color: 'rgba(255,255,255,0.05)' },
-                ticks: { color: '#a0a0b0', font: { size: 11 }, maxRotation: 0 }
-            },
-            y: Object.assign({
-                grid: { color: 'rgba(255,255,255,0.05)' },
-                ticks: {
-                    color: '#a0a0b0',
-                    font: { family: "'JetBrains Mono', monospace", size: 11 },
-                    callback: function(v) { return v.toFixed(3); }
-                }
-            }, extraYOpts)
-        }
-    };
-}
-
-// Inline Chart.js plugin: draws horizontal equilibrium reference lines
-const equilibriumPlugin = {
-    id: 'equilibriumLines',
-    afterDraw(chart) {
-        const lines = chart.options.plugins?.equilibriumLines;
-        if (!lines || !lines.length) return;
-        const { ctx } = chart;
-        const yScale = chart.scales.y;
-        const xStart = chart.chartArea.left;
-        const xEnd = chart.chartArea.right;
-
-        lines.forEach(line => {
-            const y = yScale.getPixelForValue(line.value);
-            if (y < chart.chartArea.top || y > chart.chartArea.bottom) return;
-
-            ctx.save();
-            ctx.beginPath();
-            ctx.strokeStyle = line.color || 'rgba(255,255,255,0.15)';
-            ctx.lineWidth = 1;
-            ctx.setLineDash(line.dash || [4, 4]);
-            ctx.moveTo(xStart, y);
-            ctx.lineTo(xEnd, y);
-            ctx.stroke();
-
-            if (line.label) {
-                ctx.font = '10px Inter, sans-serif';
-                ctx.fillStyle = line.color || 'rgba(255,255,255,0.3)';
-                ctx.textAlign = 'right';
-                ctx.fillText(line.label, xEnd - 4, y - 4);
-            }
-            ctx.restore();
-        });
-    }
-};
-Chart.register(equilibriumPlugin);
-
-function initEISVChart() {
-    const upperCtx = document.getElementById('eisv-chart-upper');
-    const lowerCtx = document.getElementById('eisv-chart-lower');
-    if (!upperCtx || !lowerCtx) return;
-
-    // Upper chart: E, I, Coherence — these cluster around 0.5-0.6
-    const upperOpts = makeChartOptions({ grace: '5%' });
-    upperOpts.plugins.equilibriumLines = [
-        { value: 0.593, label: 'E eq ≈0.593', color: 'rgba(124,58,237,0.3)', dash: [3, 6] },
-        { value: 0.595, label: 'I eq ≈0.595', color: 'rgba(16,185,129,0.3)', dash: [3, 6] },
-        { value: 0.499, label: 'Coh eq ≈0.50', color: 'rgba(6,182,212,0.3)', dash: [3, 6] }
-    ];
-
-    eisvChartUpper = new Chart(upperCtx, {
-        type: 'line',
-        data: {
-            datasets: [
-                { label: 'Energy (E)', borderColor: '#7c3aed', backgroundColor: 'rgba(124,58,237,0.08)', fill: true, data: [], tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 },
-                { label: 'Integrity (I)', borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.08)', fill: true, data: [], tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 },
-                { label: 'Coherence', borderColor: '#06b6d4', backgroundColor: 'transparent', data: [], tension: 0.3, pointRadius: 0, borderWidth: 2, borderDash: [6, 3] }
-            ]
-        },
-        options: upperOpts
-    });
-
-    // Lower chart: S, V — near zero, need their own scale
-    const lowerOpts = makeChartOptions({ grace: '10%' });
-    lowerOpts.plugins.equilibriumLines = [
-        { value: 0.012, label: 'S eq ≈0.012', color: 'rgba(245,158,11,0.3)', dash: [3, 6] },
-        { value: 0.0, label: 'zero', color: 'rgba(255,255,255,0.1)', dash: [2, 4] }
-    ];
-
-    eisvChartLower = new Chart(lowerCtx, {
-        type: 'line',
-        data: {
-            datasets: [
-                { label: 'Entropy (S)', borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.08)', fill: true, data: [], tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 },
-                { label: 'Void (V)', borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', fill: true, data: [], tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 }
-            ]
-        },
-        options: lowerOpts
-    });
-}
-
-function addEISVDataPoint(data) {
-    if (!eisvChartUpper || !eisvChartLower) return;
-    const ts = new Date(data.timestamp);
-    const tsMs = ts.getTime();
-    const eisv = data.eisv || {};
-    const agentId = data.agent_id || 'unknown';
-    const agentName = data.agent_name || agentId;
-
-    // Store in per-agent history
-    if (!agentEISVHistory[agentId]) {
-        agentEISVHistory[agentId] = [];
-    }
-    agentEISVHistory[agentId].push({
-        ts: tsMs,
-        name: agentName,
-        E: eisv.E ?? 0,
-        I: eisv.I ?? 0,
-        S: eisv.S ?? 0,
-        V: eisv.V ?? 0,
-        coherence: data.coherence ?? 0
-    });
-
-    // Track known agents for dropdown
-    if (!knownAgents.has(agentId)) {
-        knownAgents.add(agentId);
-        updateAgentDropdown();
-    }
-
-    // Trim old data from all agent histories
-    const cutoff = tsMs - CONFIG.EISV_WINDOW_MS;
-    for (const aid of Object.keys(agentEISVHistory)) {
-        agentEISVHistory[aid] = agentEISVHistory[aid].filter(pt => pt.ts >= cutoff);
-        if (agentEISVHistory[aid].length === 0) {
-            delete agentEISVHistory[aid];
-            knownAgents.delete(aid);
-        }
-    }
-
-    // Update chart based on selected view
-    if (selectedAgentView === '__fleet__') {
-        // Rebuild with fleet average (includes new data point)
-        rebuildChartFromSelection();
-    } else if (selectedAgentView === '__all__' || selectedAgentView === agentId) {
-        // Add point directly to chart
-        eisvChartUpper.data.datasets[0].data.push({ x: ts, y: eisv.E ?? 0 });
-        eisvChartUpper.data.datasets[1].data.push({ x: ts, y: eisv.I ?? 0 });
-        eisvChartUpper.data.datasets[2].data.push({ x: ts, y: data.coherence ?? 0 });
-        eisvChartLower.data.datasets[0].data.push({ x: ts, y: eisv.S ?? 0 });
-        eisvChartLower.data.datasets[1].data.push({ x: ts, y: eisv.V ?? 0 });
-
-        // Trim chart data by time and point count
-        const cutoffDate = new Date(cutoff);
-        [eisvChartUpper, eisvChartLower].forEach(chart => {
-            chart.data.datasets.forEach(ds => {
-                // Remove old data points by time
-                while (ds.data.length > 0 && ds.data[0].x < cutoffDate) {
-                    ds.data.shift();
-                }
-                // Limit to max points to prevent unbounded memory growth
-                while (ds.data.length > CONFIG.EISV_MAX_POINTS) {
-                    ds.data.shift();
-                }
-            });
-        });
-        requestAnimationFrame(() => {
-            eisvChartUpper.update('none');
-            eisvChartLower.update('none');
-        });
-    }
-    // If viewing a different specific agent, don't update chart
-
-    // Update info label with latest values
-    const info = document.getElementById('eisv-chart-info');
-    if (info) {
-        const shortName = agentName.length > 16 ? agentName.substring(0, 16) + '...' : agentName;
-        const viewLabel = selectedAgentView === '__fleet__' ? '(fleet avg)' :
-                          selectedAgentView === '__all__' ? '(all)' : '';
-        info.innerHTML = `<span class="eisv-agent-label">${escapeHtml(shortName)} ${viewLabel}</span>` +
-            ` <span class="eisv-value" style="color:#7c3aed">E ${(eisv.E ?? 0).toFixed(3)}</span>` +
-            ` <span class="eisv-value" style="color:#10b981">I ${(eisv.I ?? 0).toFixed(3)}</span>` +
-            ` <span class="eisv-value" style="color:#f59e0b">S ${(eisv.S ?? 0).toFixed(4)}</span>` +
-            ` <span class="eisv-value" style="color:#ef4444">V ${(eisv.V ?? 0).toFixed(5)}</span>`;
-    }
-
-    // Hide empty message
-    const emptyMsg = document.getElementById('eisv-chart-empty');
-    if (emptyMsg) emptyMsg.style.display = 'none';
-
-    // Update Governance Pulse panel
-    updateGovernancePulse(data);
-}
-
-let lastVitalsTimestamp = null;
-const MAX_LOG_ENTRIES = 8;
-
-const DRIFT_AXES = ['emotional', 'epistemic', 'behavioral'];
-const TREND_ICONS = {
-    stable: '',
-    oscillating: '~',
-    drifting_up: '\u2197',   // ↗
-    drifting_down: '\u2198'  // ↘
-};
-const TREND_COLORS = {
-    stable: '#6b7280',
-    oscillating: '#06b6d4',
-    drifting_up: '#ef4444',
-    drifting_down: '#3b82f6'
-};
-
-function updateDriftGauge(index, value, trendInfo) {
-    const fill = document.getElementById('drift-g-' + index);
-    const valEl = document.getElementById('drift-v-' + index);
-    const trendEl = document.getElementById('drift-trend-' + index);
-    if (!fill) return;
-
-    const clamped = Math.max(-0.5, Math.min(0.5, value));
-    const pct = Math.abs(clamped) / 0.5 * 50;
-
-    if (clamped >= 0) {
-        fill.style.left = '50%';
-        fill.style.width = pct + '%';
-        fill.style.background = pct > 20 ? '#ef4444' : pct > 5 ? '#f59e0b' : '#6b7280';
-    } else {
-        fill.style.left = (50 - pct) + '%';
-        fill.style.width = pct + '%';
-        fill.style.background = pct > 20 ? '#3b82f6' : pct > 5 ? '#06b6d4' : '#6b7280';
-    }
-
-    if (valEl) {
-        valEl.textContent = (clamped >= 0 ? '+' : '') + clamped.toFixed(3);
-        valEl.style.color = Math.abs(clamped) < 0.005 ? '' :
-            clamped > 0 ? '#ef4444' : '#3b82f6';
-    }
-
-    // Update trend indicator
-    if (trendEl && trendInfo) {
-        const trend = trendInfo.trend || 'stable';
-        const strength = trendInfo.strength || 0;
-        trendEl.textContent = TREND_ICONS[trend] || '';
-        trendEl.style.color = TREND_COLORS[trend] || '#6b7280';
-        trendEl.style.opacity = 0.5 + (strength * 0.5);  // Scale opacity by confidence
-        trendEl.title = trend.replace('_', ' ') + (strength > 0.5 ? ' (strong)' : '');
-    } else if (trendEl) {
-        trendEl.textContent = '';
-    }
-}
-
-function updateGovernanceVerdict(data) {
-    const verdict = document.getElementById('gov-verdict');
-    if (!verdict) return;
-    const label = verdict.querySelector('.verdict-label');
-
-    const risk = data.risk;
-    if (risk == null) return;
-
-    let text, cls;
-    if (risk < 0.35) {
-        text = 'Approve'; cls = '';
-    } else if (risk < 0.60) {
-        text = 'Proceed'; cls = 'risk-elevated';
-    } else if (risk < 0.70) {
-        text = 'Pause'; cls = 'risk-high';
-    } else {
-        text = 'Critical'; cls = 'risk-high';
-    }
-
-    if (label) label.textContent = text;
-    verdict.className = 'governance-verdict' + (cls ? ' ' + cls : '');
-}
-
-function updateDataFreshness(timestamp) {
-    const el = document.getElementById('data-freshness');
-    if (!el || !timestamp) return;
-    lastVitalsTimestamp = new Date(timestamp);
-    updateFreshnessDisplay();
-}
-
-function updateFreshnessDisplay() {
-    const el = document.getElementById('data-freshness');
-    if (!el || !lastVitalsTimestamp) return;
-
-    const ago = Math.floor((Date.now() - lastVitalsTimestamp.getTime()) / 1000);
-    if (ago < 5) {
-        el.textContent = 'just now';
-        el.className = 'data-freshness fresh';
-    } else if (ago < 60) {
-        el.textContent = ago + 's ago';
-        el.className = 'data-freshness fresh';
-    } else if (ago < 300) {
-        el.textContent = Math.floor(ago / 60) + 'm ago';
-        el.className = 'data-freshness';
-    } else {
-        el.textContent = Math.floor(ago / 60) + 'm ago';
-        el.className = 'data-freshness stale';
-    }
-}
-
-setInterval(updateFreshnessDisplay, 5000);
-
-// Event icons by type
-const EVENT_ICONS = {
-    verdict_change: '⚡',
-    risk_threshold: '📊',
-    trajectory_adjustment: '🎯',
-    drift_alert: '🌊',
-    agent_new: '✨',
-    agent_idle: '💤'
-};
-
-// Severity to CSS class mapping
-const SEVERITY_CLASSES = {
-    info: 'event-info',
-    warning: 'event-warning',
-    critical: 'event-critical'
-};
-
+// EISV functions removed — see eisv-charts.js
+// (computeFleetAverage, rebuildChartFromSelection, makeChartOptions, equilibriumPlugin,
+//  initEISVChart, addEISVDataPoint, drift gauges, governance verdict/pulse,
+//  decisions log, events log, value animations, WebSocket init)
+// Module self-initializes chart + WebSocket on DOMContentLoaded.
 // ============================================
-// Recent Decisions Log (coalesced check-ins)
+// Timeline Module (timeline.js)
 // ============================================
-const MAX_DECISIONS = 8;
-const recentDecisions = []; // {agent_id, agent_name, verdict, risk, timestamp, count}
-
-function getVerdictBadge(verdict, risk) {
-    // Determine verdict from risk if not provided
-    let v = verdict || 'safe';
-    if (!verdict && risk != null) {
-        if (risk < 0.35) v = 'approve';
-        else if (risk < 0.60) v = 'proceed';
-        else if (risk < 0.70) v = 'pause';
-        else v = 'critical';
-    }
-    const badges = {
-        'safe': { text: 'A', cls: 'verdict-approve', title: 'Approve' },
-        'approve': { text: 'A', cls: 'verdict-approve', title: 'Approve' },
-        'caution': { text: 'P', cls: 'verdict-proceed', title: 'Proceed' },
-        'proceed': { text: 'P', cls: 'verdict-proceed', title: 'Proceed' },
-        'elevated': { text: 'P', cls: 'verdict-proceed', title: 'Proceed with caution' },
-        'pause': { text: '!', cls: 'verdict-pause', title: 'Pause' },
-        'high-risk': { text: '!', cls: 'verdict-pause', title: 'High Risk' },
-        'critical': { text: 'X', cls: 'verdict-critical', title: 'Critical' }
-    };
-    return badges[v] || badges['safe'];
-}
-
-function formatCompactTime(timestamp) {
-    const now = Date.now();
-    const ts = new Date(timestamp).getTime();
-    const diff = Math.floor((now - ts) / 1000);
-    if (diff < 5) return 'now';
-    if (diff < 60) return diff + 's';
-    if (diff < 3600) return Math.floor(diff / 60) + 'm';
-    if (diff < 86400) return Math.floor(diff / 3600) + 'h';
-    return Math.floor(diff / 86400) + 'd';
-}
-
-function truncateAgentName(name, maxLen = 15) {
-    if (!name) return 'unknown';
-    if (name.length <= maxLen) return name;
-    return name.substring(0, maxLen - 3) + '...';
-}
-
-function addDecision(data) {
-    const agentId = data.agent_id || 'unknown';
-    const agentName = data.agent_name || agentId;
-    const verdict = data.metrics?.verdict || data.decision?.action || 'safe';
-    const risk = data.risk != null ? data.risk : 0;
-    const timestamp = data.timestamp || new Date().toISOString();
-    const now = Date.now();
-
-    // Check if we should coalesce with existing entry
-    const existing = recentDecisions.find(d =>
-        d.agent_id === agentId &&
-        (now - new Date(d.timestamp).getTime()) < CONFIG.COALESCE_WINDOW_MS
-    );
-
-    if (existing) {
-        // Coalesce: update values and increment count
-        existing.verdict = verdict;
-        existing.risk = risk;
-        existing.timestamp = timestamp;
-        existing.count++;
-    } else {
-        // Add new entry at start
-        recentDecisions.unshift({
-            agent_id: agentId,
-            agent_name: agentName,
-            verdict: verdict,
-            risk: risk,
-            timestamp: timestamp,
-            count: 1
-        });
-        // Trim to max
-        while (recentDecisions.length > MAX_DECISIONS) {
-            recentDecisions.pop();
-        }
-    }
-
-    renderDecisionsLog();
-}
-
-function renderDecisionsLog() {
-    const container = document.getElementById('decisions-log-entries');
-    if (!container) return;
-
-    if (recentDecisions.length === 0) {
-        container.innerHTML = '<div class="pulse-log-empty">No decisions yet</div>';
-        return;
-    }
-
-    container.innerHTML = recentDecisions.map(d => {
-        const badge = getVerdictBadge(d.verdict, d.risk);
-        const countStr = d.count > 1 ? ` <span class="decision-count">×${d.count}</span>` : '';
-        const nameDisplay = truncateAgentName(d.agent_name);
-        const timeStr = formatCompactTime(d.timestamp);
-        const riskStr = d.risk != null ? d.risk.toFixed(2) : '—';
-
-        return `
-            <div class="decision-entry" title="${escapeHtml(d.agent_name)} • Risk: ${riskStr} • ${badge.title}">
-                <span class="decision-badge ${badge.cls}" title="${badge.title}">${badge.text}</span>
-                <span class="decision-agent">${escapeHtml(nameDisplay)}${countStr}</span>
-                <span class="decision-risk">(${riskStr})</span>
-                <span class="decision-time">${timeStr}</span>
-            </div>`;
-    }).join('');
-}
-
-// Update decisions log timestamps every 5 seconds
-setInterval(renderDecisionsLog, 5000);
-
-function addEventEntry(event) {
-    const container = document.getElementById('events-log-entries');
-    if (!container) return;
-
-    // Remove empty placeholder
-    const empty = container.querySelector('.pulse-log-empty');
-    if (empty) empty.remove();
-
-    const ts = event.timestamp ? new Date(event.timestamp) : new Date();
-    const icon = EVENT_ICONS[event.type] || '📌';
-    const severityClass = SEVERITY_CLASSES[event.severity] || 'event-info';
-
-    const entry = document.createElement('div');
-    entry.className = `pulse-log-entry ${severityClass}`;
-    entry.innerHTML =
-        `<span class="event-icon">${icon}</span>` +
-        `<span class="log-time">${ts.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</span>` +
-        `<span class="event-message">${escapeHtml(event.message || event.type)}</span>`;
-
-    // Add tooltip with details
-    if (event.reason) {
-        entry.title = event.reason;
-    }
-
-    container.insertBefore(entry, container.firstChild);
-
-    // Trim to max entries
-    while (container.children.length > MAX_LOG_ENTRIES) {
-        container.removeChild(container.lastChild);
-    }
-}
-
-// Fetch initial events on page load
-async function fetchInitialEvents() {
-    try {
-        const response = await fetch('/api/events?limit=20');
-        const data = await response.json();
-        if (data.success && data.events && data.events.length > 0) {
-            // Add events in reverse order (oldest first) so newest end up on top
-            data.events.slice().reverse().forEach(event => addEventEntry(event));
-        }
-    } catch (e) {
-        console.debug('Could not fetch initial events:', e);
-    }
-}
-
-// Animate value update with glow effect
-function updateValueWithGlow(element, newValue) {
-    if (!element) return;
-    const oldValue = element.textContent;
-    element.textContent = newValue;
-    if (oldValue !== newValue) {
-        element.classList.add('live-update');
-        setTimeout(() => element.classList.remove('live-update'), 800);
-    }
-}
-
-function updateGovernancePulse(data) {
-    // Agent name display
-    const agentNameEl = document.getElementById('pulse-agent-name');
-    const agentName = data.agent_name || data.agent_id || 'unknown';
-    if (agentNameEl) {
-        // Truncate long names
-        const displayName = agentName.length > 20 ? agentName.substring(0, 17) + '...' : agentName;
-        agentNameEl.textContent = displayName;
-        agentNameEl.title = agentName;
-    }
-
-    // Risk bar with adjustment info
-    const risk = data.risk;
-    if (risk != null) {
-        const rBar = document.getElementById('v-risk');
-        const rVal = document.getElementById('vv-risk');
-        const rDetail = document.getElementById('vv-risk-detail');
-        if (rBar) {
-            rBar.style.width = (risk * 100).toFixed(0) + '%';
-            // Dynamic color: green (<0.35) → yellow (0.35-0.6) → orange (0.6-0.7) → red (>0.7)
-            const riskColor = risk < 0.35 ? '#22c55e' : risk < 0.6 ? '#eab308' : risk < 0.7 ? '#f97316' : '#ef4444';
-            rBar.style.background = riskColor;
-        }
-        updateValueWithGlow(rVal, risk.toFixed(3));
-
-        // Show risk adjustment if present
-        if (rDetail) {
-            const adjustment = data.risk_adjustment || 0;
-            const rawRisk = data.risk_raw || risk;
-            const reason = data.risk_reason || '';
-            if (adjustment !== 0) {
-                const sign = adjustment > 0 ? '+' : '';
-                rDetail.textContent = `(${sign}${(adjustment * 100).toFixed(0)}%)`;
-                rDetail.title = reason || `Base: ${(rawRisk * 100).toFixed(1)}%, Adjusted: ${(risk * 100).toFixed(1)}%`;
-                rDetail.style.color = adjustment > 0 ? 'var(--risk-high, #ef4444)' : 'var(--risk-low, #22c55e)';
-            } else {
-                rDetail.textContent = '';
-                rDetail.title = '';
-            }
-        }
-    }
-
-    // Governance input signals
-    const inputs = data.inputs;
-    if (inputs) {
-        const cxBar = document.getElementById('v-complexity');
-        const cxVal = document.getElementById('vv-complexity');
-        if (cxBar && inputs.complexity != null) {
-            cxBar.style.width = (inputs.complexity * 100).toFixed(0) + '%';
-            // Complexity: low=cyan, medium=yellow, high=orange
-            const cx = inputs.complexity;
-            const cxColor = cx < 0.4 ? '#00f0ff' : cx < 0.7 ? '#eab308' : '#f97316';
-            cxBar.style.background = cxColor;
-        }
-        if (inputs.complexity != null) updateValueWithGlow(cxVal, inputs.complexity.toFixed(2));
-
-        const cfBar = document.getElementById('v-confidence');
-        const cfVal = document.getElementById('vv-confidence');
-        if (cfBar && inputs.confidence != null) {
-            cfBar.style.width = (inputs.confidence * 100).toFixed(0) + '%';
-            // Confidence: low=orange, medium=yellow, high=green
-            const cf = inputs.confidence;
-            const cfColor = cf < 0.5 ? '#f97316' : cf < 0.75 ? '#eab308' : '#22c55e';
-            cfBar.style.background = cfColor;
-        }
-        if (inputs.confidence != null) updateValueWithGlow(cfVal, inputs.confidence.toFixed(2));
-
-        const drift = inputs.ethical_drift;
-        const driftTrends = data.drift_trends || {};
-        if (drift && drift.length === 3) {
-            for (let i = 0; i < 3; i++) {
-                const axis = DRIFT_AXES[i];
-                const trendInfo = driftTrends[axis] || null;
-                updateDriftGauge(i, drift[i], trendInfo);
-            }
-        }
-    }
-
-    // Verdict badge
-    updateGovernanceVerdict(data);
-
-    // Events log - add any events from this update
-    if (data.events && data.events.length > 0) {
-        data.events.forEach(event => addEventEntry(event));
-    }
-
-    // Data freshness
-    updateDataFreshness(data.timestamp);
-}
-
-function initWebSocket() {
-    if (typeof EISVWebSocket === 'undefined') {
-        console.warn('EISVWebSocket not available');
-        return;
-    }
-
-    eisvWebSocket = new EISVWebSocket(
-        // onUpdate
-        function(data) {
-            if (data.type === 'eisv_update') {
-                addEISVDataPoint(data);
-
-                // Also update agent card if visible
-                updateAgentCardFromWS(data);
-            }
-        },
-        // onStatusChange
-        function(status) {
-            const wsStatus = document.getElementById('ws-status');
-            const wsDot = wsStatus ? wsStatus.querySelector('.ws-dot') : null;
-            const wsLabel = wsStatus ? wsStatus.querySelector('.ws-label') : null;
-            if (wsDot) {
-                wsDot.className = 'ws-dot ' + status;
-            }
-            if (wsStatus) {
-                const titles = {
-                    connected: 'Live via WebSocket',
-                    disconnected: 'WebSocket disconnected',
-                    reconnecting: 'WebSocket reconnecting...',
-                    polling: 'Live via HTTP polling (WebSocket unavailable)'
-                };
-                wsStatus.title = titles[status] || status;
-            }
-            if (wsLabel) {
-                wsLabel.textContent = status === 'polling' ? 'Polling' : 'Live';
-            }
-            console.log('[WS] Status:', status);
-        }
-    );
-
-    eisvWebSocket.connect();
-}
-
-function updateAgentCardFromWS(data) {
-    // Find the agent card by agent_name or agent_id and flash it
-    const agentCards = document.querySelectorAll('.agent-item');
-    for (const card of agentCards) {
-        const nameEl = card.querySelector('.agent-name');
-        if (nameEl && (nameEl.textContent.includes(data.agent_name) || nameEl.textContent.includes(data.agent_id))) {
-            card.style.borderLeftColor = '#10b981';
-            card.style.boxShadow = '0 0 12px rgba(16,185,129,0.2)';
-            setTimeout(() => {
-                card.style.borderLeftColor = '';
-                card.style.boxShadow = '';
-            }, CONFIG.SCROLL_FEEDBACK_MS);
-            break;
-        }
-    }
-}
-
-// Clear chart button
-document.getElementById('eisv-chart-clear')?.addEventListener('click', () => {
-    [eisvChartUpper, eisvChartLower].forEach(chart => {
-        if (chart) {
-            chart.data.datasets.forEach(ds => { ds.data = []; });
-        }
-    });
-    requestAnimationFrame(() => {
-        if (eisvChartUpper) eisvChartUpper.update();
-        if (eisvChartLower) eisvChartLower.update();
-    });
-    const emptyMsg = document.getElementById('eisv-chart-empty');
-    if (emptyMsg) emptyMsg.style.display = '';
-    const info = document.getElementById('eisv-chart-info');
-    if (info) info.innerHTML = '';
-});
-
-// Initialize chart — delay to ensure canvas has dimensions
-requestAnimationFrame(() => {
-    initEISVChart();
-    initWebSocket();
-});
-
-// ============================================
-// Skeleton loader initialization
-// ============================================
-function initSkeletons() {
-    if (typeof LoadingSkeleton === 'undefined') return;
-    const skeletonTargets = {
-        'agents-skeleton': { type: 'listItem', count: 3 },
-        'discoveries-skeleton': { type: 'card', count: 3 },
-        'dialectic-skeleton': { type: 'card', count: 2 },
-    };
-    for (const [id, config] of Object.entries(skeletonTargets)) {
-        const el = document.getElementById(id);
-        if (el) {
-            el.innerHTML = LoadingSkeleton.create(config.type, config.count);
-        }
-    }
-}
-initSkeletons();
-
-// ============================================
-// Agent Activity Timeline
-// ============================================
-function getVerdictClass(agent) {
-    const verdict = (agent.metrics || {}).verdict || '';
-    if (verdict === 'safe' || verdict === 'approve') return 'safe';
-    if (verdict === 'caution' || verdict === 'proceed') return 'caution';
-    if (verdict === 'high-risk' || verdict === 'pause') return 'high-risk';
-    return 'unknown';
-}
-
-function getVerdictLabel(agent) {
-    const verdict = (agent.metrics || {}).verdict;
-    return verdict || getAgentStatus(agent);
-}
-
-function renderTimeline() {
-    const container = document.getElementById('timeline-container');
-    if (!container) return;
-
-    const rangeSelect = document.getElementById('timeline-range');
-    const range = rangeSelect ? rangeSelect.value : '24h';
-
-    // Build timeline events from cached agents
-    const now = Date.now();
-    let cutoff = 0;
-    if (range === '1h') cutoff = now - CONFIG.HOUR_MS;
-    else if (range === '24h') cutoff = now - CONFIG.DAY_MS;
-    else if (range === '7d') cutoff = now - CONFIG.WEEK_MS;
-
-    const events = cachedAgents
-        .filter(agent => {
-            const t = new Date(agent.last_update || agent.created_at || 0).getTime();
-            return t > cutoff && !isNaN(t);
-        })
-        .map(agent => {
-            const t = new Date(agent.last_update || agent.created_at || 0);
-            return {
-                time: t,
-                agent: agent,
-                name: getAgentDisplayName(agent),
-                verdictClass: getVerdictClass(agent),
-                verdictLabel: getVerdictLabel(agent),
-                status: getAgentStatus(agent),
-                agentId: agent.agent_id,
-            };
-        })
-        .sort((a, b) => b.time - a.time)
-        .slice(0, 30);
-
-    if (events.length === 0) {
-        container.innerHTML = '<div class="timeline-empty">No activity in this time range</div>';
-        return;
-    }
-
-    container.innerHTML = events.map((ev, idx) => {
-        const relative = formatRelativeTime(ev.time.getTime()) || 'just now';
-        const isLatest = idx === 0;
-        return `
-            <div class="timeline-item ${isLatest ? 'timeline-latest' : ''}" data-agent-uuid="${escapeHtml(ev.agentId)}" title="Click for details">
-                <div class="timeline-dot ${ev.verdictClass}"></div>
-                <div class="timeline-content">
-                    <div class="timeline-row-primary">
-                        <span class="timeline-agent">${escapeHtml(ev.name)}</span>
-                        <span class="timeline-time">${escapeHtml(relative)}</span>
-                    </div>
-                    <div class="timeline-row-secondary">
-                        <span class="timeline-action ${ev.verdictClass}">${escapeHtml(ev.verdictLabel)}</span>
-                        <span class="timeline-status">${escapeHtml(ev.status)}</span>
-                    </div>
-                </div>
-            </div>`;
-    }).join('');
-}
-
-// Timeline range filter
-const timelineRange = document.getElementById('timeline-range');
-if (timelineRange) {
-    timelineRange.addEventListener('change', renderTimeline);
-}
-
-// Timeline click → agent detail modal
-const timelineContainer = document.getElementById('timeline-container');
-if (timelineContainer) {
-    timelineContainer.addEventListener('click', (event) => {
-        const item = event.target.closest('.timeline-item');
-        if (!item) return;
-        const agentId = item.getAttribute('data-agent-uuid');
-        if (!agentId) return;
-        const agent = cachedAgents.find(a => (a.agent_id || '') === agentId);
-        if (agent) showAgentDetail(agent);
-    });
-}
+// Skeletons, timeline rendering, WS status label now in TimelineModule.
+// Module self-initializes skeletons, range filter, and click handlers.
+var renderTimeline = TimelineModule.renderTimeline;
+var updateWSStatusLabel = TimelineModule.updateWSStatusLabel;
 
 // Hook timeline into refresh cycle — update after agents load
 const originalLoadAgents = loadAgents;
@@ -3364,33 +1413,15 @@ loadAgents = async function() {
     return result;
 };
 
-// ============================================
-// WebSocket status label sync
-// ============================================
-function updateWSStatusLabel(status) {
-    const dot = document.querySelector('#ws-status .ws-dot');
-    const label = document.querySelector('#ws-status .ws-label');
-    const container = document.getElementById('ws-status');
-    if (!dot || !label || !container) return;
-
-    dot.className = 'ws-dot ' + status;
-    const labels = { connected: 'Live', polling: 'Polling', reconnecting: 'Reconnecting', disconnected: 'Offline' };
-    label.textContent = labels[status] || 'Offline';
-    const titles = { connected: 'Connected via WebSocket', polling: 'Polling (WebSocket unavailable)', reconnecting: 'Reconnecting...', disconnected: 'Offline' };
-    container.title = titles[status] || 'Offline';
-}
-
 // Patch EISV WebSocket to update status label
 if (typeof EISVWebSocket !== 'undefined') {
     const origInitWS = initWebSocket;
     initWebSocket = function() {
         origInitWS();
-        // Monitor WS connection state changes
         const checkInterval = setInterval(() => {
             const wsEl = document.querySelector('#ws-status .ws-dot');
             if (!wsEl) return;
             const currentClass = wsEl.className;
-            // The EISVWebSocket class updates dot classes — sync the label
             if (currentClass.includes('connected')) updateWSStatusLabel('connected');
             else if (currentClass.includes('polling')) updateWSStatusLabel('polling');
             else if (currentClass.includes('reconnecting')) updateWSStatusLabel('reconnecting');
@@ -3398,6 +1429,41 @@ if (typeof EISVWebSocket !== 'undefined') {
         }, CONFIG.SCROLL_FEEDBACK_MS);
     };
 }
+
+// ============================================
+// Fleet Heatmap Toggle
+// ============================================
+(function initHeatmap() {
+    const toggleBtn = document.getElementById('heatmap-toggle');
+    const closeBtn = document.getElementById('heatmap-close');
+    const panel = document.getElementById('heatmap-panel');
+    if (!toggleBtn || !panel) return;
+
+    function renderHeatmap() {
+        if (typeof FleetHeatmap === 'undefined') return;
+        const agentsWithMetrics = cachedAgents.filter(a => agentHasMetrics(a)).slice(0, 30);
+        if (agentsWithMetrics.length === 0) return;
+        const heatmap = new FleetHeatmap('fleet-heatmap');
+        heatmap.render(agentsWithMetrics);
+    }
+
+    function toggleHeatmap() {
+        const isVisible = panel.style.display !== 'none';
+        panel.style.display = isVisible ? 'none' : '';
+        if (!isVisible) renderHeatmap();
+    }
+
+    toggleBtn.addEventListener('click', toggleHeatmap);
+    if (closeBtn) closeBtn.addEventListener('click', () => { panel.style.display = 'none'; });
+
+    // Re-render on each refresh if visible
+    const origRefresh = refresh;
+    refresh = async function() {
+        const result = await origRefresh();
+        if (panel.style.display !== 'none') renderHeatmap();
+        return result;
+    };
+})();
 
 // Initial load
 console.log('Dashboard initializing...');

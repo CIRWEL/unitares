@@ -39,7 +39,7 @@ Message Types (per UARG spec) - ALL IMPLEMENTED:
 """
 
 from typing import Dict, Any, Sequence, Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from dataclasses import dataclass, field
 from collections import deque
@@ -372,7 +372,7 @@ def _get_recent_resonance_signals(
     signal_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Get recent resonance-related signals."""
-    cutoff = (datetime.utcnow() - timedelta(minutes=max_age_minutes)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
     results = []
     for signal in reversed(_resonance_alert_buffer):
         if signal["timestamp"] < cutoff:
@@ -1015,7 +1015,7 @@ def maybe_emit_resonance_signal(
         # Entering resonance -> emit RESONANCE_ALERT
         alert = ResonanceAlert(
             agent_id=agent_id,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             oi=float(cirs_result.get("oi", 0.0)),
             phase=str(cirs_result.get("phase", "unknown")),
             tau_current=float(cirs_result.get("tau", 0.40)),
@@ -1033,7 +1033,7 @@ def maybe_emit_resonance_signal(
         # Exiting resonance -> emit STABILITY_RESTORED
         restored = StabilityRestored(
             agent_id=agent_id,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             oi=float(cirs_result.get("oi", 0.0)),
             tau_settled=float(cirs_result.get("tau", 0.40)),
             beta_settled=float(cirs_result.get("beta", 0.60)),
@@ -2240,7 +2240,7 @@ async def handle_resonance_alert(arguments: Dict[str, Any]) -> Sequence[TextCont
 
         alert = ResonanceAlert(
             agent_id=agent_id,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             oi=float(arguments.get("oi", 0.0)),
             phase=str(arguments.get("phase", "unknown")),
             tau_current=float(arguments.get("tau_current", 0.4)),
@@ -2297,7 +2297,7 @@ async def handle_stability_restored(arguments: Dict[str, Any]) -> Sequence[TextC
 
     restored = StabilityRestored(
         agent_id=agent_id,
-        timestamp=datetime.utcnow().isoformat(),
+        timestamp=datetime.now(timezone.utc).isoformat(),
         oi=float(arguments.get("oi", 0.0)),
         tau_settled=float(arguments.get("tau_settled", 0.4)),
         beta_settled=float(arguments.get("beta_settled", 0.6)),

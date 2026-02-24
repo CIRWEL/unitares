@@ -3953,7 +3953,8 @@ DEPENDENCIES:
             description="""Leave a quick note in the knowledge graph - minimal friction contribution.
 
 Just agent_id + summary + optional tags. Auto-sets type='note', severity='low'.
-For when you want to jot something down without the full store_knowledge_graph ceremony.
+Notes are ephemeral by default — auto-archived after 7 days unless lasting=true or tags include a permanent signal (e.g. "architecture", "decision").
+For lasting knowledge, use store_knowledge_graph instead.
 
 USE CASES:
 - Quick observations during exploration
@@ -4052,6 +4053,11 @@ DEPENDENCIES:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Optional tags for categorization and auto-linking"
+                    },
+                    "lasting": {
+                        "type": "boolean",
+                        "description": "Set true to prevent auto-archival. Notes are ephemeral by default (archived after 7 days). Use for observations worth keeping long-term.",
+                        "default": False
                     },
                     "response_to": {
                         "type": "object",

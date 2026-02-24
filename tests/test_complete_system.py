@@ -4,12 +4,9 @@ Complete System Test - Denouement
 Run 30-39 iterations through MCP server with full lifecycle tracking
 """
 
-import sys
 import json
 import numpy as np
 from datetime import datetime
-
-sys.path.insert(0, '/Users/cirwel/projects/governance-mcp-v1')
 
 from src.mcp_server_std import monitors, agent_metadata, load_metadata
 from src.governance_monitor import UNITARESMonitor

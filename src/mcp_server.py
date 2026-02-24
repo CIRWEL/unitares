@@ -1603,6 +1603,25 @@ async def main():
         # Start auto calibration task (non-blocking)
         asyncio.create_task(startup_auto_calibration())
 
+        # === Background task: KG lifecycle cleanup (daily) ===
+        async def startup_kg_lifecycle():
+            """Start periodic KG lifecycle cleanup after server init."""
+            await asyncio.sleep(5.0)  # Wait for KG to be available
+            try:
+                from src.knowledge_graph_lifecycle import kg_lifecycle_background_task, run_kg_lifecycle_cleanup
+                # Run initial cleanup at startup
+                result = await run_kg_lifecycle_cleanup(dry_run=False)
+                archived = result.get("ephemeral_archived", 0) + result.get("discoveries_archived", 0)
+                if archived > 0:
+                    logger.info(f"KG lifecycle startup: archived {archived} entries")
+                # Start periodic task (runs every 24 hours)
+                asyncio.create_task(kg_lifecycle_background_task(interval_hours=24.0))
+                logger.info("Started periodic KG lifecycle cleanup (runs every 24 hours)")
+            except Exception as e:
+                logger.warning(f"Could not start KG lifecycle task: {e}", exc_info=True)
+
+        asyncio.create_task(startup_kg_lifecycle())
+
         # === Background task: Metadata loading (non-blocking) ===
         async def background_metadata_load():
             """Load metadata in background after server starts accepting connections."""
@@ -2271,7 +2290,12 @@ async def main():
                 return JSONResponse({"error": "Invalid file path"}, status_code=400)
             
             # Only allow specific files for security
-            allowed_files = ["utils.js", "components.js", "styles.css", "dashboard.js"]
+            allowed_files = [
+                "utils.js", "state.js", "colors.js", "components.js",
+                "visualizations.js", "agents.js", "discoveries.js",
+                "dialectic.js", "eisv-charts.js", "timeline.js",
+                "styles.css", "dashboard.js",
+            ]
             if file_path not in allowed_files:
                 return JSONResponse({
                     "error": "File not allowed",
@@ -2333,6 +2357,8 @@ async def main():
         # Events API endpoint for dashboard
         async def http_events(request):
             """Return recent governance events for dashboard."""
+            if not _check_http_auth(request):
+                return _http_unauthorized()
             try:
                 from src.event_detector import event_detector
 

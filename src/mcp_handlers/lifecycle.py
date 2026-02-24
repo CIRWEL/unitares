@@ -384,8 +384,22 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                 agent_info.setdefault("health_status", "unknown")
                 agent_info.setdefault("metrics", None)
 
-            # Trust tier from cached trajectory data
-            agent_info["trust_tier"] = getattr(meta, 'trust_tier', None)
+            # Trust tier from cached trajectory data, with DB fallback
+            cached_tier = getattr(meta, 'trust_tier', None)
+            if cached_tier is None:
+                try:
+                    from src.trajectory_identity import compute_trust_tier
+                    from src.db import get_db as _get_db
+                    identity = await _get_db().get_identity(agent_id)
+                    if identity and identity.metadata:
+                        tier_info = compute_trust_tier(identity.metadata)
+                        cached_tier = tier_info.get("name", "unknown")
+                        # Cache for next time
+                        meta.trust_tier = cached_tier
+                        meta.trust_tier_num = tier_info.get("tier", 0)
+                except Exception as e:
+                    logger.debug(f"Trust tier DB fallback failed for {agent_id[:8]}: {e}")
+            agent_info["trust_tier"] = cached_tier
 
             agents_list.append(agent_info)
         
@@ -1329,7 +1343,7 @@ async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[Te
         metrics = monitor.get_metrics()
         
         coherence = float(monitor.state.coherence)
-        risk_score = float(metrics.get("mean_risk", 0.5))
+        risk_score = float(metrics.get("mean_risk") or 0.5)
         void_active = bool(monitor.state.void_active)
         status = meta.status
         
@@ -1461,7 +1475,7 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
     metrics = monitor.get_metrics()
     
     coherence = float(monitor.state.coherence)
-    risk_score = float(metrics.get("mean_risk", 0.5))
+    risk_score = float(metrics.get("mean_risk") or 0.5)
     void_active = bool(monitor.state.void_active)
     void_value = float(monitor.state.V)
     status = meta.status
@@ -1704,7 +1718,7 @@ def _detect_stuck_agents(
             
             if monitor:
                 metrics = monitor.get_metrics()
-                risk_score = float(metrics.get("mean_risk", 0.5))
+                risk_score = float(metrics.get("mean_risk") or 0.5)
                 coherence = float(monitor.state.coherence)
                 void_active = bool(monitor.state.void_active)
                 void_value = float(monitor.state.V)
@@ -1814,7 +1828,7 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
                         monitor = mcp_server.get_or_create_monitor(agent_id)
                         metrics = monitor.get_metrics()
                         coherence = float(monitor.state.coherence)
-                        risk_score = float(metrics.get("mean_risk", 0.5))
+                        risk_score = float(metrics.get("mean_risk") or 0.5)
                         void_active = bool(monitor.state.void_active)
                     except Exception as e:
                         # Agent is unresponsive - can't get metrics

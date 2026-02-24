@@ -13,7 +13,7 @@ Agents can operate without providing trajectory signatures; this is additive.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import json
 
@@ -163,7 +163,7 @@ async def store_genesis_signature(
 
         # Store genesis signature
         metadata["trajectory_genesis"] = signature.to_dict()
-        metadata["trajectory_genesis_at"] = datetime.utcnow().isoformat()
+        metadata["trajectory_genesis_at"] = datetime.now(timezone.utc).isoformat()
 
         await db.update_identity_metadata(agent_id, metadata)
         logger.info(f"[Trajectory] Stored genesis Σ₀ for {agent_id[:8]}... (confidence={signature.identity_confidence:.2f})")
@@ -198,7 +198,7 @@ async def update_current_signature(
 
         # Store current signature
         metadata["trajectory_current"] = signature.to_dict()
-        metadata["trajectory_updated_at"] = datetime.utcnow().isoformat()
+        metadata["trajectory_updated_at"] = datetime.now(timezone.utc).isoformat()
 
         result = {
             "stored": True,

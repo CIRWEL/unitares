@@ -15,9 +15,19 @@
     <!-- Chart.js for visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-    <!-- Dashboard utilities -->
+    <!-- Layer 0: Utilities (no dependencies) -->
     <script src="/dashboard/utils.js"></script>
+    <script src="/dashboard/state.js"></script>
+    <script src="/dashboard/colors.js"></script>
     <script src="/dashboard/components.js"></script>
+    <!-- Layer 1: Visualizations (depends on Chart.js, utils, colors) -->
+    <script src="/dashboard/visualizations.js"></script>
+    <!-- Layer 2: Domain modules (depend on state, colors, utils) -->
+    <script src="/dashboard/agents.js"></script>
+    <script src="/dashboard/discoveries.js"></script>
+    <script src="/dashboard/dialectic.js"></script>
+    <script src="/dashboard/eisv-charts.js"></script>
+    <script src="/dashboard/timeline.js"></script>
 </head>
 
 <body>
@@ -104,6 +114,7 @@
                     <option value="__all__">All (raw)</option>
                 </select>
                 <span class="eisv-chart-info" id="eisv-chart-info"></span>
+                <button id="heatmap-toggle" class="panel-button" type="button">Heatmap</button>
                 <button id="eisv-chart-clear" class="panel-button" type="button">Clear</button>
             </div>
         </div>
@@ -135,6 +146,19 @@
             <div style="text-align: center; margin-top: 8px; font-size: 0.85em; color: var(--text-secondary);">
                 Waiting for EISV data — charts populate on first agent check-in
             </div>
+        </div>
+    </div>
+
+    <!-- Agent Fleet Heatmap (hidden by default) -->
+    <div class="live-chart-panel" id="heatmap-panel" style="display: none;">
+        <div class="panel-header">
+            <h2>Fleet Heatmap</h2>
+            <div class="panel-controls">
+                <button id="heatmap-close" class="panel-button" type="button">Hide</button>
+            </div>
+        </div>
+        <div class="heatmap-container">
+            <canvas id="fleet-heatmap"></canvas>
         </div>
     </div>
 
@@ -277,7 +301,7 @@
         </div>
 
         <!-- Right Column: Discoveries -->
-        <div class="panel">
+        <div class="panel" style="--panel-dot-color: var(--accent-purple);">
             <div class="panel-header">
                 <h2>Recent Discoveries</h2>
                 <div class="panel-controls">
@@ -313,7 +337,7 @@
 
     <!-- Dialectic Sessions - Full width centered -->
     <div class="dialectic-section">
-        <div class="panel">
+        <div class="panel" style="--panel-dot-color: var(--accent-yellow);">
             <div class="panel-header">
                 <h2>Dialectic Sessions</h2>
                 <div class="panel-controls">

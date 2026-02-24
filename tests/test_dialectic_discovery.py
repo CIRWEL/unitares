@@ -14,8 +14,6 @@ NOTE: TestDialecticDiscovery requires PostgreSQL - skipped in CI.
 
 import pytest
 import asyncio
-import sys
-sys.path.insert(0, '/Users/cirwel/projects/governance-mcp-v1')
 
 
 @pytest.mark.skip(reason="Requires PostgreSQL connection - run locally with DB")

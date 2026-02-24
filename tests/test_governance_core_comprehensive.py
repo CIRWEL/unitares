@@ -133,8 +133,6 @@ class TestDynamics:
     @pytest.mark.skipif(not HAS_HYPOTHESIS, reason="hypothesis not installed")
     def test_dynamics_preserves_bounds_property(self):
         """Property-based test for dynamics bounds preservation."""
-        if not HAS_HYPOTHESIS:
-            pytest.skip("hypothesis not installed")
         
         @given(
             st.floats(0, 1),  # E
@@ -388,8 +386,6 @@ class TestCoherence:
     @pytest.mark.skipif(not HAS_HYPOTHESIS, reason="hypothesis not installed")
     def test_coherence_bounds_property(self, default_theta, default_params):
         """Property-based test for coherence bounds."""
-        if not HAS_HYPOTHESIS:
-            pytest.skip("hypothesis not installed")
         
         @given(st.floats(-10, 10))
         def _test(V):

@@ -7,12 +7,8 @@ Covers:
 """
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
-
-# Import after ensuring path
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from src.mcp_handlers.cirs_protocol import (
     maybe_emit_resonance_signal,
@@ -136,7 +132,7 @@ class TestMaybeApplyNeighborPressure:
         # Peer emits RESONANCE_ALERT
         alert = ResonanceAlert(
             agent_id="peer-1",
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             oi=3.0, phase="integration",
             tau_current=0.42, beta_current=0.58, flips=5,
         )
@@ -147,7 +143,7 @@ class TestMaybeApplyNeighborPressure:
             "source_agent_id": "my-agent",
             "target_agent_id": "peer-1",
             "similarity_score": 0.75,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
         maybe_apply_neighbor_pressure(
@@ -164,7 +160,7 @@ class TestMaybeApplyNeighborPressure:
         # Peer emits RESONANCE_ALERT
         alert = ResonanceAlert(
             agent_id="peer-1",
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             oi=3.0, phase="integration",
             tau_current=0.42, beta_current=0.58, flips=5,
         )
@@ -184,7 +180,7 @@ class TestMaybeApplyNeighborPressure:
 
         alert = ResonanceAlert(
             agent_id="peer-1",
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             oi=3.0, phase="integration",
             tau_current=0.42, beta_current=0.58, flips=5,
         )
@@ -194,7 +190,7 @@ class TestMaybeApplyNeighborPressure:
             "source_agent_id": "my-agent",
             "target_agent_id": "peer-1",
             "similarity_score": 0.3,  # Below 0.5 threshold
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
         maybe_apply_neighbor_pressure(
@@ -211,7 +207,7 @@ class TestMaybeApplyNeighborPressure:
         # Self-emitted alert
         alert = ResonanceAlert(
             agent_id="my-agent",
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             oi=3.0, phase="integration",
             tau_current=0.42, beta_current=0.58, flips=5,
         )
@@ -234,7 +230,7 @@ class TestMaybeApplyNeighborPressure:
         # Peer restored stability
         restored = StabilityRestored(
             agent_id="peer-1",
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             oi=0.3, tau_settled=0.40, beta_settled=0.60,
         )
         _emit_stability_restored(restored)
@@ -288,7 +284,7 @@ class TestResonanceFullLoop:
             "source_agent_id": "agent-b",
             "target_agent_id": "agent-a",
             "similarity_score": 0.8,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
         # Phase 4: Agent B reads and applies pressure

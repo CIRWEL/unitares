@@ -372,8 +372,9 @@ class UNITARESMonitor:
         if np.any(np.isnan(prev_params)) or np.any(np.isinf(prev_params)):
             return 0.0
 
-        delta = current_params - prev_params
-        drift_squared = np.sum(delta ** 2) / len(delta)
+        delta = np.asarray(current_params - prev_params, dtype=np.float64)
+        with np.errstate(over="ignore"):
+            drift_squared = np.sum(delta ** 2) / len(delta)
 
         # Check for NaN/inf in result
         if np.isnan(drift_squared) or np.isinf(drift_squared):
@@ -415,8 +416,9 @@ class UNITARESMonitor:
             return 0.5  # Default to moderate coherence if inputs invalid
 
         # Compute parameter change magnitude
-        delta = current_params - prev_params
-        distance = np.sqrt(np.sum(delta ** 2) / len(delta))
+        delta = np.asarray(current_params - prev_params, dtype=np.float64)
+        with np.errstate(over="ignore"):
+            distance = np.sqrt(np.sum(delta ** 2) / len(delta))
 
         # Check for NaN/inf in distance
         if np.isnan(distance) or np.isinf(distance):

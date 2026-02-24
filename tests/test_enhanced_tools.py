@@ -4,12 +4,9 @@ Test the Cursor-enhanced MCP tools
 Demonstrate the complete lifecycle with improved UX
 """
 
-import sys
 import json
 import numpy as np
 from datetime import datetime
-
-sys.path.insert(0, '/Users/cirwel/projects/governance-mcp-v1')
 
 from src.mcp_server_std import monitors, agent_metadata, load_metadata
 from src.governance_monitor import UNITARESMonitor

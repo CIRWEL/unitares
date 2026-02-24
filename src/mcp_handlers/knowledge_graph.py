@@ -1528,6 +1528,17 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                     response_type=response_type
                 )
         
+        # Build tags — notes are ephemeral by default (auto-archived after 7 days)
+        # unless the caller signals permanence via tags or lasting=True
+        tags = list(arguments.get("tags", []))
+        lasting = arguments.get("lasting", False)
+        if isinstance(lasting, str):
+            lasting = lasting.lower() in ("true", "1", "yes")
+        PERMANENT_SIGNALS = {"permanent", "foundational", "architecture", "decision"}
+        if not lasting and not (set(tags) & PERMANENT_SIGNALS):
+            if "ephemeral" not in tags:
+                tags.append("ephemeral")
+
         # Create note with minimal ceremony
         note = DiscoveryNode(
             id=datetime.now().isoformat(),
@@ -1535,7 +1546,7 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             type="note",
             summary=text,
             details="",  # Notes are summary-only
-            tags=arguments.get("tags", []),
+            tags=tags,
             severity="low",
             status="open",
             response_to=response_to

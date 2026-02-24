@@ -16,14 +16,11 @@ Covers:
 """
 
 import json
-import sys
 import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime, date
 from enum import Enum
 from types import SimpleNamespace
-
-sys.path.insert(0, '/Users/cirwel/projects/governance-mcp-v1')
 
 from src.mcp_handlers.utils import (
     _infer_error_code_and_category,
@@ -475,10 +472,7 @@ class TestMakeJsonSerializable:
         assert _make_json_serializable(X()) == "x_obj"
 
     def test_numpy(self):
-        try:
-            import numpy as np
-        except ImportError:
-            pytest.skip("numpy not available")
+        import numpy as np
         assert _make_json_serializable(np.float64(3.14)) == 3.14
         assert isinstance(_make_json_serializable(np.float64(3.14)), float)
         assert _make_json_serializable(np.int64(42)) == 42

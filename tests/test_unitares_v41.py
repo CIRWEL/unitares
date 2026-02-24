@@ -5,8 +5,6 @@ Verifies the bug fix and new functionality.
 """
 
 import pytest
-import sys
-sys.path.insert(0, '/Users/cirwel/projects/governance-mcp-v1')
 
 from governance_core.dynamics import State, compute_dynamics, DEFAULT_STATE
 from governance_core.parameters import DynamicsParams, Theta, DEFAULT_PARAMS, DEFAULT_THETA
