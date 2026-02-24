@@ -722,9 +722,9 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
     
     if meta:
         if meta.status == "archived":
-            # Auto-resume: Any engagement resumes archived agents
+            # Auto-resume with safeguards: prevent zombie agents from resurrecting
             previous_archived_at = meta.archived_at
-            
+
             # Calculate days since archive for context
             days_since_archive = None
             if previous_archived_at:
@@ -733,7 +733,40 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                     days_since_archive = (datetime.now(archived_dt.tzinfo) - archived_dt).total_seconds() / 86400 if archived_dt.tzinfo else (datetime.now() - archived_dt.replace(tzinfo=None)).total_seconds() / 86400
                 except (ValueError, TypeError, AttributeError):
                     pass
-            
+
+            # Safeguard: Block auto-resume for stale/low-activity agents
+            agent_notes = getattr(meta, 'notes', '') or ''
+            explicitly_archived = bool(agent_notes and "user requested" in agent_notes.lower())
+            too_old = days_since_archive is not None and days_since_archive > 2.0
+            too_few_updates = (getattr(meta, 'total_updates', 0) or 0) < 2
+
+            if explicitly_archived or (too_old and too_few_updates):
+                # Do NOT auto-resume — this is a dead agent, not a reconnecting one
+                reasons = []
+                if explicitly_archived:
+                    reasons.append(f"explicitly archived: {agent_notes}")
+                if too_old:
+                    reasons.append(f"archived {days_since_archive:.1f} days ago")
+                if too_few_updates:
+                    reasons.append(f"only {getattr(meta, 'total_updates', 0) or 0} update(s)")
+                logger.warning(
+                    f"Blocked auto-resume of agent {agent_id[:12]}... ({', '.join(reasons)}). "
+                    f"Use agent(action='update', status='active') to resume manually."
+                )
+                return [error_response(
+                    f"Agent '{agent_id}' is archived and cannot be auto-resumed ({', '.join(reasons)}).",
+                    recovery={
+                        "action": "Use agent(action='update', agent_id=..., status='active') to resume manually, or onboard a new agent",
+                        "related_tools": ["agent", "onboard"],
+                    },
+                    context={
+                        "agent_id": agent_id,
+                        "status": "archived",
+                        "days_since_archive": round(days_since_archive, 2) if days_since_archive is not None else None,
+                        "total_updates": getattr(meta, 'total_updates', 0) or 0,
+                    }
+                )]
+
             meta.status = "active"
             meta.archived_at = None
             meta.add_lifecycle_event("resumed", "Auto-resumed on engagement")
@@ -768,7 +801,7 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             except Exception as e:
                 # Don't fail auto-resume if audit logging fails
                 logger.warning(f"Could not log auto-resume audit event: {e}", exc_info=True)
-            
+
             # Store auto-resume info for inclusion in response (Priority 2)
             auto_resume_info = {
                 "auto_resumed": True,

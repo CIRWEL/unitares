@@ -24,6 +24,7 @@ class IdentityRecord:
     parent_agent_id: Optional[str] = None
     spawn_reason: Optional[str] = None
     disabled_at: Optional[datetime] = None
+    last_activity_at: Optional[datetime] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 

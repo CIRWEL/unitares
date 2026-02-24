@@ -174,10 +174,13 @@ async def read_resource(uri):
 # Optional:
 #   UNITARES_STDIO_PROXY_STRICT=1  (default) -> fail if server unavailable
 #
-# Legacy env var UNITARES_STDIO_PROXY_URL is still supported as fallback.
+# Legacy env vars UNITARES_STDIO_PROXY_URL and UNITARES_STDIO_PROXY_SSE_URL
+# are still supported as fallbacks.
 # -----------------------------------------------------------------------------
 STDIO_PROXY_HTTP_URL = os.getenv("UNITARES_STDIO_PROXY_HTTP_URL")
-STDIO_PROXY_URL = os.getenv("UNITARES_PROXY_URL") or os.getenv("UNITARES_STDIO_PROXY_URL")
+STDIO_PROXY_URL = (os.getenv("UNITARES_PROXY_URL")
+                    or os.getenv("UNITARES_STDIO_PROXY_URL")
+                    or os.getenv("UNITARES_STDIO_PROXY_SSE_URL"))
 STDIO_PROXY_STRICT = os.getenv("UNITARES_STDIO_PROXY_STRICT", "1").strip().lower() not in ("0", "false", "no")
 STDIO_PROXY_HTTP_BEARER_TOKEN = os.getenv("UNITARES_STDIO_PROXY_HTTP_BEARER_TOKEN")  # optional
 
@@ -515,6 +518,7 @@ agent_metadata: dict[str, AgentMetadata] = {}
 _metadata_loading_lock = threading.Lock()
 _metadata_loading = False
 _metadata_loaded = False
+_metadata_loaded_event = threading.Event()  # Signaled when async load completes
 
 # Metadata cache state (for performance optimization)
 _metadata_cache_state = {
@@ -626,7 +630,7 @@ async def _load_metadata_from_postgres_async() -> dict:
             agent_id=agent.agent_id,
             status=agent.status or "active",
             created_at=agent.created_at.isoformat() if agent.created_at else now,
-            last_update=agent.updated_at.isoformat() if agent.updated_at else now,
+            last_update=(agent.last_activity_at or agent.updated_at).isoformat() if (agent.last_activity_at or agent.updated_at) else now,
             tags=agent.tags or [],
             notes=agent.notes or "",
             purpose=agent.purpose,
@@ -648,13 +652,28 @@ async def _load_metadata_from_postgres_async() -> dict:
             total_updates=agent.metadata.get("total_updates", 0),
         )
         result[agent.agent_id] = meta
-        
+
         # Populate Redis cache (best effort, non-blocking)
         if metadata_cache:
             try:
                 await metadata_cache.set(agent.agent_id, meta.to_dict(), ttl=300)
             except Exception as e:
                 logger.debug(f"Failed to cache metadata for {agent.agent_id[:8]}...: {e}")
+
+    # Batch-load trust tiers from identity metadata (single query)
+    try:
+        from src.trajectory_identity import compute_trust_tier
+        from src.db import get_db
+        db = get_db()
+        agent_ids = list(result.keys())
+        identities = await db.get_identities_batch(agent_ids)
+        for aid, identity in identities.items():
+            if identity and identity.metadata and "trajectory_current" in identity.metadata:
+                tier_info = compute_trust_tier(identity.metadata)
+                result[aid].trust_tier = tier_info.get("name", "unknown")
+                result[aid].trust_tier_num = tier_info.get("tier", 0)
+    except Exception as e:
+        logger.debug(f"Batch trust tier load skipped: {e}")
 
     return result
 
@@ -800,62 +819,63 @@ async def load_metadata_async(force: bool = False) -> None:
         _metadata_cache_state["last_load_time"] = time.time()
         _metadata_cache_state["dirty"] = False
         _metadata_loaded = True
+        _metadata_loaded_event.set()  # Wake up any sync callers waiting
         logger.debug(f"Loaded {len(agent_metadata)} agents from PostgreSQL (async)")
     except Exception as e:
         logger.error(f"Could not load metadata from PostgreSQL: {e}", exc_info=True)
+        _metadata_loaded_event.set()  # Unblock waiters even on failure
         raise
 
 
 def ensure_metadata_loaded() -> None:
     """
     Ensure metadata is loaded (lazy load if needed).
-    
+
     This is a safety net for cases where metadata hasn't been loaded yet.
     Background loading during server startup should handle most cases,
     but this ensures eventual consistency if background load fails.
-    
+
+    Schedules async load if needed, then blocks (up to 5s) until complete.
     Thread-safe: Uses lock to prevent concurrent loads.
     """
     global agent_metadata, _metadata_loading, _metadata_loaded
-    
+
     # Fast path: already loaded
     if _metadata_loaded:
         return
-    
+
     # Acquire lock to prevent concurrent loads
     with _metadata_loading_lock:
         # Double-check after acquiring lock
         if _metadata_loaded:
             return
-        
+
         # Check if another thread is loading
         if _metadata_loading:
-            # Another thread is loading - wait briefly or return
-            # (Background load should complete quickly)
-            logger.debug("Metadata loading in progress by another thread, skipping lazy load")
-            return
-        
-        # Mark as loading
-        _metadata_loading = True
-        
-        try:
-            # Schedule async metadata load on the main event loop.
-            # Sync loading via _load_metadata_from_postgres_sync() is broken with
-            # PostgreSQL (causes "Future attached to a different loop" errors).
-            # The background startup task should have loaded metadata already;
-            # this is just a safety net for the rare case it hasn't.
+            # Another thread already scheduled the load — just wait for it
+            pass
+        else:
+            # Mark as loading and schedule async load
+            _metadata_loading = True
+            _metadata_loaded_event.clear()
+
             try:
                 loop = asyncio.get_running_loop()
-                # Schedule on the main loop — will complete asynchronously
                 asyncio.run_coroutine_threadsafe(load_metadata_async(), loop)
                 logger.info("Scheduled async metadata load from ensure_metadata_loaded()")
             except RuntimeError:
                 # No running loop (shouldn't happen in normal server operation)
                 logger.warning("No running event loop for metadata load — metadata will be empty until async load completes")
-            # Don't mark as loaded yet — the async task will set _metadata_loaded when done
-            _metadata_loaded = False
-        finally:
-            _metadata_loading = False
+                _metadata_loading = False
+                return
+
+    # Wait outside the lock for the async load to complete (up to 5s)
+    if not _metadata_loaded:
+        if _metadata_loaded_event.wait(timeout=5.0):
+            logger.debug("ensure_metadata_loaded: async load completed")
+        else:
+            logger.warning("ensure_metadata_loaded: timed out waiting for async metadata load (5s)")
+        _metadata_loading = False
 
 
 

@@ -82,6 +82,7 @@ class AgentRecord:
     status: str = "active"  # active, paused, archived, deleted, waiting_input
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    last_activity_at: Optional[datetime] = None
 
     # Metadata
     tags: List[str] = field(default_factory=list)
@@ -133,6 +134,7 @@ async def get_agent(agent_id: str) -> Optional[AgentRecord]:
         status=identity.status,
         created_at=identity.created_at,
         updated_at=identity.updated_at,
+        last_activity_at=identity.last_activity_at,
         tags=identity.metadata.get("tags", []),
         notes=identity.metadata.get("notes"),
         purpose=identity.metadata.get("purpose"),
@@ -408,6 +410,7 @@ async def list_agents(
             status=identity.status,
             created_at=identity.created_at,
             updated_at=identity.updated_at,
+            last_activity_at=identity.last_activity_at,
             tags=identity.metadata.get("tags", []),
             notes=identity.metadata.get("notes"),
             purpose=identity.metadata.get("purpose"),
