@@ -385,12 +385,19 @@ async def handle_quick_resume(arguments: Dict[str, Any]) -> Sequence[TextContent
     # Strict safety checks for quick_resume (stricter than self_recovery_review)
     QUICK_RESUME_MIN_COHERENCE = 0.60
     QUICK_RESUME_MAX_RISK = 0.40
-    
-    checks = {
-        "coherence_high": coherence >= QUICK_RESUME_MIN_COHERENCE,
-        "risk_low": risk_score <= QUICK_RESUME_MAX_RISK,
-        "no_void": not void_active,
-    }
+
+    # Uninitialized agents (0 check-ins) have default EISV values (~0.5) which
+    # aren't meaningful for safety — skip strict thresholds, only check void.
+    meta = mcp_server.agent_metadata.get(agent_uuid)
+    if meta and getattr(meta, 'total_updates', 0) == 0:
+        checks = {"no_void": not void_active}
+        logger.info(f"[SELF_RECOVERY] Skipping strict thresholds for uninitialized agent {agent_uuid[:8]}...")
+    else:
+        checks = {
+            "coherence_high": coherence >= QUICK_RESUME_MIN_COHERENCE,
+            "risk_low": risk_score <= QUICK_RESUME_MAX_RISK,
+            "no_void": not void_active,
+        }
     
     if not all(checks.values()):
         failed = [k for k, v in checks.items() if not v]

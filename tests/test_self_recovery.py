@@ -430,7 +430,7 @@ class TestQuickResume:
     @pytest.mark.asyncio
     async def test_quick_resume_invalid_status(self):
         from src.mcp_handlers.self_recovery import handle_quick_resume
-        mock_server = self._make_mock_server(status="archived")
+        mock_server = self._make_mock_server(status="deleted")
 
         with patch(
             "src.mcp_handlers.self_recovery.require_registered_agent",

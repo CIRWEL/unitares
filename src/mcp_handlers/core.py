@@ -545,7 +545,10 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                 f"Agent is archived and cannot process updates",
                 error_code="AGENT_ARCHIVED",
                 details={"agent_id": agent_uuid[:12], "status": "archived"},
-                recovery={"action": "Create a new agent or restore this one via agent(action='update', status='active')"}
+                recovery={
+                    "action": "Use self_recovery(action='quick') to restore yourself, or onboard(force_new=true) for a new identity",
+                    "related_tools": ["self_recovery", "onboard"],
+                }
             )]
 
     # LAZY CREATION (v2.4.1): Ensure agent is persisted on first real work
@@ -751,13 +754,13 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                     reasons.append(f"only {getattr(meta, 'total_updates', 0) or 0} update(s)")
                 logger.warning(
                     f"Blocked auto-resume of agent {agent_id[:12]}... ({', '.join(reasons)}). "
-                    f"Use agent(action='update', status='active') to resume manually."
+                    f"Use self_recovery(action='quick') to restore, or onboard(force_new=true) for new identity."
                 )
                 return [error_response(
                     f"Agent '{agent_id}' is archived and cannot be auto-resumed ({', '.join(reasons)}).",
                     recovery={
-                        "action": "Use agent(action='update', agent_id=..., status='active') to resume manually, or onboard a new agent",
-                        "related_tools": ["agent", "onboard"],
+                        "action": "Use self_recovery(action='quick') to restore yourself, or onboard(force_new=true) for a new identity",
+                        "related_tools": ["self_recovery", "onboard"],
                     },
                     context={
                         "agent_id": agent_id,
@@ -1203,6 +1206,50 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             except Exception as e:
                 logger.warning(f"PostgreSQL record_agent_state failed: {e}", exc_info=True)
 
+            # Auto-emit outcome event when check-in describes completed work
+            # Closes the validation loop: every meaningful completion gets paired with EISV snapshot
+            outcome_event_id = None
+            try:
+                if response_text and complexity >= 0.3:
+                    # Check for completion signals in response_text
+                    _rt_lower = response_text.lower()
+                    _completion_signals = (
+                        'completed', 'implemented', 'deployed', 'finished',
+                        'fixed', 'resolved', 'shipped', 'merged', 'built',
+                        'created', 'added', 'refactored', 'migrated',
+                    )
+                    if any(sig in _rt_lower for sig in _completion_signals):
+                        from src.db import get_db
+                        _db = get_db()
+                        if _db:
+                            # Truncate response_text for detail (avoid bloating JSONB)
+                            _summary = response_text[:500] if len(response_text) > 500 else response_text
+                            outcome_event_id = await _db.record_outcome_event(
+                                agent_id=agent_id,
+                                outcome_type='task_completed',
+                                is_bad=False,
+                                outcome_score=min(1.0, metrics_dict.get('coherence', 0.5) * 1.5),
+                                session_id=arguments.get('client_session_id'),
+                                eisv_e=metrics_dict.get('E'),
+                                eisv_i=metrics_dict.get('I'),
+                                eisv_s=metrics_dict.get('S'),
+                                eisv_v=metrics_dict.get('V'),
+                                eisv_phi=metrics_dict.get('phi'),
+                                eisv_verdict=metrics_dict.get('verdict'),
+                                eisv_coherence=metrics_dict.get('coherence'),
+                                eisv_regime=metrics_dict.get('regime'),
+                                detail={
+                                    'source': 'auto_checkin',
+                                    'complexity': complexity,
+                                    'confidence': arguments.get('confidence'),
+                                    'summary': _summary,
+                                },
+                            )
+                            if outcome_event_id:
+                                logger.debug(f"Auto-emitted outcome event {outcome_event_id} for {agent_id}")
+            except Exception as e:
+                logger.debug(f"Outcome event auto-emit skipped: {e}")
+
             # Add EISV labels for reflexivity - essential for agents to understand their state
             # Bridges physics (Energy, Entropy, Void Integral) with practical understanding
             result['eisv_labels'] = UNITARESMonitor.get_eisv_labels()
@@ -1441,6 +1488,15 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                     "message": f"VOID_ALERT broadcast to peer agents: {cirs_alert.get('severity', 'warning').upper()}"
                 }
 
+            # Include outcome event info if auto-emitted
+            if outcome_event_id:
+                response_data["outcome_event"] = {
+                    "emitted": True,
+                    "outcome_id": outcome_event_id,
+                    "outcome_type": "task_completed",
+                    "message": "Outcome event recorded for EISV validation"
+                }
+
             # Include CIRS state announce info if emitted
             if cirs_state_announce:
                 response_data["cirs_state_announce"] = {
@@ -1449,27 +1505,6 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                     "update_count": cirs_state_announce.get("update_count"),
                     "message": "STATE_ANNOUNCE broadcast to peer agents"
                 }
-
-            # Add helpful explanation for sampling_params (helps agents understand what they mean)
-            if "sampling_params" in response_data:
-                sampling_params = response_data["sampling_params"]
-                temp = sampling_params.get("temperature", 0.5)
-                max_tokens = sampling_params.get("max_tokens", 100)
-                
-                # Interpret temperature
-                if temp < 0.65:
-                    temp_desc = "focused, precise"
-                elif temp < 0.9:
-                    temp_desc = "balanced approach"
-                else:
-                    temp_desc = "creative, exploratory"
-                
-                response_data["sampling_params_note"] = (
-                    f"Optional suggestions based on your current state. "
-                    f"You can use these for your next generation, or ignore them - they're just recommendations. "
-                    f"Temperature {temp:.2f} = {temp_desc}. "
-                    f"Max tokens {max_tokens} = suggested response length."
-                )
 
             # Proactive knowledge surfacing - Re-enabled (lightweight, tag-based only)
             # Surface top 3 most relevant discoveries based on agent tags
