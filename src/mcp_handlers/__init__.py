@@ -100,6 +100,8 @@ from .identity_v2 import (
 from .model_inference import handle_call_model
 # ROI Metrics - Customer value tracking
 from .roi_metrics import handle_get_roi_metrics
+# Outcome Events - EISV validation infrastructure (Feb 2026)
+from .outcome_events import handle_outcome_event
 # Consolidated tools - reduces cognitive load for agents (Jan 2026)
 from .consolidated import (
     handle_knowledge,

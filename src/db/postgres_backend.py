@@ -1175,6 +1175,79 @@ class PostgresBackend(DatabaseBackend):
             except Exception:
                 return False
 
+    # =========================================================================
+    # OUTCOME EVENT OPERATIONS
+    # =========================================================================
+
+    async def record_outcome_event(
+        self,
+        agent_id: str,
+        outcome_type: str,
+        is_bad: bool,
+        outcome_score: Optional[float] = None,
+        session_id: Optional[str] = None,
+        eisv_e: Optional[float] = None,
+        eisv_i: Optional[float] = None,
+        eisv_s: Optional[float] = None,
+        eisv_v: Optional[float] = None,
+        eisv_phi: Optional[float] = None,
+        eisv_verdict: Optional[str] = None,
+        eisv_coherence: Optional[float] = None,
+        eisv_regime: Optional[str] = None,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """Insert one outcome event. Returns outcome_id UUID string or None on failure."""
+        async with self.acquire() as conn:
+            try:
+                outcome_id = await conn.fetchval(
+                    """
+                    INSERT INTO audit.outcome_events
+                        (ts, agent_id, session_id, outcome_type, outcome_score, is_bad,
+                         eisv_e, eisv_i, eisv_s, eisv_v, eisv_phi, eisv_verdict, eisv_coherence, eisv_regime,
+                         detail)
+                    VALUES (now(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    RETURNING outcome_id
+                    """,
+                    agent_id, session_id, outcome_type, outcome_score, is_bad,
+                    eisv_e, eisv_i, eisv_s, eisv_v, eisv_phi, eisv_verdict, eisv_coherence, eisv_regime,
+                    json.dumps(detail or {}),
+                )
+                return str(outcome_id)
+            except Exception:
+                return None
+
+    async def get_latest_eisv_by_agent_id(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch latest EISV snapshot for an agent. Returns dict with E, I, S, V, phi, verdict, coherence, regime."""
+        async with self.acquire() as conn:
+            try:
+                row = await conn.fetchrow(
+                    """
+                    SELECT s.state_json, s.entropy, s.integrity, s.volatility,
+                           s.coherence, s.regime
+                    FROM core.agent_state s
+                    JOIN core.identities i ON i.identity_id = s.identity_id
+                    WHERE i.agent_id = $1
+                    ORDER BY s.recorded_at DESC
+                    LIMIT 1
+                    """,
+                    agent_id,
+                )
+                if not row:
+                    return None
+                state_json = json.loads(row["state_json"]) if isinstance(row["state_json"], str) else row["state_json"]
+                return {
+                    "E": state_json.get("E"),
+                    "I": row["integrity"],
+                    "S": row["entropy"],
+                    "V": row["volatility"],
+                    "phi": state_json.get("phi"),
+                    "verdict": state_json.get("verdict"),
+                    "coherence": row["coherence"],
+                    "regime": row["regime"],
+                }
+            except Exception:
+                return None
+
     async def query_tool_usage(
         self,
         agent_id: Optional[str] = None,

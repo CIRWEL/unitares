@@ -106,6 +106,50 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Create a monthly partition for audit.outcome_events
+CREATE OR REPLACE FUNCTION audit.create_outcome_partition(
+    p_year INTEGER,
+    p_month INTEGER
+)
+RETURNS TEXT AS $$
+DECLARE
+    v_partition_name TEXT;
+    v_start_date DATE;
+    v_end_date DATE;
+BEGIN
+    v_partition_name := format('outcome_events_%s_%s', p_year, lpad(p_month::text, 2, '0'));
+    v_start_date := make_date(p_year, p_month, 1);
+    v_end_date := v_start_date + INTERVAL '1 month';
+
+    IF EXISTS (
+        SELECT 1 FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'audit' AND c.relname = v_partition_name
+    ) THEN
+        RETURN format('Partition %s already exists', v_partition_name);
+    END IF;
+
+    EXECUTE format(
+        'CREATE TABLE IF NOT EXISTS audit.%I PARTITION OF audit.outcome_events
+         FOR VALUES FROM (%L) TO (%L)',
+        v_partition_name,
+        v_start_date,
+        v_end_date
+    );
+
+    EXECUTE format(
+        'CREATE INDEX IF NOT EXISTS idx_%s_agent_ts ON audit.%I (agent_id, ts DESC)',
+        v_partition_name, v_partition_name
+    );
+    EXECUTE format(
+        'CREATE INDEX IF NOT EXISTS idx_%s_type_ts ON audit.%I (outcome_type, ts DESC)',
+        v_partition_name, v_partition_name
+    );
+
+    RETURN format('Created partition %s', v_partition_name);
+END;
+$$ LANGUAGE plpgsql;
+
 -- =============================================================================
 -- RETENTION / CLEANUP FUNCTIONS
 -- =============================================================================
@@ -190,6 +234,45 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Drop old outcome_events partitions (older than retention_days)
+CREATE OR REPLACE FUNCTION audit.drop_old_outcome_partitions(
+    p_retention_days INTEGER DEFAULT 365
+)
+RETURNS TABLE(partition_name TEXT, action TEXT) AS $$
+DECLARE
+    v_cutoff DATE;
+    v_rec RECORD;
+BEGIN
+    v_cutoff := current_date - (p_retention_days || ' days')::INTERVAL;
+
+    FOR v_rec IN
+        SELECT c.relname as partition_name,
+               pg_get_expr(c.relpartbound, c.oid) as partition_bound
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_inherits i ON i.inhrelid = c.oid
+        JOIN pg_class parent ON parent.oid = i.inhparent
+        WHERE n.nspname = 'audit'
+          AND parent.relname = 'outcome_events'
+          AND c.relkind = 'r'
+    LOOP
+        IF v_rec.partition_bound ~ 'TO \(''(\d{4}-\d{2}-\d{2})' THEN
+            DECLARE
+                v_end_date DATE;
+            BEGIN
+                v_end_date := (regexp_match(v_rec.partition_bound, 'TO \(''(\d{4}-\d{2}-\d{2})'))[1]::DATE;
+                IF v_end_date < v_cutoff THEN
+                    EXECUTE format('DROP TABLE IF EXISTS audit.%I', v_rec.partition_name);
+                    partition_name := v_rec.partition_name;
+                    action := 'dropped';
+                    RETURN NEXT;
+                END IF;
+            END;
+        END IF;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
 -- =============================================================================
 -- MAINTENANCE FUNCTION (call weekly)
 -- =============================================================================
@@ -223,12 +306,18 @@ BEGIN
     v_msg := audit.create_tool_usage_partition(v_current_year, v_current_month);
     v_result := v_result || jsonb_build_object('tool_usage_current', v_msg);
 
+    v_msg := audit.create_outcome_partition(v_current_year, v_current_month);
+    v_result := v_result || jsonb_build_object('outcome_events_current', v_msg);
+
     -- Create next month partitions (look-ahead)
     v_msg := audit.create_events_partition(v_next_year, v_next_month);
     v_result := v_result || jsonb_build_object('events_next', v_msg);
 
     v_msg := audit.create_tool_usage_partition(v_next_year, v_next_month);
     v_result := v_result || jsonb_build_object('tool_usage_next', v_msg);
+
+    v_msg := audit.create_outcome_partition(v_next_year, v_next_month);
+    v_result := v_result || jsonb_build_object('outcome_events_next', v_msg);
 
     -- Clean up old partitions
     v_result := v_result || jsonb_build_object(
@@ -238,6 +327,10 @@ BEGIN
     v_result := v_result || jsonb_build_object(
         'tool_usage_dropped',
         (SELECT jsonb_agg(partition_name) FROM audit.drop_old_tool_usage_partitions(90))
+    );
+    v_result := v_result || jsonb_build_object(
+        'outcome_events_dropped',
+        (SELECT jsonb_agg(partition_name) FROM audit.drop_old_outcome_partitions(365))
     );
 
     -- Clean up expired sessions
@@ -267,6 +360,7 @@ BEGIN
 
         PERFORM audit.create_events_partition(v_year, v_month);
         PERFORM audit.create_tool_usage_partition(v_year, v_month);
+        PERFORM audit.create_outcome_partition(v_year, v_month);
     END LOOP;
 END $$;
 

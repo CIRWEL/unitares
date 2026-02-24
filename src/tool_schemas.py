@@ -2874,6 +2874,59 @@ DEPENDENCIES:
             }
         ),
         Tool(
+            name="outcome_event",
+            description="""Record an outcome event for EISV validation.
+
+Pairs a measurable outcome (drawing completion, test result, task completion)
+with the agent's current EISV snapshot. This enables correlation analysis:
+do EISV verdicts and phi values predict real outcomes?
+
+VALID OUTCOME TYPES:
+- drawing_completed: Lumen finished a drawing (score = satisfaction)
+- drawing_abandoned: Drawing was abandoned before completion
+- test_passed: A test or validation passed
+- test_failed: A test or validation failed
+- tool_rejected: A tool call was rejected by governance
+- task_completed: Agent completed a significant task
+- task_failed: Agent failed to complete a task
+
+PARAMETERS:
+- outcome_type (required): One of the valid types above
+- outcome_score (optional float 0-1): Quality metric. Inferred from type if omitted.
+- is_bad (optional bool): Whether this is a negative outcome. Inferred from type if omitted.
+- detail (optional dict): Type-specific metadata (e.g., mark_count, test_name)
+- agent_id (optional): Falls back to session-bound agent_id
+
+RETURNS: outcome_id, embedded EISV snapshot at time of outcome""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "outcome_type": {
+                        "type": "string",
+                        "enum": ["drawing_completed", "drawing_abandoned", "test_passed", "test_failed", "tool_rejected", "task_completed", "task_failed"],
+                        "description": "Type of outcome event"
+                    },
+                    "outcome_score": {
+                        "type": "number",
+                        "description": "Quality score 0.0 (worst) to 1.0 (best). Inferred from type if omitted."
+                    },
+                    "is_bad": {
+                        "type": "boolean",
+                        "description": "Whether this is a negative outcome. Inferred from type if omitted."
+                    },
+                    "detail": {
+                        "type": "object",
+                        "description": "Type-specific metadata (e.g., mark_count, test_name, error_message)"
+                    },
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Agent ID. Falls back to session-bound agent_id if omitted."
+                    }
+                },
+                "required": ["outcome_type"]
+            }
+        ),
+        Tool(
             name="detect_anomalies",
             description="""Detect anomalies across agents. Scans all agents or a subset for unusual patterns (risk spikes, coherence drops, void events). Returns prioritized anomalies with severity levels.
 
