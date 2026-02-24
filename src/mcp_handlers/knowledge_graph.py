@@ -862,29 +862,6 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         if len(results) == limit:
             response_data["_more_available"] = f"Results may be limited to {limit}. Use limit=N (max 100) to get more."
         
-        # UX ENHANCEMENT: Add threshold explanations for semantic search
-        if search_mode in ["semantic", "semantic_fallback_lower_threshold"] and query_text:
-            threshold_used = arguments.get("min_similarity", 0.3)
-            if search_mode == "semantic_fallback_lower_threshold":
-                threshold_used = 0.2  # Fallback threshold
-            
-            response_data["similarity_threshold_explanation"] = {
-                "threshold_used": threshold_used,
-                "meaning": f"Threshold {threshold_used} means discoveries need ~{int(threshold_used * 100)}% semantic similarity to your query",
-                "interpretation": {
-                    "0.0-0.2": "Very permissive - finds loosely related concepts",
-                    "0.2-0.3": "Moderate - finds conceptually similar content",
-                    "0.3-0.5": "Strict - finds closely related concepts",
-                    "0.5+": "Very strict - finds highly similar content only"
-                },
-                "adjustment": {
-                    "method": "MCP parameter",
-                    "how": "Pass min_similarity parameter in search_knowledge_graph() call",
-                    "example": f'search_knowledge_graph(query="...", semantic=true, min_similarity=0.3)',
-                    "note": "This is a per-query parameter - adjust it for each search call, no code changes needed"
-                }
-            }
-        
         # Add similarity scores if semantic search was used
         if search_mode in ["semantic", "semantic_fallback_lower_threshold"] and query_text and use_semantic:
             similarity_scores = {
@@ -1529,10 +1506,12 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     try:
         graph = await get_knowledge_graph()
         
-        # Truncate if too long
-        MAX_NOTE_LEN = 500
-        if len(text) > MAX_NOTE_LEN:
-            text = text[:MAX_NOTE_LEN] + "..."
+        # Notes use the same limits as store_knowledge_graph
+        MAX_SUMMARY_LEN = 1000
+        MAX_DETAILS_LEN = 5000
+        MAX_NOTE_TOTAL = MAX_SUMMARY_LEN + MAX_DETAILS_LEN
+        if len(text) > MAX_NOTE_TOTAL:
+            text = text[:MAX_NOTE_TOTAL] + "... [truncated]"
         
         # Parse response_to if provided (for threading)
         response_to = None
@@ -1565,13 +1544,33 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             if "ephemeral" not in tags:
                 tags.append("ephemeral")
 
+        # Split long notes into summary + details
+        if len(text) <= MAX_SUMMARY_LEN:
+            note_summary = text
+            note_details = ""
+        else:
+            # Try to split at a sentence boundary within summary limit
+            truncated = text[:MAX_SUMMARY_LEN]
+            split_pos = MAX_SUMMARY_LEN
+            for end_char in ['. ', '! ', '? ', '\n']:
+                last_end = truncated.rfind(end_char, MAX_SUMMARY_LEN - 200)
+                if last_end > 0:
+                    split_pos = last_end + len(end_char)
+                    break
+            else:
+                last_space = truncated.rfind(' ')
+                if last_space > MAX_SUMMARY_LEN - 100:
+                    split_pos = last_space
+            note_summary = text[:split_pos].rstrip()
+            note_details = text[split_pos:].strip()
+
         # Create note with minimal ceremony
         note = DiscoveryNode(
             id=datetime.now().isoformat(),
             agent_id=agent_id,
             type="note",
-            summary=text,
-            details="",  # Notes are summary-only
+            summary=note_summary,
+            details=note_details,
             tags=tags,
             severity="low",
             status="open",
