@@ -556,7 +556,7 @@ class KnowledgeGraphAGE:
         params = {"discovery_id": discovery_id}
 
         for key, value in updates.items():
-            if key in ("status", "resolved_at", "updated_at", "severity", "type"):
+            if key in ("status", "resolved_at", "updated_at", "severity", "type", "last_referenced"):
                 param_name = f"val_{key}"
                 set_parts.append(f"d.{key} = ${{{param_name}}}")
                 params[param_name] = value

@@ -157,6 +157,36 @@ class KnowledgeGraphLifecycle:
 
         return summary
 
+    async def _batch_update_status(
+        self, graph, discovery_ids: List[str], new_status: str, now: datetime
+    ):
+        """Update status in both AGE graph and PG knowledge.discoveries table."""
+        updated_at = now.isoformat()
+
+        # Update AGE graph (primary)
+        for discovery_id in discovery_ids:
+            await graph.update_discovery(discovery_id, {
+                "status": new_status,
+                "updated_at": updated_at,
+            })
+
+        # Sync to PG knowledge.discoveries (best-effort)
+        try:
+            from src.db.postgres_backend import get_postgres_backend
+            db = await get_postgres_backend()
+            async with db.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE knowledge.discoveries
+                    SET status = $1, updated_at = now()
+                    WHERE id = ANY($2::text[])
+                    """,
+                    new_status,
+                    discovery_ids,
+                )
+        except Exception as e:
+            logger.debug(f"PG sync skipped for lifecycle update: {e}")
+
     async def _archive_ephemeral(self, now: datetime, dry_run: bool) -> List[str]:
         """Archive ephemeral discoveries older than threshold."""
         graph = await self._get_graph()
