@@ -925,8 +925,23 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         elif synthesize and len(discovery_list) < SYNTHESIS_THRESHOLD:
             response_data["_synthesis_note"] = f"Synthesis skipped: fewer than {SYNTHESIS_THRESHOLD} results"
 
+        # Touch last_referenced on results that had details included (fire-and-forget)
+        if include_details and results:
+            import asyncio
+
+            async def _touch_referenced(ids):
+                try:
+                    g = await get_knowledge_graph()
+                    now_iso = datetime.now().isoformat()
+                    for did in ids:
+                        await g.update_discovery(did, {"last_referenced": now_iso})
+                except Exception:
+                    pass  # Best-effort, don't fail the search
+
+            asyncio.create_task(_touch_referenced([d.id for d in results]))
+
         return success_response(response_data, arguments=arguments)
-        
+
     except Exception as e:
         return [error_response(f"Failed to search knowledge: {str(e)}")]
 
@@ -1182,6 +1197,17 @@ async def handle_get_discovery_details(arguments: Dict[str, Any]) -> Sequence[Te
                     "error": "Response chain traversal not supported by current backend",
                     "note": "Use AGE backend (UNITARES_KNOWLEDGE_BACKEND=age) for full graph features"
                 }
+
+        # Touch last_referenced (fire-and-forget keep-alive signal)
+        import asyncio
+
+        async def _touch(did):
+            try:
+                await graph.update_discovery(did, {"last_referenced": datetime.now().isoformat()})
+            except Exception:
+                pass
+
+        asyncio.create_task(_touch(discovery_id))
 
         return success_response(response, arguments=arguments)
 
