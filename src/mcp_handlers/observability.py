@@ -36,6 +36,15 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
         except Exception:
             target = explicit_id
     if not target:
+        # Default to self-observe when session is bound
+        try:
+            from .context import get_context_agent_id
+            caller_uuid = get_context_agent_id()
+            if caller_uuid:
+                target = caller_uuid
+        except Exception:
+            pass
+    if not target:
         return [error_response(
             "target_agent_id required: specify which agent to observe",
             recovery={

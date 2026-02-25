@@ -892,6 +892,7 @@ DEPENDENCIES:
                     "task_type": {
                         "type": "string",
                         "description": "Task type context. Core types: convergent | divergent | mixed. Also accepts natural names: refactoring, bugfix, testing, documentation → convergent; feature, exploration, research, design → divergent; debugging, review, deployment → mixed. Default: mixed.",
+                        "enum": ["convergent", "divergent", "mixed", "refactoring", "bugfix", "testing", "documentation", "feature", "exploration", "research", "design", "debugging", "review", "deployment"],
                         "default": "mixed"
                     },
                     "trajectory_signature": {

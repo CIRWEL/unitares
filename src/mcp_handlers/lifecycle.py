@@ -147,7 +147,33 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                 })
             # Sort: labeled first, then by most recent activity
             agents.sort(key=lambda x: (0 if x.get("label") else 1, -(x.get("updates") or 0), x.get("last_update", "") or ""), reverse=False)
+
+            # Always include the requesting agent even if filtered out
+            caller_uuid = None
+            try:
+                from .context import get_context_agent_id
+                caller_uuid = get_context_agent_id()
+            except Exception:
+                pass
+            caller_in_list = caller_uuid and any(a["id"] == caller_uuid for a in agents)
+            if caller_uuid and not caller_in_list:
+                caller_meta = mcp_server.agent_metadata.get(caller_uuid)
+                if caller_meta:
+                    agents.append({
+                        "id": caller_uuid,
+                        "label": getattr(caller_meta, 'label', None),
+                        "purpose": getattr(caller_meta, 'purpose', None),
+                        "updates": caller_meta.total_updates,
+                        "last": caller_meta.last_update[:10] if caller_meta.last_update else None,
+                        "last_update": caller_meta.last_update,
+                        "trust_tier": getattr(caller_meta, 'trust_tier', None),
+                        "you": True,
+                    })
+
             for a in agents:
+                # Mark the requesting agent
+                if caller_uuid and a["id"] == caller_uuid and "you" not in a:
+                    a["you"] = True
                 a.pop("last_update", None)
 
             result = {
@@ -1551,7 +1577,7 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
             error_code="REFLECTION_REQUIRED",
             recovery={
                 "action": "Provide a meaningful reflection on what went wrong",
-                "example": "self_recovery_review(reflection='I got stuck in a loop trying to optimize the same function repeatedly. I should have stepped back and considered alternative approaches.')"
+                "example": "self_recovery(action='review', reflection='I got stuck in a loop trying to optimize the same function repeatedly. I should have stepped back and considered alternative approaches.')"
             }
         )]
     
@@ -1574,7 +1600,8 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
         risk_score=risk_score,
         coherence=coherence,
         void_active=void_active,
-        void_value=void_value
+        void_value=void_value,
+        coherence_history=monitor.state.coherence_history,
     )
     
     # 6. Safety validation
@@ -1817,7 +1844,8 @@ def _detect_stuck_agents(
                     risk_score=risk_score,
                     coherence=coherence,
                     void_active=void_active,
-                    void_value=void_value
+                    void_value=void_value,
+                    coherence_history=monitor.state.coherence_history,
                 )
                 margin = margin_info['margin']
                 
