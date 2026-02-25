@@ -7,9 +7,11 @@ Provides storage for dialectic sessions with PostgreSQL.
 import json
 import asyncio
 from typing import Dict, List, Optional, Any
+from collections.abc import Mapping
 
 from src.logging_utils import get_logger
 from src.dialectic_protocol import DialecticPhase
+from src.db.acquire_compat import compatible_acquire
 
 logger = get_logger(__name__)
 
@@ -104,12 +106,16 @@ class DialecticDB:
     async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get session by ID with all messages."""
         await self._ensure_pool()
-        async with self._pool.acquire() as conn:
+        async with compatible_acquire(self._pool) as conn:
             row = await conn.fetchrow("""
                 SELECT * FROM core.dialectic_sessions WHERE session_id = $1
             """, session_id)
 
             if not row:
+                return None
+
+            if not isinstance(row, Mapping):
+                logger.debug("Unexpected session row type from dialectic DB: %s", type(row).__name__)
                 return None
 
             session = dict(row)
@@ -265,7 +271,7 @@ class DialecticDB:
     async def is_agent_in_active_session(self, agent_id: str) -> bool:
         """Check if agent is in an active session."""
         await self._ensure_pool()
-        async with self._pool.acquire() as conn:
+        async with compatible_acquire(self._pool) as conn:
             row = await conn.fetchrow("""
                 SELECT 1 FROM core.dialectic_sessions
                 WHERE (paused_agent_id = $1 OR reviewer_agent_id = $1)

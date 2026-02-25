@@ -146,11 +146,11 @@
             var vValue = metrics.V !== undefined && metrics.V !== null ? Number(metrics.V) : null;
             var cValue = metrics.coherence !== undefined && metrics.coherence !== null ? Number(metrics.coherence) : null;
 
-            var e = eValue !== null && !Number.isNaN(eValue) ? eValue.toFixed(6) : '-';
-            var i = iValue !== null && !Number.isNaN(iValue) ? iValue.toFixed(6) : '-';
-            var s = sValue !== null && !Number.isNaN(sValue) ? sValue.toFixed(6) : '-';
-            var v = vValue !== null && !Number.isNaN(vValue) ? vValue.toFixed(6) : '-';
-            var coherence = cValue !== null && !Number.isNaN(cValue) ? cValue.toFixed(6) : '-';
+            var e = eValue !== null && !Number.isNaN(eValue) ? eValue.toFixed(3) : '-';
+            var i = iValue !== null && !Number.isNaN(iValue) ? iValue.toFixed(3) : '-';
+            var s = sValue !== null && !Number.isNaN(sValue) ? sValue.toFixed(3) : '-';
+            var v = vValue !== null && !Number.isNaN(vValue) ? vValue.toFixed(3) : '-';
+            var coherence = cValue !== null && !Number.isNaN(cValue) ? cValue.toFixed(3) : '-';
 
             var clampPercent = function (value) {
                 if (value === null || Number.isNaN(value)) return 0;
@@ -383,7 +383,7 @@
             if (val === undefined || val === null) return '';
             var formatted = typeof DataProcessor !== 'undefined'
                 ? DataProcessor.formatEISVMetric(Number(val), name)
-                : { display: Number(val).toFixed(6), interpretation: '', color: 'var(--text-primary)' };
+                : { display: Number(val).toFixed(3), interpretation: '', color: 'var(--text-primary)' };
             return '<div class="eisv-metric-row">' +
                 '<div>' +
                     '<strong style="color: ' + formatted.color + ';" class="text-mono">' + name + '</strong>' +
@@ -506,6 +506,15 @@
                     '<div class="detail-box mt-sm" style="text-align: left; white-space: pre-wrap;">' + notes + '</div>' +
                   '</div>'
                 : '') +
+
+            '<div class="agent-detail-actions mt-md">' +
+                (status === 'paused'
+                    ? '<button class="agent-detail-resume-btn panel-button" data-agent-id="' + escapeHtml(agentId) + '">Resume Agent</button>'
+                    : '') +
+                (status !== 'archived' && status !== 'deleted'
+                    ? '<button class="agent-detail-archive-btn panel-button danger" data-agent-id="' + escapeHtml(agentId) + '">Archive Agent</button>'
+                    : '') +
+            '</div>' +
 
             '<details class="mt-md">' +
                 '<summary class="cursor-pointer text-secondary-sm">Raw data</summary>' +

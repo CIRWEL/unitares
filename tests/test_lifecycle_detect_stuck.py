@@ -40,6 +40,7 @@ def _make_monitor(
     void_active=False,
     void_value=0.0,
     S=0.1,
+    coherence_history=None,
 ):
     """Create mock UNITARESMonitor."""
     state = SimpleNamespace(
@@ -47,6 +48,7 @@ def _make_monitor(
         V=void_value,
         void_active=void_active,
         S=S,
+        coherence_history=coherence_history if coherence_history is not None else [],
     )
     monitor = MagicMock()
     monitor.state = state
@@ -326,7 +328,7 @@ class TestDetectStuckAgentsMultiple:
         }
         mock_server.load_monitor_state.return_value = None
 
-        def margin_side_effect(risk_score, coherence, void_active, void_value=0.0):
+        def margin_side_effect(risk_score, coherence, void_active, void_value=0.0, coherence_history=None):
             if risk_score > 0.7:
                 return _margin_info("critical", "risk")
             return _margin_info("comfortable")
@@ -465,3 +467,115 @@ class TestDetectStuckAgentsEdgeCases:
             )
             assert len(result) == 1
             assert result[0]["reason"] == "critical_margin_timeout"
+
+
+class TestBaselineRelativeMargin:
+    """Test baseline-relative coherence tight threshold in compute_proprioceptive_margin."""
+
+    def test_steady_state_agent_comfortable(self):
+        """Agent at ODE steady state (~0.49) with stable history → comfortable, not tight."""
+        from config.governance_config import GovernanceConfig
+        history = [0.49] * 20
+        result = GovernanceConfig.compute_proprioceptive_margin(
+            risk_score=0.3,
+            coherence=0.49,
+            void_active=False,
+            void_value=0.0,
+            coherence_history=history,
+        )
+        # absolute_margin = 0.49 - 0.40 = 0.09
+        # baseline = 0.49, tight_threshold = max(0.049, 0.03) = 0.049
+        # 0.09 > 0.049 → comfortable
+        assert result["margin"] == "comfortable"
+        assert result["details"]["coherence_tight_threshold"] == pytest.approx(0.049, abs=0.001)
+
+    def test_dropping_agent_tight(self):
+        """Agent dropped from 0.80 baseline to 0.44 → tight (absolute margin < adaptive threshold)."""
+        from config.governance_config import GovernanceConfig
+        history = [0.80] * 20
+        result = GovernanceConfig.compute_proprioceptive_margin(
+            risk_score=0.3,
+            coherence=0.44,
+            void_active=False,
+            void_value=0.0,
+            coherence_history=history,
+        )
+        # absolute_margin = 0.44 - 0.40 = 0.04
+        # baseline = 0.80, tight_threshold = max(0.08, 0.03) = 0.08
+        # 0.04 < 0.08 → tight
+        assert result["margin"] == "tight"
+        assert result["nearest_edge"] == "coherence"
+        assert result["details"]["coherence_tight_threshold"] == pytest.approx(0.08, abs=0.001)
+
+    def test_no_history_falls_back_to_fixed(self):
+        """Without coherence_history, uses fixed 0.15 threshold (legacy behavior)."""
+        from config.governance_config import GovernanceConfig
+        result = GovernanceConfig.compute_proprioceptive_margin(
+            risk_score=0.3,
+            coherence=0.49,
+            void_active=False,
+            void_value=0.0,
+            coherence_history=None,
+        )
+        # absolute_margin = 0.09, fixed threshold = 0.15
+        # 0.09 < 0.15 → tight (the old false-positive behavior)
+        assert result["margin"] == "tight"
+        assert result["details"]["coherence_tight_threshold"] == 0.15
+
+    def test_short_history_falls_back_to_fixed(self):
+        """With < 10 history entries, uses fixed 0.15 threshold."""
+        from config.governance_config import GovernanceConfig
+        history = [0.49] * 5
+        result = GovernanceConfig.compute_proprioceptive_margin(
+            risk_score=0.3,
+            coherence=0.49,
+            void_active=False,
+            void_value=0.0,
+            coherence_history=history,
+        )
+        assert result["margin"] == "tight"
+        assert result["details"]["coherence_tight_threshold"] == 0.15
+
+    def test_threshold_floor_at_003(self):
+        """Adaptive threshold has a floor of 0.03 even with very low baseline."""
+        from config.governance_config import GovernanceConfig
+        history = [0.20] * 20  # very low baseline
+        result = GovernanceConfig.compute_proprioceptive_margin(
+            risk_score=0.3,
+            coherence=0.42,
+            void_active=False,
+            void_value=0.0,
+            coherence_history=history,
+        )
+        # baseline = 0.20, 10% = 0.02, floor = 0.03
+        assert result["details"]["coherence_tight_threshold"] == 0.03
+
+    def test_risk_edge_uses_fixed_threshold(self):
+        """When risk is the nearest edge, fixed 0.15 is used regardless of coherence history."""
+        from config.governance_config import GovernanceConfig
+        history = [0.80] * 20
+        result = GovernanceConfig.compute_proprioceptive_margin(
+            risk_score=0.50,  # risk_margin = 0.60 - 0.50 = 0.10 (nearest edge)
+            coherence=0.80,   # coherence_margin = 0.40 (far away)
+            void_active=False,
+            void_value=0.0,
+            coherence_history=history,
+        )
+        # risk is nearest edge at 0.10, uses fixed 0.15 → 0.10 < 0.15 → tight
+        assert result["margin"] == "tight"
+        assert result["nearest_edge"] == "risk"
+
+    def test_crossed_threshold_unaffected(self):
+        """Crossed thresholds (negative margins) still produce warning/critical as before."""
+        from config.governance_config import GovernanceConfig
+        history = [0.80] * 20
+        result = GovernanceConfig.compute_proprioceptive_margin(
+            risk_score=0.3,
+            coherence=0.38,  # below 0.40 critical threshold
+            void_active=False,
+            void_value=0.0,
+            coherence_history=history,
+        )
+        assert result["margin"] == "warning"
+        assert result["nearest_edge"] == "coherence"
+        assert result["distance_to_edge"] < 0

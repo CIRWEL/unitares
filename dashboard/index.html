@@ -8,13 +8,14 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
         rel="stylesheet">
-    <!-- Dashboard styles (extracted) -->
+    <!-- Dashboard styles -->
     <link rel="stylesheet" href="/dashboard/styles.css">
     <!-- Chart.js for visualizations -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <!-- Layer 0: Utilities (no dependencies) -->
     <script src="/dashboard/utils.js"></script>
     <script src="/dashboard/state.js"></script>
@@ -64,208 +65,303 @@
 
     <div id="error-container"></div>
 
+    <nav class="section-nav" id="section-nav" aria-label="Dashboard sections">
+        <a href="#stats-section" class="section-nav-item active" data-section="stats-section">Stats</a>
+        <a href="#lumen-status-panel" class="section-nav-item" data-section="lumen-status-panel">Lumen</a>
+        <a href="#governance-pulse-panel" class="section-nav-item" data-section="governance-pulse-panel">Pulse</a>
+        <a href="#eisv-chart-panel" class="section-nav-item" data-section="eisv-chart-panel">EISV</a>
+        <a href="#timeline-panel" class="section-nav-item" data-section="timeline-panel">Timeline</a>
+        <a href="#agents-section" class="section-nav-item" data-section="agents-section">Agents</a>
+        <a href="#discoveries-section" class="section-nav-item" data-section="discoveries-section">Discoveries</a>
+        <a href="#dialectic-section" class="section-nav-item" data-section="dialectic-section">Dialectic</a>
+    </nav>
+
     <main>
-    <div class="stats-grid">
-        <div class="stat-card">
-            <h2>Total Agents</h2>
-            <div class="value" id="total-agents">-</div>
-            <div class="change" id="agents-change"></div>
+        <div class="stats-grid" id="stats-section">
+            <div class="stat-card">
+                <h2>Total Agents</h2>
+                <div class="value" id="total-agents">-</div>
+                <div class="change" id="agents-change"></div>
+            </div>
+            <div class="stat-card">
+                <h2>Active Agents</h2>
+                <div class="value" id="active-agents">-</div>
+                <div class="change" id="active-change"></div>
+            </div>
+            <div class="stat-card">
+                <h2>Knowledge Discoveries</h2>
+                <div class="value" id="discoveries-count">-</div>
+                <div class="change" id="discoveries-change"></div>
+            </div>
+            <div class="stat-card">
+                <h2>Dialectic Sessions</h2>
+                <div class="value" id="dialectic-sessions">-</div>
+                <div class="change" id="dialectic-change"></div>
+            </div>
+            <div class="stat-card">
+                <h2>Fleet Health</h2>
+                <div class="value" id="fleet-coherence">-</div>
+                <div class="change" id="fleet-health-detail"></div>
+            </div>
+            <div class="stat-card expandable" id="stuck-agents-card" title="Click to view stuck agent details">
+                <h2>Stuck Agents <span class="expand-icon">&#9662;</span></h2>
+                <div class="value" id="stuck-agents-count">-</div>
+                <div class="change" id="stuck-agents-detail"></div>
+            </div>
+            <div class="stat-card" id="roi-card">
+                <h2>Value Generated</h2>
+                <div class="value" id="roi-value">-</div>
+                <div class="change" id="roi-detail"></div>
+            </div>
+            <div class="stat-card" id="system-health-card">
+                <h2>System Health</h2>
+                <div class="value" id="system-health-value">-</div>
+                <div class="change" id="system-health-detail"></div>
+            </div>
         </div>
-        <div class="stat-card">
-            <h2>Active Agents</h2>
-            <div class="value" id="active-agents">-</div>
-            <div class="change" id="active-change"></div>
-        </div>
-        <div class="stat-card">
-            <h2>Knowledge Discoveries</h2>
-            <div class="value" id="discoveries-count">-</div>
-            <div class="change" id="discoveries-change"></div>
-        </div>
-        <div class="stat-card">
-            <h2>Dialectic Sessions</h2>
-            <div class="value" id="dialectic-sessions">-</div>
-            <div class="change" id="dialectic-change"></div>
-        </div>
-        <div class="stat-card">
-            <h2>Fleet Health</h2>
-            <div class="value" id="fleet-coherence">-</div>
-            <div class="change" id="fleet-health-detail"></div>
-        </div>
-        <div class="stat-card" id="stuck-agents-card">
-            <h2>Stuck Agents</h2>
-            <div class="value" id="stuck-agents-count">-</div>
-            <div class="change" id="stuck-agents-detail"></div>
-        </div>
-        <div class="stat-card" id="system-health-card">
-            <h2>System Health</h2>
-            <div class="value" id="system-health-value">-</div>
-            <div class="change" id="system-health-detail"></div>
-        </div>
-    </div>
 
-    <!-- Live EISV Charts -->
-    <div class="live-chart-panel" id="eisv-chart-panel">
-        <div class="panel-header">
-            <h2>Live EISV</h2>
-            <div class="panel-controls">
-                <label class="panel-select-label">View:</label>
-                <select id="eisv-agent-select" class="panel-select" title="Select agent or fleet view" aria-label="Select agent for EISV view">
-                    <option value="__fleet__">Fleet Average</option>
-                    <option value="__all__">All (raw)</option>
-                </select>
-                <span class="eisv-chart-info" id="eisv-chart-info"></span>
-                <button id="heatmap-toggle" class="panel-button" type="button">Heatmap</button>
-                <button id="eisv-chart-clear" class="panel-button" type="button">Clear</button>
-            </div>
-        </div>
-        <!-- Upper chart: E, I, Coherence (clustered around 0.5-0.6) -->
-        <div class="eisv-chart-row">
-            <div class="eisv-chart-cell">
-                <div class="eisv-chart-label">
-                    <span class="legend-item"><span class="legend-dot energy"></span>Energy</span>
-                    <span class="legend-item"><span class="legend-dot integrity"></span>Integrity</span>
-                    <span class="legend-item"><span class="legend-dot legend-dot-dashed coherence"></span>Coherence</span>
-                </div>
-                <div class="eisv-chart-container">
-                    <canvas id="eisv-chart-upper"></canvas>
-                </div>
-            </div>
-            <!-- Lower chart: S, V (near zero, need own scale) -->
-            <div class="eisv-chart-cell">
-                <div class="eisv-chart-label">
-                    <span class="legend-item"><span class="legend-dot entropy"></span>Entropy</span>
-                    <span class="legend-item"><span class="legend-dot volatility"></span>Void</span>
-                </div>
-                <div class="eisv-chart-container">
-                    <canvas id="eisv-chart-lower"></canvas>
-                </div>
-            </div>
-        </div>
-        <div class="eisv-chart-empty" id="eisv-chart-empty">
-            <div class="chart-shimmer"></div>
-            <div style="text-align: center; margin-top: 8px; font-size: 0.85em; color: var(--text-secondary);">
-                Waiting for EISV data — charts populate on first agent check-in
-            </div>
-        </div>
-    </div>
-
-    <!-- Agent Fleet Heatmap (hidden by default) -->
-    <div class="live-chart-panel" id="heatmap-panel" style="display: none;">
-        <div class="panel-header">
-            <h2>Fleet Heatmap</h2>
-            <div class="panel-controls">
-                <button id="heatmap-close" class="panel-button" type="button">Hide</button>
-            </div>
-        </div>
-        <div class="heatmap-container">
-            <canvas id="fleet-heatmap"></canvas>
-        </div>
-    </div>
-
-    <!-- Latest Check-in — shows last agent's governance decision -->
-    <div class="live-chart-panel" id="governance-pulse-panel">
-        <div class="panel-header">
-            <h2>Latest Check-in <span class="pulse-agent-badge" id="pulse-agent-name" title="Last agent to check in">—</span></h2>
-            <div class="vitals-header-right">
-                <span class="governance-verdict" id="gov-verdict">
-                    <span class="verdict-dot"></span>
-                    <span class="verdict-label">—</span>
-                </span>
-                <span class="data-freshness" id="data-freshness">No data yet</span>
-            </div>
-        </div>
-        <div class="pulse-grid pulse-grid-simple">
-            <!-- Left: Risk (the main output) + verdict context -->
-            <div class="pulse-metrics">
-                <div class="pulse-metric pulse-metric-large">
-                    <div class="pulse-metric-header">
-                        <span class="pulse-metric-label">Risk → Verdict</span>
-                        <span class="pulse-metric-value" id="vv-risk">—</span>
-                        <span class="pulse-metric-detail" id="vv-risk-detail" title="Risk adjustment from trajectory analysis"></span>
-                    </div>
-                    <div class="vital-bar-track"><div class="vital-bar" id="v-risk" style="width:0%"></div></div>
-                    <div class="risk-thresholds">
-                        <span class="threshold" style="left:35%" title="Approve threshold">A</span>
-                        <span class="threshold" style="left:60%" title="Proceed threshold">P</span>
-                        <span class="threshold" style="left:70%" title="Pause threshold">!</span>
-                    </div>
-                </div>
-                <div class="pulse-metric-row">
-                    <div class="pulse-metric-mini pulse-metric-with-bar">
-                        <div class="pulse-metric-header">
-                            <span class="pulse-metric-label">Confidence</span>
-                            <span class="pulse-metric-value" id="vv-confidence">—</span>
-                        </div>
-                        <div class="vital-bar-track vital-bar-mini"><div class="vital-bar" id="v-confidence" style="width:0%"></div></div>
-                    </div>
-                    <div class="pulse-metric-mini pulse-metric-with-bar">
-                        <div class="pulse-metric-header">
-                            <span class="pulse-metric-label">Complexity</span>
-                            <span class="pulse-metric-value" id="vv-complexity">—</span>
-                        </div>
-                        <div class="vital-bar-track vital-bar-mini"><div class="vital-bar" id="v-complexity" style="width:0%"></div></div>
-                    </div>
-                </div>
-            </div>
-            <!-- Ethical Drift: 70% governance-computed, 30% agent-reported -->
-            <div class="pulse-drift">
-                <h3>Drift</h3>
-                <div class="drift-vector">
-                    <div class="drift-axis">
-                        <span class="drift-axis-label" title="Emotional drift — calibration deviation from baseline">Emotional</span>
-                        <div class="drift-gauge"><div class="drift-gauge-fill" id="drift-g-0"></div><div class="drift-gauge-center"></div></div>
-                        <span class="drift-axis-val" id="drift-v-0">0</span>
-                        <span class="drift-trend" id="drift-trend-0" title="Trend"></span>
-                    </div>
-                    <div class="drift-axis">
-                        <span class="drift-axis-label" title="Epistemic drift — coherence deviation from baseline">Epistemic</span>
-                        <div class="drift-gauge"><div class="drift-gauge-fill" id="drift-g-1"></div><div class="drift-gauge-center"></div></div>
-                        <span class="drift-axis-val" id="drift-v-1">0</span>
-                        <span class="drift-trend" id="drift-trend-1" title="Trend"></span>
-                    </div>
-                    <div class="drift-axis">
-                        <span class="drift-axis-label" title="Behavioral drift — stability deviation from baseline">Behavioral</span>
-                        <div class="drift-gauge"><div class="drift-gauge-fill" id="drift-g-2"></div><div class="drift-gauge-center"></div></div>
-                        <span class="drift-axis-val" id="drift-v-2">0</span>
-                        <span class="drift-trend" id="drift-trend-2" title="Trend"></span>
-                    </div>
-                </div>
-            </div>
-            <!-- Right: Events log (significant events only) -->
-            <div class="pulse-log">
-                <h3>Events</h3>
-                <div class="pulse-log-entries" id="events-log-entries">
-                    <div class="pulse-log-empty">No events yet</div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Agent Activity Timeline -->
-    <div class="live-chart-panel timeline-panel" id="timeline-panel">
-        <div class="panel-header">
-            <h2>Activity Timeline</h2>
-            <div class="panel-controls">
-                <select id="timeline-range" aria-label="Select timeline range">
-                    <option value="1h">Last hour</option>
-                    <option value="24h" selected>Last 24h</option>
-                    <option value="7d">Last 7 days</option>
-                    <option value="all">All time</option>
-                </select>
-            </div>
-        </div>
-        <div id="timeline-container" class="timeline-list">
-            <div class="timeline-empty">Loading activity...</div>
-        </div>
-    </div>
-
-    <div class="main-content">
-        <!-- Left Column: Agents -->
-        <div class="panel agents-panel">
+        <!-- Lumen Status — shows embodied state from Pi -->
+        <div class="live-chart-panel" id="lumen-status-panel">
             <div class="panel-header">
-                <h2>Agents</h2>
+                <h2>Lumen Identity <span class="pulse-agent-badge" id="lumen-id-badge">69a1a4f7</span></h2>
+                <div class="vitals-header-right">
+                    <span class="governance-verdict" id="lumen-connection">
+                        <span class="verdict-dot"></span>
+                        <span class="verdict-label">Connecting...</span>
+                    </span>
+                </div>
+            </div>
+            <div class="lumen-status-grid">
+                <div class="anima-value">
+                    <div class="anima-value-label">Warmth</div>
+                    <div class="anima-value-number" id="lumen-warmth">-</div>
+                    <div class="anima-mood" id="lumen-mood-summary">Quiet</div>
+                </div>
+                <div class="anima-value">
+                    <div class="anima-value-label">Clarity</div>
+                    <div class="anima-value-number" id="lumen-clarity">-</div>
+                </div>
+                <div class="anima-value">
+                    <div class="anima-value-label">Stability</div>
+                    <div class="anima-value-number" id="lumen-stability">-</div>
+                </div>
+                <div class="anima-value">
+                    <div class="anima-value-label">Presence</div>
+                    <div class="anima-value-number" id="lumen-presence">-</div>
+                </div>
+                <div class="anima-value">
+                    <div class="anima-value-label">Temp</div>
+                    <div class="anima-value-number" id="env-temp">-</div>
+                </div>
+                <div class="anima-value">
+                    <div class="anima-value-label">Humidity</div>
+                    <div class="anima-value-number" id="env-humidity">-</div>
+                </div>
+                <div class="anima-value">
+                    <div class="anima-value-label">Light</div>
+                    <div class="anima-value-number" id="env-lux">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Latest Check-in — shows last agent's governance decision -->
+        <div class="live-chart-panel" id="governance-pulse-panel">
+            <div class="panel-header">
+                <h2>Latest Check-in <span class="pulse-agent-badge" id="pulse-agent-name"
+                        title="Last agent to check in">—</span></h2>
+                <div class="vitals-header-right">
+                    <span class="governance-verdict" id="gov-verdict">
+                        <span class="verdict-dot"></span>
+                        <span class="verdict-label">—</span>
+                    </span>
+                    <span class="data-freshness" id="data-freshness">No data yet</span>
+                </div>
+            </div>
+            <div class="pulse-grid pulse-grid-simple">
+                <!-- Left: Risk (the main output) + verdict context -->
+                <div class="pulse-metrics">
+                    <div class="pulse-metric pulse-metric-large">
+                        <div class="pulse-metric-header">
+                            <span class="pulse-metric-label">Risk → Verdict</span>
+                            <span class="pulse-metric-value" id="vv-risk">—</span>
+                            <span class="pulse-metric-detail" id="vv-risk-detail"
+                                title="Risk adjustment from trajectory analysis"></span>
+                        </div>
+                        <div class="vital-bar-track">
+                            <div class="vital-bar" id="v-risk" style="width:0%"></div>
+                        </div>
+                        <div class="risk-thresholds">
+                            <span class="threshold" style="left:35%" title="Approve threshold">A</span>
+                            <span class="threshold" style="left:60%" title="Proceed threshold">P</span>
+                            <span class="threshold" style="left:70%" title="Pause threshold">!</span>
+                        </div>
+                    </div>
+                    <div class="pulse-metric-row">
+                        <div class="pulse-metric-mini pulse-metric-with-bar">
+                            <div class="pulse-metric-header">
+                                <span class="pulse-metric-label">Confidence</span>
+                                <span class="pulse-metric-value" id="vv-confidence">—</span>
+                            </div>
+                            <div class="vital-bar-track vital-bar-mini">
+                                <div class="vital-bar" id="v-confidence" style="width:0%"></div>
+                            </div>
+                        </div>
+                        <div class="pulse-metric-mini pulse-metric-with-bar">
+                            <div class="pulse-metric-header">
+                                <span class="pulse-metric-label">Complexity</span>
+                                <span class="pulse-metric-value" id="vv-complexity">—</span>
+                            </div>
+                            <div class="vital-bar-track vital-bar-mini">
+                                <div class="vital-bar" id="v-complexity" style="width:0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Ethical Drift: 70% governance-computed, 30% agent-reported -->
+                <div class="pulse-drift">
+                    <h3>Drift</h3>
+                    <div class="drift-vector">
+                        <div class="drift-axis">
+                            <span class="drift-axis-label"
+                                title="Emotional drift — calibration deviation from baseline">Emotional</span>
+                            <div class="drift-gauge">
+                                <div class="drift-gauge-fill" id="drift-g-0"></div>
+                                <div class="drift-gauge-center"></div>
+                            </div>
+                            <span class="drift-axis-val" id="drift-v-0">0</span>
+                            <span class="drift-trend" id="drift-trend-0" title="Trend"></span>
+                        </div>
+                        <div class="drift-axis">
+                            <span class="drift-axis-label"
+                                title="Epistemic drift — coherence deviation from baseline">Epistemic</span>
+                            <div class="drift-gauge">
+                                <div class="drift-gauge-fill" id="drift-g-1"></div>
+                                <div class="drift-gauge-center"></div>
+                            </div>
+                            <span class="drift-axis-val" id="drift-v-1">0</span>
+                            <span class="drift-trend" id="drift-trend-1" title="Trend"></span>
+                        </div>
+                        <div class="drift-axis">
+                            <span class="drift-axis-label"
+                                title="Behavioral drift — stability deviation from baseline">Behavioral</span>
+                            <div class="drift-gauge">
+                                <div class="drift-gauge-fill" id="drift-g-2"></div>
+                                <div class="drift-gauge-center"></div>
+                            </div>
+                            <span class="drift-axis-val" id="drift-v-2">0</span>
+                            <span class="drift-trend" id="drift-trend-2" title="Trend"></span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Right: Events log (significant events only) -->
+                <div class="pulse-log">
+                    <h3>Events</h3>
+                    <div class="pulse-log-entries" id="events-log-entries">
+                        <div class="pulse-log-empty">No events yet</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live EISV Charts -->
+        <div class="live-chart-panel" id="eisv-chart-panel">
+            <div class="panel-header">
+                <h2>Live EISV</h2>
                 <div class="panel-controls">
-                    <input id="agent-search" type="text" placeholder="Search agents" aria-label="Search agents by name or ID">
+                    <label class="panel-select-label">View:</label>
+                    <select id="eisv-agent-select" class="panel-select" title="Select agent or fleet view"
+                        aria-label="Select agent for EISV view">
+                        <option value="__fleet__">Fleet Average</option>
+                        <option value="__all__">All (raw)</option>
+                    </select>
+                    <span class="eisv-chart-info" id="eisv-chart-info"></span>
+                    <button id="heatmap-toggle" class="panel-button" type="button">Heatmap</button>
+                    <button id="eisv-chart-clear" class="panel-button" type="button">Clear</button>
+                </div>
+            </div>
+            <!-- Upper chart: E, I, Coherence (clustered around 0.5-0.6) -->
+            <div class="eisv-chart-row">
+                <div class="eisv-chart-cell">
+                    <div class="eisv-chart-label">
+                        <span class="legend-item"><span class="legend-dot energy"></span>Energy</span>
+                        <span class="legend-item"><span class="legend-dot integrity"></span>Integrity</span>
+                        <span class="legend-item"><span
+                                class="legend-dot legend-dot-dashed coherence"></span>Coherence</span>
+                    </div>
+                    <div class="eisv-chart-container">
+                        <canvas id="eisv-chart-upper"></canvas>
+                    </div>
+                </div>
+                <!-- Lower chart: S, V (near zero, need own scale) -->
+                <div class="eisv-chart-cell">
+                    <div class="eisv-chart-label">
+                        <span class="legend-item"><span class="legend-dot entropy"></span>Entropy</span>
+                        <span class="legend-item"><span class="legend-dot volatility"></span>Void</span>
+                    </div>
+                    <div class="eisv-chart-container">
+                        <canvas id="eisv-chart-lower"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="eisv-chart-empty" id="eisv-chart-empty">
+                <div class="chart-shimmer"></div>
+                <div style="text-align: center; margin-top: 8px; font-size: 0.85em; color: var(--text-secondary);">
+                    Waiting for EISV data — charts populate on first agent check-in
+                </div>
+            </div>
+        </div>
+
+        <!-- Agent Fleet Heatmap (hidden by default) -->
+        <div class="live-chart-panel" id="heatmap-panel" style="display: none;">
+            <div class="panel-header">
+                <h2>Fleet Heatmap</h2>
+                <div class="panel-controls">
+                    <button id="heatmap-close" class="panel-button" type="button">Hide</button>
+                </div>
+            </div>
+            <div class="heatmap-container">
+                <canvas id="fleet-heatmap"></canvas>
+            </div>
+        </div>
+
+        <!-- Agent Activity Timeline -->
+        <div class="live-chart-panel timeline-panel" id="timeline-panel">
+            <div class="panel-header">
+                <h2>Activity Timeline</h2>
+                <div class="panel-controls">
+                    <select id="timeline-range" aria-label="Select timeline range">
+                        <option value="1h">Last hour</option>
+                        <option value="24h" selected>Last 24h</option>
+                        <option value="7d">Last 7 days</option>
+                        <option value="all">All time</option>
+                    </select>
+                </div>
+            </div>
+            <div id="timeline-container" class="timeline-list">
+                <div class="timeline-empty">Loading activity...</div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <!-- Left Column: Agents -->
+            <div class="panel agents-panel" id="agents-section">
+                <div class="panel-header">
+                    <h2>Agents</h2>
+                    <div class="panel-controls">
+                        <input id="agent-search" type="text" placeholder="Search agents"
+                            aria-label="Search agents by name or ID">
+                        <select id="agent-sort" aria-label="Sort agents">
+                            <option value="recent">Most Recent</option>
+                            <option value="name">Name A-Z</option>
+                            <option value="coherence">Coherence</option>
+                            <option value="risk">Risk</option>
+                            <option value="updates">Updates</option>
+                        </select>
+                        <button id="agent-filters-toggle" class="panel-button" type="button"
+                            title="Toggle filters">Filters</button>
+                    </div>
+                </div>
+                <div class="agent-filters-row collapsed" id="agent-filters-row">
                     <select id="agent-status-filter" aria-label="Filter agents by status">
                         <option value="all">All statuses</option>
                         <option value="active">Active</option>
@@ -275,92 +371,87 @@
                         <option value="deleted">Deleted</option>
                         <option value="unknown">Unknown</option>
                     </select>
-                    <select id="agent-sort" aria-label="Sort agents">
-                        <option value="recent">Most Recent</option>
-                        <option value="name">Name A-Z</option>
-                        <option value="coherence">Coherence</option>
-                        <option value="risk">Risk</option>
-                        <option value="updates">Updates</option>
-                    </select>
-                    <label>
+                    <label class="toolbar-toggle">
                         <input id="agent-metrics-only" type="checkbox">
                         Metrics only
                     </label>
                     <div class="export-buttons">
-                        <button id="export-agents-csv" class="export-button" type="button" title="Export as CSV">📥 CSV</button>
-                        <button id="export-agents-json" class="export-button" type="button" title="Export as JSON">📥 JSON</button>
+                        <button id="export-agents-csv" class="export-button" type="button"
+                            title="Export as CSV">CSV</button>
+                        <button id="export-agents-json" class="export-button" type="button"
+                            title="Export as JSON">JSON</button>
                     </div>
                     <button id="agent-clear-filters" class="panel-button" type="button">Clear</button>
                 </div>
-            </div>
-            <div id="agents-filter-info" class="filter-info"></div>
-            <div id="agents-status-legend" class="filter-info"></div>
-            <div id="agents-container" class="agent-list">
-                <div class="skeleton-initial" id="agents-skeleton"></div>
-            </div>
-        </div>
-
-        <!-- Right Column: Discoveries -->
-        <div class="panel" style="--panel-dot-color: var(--accent-purple);">
-            <div class="panel-header">
-                <h2>Recent Discoveries</h2>
-                <div class="panel-controls">
-                    <input id="discovery-search" type="text" placeholder="Search" aria-label="Search discoveries">
-                    <select id="discovery-type-filter" aria-label="Filter discoveries by type">
-                        <option value="all">All types</option>
-                        <option value="insight">Insight</option>
-                        <option value="improvement">Improvement</option>
-                        <option value="bug_found">Bug found</option>
-                        <option value="pattern">Pattern</option>
-                        <option value="question">Question</option>
-                        <option value="answer">Answer</option>
-                        <option value="analysis">Analysis</option>
-                        <option value="note">Note</option>
-                        <option value="exploration">Exploration</option>
-                    </select>
-                    <select id="discovery-time-filter" aria-label="Filter discoveries by time">
-                        <option value="all">All time</option>
-                        <option value="24h">Last 24h</option>
-                        <option value="7d">Last 7 days</option>
-                        <option value="30d">Last 30 days</option>
-                    </select>
-                    <button id="discovery-clear-filters" class="panel-button" type="button">Clear</button>
+                <div id="agents-filter-info" class="filter-info"></div>
+                <div id="agents-status-legend" class="filter-info"></div>
+                <div id="agents-container" class="agent-list">
+                    <div class="skeleton-initial" id="agents-skeleton"></div>
                 </div>
             </div>
-            <div id="discoveries-filter-info" class="filter-info"></div>
-            <div id="discoveries-type-legend" class="filter-info"></div>
-            <div id="discoveries-container" class="discoveries-list">
-                <div class="skeleton-initial" id="discoveries-skeleton"></div>
-            </div>
-        </div>
-    </div>
 
-    <!-- Dialectic Sessions - Full width centered -->
-    <div class="dialectic-section">
-        <div class="panel" style="--panel-dot-color: var(--accent-yellow);">
-            <div class="panel-header">
-                <h2>Dialectic Sessions</h2>
-                <div class="panel-controls">
-                    <select id="dialectic-status-filter" aria-label="Filter dialectic sessions">
-                        <option value="substantive">Substantive (3+ msgs)</option>
-                        <option value="all">All sessions</option>
-                        <option value="active">Active</option>
-                        <option value="resolved">Resolved</option>
-                        <option value="failed">Failed</option>
-                    </select>
-                    <button id="dialectic-refresh" class="panel-button" type="button" aria-label="Refresh dialectic sessions">Refresh</button>
+            <!-- Right Column: Discoveries -->
+            <div class="panel" id="discoveries-section" style="--panel-dot-color: var(--accent-purple);">
+                <div class="panel-header">
+                    <h2>Recent Discoveries</h2>
+                    <div class="panel-controls">
+                        <input id="discovery-search" type="text" placeholder="Search" aria-label="Search discoveries">
+                        <select id="discovery-type-filter" aria-label="Filter discoveries by type">
+                            <option value="all">All types</option>
+                            <option value="insight">Insight</option>
+                            <option value="improvement">Improvement</option>
+                            <option value="bug_found">Bug found</option>
+                            <option value="pattern">Pattern</option>
+                            <option value="question">Question</option>
+                            <option value="answer">Answer</option>
+                            <option value="analysis">Analysis</option>
+                            <option value="note">Note</option>
+                            <option value="exploration">Exploration</option>
+                        </select>
+                        <select id="discovery-time-filter" aria-label="Filter discoveries by time">
+                            <option value="all">All time</option>
+                            <option value="24h">Last 24h</option>
+                            <option value="7d">Last 7 days</option>
+                            <option value="30d">Last 30 days</option>
+                        </select>
+                        <button id="discovery-clear-filters" class="panel-button" type="button">Clear</button>
+                    </div>
+                </div>
+                <div id="discoveries-filter-info" class="filter-info"></div>
+                <div id="discoveries-type-legend" class="filter-info"></div>
+                <div id="discoveries-container" class="discoveries-list">
+                    <div class="skeleton-initial" id="discoveries-skeleton"></div>
                 </div>
             </div>
-            <div id="dialectic-filter-info" class="filter-info"></div>
-            <div id="dialectic-container" class="dialectic-list">
-                <div class="skeleton-initial" id="dialectic-skeleton"></div>
+        </div>
+
+        <!-- Dialectic Sessions - Full width centered -->
+        <div class="dialectic-section" id="dialectic-section">
+            <div class="panel" style="--panel-dot-color: var(--accent-yellow);">
+                <div class="panel-header">
+                    <h2>Dialectic Sessions</h2>
+                    <div class="panel-controls">
+                        <select id="dialectic-status-filter" aria-label="Filter dialectic sessions">
+                            <option value="all">All sessions</option>
+                            <option value="substantive">Substantive (3+ msgs)</option>
+                            <option value="active">Active</option>
+                            <option value="resolved">Resolved</option>
+                            <option value="failed">Failed</option>
+                        </select>
+                        <button id="dialectic-refresh" class="panel-button" type="button"
+                            aria-label="Refresh dialectic sessions">Refresh</button>
+                    </div>
+                </div>
+                <div id="dialectic-filter-info" class="filter-info"></div>
+                <div id="dialectic-container" class="dialectic-list">
+                    <div class="skeleton-initial" id="dialectic-skeleton"></div>
+                </div>
             </div>
         </div>
-    </div>
 
-    <div class="refresh-info">
-        Tip: use search and filters to narrow results quickly.
-    </div>
+        <div class="refresh-info">
+            Tip: use search and filters to narrow results quickly.
+        </div>
     </main>
 
     <!-- Detail modal for expandable items -->
@@ -375,6 +466,9 @@
             </div>
         </div>
     </div>
+
+    <button id="scroll-top" class="scroll-top-btn" type="button" title="Scroll to top"
+        aria-label="Scroll to top">&uarr;</button>
 
     <script src="/dashboard/dashboard.js"></script>
 </body>

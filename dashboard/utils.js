@@ -365,7 +365,7 @@ class DataProcessor {
         }
 
         return {
-            display: clamped.toFixed(6),
+            display: clamped.toFixed(3),
             percent: percent,
             interpretation: interpretation.text,
             color: interpretation.color,

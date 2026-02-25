@@ -310,6 +310,7 @@ async def handle_check_recovery_options(arguments: Dict[str, Any]) -> Sequence[T
         coherence=coherence,
         void_active=void_active,
         void_value=void_value,
+        coherence_history=monitor.state.coherence_history,
     )
     
     return success_response({

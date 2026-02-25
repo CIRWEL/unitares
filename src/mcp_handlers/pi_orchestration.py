@@ -94,6 +94,13 @@ PI_MCP_URLS = [PI_MCP_URL_LAN, PI_MCP_URL_TAILSCALE]  # Try in order
 PI_MCP_URL = PI_MCP_URL_LAN  # Default for backwards compat
 PI_MCP_TIMEOUT = 30.0  # Default timeout for Pi calls
 
+# Stable session ID for Mac→Pi calls.
+# Without this, each call_pi_tool() creates a fresh MCP ClientSession and Pi
+# sees each as a new anonymous client, minting a fresh UUID every time (Bug #1).
+# This header lets Pi's identity resolution map all Mac orchestration calls to
+# a single persistent session (Lumen's known identity: 69a1a4f7).
+PI_STABLE_SESSION_ID = "mac-governance-orchestrator"
+
 # Tool name mapping: pi_orchestration tool → anima_mcp tool
 # This documents the mapping between pi_* wrapper tools and underlying anima tools
 PI_TOOL_MAPPING = {
@@ -221,7 +228,16 @@ async def call_pi_tool(tool_name: str, arguments: Dict[str, Any],
             
             # Use full timeout per URL attempt (not divided)
             # This ensures each attempt gets the full timeout budget
-            http_client = httpx.AsyncClient(http2=True, timeout=timeout)
+            # Include stable session headers so Pi resolves all Mac calls
+            # to the same identity instead of minting a new UUID each time
+            http_client = httpx.AsyncClient(
+                http2=True,
+                timeout=timeout,
+                headers={
+                    "X-Session-ID": PI_STABLE_SESSION_ID,
+                    "X-Agent-Name": "mac-governance",
+                },
+            )
             
             async with streamable_http_client(pi_url, http_client=http_client) as (read, write, _):
                 async with ClientSession(read, write) as session:
@@ -412,7 +428,10 @@ async def handle_pi_list_tools(arguments: Dict[str, Any]) -> Sequence[TextConten
         last_error = None
         for pi_url in PI_MCP_URLS:
             try:
-                http_client = httpx.AsyncClient(http2=True, timeout=15.0)
+                http_client = httpx.AsyncClient(
+                    http2=True, timeout=15.0,
+                    headers={"X-Session-ID": PI_STABLE_SESSION_ID, "X-Agent-Name": "mac-governance"},
+                )
                 async with streamable_http_client(pi_url, http_client=http_client) as (read, write, _):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
@@ -575,6 +594,13 @@ async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent
 
     eisv_source = "pi (neural-weighted)" if context.get("eisv") else "mac (fallback)"
     result = {
+        "operation": "sync_to_governance" if update_governance else "read_mapping",
+        "note": (
+            "Synced: anima→EISV pushed to governance state."
+            if update_governance else
+            "Read-only: computed EISV from anima state but did NOT update governance. "
+            "Pass update_governance=true to push to governance."
+        ),
         "anima": anima,
         "eisv": eisv,
         "eisv_source": eisv_source,
@@ -636,12 +662,33 @@ async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent
 
 @mcp_tool("pi_display", timeout=15.0, register=False, description="Control Pi display. Use pi(action='display') instead.")
 async def handle_pi_display(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    """Control Pi's display via orchestrated call to manage_display."""
+    """Control Pi's display via orchestrated call to manage_display.
+
+    Translates pi(action='display') parameters to manage_display's action vocabulary:
+    - screen param present → action='switch', screen=<value>
+    - display_action param → use directly (face, next, previous, list_eras, etc.)
+    - neither → action='next' (default: cycle to next screen)
+
+    manage_display valid actions: switch, face, next, previous, list_eras, get_era, set_era
+    """
     agent_id = arguments.get("agent_id", "mac-orchestrator")
-    action = arguments.get("action", "next")
     screen = arguments.get("screen")
 
-    tool_args = {"action": action}
+    # Derive the correct manage_display action.
+    # The outer 'action' key is 'display' (consumed by the pi router) —
+    # we must NOT pass it through to manage_display which has its own action vocabulary.
+    display_action = arguments.get("display_action")
+    if display_action:
+        # Explicit display sub-action (face, next, previous, list_eras, get_era, set_era)
+        md_action = display_action
+    elif screen:
+        # Screen name provided → switch to that screen
+        md_action = "switch"
+    else:
+        # Default: cycle to next screen
+        md_action = "next"
+
+    tool_args = {"action": md_action}
     if screen:
         tool_args["screen"] = screen
 
@@ -653,7 +700,7 @@ async def handle_pi_display(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     return success_response({
         "device": "pi",
-        "action": action,
+        "action": md_action,
         "result": result
     })
 

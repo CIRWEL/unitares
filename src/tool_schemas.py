@@ -316,7 +316,7 @@ EXAMPLE RESPONSE:
 {
   "success": true,
   "status": "healthy",
-  "version": "2.7.0",
+  "version": "2.7.3",
   "components": {
     "calibration": {"status": "healthy", "pending_updates": 5},
     "telemetry": {"status": "healthy", "metrics_count": 1234},
@@ -630,7 +630,7 @@ EXAMPLE REQUEST:
 EXAMPLE RESPONSE:
 {
   "success": true,
-  "server_version": "2.7.0",
+  "server_version": "2.7.3",
   "build_date": "2025-11-25",
   "current_pid": 12345,
   "current_uptime_seconds": 3600,
@@ -3099,7 +3099,7 @@ EXAMPLE REQUEST:
 EXAMPLE RESPONSE:
 {
   "success": true,
-  "server_version": "2.7.0",
+  "server_version": "2.7.3",
   "tools": [...],
   "categories": {...},
   "total_tools": 44,
@@ -5059,7 +5059,12 @@ RETURNS:
                     "screen": {
                         "type": "string",
                         "enum": ["face", "sensors", "identity", "diagnostics", "notepad", "learning", "messages", "qa", "self_graph"],
-                        "description": "Screen to switch to (for display action)"
+                        "description": "Screen to switch to (for display action). If provided, automatically uses 'switch' display sub-action."
+                    },
+                    "display_action": {
+                        "type": "string",
+                        "enum": ["switch", "face", "next", "previous", "list_eras", "get_era", "set_era"],
+                        "description": "Display sub-action (for display action). Default: 'switch' if screen provided, else 'next'."
                     },
                     "text": {
                         "type": "string",

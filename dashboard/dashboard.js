@@ -39,7 +39,10 @@ const CONFIG = {
     MAX_EVENTS_LOG: 20,
 
     // Coalescing
-    COALESCE_WINDOW_MS: 30000
+    COALESCE_WINDOW_MS: 30000,
+
+    // Optional panel refresh cadence
+    OPTIONAL_REFRESH_EVERY_N_CYCLES: 3
 };
 
 // Verify dependencies loaded
@@ -50,16 +53,17 @@ if (typeof DashboardAPI === 'undefined' || typeof DataProcessor === 'undefined' 
 // Core instances
 const api = typeof DashboardAPI !== 'undefined' ? new DashboardAPI(window.location.origin) : null;
 const themeManager = typeof ThemeManager !== 'undefined' ? new ThemeManager() : null;
+let optionalPanelRefreshCycle = 0;
 
 // State bridges — route globals through state.js for module access
 // Each property getter/setter delegates to state.get()/state.set()
 // so existing code like `cachedAgents = x` still works transparently.
 if (typeof state !== 'undefined') {
     ['refreshFailures', 'autoRefreshPaused', 'previousStats',
-     'cachedAgents', 'cachedDiscoveries', 'cachedStuckAgents',
-     'cachedDialecticSessions', 'eisvChartUpper', 'eisvChartLower',
-     'eisvWebSocket', 'agentEISVHistory', 'knownAgents',
-     'selectedAgentView', 'lastVitalsTimestamp', 'recentDecisions'
+        'cachedAgents', 'cachedDiscoveries', 'cachedStuckAgents',
+        'cachedDialecticSessions', 'eisvChartUpper', 'eisvChartLower',
+        'eisvWebSocket', 'agentEISVHistory', 'knownAgents',
+        'selectedAgentView', 'lastVitalsTimestamp', 'recentDecisions'
     ].forEach(function (key) {
         Object.defineProperty(window, key, {
             get: function () { return state.get(key); },
@@ -154,6 +158,105 @@ document.getElementById('panel-modal')?.addEventListener('click', (e) => {
 });
 // Close button handler
 document.querySelector('.panel-modal-close')?.addEventListener('click', closeModal);
+
+// ============================================================================
+// KEYBOARD SHORTCUTS
+// ============================================================================
+(function initKeyboardShortcuts() {
+    const SECTION_KEYS = {
+        '1': 'stats-section',
+        '2': 'governance-pulse-panel',
+        '3': 'eisv-chart-panel',
+        '4': 'timeline-panel',
+        '5': 'agents-section',
+        '6': 'discoveries-section',
+        '7': 'dialectic-section'
+    };
+
+    function isInputFocused() {
+        var tag = document.activeElement?.tagName;
+        return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+    }
+
+    function showShortcutsHelp() {
+        var overlay = document.getElementById('shortcuts-overlay');
+        if (overlay) {
+            overlay.classList.toggle('visible');
+            return;
+        }
+    }
+
+    document.addEventListener('keydown', function (e) {
+        // Don't capture when typing in inputs or when modifiers are held (except shift)
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+        var modal = document.getElementById('panel-modal');
+        if (modal && modal.classList.contains('visible')) return;
+
+        if (isInputFocused() && e.key !== 'Escape') return;
+
+        switch (e.key) {
+            case 'r':
+                e.preventDefault();
+                var refreshBtn = document.getElementById('refresh-now');
+                if (refreshBtn) refreshBtn.click();
+                break;
+            case 't':
+                e.preventDefault();
+                var themeBtn = document.getElementById('theme-toggle');
+                if (themeBtn) themeBtn.click();
+                break;
+            case 'f':
+                e.preventDefault();
+                var searchInput = document.getElementById('agent-search');
+                if (searchInput) searchInput.focus();
+                break;
+            case '?':
+                e.preventDefault();
+                showShortcutsHelp();
+                break;
+            case 'Escape':
+                if (isInputFocused()) document.activeElement.blur();
+                var shortcutsOverlay = document.getElementById('shortcuts-overlay');
+                if (shortcutsOverlay) shortcutsOverlay.classList.remove('visible');
+                break;
+            default:
+                if (SECTION_KEYS[e.key]) {
+                    e.preventDefault();
+                    var nav = document.getElementById('section-nav');
+                    var target = document.getElementById(SECTION_KEYS[e.key]);
+                    if (target && nav) {
+                        var navHeight = nav.offsetHeight + 12;
+                        var targetPos = target.getBoundingClientRect().top + window.scrollY - navHeight;
+                        window.scrollTo({ top: targetPos, behavior: 'smooth' });
+                    }
+                }
+        }
+    });
+
+    // Build the shortcuts help overlay
+    var overlay = document.createElement('div');
+    overlay.id = 'shortcuts-overlay';
+    overlay.className = 'shortcuts-overlay';
+    overlay.innerHTML =
+        '<div class="shortcuts-panel">' +
+        '<div class="shortcuts-header"><h3>Keyboard Shortcuts</h3><button class="shortcuts-close" type="button">&times;</button></div>' +
+        '<div class="shortcuts-grid">' +
+        '<div class="shortcut-row"><kbd>r</kbd><span>Refresh data</span></div>' +
+        '<div class="shortcut-row"><kbd>t</kbd><span>Toggle theme</span></div>' +
+        '<div class="shortcut-row"><kbd>f</kbd><span>Focus agent search</span></div>' +
+        '<div class="shortcut-row"><kbd>1</kbd>-<kbd>7</kbd><span>Jump to section</span></div>' +
+        '<div class="shortcut-row"><kbd>Esc</kbd><span>Close / unfocus</span></div>' +
+        '<div class="shortcut-row"><kbd>?</kbd><span>Toggle this help</span></div>' +
+        '</div></div>';
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('click', function (e) {
+        if (e.target === overlay || e.target.classList.contains('shortcuts-close')) {
+            overlay.classList.remove('visible');
+        }
+    });
+})();
 
 /**
  * Render discoveries list for modal view.
@@ -451,6 +554,73 @@ document.addEventListener('click', async (event) => {
         }
         return;
     }
+
+    // Handle agent detail Resume button
+    const detailResumeBtn = event.target.closest('.agent-detail-resume-btn');
+    if (detailResumeBtn) {
+        event.stopPropagation();
+        const agentId = detailResumeBtn.getAttribute('data-agent-id');
+        if (!agentId) return;
+        detailResumeBtn.disabled = true;
+        detailResumeBtn.textContent = 'Resuming...';
+        try {
+            const result = await callTool('agent', {
+                action: 'resume',
+                agent_id: agentId,
+                reason: 'Resumed from dashboard agent detail'
+            });
+            if (result && result.success) {
+                detailResumeBtn.textContent = 'Resumed';
+                detailResumeBtn.style.borderColor = 'var(--color-success)';
+                detailResumeBtn.style.color = 'var(--color-success)';
+                loadAgents();
+                loadStuckAgents();
+            } else {
+                detailResumeBtn.textContent = 'Failed';
+                detailResumeBtn.disabled = false;
+                setTimeout(() => { detailResumeBtn.textContent = 'Resume Agent'; }, 2000);
+            }
+        } catch (err) {
+            console.error('Resume failed:', err);
+            detailResumeBtn.textContent = 'Error';
+            detailResumeBtn.disabled = false;
+            setTimeout(() => { detailResumeBtn.textContent = 'Resume Agent'; }, 2000);
+        }
+        return;
+    }
+
+    // Handle agent detail Archive button
+    const detailArchiveBtn = event.target.closest('.agent-detail-archive-btn');
+    if (detailArchiveBtn) {
+        event.stopPropagation();
+        const agentId = detailArchiveBtn.getAttribute('data-agent-id');
+        if (!agentId) return;
+        detailArchiveBtn.disabled = true;
+        detailArchiveBtn.textContent = 'Archiving...';
+        try {
+            const result = await callTool('archive_agent', {
+                agent_id: agentId,
+                reason: 'Archived from dashboard agent detail'
+            });
+            if (result && result.success) {
+                detailArchiveBtn.textContent = 'Archived';
+                detailArchiveBtn.style.borderColor = 'var(--color-success)';
+                detailArchiveBtn.style.color = 'var(--color-success)';
+                loadAgents();
+                loadStuckAgents();
+            } else {
+                detailArchiveBtn.textContent = 'Failed';
+                detailArchiveBtn.disabled = false;
+                setTimeout(() => { detailArchiveBtn.textContent = 'Archive Agent'; }, 2000);
+            }
+        } catch (err) {
+            console.error('Archive failed:', err);
+            detailArchiveBtn.textContent = 'Error';
+            detailArchiveBtn.disabled = false;
+            setTimeout(() => { detailArchiveBtn.textContent = 'Archive Agent'; }, 2000);
+        }
+        return;
+    }
 });
 
 // ============================================================================
@@ -694,6 +864,18 @@ async function loadAgents() {
                 const parts = [];
                 if (criticalCount > 0) parts.push(`${criticalCount} critical`);
                 if (highRiskCount > 0) parts.push(`${highRiskCount} high-risk`);
+                // Fleet coherence change indicator
+                if (previousStats.fleetCoherence !== undefined && previousStats.fleetCoherence !== null) {
+                    const cohDiff = avgCoherence - previousStats.fleetCoherence;
+                    if (Math.abs(cohDiff) > 0.001) {
+                        const arrow = cohDiff > 0 ? '▲' : '▼';
+                        const dir = cohDiff > 0 ? 'up' : 'down';
+                        const sign = cohDiff > 0 ? '+' : '';
+                        parts.push(`<span class="change-arrow ${dir}">${arrow} ${sign}${cohDiff.toFixed(3)}</span>`);
+                    }
+                }
+                previousStats.fleetCoherence = avgCoherence;
+
                 fleetDetailEl.innerHTML = parts.length > 0 ? parts.join(', ') : `${agentsWithMetrics.length} agents tracked`;
             } else {
                 fleetCoherenceEl.textContent = '-';
@@ -744,6 +926,20 @@ async function loadStuckAgents() {
             cachedStuckAgents = stuck;
             const count = stuck.length;
             animateValue(countEl, count);
+
+            // Show change from previous
+            const stuckChange = formatChange(count, previousStats.stuckAgents);
+            if (stuckChange) {
+                // For stuck agents, an increase is bad (red), decrease is good (green)
+                // formatChange shows up=green, down=red by default, so we invert
+                const diff = count - (previousStats.stuckAgents || 0);
+                if (diff > 0) {
+                    detailEl.innerHTML = '<span class="change-arrow down">▲</span><span class="change-arrow down">+' + diff + '</span> ';
+                } else if (diff < 0) {
+                    detailEl.innerHTML = '<span class="change-arrow up">▼</span><span class="change-arrow up">' + diff + '</span> ';
+                }
+            }
+            previousStats.stuckAgents = count;
 
             // Cross-reference: mark stuck agents in cachedAgents so agent cards show stuck badge
             const stuckIds = new Set(stuck.map(s => s.agent_id));
@@ -833,6 +1029,90 @@ async function loadSystemHealth() {
 }
 
 /**
+ * Load ROI metrics and update stat card
+ */
+async function loadROIMetrics() {
+    try {
+        const data = await callTool(
+            'get_roi_metrics',
+            { agent_id: 'mac-orchestrator' },
+            { retry: false, useCache: true, cacheTimeout: 60000 }
+        );
+        const valueEl = document.getElementById('roi-value');
+        const detailEl = document.getElementById('roi-detail');
+        if (!valueEl || !detailEl) return;
+
+        if (data && data.time_saved) {
+            const hours = data.time_saved.hours || 0;
+            const savings = data.cost_savings?.estimated_usd || 0;
+            valueEl.textContent = `${hours}h`;
+            detailEl.innerHTML = `Est. $${savings.toLocaleString()} saved`;
+        }
+    } catch (e) {
+        console.debug('Could not load ROI metrics:', e);
+    }
+}
+
+/**
+ * Load Lumen (Pi) status including anima and environmental metrics
+ */
+async function loadLumenStatus() {
+    const connEl = document.getElementById('lumen-connection');
+    const badgeEl = document.getElementById('lumen-id-badge');
+    if (!connEl) return;
+
+    try {
+        // Parallel fetch for context and health
+        const [contextData, healthData] = await Promise.all([
+            callTool(
+                'pi_get_context',
+                { include: ['identity', 'anima', 'sensors', 'mood'] },
+                { retry: false, useCache: true, cacheTimeout: 60000 }
+            ),
+            callTool('pi_health', {}, { retry: false, useCache: true, cacheTimeout: 60000 })
+        ]);
+
+        const ctx = contextData.context || {};
+        const anima = ctx.anima || {};
+        const sensors = ctx.sensors || {};
+
+        // Update identity
+        if (badgeEl && ctx.identity?.uuid) {
+            badgeEl.textContent = ctx.identity.uuid.substring(0, 8);
+        }
+
+        // Update connection status
+        connEl.innerHTML = '<span class="verdict-dot" style="background: var(--accent-green)"></span><span class="verdict-label">Connected</span>';
+        connEl.className = 'governance-verdict'; // Reset classes
+
+        // Update anima metrics
+        const updateMetric = (id, val, suffix = '') => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = val !== undefined ? `${(typeof val === 'number' ? val.toFixed(2) : val)}${suffix}` : '-';
+        };
+
+        updateMetric('lumen-warmth', anima.warmth);
+        updateMetric('lumen-clarity', anima.clarity);
+        updateMetric('lumen-stability', anima.stability);
+        updateMetric('lumen-presence', anima.presence);
+
+        // Update environmental metrics
+        updateMetric('env-temp', sensors.temp, '°C');
+        updateMetric('env-humidity', sensors.humidity, '%');
+        updateMetric('env-lux', sensors.lux, 'lx');
+
+        // Update mood
+        const moodEl = document.getElementById('lumen-mood-summary');
+        if (moodEl) moodEl.textContent = ctx.mood || 'Quiet';
+
+    } catch (e) {
+        console.debug('Could not load Lumen status:', e);
+        connEl.innerHTML = '<span class="verdict-dot" style="background: var(--accent-orange)"></span><span class="verdict-label">Offline</span>';
+    }
+}
+
+
+/**
  * Load discoveries from API and render to panel.
  * Updates cachedDiscoveries and stats.
  * @returns {Promise<void>}
@@ -875,7 +1155,7 @@ async function loadDiscoveries(searchQuery = '') {
             updateDiscoveryLegend([]);
             return false;
         }
-        
+
         // Handle both array and object response formats
         let discoveries = [];
         if (Array.isArray(searchResult)) {
@@ -981,11 +1261,11 @@ async function loadDiscoveries(searchQuery = '') {
     } catch (error) {
         const errorMsg = error.message || 'Unknown error';
         console.error('Failed to load discoveries:', error);
-        
+
         // Show helpful error message
         let userMessage = `Failed to load discoveries: ${errorMsg}`;
         let isRetryable = false;
-        
+
         if (errorMsg.includes('too many clients') || errorMsg.includes('connection pool') || errorMsg.includes('connection issue')) {
             userMessage = 'Database connection pool exhausted. The server has too many open connections. Try refreshing in a moment or restart the server.';
             isRetryable = true;
@@ -998,23 +1278,23 @@ async function loadDiscoveries(searchQuery = '') {
             userMessage = 'Database error. Check server logs for details.';
             isRetryable = true;
         }
-        
+
         // Show error banner if retryable
         if (isRetryable) {
             updateConnectionBanner(true);
         }
-        
+
         showError(userMessage);
         document.getElementById('discoveries-container').innerHTML =
             `<div class="loading">${escapeHtml(userMessage)}<br><small>You can try refreshing or check the server status.</small></div>`;
         cachedDiscoveries = [];
         updateDiscoveryFilterInfo(0);
         updateDiscoveryLegend([]);
-        
+
         // Still update count to show error state
         document.getElementById('discoveries-count').textContent = '?';
         document.getElementById('discoveries-change').innerHTML = 'Error loading';
-        
+
         return false;
     }
 }
@@ -1028,7 +1308,8 @@ async function loadDiscoveries(searchQuery = '') {
 async function loadDialecticSessions() {
     try {
         console.log('Loading dialectic sessions...');
-        const result = await callTool('list_dialectic_sessions', {
+        const result = await callTool('dialectic', {
+            action: 'list',
             limit: 50,
             include_transcript: false
         });
@@ -1067,7 +1348,9 @@ async function loadDialecticSessions() {
         if (changeEl) {
             const resolved = sessions.filter(s => s.phase === 'resolved' || s.status === 'resolved').length;
             const active = sessions.filter(s => !['resolved', 'failed'].includes(s.phase || s.status)).length;
-            changeEl.innerHTML = `${resolved} resolved, ${active} active`;
+            const dialecticChange = formatChange(sessions.length, previousStats.dialecticSessions);
+            changeEl.innerHTML = (dialecticChange ? dialecticChange + ' ' : '') + `${resolved} resolved, ${active} active`;
+            previousStats.dialecticSessions = sessions.length;
         }
 
         // Apply current filter (respects user's active filter selection)
@@ -1136,17 +1419,26 @@ async function refresh(options = {}) {
         ]);
         console.log('Load results:', results);
 
+        // Optional panels refresh less frequently to reduce API pressure.
+        optionalPanelRefreshCycle += 1;
+        const shouldRefreshOptional = force || (optionalPanelRefreshCycle % CONFIG.OPTIONAL_REFRESH_EVERY_N_CYCLES === 0);
+        if (shouldRefreshOptional) {
+            Promise.allSettled([loadROIMetrics(), loadLumenStatus()]).catch((e) => {
+                console.debug('Optional panel refresh failed:', e);
+            });
+        }
+
         // Check if critical operations failed (agents and discoveries)
         const agentsResult = results[0];
         const discoveriesResult = results[1];
         const dialecticResult = results[2];
         // results[3] is loadStuckAgents - non-critical
-        
+
         const criticalFailures = [
             agentsResult.status === 'rejected' || (agentsResult.status === 'fulfilled' && agentsResult.value === false),
             discoveriesResult.status === 'rejected' || (discoveriesResult.status === 'fulfilled' && discoveriesResult.value === false)
         ].filter(Boolean).length;
-        
+
         // Only show connection banner if BOTH critical operations failed
         // This prevents false positives from transient errors
         if (criticalFailures >= 2) {
@@ -1158,7 +1450,7 @@ async function refresh(options = {}) {
         } else {
             updateConnectionBanner(false);
         }
-        
+
         // Log any individual failures
         results.forEach((result, index) => {
             if (result.status === 'rejected') {
@@ -1192,6 +1484,16 @@ if (agentSortInput) {
 const agentClearFiltersButton = document.getElementById('agent-clear-filters');
 if (agentClearFiltersButton) {
     agentClearFiltersButton.addEventListener('click', clearAgentFilters);
+}
+
+// Agent filters toggle
+const agentFiltersToggle = document.getElementById('agent-filters-toggle');
+const agentFiltersRow = document.getElementById('agent-filters-row');
+if (agentFiltersToggle && agentFiltersRow) {
+    agentFiltersToggle.addEventListener('click', () => {
+        const isCollapsed = agentFiltersRow.classList.toggle('collapsed');
+        agentFiltersToggle.classList.toggle('active', !isCollapsed);
+    });
 }
 
 // Debounce helper
@@ -1393,7 +1695,6 @@ if (discoveriesContainer) {
 // Click handler for stuck agents card to expand
 const stuckAgentsCard = document.getElementById('stuck-agents-card');
 if (stuckAgentsCard) {
-    stuckAgentsCard.style.cursor = 'pointer';
     stuckAgentsCard.addEventListener('click', () => {
         if (cachedStuckAgents.length > 0) {
             expandPanel('stuck-agents');
@@ -1478,7 +1779,7 @@ var updateWSStatusLabel = TimelineModule.updateWSStatusLabel;
 
 // Hook timeline into refresh cycle — update after agents load
 const originalLoadAgents = loadAgents;
-loadAgents = async function() {
+loadAgents = async function () {
     const result = await originalLoadAgents();
     renderTimeline();
     return result;
@@ -1487,7 +1788,7 @@ loadAgents = async function() {
 // Patch EISV WebSocket to update status label
 if (typeof EISVWebSocket !== 'undefined') {
     const origInitWS = initWebSocket;
-    initWebSocket = function() {
+    initWebSocket = function () {
         origInitWS();
         const checkInterval = setInterval(() => {
             const wsEl = document.querySelector('#ws-status .ws-dot');
@@ -1529,7 +1830,7 @@ if (typeof EISVWebSocket !== 'undefined') {
 
     // Re-render on each refresh if visible
     const origRefresh = refresh;
-    refresh = async function() {
+    refresh = async function () {
         const result = await origRefresh();
         if (panel.style.display !== 'none') renderHeatmap();
         return result;
@@ -1537,6 +1838,83 @@ if (typeof EISVWebSocket !== 'undefined') {
 })();
 
 // Initial load
+// ============================================================================
+// SECTION NAVIGATION (scroll-spy)
+// ============================================================================
+(function initSectionNav() {
+    const nav = document.getElementById('section-nav');
+    if (!nav) return;
+
+    const navItems = nav.querySelectorAll('.section-nav-item');
+    const sectionIds = Array.from(navItems).map(item => item.dataset.section);
+    const sections = sectionIds.map(id => document.getElementById(id)).filter(Boolean);
+
+    // Smooth scroll on click
+    navItems.forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.preventDefault();
+            const target = document.getElementById(item.dataset.section);
+            if (target) {
+                const navHeight = nav.offsetHeight + 12;
+                const targetPos = target.getBoundingClientRect().top + window.scrollY - navHeight;
+                window.scrollTo({ top: targetPos, behavior: 'smooth' });
+            }
+        });
+    });
+
+    // Scroll-spy: highlight active section
+    let ticking = false;
+    function updateActiveSection() {
+        const navHeight = nav.offsetHeight + 20;
+        let activeId = sectionIds[0];
+
+        for (let i = sections.length - 1; i >= 0; i--) {
+            const rect = sections[i].getBoundingClientRect();
+            if (rect.top <= navHeight + 40) {
+                activeId = sectionIds[i];
+                break;
+            }
+        }
+
+        navItems.forEach(item => {
+            item.classList.toggle('active', item.dataset.section === activeId);
+        });
+        ticking = false;
+    }
+
+    window.addEventListener('scroll', () => {
+        if (!ticking) {
+            requestAnimationFrame(updateActiveSection);
+            ticking = true;
+        }
+    }, { passive: true });
+
+    updateActiveSection();
+})();
+
+// ============================================================================
+// SCROLL-TO-TOP BUTTON
+// ============================================================================
+(function initScrollToTop() {
+    var btn = document.getElementById('scroll-top');
+    if (!btn) return;
+
+    var ticking = false;
+    window.addEventListener('scroll', function () {
+        if (!ticking) {
+            requestAnimationFrame(function () {
+                btn.classList.toggle('visible', window.scrollY > 400);
+                ticking = false;
+            });
+            ticking = true;
+        }
+    }, { passive: true });
+
+    btn.addEventListener('click', function () {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+})();
+
 console.log('Dashboard initializing...');
 console.log('API available:', typeof api !== 'undefined' && api !== null);
 console.log('DataProcessor available:', typeof DataProcessor !== 'undefined');

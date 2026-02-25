@@ -61,6 +61,7 @@ from src._imports import ensure_project_root
 project_root = ensure_project_root()
 
 from src.logging_utils import get_logger
+from src.versioning import load_version_from_file
 logger = get_logger(__name__)
 
 # Process management (prevent multiple instances)
@@ -573,10 +574,7 @@ def _session_id_from_ctx(ctx: Context | None) -> str | None:
 
 def _load_version():
     """Load version from VERSION file."""
-    version_file = project_root / "VERSION"
-    if version_file.exists():
-        return version_file.read_text().strip()
-    return "2.7.0"  # Fallback if VERSION file missing
+    return load_version_from_file(project_root)
 
 SERVER_VERSION = _load_version()
 
@@ -1800,22 +1798,53 @@ async def main():
         except Exception as e:
             logger.warning(f"[EISV_SYNC] Could not start: {e}")
 
-        # === Periodic expired session cleanup ===
+        # === Periodic expired session cleanup (PG + Redis) ===
         async def session_cleanup_task(interval_hours: float = 6.0):
-            """Delete expired session rows to prevent table bloat."""
+            """Delete expired sessions from PG and orphaned Redis session cache keys."""
             while True:
                 await asyncio.sleep(interval_hours * 3600)
+                pg_deleted = 0
+                redis_deleted = 0
+
+                # 1. Get expired session keys from PG before deleting
+                expired_session_keys = []
                 try:
                     db = get_db()
                     pool = db._pool
                     if pool:
                         async with pool.acquire() as conn:
+                            # Collect expired session keys for Redis cleanup
+                            rows = await conn.fetch(
+                                "SELECT session_key FROM core.sessions WHERE expires_at <= now()"
+                            )
+                            expired_session_keys = [r["session_key"] for r in rows]
+                            # Delete expired PG rows
                             result = await conn.execute("DELETE FROM core.sessions WHERE expires_at <= now()")
-                            deleted = int(result.split()[-1]) if result else 0
-                            if deleted:
-                                logger.info(f"[SESSION_CLEANUP] Deleted {deleted} expired sessions")
+                            pg_deleted = int(result.split()[-1]) if result else 0
                 except Exception as e:
-                    logger.warning(f"[SESSION_CLEANUP] Failed: {e}")
+                    logger.warning(f"[SESSION_CLEANUP] PG cleanup failed: {e}")
+
+                # 2. Delete matching Redis session cache keys
+                if expired_session_keys:
+                    try:
+                        from src.cache.redis_client import get_redis
+                        redis = await get_redis()
+                        if redis is not None:
+                            for sk in expired_session_keys:
+                                try:
+                                    removed = await redis.delete(f"session:{sk}")
+                                    if removed:
+                                        redis_deleted += 1
+                                except Exception:
+                                    pass
+                    except Exception as e:
+                        logger.warning(f"[SESSION_CLEANUP] Redis cleanup failed: {e}")
+
+                if pg_deleted or redis_deleted:
+                    logger.info(
+                        f"[SESSION_CLEANUP] Deleted {pg_deleted} expired PG sessions, "
+                        f"{redis_deleted} Redis cache keys"
+                    )
 
         asyncio.create_task(session_cleanup_task(interval_hours=6.0))
         logger.info("[SESSION_CLEANUP] Started periodic expired session cleanup (every 6h)")

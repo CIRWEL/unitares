@@ -28,6 +28,41 @@ from .llm_delegation import synthesize_results
 
 logger = get_logger(__name__)
 
+import re
+
+def normalize_tag(tag: str) -> str:
+    """Normalize a tag to canonical form: lowercase, strip, collapse separators to hyphens.
+
+    Examples:
+        "EISV" → "eisv"
+        "bug_fix" → "bug-fix"
+        "  Bug Fix  " → "bug-fix"
+        "eisv-dynamics" → "eisv-dynamics" (unchanged)
+        "eisv_dynamics" → "eisv-dynamics"
+    """
+    t = tag.strip().lower()
+    # Replace underscores and spaces with hyphens
+    t = re.sub(r'[\s_]+', '-', t)
+    # Collapse multiple hyphens
+    t = re.sub(r'-{2,}', '-', t)
+    # Strip leading/trailing hyphens
+    t = t.strip('-')
+    return t
+
+
+def normalize_tags(tags: list) -> list:
+    """Normalize and deduplicate a list of tags."""
+    seen = set()
+    result = []
+    for tag in tags:
+        if not isinstance(tag, str) or not tag.strip():
+            continue
+        normalized = normalize_tag(tag)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
+
 
 async def _discovery_not_found(discovery_id: str, graph) -> TextContent:
     """Build a 'not found' error with prefix-match suggestions.
@@ -384,14 +419,14 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
             type=discovery_type,
             summary=summary,
             details=raw_details,
-            tags=arguments.get("tags", []),
+            tags=normalize_tags(arguments.get("tags", [])),
             severity=severity,
             status=arguments.get("status", "open"),
             response_to=response_to,
             references_files=arguments.get("related_files", []),
             provenance=provenance
         )
-        
+
         # Find similar discoveries (fast with tag index) - DEFAULT: true for better linking
         similar_discoveries = []
         if arguments.get("auto_link_related", True):  # Default to true - new graph uses indexes (fast)
@@ -495,7 +530,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         # Accept both "query" and "text" as parameter names for better UX
         query_text = arguments.get("query") or arguments.get("text")
         agent_id = arguments.get("agent_id")
-        tags = arguments.get("tags")
+        tags = normalize_tags(arguments.get("tags", [])) or None
         dtype = arguments.get("discovery_type")
         severity = arguments.get("severity")
         status = arguments.get("status")
@@ -1438,7 +1473,7 @@ async def handle_answer_question(arguments: Dict[str, Any]) -> Sequence[TextCont
             type="answer",
             summary=f"Answer: {answer_text[:200]}..." if len(answer_text) > 200 else f"Answer: {answer_text}",
             details=answer_text,
-            tags=arguments.get("tags", []),
+            tags=normalize_tags(arguments.get("tags", [])),
             severity="low",
             status="open",
             response_to=ResponseTo(
@@ -1535,7 +1570,7 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         
         # Build tags — notes are ephemeral by default (auto-archived after 7 days)
         # unless the caller signals permanence via tags or lasting=True
-        tags = list(arguments.get("tags", []))
+        tags = normalize_tags(arguments.get("tags", []))
         lasting = arguments.get("lasting", False)
         if isinstance(lasting, str):
             lasting = lasting.lower() in ("true", "1", "yes")

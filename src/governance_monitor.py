@@ -996,7 +996,8 @@ class UNITARESMonitor:
             risk_score=risk_score,
             coherence=self.state.coherence,
             void_active=self.state.void_active,
-            void_value=self.state.V
+            void_value=self.state.V,
+            coherence_history=self.state.coherence_history,
         )
         
         # Use UNITARES verdict to influence decision if available

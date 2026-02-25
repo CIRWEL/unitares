@@ -498,26 +498,31 @@ class GovernanceConfig:
         risk_score: float,
         coherence: float,
         void_active: bool,
-        void_value: float = 0.0
+        void_value: float = 0.0,
+        coherence_history: Optional[List[float]] = None,
     ) -> Dict[str, any]:
         """
         Compute proprioceptive margin - how close agent is to decision boundaries.
-        
+
         This implements the "viability envelope" concept: agents need to know where they
         are relative to their limits, not just absolute numbers. This is proprioception
         as felt experience, not telemetry data.
-        
+
         Returns margin level and nearest edge:
         - "comfortable": Well within limits, proceed freely
         - "tight": Near an edge, be aware
         - "critical": At boundary, stop or adjust
-        
+
         Args:
             risk_score: Current risk score [0, 1]
             coherence: Current coherence [0, 1]
             void_active: Whether void state is active
             void_value: Current void value (for distance calculation)
-        
+            coherence_history: Recent coherence values for baseline-relative margin.
+                When provided with >= 10 values, the tight threshold for coherence
+                adapts to 10% of the agent's baseline (rolling average), preventing
+                false-positive "tight" signals for agents at steady state.
+
         Returns:
             {
                 'margin': 'comfortable' | 'tight' | 'critical',
@@ -584,11 +589,19 @@ class GovernanceConfig:
         nearest_edge = min(valid_margins.items(), key=lambda x: x[1])[0]
         distance_to_edge = valid_margins[nearest_edge]
 
-        # Determine margin level based on distance TO threshold
-        # comfortable: > 0.15 away from any threshold
-        # tight: <= 0.15 away from threshold (approaching)
+        # Baseline-relative tight threshold for coherence.
+        # With enough history, "tight" = within 10% of the agent's baseline.
+        # This prevents false-positive tight signals for agents at ODE steady
+        # state (~0.49) where the fixed 0.15 threshold is never reachable.
+        if coherence_history and len(coherence_history) >= 10:
+            baseline = sum(coherence_history) / len(coherence_history)
+            coherence_tight_threshold = max(baseline * 0.10, 0.03)
+        else:
+            coherence_tight_threshold = 0.15
 
-        if distance_to_edge > 0.15:
+        # For coherence edge, use adaptive threshold; others use fixed 0.15
+        edge_threshold = coherence_tight_threshold if nearest_edge == 'coherence' else 0.15
+        if distance_to_edge > edge_threshold:
             margin_level = 'comfortable'
         else:
             margin_level = 'tight'
@@ -600,7 +613,8 @@ class GovernanceConfig:
             'details': {
                 'risk_margin': risk_margin,
                 'coherence_margin': coherence_margin,
-                'void_margin': void_margin
+                'void_margin': void_margin,
+                'coherence_tight_threshold': coherence_tight_threshold,
             }
         }
     

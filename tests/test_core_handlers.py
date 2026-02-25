@@ -774,7 +774,7 @@ class TestProcessAgentUpdate:
         stack.enter_context(patch("src.mcp_handlers.context.get_context_agent_id", return_value=patches_dict["ctx_agent_id"]))
         stack.enter_context(patch("src.mcp_handlers.context.get_context_session_key", return_value=patches_dict["ctx_session_key"]))
         stack.enter_context(patch("src.mcp_handlers.identity_v2.ensure_agent_persisted", new_callable=AsyncMock, return_value=False))
-        stack.enter_context(patch("src.mcp_handlers.core.agent_storage", patches_dict["storage"]))
+        stack.enter_context(patch("src.mcp_handlers.update_phases.agent_storage", patches_dict["storage"]))
         return stack
 
     @pytest.mark.asyncio
@@ -856,7 +856,7 @@ class TestProcessAgentUpdate:
         mock_error = _make_error_text_content("complexity out of range")
 
         with self._apply_patches(p), \
-             patch("src.mcp_handlers.core.validate_complexity", return_value=(None, mock_error)):
+             patch("src.mcp_handlers.update_phases.validate_complexity", return_value=(None, mock_error)):
 
             from src.mcp_handlers.core import handle_process_agent_update
             result = await handle_process_agent_update({
@@ -878,7 +878,7 @@ class TestProcessAgentUpdate:
         mock_error = _make_error_text_content("confidence invalid")
 
         with self._apply_patches(p), \
-             patch("src.mcp_handlers.core.validate_confidence", return_value=(None, mock_error)):
+             patch("src.mcp_handlers.update_phases.validate_confidence", return_value=(None, mock_error)):
 
             from src.mcp_handlers.core import handle_process_agent_update
             result = await handle_process_agent_update({
@@ -898,7 +898,7 @@ class TestProcessAgentUpdate:
         mock_error = _make_error_text_content("ethical_drift invalid")
 
         with self._apply_patches(p), \
-             patch("src.mcp_handlers.core.validate_ethical_drift", return_value=(None, mock_error)):
+             patch("src.mcp_handlers.update_phases.validate_ethical_drift", return_value=(None, mock_error)):
 
             from src.mcp_handlers.core import handle_process_agent_update
             result = await handle_process_agent_update({
@@ -918,7 +918,7 @@ class TestProcessAgentUpdate:
         mock_error = _make_error_text_content("response_text too long")
 
         with self._apply_patches(p), \
-             patch("src.mcp_handlers.core.validate_response_text", return_value=(None, mock_error)):
+             patch("src.mcp_handlers.update_phases.validate_response_text", return_value=(None, mock_error)):
 
             from src.mcp_handlers.core import handle_process_agent_update
             result = await handle_process_agent_update({
@@ -1854,16 +1854,16 @@ class TestProcessAgentUpdateExtended:
         stack.enter_context(patch("src.mcp_handlers.context.get_context_agent_id", return_value=patches_dict["ctx_agent_id"]))
         stack.enter_context(patch("src.mcp_handlers.context.get_context_session_key", return_value=patches_dict["ctx_session_key"]))
         stack.enter_context(patch("src.mcp_handlers.identity_v2.ensure_agent_persisted", new_callable=AsyncMock, return_value=False))
-        stack.enter_context(patch("src.mcp_handlers.core.agent_storage", patches_dict["storage"]))
+        stack.enter_context(patch("src.mcp_handlers.update_phases.agent_storage", patches_dict["storage"]))
         return stack
 
     # ------------------------------------------------------------------
-    # Lines 30-32: EISV_VALIDATION_AVAILABLE import fallback
+    # EISV validation: enrichment function exists
     # ------------------------------------------------------------------
-    def test_eisv_validation_available_flag_exists(self):
-        """EISV_VALIDATION_AVAILABLE flag is set at module level."""
-        from src.mcp_handlers.core import EISV_VALIDATION_AVAILABLE
-        assert isinstance(EISV_VALIDATION_AVAILABLE, bool)
+    def test_eisv_validation_enrichment_exists(self):
+        """EISV validation enrichment is available."""
+        from src.mcp_handlers.update_enrichments import enrich_eisv_validation
+        assert callable(enrich_eisv_validation)
 
     # ------------------------------------------------------------------
     # Lines 185-186: complexity calibration exception in get_metrics
@@ -3222,8 +3222,7 @@ class TestProcessAgentUpdateExtended:
 
         p = self._common_patches(mock_server, agent_uuid=agent_uuid)
         with self._apply_patches(p), \
-             patch("src.mcp_handlers.core.EISV_VALIDATION_AVAILABLE", True), \
-             patch("src.mcp_handlers.core.validate_governance_response", side_effect=ValueError("Missing V metric")):
+             patch("src.eisv_validator.validate_governance_response", side_effect=ValueError("Missing V metric")):
 
             from src.mcp_handlers.core import handle_process_agent_update
             result = await handle_process_agent_update({

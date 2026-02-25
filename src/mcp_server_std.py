@@ -92,6 +92,7 @@ from src.pattern_analysis import analyze_agent_patterns
 from src.runtime_config import get_thresholds
 from src.lock_cleanup import cleanup_stale_state_locks
 from src.tool_schemas import get_tool_definitions
+from src.versioning import load_version_from_file
 # Tool mode filtering removed - all tools always available
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
@@ -104,10 +105,7 @@ import os
 # Single source of truth: VERSION file
 def _load_version():
     """Load version from VERSION file (single source of truth)."""
-    version_file = project_root / "VERSION"
-    if version_file.exists():
-        return version_file.read_text().strip()
-    return "2.7.0"  # Fallback if VERSION file missing
+    return load_version_from_file(project_root)
 
 SERVER_VERSION = _load_version()  # Auto-sync from VERSION file
 SERVER_BUILD_DATE = "2026-02-05"
@@ -667,6 +665,12 @@ async def _load_metadata_from_postgres_async() -> dict:
         db = get_db()
         agent_ids = list(result.keys())
         identities = await db.get_identities_batch(agent_ids)
+        if not isinstance(identities, dict):
+            logger.debug(
+                "Batch trust tier load expected dict from get_identities_batch, got %s",
+                type(identities).__name__,
+            )
+            identities = {}
         for aid, identity in identities.items():
             if identity and identity.metadata and "trajectory_current" in identity.metadata:
                 tier_info = compute_trust_tier(identity.metadata)
@@ -1246,7 +1250,12 @@ async def auto_archive_orphan_agents(
         except (ValueError, TypeError, AttributeError):
             continue
 
-        updates = getattr(meta, 'total_updates', 0) or 0
+        raw_updates = getattr(meta, 'total_updates', 0)
+        try:
+            updates = int(raw_updates or 0)
+        except (TypeError, ValueError):
+            # Defensive fallback: some tests patch metadata with mock-like values.
+            updates = 0
         should_archive = False
         reason = ""
 

@@ -95,11 +95,11 @@ class TestCircuitBreakerIntegration:
         # This is a higher-level test - we'll verify the pattern exists
         # The actual integration test requires more setup
 
-        # Verify the check exists in the handler
-        from src.mcp_handlers import core
+        # Verify the check exists in the handler (logic extracted to update_phases)
+        from src.mcp_handlers import update_phases
         import inspect
 
-        source = inspect.getsource(core.handle_process_agent_update)
+        source = inspect.getsource(update_phases.resolve_identity_and_guards)
         assert "status == \"paused\"" in source or "circuit breaker" in source.lower()
 
     @pytest.mark.asyncio

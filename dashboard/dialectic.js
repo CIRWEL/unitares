@@ -156,7 +156,7 @@
 
     function applyDialecticFilters() {
         var statusFilter = document.getElementById('dialectic-status-filter');
-        var filter = statusFilter ? statusFilter.value : 'substantive';
+        var filter = statusFilter ? statusFilter.value : 'all';
 
         var cachedDialecticSessions = state.get('cachedDialecticSessions');
         var filtered = cachedDialecticSessions;
@@ -201,9 +201,9 @@
         // Try to fetch full session with transcript (callTool is in dashboard.js, available at call time)
         var fullSession = session;
         if (sessionId && sessionId !== 'Unknown' && typeof callTool === 'function') {
-            callTool('get_dialectic_session', {
-                session_id: sessionId,
-                check_timeout: false
+            callTool('dialectic', {
+                action: 'get',
+                session_id: sessionId
             }).then(function (result) {
                 if (result && result.session) {
                     fullSession = result.session;

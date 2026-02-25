@@ -1,5 +1,5 @@
 # Makefile for governance-mcp-v1
-.PHONY: help test test-quick version version-check version-bump restart logs serve docs clean
+.PHONY: help test test-quick test-smoke version version-check version-bump restart logs serve docs clean
 
 help: ## Show this help message
 	@echo "Available commands:"
@@ -26,6 +26,12 @@ test: ## Run full test suite with coverage
 test-quick: ## Run tests without coverage
 	@python3 -m pytest -o addopts= -q
 
+test-smoke: ## Run fast critical-path tests
+	@python3 -m pytest -o addopts= -q --maxfail=1 \
+		tests/test_version_sync.py \
+		tests/test_mcp_server_std.py::TestLoadVersion \
+		tests/test_mcp_server_std.py::TestAutoArchiveOrphanAgents
+
 # ── Server ───────────────────────────────────────────────
 
 serve: ## Start server locally (foreground)
@@ -50,6 +56,7 @@ docs: ## Generate tool documentation from @mcp_tool decorators
 	@python3 scripts/generate_tool_docs.py
 
 validate: ## Run CI validation checks locally
+	@python3 scripts/check_ci_python_version_sync.py
 	@python3 scripts/update_docs_tool_count.py --check
 	@python3 scripts/version_manager.py --check
 	@echo "All checks passed"

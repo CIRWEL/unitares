@@ -708,21 +708,24 @@ class PostgresBackend(DatabaseBackend):
         client_type: Optional[str] = None,
         client_info: Optional[Dict[str, Any]] = None,
     ) -> bool:
+        """
+        Create a new session row.
+
+        Returns True only when a new session is inserted. If the session_id
+        already exists, this method returns False and does not mutate existing
+        session state.
+        """
         async with self.acquire() as conn:
             try:
-                await conn.execute(
+                result = await conn.execute(
                     """
                     INSERT INTO core.sessions (session_id, identity_id, expires_at, client_type, client_info)
                     VALUES ($1, $2, $3, $4, $5)
-                    ON CONFLICT (session_id) DO UPDATE SET
-                        expires_at = EXCLUDED.expires_at,
-                        last_active = now(),
-                        is_active = true,
-                        client_info = EXCLUDED.client_info
+                    ON CONFLICT (session_id) DO NOTHING
                     """,
                     session_id, identity_id, expires_at, client_type, json.dumps(client_info or {}),
                 )
-                return True
+                return "INSERT 0 1" in result
             except Exception:
                 return False
 

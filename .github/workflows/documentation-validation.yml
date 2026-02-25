@@ -20,7 +20,11 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.9'
+        python-version: '3.12'
+
+    - name: Validate CI/Python version sync
+      run: |
+        python scripts/check_ci_python_version_sync.py
 
     - name: Validate tool count synchronization
       env:

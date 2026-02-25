@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from src.db import get_db
+from src.db.acquire_compat import compatible_acquire
 from src.db.base import IdentityRecord, AgentStateRecord
 from src.logging_utils import get_logger
 
@@ -372,7 +373,7 @@ async def list_agents(
     agent_labels = {}
     try:
         if hasattr(db, '_pool') and db._pool:
-            async with db._pool.acquire() as conn:
+            async with compatible_acquire(db._pool) as conn:
                 rows = await conn.fetch("SELECT id, label FROM core.agents WHERE label IS NOT NULL AND label != ''")
                 agent_labels = {row['id']: row['label'] for row in rows}
     except Exception as e:

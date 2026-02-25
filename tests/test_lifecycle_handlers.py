@@ -269,7 +269,7 @@ class TestListAgentsFull:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             E=0.7, I=0.3, S=0.5, V=0.0, coherence=0.8,
-            lambda1=0.1, void_active=False
+            lambda1=0.1, void_active=False, coherence_history=[]
         )
         mock_monitor.get_metrics.return_value = {
             "risk_score": 0.3, "current_risk": 0.3,
@@ -304,7 +304,7 @@ class TestListAgentsFull:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             E=0.7, I=0.3, S=0.5, V=0.0, coherence=0.8,
-            lambda1=0.1, void_active=False
+            lambda1=0.1, void_active=False, coherence_history=[]
         )
         mock_monitor.get_metrics.return_value = {
             "risk_score": 0.3, "current_risk": 0.3,
@@ -336,7 +336,7 @@ class TestListAgentsFull:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             E=0.7, I=0.3, S=0.5, V=0.0, coherence=0.8,
-            lambda1=0.1, void_active=False
+            lambda1=0.1, void_active=False, coherence_history=[]
         )
         mock_monitor.get_metrics.return_value = {
             "risk_score": 0.3, "current_risk": 0.3,
@@ -370,7 +370,7 @@ class TestListAgentsFull:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             E=0.7, I=0.3, S=0.5, V=0.0, coherence=0.8,
-            lambda1=0.1, void_active=False
+            lambda1=0.1, void_active=False, coherence_history=[]
         )
         mock_monitor.get_metrics.return_value = {
             "risk_score": 0.3, "current_risk": 0.3,
@@ -466,7 +466,7 @@ class TestGetAgentMetadata:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             lambda1=0.1, coherence=0.8, void_active=False,
-            E=0.7, I=0.3, S=0.5, V=0.0,
+            E=0.7, I=0.3, S=0.5, V=0.0, coherence_history=[],
         )
         server.monitors = {"agent-1": mock_monitor}
 
@@ -1340,7 +1340,7 @@ class TestDirectResumeIfSafe:
         monitor = MagicMock()
         monitor.state = SimpleNamespace(
             coherence=coherence, void_active=void_active,
-            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1,
+            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1, coherence_history=[],
         )
         monitor.get_metrics.return_value = {"mean_risk": mean_risk}
         return monitor
@@ -1460,7 +1460,7 @@ class TestSelfRecoveryReview:
         monitor = MagicMock()
         monitor.state = SimpleNamespace(
             coherence=coherence, void_active=void_active,
-            E=0.7, I=0.3, S=0.5, V=V, lambda1=0.1,
+            E=0.7, I=0.3, S=0.5, V=V, lambda1=0.1, coherence_history=[],
         )
         monitor.get_metrics.return_value = {"mean_risk": mean_risk}
         return monitor
@@ -1707,7 +1707,7 @@ class TestDetectStuckAgentsInternal:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             coherence=0.8, void_active=False,
-            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1,
+            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1, coherence_history=[],
         )
         mock_monitor.get_metrics.return_value = {"mean_risk": 0.3}
         server.monitors = {"agent-1": mock_monitor}
@@ -1854,7 +1854,7 @@ class TestListAgentsLiteImplicit:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             E=0.7, I=0.3, S=0.5, V=0.0, coherence=0.8,
-            lambda1=0.1, void_active=False
+            lambda1=0.1, void_active=False, coherence_history=[]
         )
         mock_monitor.get_metrics.return_value = {
             "risk_score": 0.3, "current_risk": 0.3,
@@ -2026,7 +2026,7 @@ class TestListAgentsFullModeEdgeCases:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             E=0.7, I=0.3, S=0.5, V=0.0, coherence=0.8,
-            lambda1=0.1, void_active=False
+            lambda1=0.1, void_active=False, coherence_history=[]
         )
         mock_monitor.get_metrics.return_value = {
             "risk_score": 0.3, "current_risk": 0.3,
@@ -2135,7 +2135,7 @@ class TestListAgentsFullModeEdgeCases:
         error_monitor = MagicMock()
         error_monitor.state = SimpleNamespace(
             E=0.7, I=0.3, S=0.5, V=0.0, coherence=0.8,
-            lambda1=0.1, void_active=False
+            lambda1=0.1, void_active=False, coherence_history=[]
         )
         error_monitor.get_metrics.side_effect = RuntimeError("metrics broken")
         server.monitors = {"agent-err": error_monitor}
@@ -2301,7 +2301,7 @@ class TestListAgentsFullModeEdgeCases:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             E=None, I=0.3, S=0.5, V=0.0, coherence=0.8,
-            lambda1=None, void_active=None
+            lambda1=None, void_active=None, coherence_history=[]
         )
         mock_monitor.get_metrics.return_value = {
             "risk_score": None, "current_risk": None,
@@ -2388,7 +2388,7 @@ class TestGetAgentMetadataEdgeCases:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             lambda1=0.1, coherence=0.9, void_active=False,
-            E=0.8, I=0.2, S=0.6, V=0.0,
+            E=0.8, I=0.2, S=0.6, V=0.0, coherence_history=[],
         )
         server.monitors = {"agent-uuid-123": mock_monitor}
 
@@ -2854,7 +2854,7 @@ class TestDirectResumeEdgeCases:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             coherence=0.8, void_active=False,
-            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1,
+            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1, coherence_history=[],
         )
         mock_monitor.get_metrics.return_value = {"mean_risk": 0.3}
         server.get_or_create_monitor.return_value = mock_monitor
@@ -2885,7 +2885,7 @@ class TestSelfRecoveryReviewEdgeCases:
         monitor = MagicMock()
         monitor.state = SimpleNamespace(
             coherence=coherence, void_active=void_active,
-            E=0.7, I=0.3, S=0.5, V=V, lambda1=0.1,
+            E=0.7, I=0.3, S=0.5, V=V, lambda1=0.1, coherence_history=[],
         )
         monitor.get_metrics.return_value = {"mean_risk": mean_risk}
         return monitor
@@ -2997,7 +2997,7 @@ class TestDetectStuckAgentsInternalEdgeCases:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             coherence=0.8, void_active=False,
-            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1,
+            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1, coherence_history=[],
         )
         mock_monitor.get_metrics.return_value = {"mean_risk": 0.3}
         server.monitors = {"agent-1": mock_monitor}
@@ -3021,7 +3021,7 @@ class TestDetectStuckAgentsInternalEdgeCases:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             coherence=0.8, void_active=False,
-            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1,
+            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1, coherence_history=[],
         )
         mock_monitor.get_metrics.return_value = {"mean_risk": 0.3}
         server.monitors = {"agent-1": mock_monitor}
@@ -3052,7 +3052,7 @@ class TestDetectStuckAgentsInternalEdgeCases:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             coherence=0.8, void_active=False,
-            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1,
+            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1, coherence_history=[],
         )
         mock_monitor.get_metrics.return_value = {"mean_risk": 0.3}
         server.monitors = {"agent-1": mock_monitor}
@@ -3089,7 +3089,7 @@ class TestDetectStuckAgentsInternalEdgeCases:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             coherence=0.8, void_active=False,
-            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1,
+            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1, coherence_history=[],
         )
         mock_monitor.get_metrics.return_value = {"mean_risk": 0.3}
         server.monitors = {"agent-1": mock_monitor}
@@ -3126,7 +3126,7 @@ class TestDetectStuckAgentsInternalEdgeCases:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             coherence=0.2, void_active=True,
-            E=0.9, I=0.1, S=0.3, V=0.5, lambda1=0.8,
+            E=0.9, I=0.1, S=0.3, V=0.5, lambda1=0.8, coherence_history=[],
         )
         mock_monitor.get_metrics.return_value = {"mean_risk": 0.8}
         server.monitors = {"agent-1": mock_monitor}
@@ -3155,7 +3155,7 @@ class TestDetectStuckAgentsInternalEdgeCases:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             coherence=0.5, void_active=False,
-            E=0.6, I=0.3, S=0.5, V=0.1, lambda1=0.3,
+            E=0.6, I=0.3, S=0.5, V=0.1, lambda1=0.3, coherence_history=[],
         )
         mock_monitor.get_metrics.return_value = {"mean_risk": 0.5}
         server.monitors = {"agent-1": mock_monitor}
@@ -3191,7 +3191,7 @@ class TestDetectStuckAgentsAutoRecover:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             coherence=coherence, void_active=void_active,
-            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1,
+            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1, coherence_history=[],
         )
         mock_monitor.get_metrics.return_value = {"mean_risk": mean_risk}
         return mock_monitor
@@ -3491,7 +3491,7 @@ class TestListAgentsFullModeMonitorEdgeCases:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             E=None, I="not-a-number", S=0.5, V=0.0, coherence=0.8,
-            lambda1=None, void_active=None
+            lambda1=None, void_active=None, coherence_history=[]
         )
         mock_monitor.get_metrics.return_value = {
             "risk_score": None, "current_risk": None,
@@ -3519,7 +3519,7 @@ class TestListAgentsFullModeMonitorEdgeCases:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             E=0.7, I=0.3, S=0.5, V=0.0, coherence=0.8,
-            lambda1=0.1, void_active=False
+            lambda1=0.1, void_active=False, coherence_history=[]
         )
         mock_monitor.get_metrics.return_value = {
             "risk_score": 0.3, "current_risk": 0.3,
@@ -3632,7 +3632,7 @@ class TestDetectStuckAgentsAutoRecoverAdditional:
         mock_monitor = MagicMock()
         mock_monitor.state = SimpleNamespace(
             coherence=0.8, void_active=False,
-            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1,
+            E=0.7, I=0.3, S=0.5, V=0.0, lambda1=0.1, coherence_history=[],
         )
         mock_monitor.get_metrics.return_value = {"mean_risk": 0.3}
         server.get_or_create_monitor.return_value = mock_monitor

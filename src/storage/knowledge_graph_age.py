@@ -17,6 +17,7 @@ from pathlib import Path
 from src.logging_utils import get_logger
 from src.knowledge_graph import DiscoveryNode, ResponseTo
 from src.db import get_db
+from src.db.acquire_compat import compatible_acquire
 from src.db.age_queries import (
     create_discovery_node,
     create_agent_node,
@@ -118,7 +119,7 @@ class KnowledgeGraphAGE:
         if pool is None:
             raise RuntimeError("PostgreSQL pool unavailable (AGE SQL execution requires Postgres backend)")
 
-        async with pool.acquire() as conn:
+        async with compatible_acquire(pool) as conn:
             await conn.execute("LOAD 'age'")
             await conn.execute("SET search_path = ag_catalog, core, audit, public")
             await conn.execute(sql)

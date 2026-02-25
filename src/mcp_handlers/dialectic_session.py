@@ -13,6 +13,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 from src.dialectic_protocol import DialecticSession, DialecticPhase
+from src.db.acquire_compat import compatible_acquire
 from src.logging_utils import get_logger
 from .shared import get_mcp_server
 
@@ -368,7 +369,7 @@ async def load_session_as_dict(session_id: str) -> Optional[Dict[str, Any]]:
         from src.dialectic_db import get_dialectic_db
         db = await get_dialectic_db()
         await db._ensure_pool()
-        async with db._pool.acquire() as conn:
+        async with compatible_acquire(db._pool) as conn:
             row = await conn.fetchrow("""
                 SELECT session_id, phase, status, session_type,
                        paused_agent_id, reviewer_agent_id, topic,
@@ -465,7 +466,7 @@ async def list_all_sessions(
         db = await get_dialectic_db()
         await db._ensure_pool()
 
-        async with db._pool.acquire() as conn:
+        async with compatible_acquire(db._pool) as conn:
             # Build query with filters (LEFT JOIN for pre-aggregated message count)
             query = """
                 SELECT

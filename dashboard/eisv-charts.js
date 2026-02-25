@@ -452,7 +452,7 @@
         if (info) {
             var shortName = agentName.length > 16 ? agentName.substring(0, 16) + '...' : agentName;
             var viewLabel = selectedAgentView === '__fleet__' ? '(fleet avg)' :
-                            selectedAgentView === '__all__' ? '(all)' : '';
+                selectedAgentView === '__all__' ? '(all)' : '';
             info.innerHTML = '<span class="eisv-agent-label">' + escapeHtml(shortName) + ' ' + viewLabel + '</span>' +
                 ' <span class="eisv-value" style="color:' + MetricColors.HEX.chartEnergy + '">E ' + (eisv.E || 0).toFixed(3) + '</span>' +
                 ' <span class="eisv-value" style="color:' + MetricColors.HEX.chartIntegrity + '">I ' + (eisv.I || 0).toFixed(3) + '</span>' +
@@ -574,14 +574,14 @@
             else v = 'critical';
         }
         var badges = {
-            'safe':      { text: 'A', cls: 'verdict-approve', title: 'Approve' },
-            'approve':   { text: 'A', cls: 'verdict-approve', title: 'Approve' },
-            'caution':   { text: 'P', cls: 'verdict-proceed', title: 'Proceed' },
-            'proceed':   { text: 'P', cls: 'verdict-proceed', title: 'Proceed' },
-            'elevated':  { text: 'P', cls: 'verdict-proceed', title: 'Proceed with caution' },
-            'pause':     { text: '!', cls: 'verdict-pause', title: 'Pause' },
+            'safe': { text: 'A', cls: 'verdict-approve', title: 'Approve' },
+            'approve': { text: 'A', cls: 'verdict-approve', title: 'Approve' },
+            'caution': { text: 'P', cls: 'verdict-proceed', title: 'Proceed' },
+            'proceed': { text: 'P', cls: 'verdict-proceed', title: 'Proceed' },
+            'elevated': { text: 'P', cls: 'verdict-proceed', title: 'Proceed with caution' },
+            'pause': { text: '!', cls: 'verdict-pause', title: 'Pause' },
             'high-risk': { text: '!', cls: 'verdict-pause', title: 'High Risk' },
-            'critical':  { text: 'X', cls: 'verdict-critical', title: 'Critical' }
+            'critical': { text: 'X', cls: 'verdict-critical', title: 'Critical' }
         };
         return badges[v] || badges['safe'];
     }
@@ -673,7 +673,7 @@
                 '<span class="decision-agent">' + escapeHtml(nameDisplay) + countStr + '</span>' +
                 '<span class="decision-risk">(' + riskStr + ')</span>' +
                 '<span class="decision-time">' + timeStr + '</span>' +
-            '</div>';
+                '</div>';
         }).join('');
     }
 
@@ -778,12 +778,13 @@
     // ========================================================================
 
     function updateGovernancePulse(data) {
-        // Agent name
         var agentNameEl = document.getElementById('pulse-agent-name');
         var agentName = data.agent_name || data.agent_id || 'unknown';
         if (agentNameEl) {
             var displayName = agentName.length > 20 ? agentName.substring(0, 17) + '...' : agentName;
-            agentNameEl.textContent = displayName;
+            var isLocalDevice = agentName.toLowerCase().includes('lumen') || agentName.toLowerCase().includes('anima') || data.agent_id === 'mac-orchestrator';
+            var localBadge = isLocalDevice ? ' <span class="local-device-badge" title="Physical Device">LUMEN</span>' : '';
+            agentNameEl.innerHTML = escapeHtml(displayName) + localBadge;
             agentNameEl.title = agentName;
         }
 

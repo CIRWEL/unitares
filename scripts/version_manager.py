@@ -59,17 +59,14 @@ def bump_version(part: str) -> str:
 # Files and patterns to check/update
 # NOTE: admin.py health_check now uses dynamic SERVER_VERSION, no longer hardcoded.
 VERSION_REFERENCES = [
+    # Package metadata
+    ("pyproject.toml", [
+        (r'version = "([\d.]+)"', r'version = "{version}"'),
+    ]),
     # README.md - title and footer
     ("README.md", [
         (r'# UNITARES Governance Framework v([\d.]+)', r'# UNITARES Governance Framework v{version}'),
         (r'\*\*Version:\*\* ([\d.]+)', r'**Version:** {version}'),
-    ]),
-    # Server code - fallback versions
-    ("src/mcp_server.py", [
-        (r'return "([\d.]+)"  # Fallback if VERSION file missing', r'return "{version}"  # Fallback if VERSION file missing'),
-    ]),
-    ("src/mcp_server_std.py", [
-        (r'return "([\d.]+)"  # Fallback if VERSION file missing', r'return "{version}"  # Fallback if VERSION file missing'),
     ]),
     # Tool schemas - example response versions
     ("src/tool_schemas.py", [

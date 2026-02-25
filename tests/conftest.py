@@ -4,6 +4,7 @@ Pytest configuration and fixtures for governance-mcp-v1 tests.
 import pytest
 import warnings
 import sys
+from collections import defaultdict, deque
 from unittest.mock import AsyncMock
 
 # Filter ResourceWarnings globally before any imports
@@ -100,6 +101,88 @@ def _isolate_db_backend(monkeypatch):
 
     # monkeypatch auto-restores _db_instance on teardown
     storage_module._db_ready_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_identity_state():
+    """
+    Reset all in-memory identity and session state between tests.
+
+    Without this, each test that triggers dispatch or identity resolution
+    accumulates ghost agent entries in shared module-level dicts. These
+    persist across the entire test session because Python module globals
+    survive between test functions.
+
+    Clears:
+    - _session_identities: session -> agent binding cache
+    - _uuid_prefix_index: UUID prefix -> full UUID lookup
+    - agent_metadata / monitors: server-level agent registries
+    - pattern tracker per-agent state
+    - middleware _tool_call_history: rate-limit loop detection
+    - contextvars: session_context, mcp_session_id, transport_client_hint,
+      session_signals, trajectory_confidence
+    """
+    yield
+
+    # --- identity_shared module-level caches ---
+    try:
+        from src.mcp_handlers.identity_shared import (
+            _session_identities, _uuid_prefix_index,
+        )
+        _session_identities.clear()
+        _uuid_prefix_index.clear()
+    except Exception:
+        pass
+
+    # --- mcp_server_std agent_metadata & monitors ---
+    try:
+        if 'src.mcp_server_std' in sys.modules:
+            mcp = sys.modules['src.mcp_server_std']
+            if hasattr(mcp, 'agent_metadata'):
+                mcp.agent_metadata.clear()
+            if hasattr(mcp, 'monitors'):
+                mcp.monitors.clear()
+    except Exception:
+        pass
+
+    # --- pattern tracker per-agent state ---
+    try:
+        from src.pattern_tracker import get_pattern_tracker
+        tracker = get_pattern_tracker()
+        if hasattr(tracker, '_agents'):
+            tracker._agents.clear()
+        if hasattr(tracker, '_tool_history'):
+            tracker._tool_history.clear()
+        if hasattr(tracker, '_hypotheses'):
+            tracker._hypotheses.clear()
+    except Exception:
+        pass
+
+    # --- middleware rate-limit loop history ---
+    try:
+        from src.mcp_handlers import middleware
+        middleware._tool_call_history.clear()
+    except Exception:
+        pass
+
+    # --- contextvars (reset to defaults) ---
+    try:
+        from src.mcp_handlers.context import (
+            _session_context,
+            _mcp_session_id,
+            _transport_client_hint,
+            _session_signals,
+            _trajectory_confidence,
+        )
+        # Reset each contextvar to its default by setting then immediately
+        # using the ContextVar default mechanism
+        _session_context.set({})
+        _mcp_session_id.set(None)
+        _transport_client_hint.set(None)
+        _session_signals.set(None)
+        _trajectory_confidence.set(None)
+    except Exception:
+        pass
 
 
 @pytest.fixture

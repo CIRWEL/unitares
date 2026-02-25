@@ -369,18 +369,17 @@ class TestDispatchToolRateLimiting:
 
     @pytest.mark.asyncio
     async def test_read_only_tools_skip_rate_limit(self, integration_mocks):
-        """Read-only tools (health_check, etc.) should skip rate limiting."""
+        """Read-only tools should skip rate limiting."""
         from src.mcp_handlers import dispatch_tool
 
         # Make rate limiter reject everything
         integration_mocks["rate_limiter"].check_rate_limit.return_value = (False, "Rate limit exceeded")
 
-        # health_check is a real registered tool, should skip rate limit
-        result = await dispatch_tool("health_check", {})
+        # get_thresholds is read-only and should skip rate limiting.
+        result = await dispatch_tool("get_thresholds", {})
         assert result is not None
-        # Should NOT be a rate limit error - health_check is in read_only_tools set
+        # Should NOT be a rate limit error.
         text = result[0].text.lower()
-        # health_check should succeed or at least not be rate-limited
         assert "rate limit" not in text
 
 
