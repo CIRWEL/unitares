@@ -147,9 +147,9 @@
                 '</div>' +
                 '<div class="dialectic-topic">' + escapeHtml(topic) + '</div>' +
                 '<div class="dialectic-agents">' +
-                    '<span class="agent-label">Requestor:</span> <span title="' + escapeHtml(requestorUuid) + '">' + escapeHtml(requestorLabel) + '</span>' +
+                    '<span class="agent-label">Requestor:</span> ' + escapeHtml(requestorLabel) + (requestorUuid ? ' <code style="font-size: 0.75em; color: var(--text-tertiary);">' + escapeHtml(requestorUuid.substring(0, 8)) + '</code>' : '') +
                     (reviewerLabel && reviewerLabel !== 'None'
-                        ? '<span class="agent-label" style="margin-left: 10px;">Reviewer:</span> <span title="' + escapeHtml(reviewerUuid) + '">' + escapeHtml(reviewerLabel) + '</span>'
+                        ? '<span class="agent-label" style="margin-left: 10px;">Reviewer:</span> ' + escapeHtml(reviewerLabel) + (reviewerUuid ? ' <code style="font-size: 0.75em; color: var(--text-tertiary);">' + escapeHtml(reviewerUuid.substring(0, 8)) + '</code>' : '')
                         : '') +
                     '<span class="agent-label" style="margin-left: 10px; color: var(--accent-cyan);">📝 ' + (session.message_count || 0) + ' messages</span>' +
                 '</div>' +
@@ -323,7 +323,8 @@
                     '<div class="flex-between mb-sm">' +
                         '<span>' +
                             '<strong style="color: ' + roleColor + '; text-transform: uppercase; font-size: 0.8em;">' + escapeHtml(role) + '</strong>' +
-                            (authorLabel ? '<span style="color: var(--text-secondary); font-size: 0.8em; margin-left: 8px;" title="' + escapeHtml(authorUuid) + '">' + escapeHtml(authorLabel) + '</span>' : '') +
+                            (authorLabel ? '<span style="color: var(--text-secondary); font-size: 0.8em; margin-left: 8px;">' + escapeHtml(authorLabel) + '</span>' : '') +
+                            (authorUuid ? '<code style="color: var(--text-tertiary); font-size: 0.7em; margin-left: 6px;">' + escapeHtml(authorUuid.substring(0, 8)) + '</code>' : '') +
                         '</span>' +
                         (timestamp ? '<span class="text-secondary-xxs">' + escapeHtml(timestamp) + '</span>' : '') +
                     '</div>' +
