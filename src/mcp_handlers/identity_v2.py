@@ -1571,6 +1571,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     # Auto-resume existing identity by default (no prompt needed)
     existing_identity = None
     created_fresh_identity = False  # Track if we got a fresh identity to persist
+    _was_archived = False  # Track if agent was auto-unarchived
     if not force_new:
         # Name-based reconnection ONLY if resume=True is explicitly passed
         # This prevents accidental identity collision when multiple sessions use same name
@@ -1592,6 +1593,16 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             agent_id = existing_identity.get("agent_id", agent_uuid)
             label = existing_identity.get("label")
             logger.info(f"[ONBOARD] Auto-resuming existing agent {agent_uuid[:8]}...")
+            # Check if agent is archived — auto-unarchive on explicit reconnect
+            try:
+                db = get_db()
+                identity_record = await db.get_identity(agent_uuid)
+                if identity_record and identity_record.status == "archived":
+                    await db.update_agent_fields(agent_uuid, status="active")
+                    logger.info(f"[ONBOARD] Auto-unarchived agent {agent_uuid[:8]}... (reconnected via onboard)")
+                    _was_archived = True
+            except Exception as e:
+                logger.warning(f"[ONBOARD] Could not check/unarchive agent: {e}")
             # Mark for resume flow below
             resume = True
         else:
@@ -1824,6 +1835,8 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     else:
         welcome = f"Welcome back, {friendly_name}! Your session ID is `{stable_session_id}`."
         welcome_message = f"I found your existing identity. Pass `client_session_id: \"{stable_session_id}\"` in all tool calls for best attribution."
+        if _was_archived:
+            welcome_message += " (Note: your agent was archived and has been reactivated.)"
 
     result = {
         "success": True,

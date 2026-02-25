@@ -80,6 +80,7 @@ Call `process_agent_update()` periodically with:
 - `response_text`: Brief summary of what you did
 - `complexity`: 0.0–1.0 estimate of task difficulty
 - `confidence`: 0.0–1.0 how confident you are in the output (be honest — overconfidence is tracked)
+- `task_type`: `"convergent"` (focused/narrowing), `"divergent"` (exploring/expanding), or `"mixed"` (default)
 
 **When to check in:**
 - After completing a meaningful unit of work
