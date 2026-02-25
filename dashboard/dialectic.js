@@ -306,15 +306,25 @@
                 '<div class="mt-sm" style="max-height: 350px; overflow-y: auto;">';
 
             transcript.forEach(function (entry) {
-                var role = entry.role || entry.agent_id || entry.phase || 'system';
+                var role = entry.role || entry.phase || 'system';
                 var content = entry.content || entry.reasoning || entry.message || '';
                 var timestamp = entry.timestamp || '';
-                var isSystem = role === 'system' || role === 'synthesis';
-                var roleColor = isSystem ? 'var(--accent-yellow)' : 'var(--accent-cyan)';
+                var authorUuid = entry.agent_id || '';
+                var authorLabel = authorUuid ? resolveAgentLabel(authorUuid) : '';
+                var roleColors = {
+                    thesis: 'var(--accent-cyan)',
+                    antithesis: 'var(--accent-purple)',
+                    synthesis: 'var(--accent-yellow)',
+                    system: 'var(--text-secondary)'
+                };
+                var roleColor = roleColors[role] || 'var(--accent-cyan)';
 
                 html += '<div class="transcript-entry" style="border-left-color: ' + roleColor + ';">' +
                     '<div class="flex-between mb-sm">' +
-                        '<strong style="color: ' + roleColor + '; text-transform: uppercase; font-size: 0.8em;">' + escapeHtml(role) + '</strong>' +
+                        '<span>' +
+                            '<strong style="color: ' + roleColor + '; text-transform: uppercase; font-size: 0.8em;">' + escapeHtml(role) + '</strong>' +
+                            (authorLabel ? '<span style="color: var(--text-secondary); font-size: 0.8em; margin-left: 8px;" title="' + escapeHtml(authorUuid) + '">' + escapeHtml(authorLabel) + '</span>' : '') +
+                        '</span>' +
                         (timestamp ? '<span class="text-secondary-xxs">' + escapeHtml(timestamp) + '</span>' : '') +
                     '</div>' +
                     '<div style="color: var(--text-primary); white-space: pre-wrap; word-wrap: break-word; font-size: 0.9em; line-height: 1.5;">' + escapeHtml(content) + '</div>' +
