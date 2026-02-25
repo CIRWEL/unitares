@@ -116,7 +116,7 @@ def _reconstruct_session_from_dict(session_id: str, session_data: Dict) -> Optio
 
         session = DialecticSession(
             paused_agent_id=session_data.get("paused_agent_id", ""),
-            reviewer_agent_id=session_data.get("reviewer_agent_id", ""),
+            reviewer_agent_id=session_data.get("reviewer_agent_id") or None,
             paused_agent_state=paused_agent_state,
             discovery_id=session_data.get("discovery_id"),
             dispute_type=session_data.get("dispute_type"),
@@ -156,52 +156,54 @@ def _reconstruct_session_from_dict(session_id: str, session_data: Dict) -> Optio
 
 async def save_session(session: DialecticSession) -> None:
     """
-    Persist dialectic session to disk - ASYNC to prevent Claude Desktop freezing.
-    
-    Dialectic sessions are critical for recovery - they must be saved before handler returns.
-    Using async executor ensures file is on disk without blocking the event loop.
+    Persist dialectic session to PostgreSQL (primary) and optionally JSON (snapshot).
+
+    All callers (dialectic handlers, lifecycle auto-triggers) go through here,
+    ensuring a single write path and no data split between backends.
     """
+    # Primary: write to PostgreSQL
+    try:
+        from src.dialectic_db import create_session_async as pg_create_session
+        await pg_create_session(
+            session_id=session.session_id,
+            paused_agent_id=session.paused_agent_id,
+            reviewer_agent_id=session.reviewer_agent_id,
+            reason=getattr(session, 'reason', None),
+            discovery_id=getattr(session, 'discovery_id', None),
+            dispute_type=getattr(session, 'dispute_type', None),
+            session_type=getattr(session, 'session_type', None),
+            topic=getattr(session, 'topic', None),
+            max_synthesis_rounds=getattr(session, 'max_synthesis_rounds', 5),
+            synthesis_round=getattr(session, 'synthesis_round', 0),
+            paused_agent_state=getattr(session, 'paused_agent_state', None),
+        )
+        logger.debug(f"Session {session.session_id} saved to PostgreSQL")
+    except Exception as e:
+        # Log but don't block — JSON snapshot is the fallback
+        logger.error(f"PostgreSQL save failed for session {session.session_id}: {e}")
+
+    # Secondary: JSON snapshot (for offline access / debugging)
     try:
         if not UNITARES_DIALECTIC_WRITE_JSON_SNAPSHOT:
             return
 
         session_file = SESSION_STORAGE_DIR / f"{session.session_id}.json"
         session_data = session.to_dict()
-        
-        # CRITICAL: Run file I/O in executor to avoid blocking event loop
-        # These are small files (<10KB) but blocking I/O freezes Claude Desktop
-        # Using executor ensures non-blocking persistence
+
         loop = asyncio.get_running_loop()
-        
+
         def _write_session_sync():
-            """Synchronous file write - runs in executor to avoid blocking"""
-            # Ensure directory exists (inside executor to avoid blocking)
             SESSION_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-            
             json_str = json.dumps(session_data, indent=2)
             with open(session_file, 'w', encoding='utf-8') as f:
                 f.write(json_str)
-                f.flush()  # Ensure buffered data written
-                os.fsync(f.fileno())  # Force write to disk
-            
-            # Verify file exists and has content
-            if not session_file.exists():
-                raise FileNotFoundError(f"Session file not found after write: {session_file}")
-            
-            file_size = session_file.stat().st_size
-            if file_size == 0:
-                raise ValueError(f"Session file is empty: {session_file}")
-            
-            return file_size
-        
-        # Run in executor to avoid blocking event loop (prevents Claude Desktop freezing)
+                f.flush()
+                os.fsync(f.fileno())
+
         await loop.run_in_executor(None, _write_session_sync)
-            
+
     except Exception as e:
-        import traceback
-        logger.error(f"Could not save session {session.session_id}: {e}", exc_info=True)
-        # Re-raise to ensure caller knows save failed
-        raise
+        logger.error(f"JSON snapshot save failed for session {session.session_id}: {e}", exc_info=True)
 
 
 async def load_all_sessions() -> int:
@@ -468,6 +470,14 @@ async def list_all_sessions(
 
         async with compatible_acquire(db._pool) as conn:
             # Build query with filters (LEFT JOIN for pre-aggregated message count)
+            # Exclude test/demo agent sessions (same patterns as _is_test_agent in lifecycle.py)
+            test_filter = """
+                AND ds.paused_agent_id NOT LIKE 'test_%'
+                AND ds.paused_agent_id NOT LIKE 'demo_%'
+                AND LOWER(ds.paused_agent_id) NOT LIKE '%test%'
+                AND LOWER(ds.paused_agent_id) NOT LIKE '%demo%'
+            """
+
             query = """
                 SELECT
                     ds.session_id,
@@ -487,7 +497,7 @@ async def list_all_sessions(
                     GROUP BY session_id
                 ) mc ON mc.session_id = ds.session_id
                 WHERE 1=1
-            """
+            """ + test_filter
             params = []
             param_idx = 1
 
@@ -605,6 +615,11 @@ async def list_all_sessions(
                     phase = data.get("phase", "")
                     if status.lower() not in phase.lower():
                         continue
+
+                # Skip test/demo agent sessions
+                paused_id = data.get("paused_agent_id", "").lower()
+                if "test" in paused_id or "demo" in paused_id:
+                    continue
 
                 summary = {
                     "session_id": session_id,
