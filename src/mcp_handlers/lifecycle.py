@@ -6,7 +6,7 @@ Handles agent creation, metadata, archiving, deletion, and API key management.
 
 from typing import Dict, Any, Sequence
 from mcp.types import TextContent
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import sys
 import hashlib
 # PostgreSQL-only agent storage (single source of truth)
@@ -87,8 +87,6 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
             elif arguments.get("summary_only") is True or arguments.get("grouped") is False:
                 lite_mode = False
         if lite_mode:
-            from datetime import datetime, timedelta, timezone
-
             # Ultra-compact response - only real agents
             limit = arguments.get("limit", 20)
             status_filter = arguments.get("status_filter", "active")
@@ -201,26 +199,43 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
         # Default: include zero-update agents so newly created agents are discoverable.
         # Callers can still pass min_updates=2 to hide one-shot / placeholder agents.
         min_updates = arguments.get("min_updates", 0)
-        
+        recent_days = arguments.get("recent_days")  # Optional recency filter
+
         # Pagination support (optimization)
         offset = arguments.get("offset", 0)
         limit = arguments.get("limit")  # None = no limit (backward compatible)
 
+        # Calculate cutoff time for recency filter
+        cutoff_time = None
+        if recent_days and recent_days > 0:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(days=recent_days)
+
         agents_list = []
-        
+
         # First pass: collect all matching agents (without loading monitors)
         for agent_id, meta in mcp_server.agent_metadata.items():
             # Filter by status if requested
             if status_filter != "all" and meta.status != status_filter:
                 continue
-            
+
             # Filter out test agents by default (unless explicitly requested)
             if not include_test_agents and _is_test_agent(agent_id):
                 continue
-            
+
             # Filter out low-activity agents (one-shot fragmentation cleanup)
             if min_updates and meta.total_updates < min_updates:
                 continue
+
+            # Apply recency filter
+            if cutoff_time and meta.last_update:
+                try:
+                    last_dt = datetime.fromisoformat(meta.last_update.replace('Z', '+00:00'))
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    if last_dt < cutoff_time:
+                        continue
+                except Exception:
+                    pass
             
             # Filter by loaded status if requested
             if loaded_only:
@@ -1755,12 +1770,6 @@ def _detect_stuck_agents(
         
         # Skip if not active
         if meta.status != "active":
-            continue
-
-        # Skip autonomous/embodied agents - they operate on different timescales
-        # (e.g., Lumen, creatures) and shouldn't be flagged as "stuck" by timeout
-        agent_tags = getattr(meta, "tags", []) or []
-        if any(tag in agent_tags for tag in ["autonomous", "embodied", "creature", "anima"]):
             continue
 
         # Skip agents with too few updates (likely orphan/test agents)
