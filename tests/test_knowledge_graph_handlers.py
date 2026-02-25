@@ -1205,11 +1205,11 @@ class TestLeaveNote:
 
     @pytest.mark.asyncio
     async def test_leave_note_truncation(self, patch_common, registered_agent):
-        """Long notes are truncated to 500 chars."""
+        """Long notes are truncated to 1000 chars (MAX_SUMMARY_LEN)."""
         mock_mcp_server, mock_graph = patch_common
         from src.mcp_handlers.knowledge_graph import handle_leave_note
 
-        long_text = "X" * 600
+        long_text = "X" * 1200
         result = await handle_leave_note({
             "agent_id": registered_agent,
             "summary": long_text,
@@ -1220,7 +1220,7 @@ class TestLeaveNote:
         # The stored discovery's summary should be truncated
         call_args = mock_graph.add_discovery.call_args
         discovery = call_args[0][0]
-        assert len(discovery.summary) <= 504  # 500 + "..."
+        assert len(discovery.summary) <= 1004  # 1000 + "..."
 
     @pytest.mark.asyncio
     async def test_leave_note_auto_links_with_tags(self, patch_common, registered_agent):
