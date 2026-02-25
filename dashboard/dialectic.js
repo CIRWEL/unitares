@@ -58,6 +58,22 @@
         }
     }
 
+    /**
+     * Resolve agent UUID to display label using cached agent data.
+     * Returns label if found, otherwise truncated UUID, or fallback.
+     */
+    function resolveAgentLabel(uuid, fallback) {
+        if (!uuid || uuid === 'Unknown' || uuid === 'unknown') return fallback || 'Unknown';
+        var agents = state.get('cachedAgents') || [];
+        for (var i = 0; i < agents.length; i++) {
+            if (agents[i].agent_id === uuid) {
+                return agents[i].label || agents[i].name || uuid.substring(0, 8);
+            }
+        }
+        // Not in cache — return short UUID
+        return uuid.substring(0, 8);
+    }
+
     // ========================================================================
     // Dialectic list rendering
     // ========================================================================
@@ -83,8 +99,10 @@
         container.innerHTML = displaySessions.map(function (session) {
             var phase = session.phase || session.status || 'unknown';
             var phaseColor = getPhaseColor(phase);
-            var requestorId = session.paused_agent || session.requestor_id || session.agent_id || 'Unknown';
-            var reviewerId = session.reviewer || session.reviewer_id || 'None';
+            var requestorUuid = session.paused_agent || session.requestor_id || session.agent_id || '';
+            var reviewerUuid = session.reviewer || session.reviewer_id || '';
+            var requestorLabel = resolveAgentLabel(requestorUuid, 'Unknown');
+            var reviewerLabel = reviewerUuid ? resolveAgentLabel(reviewerUuid) : 'None';
             var sessionType = session.session_type || session.type || 'verification';
             var topic = session.topic || session.reason || (sessionType + ' session');
             var created = session.created || session.created_at || session.timestamp || '';
@@ -119,10 +137,6 @@
                 '</div>';
             }
 
-            var truncId = function (id) {
-                return id.length > 15 ? id.substring(0, 12) + '...' : id;
-            };
-
             return '<div class="dialectic-item ' + phase + '" data-session-id="' + (session.session_id || '') + '" style="cursor: pointer;" title="Click to view details">' +
                 '<div class="dialectic-header">' +
                     '<span class="dialectic-type" style="border-color: ' + phaseColor + '; color: ' + phaseColor + '">' +
@@ -133,9 +147,9 @@
                 '</div>' +
                 '<div class="dialectic-topic">' + escapeHtml(topic) + '</div>' +
                 '<div class="dialectic-agents">' +
-                    '<span class="agent-label">Requestor:</span> ' + escapeHtml(truncId(requestorId)) +
-                    (reviewerId && reviewerId !== 'None'
-                        ? '<span class="agent-label" style="margin-left: 10px;">Reviewer:</span> ' + escapeHtml(truncId(reviewerId))
+                    '<span class="agent-label">Requestor:</span> <span title="' + escapeHtml(requestorUuid) + '">' + escapeHtml(requestorLabel) + '</span>' +
+                    (reviewerLabel && reviewerLabel !== 'None'
+                        ? '<span class="agent-label" style="margin-left: 10px;">Reviewer:</span> <span title="' + escapeHtml(reviewerUuid) + '">' + escapeHtml(reviewerLabel) + '</span>'
                         : '') +
                     '<span class="agent-label" style="margin-left: 10px; color: var(--accent-cyan);">📝 ' + (session.message_count || 0) + ' messages</span>' +
                 '</div>' +
@@ -223,8 +237,10 @@
     function renderDialecticDetailContent(container, session) {
         var phase = session.phase || session.status || 'unknown';
         var phaseColor = getPhaseColor(phase);
-        var requestorId = session.paused_agent || session.requestor_id || session.agent_id || 'Unknown';
-        var reviewerId = session.reviewer || session.reviewer_id || 'None';
+        var requestorUuid = session.paused_agent || session.requestor_id || session.agent_id || '';
+        var reviewerUuid = session.reviewer || session.reviewer_id || '';
+        var requestorLabel = resolveAgentLabel(requestorUuid, 'Unknown');
+        var reviewerLabel = reviewerUuid ? resolveAgentLabel(reviewerUuid) : 'None';
         var sessionType = session.session_type || session.type || 'verification';
         var topic = session.topic || session.reason || (sessionType + ' session');
         var sessionId = session.session_id || 'Unknown';
@@ -259,12 +275,14 @@
             '<div class="grid-2col mb-md">' +
                 '<div>' +
                     '<strong class="text-secondary-sm">Requestor:</strong><br>' +
-                    '<code style="font-size: 0.9em; word-break: break-all;">' + escapeHtml(requestorId) + '</code>' +
+                    escapeHtml(requestorLabel) +
+                    (requestorUuid ? '<br><code style="font-size: 0.75em; color: var(--text-tertiary); word-break: break-all;">' + escapeHtml(requestorUuid) + '</code>' : '') +
                 '</div>' +
                 '<div>' +
                     '<strong class="text-secondary-sm">Reviewer:</strong><br>' +
-                    (reviewerId !== 'None'
-                        ? '<code style="font-size: 0.9em; word-break: break-all;">' + escapeHtml(reviewerId) + '</code>'
+                    (reviewerLabel !== 'None'
+                        ? escapeHtml(reviewerLabel) +
+                          (reviewerUuid ? '<br><code style="font-size: 0.75em; color: var(--text-tertiary); word-break: break-all;">' + escapeHtml(reviewerUuid) + '</code>' : '')
                         : '<span class="text-secondary-sm">Not assigned</span>') +
                 '</div>' +
             '</div>';
