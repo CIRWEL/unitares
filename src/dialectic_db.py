@@ -47,10 +47,25 @@ class DialecticDB:
         self._initialized = True
         logger.debug("Initialized PostgreSQL dialectic backend")
 
-    async def _ensure_pool(self):
-        """Ensure pool is initialized before use."""
+    def _pool_is_alive(self) -> bool:
+        """Check if the cached pool reference is still usable."""
         if self._pool is None:
-            logger.warning("PostgreSQL dialectic pool was None, re-initializing...")
+            return False
+        # asyncpg sets _closed=True after pool.close()
+        return not getattr(self._pool, '_closed', False)
+
+    async def _ensure_pool(self):
+        """Ensure pool is initialized and alive before use.
+
+        Detects stale pool references (e.g. after PostgresBackend
+        recreated its pool) and refreshes from the backend.
+        """
+        if not self._pool_is_alive():
+            if self._pool is not None:
+                logger.warning("DialecticDB pool is closed/stale, refreshing from backend...")
+            else:
+                logger.warning("PostgreSQL dialectic pool was None, re-initializing...")
+            self._pool = None  # Clear stale reference
             await self.init()
             if self._pool is None:
                 raise RuntimeError("Failed to initialize PostgreSQL dialectic pool")

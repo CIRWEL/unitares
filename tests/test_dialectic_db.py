@@ -44,6 +44,7 @@ from src.dialectic_protocol import DialecticPhase
 def _make_mock_pool():
     """Create a mock asyncpg pool with acquire() returning an async context manager."""
     pool = MagicMock()
+    pool._closed = False  # Mimic asyncpg Pool — DialecticDB._pool_is_alive checks this
     conn = AsyncMock()
 
     # Make pool.acquire() return an async context manager that yields conn
@@ -172,6 +173,24 @@ class TestEnsurePool:
         with patch("src.db.get_db", return_value=mock_db_backend):
             with pytest.raises(RuntimeError, match="Failed to initialize"):
                 await db._ensure_pool()
+
+    @pytest.mark.asyncio
+    async def test_ensure_pool_refreshes_closed_pool(self):
+        """_ensure_pool detects a closed pool and refreshes from backend."""
+        stale_pool = MagicMock()
+        stale_pool._closed = True  # Simulate pool that was closed by PostgresBackend
+
+        db = DialecticDB(pool=stale_pool)
+
+        fresh_pool = MagicMock()
+        fresh_pool._closed = False
+        mock_db_backend = AsyncMock()
+        mock_db_backend._pool = fresh_pool
+
+        with patch("src.db.get_db", return_value=mock_db_backend):
+            await db._ensure_pool()
+            assert db._pool is fresh_pool
+            assert db._pool is not stale_pool
 
 
 # ============================================================================
