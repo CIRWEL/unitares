@@ -819,28 +819,29 @@ async def handle_update_agent_metadata(arguments: Dict[str, Any]) -> Sequence[Te
 
 @mcp_tool("archive_agent", timeout=15.0, register=False)
 async def handle_archive_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    """Archive an agent for long-term storage
-    
-    SECURITY: Requires API key authentication and ownership verification.
-    Agents can only archive themselves.
+    """Archive an agent for long-term storage.
+
+    No ownership check — dashboard and operator agents need to archive
+    other agents. HTTP Bearer token auth is sufficient for admin actions.
+    Mirrors handle_resume_agent pattern.
     """
     # SECURITY FIX: Require registered agent_id (prevents phantom agent_ids)
     agent_id, error = require_registered_agent(arguments)
     if error:
         return [error]
-    
+
     # Use authoritative UUID for internal lookups (agent_id might be a label)
     # require_registered_agent sets this after validating registration
     agent_uuid = arguments.get("_agent_uuid") or agent_id
 
     # Reload metadata from PostgreSQL (async)
     await mcp_server.load_metadata_async(force=True)
-    
+
     if agent_uuid not in mcp_server.agent_metadata:
         return agent_not_found_error(agent_id)
-    
+
     meta = mcp_server.agent_metadata[agent_uuid]
-    
+
     if meta.status == "archived":
         return [error_response(
             f"Agent '{agent_id}' is already archived",
@@ -851,20 +852,6 @@ async def handle_archive_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
                 "action": "Agent is already archived",
                 "related_tools": ["get_agent_metadata", "list_agents"],
                 "workflow": ["1. Check agent status with get_agent_metadata", "2. Archived agents cannot be archived again"]
-            }
-        )]
-    
-    # SECURITY: Verify ownership via session binding (UUID-based auth, Dec 2025)
-    from .utils import verify_agent_ownership
-    if not verify_agent_ownership(agent_uuid, arguments):
-        return [error_response(
-            "Authentication required. You can only archive your own agent.",
-            error_code="AUTH_REQUIRED",
-            error_category="auth_error",
-            recovery={
-                "action": "Ensure your session is bound to this agent",
-                "related_tools": ["identity"],
-                "workflow": "Identity auto-binds on first tool call. Use identity() to check binding."
             }
         )]
 
@@ -979,31 +966,32 @@ async def handle_resume_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
 
 @mcp_tool("delete_agent", timeout=15.0, register=False)
 async def handle_delete_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    """Handle delete_agent tool - delete agent and archive data (protected: cannot delete pioneer agents)
-    
-    SECURITY: Requires API key authentication and ownership verification.
-    Agents can only delete themselves.
+    """Delete agent and archive data (protected: cannot delete pioneer agents).
+
+    No ownership check — dashboard and operator agents need to manage
+    other agents. HTTP Bearer token auth is sufficient for admin actions.
+    Still requires confirm=true and pioneer protection.
     """
     # SECURITY FIX: Require registered agent_id (prevents phantom agent_ids)
     agent_id, error = require_registered_agent(arguments)
     if error:
         return [error]
-    
+
     confirm = arguments.get("confirm", False)
     if not confirm:
         return [error_response("Deletion requires explicit confirmation (confirm=true)")]
-    
+
     # Use authoritative UUID for internal lookups
     agent_uuid = arguments.get("_agent_uuid") or agent_id
 
     # Reload metadata from PostgreSQL (async)
     await mcp_server.load_metadata_async(force=True)
-    
+
     if agent_uuid not in mcp_server.agent_metadata:
         return agent_not_found_error(agent_id)
-    
+
     meta = mcp_server.agent_metadata[agent_uuid]
-    
+
     # Check if agent is a pioneer (protected)
     if "pioneer" in meta.tags:
         return [error_response(
@@ -1012,20 +1000,6 @@ async def handle_delete_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
                 "action": "Pioneer agents are protected from deletion. Use archive_agent instead.",
                 "related_tools": ["archive_agent"],
                 "workflow": ["1. Call archive_agent to archive instead of delete", "2. Pioneer agents preserve system history"]
-            }
-        )]
-    
-    # SECURITY: Verify ownership via session binding (UUID-based auth, Dec 2025)
-    from .utils import verify_agent_ownership
-    if not verify_agent_ownership(agent_uuid, arguments):
-        return [error_response(
-            "Authentication required. You can only delete your own agent.",
-            error_code="AUTH_REQUIRED",
-            error_category="auth_error",
-            recovery={
-                "action": "Ensure your session is bound to this agent",
-                "related_tools": ["identity"],
-                "workflow": "Identity auto-binds on first tool call. Use identity() to check binding."
             }
         )]
 
@@ -1727,6 +1701,52 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
         })
 
 
+async def _trigger_dialectic_for_stuck_agent(
+    agent_id: str,
+    paused_agent_state: dict,
+    note: str,
+) -> dict | None:
+    """
+    Create a dialectic session for a stuck agent.
+
+    Returns recovery info dict on success, None on failure or if agent
+    already has an active session.
+    """
+    from src.dialectic_protocol import DialecticSession
+    from src.mcp_handlers.dialectic_reviewer import select_reviewer
+    from .dialectic_session import save_session
+    from src.dialectic_db import is_agent_in_active_session_async
+
+    has_session = await is_agent_in_active_session_async(agent_id)
+    if has_session:
+        logger.debug(f"[STUCK_AGENT_RECOVERY] Agent {agent_id[:8]}... already has active dialectic session")
+        return None
+
+    reviewer_id = await select_reviewer(paused_agent_id=agent_id)
+    if reviewer_id is None:
+        reviewer_id = agent_id  # Self-review fallback
+
+    session = DialecticSession(
+        paused_agent_id=agent_id,
+        reviewer_agent_id=reviewer_id,
+        paused_agent_state=paused_agent_state,
+    )
+    await save_session(session)
+
+    logger.info(
+        f"[STUCK_AGENT_RECOVERY] Triggered dialectic for {agent_id[:8]}... "
+        f"(reviewer: {reviewer_id[:8]}..., session: {session.session_id[:8]}...)"
+    )
+    return {
+        "agent_id": agent_id,
+        "action": "dialectic_triggered",
+        "reason": paused_agent_state.get("stuck_reason", "unknown"),
+        "reviewer_id": reviewer_id,
+        "session_id": session.session_id,
+        "note": note,
+    }
+
+
 def _detect_stuck_agents(
     max_age_minutes: float = 30.0,  # Unused, kept for API compatibility
     critical_margin_timeout_minutes: float = 5.0,
@@ -1976,58 +1996,17 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
                     # If unresponsive AND stuck, trigger dialectic immediately (can't self-rescue)
                     if not responsive:
                         try:
-                            from src.dialectic_protocol import DialecticSession, DialecticPhase
-                            from src.mcp_handlers.dialectic_reviewer import select_reviewer
-                            from .dialectic_session import save_session
-
-                            # Check if agent already has active dialectic session
-                            from src.dialectic_db import is_agent_in_active_session_async
-                            has_session = await is_agent_in_active_session_async(agent_id)
-
-                            if not has_session:
-                                # Random reviewer selection, self-fallback if none available
-                                reviewer_id = await select_reviewer(paused_agent_id=agent_id)
-                                if reviewer_id is None:
-                                    reviewer_id = agent_id  # Self-review fallback
-
-                                if reviewer_id:
-                                    # Create dialectic session
-                                    session = DialecticSession(
-                                        paused_agent_id=agent_id,
-                                        reviewer_agent_id=reviewer_id,
-                                        paused_agent_state={
-                                            "risk_score": risk_score,
-                                            "coherence": coherence,
-                                            "void_active": void_active,
-                                            "stuck_reason": stuck["reason"],
-                                            "unresponsive": True,
-                                            "age_minutes": stuck.get("age_minutes", 0)
-                                        }
-                                    )
-                                    
-                                    # Save session
-                                    await save_session(session)
-                                    
-                                    # NOTE: Disabled KG writes for dialectic triggers (Feb 2026)
-                                    # Dialectic sessions tracked separately
-                                    
-                                    recovered.append({
-                                        "agent_id": agent_id,
-                                        "action": "dialectic_triggered",
-                                        "reason": stuck["reason"],
-                                        "reviewer_id": reviewer_id,
-                                        "session_id": session.session_id,
-                                        "note": "Unresponsive - triggered dialectic immediately"
-                                    })
-                                    logger.info(
-                                        f"[STUCK_AGENT_RECOVERY] Triggered dialectic for unresponsive stuck agent {agent_id[:8]}... "
-                                        f"(reviewer: {reviewer_id[:8]}..., session: {session.session_id[:8]}...)"
-                                    )
-                                    continue  # Skip to next stuck agent
-                                else:
-                                    logger.warning(f"[STUCK_AGENT_RECOVERY] Could not find reviewer for unresponsive stuck agent {agent_id[:8]}...")
-                            else:
-                                logger.debug(f"[STUCK_AGENT_RECOVERY] Agent {agent_id[:8]}... already has active dialectic session")
+                            result = await _trigger_dialectic_for_stuck_agent(
+                                agent_id,
+                                paused_agent_state={
+                                    "risk_score": risk_score, "coherence": coherence,
+                                    "void_active": void_active, "stuck_reason": stuck["reason"],
+                                    "unresponsive": True, "age_minutes": stuck.get("age_minutes", 0),
+                                },
+                                note="Unresponsive - triggered dialectic immediately",
+                            )
+                            if result:
+                                recovered.append(result)
                         except Exception as e:
                             logger.warning(f"[STUCK_AGENT_RECOVERY] Could not trigger dialectic for unresponsive {agent_id[:8]}...: {e}", exc_info=True)
                         continue  # Skip to next stuck agent
@@ -2066,59 +2045,18 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
                                     
                                     # Trigger dialectic for safe stuck agents if stuck > 1 hour
                                     if age_minutes > 60.0:
-                                        # Safe but stuck long enough - trigger dialectic
                                         try:
-                                            from src.dialectic_protocol import DialecticSession, DialecticPhase
-                                            from src.mcp_handlers.dialectic_reviewer import select_reviewer
-                                            from .dialectic_session import save_session
-
-                                            # Check if agent already has active dialectic session
-                                            from src.dialectic_db import is_agent_in_active_session_async
-                                            has_session = await is_agent_in_active_session_async(agent_id)
-
-                                            if not has_session:
-                                                # Random reviewer selection, self-fallback if none available
-                                                reviewer_id = await select_reviewer(paused_agent_id=agent_id)
-                                                if reviewer_id is None:
-                                                    reviewer_id = agent_id  # Self-review fallback
-
-                                                if reviewer_id:
-                                                    # Create dialectic session
-                                                    session = DialecticSession(
-                                                        paused_agent_id=agent_id,
-                                                        reviewer_agent_id=reviewer_id,
-                                                        paused_agent_state={
-                                                            "risk_score": risk_score,
-                                                            "coherence": coherence,
-                                                            "void_active": void_active,
-                                                            "stuck_reason": stuck["reason"],
-                                                            "safe_but_stuck": True,
-                                                            "age_minutes": age_minutes
-                                                        }
-                                                    )
-                                                    
-                                                    # Save session
-                                                    await save_session(session)
-                                                    
-                                                    # NOTE: Disabled KG writes for dialectic triggers (Feb 2026)
-                                                    # Dialectic sessions tracked separately
-                                                    
-                                                    recovered.append({
-                                                        "agent_id": agent_id,
-                                                        "action": "dialectic_triggered",
-                                                        "reason": stuck["reason"],
-                                                        "reviewer_id": reviewer_id,
-                                                        "session_id": session.session_id,
-                                                        "note": f"Safe but stuck {age_minutes:.1f} min - triggered dialectic"
-                                                    })
-                                                    logger.info(
-                                                        f"[STUCK_AGENT_RECOVERY] Triggered dialectic for safe stuck agent {agent_id[:8]}... "
-                                                        f"(stuck {age_minutes:.1f} min, reviewer: {reviewer_id[:8]}..., session: {session.session_id[:8]}...)"
-                                                    )
-                                                else:
-                                                    logger.warning(f"[STUCK_AGENT_RECOVERY] Could not find reviewer for safe stuck agent {agent_id[:8]}...")
-                                            else:
-                                                logger.debug(f"[STUCK_AGENT_RECOVERY] Agent {agent_id[:8]}... already has active dialectic session")
+                                            result = await _trigger_dialectic_for_stuck_agent(
+                                                agent_id,
+                                                paused_agent_state={
+                                                    "risk_score": risk_score, "coherence": coherence,
+                                                    "void_active": void_active, "stuck_reason": stuck["reason"],
+                                                    "safe_but_stuck": True, "age_minutes": age_minutes,
+                                                },
+                                                note=f"Safe but stuck {age_minutes:.1f} min - triggered dialectic",
+                                            )
+                                            if result:
+                                                recovered.append(result)
                                         except Exception as e:
                                             logger.warning(f"[STUCK_AGENT_RECOVERY] Could not trigger dialectic for safe stuck {agent_id[:8]}...: {e}", exc_info=True)
                                     else:
