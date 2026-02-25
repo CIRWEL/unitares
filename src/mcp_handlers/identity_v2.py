@@ -160,66 +160,29 @@ def _generate_auto_label(model_type: Optional[str] = None, client_hint: Optional
     return "-".join(parts)
 
 
-async def _find_agent_by_id(agent_id: str) -> Optional[Dict[str, Any]]:
+def _normalize_model_type(model_type: str) -> str:
+    """Normalize model_type to a canonical family name for session key suffixing.
+
+    Used by handle_identity_adapter and handle_onboard_v2 to prevent identity
+    collision across different models from the same transport.
+
+    Examples:
+        "claude-opus-4-5" -> "claude"
+        "gemini-pro" -> "gemini"
+        "gpt-4o" -> "gpt"
     """
-    Find existing agent by agent_id.
-
-    DEPRECATED (v2.5.2): This function is for backward compatibility only.
-    New code should use UUID directly - the agent_id (model+date) is just
-    a display label, not a lookup key.
-
-    Checks both PostgreSQL and in-memory cache.
-
-    Returns:
-        Agent dict with agent_uuid, label etc. or None if not found
-    """
-    # Check PostgreSQL first
-    try:
-        db = get_db()
-        if hasattr(db, "init"):
-            await db.init()
-
-        # Look up agent by ID
-        agent = await db.get_agent(agent_id)
-        if agent:
-            # Get identity for UUID
-            identity = await db.get_identity(agent_id)
-            agent_uuid = None
-            if identity and identity.metadata:
-                agent_uuid = identity.metadata.get("agent_uuid")
-            # Fallback: use agent_id as UUID if not stored separately
-            if not agent_uuid:
-                agent_uuid = agent_id
-
-            display_name = getattr(agent, "label", None) or getattr(agent, "display_name", None)
-            return {
-                "agent_id": agent_id,
-                "agent_uuid": agent_uuid,
-                "display_name": display_name,
-                "label": display_name,  # backward compat alias
-                "status": getattr(agent, "status", "active"),
-            }
-    except Exception as e:
-        logger.debug(f"PostgreSQL agent lookup failed for {agent_id}: {e}")
-
-    # Check in-memory cache
-    try:
-        from .shared import get_mcp_server
-        mcp_server = get_mcp_server()
-        if agent_id in mcp_server.agent_metadata:
-            meta = mcp_server.agent_metadata[agent_id]
-            display_name = getattr(meta, "label", None)
-            return {
-                "agent_id": agent_id,
-                "agent_uuid": getattr(meta, "agent_uuid", agent_id),
-                "display_name": display_name,
-                "label": display_name,  # backward compat alias
-                "status": getattr(meta, "status", "active"),
-            }
-    except Exception as e:
-        logger.debug(f"In-memory agent lookup failed for {agent_id}: {e}")
-
-    return None
+    normalized = model_type.lower().replace("-", "_").replace(".", "_")
+    if "claude" in normalized:
+        return "claude"
+    elif "gemini" in normalized:
+        return "gemini"
+    elif "gpt" in normalized or "chatgpt" in normalized:
+        return "gpt"
+    elif "composer" in normalized or "cursor" in normalized:
+        return "composer"
+    elif "llama" in normalized:
+        return "llama"
+    return normalized
 
 
 # =============================================================================
@@ -357,13 +320,12 @@ async def resolve_session_identity(
 
                     else:
 
-                        # Legacy format (pre-v2.5.2): cached value was model+date
+                        # Legacy format (pre-v2.5.2): treat as both agent_id and UUID fallback
+                        # v1 identity deleted Feb 2026 — no new entries in this format
+
+                        agent_uuid = cached_id
 
                         agent_id = cached_id
-
-                        existing = await _find_agent_by_id(agent_id)
-
-                        agent_uuid = existing.get("agent_uuid", agent_id) if existing else agent_id
 
 
 
@@ -452,13 +414,11 @@ async def resolve_session_identity(
 
                 else:
 
-                    # Legacy: stored value was model+date - phase out
+                    # Legacy format (pre-v2.5.2): treat as both agent_id and UUID fallback
+
+                    agent_uuid = stored_id
 
                     agent_id = stored_id
-
-                    existing = await _find_agent_by_id(agent_id)
-
-                    agent_uuid = existing.get("agent_uuid", agent_id) if existing else agent_id
 
 
 
@@ -1052,62 +1012,90 @@ from .utils import success_response
 import os
 
 
-def _extract_stable_identifier(session_key: str) -> Optional[str]:
+async def derive_session_key(
+    signals: "Optional[SessionSignals]" = None,
+    arguments: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Single source of truth for session key derivation.
+
+    Priority (highest to lowest):
+    1. arguments["client_session_id"]  — explicit from caller
+    2. MCP protocol session ID         — stable, no pin needed
+    3. Explicit HTTP session header     — stable, no pin needed
+    4. OAuth client identity            — stable, no pin needed
+    5. Explicit client ID header        — stable-ish
+    6. IP:UA fingerprint + pin lookup   — unstable, needs pin
+    7. Contextvars fallback             — backward compat (remove once all callers pass signals)
+    8. stdio fallback                   — single-user / Claude Desktop
     """
-    Extract stable identifier from session key for recovery across server restarts.
-    
-    For client_session_id format "IP:port:suffix", extracts the suffix.
-    This allows recovery even when IP changes.
-    
-    Args:
-        session_key: Full session key (e.g., "217.216.112.229:8767:6d79c4")
-    
-    Returns:
-        Stable identifier (e.g., "6d79c4") or None if not extractable
-    """
-    if not session_key:
-        return None
-    
-    # Pattern: IP:port:suffix or IP:suffix
-    parts = session_key.split(":")
-    if len(parts) >= 2:
-        # Take the last part as stable identifier
-        suffix = parts[-1]
-        # Validate it looks like a fingerprint (hex, reasonable length)
-        if len(suffix) >= 4 and all(c in '0123456789abcdef' for c in suffix.lower()):
-            return suffix
-    
-    return None
+    from .context import SessionSignals  # type hint import
+
+    arguments = arguments or {}
+
+    # 1. Explicit from arguments (highest priority)
+    if arguments.get("client_session_id"):
+        return str(arguments["client_session_id"])
+
+    # 2. MCP protocol session ID (stable, no pin needed)
+    if signals and signals.mcp_session_id:
+        return f"mcp:{signals.mcp_session_id}"
+
+    # 3. Explicit HTTP session header (stable, no pin needed)
+    if signals and signals.x_session_id:
+        return signals.x_session_id
+
+    # 4. OAuth client identity (stable, no pin needed)
+    if signals and signals.oauth_client_id:
+        return signals.oauth_client_id
+
+    # 5. Explicit client ID header
+    if signals and signals.x_client_id:
+        return signals.x_client_id
+
+    # 6. IP:UA fingerprint with integrated pin lookup
+    if signals and signals.ip_ua_fingerprint:
+        base_fp = _extract_base_fingerprint(signals.ip_ua_fingerprint)
+        if base_fp:
+            pinned = await lookup_onboard_pin(base_fp)
+            if pinned:
+                return pinned
+        return signals.ip_ua_fingerprint
+
+    # 7. Fallback: contextvars (for callers without signals)
+    # Backward compat — remove once all callers pass signals
+    try:
+        from .context import get_mcp_session_id, get_context_session_key
+        mcp_sid = get_mcp_session_id()
+        if mcp_sid:
+            return f"mcp:{mcp_sid}"
+        ctx_key = get_context_session_key()
+        if ctx_key:
+            return str(ctx_key)
+    except Exception:
+        pass
+
+    # 8. stdio fallback
+    return f"stdio:{os.getpid()}"
 
 
 def _derive_session_key(arguments: Dict[str, Any]) -> str:
-    """
-    Derive session key from arguments or context.
+    """DEPRECATED: Sync wrapper for backward compatibility.
 
-    Precedence:
-    1. arguments["client_session_id"] (Explicit session ID from client)
-    2. MCP session ID from mcp-session-id header (MCP Streamable HTTP transport)
-    3. contextvars session_key (Fingerprinted ID from transport layer)
-    4. stdio fallback (Claude Desktop / single-user)
-
-    CRITICAL (Feb 2026): Priority 2 enables MCP Streamable HTTP clients to maintain
-    stable identity across requests without manually passing client_session_id.
+    Use ``await derive_session_key(signals, arguments)`` instead.
+    This wrapper cannot do async pin lookup (priority 6) and falls back to
+    the contextvar path (priority 7).
     """
     if arguments.get("client_session_id"):
         return str(arguments["client_session_id"])
 
-    # 2. Check MCP session ID (set by ASGI wrapper from mcp-session-id header)
-    # This is the implicit identity mechanism for MCP Streamable HTTP transport
     try:
         from .context import get_mcp_session_id
         mcp_sid = get_mcp_session_id()
         if mcp_sid:
-            logger.debug(f"[SESSION] Using mcp-session-id: {mcp_sid[:16]}...")
             return f"mcp:{mcp_sid}"
     except Exception:
         pass
 
-    # 3. Check contextvars (set by transport layer at request entry)
     try:
         from .context import get_context_session_key
         ctx_key = get_context_session_key()
@@ -1116,7 +1104,6 @@ def _derive_session_key(arguments: Dict[str, Any]) -> str:
     except Exception:
         pass
 
-    # 4. Stable fallback for stdio
     return f"stdio:{os.getpid()}"
 
 
@@ -1258,8 +1245,10 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     resume = arguments.get("resume", False)
     model_type = arguments.get("model_type")
 
-    # Derive base session key
-    base_session_key = _derive_session_key(arguments)
+    # Derive base session key (unified)
+    from .context import get_session_signals
+    signals = get_session_signals()
+    base_session_key = await derive_session_key(signals, arguments)
     normalized_model = None
 
     # PATH 2.5: Name-based identity claim (before any session resolution)
@@ -1323,19 +1312,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     # STEP 2: No existing identity under base key - use model differentiation if provided
     # This only affects NEW identity creation, not resumption
     if model_type:
-        # Normalize model type
-        normalized_model = model_type.lower().replace("-", "_").replace(".", "_")
-        if "claude" in normalized_model:
-            normalized_model = "claude"
-        elif "gemini" in normalized_model:
-            normalized_model = "gemini"
-        elif "gpt" in normalized_model or "chatgpt" in normalized_model:
-            normalized_model = "gpt"
-        elif "composer" in normalized_model or "cursor" in normalized_model:
-            normalized_model = "composer"
-        elif "llama" in normalized_model:
-            normalized_model = "llama"
-        # Append model to session key for distinct binding (prevents identity collision)
+        normalized_model = _normalize_model_type(model_type)
         session_key = f"{base_session_key}:{normalized_model}"
         logger.info(f"[IDENTITY] Creating NEW identity with model-specific session_key: {session_key}")
 
@@ -1412,7 +1389,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     user_name = result.get("label")
     
     # Derive client_session_id for session continuity
-    client_session_id = _derive_session_key(arguments) if arguments else None
+    client_session_id = base_session_key
     
     response_data = {
         "uuid": agent_uuid,
@@ -1473,60 +1450,6 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     return success_response(response_data, agent_id=final_agent_id, arguments=arguments)
 
 
-# =============================================================================
-# MIGRATION HELPERS
-# =============================================================================
-
-async def migrate_from_v1(old_session_identities: Dict[str, Dict]) -> int:
-    """
-    Migrate existing session bindings from identity.py to v2 format.
-
-    Call once during upgrade to populate PostgreSQL with existing bindings.
-    Returns number of sessions migrated.
-    """
-    count = 0
-    db = get_db()
-
-    for session_key, binding in old_session_identities.items():
-        agent_uuid = binding.get("bound_agent_id")
-        if not agent_uuid:
-            continue
-
-        try:
-            # Ensure agent exists
-            await db.upsert_agent(
-                agent_id=agent_uuid,
-                api_key=binding.get("api_key", ""),
-                status="active",
-            )
-
-            # Ensure identity exists
-            await db.upsert_identity(
-                agent_id=agent_uuid,
-                api_key_hash="",
-                metadata={"migrated_from": "v1", "total_updates": 0}
-            )
-
-            # Create session
-            identity = await db.get_identity(agent_uuid)
-            if identity:
-                await db.create_session(
-                    session_id=session_key,
-                    identity_id=identity.identity_id,
-                    expires_at=datetime.now() + timedelta(hours=GovernanceConfig.SESSION_TTL_HOURS),
-                    client_type="mcp",
-                    client_info={"migrated": True}
-                )
-
-            count += 1
-
-        except Exception as e:
-            logger.warning(f"Failed to migrate session {session_key[:20]}...: {e}")
-
-    logger.info(f"Migrated {count} sessions from v1 to v2")
-    return count
-
-
 @mcp_tool("onboard", timeout=15.0)
 async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
@@ -1567,30 +1490,11 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         from .context import get_context_client_hint
         client_hint = get_context_client_hint() or "unknown"
 
-    # Derive base session key
-    base_session_key = _derive_session_key(arguments)
+    # Derive base session key (unified — pin lookup integrated in derive_session_key)
+    from .context import get_session_signals
+    signals = get_session_signals()
+    base_session_key = await derive_session_key(signals, arguments)
     normalized_model = None
-
-    # PATH 0.5: IP-fingerprint onboard-pin lookup (v2.7.2)
-    # Streamable HTTP clients (/mcp/) receive a stable mcp:SESSION_ID from the protocol
-    # and never hit this code path (_extract_base_fingerprint returns None for mcp: keys).
-    #
-    # Legacy SSE clients (/sse, deprecated) and non-MCP HTTP clients derive their session
-    # key from IP:UA_hash. Proxy-pool clients (e.g. Google Cloud, Tailscale) reconnect
-    # from different IPs with the same UA, creating a fresh key each time → duplicate identity.
-    # The onboard-pin was supposed to fix this, but the lookup only ran in the REST path.
-    # Fix: also check the pin here, at the top of handle_onboard_v2, so any client
-    # that arrives with an IP-based session key gets redirected to its existing identity.
-    if not force_new and not arguments.get("client_session_id"):
-        try:
-            base_fp = _extract_base_fingerprint(base_session_key)
-            if base_fp:
-                pinned_sid = await lookup_onboard_pin(base_fp)
-                if pinned_sid:
-                    logger.info(f"[ONBOARD_PIN] Injected {pinned_sid} from {base_fp} (was: {base_session_key[:30]})")
-                    base_session_key = pinned_sid
-        except Exception as e:
-            logger.debug(f"[ONBOARD_PIN] Pin lookup failed (non-fatal): {e}")
 
     # Extract resume flag early (before checking existing identity)
     resume = arguments.get("resume", False)
@@ -1664,32 +1568,16 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             # Adjust session_key for fleet tracking
             session_key = base_session_key
             if model_type:
-                normalized_model = model_type.lower().replace("-", "_").replace(".", "_")
-                if "claude" in normalized_model:
-                    normalized_model = "claude"
-                elif "gemini" in normalized_model:
-                    normalized_model = "gemini"
-                elif "gpt" in normalized_model:
-                    normalized_model = "gpt"
-                elif "llama" in normalized_model:
-                    normalized_model = "llama"
+                normalized_model = _normalize_model_type(model_type)
                 session_key = f"{base_session_key}:{normalized_model}"
-                logger.info(f"[ONBOARD] NEW agent with model_type={model_type} → session_key includes model: {session_key}")
+                logger.info(f"[ONBOARD] NEW agent with model_type={model_type} -> session_key includes model: {session_key}")
     else:
         # force_new requested - use model-suffixed key if model_type provided
         session_key = base_session_key
         if model_type:
-            normalized_model = model_type.lower().replace("-", "_").replace(".", "_")
-            if "claude" in normalized_model:
-                normalized_model = "claude"
-            elif "gemini" in normalized_model:
-                normalized_model = "gemini"
-            elif "gpt" in normalized_model:
-                normalized_model = "gpt"
-            elif "llama" in normalized_model:
-                normalized_model = "llama"
+            normalized_model = _normalize_model_type(model_type)
             session_key = f"{base_session_key}:{normalized_model}"
-            logger.info(f"[ONBOARD] force_new with model_type={model_type} → session_key: {session_key}")
+            logger.info(f"[ONBOARD] force_new with model_type={model_type} -> session_key: {session_key}")
 
     # STEP 2: Handle resume flag (explicit consent to resume existing identity)
     # (resume was extracted earlier at STEP 1)
