@@ -466,7 +466,7 @@ class TestAgentHandler:
         result = await handle_agent({"action": "bad"})
         data = _parse_response(result)
         valid = sorted(data["recovery"]["valid_actions"])
-        expected = sorted(["list", "get", "update", "archive", "delete"])
+        expected = sorted(["list", "get", "update", "archive", "resume", "delete"])
         assert valid == expected
 
 

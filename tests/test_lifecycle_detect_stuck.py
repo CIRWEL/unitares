@@ -39,12 +39,14 @@ def _make_monitor(
     risk=0.3,
     void_active=False,
     void_value=0.0,
+    S=0.1,
 ):
     """Create mock UNITARESMonitor."""
     state = SimpleNamespace(
         coherence=coherence,
         V=void_value,
         void_active=void_active,
+        S=S,
     )
     monitor = MagicMock()
     monitor.state = state
@@ -258,12 +260,13 @@ class TestDetectStuckAgentsMarginBased:
     @patch(_PATCHES["gov_config"])
     @patch(_PATCHES["mcp_server"])
     def test_tight_margin_timeout(self, mock_server, mock_config):
-        """Tight margin + timeout → tight_margin_timeout."""
-        old_time = datetime.now(timezone.utc) - timedelta(minutes=20)
+        """Tight margin + inactivity + degraded state → tight_margin_timeout."""
+        old_time = datetime.now(timezone.utc) - timedelta(minutes=90)
         mock_server.agent_metadata = {
             "a1": _make_agent_meta(last_update=old_time, total_updates=100),
         }
-        monitor = _make_monitor()
+        # Use degraded metrics (risk > 0.45) so the stuck check fires
+        monitor = _make_monitor(risk=0.5, coherence=0.45)
         mock_server.monitors = {"a1": monitor}
         mock_config.compute_proprioceptive_margin.return_value = _margin_info(
             "tight", nearest_edge="coherence", distance=0.08

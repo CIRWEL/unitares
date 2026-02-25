@@ -583,7 +583,7 @@ _auth_settings = None
 
 if _oauth_issuer_url:
     try:
-        from mcp.server.auth.settings import AuthSettings
+        from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
         from src.oauth_provider import GovernanceOAuthProvider
 
         _oauth_secret = os.environ.get("UNITARES_OAUTH_SECRET")
@@ -592,6 +592,11 @@ if _oauth_issuer_url:
         _auth_settings = AuthSettings(
             issuer_url=_oauth_issuer_url,
             resource_server_url=_oauth_issuer_url,
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True,
+                valid_scopes=["mcp:tools"],
+                default_scopes=["mcp:tools"],
+            ),
         )
         print(f"[FastMCP] OAuth 2.1 enabled (issuer: {_oauth_issuer_url})", file=sys.stderr, flush=True)
     except Exception as e:
@@ -1761,6 +1766,26 @@ async def main():
         except Exception as e:
             logger.warning(f"[EISV_SYNC] Could not start: {e}")
 
+        # === Periodic expired session cleanup ===
+        async def session_cleanup_task(interval_hours: float = 6.0):
+            """Delete expired session rows to prevent table bloat."""
+            while True:
+                await asyncio.sleep(interval_hours * 3600)
+                try:
+                    db = get_db()
+                    pool = db._pool
+                    if pool:
+                        async with pool.acquire() as conn:
+                            result = await conn.execute("DELETE FROM core.sessions WHERE expires_at <= now()")
+                            deleted = int(result.split()[-1]) if result else 0
+                            if deleted:
+                                logger.info(f"[SESSION_CLEANUP] Deleted {deleted} expired sessions")
+                except Exception as e:
+                    logger.warning(f"[SESSION_CLEANUP] Failed: {e}")
+
+        asyncio.create_task(session_cleanup_task(interval_hours=6.0))
+        logger.info("[SESSION_CLEANUP] Started periodic expired session cleanup (every 6h)")
+
         # === HTTP REST endpoints for non-MCP clients (Llama, Mistral, etc.) ===
         # Any model that can make HTTP calls can use governance
         HTTP_API_TOKEN = os.getenv("UNITARES_HTTP_API_TOKEN")
@@ -2273,8 +2298,16 @@ async def main():
             """Serve the web dashboard"""
             dashboard_path = Path(__file__).parent.parent / "dashboard" / "index.html"
             if dashboard_path.exists():
+                html = dashboard_path.read_text()
+                # Inject API token so dashboard JS can authenticate
+                if HTTP_API_TOKEN:
+                    token_script = (
+                        f'<script>if(!localStorage.getItem("unitares_api_token"))'
+                        f'{{localStorage.setItem("unitares_api_token","{HTTP_API_TOKEN}")}}</script>'
+                    )
+                    html = html.replace("</head>", f"{token_script}</head>", 1)
                 return Response(
-                    content=dashboard_path.read_text(),
+                    content=html,
                     media_type="text/html"
                 )
             return JSONResponse({
@@ -2465,9 +2498,28 @@ async def main():
                     ua_fingerprint = hashlib.md5(ua.encode()).hexdigest()[:6]
                     x_session_id = headers.get("x-session-id")
                     x_client_id = headers.get("x-client-id") or headers.get("x-mcp-client-id")
+
+                    # Extract OAuth client identity from Bearer token (v2.7.3)
+                    # For authenticated clients, the OAuth client_id is the best stable key:
+                    # it survives IP rotation and doesn't need Redis pinning.
+                    # IP:UA_hash is only a fallback for unauthenticated clients.
+                    oauth_client_id = None
+                    auth_header = headers.get("authorization", "")
+                    if auth_header.startswith("Bearer "):
+                        token = auth_header[7:]
+                        try:
+                            token_data = _oauth_provider._access_tokens.get(token) if _oauth_provider else None
+                            if token_data and hasattr(token_data, "client_id"):
+                                oauth_client_id = f"oauth:{token_data.client_id}"
+                                logger.debug(f"[/mcp] OAuth client_id resolved: {oauth_client_id[:30]}")
+                        except Exception:
+                            pass
+
                     if x_session_id:
                         client_id = x_session_id
                         logger.info(f"[/mcp] Using X-Session-ID: {x_session_id[:20]}...")
+                    elif oauth_client_id:
+                        client_id = oauth_client_id
                     elif x_client_id:
                         client_id = x_client_id
                     else:

@@ -612,6 +612,22 @@ DISCOVERY_TYPES = {"bug_found", "insight", "pattern", "improvement", "question",
 SEVERITY_LEVELS = {"low", "medium", "high", "critical"}
 DISCOVERY_STATUSES = {"open", "resolved", "archived", "disputed"}
 TASK_TYPES = {"convergent", "divergent", "mixed"}
+
+# Semantic aliases for task types (maps natural-language task names to governance types)
+TASK_TYPE_ALIASES = {
+    # convergent: standardization, compliance, reducing entropy
+    "refactoring": "convergent", "formatting": "convergent", "cleanup": "convergent",
+    "linting": "convergent", "bugfix": "convergent", "bug_fix": "convergent",
+    "testing": "convergent", "documentation": "convergent", "migration": "convergent",
+    "fix": "convergent", "lint": "convergent", "test": "convergent",
+    # divergent: creative exploration, increasing possibility space
+    "feature": "divergent", "exploration": "divergent", "research": "divergent",
+    "design": "divergent", "brainstorming": "divergent", "prototyping": "divergent",
+    "experiment": "divergent", "spike": "divergent",
+    # mixed: both convergent and divergent elements
+    "debugging": "mixed", "review": "mixed", "integration": "mixed",
+    "deployment": "mixed", "maintenance": "mixed", "ops": "mixed",
+}
 RESPONSE_TYPES = {"extend", "question", "disagree", "support"}
 LIFECYCLE_STATUSES = {"active", "waiting_input", "paused", "archived", "deleted"}
 HEALTH_STATUSES = {"healthy", "moderate", "critical", "unknown"}
@@ -856,8 +872,24 @@ def validate_discovery_status(value: Any) -> Tuple[Optional[str], Optional[TextC
 
 
 def validate_task_type(value: Any) -> Tuple[Optional[str], Optional[TextContent]]:
-    """Validate task_type parameter."""
-    return validate_enum(value, TASK_TYPES, "task_type", list(TASK_TYPES))
+    """Validate task_type parameter. Accepts governance types or natural-language aliases."""
+    if value is None:
+        return "mixed", None
+    value_str = str(value).strip().lower()
+    if not value_str:
+        return "mixed", None
+    # Exact match
+    if value_str in TASK_TYPES:
+        return value_str, None
+    # Alias match
+    if value_str in TASK_TYPE_ALIASES:
+        return TASK_TYPE_ALIASES[value_str], None
+    # Unknown — return error with valid options
+    return None, error_response(
+        f"Invalid task_type: '{value}'. Must be one of: {', '.join(sorted(TASK_TYPES))} "
+        f"(or aliases like refactoring, feature, debugging, etc.)",
+        details={"valid_types": sorted(TASK_TYPES), "aliases": dict(TASK_TYPE_ALIASES)},
+    )
 
 
 def validate_response_type(value: Any) -> Tuple[Optional[str], Optional[TextContent]]:

@@ -711,7 +711,7 @@
     }
 
     function fetchInitialEvents() {
-        fetch('/api/events?limit=20')
+        authFetch('/api/events?limit=20')
             .then(function (response) { return response.json(); })
             .then(function (data) {
                 if (data.success && data.events && data.events.length > 0) {

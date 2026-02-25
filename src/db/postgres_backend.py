@@ -714,11 +714,16 @@ class PostgresBackend(DatabaseBackend):
                     """
                     INSERT INTO core.sessions (session_id, identity_id, expires_at, client_type, client_info)
                     VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (session_id) DO UPDATE SET
+                        expires_at = EXCLUDED.expires_at,
+                        last_active = now(),
+                        is_active = true,
+                        client_info = EXCLUDED.client_info
                     """,
                     session_id, identity_id, expires_at, client_type, json.dumps(client_info or {}),
                 )
                 return True
-            except asyncpg.UniqueViolationError:
+            except Exception:
                 return False
 
     async def get_session(self, session_id: str) -> Optional[SessionRecord]:

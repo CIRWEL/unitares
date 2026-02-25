@@ -525,6 +525,30 @@ class TestConvenienceValidators:
         val, err = validate_task_type("convergent")
         assert val == "convergent"
 
+    def test_task_type_alias_convergent(self):
+        val, err = validate_task_type("refactoring")
+        assert val == "convergent"
+        assert err is None
+
+    def test_task_type_alias_divergent(self):
+        val, err = validate_task_type("feature")
+        assert val == "divergent"
+        assert err is None
+
+    def test_task_type_alias_mixed(self):
+        val, err = validate_task_type("debugging")
+        assert val == "mixed"
+        assert err is None
+
+    def test_task_type_alias_case_insensitive(self):
+        val, err = validate_task_type("Refactoring")
+        assert val == "convergent"
+        assert err is None
+
+    def test_task_type_unknown_errors(self):
+        val, err = validate_task_type("parallel")
+        assert err is not None
+
     def test_response_type_valid(self):
         val, err = validate_response_type("support")
         assert val == "support"

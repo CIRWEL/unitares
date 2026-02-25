@@ -12,8 +12,53 @@ With contextvars, session context is set once at dispatch entry and accessible e
 """
 
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 import os
+
+
+# =============================================================================
+# SESSION SIGNALS (unified transport signal capture)
+# =============================================================================
+
+@dataclass(frozen=True)
+class SessionSignals:
+    """Frozen snapshot of all transport-level signals for session key derivation.
+
+    Captured once at the ASGI/HTTP layer, stored in a contextvar, and read by
+    the single ``derive_session_key()`` function in identity_v2.py.
+
+    No priority decisions happen here — this is a pure data capture object.
+    """
+    mcp_session_id: Optional[str] = None      # mcp-session-id header
+    x_session_id: Optional[str] = None        # X-Session-ID header
+    x_client_id: Optional[str] = None         # X-Client-Id / X-MCP-Client-Id header
+    oauth_client_id: Optional[str] = None     # oauth:CLIENT_ID from Bearer token
+    ip_ua_fingerprint: Optional[str] = None   # IP:MD5(UA)[:6] fallback
+    user_agent: Optional[str] = None          # raw User-Agent
+    client_hint: Optional[str] = None         # detected client type (cursor, claude_desktop, etc.)
+    x_agent_name: Optional[str] = None        # X-Agent-Name header
+    x_agent_id: Optional[str] = None          # X-Agent-Id header
+    transport: str = "unknown"                # "mcp", "rest", "sse", "stdio"
+
+
+# Contextvar for SessionSignals — set once per request at the transport layer
+_session_signals: ContextVar[Optional[SessionSignals]] = ContextVar('session_signals', default=None)
+
+
+def set_session_signals(signals: SessionSignals) -> object:
+    """Store SessionSignals for the current request. Returns token for reset."""
+    return _session_signals.set(signals)
+
+
+def get_session_signals() -> Optional[SessionSignals]:
+    """Get SessionSignals for the current request, or None if not set."""
+    return _session_signals.get()
+
+
+def reset_session_signals(token: object) -> None:
+    """Reset SessionSignals using token from set_session_signals."""
+    _session_signals.reset(token)
 
 
 # Session context - set at request entry, accessible throughout the request lifecycle

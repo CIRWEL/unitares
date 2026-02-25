@@ -335,7 +335,14 @@ async def inject_identity(name: str, arguments: Dict[str, Any], ctx: DispatchCon
                 except Exception:
                     pass
 
-                if name not in identity_tools and name not in dialectic_tools and not is_label_match:
+                # Operator tools that act on OTHER agents (dashboard resume/archive/observe)
+                operator_tools = {
+                    "agent", "observe_agent", "detect_stuck_agents",
+                    "archive_agent", "archive_old_test_agents",
+                    "direct_resume_if_safe", "operator_resume_agent",
+                    "ping_agent",
+                }
+                if name not in identity_tools and name not in dialectic_tools and name not in operator_tools and not is_label_match:
                     return [error_response(
                         f"Session mismatch: you are bound as '{bound_id}' but requested '{provided_id}'",
                         details={

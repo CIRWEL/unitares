@@ -30,6 +30,7 @@ from .lifecycle import (
     handle_get_agent_metadata,
     handle_update_agent_metadata,
     handle_archive_agent,
+    handle_resume_agent,
     handle_delete_agent,
     handle_archive_old_test_agents,
     # handle_get_agent_api_key REMOVED Dec 2025 - aliased to identity()

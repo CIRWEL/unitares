@@ -2768,7 +2768,7 @@ class TestHandleOnboardV2:
         assert "date_context" in data
         assert "session_continuity" in data
         assert "workflow" in data
-        assert "what_this_does" in data
+        assert "what_this_does" not in data
 
     @pytest.mark.asyncio
     async def test_onboard_resumes_existing_agent(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
@@ -3163,6 +3163,34 @@ class TestHandleOnboardV2:
         assert data["success"] is True
         # agent_id should be generated, not an empty UUID
         assert data.get("agent_id") is not None
+
+    @pytest.mark.asyncio
+    async def test_onboard_auto_unarchives_agent(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """onboard() auto-unarchives an archived agent and sets auto_resumed flag."""
+        from src.mcp_handlers.identity_v2 import handle_onboard_v2
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        # Return archived identity
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1", metadata={}, status="archived"
+        )
+        mock_db.get_agent_label.return_value = "ArchivedAgent"
+        mock_db.update_agent_fields.return_value = True
+
+        result = await handle_onboard_v2({"client_session_id": "onboard-archived"})
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["is_new"] is False
+        assert data.get("auto_resumed") is True
+        assert data.get("previous_status") == "archived"
+        assert "reactivated" in data.get("welcome_message", "").lower()
+        # Verify DB update was called
+        mock_db.update_agent_fields.assert_called_with(test_uuid, status="active")
 
 
 # ============================================================================

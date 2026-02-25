@@ -35,6 +35,7 @@ from .lifecycle import (
     handle_get_agent_metadata,
     handle_update_agent_metadata,
     handle_archive_agent,
+    handle_resume_agent,
     handle_delete_agent,
 )
 from .admin import (
@@ -126,15 +127,17 @@ handle_agent = action_router(
         "get": handle_get_agent_metadata,
         "update": handle_update_agent_metadata,
         "archive": handle_archive_agent,
+        "resume": handle_resume_agent,
         "delete": handle_delete_agent,
     },
     timeout=20.0,
-    description="Unified agent lifecycle operations: list, get, update, archive, delete",
+    description="Unified agent lifecycle operations: list, get, update, archive, resume, delete",
     examples=[
         "agent(action='list')",
         "agent(action='get', agent_id='claude-opus-20251215')",
         "agent(action='update', tags=['explorer', 'governance'])",
         "agent(action='archive', agent_id='old-agent-id')",
+        "agent(action='resume', agent_id='stuck-agent-id')",
     ],
 )
 

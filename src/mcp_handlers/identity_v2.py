@@ -523,14 +523,23 @@ async def resolve_session_identity(
     # PATH 2.75: Auto-name from client signals (prevents ghost proliferation)
     # If no explicit agent_name was provided, generate a stable label from
     # model_type + client_hint and try to claim an existing identity.
-    if not agent_name and (model_type or client_hint):
+    #
+    # IDENTITY INTEGRITY FIX (v2.7.1): Auto-name claims now REQUIRE trajectory
+    # signature verification. Without it, every fresh session of the same model
+    # type silently inherits prior history and relational context — false continuity.
+    # An agent ends up believing it has 30 visits to Lumen when it has none.
+    #
+    # Rule: only auto-claim an *existing* identity if trajectory_signature is
+    # provided and passes verification. Without it, PATH 3 creates a fresh UUID
+    # (the auto_label is still assigned so the new agent can be found later).
+    if not agent_name and (model_type or client_hint) and trajectory_signature:
         auto_label = _generate_auto_label(model_type, client_hint)
         if auto_label:
             auto_result = await resolve_by_name_claim(
                 auto_label, session_key, trajectory_signature
             )
             if auto_result:
-                logger.info(f"[AUTO_NAME] Reused identity via auto-label '{auto_label}'")
+                logger.info(f"[AUTO_NAME] Reused identity via auto-label '{auto_label}' (trajectory verified)")
                 return auto_result
 
     # PATH 3: Create new agent
@@ -1125,7 +1134,7 @@ def _extract_base_fingerprint(session_key: str) -> Optional[str]:
     if not session_key:
         return None
     # Keys with stable identity don't need pinning
-    if session_key.startswith(("mcp:", "stdio:", "agent-")):
+    if session_key.startswith(("mcp:", "stdio:", "agent-", "oauth:")):
         logger.debug(f"[ONBOARD_PIN] Skipping stable key: {session_key[:30]}...")
         return None
     # Pattern: IP:UA_hash or IP:UA_hash:random_suffix or IP:UA_hash:model_hint
@@ -1562,6 +1571,27 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     base_session_key = _derive_session_key(arguments)
     normalized_model = None
 
+    # PATH 0.5: IP-fingerprint onboard-pin lookup (v2.7.2)
+    # Streamable HTTP clients (/mcp/) receive a stable mcp:SESSION_ID from the protocol
+    # and never hit this code path (_extract_base_fingerprint returns None for mcp: keys).
+    #
+    # Legacy SSE clients (/sse, deprecated) and non-MCP HTTP clients derive their session
+    # key from IP:UA_hash. Proxy-pool clients (e.g. Google Cloud, Tailscale) reconnect
+    # from different IPs with the same UA, creating a fresh key each time → duplicate identity.
+    # The onboard-pin was supposed to fix this, but the lookup only ran in the REST path.
+    # Fix: also check the pin here, at the top of handle_onboard_v2, so any client
+    # that arrives with an IP-based session key gets redirected to its existing identity.
+    if not force_new and not arguments.get("client_session_id"):
+        try:
+            base_fp = _extract_base_fingerprint(base_session_key)
+            if base_fp:
+                pinned_sid = await lookup_onboard_pin(base_fp)
+                if pinned_sid:
+                    logger.info(f"[ONBOARD_PIN] Injected {pinned_sid} from {base_fp} (was: {base_session_key[:30]})")
+                    base_session_key = pinned_sid
+        except Exception as e:
+            logger.debug(f"[ONBOARD_PIN] Pin lookup failed (non-fatal): {e}")
+
     # Extract resume flag early (before checking existing identity)
     resume = arguments.get("resume", False)
     
@@ -1593,12 +1623,28 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             agent_id = existing_identity.get("agent_id", agent_uuid)
             label = existing_identity.get("label")
             logger.info(f"[ONBOARD] Auto-resuming existing agent {agent_uuid[:8]}...")
-            # Check if agent is archived — auto-unarchive on explicit reconnect
+            # Check if agent is archived — auto-unarchive on explicit onboard
             try:
                 db = get_db()
                 identity_record = await db.get_identity(agent_uuid)
                 if identity_record and identity_record.status == "archived":
+                    # 1. Update PostgreSQL (source of truth)
                     await db.update_agent_fields(agent_uuid, status="active")
+                    # 2. Update runtime metadata cache
+                    try:
+                        from .shared import get_mcp_server
+                        srv = get_mcp_server()
+                        if agent_uuid in srv.agent_metadata:
+                            srv.agent_metadata[agent_uuid].status = "active"
+                            srv.agent_metadata[agent_uuid].archived_at = None
+                    except Exception:
+                        pass
+                    # 3. Invalidate Redis cache
+                    try:
+                        from src.cache import get_metadata_cache
+                        await get_metadata_cache().invalidate(agent_uuid)
+                    except Exception:
+                        pass
                     logger.info(f"[ONBOARD] Auto-unarchived agent {agent_uuid[:8]}... (reconnected via onboard)")
                     _was_archived = True
             except Exception as e:
@@ -1901,12 +1947,12 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                 "step_3": "Call process_agent_update with response_text describing what you did",
                 "loop": "Repeat steps 2-3. Check metrics with get_governance_metrics when curious."
             },
-            "what_this_does": {
-                "problem": "AI systems drift, get stuck, and make unexplainable decisions.",
-                "solution": "This system monitors your work in real-time using state-based dynamics (not rules).",
-                "benefits": ["Prevents problems", "Avoids loops", "Provides feedback", "Scales automatically"]
-            }
         })
+
+    # Add auto-resume notice for reactivated agents
+    if _was_archived:
+        result["auto_resumed"] = True
+        result["previous_status"] = "archived"
 
     # Include trajectory result if genesis was stored
     if trajectory_result:

@@ -698,6 +698,64 @@ class TestUpdateAgentMetadata:
             assert data["success"] is True
             assert meta.notes == "from kwargs"
 
+    @pytest.mark.asyncio
+    async def test_update_status_reactivate_archived(self, server):
+        """status='active' reactivates an archived agent."""
+        meta = make_agent_meta(status="archived")
+        server.agent_metadata = {"agent-1": meta}
+
+        with patch("src.mcp_handlers.lifecycle.mcp_server", server), \
+             patch("src.mcp_handlers.lifecycle.require_registered_agent", return_value=("agent-1", None)), \
+             patch("src.mcp_handlers.lifecycle.agent_storage") as mock_storage, \
+             patch("src.mcp_handlers.identity_shared.require_write_permission", return_value=(True, None)), \
+             patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
+            mock_storage.update_agent = AsyncMock()
+            from src.mcp_handlers.lifecycle import handle_update_agent_metadata
+            result = await handle_update_agent_metadata({
+                "agent_id": "agent-1", "status": "active",
+            })
+            data = _parse(result)
+            assert data["success"] is True
+            assert meta.status == "active"
+
+    @pytest.mark.asyncio
+    async def test_update_status_invalid_transition(self, server):
+        """status='active' on an already-active agent returns error."""
+        meta = make_agent_meta(status="active")
+        server.agent_metadata = {"agent-1": meta}
+
+        with patch("src.mcp_handlers.lifecycle.mcp_server", server), \
+             patch("src.mcp_handlers.lifecycle.require_registered_agent", return_value=("agent-1", None)), \
+             patch("src.mcp_handlers.lifecycle.agent_storage") as mock_storage, \
+             patch("src.mcp_handlers.identity_shared.require_write_permission", return_value=(True, None)), \
+             patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
+            mock_storage.update_agent = AsyncMock()
+            from src.mcp_handlers.lifecycle import handle_update_agent_metadata
+            result = await handle_update_agent_metadata({
+                "agent_id": "agent-1", "status": "active",
+            })
+            data = _parse(result)
+            assert "already" in data.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_update_status_invalid_value(self, server):
+        """Only status='active' is accepted."""
+        meta = make_agent_meta(status="archived")
+        server.agent_metadata = {"agent-1": meta}
+
+        with patch("src.mcp_handlers.lifecycle.mcp_server", server), \
+             patch("src.mcp_handlers.lifecycle.require_registered_agent", return_value=("agent-1", None)), \
+             patch("src.mcp_handlers.lifecycle.agent_storage") as mock_storage, \
+             patch("src.mcp_handlers.identity_shared.require_write_permission", return_value=(True, None)), \
+             patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
+            mock_storage.update_agent = AsyncMock()
+            from src.mcp_handlers.lifecycle import handle_update_agent_metadata
+            result = await handle_update_agent_metadata({
+                "agent_id": "agent-1", "status": "paused",
+            })
+            data = _parse(result)
+            assert "only" in data.get("error", "").lower()
+
 
 # ============================================================================
 # handle_archive_agent
@@ -3089,7 +3147,7 @@ class TestDetectStuckAgentsInternalEdgeCases:
 
     def test_tight_margin_detection(self, server):
         """Lines 1752-1763: tight margin + timeout detected."""
-        old = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+        old = (datetime.now(timezone.utc) - timedelta(minutes=90)).isoformat()
         meta = make_agent_meta(status="active", last_update=old, total_updates=100)
         meta.created_at = old
         server.agent_metadata = {"agent-1": meta}
@@ -3109,7 +3167,7 @@ class TestDetectStuckAgentsInternalEdgeCases:
             }
             from src.mcp_handlers.lifecycle import _detect_stuck_agents
             result = _detect_stuck_agents(
-                max_age_minutes=60,
+                max_age_minutes=120,
                 tight_margin_timeout_minutes=15,
                 include_pattern_detection=False
             )

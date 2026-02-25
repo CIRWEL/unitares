@@ -785,7 +785,7 @@ async function loadStuckAgents() {
 // System health — fetches /health for DB pool, uptime, server status
 async function loadSystemHealth() {
     try {
-        const resp = await fetch('/health');
+        const resp = await authFetch('/health');
         const data = await resp.json();
         const valueEl = document.getElementById('system-health-value');
         const detailEl = document.getElementById('system-health-detail');

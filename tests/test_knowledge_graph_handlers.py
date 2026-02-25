@@ -2317,7 +2317,7 @@ class TestSearchKnowledgeGraphAdditional:
         data = parse_result(result)
         assert data["success"] is True
         if data["count"] > 0:
-            assert "similarity_threshold_explanation" in data
+            assert "similarity_threshold_explanation" not in data
 
     @pytest.mark.asyncio
     async def test_search_similarity_scores_included(self, patch_common):

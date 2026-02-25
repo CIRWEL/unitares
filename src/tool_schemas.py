@@ -891,8 +891,7 @@ DEPENDENCIES:
                     },
                     "task_type": {
                         "type": "string",
-                        "enum": ["convergent", "divergent", "mixed"],
-                        "description": "Optional task type context. Valid values: \"convergent\" | \"divergent\" | \"mixed\". 'convergent' (standardization, formatting) vs 'divergent' (creative exploration). System interprets S=0 differently: convergent S=0 is healthy compliance, divergent S=0 may indicate lack of exploration. Prevents false positives on 'compliance vs health'.",
+                        "description": "Task type context. Core types: convergent | divergent | mixed. Also accepts natural names: refactoring, bugfix, testing, documentation → convergent; feature, exploration, research, design → divergent; debugging, review, deployment → mixed. Default: mixed.",
                         "default": "mixed"
                     },
                     "trajectory_signature": {
@@ -2023,6 +2022,11 @@ DEPENDENCIES:
                     "agent_id": {
                         "type": "string",
                         "description": "Agent identifier"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["active"],
+                        "description": "Set to 'active' to reactivate an archived agent"
                     },
                     "tags": {
                         "type": "array",

@@ -20,6 +20,21 @@ function debounce(fn, delay) {
     };
 }
 
+/**
+ * Fetch wrapper that adds Authorization header when a token is configured.
+ * Use this instead of bare fetch() for authenticated endpoints.
+ */
+function authFetch(url, options = {}) {
+    const token = localStorage.getItem('unitares_api_token') ||
+        new URLSearchParams(window.location.search).get('token');
+    if (token) {
+        options.headers = Object.assign({}, options.headers, {
+            'Authorization': `Bearer ${token}`
+        });
+    }
+    return fetch(url, options);
+}
+
 class DashboardAPI {
     /**
      * Centralized API client with retry logic, error handling, and caching.
