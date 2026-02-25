@@ -374,7 +374,7 @@ class DialecticSession:
 
     def __init__(self,
                  paused_agent_id: str,
-                 reviewer_agent_id: str,
+                 reviewer_agent_id: Optional[str] = None,
                  paused_agent_state: Optional[Dict[str, Any]] = None,
                  discovery_id: Optional[str] = None,
                  dispute_type: Optional[str] = None,
@@ -426,7 +426,7 @@ class DialecticSession:
         Returns:
             16-character hexadecimal session ID
         """
-        session_data = f"{self.paused_agent_id}:{self.reviewer_agent_id}:{self.created_at.isoformat()}"
+        session_data = f"{self.paused_agent_id}:{self.reviewer_agent_id or 'open'}:{self.created_at.isoformat()}"
         return hashlib.sha256(session_data.encode()).hexdigest()[:16]
 
     def submit_thesis(self, message: DialecticMessage, api_key: str = "") -> Dict[str, Any]:
@@ -462,13 +462,22 @@ class DialecticSession:
         """
         Agent B submits antithesis: "What I observe, my concerns"
 
+        If no reviewer is assigned yet, the submitting agent becomes the reviewer
+        (assigned-on-response pattern).
+
         Args:
             message: Antithesis message with observations, concerns
             api_key: Deprecated, unused. Auth handled at handler layer.
 
         Returns:
-            Status dict
+            Status dict (includes reviewer_auto_assigned=True if assignment happened)
         """
+        # Auto-assign reviewer if none set — whoever responds becomes the reviewer
+        if self.reviewer_agent_id is None:
+            if message.agent_id == self.paused_agent_id:
+                return {"success": False, "error": "Requestor cannot review their own session (use reviewer_mode='self' for self-review)"}
+            self.reviewer_agent_id = message.agent_id
+
         # Verify agent
         if message.agent_id != self.reviewer_agent_id:
             return {"success": False, "error": "Only reviewer can submit antithesis"}
@@ -699,10 +708,10 @@ class DialecticSession:
             if not any(self._conditions_conflict(cond, c) for c in merged_conditions):
                 merged_conditions.append(cond)
         
-        # Merge root causes
+        # Merge root causes — fall back to thesis root_cause if synthesis messages lack it
         root_cause_a = msg_a.root_cause or ""
         root_cause_b = msg_b.root_cause or ""
-        
+
         if root_cause_a and root_cause_b:
             if root_cause_a.lower() == root_cause_b.lower():
                 merged_root_cause = root_cause_a
@@ -711,6 +720,13 @@ class DialecticSession:
                 merged_root_cause = f"{root_cause_a} (also: {root_cause_b})"
         else:
             merged_root_cause = root_cause_a or root_cause_b
+
+        # If synthesis messages had no root_cause, pull from thesis
+        if not merged_root_cause:
+            for msg in self.transcript:
+                if msg.phase == "thesis" and msg.root_cause:
+                    merged_root_cause = msg.root_cause
+                    break
         
         # Merge reasoning
         reasoning_a = msg_a.reasoning or ""
@@ -779,9 +795,17 @@ class DialecticSession:
         if self.phase != DialecticPhase.RESOLVED:
             raise ValueError(f"Cannot finalize in phase {self.phase.value}")
 
+        # Get root_cause from thesis (the authoritative source)
+        # Synthesis messages typically don't carry root_cause
+        thesis_root_cause = None
+        for msg in self.transcript:
+            if msg.phase == "thesis" and msg.root_cause:
+                thesis_root_cause = msg.root_cause
+                break
+
         # Get agreed synthesis messages from both agents
         synthesis_messages = [msg for msg in self.transcript if msg.phase == "synthesis" and msg.agrees]
-        
+
         if len(synthesis_messages) < 2:
             # Fallback: use most recent agreed message
             agreed_message = None
@@ -789,13 +813,13 @@ class DialecticSession:
                 if msg.phase == "synthesis" and msg.agrees:
                     agreed_message = msg
                     break
-            
+
             if not agreed_message:
                 raise ValueError("No agreed synthesis found")
-            
+
             merged = {
                 "conditions": agreed_message.proposed_conditions or [],
-                "root_cause": agreed_message.root_cause or "Unknown",
+                "root_cause": agreed_message.root_cause or thesis_root_cause or "Unknown",
                 "reasoning": agreed_message.reasoning or ""
             }
         else:
@@ -811,13 +835,13 @@ class DialecticSession:
             elif agent_a_msg:
                 merged = {
                     "conditions": agent_a_msg.proposed_conditions or [],
-                    "root_cause": agent_a_msg.root_cause or "Unknown",
+                    "root_cause": agent_a_msg.root_cause or thesis_root_cause or "Unknown",
                     "reasoning": agent_a_msg.reasoning or ""
                 }
             elif agent_b_msg:
                 merged = {
                     "conditions": agent_b_msg.proposed_conditions or [],
-                    "root_cause": agent_b_msg.root_cause or "Unknown",
+                    "root_cause": agent_b_msg.root_cause or thesis_root_cause or "Unknown",
                     "reasoning": agent_b_msg.reasoning or ""
                 }
             else:
