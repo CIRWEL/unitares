@@ -519,12 +519,26 @@ def _session_id_from_ctx(ctx: Context | None) -> str | None:
     """
     Resolve a stable per-client session identifier for identity binding.
 
-    Priority order:
-    1. MCP session ID from mcp-session-id header (implicit, protocol-level)
-    2. FastMCP's Context.client_id (OAuth-based)
-    3. Starlette request state from ConnectionTrackingMiddleware
+    Uses SessionSignals when available (set by ASGI wrapper), otherwise
+    falls back to legacy extraction paths.
     """
-    # 1. Try MCP session ID from contextvar (set by ASGI wrapper from header)
+    # Check SessionSignals first (set by ASGI wrapper / ConnectionTrackingMiddleware)
+    try:
+        from src.mcp_handlers.context import get_session_signals
+        signals = get_session_signals()
+        if signals:
+            # Same priority as derive_session_key, minus async pin lookup
+            return (
+                signals.x_session_id
+                or (f"mcp:{signals.mcp_session_id}" if signals.mcp_session_id else None)
+                or signals.oauth_client_id
+                or signals.x_client_id
+                or signals.ip_ua_fingerprint
+            )
+    except Exception:
+        pass
+
+    # Fallback: legacy extraction (for callers before signals are set)
     try:
         from src.mcp_handlers.context import get_mcp_session_id
         mcp_sid = get_mcp_session_id()
@@ -536,7 +550,6 @@ def _session_id_from_ctx(ctx: Context | None) -> str | None:
     if ctx is None:
         return None
 
-    # 2. Try Starlette request state (Our fingerprinting logic from middleware)
     try:
         req = ctx.request_context.request
         if req is not None:
@@ -546,7 +559,6 @@ def _session_id_from_ctx(ctx: Context | None) -> str | None:
     except Exception:
         pass
 
-    # 3. Try FastMCP's Context.client_id (Fallback)
     try:
         if ctx.client_id:
             return ctx.client_id
@@ -1393,21 +1405,43 @@ async def main():
                     return
 
                 # Generate base id (stable per SSE connection, unique per HTTP request)
-                # Prioritize explicit client identity headers
-                base_id = headers.get("x-client-id") or headers.get("x-mcp-client-id")
-                
-                if not base_id:
-                    # Fallback: Disambiguate by IP + User-Agent to handle shared tunnels (ngrok)
-                    client = scope.get("client")
-                    client_ip = client[0] if (client and len(client) >= 1) else "unknown"
-                    
-                    # Use User-Agent to separate different client types (Claude vs Gemini vs Cursor)
+                # For /mcp/ path, SessionSignals are already set by the ASGI wrapper
+                # so we just read from scope.state if available, otherwise compute here.
+                from src.mcp_handlers.context import get_session_signals, SessionSignals, set_session_signals
+                signals = get_session_signals()
+
+                if signals and signals.transport == "mcp":
+                    # ASGI wrapper already set signals — reuse computed client_id
+                    state = scope.get("state", {})
+                    base_id = state.get("governance_client_id")
+                    if not base_id:
+                        base_id = signals.x_client_id or signals.ip_ua_fingerprint or "unknown"
+                else:
+                    # Legacy paths (SSE, REST) — compute fingerprint and build signals
+                    base_id = headers.get("x-client-id") or headers.get("x-mcp-client-id")
                     ua = headers.get("user-agent", "unknown")
-                    
-                    # Create a simple stable fingerprint from the User-Agent
-                    import hashlib
-                    ua_fingerprint = hashlib.md5(ua.encode()).hexdigest()[:6]
-                    base_id = f"{client_ip}:{ua_fingerprint}"
+
+                    if not base_id:
+                        client = scope.get("client")
+                        client_ip = client[0] if (client and len(client) >= 1) else "unknown"
+                        import hashlib
+                        ua_fingerprint = hashlib.md5(ua.encode()).hexdigest()[:6]
+                        base_id = f"{client_ip}:{ua_fingerprint}"
+
+                    # Build SessionSignals for legacy paths (if not already set)
+                    if not signals:
+                        from src.mcp_handlers.context import detect_client_from_user_agent
+                        legacy_signals = SessionSignals(
+                            x_client_id=headers.get("x-client-id") or headers.get("x-mcp-client-id"),
+                            x_session_id=headers.get("x-session-id"),
+                            ip_ua_fingerprint=base_id,
+                            user_agent=ua,
+                            client_hint=detect_client_from_user_agent(ua),
+                            x_agent_name=headers.get("x-agent-name"),
+                            x_agent_id=headers.get("x-agent-id"),
+                            transport="sse" if is_sse else "rest",
+                        )
+                        set_session_signals(legacy_signals)
 
                 if is_sse:
                     client_id = base_id
@@ -1809,38 +1843,56 @@ async def main():
         async def _extract_client_session_id(request) -> str:
             """
             Stable per-client session id for HTTP callers.
-            - Prefer explicit header X-Session-ID (agents should echo this back)
-            - Check UA-hash pin from recent onboard
-            - Fall back to ConnectionTrackingMiddleware id if present
-            - Otherwise generate a unique session ID per request chain
+            Uses SessionSignals + derive_session_key() for unified derivation.
+            Falls back to legacy logic if signals unavailable.
             """
-            sid = request.headers.get("X-Session-ID") or request.headers.get("x-session-id")
-            if sid:
-                return str(sid)
-            try:
-                from src.mcp_handlers.identity_v2 import ua_hash_from_header, lookup_onboard_pin
-                ua = request.headers.get("user-agent", "")
-                base_fp = ua_hash_from_header(ua)
-                pinned_sid = await lookup_onboard_pin(base_fp)
-                if pinned_sid:
-                    logger.info(f"[REST_PIN] Injected {pinned_sid} from {base_fp}")
-                    return pinned_sid
-            except Exception as e:
-                logger.debug(f"[REST_PIN] Pin lookup failed: {e}")
-            try:
-                if hasattr(request, "state") and hasattr(request.state, "governance_client_id"):
-                    return str(getattr(request.state, "governance_client_id"))
-            except Exception:
-                pass
-            # Generate unique session ID - agents must echo back client_session_id
-            # from onboard() response to maintain identity across calls
-            import uuid
-            unique_id = str(uuid.uuid4())[:12]
+            from src.mcp_handlers.context import SessionSignals
+            from src.mcp_handlers.identity_v2 import derive_session_key, ua_hash_from_header
+
+            # Build SessionSignals from request headers
+            ua = request.headers.get("user-agent", "")
+            x_session_id = request.headers.get("X-Session-ID") or request.headers.get("x-session-id")
+
+            # Compute IP:UA fingerprint
+            ip_ua_fp = None
             try:
                 host = request.client.host if request.client else "unknown"
-                return f"http:{host}:{unique_id}"
+                import hashlib
+                ua_fp = hashlib.md5(ua.encode()).hexdigest()[:6] if ua else "000000"
+                ip_ua_fp = f"{host}:{ua_fp}"
             except Exception:
-                return f"http:unknown:{unique_id}"
+                pass
+
+            signals = SessionSignals(
+                x_session_id=x_session_id,
+                x_client_id=request.headers.get("x-client-id") or request.headers.get("x-mcp-client-id"),
+                ip_ua_fingerprint=ip_ua_fp,
+                user_agent=ua,
+                x_agent_name=request.headers.get("x-agent-name"),
+                x_agent_id=request.headers.get("x-agent-id"),
+                transport="rest",
+            )
+
+            result = await derive_session_key(signals)
+
+            # If derive_session_key returned the raw IP:UA fingerprint (no pin found),
+            # and there's no explicit session header, generate a unique ID so REST
+            # clients without session headers get distinct identities per request chain.
+            if result == ip_ua_fp and not x_session_id:
+                try:
+                    if hasattr(request, "state") and hasattr(request.state, "governance_client_id"):
+                        return str(getattr(request.state, "governance_client_id"))
+                except Exception:
+                    pass
+                import uuid as _uuid
+                unique_id = str(_uuid.uuid4())[:12]
+                try:
+                    host = request.client.host if request.client else "unknown"
+                    return f"http:{host}:{unique_id}"
+                except Exception:
+                    return f"http:unknown:{unique_id}"
+
+            return result
         
         async def http_list_tools(request):
             """List all tools in OpenAI-compatible format
@@ -2470,27 +2522,22 @@ async def main():
                     await response(scope, receive, send)
                     return
 
-                # AUTO-DETECT CLIENT TYPE from User-Agent for better auto-naming
-                # CAPTURE MCP SESSION ID for implicit identity binding
-                # Use contextvars so tool handlers can access it
+                # BUILD SESSION SIGNALS — single capture of all transport headers
+                # No priority decisions here; derive_session_key() handles that.
                 client_hint_token = None
                 mcp_session_token = None
+                signals_token = None
                 try:
                     from starlette.datastructures import Headers
                     from src.mcp_handlers.context import (
+                        SessionSignals, set_session_signals, reset_session_signals,
                         detect_client_from_user_agent, set_transport_client_hint, reset_transport_client_hint,
                         set_mcp_session_id, reset_mcp_session_id
                     )
                     headers = Headers(scope=scope)
 
-                    # Capture mcp-session-id header for implicit identity binding
+                    # Extract all headers into SessionSignals (no priority decisions)
                     mcp_sid = headers.get("mcp-session-id")
-                    if mcp_sid:
-                        mcp_session_token = set_mcp_session_id(mcp_sid)
-                        logger.debug(f"[/mcp] Captured mcp-session-id={mcp_sid[:16]}...")
-
-                    # FINGERPRINTING: Disambiguate by IP + User-Agent for shared tunnels
-                    # This must match logic in ConnectionTrackingMiddleware
                     client = scope.get("client")
                     client_ip = client[0] if (client and len(client) >= 1) else "unknown"
                     ua = headers.get("user-agent", "unknown")
@@ -2499,10 +2546,7 @@ async def main():
                     x_session_id = headers.get("x-session-id")
                     x_client_id = headers.get("x-client-id") or headers.get("x-mcp-client-id")
 
-                    # Extract OAuth client identity from Bearer token (v2.7.3)
-                    # For authenticated clients, the OAuth client_id is the best stable key:
-                    # it survives IP rotation and doesn't need Redis pinning.
-                    # IP:UA_hash is only a fallback for unauthenticated clients.
+                    # Extract OAuth client identity from Bearer token
                     oauth_client_id = None
                     auth_header = headers.get("authorization", "")
                     if auth_header.startswith("Bearer "):
@@ -2511,57 +2555,46 @@ async def main():
                             token_data = _oauth_provider._access_tokens.get(token) if _oauth_provider else None
                             if token_data and hasattr(token_data, "client_id"):
                                 oauth_client_id = f"oauth:{token_data.client_id}"
-                                logger.debug(f"[/mcp] OAuth client_id resolved: {oauth_client_id[:30]}")
                         except Exception:
                             pass
 
-                    if x_session_id:
-                        client_id = x_session_id
-                        logger.info(f"[/mcp] Using X-Session-ID: {x_session_id[:20]}...")
-                    elif oauth_client_id:
-                        client_id = oauth_client_id
-                    elif x_client_id:
-                        client_id = x_client_id
-                    else:
-                        client_id = f"{client_ip}:{ua_fingerprint}"
+                    detected_client = detect_client_from_user_agent(ua)
+                    ip_ua_fp = f"{client_ip}:{ua_fingerprint}"
 
+                    signals = SessionSignals(
+                        mcp_session_id=mcp_sid,
+                        x_session_id=x_session_id,
+                        x_client_id=x_client_id,
+                        oauth_client_id=oauth_client_id,
+                        ip_ua_fingerprint=ip_ua_fp,
+                        user_agent=ua,
+                        client_hint=detected_client,
+                        x_agent_name=headers.get("x-agent-name"),
+                        x_agent_id=headers.get("x-agent-id"),
+                        transport="mcp",
+                    )
+                    signals_token = set_session_signals(signals)
+
+                    # Backward compat: set individual contextvars that downstream code reads
+                    if mcp_sid:
+                        mcp_session_token = set_mcp_session_id(mcp_sid)
+
+                    # Backward compat: expose client_id in scope.state for ConnectionTrackingMiddleware consumers
+                    client_id = x_session_id or oauth_client_id or x_client_id or ip_ua_fp
                     state = scope.setdefault("state", {})
                     state["governance_client_id"] = client_id
 
-                    # PROPAGATE IDENTITY via contextvars
+                    # Backward compat: set session context
                     from src.mcp_handlers.context import set_session_context, reset_session_context
-                    effective_session_key = x_session_id or mcp_sid or x_client_id or client_id
                     session_context_token = set_session_context(
-                        session_key=effective_session_key,
-                        client_session_id=x_session_id or x_client_id or mcp_sid,
+                        session_key=signals.ip_ua_fingerprint or "unknown",
+                        client_session_id=x_session_id or x_client_id,
                         user_agent=ua,
                     )
 
-                    # Detect client type from User-Agent
-                    detected_client = detect_client_from_user_agent(ua)
                     if detected_client:
                         client_hint_token = set_transport_client_hint(detected_client)
-                        logger.debug(f"[/mcp] Detected client_hint={detected_client} from UA")
 
-                    # Auto-resume identity from X-Agent-Name header
-                    # This allows MCP clients to reconnect as a named agent across sessions
-                    x_agent_name = headers.get("x-agent-name")
-                    if x_agent_name:
-                        try:
-                            from src.mcp_handlers.identity_v2 import resolve_by_name_claim
-                            name_result = await resolve_by_name_claim(x_agent_name, effective_session_key)
-                            if name_result:
-                                # Update context with resolved agent ID
-                                reset_session_context(session_context_token)
-                                session_context_token = set_session_context(
-                                    session_key=effective_session_key,
-                                    client_session_id=x_session_id or x_client_id or mcp_sid,
-                                    agent_id=name_result["agent_uuid"],
-                                    user_agent=ua,
-                                )
-                                logger.info(f"[/mcp] Auto-resumed identity '{x_agent_name}' -> {name_result['agent_uuid'][:12]}...")
-                        except Exception as e:
-                            logger.debug(f"[/mcp] X-Agent-Name resolution failed: {e}")
                 except Exception as e:
                     logger.debug(f"[/mcp] Could not capture context: {e}")
 
@@ -2593,6 +2626,12 @@ async def main():
                         try:
                             from src.mcp_handlers.context import reset_transport_client_hint
                             reset_transport_client_hint(client_hint_token)
+                        except Exception:
+                            pass
+                    if signals_token is not None:
+                        try:
+                            from src.mcp_handlers.context import reset_session_signals
+                            reset_session_signals(signals_token)
                         except Exception:
                             pass
 

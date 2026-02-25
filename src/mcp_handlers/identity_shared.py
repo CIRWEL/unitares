@@ -69,16 +69,16 @@ def _lookup_uuid_by_prefix(uuid_prefix: str) -> Optional[str]:
 
 def _get_session_key(arguments: Optional[Dict[str, Any]] = None, session_id: Optional[str] = None) -> str:
     """
-    Resolve the session key used for identity binding.
+    DEPRECATED: Use ``await identity_v2.derive_session_key(signals, arguments)`` instead.
+
+    This sync version is kept for callers that cannot be made async (e.g.,
+    ``_get_identity_record_sync``). New code should use the unified async version.
 
     Precedence:
     1) explicit session_id argument
     2) arguments["client_session_id"] (injected by SSE wrappers)
     3) contextvars session_key (set at dispatch entry)
     4) fallback to a stable per-process key (stdio/single-user)
-
-    Note: For stdio/single-user (Claude Desktop), a per-process key is stable and sufficient.
-    The fallback is intentionally stable (no timestamp) to enable binding persistence across calls.
     """
     if session_id:
         logger.debug(f"_get_session_key: using explicit session_id={session_id}")

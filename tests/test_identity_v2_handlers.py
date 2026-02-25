@@ -3,7 +3,7 @@ Comprehensive tests for src/mcp_handlers/identity_v2.py.
 
 Covers the full identity resolution pipeline:
 - resolve_session_identity() 3-tier: Redis -> PostgreSQL -> Create new
-- _derive_session_key() priority chain
+- derive_session_key() unified async + _derive_session_key() deprecated sync wrapper
 - _validate_session_key() / sanitization within resolve_session_identity
 - persist_identity via ensure_agent_persisted()
 - get_agent_label / _get_agent_label
@@ -11,16 +11,15 @@ Covers the full identity resolution pipeline:
 - _find_agent_by_label
 - _get_agent_id_from_metadata
 - _generate_agent_id (pure function)
+- _normalize_model_type (pure function)
 - set_agent_label
 - resolve_by_name_claim
 - _cache_session
-- _extract_stable_identifier
 - _extract_base_fingerprint
 - ua_hash_from_header
 - lookup_onboard_pin / set_onboard_pin
 - handle_identity_v2 (tool handler)
 - ensure_agent_persisted (lazy creation)
-- migrate_from_v1
 
 All external I/O (Redis, PostgreSQL, MCP server) is mocked.
 """
@@ -281,6 +280,149 @@ class TestDeriveSessionKey:
              patch("src.mcp_handlers.context.get_context_session_key", side_effect=Exception("boom")):
             result = self.derive({})
             assert result.startswith("stdio:")
+
+
+# ============================================================================
+# Unified derive_session_key (async, with SessionSignals)
+# ============================================================================
+
+class TestUnifiedDeriveSessionKey:
+    """Tests for the new async derive_session_key() with SessionSignals."""
+
+    @pytest.mark.asyncio
+    async def test_priority_1_explicit_client_session_id(self):
+        """arguments['client_session_id'] has highest priority."""
+        from src.mcp_handlers.identity_v2 import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+        signals = SessionSignals(mcp_session_id="mcp-id", x_session_id="x-id")
+        result = await derive_session_key(signals, {"client_session_id": "explicit-123"})
+        assert result == "explicit-123"
+
+    @pytest.mark.asyncio
+    async def test_priority_2_mcp_session_id(self):
+        """mcp_session_id from signals is second priority."""
+        from src.mcp_handlers.identity_v2 import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+        signals = SessionSignals(mcp_session_id="mcp-abc", x_session_id="x-id")
+        result = await derive_session_key(signals, {})
+        assert result == "mcp:mcp-abc"
+
+    @pytest.mark.asyncio
+    async def test_priority_3_x_session_id(self):
+        """x_session_id from signals is third priority."""
+        from src.mcp_handlers.identity_v2 import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+        signals = SessionSignals(x_session_id="x-sess-456")
+        result = await derive_session_key(signals, {})
+        assert result == "x-sess-456"
+
+    @pytest.mark.asyncio
+    async def test_priority_4_oauth_client_id(self):
+        """oauth_client_id from signals is fourth priority."""
+        from src.mcp_handlers.identity_v2 import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+        signals = SessionSignals(oauth_client_id="oauth:client-789")
+        result = await derive_session_key(signals, {})
+        assert result == "oauth:client-789"
+
+    @pytest.mark.asyncio
+    async def test_priority_5_x_client_id(self):
+        """x_client_id from signals is fifth priority."""
+        from src.mcp_handlers.identity_v2 import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+        signals = SessionSignals(x_client_id="x-client-abc")
+        result = await derive_session_key(signals, {})
+        assert result == "x-client-abc"
+
+    @pytest.mark.asyncio
+    async def test_priority_6_ip_ua_fingerprint_no_pin(self):
+        """ip_ua_fingerprint with no pin returns raw fingerprint."""
+        from src.mcp_handlers.identity_v2 import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+        signals = SessionSignals(ip_ua_fingerprint="1.2.3.4:abc123")
+        with patch("src.mcp_handlers.identity_v2.lookup_onboard_pin", new_callable=AsyncMock, return_value=None):
+            result = await derive_session_key(signals, {})
+        assert result == "1.2.3.4:abc123"
+
+    @pytest.mark.asyncio
+    async def test_priority_6_ip_ua_fingerprint_with_pin(self):
+        """ip_ua_fingerprint with pin returns pinned session ID."""
+        from src.mcp_handlers.identity_v2 import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+        signals = SessionSignals(ip_ua_fingerprint="1.2.3.4:abc123")
+        with patch("src.mcp_handlers.identity_v2.lookup_onboard_pin", new_callable=AsyncMock, return_value="agent-pinned123"):
+            result = await derive_session_key(signals, {})
+        assert result == "agent-pinned123"
+
+    @pytest.mark.asyncio
+    async def test_priority_7_contextvars_fallback(self):
+        """Falls back to contextvars when no signals."""
+        from src.mcp_handlers.identity_v2 import derive_session_key
+        with patch("src.mcp_handlers.context.get_mcp_session_id", return_value="mcp-ctx"):
+            result = await derive_session_key(None, {})
+        assert result == "mcp:mcp-ctx"
+
+    @pytest.mark.asyncio
+    async def test_priority_8_stdio_fallback(self):
+        """Falls back to stdio:{pid} when nothing available."""
+        from src.mcp_handlers.identity_v2 import derive_session_key
+        with patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value=None):
+            result = await derive_session_key(None, {})
+        assert result.startswith("stdio:")
+
+    @pytest.mark.asyncio
+    async def test_none_signals_none_arguments(self):
+        """Handles None signals and None arguments gracefully."""
+        from src.mcp_handlers.identity_v2 import derive_session_key
+        with patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value=None):
+            result = await derive_session_key(None, None)
+        assert result.startswith("stdio:")
+
+    @pytest.mark.asyncio
+    async def test_deprecated_sync_wrapper_still_works(self):
+        """_derive_session_key (deprecated sync) still returns correct result."""
+        from src.mcp_handlers.identity_v2 import _derive_session_key
+        result = _derive_session_key({"client_session_id": "sync-test"})
+        assert result == "sync-test"
+
+
+# ============================================================================
+# _normalize_model_type
+# ============================================================================
+
+class TestNormalizeModelType:
+    """Tests for model type normalization helper."""
+
+    def test_claude_variants(self):
+        from src.mcp_handlers.identity_v2 import _normalize_model_type
+        assert _normalize_model_type("claude-opus-4-5") == "claude"
+        assert _normalize_model_type("Claude-Sonnet-4") == "claude"
+        assert _normalize_model_type("claude") == "claude"
+
+    def test_gemini(self):
+        from src.mcp_handlers.identity_v2 import _normalize_model_type
+        assert _normalize_model_type("gemini-pro") == "gemini"
+
+    def test_gpt(self):
+        from src.mcp_handlers.identity_v2 import _normalize_model_type
+        assert _normalize_model_type("gpt-4o") == "gpt"
+        assert _normalize_model_type("chatgpt") == "gpt"
+
+    def test_cursor(self):
+        from src.mcp_handlers.identity_v2 import _normalize_model_type
+        assert _normalize_model_type("cursor") == "composer"
+        assert _normalize_model_type("composer") == "composer"
+
+    def test_llama(self):
+        from src.mcp_handlers.identity_v2 import _normalize_model_type
+        assert _normalize_model_type("llama-3.1") == "llama"
+
+    def test_unknown_passthrough(self):
+        from src.mcp_handlers.identity_v2 import _normalize_model_type
+        result = _normalize_model_type("mistral-7b")
+        assert result == "mistral_7b"
 
 
 # ============================================================================
@@ -1075,46 +1217,6 @@ class TestSetAgentLabel:
 
 
 # ============================================================================
-# _extract_stable_identifier
-# ============================================================================
-
-class TestExtractStableIdentifier:
-
-    @pytest.fixture(autouse=True)
-    def import_fn(self):
-        from src.mcp_handlers.identity_v2 import _extract_stable_identifier
-        self.extract = _extract_stable_identifier
-
-    def test_extracts_hex_suffix(self):
-        result = self.extract("217.216.112.229:8767:6d79c4")
-        assert result == "6d79c4"
-
-    def test_extracts_hex_from_two_parts(self):
-        result = self.extract("192.168.1.1:abcdef")
-        assert result == "abcdef"
-
-    def test_returns_none_for_single_part(self):
-        result = self.extract("singlepart")
-        assert result is None
-
-    def test_returns_none_for_non_hex_suffix(self):
-        result = self.extract("192.168.1.1:not-hex-here")
-        assert result is None
-
-    def test_returns_none_for_short_suffix(self):
-        result = self.extract("192.168.1.1:ab")
-        assert result is None
-
-    def test_returns_none_for_empty(self):
-        result = self.extract("")
-        assert result is None
-
-    def test_returns_none_for_none(self):
-        result = self.extract(None)
-        assert result is None
-
-
-# ============================================================================
 # _extract_base_fingerprint
 # ============================================================================
 
@@ -1523,179 +1625,6 @@ class TestCacheSession:
 
 
 # ============================================================================
-# migrate_from_v1
-# ============================================================================
-
-class TestMigrateFromV1:
-
-    @pytest.mark.asyncio
-    async def test_migrates_sessions(self):
-        """Migrates v1 session bindings to v2 format."""
-        from src.mcp_handlers.identity_v2 import migrate_from_v1
-
-        mock_db = AsyncMock()
-        mock_db.upsert_agent = AsyncMock()
-        mock_db.upsert_identity = AsyncMock()
-        mock_db.get_identity.return_value = SimpleNamespace(identity_id="migrated-ident", metadata={})
-        mock_db.create_session = AsyncMock()
-
-        old_bindings = {
-            "session-1": {"bound_agent_id": "uuid-1", "api_key": "key-1"},
-            "session-2": {"bound_agent_id": "uuid-2", "api_key": "key-2"},
-        }
-
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
-            count = await migrate_from_v1(old_bindings)
-
-        assert count == 2
-        assert mock_db.upsert_agent.call_count == 2
-        assert mock_db.upsert_identity.call_count == 2
-        assert mock_db.create_session.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_skips_bindings_without_agent_id(self):
-        """Bindings without bound_agent_id are skipped."""
-        from src.mcp_handlers.identity_v2 import migrate_from_v1
-
-        mock_db = AsyncMock()
-
-        old_bindings = {
-            "session-1": {"bound_agent_id": None},
-            "session-2": {},  # No bound_agent_id key
-        }
-
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
-            count = await migrate_from_v1(old_bindings)
-
-        assert count == 0
-        mock_db.upsert_agent.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_continues_on_individual_failure(self):
-        """Failures for individual sessions don't stop migration."""
-        from src.mcp_handlers.identity_v2 import migrate_from_v1
-
-        mock_db = AsyncMock()
-        mock_db.upsert_agent.side_effect = [
-            Exception("DB error"),  # First fails
-            None,  # Second succeeds
-        ]
-        mock_db.upsert_identity = AsyncMock()
-        mock_db.get_identity.return_value = SimpleNamespace(identity_id="ident", metadata={})
-        mock_db.create_session = AsyncMock()
-
-        old_bindings = {
-            "session-fail": {"bound_agent_id": "uuid-fail"},
-            "session-ok": {"bound_agent_id": "uuid-ok"},
-        }
-
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
-            count = await migrate_from_v1(old_bindings)
-
-        assert count == 1  # Only the second one succeeded
-
-    @pytest.mark.asyncio
-    async def test_empty_bindings_returns_zero(self):
-        """Empty bindings dict returns 0."""
-        from src.mcp_handlers.identity_v2 import migrate_from_v1
-
-        mock_db = AsyncMock()
-
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
-            count = await migrate_from_v1({})
-
-        assert count == 0
-
-
-# ============================================================================
-# _find_agent_by_id (deprecated but still present)
-# ============================================================================
-
-class TestFindAgentById:
-
-    @pytest.mark.asyncio
-    async def test_returns_agent_from_postgres(self):
-        from src.mcp_handlers.identity_v2 import _find_agent_by_id
-
-        mock_db = AsyncMock()
-        mock_db.init = AsyncMock()
-        mock_db.get_agent.return_value = SimpleNamespace(
-            label="TestAgent", status="active"
-        )
-        mock_db.get_identity.return_value = SimpleNamespace(
-            identity_id="i1", metadata={"agent_uuid": "uuid-from-meta"}
-        )
-
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
-            result = await _find_agent_by_id("old-agent-id")
-
-        assert result is not None
-        assert result["agent_id"] == "old-agent-id"
-        assert result["agent_uuid"] == "uuid-from-meta"
-        assert result["display_name"] == "TestAgent"
-        assert result["label"] == "TestAgent"
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_not_found(self):
-        from src.mcp_handlers.identity_v2 import _find_agent_by_id
-
-        mock_db = AsyncMock()
-        mock_db.init = AsyncMock()
-        mock_db.get_agent.return_value = None
-
-        mock_server = MagicMock()
-        mock_server.agent_metadata = {}
-
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server):
-            result = await _find_agent_by_id("nonexistent-id")
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_falls_back_to_memory_cache(self):
-        from src.mcp_handlers.identity_v2 import _find_agent_by_id
-
-        mock_db = AsyncMock()
-        mock_db.init = AsyncMock()
-        mock_db.get_agent.side_effect = Exception("DB error")
-
-        mock_server = MagicMock()
-        meta = SimpleNamespace(
-            label="CachedAgent",
-            agent_uuid="uuid-cached",
-            status="active",
-        )
-        mock_server.agent_metadata = {"agent-id-1": meta}
-
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server):
-            result = await _find_agent_by_id("agent-id-1")
-
-        assert result is not None
-        assert result["agent_uuid"] == "uuid-cached"
-        assert result["display_name"] == "CachedAgent"
-
-    @pytest.mark.asyncio
-    async def test_uuid_fallback_when_no_metadata_uuid(self):
-        """When identity metadata has no agent_uuid, falls back to agent_id."""
-        from src.mcp_handlers.identity_v2 import _find_agent_by_id
-
-        mock_db = AsyncMock()
-        mock_db.init = AsyncMock()
-        mock_db.get_agent.return_value = SimpleNamespace(label=None, status="active")
-        mock_db.get_identity.return_value = SimpleNamespace(
-            identity_id="i1", metadata={}  # No agent_uuid in metadata
-        )
-
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
-            result = await _find_agent_by_id("fallback-id")
-
-        assert result is not None
-        assert result["agent_uuid"] == "fallback-id"  # Falls back to agent_id
-
-
-# ============================================================================
 # Integration-style tests (multiple paths)
 # ============================================================================
 
@@ -1912,27 +1841,6 @@ class TestGetRedisExceptionPath:
 
 
 # ============================================================================
-# _find_agent_by_id - both PG and in-memory fail (lines 182-183)
-# ============================================================================
-
-class TestFindAgentByIdBothFail:
-
-    @pytest.mark.asyncio
-    async def test_pg_and_memory_both_fail_returns_none(self):
-        """When PG raises and in-memory lookup also raises, returns None."""
-        from src.mcp_handlers.identity_v2 import _find_agent_by_id
-
-        mock_db = AsyncMock()
-        mock_db.init = AsyncMock()
-        mock_db.get_agent.side_effect = Exception("PG error")
-
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.shared.get_mcp_server", side_effect=Exception("No server")):
-            result = await _find_agent_by_id("test-agent-id")
-
-        assert result is None
-
-
 # ============================================================================
 # Redis TTL refresh exception (lines 354-356)
 # ============================================================================

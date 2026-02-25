@@ -16,7 +16,6 @@ sys.path.insert(0, str(project_root))
 from src.mcp_handlers.identity_v2 import (
     _generate_agent_id,
     _get_date_context,
-    _extract_stable_identifier,
     _derive_session_key,
 )
 
@@ -133,46 +132,7 @@ class TestGenerateAgentId:
 
 
 # ============================================================================
-# _extract_stable_identifier
-# ============================================================================
-
-class TestExtractStableIdentifier:
-
-    def test_ip_port_suffix(self):
-        result = _extract_stable_identifier("217.216.112.229:8765:6d79c4")
-        assert result == "6d79c4"
-
-    def test_ip_suffix_no_port(self):
-        result = _extract_stable_identifier("192.168.1.1:abcdef")
-        assert result == "abcdef"
-
-    def test_empty_returns_none(self):
-        assert _extract_stable_identifier("") is None
-
-    def test_none_returns_none(self):
-        assert _extract_stable_identifier(None) is None
-
-    def test_no_colon_returns_none(self):
-        assert _extract_stable_identifier("just-a-string") is None
-
-    def test_short_suffix_rejected(self):
-        """Suffix less than 4 chars is not a valid fingerprint."""
-        assert _extract_stable_identifier("192.168.1.1:ab") is None
-
-    def test_non_hex_suffix_rejected(self):
-        assert _extract_stable_identifier("192.168.1.1:notahex") is None
-
-    def test_hex_uppercase_accepted(self):
-        result = _extract_stable_identifier("10.0.0.1:ABCD1234")
-        assert result == "ABCD1234"
-
-    def test_long_suffix(self):
-        result = _extract_stable_identifier("10.0.0.1:8765:abcdef1234567890")
-        assert result == "abcdef1234567890"
-
-
-# ============================================================================
-# _derive_session_key
+# _derive_session_key (deprecated sync wrapper)
 # ============================================================================
 
 class TestDeriveSessionKey:
