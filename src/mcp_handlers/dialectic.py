@@ -894,6 +894,13 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
                     }
                 )]
 
+        # Coerce agrees to bool (MCP tools may send "true"/"false" strings)
+        raw_agrees = arguments.get('agrees', False)
+        if isinstance(raw_agrees, str):
+            agrees = raw_agrees.lower() in ('true', '1', 'yes')
+        else:
+            agrees = bool(raw_agrees)
+
         # Create synthesis message
         message = DialecticMessage(
             phase="synthesis",
@@ -902,7 +909,7 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
             proposed_conditions=arguments.get('proposed_conditions', []),
             root_cause=arguments.get('root_cause'),
             reasoning=arguments.get('reasoning'),
-            agrees=arguments.get('agrees', False)
+            agrees=agrees
         )
 
         # Submit to session
