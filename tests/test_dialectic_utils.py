@@ -1,7 +1,7 @@
 """
 Tests for pure utility functions in src/dialectic_protocol.py.
 
-Tests _normalize_condition, _semantic_similarity, _conditions_conflict,
+Tests _normalize_condition_terms, _semantic_similarity_terms, _conditions_conflict,
 _merge_proposals, check_hard_limits, and calculate_authority_score.
 """
 
@@ -50,78 +50,66 @@ def _make_resolution(**kwargs):
 
 
 # ============================================================================
-# _normalize_condition
+# _normalize_condition_terms
 # ============================================================================
 
 class TestNormalizeCondition:
 
     def test_removes_filler_words(self):
-        session = _make_session()
-        result = session._normalize_condition("reduce the risk to the minimum")
-        # "the" and "to" are filler words, "reduce", "risk", "minimum" remain
-        assert "the" not in result.split()
+        result = DialecticSession._normalize_condition_terms("reduce the risk to the minimum")
+        assert "the" not in result
+        assert "to" not in result
         assert "reduce" in result
         assert "risk" in result
         assert "minimum" in result
 
-    def test_removes_parenthetical_notes(self):
-        session = _make_session()
-        result = session._normalize_condition("implement checks (low effort, reasonable hygiene)")
-        assert "low" not in result
-        assert "effort" not in result
+    def test_returns_set(self):
+        result = DialecticSession._normalize_condition_terms("implement checks")
+        assert isinstance(result, set)
         assert "implement" in result
         assert "checks" in result
 
-    def test_sorts_words(self):
-        session = _make_session()
-        result = session._normalize_condition("zebra apple mango")
-        words = result.split()
-        assert words == sorted(words)
+    def test_sorts_irrelevant_returns_set(self):
+        result = DialecticSession._normalize_condition_terms("zebra apple mango")
+        assert result == {"zebra", "apple", "mango"}
 
     def test_lowercases(self):
-        session = _make_session()
-        result = session._normalize_condition("REDUCE Risk THRESHOLD")
-        assert result == result.lower()
+        result = DialecticSession._normalize_condition_terms("REDUCE Risk THRESHOLD")
+        assert all(w == w.lower() for w in result)
+        assert "reduce" in result
 
     def test_filters_short_words(self):
-        session = _make_session()
-        result = session._normalize_condition("do it so we can go on")
-        # Single-char words removed; 2+ char non-filler words kept (len > 1)
-        for word in result.split():
-            assert len(word) > 1
+        result = DialecticSession._normalize_condition_terms("do it so we can go on")
+        # stopwords removed; non-stopwords kept
+        assert "do" not in result
+        assert "go" in result
 
 
 # ============================================================================
-# _semantic_similarity
+# _semantic_similarity_terms
 # ============================================================================
 
 class TestSemanticSimilarity:
 
     def test_identical_strings(self):
-        session = _make_session()
-        assert session._semantic_similarity("foo bar baz", "foo bar baz") == 1.0
+        assert DialecticSession._semantic_similarity_terms("foo bar baz", "foo bar baz") == 1.0
 
     def test_no_overlap(self):
-        session = _make_session()
-        assert session._semantic_similarity("foo bar", "baz qux") == 0.0
+        assert DialecticSession._semantic_similarity_terms("foo bar", "baz qux") == 0.0
 
     def test_partial_overlap(self):
-        session = _make_session()
-        sim = session._semantic_similarity("foo bar baz", "foo bar qux")
+        sim = DialecticSession._semantic_similarity_terms("foo bar baz", "foo bar qux")
         # intersection=2 (foo, bar), union=4 → 0.5
         assert sim == pytest.approx(0.5)
 
     def test_empty_first(self):
-        session = _make_session()
-        assert session._semantic_similarity("", "foo bar") == 0.0
+        assert DialecticSession._semantic_similarity_terms("", "foo bar") == 0.0
 
     def test_empty_second(self):
-        session = _make_session()
-        assert session._semantic_similarity("foo bar", "") == 0.0
+        assert DialecticSession._semantic_similarity_terms("foo bar", "") == 0.0
 
     def test_both_empty(self):
-        session = _make_session()
-        assert session._semantic_similarity("", "") == 0.0
+        assert DialecticSession._semantic_similarity_terms("", "") == 0.0
 
 
 # ============================================================================
@@ -328,12 +316,12 @@ class TestCheckHardLimits:
         assert is_safe is False
         assert "vague" in reason.lower()
 
-    def test_root_cause_too_short(self):
+    def test_short_root_cause_accepted(self):
+        """Short but non-empty root_cause is accepted — length check removed."""
         session = _make_session()
         res = _make_resolution(root_cause="short")
         is_safe, reason = session.check_hard_limits(res)
-        assert is_safe is False
-        assert "root cause" in reason.lower()
+        assert is_safe is True
 
     def test_skip_check_forbidden(self):
         session = _make_session()

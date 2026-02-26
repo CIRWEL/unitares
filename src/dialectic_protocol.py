@@ -395,7 +395,6 @@ class DialecticSession:
 
         self.created_at = datetime.now(timezone.utc)
         self.session_id = self._generate_session_id()
-        # Any agent can submit synthesis (open facilitation model).
 
         # Set instance-level timeouts based on session type
         if self.session_type == "design_review":
@@ -490,7 +489,7 @@ class DialecticSession:
 
     def submit_synthesis(self, message: DialecticMessage, api_key: str = "") -> Dict[str, Any]:
         """
-        Either agent submits synthesis proposal during negotiation.
+        Either agent (or third-party mediator) submits synthesis proposal.
 
         Args:
             message: Synthesis message with proposed resolution
@@ -499,8 +498,6 @@ class DialecticSession:
         Returns:
             Status dict with convergence info
         """
-        # Any agent can submit synthesis (open facilitation model).
-        # The user manually routes messages between agents.
         is_participant = message.agent_id in [self.paused_agent_id, self.reviewer_agent_id]
 
         # Verify phase

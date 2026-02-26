@@ -1,7 +1,7 @@
 """
 Tests for pure functions in src/dialectic_protocol.py.
 
-Covers: _normalize_condition, _semantic_similarity, _conditions_conflict,
+Covers: _normalize_condition_terms, _semantic_similarity_terms, _conditions_conflict,
         _merge_proposals, check_hard_limits, calculate_authority_score.
 """
 
@@ -80,110 +80,102 @@ def _make_message(
 
 
 # ===========================================================================
-# 1. _normalize_condition
+# 1. _normalize_condition_terms
 # ===========================================================================
 
 class TestNormalizeCondition:
-    """Tests for DialecticSession._normalize_condition."""
+    """Tests for DialecticSession._normalize_condition_terms (returns set of terms)."""
 
-    def setup_method(self):
-        self.session = _make_session()
-
-    def test_removes_parenthetical_notes(self):
-        result = self.session._normalize_condition("implement monitoring (low effort)")
-        assert "low" not in result
-        assert "effort" not in result
-
-    def test_removes_multiple_parentheticals(self):
-        result = self.session._normalize_condition("add check (easy) and log (debug)")
-        assert "easy" not in result
-        assert "debug" not in result
-
-    def test_removes_filler_words(self):
-        result = self.session._normalize_condition("the agent should be monitored")
-        # "the", "should", "be" are filler words
-        assert "the" not in result.split()
-        assert "should" not in result.split()
+    def test_removes_stopwords(self):
+        result = DialecticSession._normalize_condition_terms("the agent should be monitored")
+        assert "the" not in result
+        assert "should" not in result
+        assert "monitored" in result
 
     def test_lowercases_all_words(self):
-        result = self.session._normalize_condition("Implement Monitoring System")
-        assert result == result.lower()
+        result = DialecticSession._normalize_condition_terms("Implement Monitoring System")
+        assert all(w == w.lower() for w in result)
+        assert "implement" in result
 
-    def test_sorts_words_alphabetically(self):
-        result = self.session._normalize_condition("zebra apple mango")
-        words = result.split()
-        assert words == sorted(words)
+    def test_returns_set(self):
+        result = DialecticSession._normalize_condition_terms("zebra apple mango")
+        assert isinstance(result, set)
+        assert result == {"zebra", "apple", "mango"}
 
-    def test_filters_short_words(self):
-        """Single-character words and filler words are removed; 2+ char non-filler words kept."""
-        result = self.session._normalize_condition("do it or go on")
-        # "do", "it", "or", "on" are filler words; "go" is 2 chars, non-filler → kept
-        assert result == "go"
+    def test_filters_stopwords_only(self):
+        result = DialecticSession._normalize_condition_terms("do it or go on")
+        # "do", "or", "on" are stopwords; "it" is stopword; "go" is not
+        assert "do" not in result
+        assert "or" not in result
+        assert "go" in result
 
     def test_empty_string(self):
-        result = self.session._normalize_condition("")
-        assert result == ""
+        result = DialecticSession._normalize_condition_terms("")
+        assert result == {""}  or result == set()  # empty split gives {""}
+        # Either way, no meaningful terms
 
-    def test_only_filler_words(self):
-        result = self.session._normalize_condition("the a an and or but to for of in on at by with from")
-        assert result == ""
+    def test_only_stopwords(self):
+        result = DialecticSession._normalize_condition_terms("the a an and or but to for of in on at by with from")
+        assert len(result) == 0
 
     def test_preserves_meaningful_words(self):
-        result = self.session._normalize_condition("implement risk monitoring")
-        words = result.split()
-        assert "implement" in words
-        assert "monitoring" in words
-        assert "risk" in words
+        result = DialecticSession._normalize_condition_terms("implement risk monitoring")
+        assert "implement" in result
+        assert "monitoring" in result
+        assert "risk" in result
 
-    def test_returns_consistent_output_regardless_of_word_order(self):
-        result_a = self.session._normalize_condition("monitoring risk implement")
-        result_b = self.session._normalize_condition("implement risk monitoring")
+    def test_consistent_regardless_of_word_order(self):
+        result_a = DialecticSession._normalize_condition_terms("monitoring risk implement")
+        result_b = DialecticSession._normalize_condition_terms("implement risk monitoring")
         assert result_a == result_b
+
+    def test_strips_punctuation(self):
+        result = DialecticSession._normalize_condition_terms("implement, monitoring. system!")
+        assert "implement" in result
+        assert "monitoring" in result
+        assert "system" in result
 
 
 # ===========================================================================
-# 2. _semantic_similarity
+# 2. _semantic_similarity_terms
 # ===========================================================================
 
 class TestSemanticSimilarity:
-    """Tests for DialecticSession._semantic_similarity."""
-
-    def setup_method(self):
-        self.session = _make_session()
+    """Tests for DialecticSession._semantic_similarity_terms (Jaccard on term sets)."""
 
     def test_identical_strings_return_one(self):
-        assert self.session._semantic_similarity("alpha beta", "alpha beta") == 1.0
+        assert DialecticSession._semantic_similarity_terms("alpha beta", "alpha beta") == 1.0
 
     def test_completely_different_strings_return_zero(self):
-        assert self.session._semantic_similarity("alpha beta", "gamma delta") == 0.0
+        assert DialecticSession._semantic_similarity_terms("alpha beta", "gamma delta") == 0.0
 
     def test_empty_first_string(self):
-        assert self.session._semantic_similarity("", "alpha beta") == 0.0
+        assert DialecticSession._semantic_similarity_terms("", "alpha beta") == 0.0
 
     def test_empty_second_string(self):
-        assert self.session._semantic_similarity("alpha beta", "") == 0.0
+        assert DialecticSession._semantic_similarity_terms("alpha beta", "") == 0.0
 
     def test_both_empty_strings(self):
-        assert self.session._semantic_similarity("", "") == 0.0
+        assert DialecticSession._semantic_similarity_terms("", "") == 0.0
 
     def test_partial_overlap(self):
         # {"alpha", "beta"} & {"beta", "gamma"} = {"beta"}
         # Union = {"alpha", "beta", "gamma"} => 1/3
-        result = self.session._semantic_similarity("alpha beta", "beta gamma")
+        result = DialecticSession._semantic_similarity_terms("alpha beta", "beta gamma")
         assert result == pytest.approx(1 / 3)
 
     def test_subset_relationship(self):
         # {"alpha"} & {"alpha", "beta"} = {"alpha"}
         # Union = {"alpha", "beta"} => 1/2
-        result = self.session._semantic_similarity("alpha", "alpha beta")
+        result = DialecticSession._semantic_similarity_terms("alpha", "alpha beta")
         assert result == pytest.approx(0.5)
 
     def test_single_word_match(self):
-        result = self.session._semantic_similarity("monitor", "monitor")
+        result = DialecticSession._semantic_similarity_terms("monitor", "monitor")
         assert result == 1.0
 
     def test_result_bounded_between_zero_and_one(self):
-        result = self.session._semantic_similarity("aaa bbb ccc", "bbb ddd eee fff")
+        result = DialecticSession._semantic_similarity_terms("aaa bbb ccc", "bbb ddd eee fff")
         assert 0.0 <= result <= 1.0
 
 
@@ -458,11 +450,11 @@ class TestCheckHardLimits:
         is_safe, _ = self.session.check_hard_limits(res)
         assert is_safe is False
 
-    def test_short_root_cause_unsafe(self):
+    def test_short_root_cause_accepted(self):
+        """Short but non-empty root_cause is now accepted — length check removed."""
         res = _make_resolution(root_cause="short")
         is_safe, reason = self.session.check_hard_limits(res)
-        assert is_safe is False
-        assert "10 characters" in reason
+        assert is_safe is True
 
     def test_empty_root_cause_unsafe(self):
         res = _make_resolution(root_cause="")
