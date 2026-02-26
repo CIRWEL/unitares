@@ -438,11 +438,11 @@
             '<div class="grid-2col mb-md">' +
                 '<div>' +
                     '<strong class="text-secondary-sm">Created:</strong><br>' +
-                    (agent.created_at || agent.created || '-') +
+                    escapeHtml(agent.created_at || agent.created || '-') +
                 '</div>' +
                 '<div>' +
                     '<strong class="text-secondary-sm">Last Update:</strong><br>' +
-                    (agent.last_update || '-') +
+                    escapeHtml(agent.last_update || '-') +
                 '</div>' +
             '</div>' +
 

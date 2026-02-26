@@ -883,7 +883,7 @@ async function loadAgents() {
     try {
         console.log('Loading agents...');
         // Use unified agent() tool with action='list'
-        const result = await callTool('agent', {
+        let result = await callTool('agent', {
             action: 'list',
             include_metrics: true,
             recent_days: 30,

@@ -398,6 +398,7 @@ class DialecticSession:
 
         self.created_at = datetime.now(timezone.utc)
         self.session_id = self._generate_session_id()
+        self.appointed_mediator_id: Optional[str] = None  # Must be explicitly set to allow third-party resolution
 
         # Set instance-level timeouts based on session type
         if self.session_type == "design_review":
@@ -501,8 +502,14 @@ class DialecticSession:
         Returns:
             Status dict with convergence info
         """
-        # Track whether this is a third-party mediator
-        is_mediator = message.agent_id not in [self.paused_agent_id, self.reviewer_agent_id]
+        # Track whether this is an appointed third-party mediator
+        is_participant = message.agent_id in [self.paused_agent_id, self.reviewer_agent_id]
+        is_mediator = (not is_participant
+                       and self.appointed_mediator_id is not None
+                       and message.agent_id == self.appointed_mediator_id)
+
+        if not is_participant and not is_mediator:
+            return {"success": False, "error": "Only session participants or an appointed mediator can submit synthesis"}
 
         # Verify phase
         if self.phase != DialecticPhase.SYNTHESIS:
@@ -522,7 +529,7 @@ class DialecticSession:
         self.transcript.append(message)
 
         # Check for convergence
-        # Mediator with agrees=True resolves immediately (authoritative third-party)
+        # Appointed mediator with agrees=True resolves immediately
         # Otherwise check if both original participants agree
         if message.agrees and (is_mediator or self._check_both_agree()):
             self.phase = DialecticPhase.RESOLVED

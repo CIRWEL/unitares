@@ -616,6 +616,9 @@
         while (container.children.length > MAX_LOG_ENTRIES) {
             container.removeChild(container.lastChild);
         }
+
+        var section = document.getElementById('pulse-log-section');
+        if (section) section.classList.remove('pulse-log-empty');
     }
 
     function fetchInitialEvents() {

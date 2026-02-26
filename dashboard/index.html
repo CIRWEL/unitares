@@ -77,10 +77,20 @@
 
     <main>
         <div class="stats-grid" id="stats-section">
+            <div class="stat-card" data-accent="coherence">
+                <h2>Fleet Coherence</h2>
+                <div class="value"><span id="fleet-coherence">-</span></div>
+                <div class="change" id="fleet-health-detail"></div>
+            </div>
             <div class="stat-card" data-accent="cyan">
                 <h2>Agents</h2>
                 <div class="value"><span id="active-agents">-</span><span class="stat-of"> / <span id="total-agents">-</span></span></div>
                 <div class="change" id="agents-change"></div>
+            </div>
+            <div class="stat-card expandable" data-accent="orange" id="stuck-agents-card" title="Click to view stuck agent details">
+                <h2>Stuck Agents <span class="expand-icon">&#9662;</span></h2>
+                <div class="value" id="stuck-agents-count">-</div>
+                <div class="change" id="stuck-agents-detail"></div>
             </div>
             <div class="stat-card" data-accent="green">
                 <h2>Discoveries</h2>
@@ -92,22 +102,12 @@
                 <div class="value" id="dialectic-sessions">-</div>
                 <div class="change" id="dialectic-change"></div>
             </div>
-            <div class="stat-card" data-accent="coherence">
-                <h2>Fleet Coherence</h2>
-                <div class="value" id="fleet-coherence">-</div>
-                <div class="change" id="fleet-health-detail"></div>
-            </div>
-            <div class="stat-card expandable" data-accent="orange" id="stuck-agents-card" title="Click to view stuck agent details">
-                <h2>Stuck Agents <span class="expand-icon">&#9662;</span></h2>
-                <div class="value" id="stuck-agents-count">-</div>
-                <div class="change" id="stuck-agents-detail"></div>
-            </div>
             <div class="stat-card" data-accent="info" id="system-health-card">
                 <h2>System Health</h2>
                 <div class="value" id="system-health-value">-</div>
                 <div class="change" id="system-health-detail"></div>
             </div>
-            <div class="stat-card expandable" data-accent="green" id="calibration-card" title="Click for calibration details">
+            <div class="stat-card expandable" data-accent="info" id="calibration-card" title="Click for calibration details">
                 <h2>Calibration <span class="expand-icon">&#9662;</span></h2>
                 <div class="value" id="calibration-value">-</div>
                 <div class="change" id="calibration-detail"></div>
@@ -132,9 +132,8 @@
                     <span class="data-freshness" id="data-freshness">No agent check-in yet</span>
                 </div>
             </div>
-            <div class="pulse-grid pulse-grid-simple">
-                <!-- Left: Risk (main governance output) -->
-                <div class="pulse-metrics">
+            <div class="pulse-layout">
+                <div class="pulse-primary">
                     <div class="pulse-metric pulse-metric-large">
                         <div class="pulse-metric-header">
                             <span class="pulse-metric-label">Risk</span>
@@ -151,62 +150,65 @@
                             <span class="threshold" style="left:70%">Pause</span>
                         </div>
                     </div>
-                    <div class="pulse-metric-row">
-                        <div class="pulse-metric-mini pulse-metric-with-bar">
-                            <div class="pulse-metric-header">
-                                <span class="pulse-metric-label">Confidence</span>
-                                <span class="pulse-metric-value" id="vv-confidence">—</span>
+                </div>
+                <details class="pulse-details">
+                    <summary>Details</summary>
+                    <div class="pulse-details-inner">
+                        <div class="pulse-metric-row">
+                            <div class="pulse-metric-mini pulse-metric-with-bar">
+                                <div class="pulse-metric-header">
+                                    <span class="pulse-metric-label">Confidence</span>
+                                    <span class="pulse-metric-value" id="vv-confidence">—</span>
+                                </div>
+                                <div class="vital-bar-track vital-bar-mini">
+                                    <div class="vital-bar" id="v-confidence" style="width:0%"></div>
+                                </div>
                             </div>
-                            <div class="vital-bar-track vital-bar-mini">
-                                <div class="vital-bar" id="v-confidence" style="width:0%"></div>
+                            <div class="pulse-metric-mini pulse-metric-with-bar">
+                                <div class="pulse-metric-header">
+                                    <span class="pulse-metric-label">Complexity</span>
+                                    <span class="pulse-metric-value" id="vv-complexity">—</span>
+                                </div>
+                                <div class="vital-bar-track vital-bar-mini">
+                                    <div class="vital-bar" id="v-complexity" style="width:0%"></div>
+                                </div>
                             </div>
                         </div>
-                        <div class="pulse-metric-mini pulse-metric-with-bar">
-                            <div class="pulse-metric-header">
-                                <span class="pulse-metric-label">Complexity</span>
-                                <span class="pulse-metric-value" id="vv-complexity">—</span>
-                            </div>
-                            <div class="vital-bar-track vital-bar-mini">
-                                <div class="vital-bar" id="v-complexity" style="width:0%"></div>
+                        <div class="pulse-drift">
+                            <h3>Drift</h3>
+                            <div class="drift-vector">
+                                <div class="drift-axis">
+                                    <span class="drift-axis-label" title="Emotional drift → calibration deviation from baseline">Emotional</span>
+                                    <div class="drift-gauge">
+                                        <div class="drift-gauge-fill" id="drift-g-0"></div>
+                                        <div class="drift-gauge-center"></div>
+                                    </div>
+                                    <span class="drift-axis-val" id="drift-v-0">0</span>
+                                    <span class="drift-trend" id="drift-trend-0" title="Trend"></span>
+                                </div>
+                                <div class="drift-axis">
+                                    <span class="drift-axis-label" title="Epistemic drift → coherence deviation from baseline">Epistemic</span>
+                                    <div class="drift-gauge">
+                                        <div class="drift-gauge-fill" id="drift-g-1"></div>
+                                        <div class="drift-gauge-center"></div>
+                                    </div>
+                                    <span class="drift-axis-val" id="drift-v-1">0</span>
+                                    <span class="drift-trend" id="drift-trend-1" title="Trend"></span>
+                                </div>
+                                <div class="drift-axis">
+                                    <span class="drift-axis-label" title="Behavioral drift → stability deviation from baseline">Behavioral</span>
+                                    <div class="drift-gauge">
+                                        <div class="drift-gauge-fill" id="drift-g-2"></div>
+                                        <div class="drift-gauge-center"></div>
+                                    </div>
+                                    <span class="drift-axis-val" id="drift-v-2">0</span>
+                                    <span class="drift-trend" id="drift-trend-2" title="Trend"></span>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-                <!-- Drift: emotional→calibration, epistemic→coherence, behavioral→stability (governance_monitor) -->
-                <div class="pulse-drift">
-                    <h3>Drift</h3>
-                    <div class="drift-vector">
-                        <div class="drift-axis">
-                            <span class="drift-axis-label" title="Emotional drift → calibration deviation from baseline">Emotional</span>
-                            <div class="drift-gauge">
-                                <div class="drift-gauge-fill" id="drift-g-0"></div>
-                                <div class="drift-gauge-center"></div>
-                            </div>
-                            <span class="drift-axis-val" id="drift-v-0">0</span>
-                            <span class="drift-trend" id="drift-trend-0" title="Trend"></span>
-                        </div>
-                        <div class="drift-axis">
-                            <span class="drift-axis-label" title="Epistemic drift → coherence deviation from baseline">Epistemic</span>
-                            <div class="drift-gauge">
-                                <div class="drift-gauge-fill" id="drift-g-1"></div>
-                                <div class="drift-gauge-center"></div>
-                            </div>
-                            <span class="drift-axis-val" id="drift-v-1">0</span>
-                            <span class="drift-trend" id="drift-trend-1" title="Trend"></span>
-                        </div>
-                        <div class="drift-axis">
-                            <span class="drift-axis-label" title="Behavioral drift → stability deviation from baseline">Behavioral</span>
-                            <div class="drift-gauge">
-                                <div class="drift-gauge-fill" id="drift-g-2"></div>
-                                <div class="drift-gauge-center"></div>
-                            </div>
-                            <span class="drift-axis-val" id="drift-v-2">0</span>
-                            <span class="drift-trend" id="drift-trend-2" title="Trend"></span>
-                        </div>
-                    </div>
-                </div>
-                <!-- Right: Events log (significant events only) -->
-                <div class="pulse-log">
+                </details>
+                <div class="pulse-log pulse-log-collapsible pulse-log-empty" id="pulse-log-section">
                     <h3>Events</h3>
                     <div class="pulse-log-entries" id="events-log-entries">
                         <div class="pulse-log-empty">No events yet</div>

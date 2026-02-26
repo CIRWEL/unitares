@@ -1323,13 +1323,14 @@ async def main():
         
         # === Add CORS support for web-based GPT/Gemini clients ===
         # CORS: restrict to known origins (dashboard, local dev, Tailscale)
+        _cors_allow_origin = os.getenv("UNITARES_HTTP_CORS_ALLOW_ORIGIN")
         _cors_origins = [
             "http://localhost:8767",
             "http://127.0.0.1:8767",
             "http://192.168.1.0/16",
         ]
-        if HTTP_CORS_ALLOW_ORIGIN:
-            _cors_origins.append(HTTP_CORS_ALLOW_ORIGIN)
+        if _cors_allow_origin:
+            _cors_origins.append(_cors_allow_origin)
         app.add_middleware(
             CORSMiddleware,
             allow_origins=_cors_origins,

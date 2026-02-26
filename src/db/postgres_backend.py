@@ -752,16 +752,17 @@ class PostgresBackend(DatabaseBackend):
 
     async def update_session_activity(self, session_id: str) -> bool:
         from config.governance_config import GovernanceConfig
-        ttl_hours = GovernanceConfig.SESSION_TTL_HOURS
+        ttl_hours = int(GovernanceConfig.SESSION_TTL_HOURS)
         async with self.acquire() as conn:
             result = await conn.execute(
-                f"""
+                """
                 UPDATE core.sessions
                 SET last_active = now(),
-                    expires_at = now() + interval '{ttl_hours} hours'
+                    expires_at = now() + ($2 * interval '1 hour')
                 WHERE session_id = $1 AND is_active = TRUE
                 """,
                 session_id,
+                ttl_hours,
             )
             return "UPDATE 1" in result
 
@@ -934,7 +935,8 @@ class PostgresBackend(DatabaseBackend):
                     event.raw_hash,
                 )
                 return True
-            except Exception:
+            except Exception as e:
+                logger.error(f"append_audit_event failed for agent={event.agent_id} type={event.event_type}: {e}")
                 return False
 
     async def query_audit_events(
@@ -1185,7 +1187,8 @@ class PostgresBackend(DatabaseBackend):
                     json.dumps(payload or {}),
                 )
                 return True
-            except Exception:
+            except Exception as e:
+                logger.error(f"append_tool_usage failed for agent={agent_id} tool={tool_name}: {e}")
                 return False
 
     # =========================================================================

@@ -230,15 +230,15 @@ async def call_pi_tool(tool_name: str, arguments: Dict[str, Any],
             # This ensures each attempt gets the full timeout budget
             # Include stable session headers so Pi resolves all Mac calls
             # to the same identity instead of minting a new UUID each time
-            async with httpx.AsyncClient(
+            http_client = httpx.AsyncClient(
                 http2=True,
                 timeout=timeout,
                 headers={
                     "X-Session-ID": PI_STABLE_SESSION_ID,
                     "X-Agent-Name": "mac-governance",
                 },
-            ) as http_client:
-              async with streamable_http_client(pi_url, http_client=http_client) as (read, write, _):
+            )
+            async with streamable_http_client(pi_url, http_client=http_client) as (read, write, _):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     
@@ -321,14 +321,14 @@ async def call_pi_tool(tool_name: str, arguments: Dict[str, Any],
             # Connection/network error - try next URL or retry
             last_error = e
             logger.debug(f"Pi connection failed via {pi_url} (attempt {url_index + 1}/{len(PI_MCP_URLS)}): {e}")
-            
+
             # If this was the last URL and we haven't exhausted retries, retry with backoff
             if url_index == len(PI_MCP_URLS) - 1 and retry_attempt < PI_RETRY_MAX_ATTEMPTS:
                 delay = PI_RETRY_BASE_DELAY * (2 ** retry_attempt)
                 logger.debug(f"Retrying Pi call after {delay}s (attempt {retry_attempt + 1}/{PI_RETRY_MAX_ATTEMPTS})")
                 await asyncio.sleep(delay)
                 return await call_pi_tool(tool_name, arguments, agent_id, timeout, retry_attempt + 1)
-            
+
             continue  # Try next URL
 
         except Exception as e:
@@ -348,6 +348,10 @@ async def call_pi_tool(tool_name: str, arguments: Dict[str, Any],
             last_error = e
             logger.debug(f"Pi MCP call failed via {pi_url}: {e}")
             continue
+
+        finally:
+            # Always close the httpx client to prevent socket leaks
+            await http_client.aclose()
 
     # All URLs failed
     latency_ms = (time.time() - start_time) * 1000
@@ -469,6 +473,8 @@ async def handle_pi_list_tools(arguments: Dict[str, Any]) -> Sequence[TextConten
                 last_error = e
                 logger.debug(f"Failed to list tools via {pi_url}: {e}")
                 continue
+            finally:
+                await http_client.aclose()
         
         # All URLs failed
         return error_response(f"Failed to list Pi tools: {last_error or 'All connection attempts failed'}")
