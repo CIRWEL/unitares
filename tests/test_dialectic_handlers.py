@@ -91,14 +91,16 @@ DIALECTIC = "src.mcp_handlers.dialectic"
 
 @pytest.fixture
 def mock_server():
-    """Provide a mock mcp_server patched into dialectic module."""
+    """Provide a mock mcp_server patched into dialectic module and shared."""
     server = _make_mock_server({
         "agent-paused": _make_agent_meta(status="paused"),
         "agent-reviewer": _make_agent_meta(status="active"),
         "agent-active": _make_agent_meta(status="active"),
         "agent-waiting": _make_agent_meta(status="waiting_input"),
+        "agent-mediator": _make_agent_meta(status="active"),  # Third-party synthesizer
     })
-    with patch(f"{DIALECTIC}.mcp_server", server):
+    with patch(f"{DIALECTIC}.mcp_server", server), \
+         patch("src.mcp_handlers.shared.get_mcp_server", return_value=server):
         yield server
 
 
@@ -484,11 +486,11 @@ class TestHandleSubmitThesis:
         assert data["success"] is False
 
     @pytest.mark.asyncio
-    async def test_session_not_found(self, mock_load_session, mock_context_agent):
+    async def test_session_not_found(self, mock_server, mock_load_session, mock_context_agent):
         """Returns error when session does not exist."""
         from src.mcp_handlers.dialectic import handle_submit_thesis
 
-        with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock, return_value=None), \
+        with mock_server, patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock, return_value=None), \
              mock_context_agent:
             result = await handle_submit_thesis({
                 "session_id": "nonexistent-session",
@@ -648,11 +650,11 @@ class TestHandleSubmitAntithesis:
         assert "required" in data["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_session_not_found(self, mock_context_agent):
+    async def test_session_not_found(self, mock_server, mock_context_agent):
         """Returns error when session does not exist."""
         from src.mcp_handlers.dialectic import handle_submit_antithesis
 
-        with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock, return_value=None), \
+        with mock_server, patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock, return_value=None), \
              mock_context_agent:
             result = await handle_submit_antithesis({
                 "session_id": "nonexistent",
@@ -789,11 +791,11 @@ class TestHandleSubmitSynthesis:
         assert "required" in data["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_session_not_found(self, mock_context_agent):
+    async def test_session_not_found(self, mock_server, mock_context_agent):
         """Returns error when session not found anywhere."""
         from src.mcp_handlers.dialectic import handle_submit_synthesis
 
-        with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock, return_value=None), \
+        with mock_server, patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock, return_value=None), \
              mock_context_agent:
             result = await handle_submit_synthesis({
                 "session_id": "nonexistent",

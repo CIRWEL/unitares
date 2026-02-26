@@ -399,7 +399,6 @@ class DialecticSession:
         self.created_at = datetime.now(timezone.utc)
         self.session_id = self._generate_session_id()
         # Any agent can submit synthesis (open facilitation model).
-        # Convergence is determined by _check_both_agree(), not by who submits.
 
         # Set instance-level timeouts based on session type
         if self.session_type == "design_review":
@@ -524,8 +523,9 @@ class DialecticSession:
         # Store message
         self.transcript.append(message)
 
-        # Check for convergence
-        if message.agrees and self._check_both_agree():
+        # Convergence: agrees=True resolves immediately.
+        # Thesis → Antithesis → Synthesis is three phases, not four.
+        if message.agrees:
             self.phase = DialecticPhase.RESOLVED
             return {
                 "success": True,
@@ -988,9 +988,10 @@ class DialecticSession:
                 if any(re.match(pattern, cond.lower()) for pattern in vague_patterns):
                     return False, f"Condition too vague: '{cond}'"
 
-            # Check root cause is meaningful (recovery sessions must explain what happened)
-            if not resolution.root_cause or len(resolution.root_cause.strip()) < 10:
-                return False, "Root cause must be at least 10 characters"
+            # Root cause should be present but don't block over length — the thesis
+            # already explained it and synthesis may not repeat it verbatim.
+            if not resolution.root_cause or not resolution.root_cause.strip():
+                return False, "Root cause is missing entirely"
 
         return True, None
 

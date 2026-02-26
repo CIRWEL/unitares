@@ -551,23 +551,17 @@ class TestDialecticProtocolFlow:
         assert result["converged"] is False
         assert session.synthesis_round == 2
 
-    def test_synthesis_third_party_plus_participant_resolves(self):
-        """Third-party synthesizer + participant both agreeing resolves session."""
+    def test_synthesis_third_party_agrees_resolves(self):
+        """Third-party synthesizer with agrees=True resolves immediately."""
         session = self._make_session()
         session.submit_thesis(self._thesis_msg(), "key-a")
         session.submit_antithesis(self._antithesis_msg(), "key-b")
-        # Third-party agent submits synthesis with agrees=True
         msg_c = self._synthesis_msg("agent-c")
         msg_c.agrees = True
-        result_c = session.submit_synthesis(msg_c, "key-c")
-        assert result_c["success"] is True
-        assert result_c["converged"] is False  # Only 1 agent agreed so far
-        # Reviewer also agrees — now 2 distinct agents agree → converged
-        msg_b = self._synthesis_msg("agent-b")
-        msg_b.agrees = True
-        result_b = session.submit_synthesis(msg_b, "key-b")
-        assert result_b["success"] is True
-        assert result_b["converged"] is True
+        result = session.submit_synthesis(msg_c, "key-c")
+        assert result["success"] is True
+        assert result["converged"] is True
+        assert result.get("synthesizer") == "agent-c"
         assert session.phase == DialecticPhase.RESOLVED
 
     def test_synthesis_third_party_no_agree_continues(self):
@@ -603,14 +597,12 @@ class TestDialecticProtocolFlow:
         assert "Max synthesis rounds exceeded" in result["error"]
         assert session.phase == DialecticPhase.ESCALATED
 
-    def test_convergence_both_agree(self):
+    def test_convergence_single_agrees(self):
+        """Single synthesis with agrees=True resolves. No fourth phase."""
         session = self._make_session()
         session.submit_thesis(self._thesis_msg(), "key-a")
         session.submit_antithesis(self._antithesis_msg(), "key-b")
-        # Agent A proposes with agrees=True
-        session.submit_synthesis(self._synthesis_msg("agent-a", agrees=True), "key-a")
-        # Agent B agrees
-        result = session.submit_synthesis(self._synthesis_msg("agent-b", agrees=True), "key-b")
+        result = session.submit_synthesis(self._synthesis_msg("agent-a", agrees=True), "key-a")
         assert result["success"] is True
         assert result["converged"] is True
         assert session.phase == DialecticPhase.RESOLVED

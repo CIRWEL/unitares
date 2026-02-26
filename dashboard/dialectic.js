@@ -153,24 +153,28 @@
                 '</div>';
             }
 
-            return '<div class="dialectic-item ' + phase + '" data-session-id="' + (session.session_id || '') + '" title="Click to view details">' +
+            var sid = session.session_id || '';
+            return '<div class="dialectic-item ' + phase + '" data-session-id="' + sid + '" title="Click to view details">' +
                 '<div class="dialectic-header">' +
                     '<span class="dialectic-type" style="border-color: ' + phaseColor + '; color: ' + phaseColor + '">' +
                         escapeHtml(formatDialecticPhase(phase)) +
                     '</span>' +
                     '<span class="dialectic-session-type">' + escapeHtml(sessionType) + '</span>' +
+                    '<span class="dialectic-session-id-copy" title="Copy session ID" data-session-id="' + escapeHtml(sid) + '">' +
+                        '<code class="code-tertiary">' + escapeHtml(sid ? sid.substring(0, 16) + '…' : '') + '</code> 📋' +
+                    '</span>' +
                     '<span class="dialectic-time">' + escapeHtml(timeAgo) + '</span>' +
                 '</div>' +
                 '<div class="dialectic-topic">' + escapeHtml(topic) + '</div>' +
-                '<div class="dialectic-agents">' +
-                    '<span class="agent-label">Requestor:</span> ' + escapeHtml(requestorLabel) + (requestorUuid ? ' <code class="code-tertiary">' + escapeHtml(requestorUuid.substring(0, 8)) + '</code>' : '') +
+                '<div class="dialectic-agents dialectic-agents-three">' +
+                    '<span class="agent-pill"><span class="agent-label">Requestor</span> ' + escapeHtml(requestorLabel) + (requestorUuid ? ' <code class="code-tertiary">' + escapeHtml(requestorUuid.substring(0, 8)) + '</code>' : '') + '</span>' +
                     (reviewerLabel && reviewerLabel !== 'None'
-                        ? '<span class="agent-label agent-label-spaced">Reviewer:</span> ' + escapeHtml(reviewerLabel) + (reviewerUuid ? ' <code class="code-tertiary">' + escapeHtml(reviewerUuid.substring(0, 8)) + '</code>' : '')
+                        ? '<span class="agent-pill"><span class="agent-label">Reviewer</span> ' + escapeHtml(reviewerLabel) + (reviewerUuid ? ' <code class="code-tertiary">' + escapeHtml(reviewerUuid.substring(0, 8)) + '</code>' : '') + '</span>'
                         : '') +
                     (synthesizerLabel
-                        ? '<span class="agent-label agent-label-spaced">Synthesizer:</span> ' + escapeHtml(synthesizerLabel) + (synthesizerUuid ? ' <code class="code-tertiary">' + escapeHtml(synthesizerUuid.substring(0, 8)) + '</code>' : '')
+                        ? '<span class="agent-pill agent-pill-synthesizer"><span class="agent-label">Synthesizer</span> ' + escapeHtml(synthesizerLabel) + (synthesizerUuid ? ' <code class="code-tertiary">' + escapeHtml(synthesizerUuid.substring(0, 8)) + '</code>' : '') + '</span>'
                         : '') +
-                    '<span class="agent-label agent-label-spaced dialectic-msg-count">' + (session.message_count || 0) + ' msgs</span>' +
+                    '<span class="dialectic-msg-count">' + (session.message_count || 0) + ' msgs</span>' +
                 '</div>' +
                 resolutionInfo +
             '</div>';
@@ -267,8 +271,6 @@
         var sessionId = session.session_id || 'Unknown';
         var created = session.created || session.created_at || session.timestamp || '';
 
-        var filterFn = typeof filterInternalKeys === 'function' ? filterInternalKeys : function (o) { return o; };
-
         var html = '<div class="dialectic-detail">' +
             '<div class="dialectic-detail-header">' +
                 '<span class="dialectic-type" style="border-color: ' + phaseColor + '; color: ' + phaseColor + '">' +
@@ -285,7 +287,8 @@
             '<div class="grid-2col mb-md mt-md">' +
                 '<div>' +
                     '<strong class="text-secondary-sm">Session ID:</strong><br>' +
-                    '<code class="code-tertiary">' + escapeHtml(sessionId) + '</code>' +
+                    '<span class="dialectic-session-id-copy detail-copy" title="Click to copy" data-session-id="' + escapeHtml(sessionId) + '">' +
+                    '<code class="code-tertiary">' + escapeHtml(sessionId) + '</code> <span class="copy-hint">📋 Copy</span></span>' +
                 '</div>' +
                 '<div>' +
                     '<strong class="text-secondary-sm">Created:</strong><br>' +
@@ -293,21 +296,21 @@
                 '</div>' +
             '</div>' +
 
-            '<div class="grid-3col mb-md">' +
-                '<div>' +
-                    '<strong class="text-secondary-sm">Requestor:</strong><br>' +
+            '<div class="grid-3col mb-md dialectic-agents-detail">' +
+                '<div class="agent-detail-cell">' +
+                    '<strong class="text-secondary-sm">Requestor</strong><br>' +
                     escapeHtml(requestorLabel) +
                     (requestorUuid ? '<br><code class="code-tertiary">' + escapeHtml(requestorUuid) + '</code>' : '') +
                 '</div>' +
-                '<div>' +
-                    '<strong class="text-secondary-sm">Reviewer:</strong><br>' +
+                '<div class="agent-detail-cell">' +
+                    '<strong class="text-secondary-sm">Reviewer</strong><br>' +
                     (reviewerLabel !== 'None'
                         ? escapeHtml(reviewerLabel) +
                           (reviewerUuid ? '<br><code class="code-tertiary">' + escapeHtml(reviewerUuid) + '</code>' : '')
                         : '<span class="text-secondary-sm">Not assigned</span>') +
                 '</div>' +
-                '<div>' +
-                    '<strong class="text-secondary-sm">Synthesizer:</strong><br>' +
+                '<div class="agent-detail-cell agent-detail-synthesizer">' +
+                    '<strong class="text-secondary-sm">Synthesizer</strong><br>' +
                     (synthesizerLabel
                         ? escapeHtml(synthesizerLabel) +
                           (synthesizerUuid ? '<br><code class="code-tertiary">' + escapeHtml(synthesizerUuid) + '</code>' : '')
@@ -371,12 +374,6 @@
 
         // Note: Thesis/antithesis/synthesis are submitted by agents via MCP tools.
         // Human operators monitor sessions through this dashboard; participation is agent-only.
-
-        // Raw data
-        html += '<details class="mt-md">' +
-            '<summary class="cursor-pointer text-secondary-sm">Raw session data</summary>' +
-            '<pre class="raw-data-pre">' + escapeHtml(JSON.stringify(filterFn(session), null, 2)) + '</pre>' +
-        '</details></div>';
 
         container.innerHTML = html;
     }

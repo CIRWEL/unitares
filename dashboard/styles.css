@@ -1816,6 +1816,26 @@ body {
     margin-left: auto;
 }
 
+.dialectic-session-id-copy {
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: background 0.15s;
+}
+.dialectic-session-id-copy:hover {
+    background: var(--metric-track);
+}
+.dialectic-session-id-copy .copy-hint {
+    margin-left: 4px;
+    font-size: 0.85em;
+    opacity: 0.8;
+}
+.dialectic-session-id-copy.detail-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
 .dialectic-topic {
     font-size: 0.85em;
     color: var(--text-primary);
@@ -3730,10 +3750,47 @@ body {
     margin-left: 10px;
 }
 
+/* Agent pills: Requestor, Reviewer, Synthesizer — equal prominence */
+.dialectic-agents-three .agent-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: var(--metric-track);
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+.dialectic-agents-three .agent-pill-synthesizer {
+    background: color-mix(in srgb, var(--accent-yellow) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent-yellow) 35%, transparent);
+}
+.dialectic-agents-three .agent-pill .agent-label {
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.dialectic-agents-three .agent-pill-synthesizer .agent-label {
+    color: var(--accent-yellow);
+}
+
+/* Detail modal: Requestor, Reviewer, Synthesizer — equal prominence */
+.dialectic-agents-detail .agent-detail-cell {
+    padding: 10px 12px;
+    background: var(--metric-track);
+    border-radius: 6px;
+}
+.dialectic-agents-detail .agent-detail-synthesizer {
+    background: color-mix(in srgb, var(--accent-yellow) 10%, var(--metric-track));
+    border: 1px solid color-mix(in srgb, var(--accent-yellow) 30%, transparent);
+}
+.dialectic-agents-detail .agent-detail-synthesizer strong {
+    color: var(--accent-yellow);
+}
+
 /* Message count indicator */
 .dialectic-msg-count {
     color: var(--accent-cyan);
-    margin-left: 10px;
+    margin-left: 8px;
+    font-size: 0.85em;
 }
 
 /* Dialectic detail header */

@@ -27,6 +27,41 @@ from src.dialectic_protocol import (
 )
 from .utils import success_response, error_response, require_registered_agent
 from .decorators import mcp_tool
+
+
+async def _resolve_dialectic_agent_id(arguments: Dict[str, Any]) -> tuple:
+    """
+    Resolve agent_id for dialectic submit tools — same UUID as onboard/identity.
+
+    - No agent_id: use require_registered_agent (session-bound UUID)
+    - agent_id provided (third-party synthesizer): validate registered, use it
+    """
+    provided = arguments.get("agent_id")
+    if not provided:
+        agent_id, error = require_registered_agent(arguments)
+        if error:
+            return None, [error]  # Wrap for handler return
+        return agent_id, None
+
+    # Third-party case: validate provided agent_id is registered
+    from .shared import get_mcp_server
+    mcp_server = get_mcp_server()
+    if provided in mcp_server.agent_metadata:
+        return provided, None
+    # Check PostgreSQL for agents created in other sessions
+    try:
+        from .identity_v2 import _agent_exists_in_postgres
+        if await _agent_exists_in_postgres(provided):
+            return provided, None
+    except Exception:
+        pass
+    return None, [error_response(
+        f"Agent '{provided[:8]}...' is not registered",
+        recovery={
+            "action": "Third-party synthesizers must be registered. Call onboard() or identity() first.",
+            "related_tools": ["onboard", "identity"],
+        },
+    )]
 from src.logging_utils import get_logger
 import sys
 import os
@@ -155,6 +190,7 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
     It sets up the session and persists it, but does not auto-progress the protocol.
     """
     # Require a registered agent and use authoritative UUID for internal IDs
+    # (Same pipeline as onboard/identity — dialectic was previously wonky using get_bound_agent_id)
     agent_id, error = require_registered_agent(arguments)
     if error:
         return [error]
@@ -636,27 +672,21 @@ async def handle_submit_thesis(arguments: Dict[str, Any]) -> Sequence[TextConten
     """
     try:
         session_id = arguments.get('session_id')
-        agent_id = arguments.get('agent_id')
         api_key = arguments.get('api_key', '')
 
-        # Auto-retrieve API key and agent_id from bound identity if not provided
-        if not api_key or not agent_id:
-            try:
-                from .identity_shared import get_bound_agent_id
-                if not agent_id:
-                    agent_id = get_bound_agent_id(arguments=arguments)
-                # Note: api_key auto-detection removed (get_bound_api_key didn't exist)
-            except Exception as e:
-                logger.debug(f"Could not auto-retrieve credentials: {e}")
-
-        if not session_id or not agent_id:
+        if not session_id:
             return [error_response(
-                "session_id and agent_id are required",
+                "session_id is required",
                 recovery={
-                    "action": "Provide session_id, and optionally agent_id (can be auto-detected from bound identity)",
+                    "action": "Provide session_id",
                     "related_tools": ["get_dialectic_session", "identity"]
                 }
             )]
+
+        # Use same identity pipeline as onboard/identity (consistent UUID)
+        agent_id, agent_error = await _resolve_dialectic_agent_id(arguments)
+        if agent_error:
+            return agent_error
 
         # Get session - reload from disk if not in memory
         session = ACTIVE_SESSIONS.get(session_id)
@@ -732,27 +762,21 @@ async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextCo
     """
     try:
         session_id = arguments.get('session_id')
-        agent_id = arguments.get('agent_id')
         api_key = arguments.get('api_key', '')
 
-        # Auto-retrieve credentials from bound identity
-        if not api_key or not agent_id:
-            try:
-                from .identity_shared import get_bound_agent_id
-                if not agent_id:
-                    agent_id = get_bound_agent_id(arguments=arguments)
-                # Note: api_key auto-detection removed (get_bound_api_key didn't exist)
-            except Exception as e:
-                logger.debug(f"Could not auto-retrieve credentials: {e}")
-
-        if not session_id or not agent_id:
+        if not session_id:
             return [error_response(
-                "session_id and agent_id are required",
+                "session_id is required",
                 recovery={
-                    "action": "Provide session_id, and optionally agent_id",
+                    "action": "Provide session_id",
                     "related_tools": ["get_dialectic_session", "identity"]
                 }
             )]
+
+        # Use same identity pipeline as onboard/identity (consistent UUID)
+        agent_id, agent_error = await _resolve_dialectic_agent_id(arguments)
+        if agent_error:
+            return agent_error
 
         # Get session
         session = ACTIVE_SESSIONS.get(session_id)
@@ -838,27 +862,22 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
     """
     try:
         session_id = arguments.get('session_id')
-        agent_id = arguments.get('agent_id')
         api_key = arguments.get('api_key', '')
 
-        # Auto-retrieve credentials from bound identity
-        if not api_key or not agent_id:
-            try:
-                from .identity_shared import get_bound_agent_id
-                if not agent_id:
-                    agent_id = get_bound_agent_id(arguments=arguments)
-                # Note: api_key auto-detection removed (get_bound_api_key didn't exist)
-            except Exception as e:
-                logger.debug(f"Could not auto-retrieve credentials: {e}")
-
-        if not session_id or not agent_id:
+        if not session_id:
             return [error_response(
-                "session_id and agent_id are required",
+                "session_id is required",
                 recovery={
-                    "action": "Provide session_id, and optionally agent_id",
+                    "action": "Provide session_id",
                     "related_tools": ["get_dialectic_session", "identity"]
                 }
             )]
+
+        # Use same identity pipeline as onboard/identity (consistent UUID)
+        # Supports third-party synthesizer when agent_id is explicitly provided
+        agent_id, agent_error = await _resolve_dialectic_agent_id(arguments)
+        if agent_error:
+            return agent_error
 
         # Always reload from disk to get latest state
         session = await load_session(session_id)

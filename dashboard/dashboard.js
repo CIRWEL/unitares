@@ -298,6 +298,7 @@ function renderDialecticForModal(sessions) {
         const phaseColor = getPhaseColor(phase);
         const requestorId = session.paused_agent || session.requestor_id || 'Unknown';
         const reviewerId = session.reviewer || session.reviewer_id || 'None';
+        const synthesizerId = session.synthesizer || '';
         const sessionType = session.session_type || session.type || 'verification';
         const topic = session.topic || session.reason || `${sessionType} session`;
         const created = session.created || session.created_at || '';
@@ -310,15 +311,16 @@ function renderDialecticForModal(sessions) {
                         ${escapeHtml(formatDialecticPhase(phase))}
                     </span>
                     <span class="dialectic-session-type">${escapeHtml(sessionType)}</span>
+                    <span class="dialectic-session-id-copy" title="Copy session ID" data-session-id="${escapeHtml(sessionId)}">
+                        <code class="code-tertiary">${escapeHtml(sessionId.substring(0, 16))}${sessionId.length > 16 ? '…' : ''}</code> 📋
+                    </span>
                     <span class="dialectic-time">${escapeHtml(created)}</span>
                 </div>
                 <div class="dialectic-topic">${escapeHtml(topic)}</div>
-                <div class="dialectic-agents">
-                    <span class="agent-label">Session:</span> ${escapeHtml(sessionId)}
-                </div>
-                <div class="dialectic-agents" style="margin-top: 4px;">
-                    <span class="agent-label">Requestor:</span> ${escapeHtml(requestorId)}
-                    ${reviewerId && reviewerId !== 'None' ? `<span class="agent-label">Reviewer:</span> ${escapeHtml(reviewerId)}` : ''}
+                <div class="dialectic-agents dialectic-agents-three">
+                    <span class="agent-pill"><span class="agent-label">Requestor</span> ${escapeHtml(requestorId.substring(0, 8))}</span>
+                    ${reviewerId && reviewerId !== 'None' ? `<span class="agent-pill"><span class="agent-label">Reviewer</span> ${escapeHtml(reviewerId.substring(0, 8))}</span>` : ''}
+                    ${synthesizerId ? `<span class="agent-pill agent-pill-synthesizer"><span class="agent-label">Synthesizer</span> ${escapeHtml(synthesizerId.substring(0, 8))}</span>` : ''}
                 </div>
             </div>
         `;
@@ -1707,6 +1709,7 @@ if (dialecticRefreshButton) {
 const dialecticContainer = document.getElementById('dialectic-container');
 if (dialecticContainer) {
     dialecticContainer.addEventListener('click', (event) => {
+        if (event.target.closest('.dialectic-session-id-copy')) return; // Copy button, don't open detail
         const item = event.target.closest('.dialectic-item');
         if (!item) return;
         const sessionId = item.getAttribute('data-session-id');
@@ -1717,6 +1720,21 @@ if (dialecticContainer) {
         showDialecticDetail(session);
     });
 }
+
+// Click handler for dialectic session ID copy (list and modal)
+document.addEventListener('click', (event) => {
+    const copyEl = event.target.closest('.dialectic-session-id-copy');
+    if (!copyEl) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const sid = copyEl.getAttribute('data-session-id');
+    if (sid && typeof copyToClipboard === 'function') {
+        copyToClipboard(sid).then(() => {
+            const hint = copyEl.querySelector('.copy-hint');
+            if (hint) { const t = hint.textContent; hint.textContent = 'Copied!'; setTimeout(() => { hint.textContent = t; }, 1500); }
+        }).catch(() => {});
+    }
+});
 
 // Click handler for tags — sets them as the search term in the relevant panel
 document.addEventListener('click', (event) => {
