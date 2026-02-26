@@ -635,7 +635,7 @@ class TestDebugRequestContext:
              patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value="test-session"), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {"tool1": None, "tool2": None}), \
-             patch("src.mcp_handlers.identity_v2._derive_session_key", return_value="derived-key"), \
+             patch("src.mcp_handlers.identity_v2.derive_session_key", new_callable=AsyncMock, return_value="derived-key"), \
              patch("src.mcp_handlers.identity_shared._session_identities", {}), \
              patch("src.mcp_handlers.identity_shared._uuid_prefix_index", {}):
             from src.mcp_handlers.admin import handle_debug_request_context
@@ -2295,7 +2295,7 @@ class TestDebugRequestContextAdditional:
              patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-abc"), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value="test-key"), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {"tool1": None}), \
-             patch("src.mcp_handlers.identity_v2._derive_session_key", return_value="derived"), \
+             patch("src.mcp_handlers.identity_v2.derive_session_key", new_callable=AsyncMock, return_value="derived"), \
              patch("src.mcp_handlers.identity_shared._session_identities", session_identities), \
              patch("src.mcp_handlers.identity_shared._uuid_prefix_index", uuid_prefix_index):
             from src.mcp_handlers.admin import handle_debug_request_context
@@ -2318,7 +2318,7 @@ class TestDebugRequestContextAdditional:
              patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value=None), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {}), \
-             patch("src.mcp_handlers.identity_v2._derive_session_key", return_value="key"), \
+             patch("src.mcp_handlers.identity_v2.derive_session_key", new_callable=AsyncMock, return_value="key"), \
              patch("src.mcp_handlers.identity_shared._session_identities", BrokenDict()):
             from src.mcp_handlers.admin import handle_debug_request_context
             result = await handle_debug_request_context({})

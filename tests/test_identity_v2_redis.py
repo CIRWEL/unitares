@@ -126,41 +126,45 @@ class TestGenerateAgentId:
 
 
 # ============================================================================
-# _derive_session_key
+# derive_session_key (async)
 # ============================================================================
 
 class TestDeriveSessionKey:
 
     @pytest.fixture(autouse=True)
     def import_fn(self):
-        from src.mcp_handlers.identity_v2 import _derive_session_key
-        self.derive = _derive_session_key
+        from src.mcp_handlers.identity_v2 import derive_session_key
+        self.derive = derive_session_key
 
-    def test_explicit_client_session_id(self):
-        result = self.derive({"client_session_id": "my-session-123"})
+    @pytest.mark.asyncio
+    async def test_explicit_client_session_id(self):
+        result = await self.derive(None, {"client_session_id": "my-session-123"})
         assert result == "my-session-123"
 
-    def test_mcp_session_id_header(self):
-        # Patched at source: local import 'from .context import get_mcp_session_id'
+    @pytest.mark.asyncio
+    async def test_mcp_session_id_header(self):
         with patch("src.mcp_handlers.context.get_mcp_session_id", return_value="mcp-abc123"):
-            result = self.derive({})
+            result = await self.derive(None, {})
             assert result == "mcp:mcp-abc123"
 
-    def test_context_session_key(self):
+    @pytest.mark.asyncio
+    async def test_context_session_key(self):
         with patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value="ctx-key-456"):
-            result = self.derive({})
+            result = await self.derive(None, {})
             assert result == "ctx-key-456"
 
-    def test_stdio_fallback(self):
+    @pytest.mark.asyncio
+    async def test_stdio_fallback(self):
         with patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value=None):
-            result = self.derive({})
+            result = await self.derive(None, {})
             assert result.startswith("stdio:")
 
-    def test_client_session_id_takes_priority(self):
+    @pytest.mark.asyncio
+    async def test_client_session_id_takes_priority(self):
         with patch("src.mcp_handlers.context.get_mcp_session_id", return_value="mcp-abc"):
-            result = self.derive({"client_session_id": "explicit"})
+            result = await self.derive(None, {"client_session_id": "explicit"})
             assert result == "explicit"
 
 

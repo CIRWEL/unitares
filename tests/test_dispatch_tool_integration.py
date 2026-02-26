@@ -116,8 +116,8 @@ def mock_onboard_pin():
 
 @pytest.fixture
 def mock_derive_session_key():
-    """Mock session key derivation."""
-    with patch("src.mcp_handlers.identity_v2._derive_session_key") as m:
+    """Mock session key derivation (async)."""
+    with patch("src.mcp_handlers.identity_v2.derive_session_key", new_callable=AsyncMock) as m:
         m.return_value = "test-session-key"
         yield m
 

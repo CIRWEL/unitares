@@ -16,7 +16,7 @@ sys.path.insert(0, str(project_root))
 from src.mcp_handlers.identity_v2 import (
     _generate_agent_id,
     _get_date_context,
-    _derive_session_key,
+    derive_session_key,
 )
 
 
@@ -132,57 +132,65 @@ class TestGenerateAgentId:
 
 
 # ============================================================================
-# _derive_session_key (deprecated sync wrapper)
+# derive_session_key (async, signals=None uses context/stdio fallback)
 # ============================================================================
 
 class TestDeriveSessionKey:
 
-    def test_explicit_client_session_id(self):
-        result = _derive_session_key({"client_session_id": "my-session-123"})
+    @pytest.mark.asyncio
+    async def test_explicit_client_session_id(self):
+        result = await derive_session_key(None, {"client_session_id": "my-session-123"})
         assert result == "my-session-123"
 
-    def test_explicit_takes_priority(self):
+    @pytest.mark.asyncio
+    async def test_explicit_takes_priority(self):
         """client_session_id should take priority over context."""
-        result = _derive_session_key({"client_session_id": "explicit-id"})
+        result = await derive_session_key(None, {"client_session_id": "explicit-id"})
         assert result == "explicit-id"
 
-    def test_empty_client_session_id_falls_through(self):
+    @pytest.mark.asyncio
+    async def test_empty_client_session_id_falls_through(self):
         """Empty string is falsy, should fall through."""
-        result = _derive_session_key({"client_session_id": ""})
+        result = await derive_session_key(None, {"client_session_id": ""})
         # Should not be empty string, should fall through to other methods
         assert result != ""
 
-    def test_none_client_session_id_falls_through(self):
-        result = _derive_session_key({"client_session_id": None})
+    @pytest.mark.asyncio
+    async def test_none_client_session_id_falls_through(self):
+        result = await derive_session_key(None, {"client_session_id": None})
         assert result is not None
         assert len(result) > 0
 
-    def test_no_args_returns_stdio_fallback(self):
+    @pytest.mark.asyncio
+    async def test_no_args_returns_stdio_fallback(self):
         """With no context set, should fall through to stdio fallback."""
         import os
-        result = _derive_session_key({})
+        result = await derive_session_key(None, {})
         assert result == f"stdio:{os.getpid()}"
 
-    def test_mcp_session_id_from_context(self):
+    @pytest.mark.asyncio
+    async def test_mcp_session_id_from_context(self):
         """When mcp_session_id is set in context, use it."""
         from src.mcp_handlers.context import set_mcp_session_id, reset_mcp_session_id
         token = set_mcp_session_id("mcp-session-abc123")
         try:
-            result = _derive_session_key({})
+            result = await derive_session_key(None, {})
             assert result == "mcp:mcp-session-abc123"
         finally:
             reset_mcp_session_id(token)
 
-    def test_context_session_key_fallback(self):
+    @pytest.mark.asyncio
+    async def test_context_session_key_fallback(self):
         """When context session_key is set, use it as fallback."""
         from src.mcp_handlers.context import set_session_context, reset_session_context
         token = set_session_context(session_key="ctx-key-456")
         try:
-            result = _derive_session_key({})
+            result = await derive_session_key(None, {})
             assert result == "ctx-key-456"
         finally:
             reset_session_context(token)
 
-    def test_returns_string(self):
-        result = _derive_session_key({})
+    @pytest.mark.asyncio
+    async def test_returns_string(self):
+        result = await derive_session_key(None, {})
         assert isinstance(result, str)

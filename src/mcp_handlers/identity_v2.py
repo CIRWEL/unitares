@@ -1092,35 +1092,6 @@ async def derive_session_key(
     return f"stdio:{os.getpid()}"
 
 
-def _derive_session_key(arguments: Dict[str, Any]) -> str:
-    """DEPRECATED: Sync wrapper for backward compatibility.
-
-    Use ``await derive_session_key(signals, arguments)`` instead.
-    This wrapper cannot do async pin lookup (priority 6) and falls back to
-    the contextvar path (priority 7).
-    """
-    if arguments.get("client_session_id"):
-        return str(arguments["client_session_id"])
-
-    try:
-        from .context import get_mcp_session_id
-        mcp_sid = get_mcp_session_id()
-        if mcp_sid:
-            return f"mcp:{mcp_sid}"
-    except Exception:
-        pass
-
-    try:
-        from .context import get_context_session_key
-        ctx_key = get_context_session_key()
-        if ctx_key:
-            return str(ctx_key)
-    except Exception:
-        pass
-
-    return f"stdio:{os.getpid()}"
-
-
 def _extract_base_fingerprint(session_key: str) -> Optional[str]:
     """Extract stable base fingerprint from a session key.
 

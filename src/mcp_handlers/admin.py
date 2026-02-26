@@ -2202,16 +2202,16 @@ async def handle_debug_request_context(arguments: Dict[str, Any]) -> Sequence[Te
     import hashlib
     from datetime import datetime
     from . import TOOL_HANDLERS
-    from .identity_v2 import _derive_session_key
+    from .context import get_context_agent_id, get_context_session_key, get_session_signals
+    from .identity_v2 import derive_session_key
 
     # Get raw diagnostic info - no complex logic
     # NOTE (Dec 2025): identity_v2 is the AUTHORITATIVE source of truth for identity.
     # Context agent_id was resolved via identity_v2.resolve_session_identity() at dispatch entry.
-    from .context import get_context_agent_id, get_context_session_key
-
     context_agent_id = get_context_agent_id()  # Authoritative (from identity_v2)
     context_session_key = get_context_session_key()
-    session_key = context_session_key or _derive_session_key(arguments)
+    signals = get_session_signals()
+    session_key = context_session_key or (await derive_session_key(signals, arguments or {}))
 
     # Get tool registry info
     tool_names = sorted(TOOL_HANDLERS.keys())
