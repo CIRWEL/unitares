@@ -355,21 +355,8 @@
             '</div>';
         }
 
-        // Participate: submit antithesis or synthesis when session is active
-        var activePhases = ['thesis', 'antithesis', 'synthesis'];
-        if (activePhases.indexOf(phase) !== -1 && !session.resolution) {
-            html += '<div class="dialectic-participate mt-md">' +
-                '<strong class="text-secondary-sm">Participate:</strong>' +
-                '<textarea class="dialectic-message-input mt-sm" placeholder="Your message..." data-session-id="' + escapeHtml(sessionId) + '" data-phase="' + escapeHtml(phase) + '" rows="3"></textarea>' +
-                '<div class="mt-sm">' +
-                    (phase === 'antithesis'
-                        ? '<button class="panel-button dialectic-submit-btn" data-session-id="' + escapeHtml(sessionId) + '" data-action="antithesis">Submit antithesis</button>'
-                        : phase === 'synthesis'
-                            ? '<button class="panel-button dialectic-submit-btn" data-session-id="' + escapeHtml(sessionId) + '" data-action="synthesis">Submit synthesis</button>'
-                            : '<button class="panel-button dialectic-submit-btn" data-session-id="' + escapeHtml(sessionId) + '" data-action="thesis">Submit thesis</button>') +
-                '</div>' +
-            '</div>';
-        }
+        // Note: Thesis/antithesis/synthesis are submitted by agents via MCP tools.
+        // Human operators monitor sessions through this dashboard; participation is agent-only.
 
         // Raw data
         html += '<details class="mt-md">' +

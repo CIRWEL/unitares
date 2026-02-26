@@ -279,11 +279,22 @@ async def inject_identity(name: str, arguments: Dict[str, Any], ctx: DispatchCon
                     "search_knowledge_graph", "query_knowledge_graph", "list_knowledge_graph",
                     "list_dialectic_sessions", "get_dialectic_session", "dialectic"
                 }
+                # For the consolidated 'knowledge' tool, only skip injection for read/browse
+                # actions (search/list/stats/details/get) so agents can learn from each
+                # other's discoveries. Write actions (store/note/update/supersede) still
+                # need attribution and get agent_id injected normally.
+                knowledge_browsable_actions = {"search", "list", "stats", "details", "get"}
+                action = arguments.get("action", "")
+                is_knowledge_browsable = (
+                    name == "knowledge" and action in knowledge_browsable_actions
+                )
                 logger.info(
-                    f"[DISPATCH] name={name}, in browsable_data_tools={name in browsable_data_tools}, "
+                    f"[DISPATCH] name={name}, action={action!r}, "
+                    f"in browsable_data_tools={name in browsable_data_tools}, "
+                    f"is_knowledge_browsable={is_knowledge_browsable}, "
                     f"bound_id={bound_id[:8] if bound_id else None}..."
                 )
-                if name not in browsable_data_tools:
+                if name not in browsable_data_tools and not is_knowledge_browsable:
                     arguments["agent_id"] = bound_id
                     logger.debug(f"Injected session-bound agent_id: {bound_id}")
             elif provided_id != bound_id:
@@ -350,8 +361,9 @@ async def inject_identity(name: str, arguments: Dict[str, Any], ctx: DispatchCon
 
 async def validate_params(name: str, arguments: Dict[str, Any], ctx: DispatchContext) -> MiddlewareResult:
     """Lite model parameter coercion and validation."""
-    from .validators import validate_and_coerce_params
+    from .validators import validate_and_coerce_params, apply_param_aliases
 
+    arguments = apply_param_aliases(name, arguments)
     coerced_args, validation_error, param_coercions = validate_and_coerce_params(name, arguments)
     if validation_error:
         return [validation_error]

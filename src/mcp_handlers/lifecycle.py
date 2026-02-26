@@ -1580,10 +1580,18 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
     monitor = mcp_server.get_or_create_monitor(agent_uuid)
     metrics = monitor.get_metrics()
     
-    coherence = float(monitor.state.coherence)
-    risk_score = float(metrics.get("mean_risk") or 0.5)
+    def _safe_float(val, default=0.5):
+        if val is None:
+            return default
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return default
+    
+    coherence = _safe_float(monitor.state.coherence, 0.5)
+    risk_score = _safe_float(metrics.get("mean_risk"), 0.5)
     void_active = bool(monitor.state.void_active)
-    void_value = float(monitor.state.V)
+    void_value = _safe_float(monitor.state.V, 0.0)
     status = meta.status
     
     # 5. Compute margin for context

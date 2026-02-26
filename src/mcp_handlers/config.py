@@ -25,10 +25,13 @@ async def handle_get_thresholds(arguments: Dict[str, Any]) -> Sequence[TextConte
     
     thresholds = get_thresholds()
     
-    return success_response({
-        "thresholds": thresholds,
-        "note": "These are the effective thresholds (runtime overrides + defaults)"
-    })
+    return success_response(
+        {
+            "thresholds": thresholds,
+            "note": "These are the effective thresholds (runtime overrides + defaults)"
+        },
+        arguments=arguments,
+    )
 
 
 @mcp_tool("set_thresholds", timeout=15.0, register=False)

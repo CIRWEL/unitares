@@ -551,21 +551,27 @@ class TestDialecticProtocolFlow:
         assert result["converged"] is False
         assert session.synthesis_round == 2
 
-    def test_synthesis_third_party_mediator_resolves(self):
-        """Third-party mediator with agrees=True resolves session."""
+    def test_synthesis_third_party_plus_participant_resolves(self):
+        """Third-party synthesizer + participant both agreeing resolves session."""
         session = self._make_session()
         session.submit_thesis(self._thesis_msg(), "key-a")
         session.submit_antithesis(self._antithesis_msg(), "key-b")
-        msg = self._synthesis_msg("agent-c")
-        msg.agrees = True
-        result = session.submit_synthesis(msg, "key-c")
-        assert result["success"] is True
-        assert result["converged"] is True
-        assert result.get("mediator") == "agent-c"
+        # Third-party agent submits synthesis with agrees=True
+        msg_c = self._synthesis_msg("agent-c")
+        msg_c.agrees = True
+        result_c = session.submit_synthesis(msg_c, "key-c")
+        assert result_c["success"] is True
+        assert result_c["converged"] is False  # Only 1 agent agreed so far
+        # Reviewer also agrees — now 2 distinct agents agree → converged
+        msg_b = self._synthesis_msg("agent-b")
+        msg_b.agrees = True
+        result_b = session.submit_synthesis(msg_b, "key-b")
+        assert result_b["success"] is True
+        assert result_b["converged"] is True
         assert session.phase == DialecticPhase.RESOLVED
 
     def test_synthesis_third_party_no_agree_continues(self):
-        """Third-party mediator without agrees continues negotiation."""
+        """Third-party synthesizer without agrees continues negotiation."""
         session = self._make_session()
         session.submit_thesis(self._thesis_msg(), "key-a")
         session.submit_antithesis(self._antithesis_msg(), "key-b")

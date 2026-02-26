@@ -1563,6 +1563,11 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                         await get_metadata_cache().invalidate(agent_uuid)
                     except Exception:
                         pass
+                    # 4. Reload metadata so next process_agent_update sees status=active
+                    try:
+                        await srv.load_metadata_async(force=True)
+                    except Exception:
+                        pass
                     logger.info(f"[ONBOARD] Auto-unarchived agent {agent_uuid[:8]}... (reconnected via onboard)")
                     _was_archived = True
             except Exception as e:

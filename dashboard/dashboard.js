@@ -625,83 +625,8 @@ document.addEventListener('click', async (event) => {
         return;
     }
 
-    // Discovery leave note
-    const discoveryNoteBtn = event.target.closest('.discovery-leave-note-btn');
-    if (discoveryNoteBtn) {
-        event.stopPropagation();
-        const discoveryId = discoveryNoteBtn.getAttribute('data-discovery-id');
-        const modalBody = document.getElementById('modal-body');
-        const input = modalBody ? modalBody.querySelector('.discovery-note-input[data-discovery-id="' + discoveryId + '"]') : null;
-        const summary = input ? input.value.trim() : '';
-        if (!summary) return;
-        discoveryNoteBtn.disabled = true;
-        discoveryNoteBtn.textContent = '...';
-        try {
-            const result = await callTool('leave_note', {
-                agent_id: 'dashboard',
-                summary: summary,
-                response_to: { discovery_id: discoveryId, response_type: 'support' }
-            });
-            if (result && result.success) {
-                if (input) input.value = '';
-                discoveryNoteBtn.textContent = 'Saved';
-                loadDiscoveries();
-            } else {
-                discoveryNoteBtn.textContent = 'Failed';
-            }
-        } catch (e) {
-            console.error('Leave note failed:', e);
-            discoveryNoteBtn.textContent = 'Error';
-        }
-        discoveryNoteBtn.disabled = false;
-        return;
-    }
-
-    // Dialectic submit (thesis/antithesis/synthesis)
-    const dialecticSubmitBtn = event.target.closest('.dialectic-submit-btn');
-    if (dialecticSubmitBtn) {
-        event.stopPropagation();
-        const sessionId = dialecticSubmitBtn.getAttribute('data-session-id');
-        const action = dialecticSubmitBtn.getAttribute('data-action');
-        const modalBody = document.getElementById('modal-body');
-        const textarea = modalBody ? modalBody.querySelector('.dialectic-message-input[data-session-id="' + sessionId + '"]') : null;
-        const msg = textarea ? textarea.value.trim() : '';
-        if (!msg) return;
-        dialecticSubmitBtn.disabled = true;
-        dialecticSubmitBtn.textContent = '...';
-        try {
-            let result;
-            if (action === 'thesis') {
-                result = await callTool('submit_thesis', { session_id: sessionId, root_cause: msg, proposed_conditions: [msg], reasoning: msg });
-            } else if (action === 'antithesis') {
-                result = await callTool('submit_antithesis', { session_id: sessionId, concerns: [msg], reasoning: msg });
-            } else if (action === 'synthesis') {
-                result = await callTool('submit_synthesis', { session_id: sessionId, proposed_conditions: [msg], agrees: true, reasoning: msg });
-            }
-            if (result && result.success) {
-                dialecticSubmitBtn.textContent = 'Done';
-                loadDialecticSessions();
-                if (result.phase) {
-                    callTool('dialectic', { action: 'get', session_id: sessionId }).then(function (r) {
-                        if (r && r.session) {
-                            var container = document.getElementById('modal-body');
-                            if (container) renderDialecticDetailContent(container, r.session);
-                        }
-                    });
-                } else {
-                    closeModal();
-                }
-            } else {
-                dialecticSubmitBtn.textContent = result && result.error ? result.error.substring(0, 20) : 'Failed';
-                dialecticSubmitBtn.disabled = false;
-            }
-        } catch (e) {
-            console.error('Dialectic submit failed:', e);
-            dialecticSubmitBtn.textContent = 'Error';
-            dialecticSubmitBtn.disabled = false;
-        }
-        return;
-    }
+    // Note: Discovery leave-note and dialectic submit handlers removed.
+    // These are agent-only operations, not human dashboard features.
 
     // Handle agent detail Resume button
     const detailResumeBtn = event.target.closest('.agent-detail-resume-btn');

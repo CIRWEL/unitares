@@ -68,16 +68,11 @@ async def resolve_identity_and_guards(ctx: UpdateContext) -> Optional[Sequence[T
                     "auto_recovery": "Dialectic recovery may already be in progress",
                 }
             )]
-        elif meta.status == "archived":
-            return [error_response(
-                "Agent is archived and cannot process updates",
-                error_code="AGENT_ARCHIVED",
-                details={"agent_id": ctx.agent_uuid[:12], "status": "archived"},
-                recovery={
-                    "action": "Use self_recovery(action='quick') to restore yourself, or onboard(force_new=true) for a new identity",
-                    "related_tools": ["self_recovery", "onboard"],
-                }
-            )]
+        # NOTE: Do NOT block archived here. Phase 2 (handle_onboarding_and_resume)
+        # auto-resumes archived agents on engagement. Blocking here prevented
+        # onboard() reactivation from taking effect (Phase 1 ran before metadata
+        # was refreshed) and blocked the auto-resume path in Phase 2.
+        # elif meta.status == "archived": ... REMOVED - let Phase 2 handle it
 
     # Lazy creation: persist agent in PostgreSQL on first real work
     from .identity_v2 import ensure_agent_persisted

@@ -241,7 +241,8 @@ def action_router(
 
     @mcp_tool(name, timeout=timeout, description=description)
     async def router(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-        action = arguments.get("action", "").lower() or default_action
+        # Support both 'action' and 'op' (op is alias for consistency with other tools)
+        action = (arguments.get("action") or arguments.get("op") or "").lower() or default_action
 
         if not action:
             return [error_response(

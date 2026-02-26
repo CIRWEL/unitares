@@ -286,10 +286,6 @@
                         '<button class="panel-button discovery-status-btn" data-discovery-id="' + escapeHtml(discovery.id) + '" data-status="resolved">Resolved</button>' +
                         '<button class="panel-button discovery-status-btn" data-discovery-id="' + escapeHtml(discovery.id) + '" data-status="archived">Archived</button>' +
                     '</div>' +
-                    '<div class="mt-sm">' +
-                        '<input type="text" class="discovery-note-input" placeholder="Add note..." data-discovery-id="' + escapeHtml(discovery.id) + '" style="max-width: 300px; margin-right: 8px;">' +
-                        '<button class="panel-button discovery-leave-note-btn" data-discovery-id="' + escapeHtml(discovery.id) + '">Leave note</button>' +
-                    '</div>' +
                   '</div>'
                 : '') +
 

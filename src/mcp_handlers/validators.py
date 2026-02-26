@@ -168,6 +168,9 @@ PARAM_ALIASES: Dict[str, Dict[str, str]] = {
         "display_name": "name",
         "nickname": "name",
     },
+    "agent": {
+        "op": "action",  # agent(op='list') → agent(action='list')
+    },
 }
 
 

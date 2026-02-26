@@ -398,7 +398,8 @@ class DialecticSession:
 
         self.created_at = datetime.now(timezone.utc)
         self.session_id = self._generate_session_id()
-        self.appointed_mediator_id: Optional[str] = None  # Must be explicitly set to allow third-party resolution
+        # Any agent can submit synthesis (open facilitation model).
+        # Convergence is determined by _check_both_agree(), not by who submits.
 
         # Set instance-level timeouts based on session type
         if self.session_type == "design_review":
@@ -502,14 +503,9 @@ class DialecticSession:
         Returns:
             Status dict with convergence info
         """
-        # Track whether this is an appointed third-party mediator
+        # Any agent can submit synthesis (open facilitation model).
+        # The user manually routes messages between agents.
         is_participant = message.agent_id in [self.paused_agent_id, self.reviewer_agent_id]
-        is_mediator = (not is_participant
-                       and self.appointed_mediator_id is not None
-                       and message.agent_id == self.appointed_mediator_id)
-
-        if not is_participant and not is_mediator:
-            return {"success": False, "error": "Only session participants or an appointed mediator can submit synthesis"}
 
         # Verify phase
         if self.phase != DialecticPhase.SYNTHESIS:
@@ -529,16 +525,14 @@ class DialecticSession:
         self.transcript.append(message)
 
         # Check for convergence
-        # Appointed mediator with agrees=True resolves immediately
-        # Otherwise check if both original participants agree
-        if message.agrees and (is_mediator or self._check_both_agree()):
+        if message.agrees and self._check_both_agree():
             self.phase = DialecticPhase.RESOLVED
             return {
                 "success": True,
                 "converged": True,
                 "phase": self.phase.value,
                 "rounds": self.synthesis_round,
-                **({"mediator": message.agent_id} if is_mediator else {}),
+                **({"synthesizer": message.agent_id} if not is_participant else {}),
             }
 
         # No convergence yet, continue negotiation
@@ -554,25 +548,23 @@ class DialecticSession:
 
     def _check_both_agree(self) -> bool:
         """
-        Check if both agents have agreed on the same proposal.
+        Check if at least 2 distinct agents agree on the same proposal.
 
-        Convergence requires:
-        - Both agents must agree (agrees=True)
-        - Both must reference similar conditions (>=50% semantic match)
-        - Both must agree on root cause (>=15% word overlap, always required)
+        Open facilitation model: any agent can participate in synthesis.
+        Convergence requires at least 2 distinct agents with agrees=True
+        in recent synthesis messages, with compatible conditions and root cause.
 
-        Self-review requires 2 synthesis messages with agrees=True and conditions.
+        Self-review (paused == reviewer) requires 2 synthesis messages with
+        agrees=True and conditions from the same agent.
         """
         recent_synthesis = [msg for msg in self.transcript[-6:] if msg.phase == "synthesis"]
 
         # Self-review: require at least 2 synthesis messages with agrees=True
-        # (prevents single-message rubber-stamp convergence)
         if self.paused_agent_id == self.reviewer_agent_id:
             agreed = [msg for msg in recent_synthesis
                       if msg.agrees and msg.agent_id == self.paused_agent_id]
             if len(agreed) < 2:
                 return False
-            # Last message must have conditions
             if not (agreed[-1].proposed_conditions):
                 return False
             return True
@@ -580,19 +572,19 @@ class DialecticSession:
         if len(recent_synthesis) < 2:
             return False
 
-        # Get most recent message from each agent
-        agent_a_messages = [msg for msg in recent_synthesis if msg.agent_id == self.paused_agent_id]
-        agent_b_messages = [msg for msg in recent_synthesis if msg.agent_id == self.reviewer_agent_id]
+        # Collect most recent agrees=True message from each distinct agent
+        agreed_by_agent: Dict[str, 'DialecticMessage'] = {}
+        for msg in recent_synthesis:
+            if msg.agrees:
+                agreed_by_agent[msg.agent_id] = msg  # last one wins
 
-        if not agent_a_messages or not agent_b_messages:
+        if len(agreed_by_agent) < 2:
             return False
 
-        msg_a = agent_a_messages[-1]
-        msg_b = agent_b_messages[-1]
-
-        # Both must explicitly agree
-        if not (msg_a.agrees and msg_b.agrees):
-            return False
+        # Pick any 2 agreeing agents' messages for condition/root-cause checks
+        agreeing_msgs = list(agreed_by_agent.values())
+        msg_a = agreeing_msgs[-2]
+        msg_b = agreeing_msgs[-1]
 
         # At least one side must propose conditions
         conditions_a = msg_a.proposed_conditions or []
@@ -601,7 +593,7 @@ class DialecticSession:
         if not conditions_a and not conditions_b:
             return False
 
-        # Check conditions match semantically
+        # Check conditions match semantically (if both provide them)
         if conditions_a and conditions_b:
             normalized_a = [self._normalize_condition(c) for c in conditions_a]
             normalized_b = [self._normalize_condition(c) for c in conditions_b]
@@ -620,8 +612,7 @@ class DialecticSession:
             if match_ratio < 0.5:
                 return False
 
-        # Root cause agreement is ALWAYS required (not optional)
-        # Both agents must demonstrate shared understanding of the problem
+        # Root cause check: at least one must provide root cause
         root_cause_a = (msg_a.root_cause or "").lower()
         root_cause_b = (msg_b.root_cause or "").lower()
 
@@ -633,7 +624,6 @@ class DialecticSession:
                 if word_overlap < 0.15:
                     return False
         elif not root_cause_a and not root_cause_b:
-            # Neither provided root cause — cannot converge without understanding the problem
             return False
 
         return True

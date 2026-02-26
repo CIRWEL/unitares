@@ -838,6 +838,7 @@ class TestHandleSubmitSynthesis:
 
         session = _make_session(phase=DialecticPhase.SYNTHESIS)
         session.synthesis_round = 1
+        session.appointed_mediator_id = "agent-mediator"
 
         with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock,
                    return_value=session), \

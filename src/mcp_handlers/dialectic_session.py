@@ -405,12 +405,14 @@ async def load_session_as_dict(session_id: str) -> Optional[Dict[str, Any]]:
                 result["resolution"] = res if isinstance(res, dict) else json.loads(res)
 
             for msg in msg_rows:
+                reasoning = msg["reasoning"] or ""
                 m = {
                     "phase": msg["message_type"],
                     "role": msg["message_type"],
                     "agent_id": msg["agent_id"],
                     "timestamp": msg["timestamp"].isoformat() if hasattr(msg["timestamp"], 'isoformat') else msg["timestamp"],
-                    "reasoning": msg["reasoning"],
+                    "reasoning": reasoning,
+                    "content": reasoning,  # Frontend expects content or reasoning
                 }
                 if msg["root_cause"]:
                     m["root_cause"] = msg["root_cause"]
@@ -556,11 +558,14 @@ async def list_all_sessions(
 
                     messages = []
                     for msg_row in msg_rows:
+                        reasoning = msg_row["reasoning"] or ""
                         msg = {
                             "phase": msg_row["message_type"],
+                            "role": msg_row["message_type"],
                             "agent_id": msg_row["agent_id"],
                             "timestamp": msg_row["timestamp"].isoformat() if msg_row["timestamp"] and hasattr(msg_row["timestamp"], 'isoformat') else msg_row["timestamp"],
-                            "reasoning": msg_row["reasoning"],
+                            "reasoning": reasoning,
+                            "content": reasoning,
                             "root_cause": msg_row["root_cause"],
                         }
                         if msg_row["proposed_conditions"]:

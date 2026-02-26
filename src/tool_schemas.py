@@ -4551,7 +4551,12 @@ EXAMPLE: agent(action="list")
                     "action": {
                         "type": "string",
                         "enum": ["list", "get", "update", "archive", "delete"],
-                        "description": "Operation to perform"
+                        "description": "Operation to perform (alias: op)"
+                    },
+                    "op": {
+                        "type": "string",
+                        "enum": ["list", "get", "update", "archive", "delete"],
+                        "description": "Alias for action. Use action or op."
                     },
                     "agent_id": {"type": "string", "description": "Target agent ID (for get, update, archive, delete)"},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to set (for action=update)"},

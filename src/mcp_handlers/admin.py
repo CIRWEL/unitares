@@ -1633,7 +1633,7 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             },
             # Quick workflows (v2.5.0+) - progressive disclosure
             "workflows": {
-                "new_agent": ["onboard()", "process_agent_update(complexity=0.5)", "list_agents()"],
+                "new_agent": ["onboard()", "process_agent_update(complexity=0.5)", "agent(action='list') or list_agents()"],
                 "check_in": ["process_agent_update(response_text='...', complexity=0.5)"],
                 "save_insight": ["leave_note(summary='...')", "OR store_knowledge_graph(summary='...', tags=[...])"],
                 "find_info": ["search_knowledge_graph(query='...')", "OR search_knowledge_graph(tags=[...])"]
