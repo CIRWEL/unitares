@@ -373,6 +373,9 @@ function renderStuckAgentsForModal(agents) {
                         <button class="stuck-agent-view-btn" data-agent-id="${escapeHtml(stuck.agent_id)}" title="View agent details">
                             <span>Details</span>
                         </button>
+                        <button class="stuck-agent-dialectic-btn" data-agent-id="${escapeHtml(stuck.agent_id)}" title="Request dialectic review">
+                            <span>Dialectic</span>
+                        </button>
                         <button class="stuck-agent-resume-btn" data-agent-id="${escapeHtml(stuck.agent_id)}" title="Clear stuck status and resume this agent">
                             <span>Unstick</span>
                         </button>
@@ -447,26 +450,39 @@ async function archiveStuckAgent(agentId) {
 // Resume/unstick stuck agent handler
 async function resumeStuckAgent(agentId) {
     try {
-        // Check if agent is active (stuck) vs paused — active agents need unstick flag
         const agentData = cachedAgents.find(a => a.agent_id === agentId);
         const isActive = agentData && (agentData.lifecycle_status === 'active' || agentData.status === 'active');
-        const result = await callTool('agent', {
+        let result = await callTool('agent', {
             action: 'resume',
             agent_id: agentId,
             reason: isActive ? 'Unstuck from dashboard' : 'Resumed from dashboard',
             unstick: isActive ? true : undefined
         });
         if (result && result.success) {
-            // Remove from cached stuck agents
             cachedStuckAgents = cachedStuckAgents.filter(a => a.agent_id !== agentId);
-            // Refresh the modal
             const modalBody = document.getElementById('modal-body');
             const modalTitle = document.getElementById('modal-title');
             if (modalBody && modalTitle) {
                 modalTitle.textContent = `Stuck Agents (${cachedStuckAgents.length})`;
                 modalBody.innerHTML = renderStuckAgentsForModal(cachedStuckAgents);
             }
-            // Refresh agents list
+            loadAgents();
+            loadStuckAgents();
+            return true;
+        }
+        // Fallback: operator_resume_agent for hard limits
+        result = await callTool('operator_resume_agent', {
+            target_agent_id: agentId,
+            reason: 'Operator resumed from dashboard'
+        });
+        if (result && result.success) {
+            cachedStuckAgents = cachedStuckAgents.filter(a => a.agent_id !== agentId);
+            const modalBody = document.getElementById('modal-body');
+            const modalTitle = document.getElementById('modal-title');
+            if (modalBody && modalTitle) {
+                modalTitle.textContent = `Stuck Agents (${cachedStuckAgents.length})`;
+                modalBody.innerHTML = renderStuckAgentsForModal(cachedStuckAgents);
+            }
             loadAgents();
             loadStuckAgents();
             return true;
@@ -533,6 +549,36 @@ document.addEventListener('click', async (event) => {
         if (agent) {
             closeModal();
             setTimeout(() => showAgentDetail(agent), 100);
+        }
+        return;
+    }
+
+    // Handle request dialectic button
+    const dialecticBtn = event.target.closest('.stuck-agent-dialectic-btn');
+    if (dialecticBtn) {
+        event.stopPropagation();
+        const agentId = dialecticBtn.getAttribute('data-agent-id');
+        if (!agentId) return;
+        dialecticBtn.disabled = true;
+        dialecticBtn.innerHTML = '<span>...</span>';
+        try {
+            const result = await callTool('request_dialectic_review', {
+                agent_id: agentId,
+                reason: 'Requested from dashboard',
+                reviewer_mode: 'llm'
+            });
+            if (result && result.success) {
+                dialecticBtn.innerHTML = '<span>Created</span>';
+                loadDialecticSessions();
+                closeModal();
+            } else {
+                dialecticBtn.innerHTML = '<span>Failed</span>';
+                dialecticBtn.disabled = false;
+            }
+        } catch (e) {
+            console.error('Request dialectic failed:', e);
+            dialecticBtn.innerHTML = '<span>Error</span>';
+            dialecticBtn.disabled = false;
         }
         return;
     }
@@ -1128,6 +1174,60 @@ async function loadSystemHealth() {
     }
 }
 
+async function loadCalibration() {
+    try {
+        const result = await callTool('check_calibration', {});
+        const valueEl = document.getElementById('calibration-value');
+        const detailEl = document.getElementById('calibration-detail');
+        if (!valueEl || !detailEl) return;
+        if (result && result.success) {
+            const th = result.trajectory_health ?? result.accuracy ?? 0;
+            valueEl.textContent = result.calibrated ? 'OK' : '—';
+            detailEl.textContent = `Health ${(th * 100).toFixed(0)}%`;
+        } else {
+            valueEl.textContent = '-';
+            detailEl.textContent = '';
+        }
+    } catch (e) {
+        const valueEl = document.getElementById('calibration-value');
+        if (valueEl) valueEl.textContent = '-';
+    }
+}
+
+async function loadAnomalies() {
+    try {
+        const result = await callTool('detect_anomalies', {});
+        const countEl = document.getElementById('anomalies-count');
+        const detailEl = document.getElementById('anomalies-detail');
+        if (!countEl || !detailEl) return;
+        if (result && result.anomalies) {
+            const count = result.anomalies.length;
+            animateValue(countEl, count);
+            detailEl.textContent = count > 0 ? (result.anomalies[0]?.type || 'Detected') : 'None';
+        } else {
+            countEl.textContent = '-';
+            detailEl.textContent = '';
+        }
+    } catch (e) {
+        const countEl = document.getElementById('anomalies-count');
+        if (countEl) countEl.textContent = '-';
+    }
+}
+
+async function loadServerInfo() {
+    try {
+        const r = await callTool('get_server_info', {});
+        const el = document.getElementById('server-version');
+        if (el && r) {
+            const v = r.server_version || r.version || '';
+            el.textContent = v ? 'v' + v : '-';
+        }
+    } catch (e) {
+        const el = document.getElementById('server-version');
+        if (el) el.textContent = '-';
+    }
+}
+
 /**
  * Load discoveries from API and render to panel.
  * Updates cachedDiscoveries and stats.
@@ -1431,7 +1531,10 @@ async function refresh(options = {}) {
             loadDiscoveries(),
             loadDialecticSessions(),
             loadStuckAgents(),
-            loadSystemHealth()
+            loadSystemHealth(),
+            loadCalibration(),
+            loadAnomalies(),
+            loadServerInfo()
         ]);
         console.log('Load results:', results);
 
@@ -1500,6 +1603,51 @@ if (agentFiltersToggle && agentFiltersRow) {
     agentFiltersToggle.addEventListener('click', () => {
         const isCollapsed = agentFiltersRow.classList.toggle('collapsed');
         agentFiltersToggle.classList.toggle('active', !isCollapsed);
+    });
+}
+
+// Compare agents
+const agentCompareBtn = document.getElementById('agent-compare-btn');
+if (agentCompareBtn) {
+    agentCompareBtn.addEventListener('click', async () => {
+        const agents = cachedAgents.filter(a => (a.metrics?.E ?? a.metrics?.coherence) != null);
+        if (agents.length < 2) {
+            showError('Need at least 2 agents with metrics to compare');
+            return;
+        }
+        const modal = document.getElementById('panel-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalBody = document.getElementById('modal-body');
+        if (!modal || !modalTitle || !modalBody) return;
+        modalTitle.textContent = 'Compare Agents';
+        const opts = agents.map(a => `<option value="${escapeHtml(a.agent_id)}">${escapeHtml(a.label || a.name || a.agent_id)}</option>`).join('');
+        modalBody.innerHTML = '<div class="grid-2col mb-md">' +
+            '<div><label>Agent 1:</label><select id="compare-agent1">' + opts + '</select></div>' +
+            '<div><label>Agent 2:</label><select id="compare-agent2">' + opts + '</select></div>' +
+            '</div><button class="panel-button" id="compare-run">Compare</button><div id="compare-result" class="mt-md"></div>';
+        const runBtn = modalBody.querySelector('#compare-run');
+        const resultDiv = modalBody.querySelector('#compare-result');
+        const select2 = modalBody.querySelector('#compare-agent2');
+        if (select2 && agents.length > 1) select2.selectedIndex = 1;
+        runBtn.addEventListener('click', async () => {
+            const id1 = modalBody.querySelector('#compare-agent1').value;
+            const id2 = modalBody.querySelector('#compare-agent2').value;
+            if (id1 === id2) { resultDiv.innerHTML = 'Select different agents'; return; }
+            runBtn.disabled = true;
+            resultDiv.innerHTML = 'Loading...';
+            try {
+                const r = await callTool('compare_agents', { agent_ids: [id1, id2] });
+                const c = r?.comparison || r;
+                if (!c) { resultDiv.innerHTML = 'No comparison data'; return; }
+                const diff = c.differences || c;
+                resultDiv.innerHTML = '<pre>' + escapeHtml(JSON.stringify(diff, null, 2)) + '</pre>';
+            } catch (e) {
+                resultDiv.innerHTML = 'Error: ' + escapeHtml(e.message);
+            }
+            runBtn.disabled = false;
+        });
+        modal.classList.add('visible');
+        document.body.style.overflow = 'hidden';
     });
 }
 
@@ -1707,6 +1855,102 @@ if (stuckAgentsCard) {
     stuckAgentsCard.addEventListener('click', () => {
         if (cachedStuckAgents.length > 0) {
             expandPanel('stuck-agents');
+        }
+    });
+}
+
+// Calibration card - expand to modal
+const calibrationCard = document.getElementById('calibration-card');
+if (calibrationCard) {
+    calibrationCard.addEventListener('click', async () => {
+        const modal = document.getElementById('panel-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalBody = document.getElementById('modal-body');
+        if (!modal || !modalTitle || !modalBody) return;
+        modalTitle.textContent = 'Calibration';
+        modalBody.innerHTML = '<div class="loading">Loading...</div>';
+        modal.classList.add('visible');
+        document.body.style.overflow = 'hidden';
+        try {
+            const r = await callTool('check_calibration', {});
+            const th = r?.trajectory_health ?? r?.accuracy ?? 0;
+            const dist = r?.confidence_distribution || {};
+            modalBody.innerHTML = '<div class="detail-section">' +
+                '<div><strong>Calibrated:</strong> ' + (r?.calibrated ? 'Yes' : 'No') + '</div>' +
+                '<div><strong>Trajectory health:</strong> ' + (th * 100).toFixed(1) + '%</div>' +
+                (dist.mean != null ? '<div><strong>Confidence mean:</strong> ' + (dist.mean * 100).toFixed(1) + '%</div>' : '') +
+                '</div>';
+        } catch (e) {
+            modalBody.innerHTML = '<div class="loading">Error: ' + escapeHtml(e.message) + '</div>';
+        }
+    });
+}
+
+// Anomalies card - expand to modal
+const anomaliesCard = document.getElementById('anomalies-card');
+if (anomaliesCard) {
+    anomaliesCard.addEventListener('click', async () => {
+        const modal = document.getElementById('panel-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalBody = document.getElementById('modal-body');
+        if (!modal || !modalTitle || !modalBody) return;
+        modalTitle.textContent = 'Anomalies';
+        modalBody.innerHTML = '<div class="loading">Loading...</div>';
+        modal.classList.add('visible');
+        document.body.style.overflow = 'hidden';
+        try {
+            const r = await callTool('detect_anomalies', {});
+            const anomalies = r?.anomalies || [];
+            if (anomalies.length === 0) {
+                modalBody.innerHTML = '<div class="loading">No anomalies detected</div>';
+            } else {
+                modalBody.innerHTML = anomalies.map(a =>
+                    '<div class="anomaly-item" style="margin-bottom: 10px; padding: 8px; border-left: 3px solid var(--accent-orange);">' +
+                    '<strong>' + escapeHtml(a.type || 'anomaly') + '</strong> ' + escapeHtml(a.severity || '') + '<br>' +
+                    escapeHtml(a.description || '') + ' ' + (a.agent_id ? '<code>' + escapeHtml(a.agent_id) + '</code>' : '') +
+                    '</div>'
+                ).join('');
+            }
+        } catch (e) {
+            modalBody.innerHTML = '<div class="loading">Error: ' + escapeHtml(e.message) + '</div>';
+        }
+    });
+}
+
+// Thresholds button
+const thresholdsBtn = document.getElementById('thresholds-btn');
+if (thresholdsBtn) {
+    thresholdsBtn.addEventListener('click', async () => {
+        const modal = document.getElementById('panel-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalBody = document.getElementById('modal-body');
+        if (!modal || !modalTitle || !modalBody) return;
+        modalTitle.textContent = 'Thresholds';
+        modalBody.innerHTML = '<div class="loading">Loading...</div>';
+        modal.classList.add('visible');
+        document.body.style.overflow = 'hidden';
+        try {
+            const r = await callTool('get_thresholds', {});
+            const t = r?.thresholds || {};
+            const keys = ['risk_approve_threshold', 'risk_revise_threshold', 'coherence_critical_threshold', 'void_threshold_initial'];
+            modalBody.innerHTML = '<div class="thresholds-form">' +
+                keys.map(k => `<div><label>${k.replace(/_/g, ' ')}:</label> <input type="number" step="0.01" data-key="${k}" value="${t[k] ?? ''}" style="width:80px"></div>`).join('') +
+                '<button class="panel-button mt-md" id="thresholds-save">Save</button></div>';
+            modalBody.querySelector('#thresholds-save').addEventListener('click', async () => {
+                const inputs = modalBody.querySelectorAll('input[data-key]');
+                const thresholds = {};
+                inputs.forEach(inp => { const v = parseFloat(inp.value); if (!isNaN(v)) thresholds[inp.dataset.key] = v; });
+                if (Object.keys(thresholds).length === 0) return;
+                const result = await callTool('set_thresholds', { thresholds });
+                if (result?.success) {
+                    modalBody.innerHTML = '<div class="loading">Saved.</div>';
+                    setTimeout(closeModal, 800);
+                } else {
+                    modalBody.innerHTML += '<div class="text-secondary-sm mb-md">Error: ' + (result?.errors?.join(', ') || '') + '</div>';
+                }
+            });
+        } catch (e) {
+            modalBody.innerHTML = '<div class="loading">Error: ' + escapeHtml(e.message) + '</div>';
         }
     });
 }

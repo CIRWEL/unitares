@@ -156,31 +156,28 @@ def _reconstruct_session_from_dict(session_id: str, session_data: Dict) -> Optio
 
 async def save_session(session: DialecticSession) -> None:
     """
-    Persist dialectic session to PostgreSQL (primary) and optionally JSON (snapshot).
+    Persist dialectic session to PostgreSQL (upsert) and JSON (snapshot).
 
-    All callers (dialectic handlers, lifecycle auto-triggers) go through here,
-    ensuring a single write path and no data split between backends.
+    Uses pg_update_phase to sync phase/synthesis_round to PG (not INSERT).
+    The JSON snapshot captures the full in-memory state for offline debugging.
     """
-    # Primary: write to PostgreSQL
+    # Primary: update phase + resolution in PostgreSQL
     try:
-        from src.dialectic_db import create_session_async as pg_create_session
-        await pg_create_session(
-            session_id=session.session_id,
-            paused_agent_id=session.paused_agent_id,
-            reviewer_agent_id=session.reviewer_agent_id,
-            reason=getattr(session, 'reason', None),
-            discovery_id=getattr(session, 'discovery_id', None),
-            dispute_type=getattr(session, 'dispute_type', None),
-            session_type=getattr(session, 'session_type', None),
-            topic=getattr(session, 'topic', None),
-            max_synthesis_rounds=getattr(session, 'max_synthesis_rounds', 5),
-            synthesis_round=getattr(session, 'synthesis_round', 0),
-            paused_agent_state=getattr(session, 'paused_agent_state', None),
-        )
-        logger.debug(f"Session {session.session_id} saved to PostgreSQL")
+        from src.dialectic_db import update_session_phase_async as pg_update_phase
+        from src.dialectic_db import resolve_session_async as pg_resolve_session
+        if session.phase in (DialecticPhase.RESOLVED, DialecticPhase.FAILED, DialecticPhase.ESCALATED):
+            resolution_dict = session.resolution.to_dict() if session.resolution else None
+            status = session.phase.value if session.phase == DialecticPhase.RESOLVED else "failed"
+            await pg_resolve_session(
+                session_id=session.session_id,
+                resolution=resolution_dict,
+                status=status,
+            )
+        else:
+            await pg_update_phase(session.session_id, session.phase.value)
+        logger.debug(f"Session {session.session_id} synced to PostgreSQL (phase={session.phase.value})")
     except Exception as e:
-        # Log but don't block — JSON snapshot is the fallback
-        logger.error(f"PostgreSQL save failed for session {session.session_id}: {e}")
+        logger.error(f"PostgreSQL sync failed for session {session.session_id}: {e}")
 
     # Secondary: JSON snapshot (for offline access / debugging)
     try:

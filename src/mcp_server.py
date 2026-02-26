@@ -1322,9 +1322,17 @@ async def main():
             logger.info(f"Streamable HTTP transport not available: {e}")
         
         # === Add CORS support for web-based GPT/Gemini clients ===
+        # CORS: restrict to known origins (dashboard, local dev, Tailscale)
+        _cors_origins = [
+            "http://localhost:8767",
+            "http://127.0.0.1:8767",
+            "http://192.168.1.0/16",
+        ]
+        if HTTP_CORS_ALLOW_ORIGIN:
+            _cors_origins.append(HTTP_CORS_ALLOW_ORIGIN)
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],  # Allow all origins (restrict in production)
+            allow_origins=_cors_origins,
             allow_methods=["GET", "POST", "OPTIONS"],
             allow_headers=["*"],
             expose_headers=["*"],
@@ -1866,12 +1874,12 @@ async def main():
         ]
 
         def _is_trusted_network(request) -> bool:
-            """Check if request originates from a trusted network."""
-            forwarded = request.headers.get("x-forwarded-for")
-            if forwarded:
-                client_ip = forwarded.split(",")[0].strip()
-            else:
-                client_ip = request.client.host if request.client else None
+            """Check if request originates from a trusted network.
+
+            Uses the actual TCP peer address only — never trust X-Forwarded-For
+            since there is no reverse proxy stripping it before us.
+            """
+            client_ip = request.client.host if request.client else None
             if not client_ip:
                 return False
             try:

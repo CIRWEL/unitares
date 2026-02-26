@@ -478,20 +478,22 @@ body {
     position: absolute;
     bottom: -1px;
     left: 0;
-    width: 200px;
-    height: 1px;
-    background: linear-gradient(90deg, var(--accent-cyan), transparent);
+    width: 300px;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple), transparent);
+    box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
 }
 
 .header h1 {
-    font-size: 1.8rem;
-    font-weight: 700;
+    font-size: 2.2rem;
+    font-weight: 800;
     margin: 0;
-    background: linear-gradient(135deg, #ffffff 10%, var(--accent-cyan) 60%, var(--accent-purple) 100%);
+    background: linear-gradient(135deg, #ffffff 0%, var(--accent-cyan) 50%, var(--accent-purple) 100%);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.03em;
+    text-shadow: 0 0 40px rgba(0, 240, 255, 0.15);
 }
 
 .header .subtitle {
@@ -612,8 +614,10 @@ body {
 
 .section-nav-item.active {
     color: var(--accent-cyan);
-    background: rgba(0, 240, 255, 0.08);
-    border-color: rgba(0, 240, 255, 0.25);
+    background: rgba(0, 240, 255, 0.12);
+    border-color: rgba(0, 240, 255, 0.4);
+    font-weight: 600;
+    box-shadow: 0 2px 0 0 var(--accent-cyan), 0 0 12px rgba(0, 240, 255, 0.08);
 }
 
 [data-theme="light"] .section-nav {
@@ -621,8 +625,10 @@ body {
 }
 
 [data-theme="light"] .section-nav-item.active {
-    background: rgba(0, 150, 200, 0.1);
-    border-color: rgba(0, 150, 200, 0.3);
+    background: rgba(0, 150, 200, 0.12);
+    border-color: rgba(0, 150, 200, 0.4);
+    font-weight: 600;
+    box-shadow: 0 2px 0 0 rgba(0, 150, 200, 0.7), 0 0 8px rgba(0, 150, 200, 0.06);
 }
 
 /* ============================================
@@ -644,9 +650,10 @@ body {
 
 .stat-card {
     background-color: var(--card-bg);
+    background-image: linear-gradient(135deg, var(--stat-tint, transparent), transparent 60%);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    padding: 18px 20px;
+    padding: 20px 22px;
     transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     box-shadow: var(--shadow-sm);
     position: relative;
@@ -673,16 +680,16 @@ body {
     top: 0;
     left: 0;
     width: 100%;
-    height: 2px;
+    height: 3px;
     background: var(--stat-accent, var(--accent-cyan));
-    box-shadow: 0 0 8px var(--stat-accent, var(--accent-cyan));
+    box-shadow: 0 0 12px var(--stat-accent, var(--accent-cyan));
 }
 
-.stat-card[data-accent="cyan"]  { --stat-accent: var(--accent-cyan); }
-.stat-card[data-accent="green"] { --stat-accent: var(--accent-green); }
-.stat-card[data-accent="purple"]{ --stat-accent: var(--accent-purple); }
-.stat-card[data-accent="orange"]{ --stat-accent: var(--accent-orange); }
-.stat-card[data-accent="info"]  { --stat-accent: var(--color-info); }
+.stat-card[data-accent="cyan"]  { --stat-accent: var(--accent-cyan);   --stat-tint: rgba(0, 240, 255, 0.04); }
+.stat-card[data-accent="green"] { --stat-accent: var(--accent-green);  --stat-tint: rgba(0, 230, 118, 0.04); }
+.stat-card[data-accent="purple"]{ --stat-accent: var(--accent-purple); --stat-tint: rgba(157, 78, 221, 0.04); }
+.stat-card[data-accent="orange"]{ --stat-accent: var(--accent-orange); --stat-tint: rgba(255, 61, 0, 0.05); }
+.stat-card[data-accent="info"]  { --stat-accent: var(--color-info);    --stat-tint: rgba(59, 130, 246, 0.04); }
 
 .stat-card[data-accent="coherence"] {
     --stat-accent: var(--accent-cyan);
@@ -734,9 +741,9 @@ body {
 }
 
 .stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
-    border-color: var(--border-highlight);
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-md), 0 0 20px color-mix(in srgb, var(--stat-accent, var(--accent-cyan)) 15%, transparent);
+    border-color: color-mix(in srgb, var(--stat-accent, var(--accent-cyan)) 40%, transparent);
 }
 
 .stat-card h2 {
@@ -756,10 +763,11 @@ body {
 }
 
 .stat-card .value {
-    color: var(--text-primary);
-    font-size: 1.8em;
+    color: var(--stat-accent, var(--text-primary));
+    font-size: 2em;
     font-weight: 700;
     font-family: var(--font-mono);
+    text-shadow: 0 0 20px color-mix(in srgb, var(--stat-accent, transparent) 30%, transparent);
 }
 
 .stat-card .change {
@@ -817,14 +825,17 @@ body {
     position: relative;
 }
 
-.panel::before {
+/* Top accent bar on panels — color-coded per section */
+.panel::after {
     content: '';
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    height: 3px;
+    background: var(--panel-dot-color, var(--accent-cyan));
+    box-shadow: 0 0 12px var(--panel-dot-color, var(--accent-cyan));
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
 .panel-header {
@@ -839,13 +850,14 @@ body {
 }
 
 .panel h2 {
-    color: var(--text-primary);
+    color: var(--panel-dot-color, var(--text-primary));
     font-size: 1.4rem;
-    font-weight: 600;
+    font-weight: 700;
     margin: 0;
     display: flex;
     align-items: center;
     gap: 10px;
+    letter-spacing: -0.01em;
 }
 
 .panel h2::before {
@@ -858,10 +870,27 @@ body {
     box-shadow: 0 0 10px var(--panel-dot-color, var(--accent-cyan));
 }
 
-.panel-purple { --panel-dot-color: var(--accent-purple); }
-.panel-yellow { --panel-dot-color: var(--accent-yellow); }
-.panel-green  { --panel-dot-color: var(--accent-green); }
-.panel-orange { --panel-dot-color: var(--accent-orange); }
+.panel-purple {
+    --panel-dot-color: var(--accent-purple);
+    background-image: radial-gradient(ellipse at top left, rgba(157, 78, 221, 0.06), transparent 50%);
+}
+.panel-yellow {
+    --panel-dot-color: var(--accent-yellow);
+    background-image: radial-gradient(ellipse at top left, rgba(255, 234, 0, 0.04), transparent 50%);
+}
+.panel-green {
+    --panel-dot-color: var(--accent-green);
+    background-image: radial-gradient(ellipse at top left, rgba(0, 230, 118, 0.05), transparent 50%);
+}
+.panel-orange {
+    --panel-dot-color: var(--accent-orange);
+    background-image: radial-gradient(ellipse at top left, rgba(255, 61, 0, 0.05), transparent 50%);
+}
+
+/* Agents panel (default cyan) gets its own tint */
+.agents-panel {
+    background-image: radial-gradient(ellipse at top left, rgba(0, 240, 255, 0.05), transparent 50%);
+}
 
 /* ============================================
    Panel Controls
@@ -1018,9 +1047,9 @@ body {
    Agent Items
    ============================================ */
 .agent-item {
-    background: var(--item-bg);
+    background: linear-gradient(90deg, rgba(0, 240, 255, 0.03) 0%, var(--item-bg) 30%);
     border: 1px solid var(--border-color);
-    border-left: 3px solid var(--accent-cyan);
+    border-left: 4px solid var(--accent-cyan);
     border-radius: var(--radius-md);
     padding: 18px;
     margin-bottom: 15px;
@@ -1115,30 +1144,33 @@ body {
    ============================================ */
 .status-chip {
     font-size: 0.7em;
-    padding: 3px 8px;
+    padding: 3px 10px;
     border-radius: 4px;
     text-transform: uppercase;
-    letter-spacing: 0.03em;
-    font-weight: 600;
-    border: 1px solid transparent;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+    border: 1px solid rgba(255, 255, 255, 0.1);
     background: var(--metric-track);
     color: var(--text-secondary);
     cursor: pointer;
 }
 
 .status-chip.active {
-    background: rgba(3, 218, 198, 0.15);
+    background: rgba(0, 230, 118, 0.15);
     color: var(--accent-green);
+    border-color: rgba(0, 230, 118, 0.3);
 }
 
 .status-chip.waiting_input {
-    background: rgba(245, 215, 122, 0.15);
+    background: rgba(255, 208, 0, 0.12);
     color: var(--accent-yellow-text);
+    border-color: rgba(255, 208, 0, 0.3);
 }
 
 .status-chip.paused {
-    background: rgba(207, 102, 121, 0.15);
+    background: rgba(255, 61, 0, 0.12);
     color: var(--accent-orange);
+    border-color: rgba(255, 61, 0, 0.3);
 }
 
 /* ============================================
@@ -1243,21 +1275,26 @@ body {
 .trust-tier.tier-0 {
     background: rgba(160, 160, 176, 0.15);
     color: var(--text-secondary);
+    border: 1px solid rgba(160, 160, 176, 0.2);
 }
 
 .trust-tier.tier-1 {
-    background: rgba(245, 215, 122, 0.15);
+    background: rgba(255, 208, 0, 0.12);
     color: var(--accent-yellow-text);
+    border: 1px solid rgba(255, 208, 0, 0.3);
 }
 
 .trust-tier.tier-2 {
-    background: rgba(3, 218, 198, 0.15);
+    background: rgba(0, 230, 118, 0.15);
     color: var(--accent-green);
+    border: 1px solid rgba(0, 230, 118, 0.3);
 }
 
 .trust-tier.tier-3 {
-    background: rgba(0, 255, 255, 0.15);
+    background: rgba(0, 240, 255, 0.15);
     color: var(--accent-cyan);
+    border: 1px solid rgba(0, 240, 255, 0.3);
+    box-shadow: 0 0 6px rgba(0, 240, 255, 0.2);
 }
 
 /* Stuck badge — shown on agent cards when detect_stuck_agents flags them */
@@ -1364,9 +1401,9 @@ body {
    Discoveries
    ============================================ */
 .discovery-item {
-    background: var(--item-bg);
+    background: linear-gradient(90deg, rgba(157, 78, 221, 0.03) 0%, var(--item-bg) 30%);
     border: 1px solid var(--border-color);
-    border-left: 3px solid var(--accent-purple);
+    border-left: 4px solid var(--accent-purple);
     border-radius: var(--radius-md);
     padding: 18px;
     margin-bottom: 15px;
@@ -1416,17 +1453,39 @@ body {
 
 .discovery-type.insight {
     color: var(--accent-green);
-    border-color: rgba(3, 218, 198, 0.3);
+    background: rgba(0, 230, 118, 0.12);
+    border-color: rgba(0, 230, 118, 0.3);
+}
+
+.discovery-type.improvement {
+    color: var(--accent-cyan);
+    background: rgba(0, 240, 255, 0.1);
+    border-color: rgba(0, 240, 255, 0.3);
 }
 
 .discovery-type.pattern {
     color: var(--accent-purple);
-    border-color: rgba(187, 134, 252, 0.3);
+    background: rgba(157, 78, 221, 0.12);
+    border-color: rgba(157, 78, 221, 0.3);
 }
 
 .discovery-type.bug_found {
     color: var(--accent-orange);
-    border-color: rgba(207, 102, 121, 0.3);
+    background: rgba(255, 61, 0, 0.12);
+    border-color: rgba(255, 61, 0, 0.3);
+}
+
+.discovery-type.question,
+.discovery-type.answer {
+    color: var(--color-info);
+    background: rgba(59, 130, 246, 0.1);
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.discovery-type.analysis {
+    color: var(--accent-yellow-text);
+    background: rgba(255, 208, 0, 0.1);
+    border-color: rgba(255, 208, 0, 0.25);
 }
 
 .discovery-item h4 {
@@ -1676,9 +1735,9 @@ body {
 }
 
 .dialectic-item {
-    background: var(--item-bg);
+    background: linear-gradient(90deg, rgba(255, 234, 0, 0.025) 0%, var(--item-bg) 30%);
     border: 1px solid var(--border-color);
-    border-left: 3px solid var(--accent-yellow);
+    border-left: 4px solid var(--accent-yellow);
     border-radius: var(--radius-md);
     padding: 18px;
     transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);

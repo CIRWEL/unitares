@@ -47,6 +47,7 @@
                 <input id="pause-refresh" type="checkbox">
                 Pause auto-refresh
             </label>
+            <button id="thresholds-btn" class="toolbar-button" type="button" title="View/edit thresholds">Thresholds</button>
             <button id="theme-toggle" class="theme-toggle" type="button" title="Toggle theme">
                 <span id="theme-icon">🌙</span>
                 <span id="theme-label">Dark</span>
@@ -59,7 +60,7 @@
             </span>
             &bull;
             <span id="refresh-status">Auto-refresh every 30 seconds</span> &bull; Last updated: <span
-                id="last-update">-</span>
+                id="last-update">-</span> &bull; <span id="server-version" title="Server version">-</span>
         </div>
     </div>
 
@@ -106,6 +107,16 @@
                 <div class="value" id="system-health-value">-</div>
                 <div class="change" id="system-health-detail"></div>
             </div>
+            <div class="stat-card expandable" data-accent="green" id="calibration-card" title="Click for calibration details">
+                <h2>Calibration <span class="expand-icon">&#9662;</span></h2>
+                <div class="value" id="calibration-value">-</div>
+                <div class="change" id="calibration-detail"></div>
+            </div>
+            <div class="stat-card expandable" data-accent="orange" id="anomalies-card" title="Click for anomaly details">
+                <h2>Anomalies <span class="expand-icon">&#9662;</span></h2>
+                <div class="value" id="anomalies-count">-</div>
+                <div class="change" id="anomalies-detail"></div>
+            </div>
         </div>
 
         <!-- Pulse — last agent's governance decision -->
@@ -118,7 +129,7 @@
                         <span class="verdict-dot"></span>
                         <span class="verdict-label">—</span>
                     </span>
-                    <span class="data-freshness" id="data-freshness">No data yet</span>
+                    <span class="data-freshness" id="data-freshness">No agent check-in yet</span>
                 </div>
             </div>
             <div class="pulse-grid pulse-grid-simple">
@@ -282,6 +293,7 @@
                         </select>
                         <button id="agent-filters-toggle" class="panel-button" type="button"
                             title="Toggle filters">Filters</button>
+                        <button id="agent-compare-btn" class="panel-button" type="button" title="Compare two agents">Compare</button>
                     </div>
                 </div>
                 <div class="agent-filters-row collapsed" id="agent-filters-row">
