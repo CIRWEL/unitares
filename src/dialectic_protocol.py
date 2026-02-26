@@ -68,13 +68,10 @@ The `check_hard_limits()` function prevents resolutions that would:
 - Set coherence thresholds < 0.1
 - Include vague or meaningless conditions
 
-## Convergence Detection
+## Convergence
 
-The `_check_both_agree()` function uses semantic matching to detect convergence:
-- Both agents must explicitly agree (`agrees=True`)
-- Conditions must match semantically (>=60% word overlap)
-- Root cause must have word overlap (>=20% or optional if conditions match well)
-- Normalizes conditions by removing filler words and parenthetical notes
+Synthesis with `agrees=True` resolves the session immediately.
+Three phases: thesis → antithesis → synthesis. No fourth phase.
 
 ## Usage Example
 
@@ -545,127 +542,6 @@ class DialecticSession:
             "round": self.synthesis_round,
             "max_rounds": self.max_synthesis_rounds,
         }
-
-    def _check_both_agree(self) -> bool:
-        """
-        Check if at least 2 distinct agents agree on the same proposal.
-
-        Open facilitation model: any agent can participate in synthesis.
-        Convergence requires at least 2 distinct agents with agrees=True
-        in recent synthesis messages, with compatible conditions and root cause.
-
-        Self-review (paused == reviewer) requires 2 synthesis messages with
-        agrees=True and conditions from the same agent.
-        """
-        recent_synthesis = [msg for msg in self.transcript[-6:] if msg.phase == "synthesis"]
-
-        # Self-review: require at least 2 synthesis messages with agrees=True
-        if self.paused_agent_id == self.reviewer_agent_id:
-            agreed = [msg for msg in recent_synthesis
-                      if msg.agrees and msg.agent_id == self.paused_agent_id]
-            if len(agreed) < 2:
-                return False
-            if not (agreed[-1].proposed_conditions):
-                return False
-            return True
-
-        if len(recent_synthesis) < 2:
-            return False
-
-        # Collect most recent agrees=True message from each distinct agent
-        agreed_by_agent: Dict[str, 'DialecticMessage'] = {}
-        for msg in recent_synthesis:
-            if msg.agrees:
-                agreed_by_agent[msg.agent_id] = msg  # last one wins
-
-        if len(agreed_by_agent) < 2:
-            return False
-
-        # Pick any 2 agreeing agents' messages for condition/root-cause checks
-        agreeing_msgs = list(agreed_by_agent.values())
-        msg_a = agreeing_msgs[-2]
-        msg_b = agreeing_msgs[-1]
-
-        # At least one side must propose conditions
-        conditions_a = msg_a.proposed_conditions or []
-        conditions_b = msg_b.proposed_conditions or []
-
-        if not conditions_a and not conditions_b:
-            return False
-
-        # Check conditions match semantically (if both provide them)
-        if conditions_a and conditions_b:
-            normalized_a = [self._normalize_condition(c) for c in conditions_a]
-            normalized_b = [self._normalize_condition(c) for c in conditions_b]
-
-            matches = 0
-            total = len(normalized_a) + len(normalized_b)
-
-            for norm_a in normalized_a:
-                for norm_b in normalized_b:
-                    similarity = self._semantic_similarity(norm_a, norm_b)
-                    if similarity >= 0.6:
-                        matches += 1
-                        break
-
-            match_ratio = (matches * 2) / total if total > 0 else 0.0
-            if match_ratio < 0.5:
-                return False
-
-        # Root cause check: at least one must provide root cause
-        root_cause_a = (msg_a.root_cause or "").lower()
-        root_cause_b = (msg_b.root_cause or "").lower()
-
-        if root_cause_a and root_cause_b:
-            words_a = set(root_cause_a.split())
-            words_b = set(root_cause_b.split())
-            if words_a and words_b:
-                word_overlap = len(words_a & words_b) / len(words_a | words_b)
-                if word_overlap < 0.15:
-                    return False
-        elif not root_cause_a and not root_cause_b:
-            return False
-
-        return True
-
-    def _normalize_condition(self, condition: str) -> str:
-        """
-        Normalize a condition string to extract key semantic elements.
-
-        Removes:
-        - Parenthetical notes (e.g., "(low effort, reasonable hygiene)")
-        - Common filler words
-        - Punctuation
-
-        Keeps:
-        - Action verbs (implement, add, defer, document, etc.)
-        - Key nouns (recently-reviewed check, reputation tracking, etc.)
-        """
-        import re
-        # Remove parenthetical notes
-        condition = re.sub(r'\([^)]*\)', '', condition)
-        # Remove common filler words
-        filler_words = {'the', 'a', 'an', 'and', 'or', 'but', 'to', 'for', 'of', 'in', 'on', 'at', 'by', 'with', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'it', 'its'}
-        words = re.findall(r'\b[a-zA-Z][a-zA-Z/]*\b', condition)
-        key_words = [w.lower() for w in words if w.lower() not in filler_words and len(w) > 1]
-        return ' '.join(sorted(key_words))  # Sort for consistent comparison
-
-    def _semantic_similarity(self, text1: str, text2: str) -> float:
-        """
-        Calculate semantic similarity between two normalized text strings.
-
-        Uses word overlap (Jaccard similarity) on normalized text.
-        """
-        words1 = set(text1.split())
-        words2 = set(text2.split())
-
-        if not words1 or not words2:
-            return 0.0
-
-        intersection = len(words1 & words2)
-        union = len(words1 | words2)
-
-        return intersection / union if union > 0 else 0.0
 
     @staticmethod
     def _normalize_condition_terms(cond: str) -> set:
