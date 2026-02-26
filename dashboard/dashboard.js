@@ -53,8 +53,6 @@ if (typeof DashboardAPI === 'undefined' || typeof DataProcessor === 'undefined' 
 // Core instances
 const api = typeof DashboardAPI !== 'undefined' ? new DashboardAPI(window.location.origin) : null;
 const themeManager = typeof ThemeManager !== 'undefined' ? new ThemeManager() : null;
-let optionalPanelRefreshCycle = 0;
-
 // State bridges — route globals through state.js for module access
 // Each property getter/setter delegates to state.get()/state.set()
 // so existing code like `cachedAgents = x` still works transparently.
@@ -994,10 +992,12 @@ async function loadSystemHealth() {
         cardEl.classList.remove('stat-warning', 'stat-critical');
 
         if (db.status === 'connected') {
-            const idle = db.pool_idle ?? 0;
+            // Backend returns pool_idle (idle conns) and pool_size (total in pool); pool_max is max capacity
+            const idle = db.pool_idle ?? db.pool_free ?? 0;
             const total = db.pool_size ?? 0;
-            const max = db.pool_max ?? 0;
-            const usage = total > 0 ? ((total - idle) / max * 100).toFixed(0) : 0;
+            const max = Math.max(db.pool_max ?? total, 1);  // Avoid div by zero
+            const active = Math.max(0, total - idle);
+            const usage = max > 0 ? ((active / max) * 100).toFixed(0) : 0;
 
             if (usage > 90) {
                 valueEl.textContent = '⚠ DB';
@@ -1008,7 +1008,7 @@ async function loadSystemHealth() {
             } else {
                 valueEl.textContent = 'OK';
             }
-            detailEl.innerHTML = `DB pool ${total - idle}/${max} active · Up ${uptime}`;
+            detailEl.innerHTML = `DB pool ${active}/${max} active · Up ${uptime}`;
         } else if (db.status === 'no_pool') {
             valueEl.textContent = '⚠';
             cardEl.classList.add('stat-warning');
@@ -1052,65 +1052,6 @@ async function loadROIMetrics() {
         console.debug('Could not load ROI metrics:', e);
     }
 }
-
-/**
- * Load Lumen (Pi) status including anima and environmental metrics
- */
-async function loadLumenStatus() {
-    const connEl = document.getElementById('lumen-connection');
-    const badgeEl = document.getElementById('lumen-id-badge');
-    if (!connEl) return;
-
-    try {
-        // Parallel fetch for context and health
-        const [contextData, healthData] = await Promise.all([
-            callTool(
-                'pi_get_context',
-                { include: ['identity', 'anima', 'sensors', 'mood'] },
-                { retry: false, useCache: true, cacheTimeout: 60000 }
-            ),
-            callTool('pi_health', {}, { retry: false, useCache: true, cacheTimeout: 60000 })
-        ]);
-
-        const ctx = contextData.context || {};
-        const anima = ctx.anima || {};
-        const sensors = ctx.sensors || {};
-
-        // Update identity
-        if (badgeEl && ctx.identity?.uuid) {
-            badgeEl.textContent = ctx.identity.uuid.substring(0, 8);
-        }
-
-        // Update connection status
-        connEl.innerHTML = '<span class="verdict-dot" style="background: var(--accent-green)"></span><span class="verdict-label">Connected</span>';
-        connEl.className = 'governance-verdict'; // Reset classes
-
-        // Update anima metrics
-        const updateMetric = (id, val, suffix = '') => {
-            const el = document.getElementById(id);
-            if (el) el.textContent = val !== undefined ? `${(typeof val === 'number' ? val.toFixed(2) : val)}${suffix}` : '-';
-        };
-
-        updateMetric('lumen-warmth', anima.warmth);
-        updateMetric('lumen-clarity', anima.clarity);
-        updateMetric('lumen-stability', anima.stability);
-        updateMetric('lumen-presence', anima.presence);
-
-        // Update environmental metrics
-        updateMetric('env-temp', sensors.temp, '°C');
-        updateMetric('env-humidity', sensors.humidity, '%');
-        updateMetric('env-lux', sensors.lux, 'lx');
-
-        // Update mood
-        const moodEl = document.getElementById('lumen-mood-summary');
-        if (moodEl) moodEl.textContent = ctx.mood || 'Quiet';
-
-    } catch (e) {
-        console.debug('Could not load Lumen status:', e);
-        connEl.innerHTML = '<span class="verdict-dot" style="background: var(--accent-orange)"></span><span class="verdict-label">Offline</span>';
-    }
-}
-
 
 /**
  * Load discoveries from API and render to panel.
@@ -1415,18 +1356,10 @@ async function refresh(options = {}) {
             loadDiscoveries(),
             loadDialecticSessions(),
             loadStuckAgents(),
-            loadSystemHealth()
+            loadSystemHealth(),
+            loadROIMetrics()
         ]);
         console.log('Load results:', results);
-
-        // Optional panels refresh less frequently to reduce API pressure.
-        optionalPanelRefreshCycle += 1;
-        const shouldRefreshOptional = force || (optionalPanelRefreshCycle % CONFIG.OPTIONAL_REFRESH_EVERY_N_CYCLES === 0);
-        if (shouldRefreshOptional) {
-            Promise.allSettled([loadROIMetrics(), loadLumenStatus()]).catch((e) => {
-                console.debug('Optional panel refresh failed:', e);
-            });
-        }
 
         // Check if critical operations failed (agents and discoveries)
         const agentsResult = results[0];

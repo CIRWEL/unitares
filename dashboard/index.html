@@ -67,7 +67,6 @@
 
     <nav class="section-nav" id="section-nav" aria-label="Dashboard sections">
         <a href="#stats-section" class="section-nav-item active" data-section="stats-section">Stats</a>
-        <a href="#lumen-status-panel" class="section-nav-item" data-section="lumen-status-panel">Lumen</a>
         <a href="#governance-pulse-panel" class="section-nav-item" data-section="governance-pulse-panel">Pulse</a>
         <a href="#eisv-chart-panel" class="section-nav-item" data-section="eisv-chart-panel">EISV</a>
         <a href="#timeline-panel" class="section-nav-item" data-section="timeline-panel">Timeline</a>
@@ -117,50 +116,6 @@
                 <h2>System Health</h2>
                 <div class="value" id="system-health-value">-</div>
                 <div class="change" id="system-health-detail"></div>
-            </div>
-        </div>
-
-        <!-- Lumen Status — shows embodied state from Pi -->
-        <div class="live-chart-panel" id="lumen-status-panel">
-            <div class="panel-header">
-                <h2>Lumen Identity <span class="pulse-agent-badge" id="lumen-id-badge">69a1a4f7</span></h2>
-                <div class="vitals-header-right">
-                    <span class="governance-verdict" id="lumen-connection">
-                        <span class="verdict-dot"></span>
-                        <span class="verdict-label">Connecting...</span>
-                    </span>
-                </div>
-            </div>
-            <div class="lumen-status-grid">
-                <div class="anima-value">
-                    <div class="anima-value-label">Warmth</div>
-                    <div class="anima-value-number" id="lumen-warmth">-</div>
-                    <div class="anima-mood" id="lumen-mood-summary">Quiet</div>
-                </div>
-                <div class="anima-value">
-                    <div class="anima-value-label">Clarity</div>
-                    <div class="anima-value-number" id="lumen-clarity">-</div>
-                </div>
-                <div class="anima-value">
-                    <div class="anima-value-label">Stability</div>
-                    <div class="anima-value-number" id="lumen-stability">-</div>
-                </div>
-                <div class="anima-value">
-                    <div class="anima-value-label">Presence</div>
-                    <div class="anima-value-number" id="lumen-presence">-</div>
-                </div>
-                <div class="anima-value">
-                    <div class="anima-value-label">Temp</div>
-                    <div class="anima-value-number" id="env-temp">-</div>
-                </div>
-                <div class="anima-value">
-                    <div class="anima-value-label">Humidity</div>
-                    <div class="anima-value-number" id="env-humidity">-</div>
-                </div>
-                <div class="anima-value">
-                    <div class="anima-value-label">Light</div>
-                    <div class="anima-value-number" id="env-lux">-</div>
-                </div>
             </div>
         </div>
 
