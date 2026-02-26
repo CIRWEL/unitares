@@ -433,22 +433,21 @@ class DialecticSession:
         """
         Agent A submits thesis: "What I did, what I think happened"
 
-        Args:
-            message: Thesis message with root_cause, proposed_conditions
-            api_key: Deprecated, unused. Auth handled at handler layer.
-
-        Returns:
-            Status dict
+        Requires root_cause and at least one proposed condition.
         """
-        # Verify agent
         if message.agent_id != self.paused_agent_id:
             return {"success": False, "error": "Only paused agent can submit thesis"}
 
-        # Verify phase
         if self.phase != DialecticPhase.THESIS:
             return {"success": False, "error": f"Cannot submit thesis in phase {self.phase.value}"}
 
-        # Store message
+        # Content validation: thesis must explain what happened and propose conditions
+        if not message.root_cause or not message.root_cause.strip():
+            return {"success": False, "error": "Thesis requires root_cause: explain what you think happened"}
+
+        if not message.proposed_conditions or len(message.proposed_conditions) == 0:
+            return {"success": False, "error": "Thesis requires at least one proposed_condition for recovery"}
+
         self.transcript.append(message)
         self.phase = DialecticPhase.ANTITHESIS
 
@@ -462,31 +461,24 @@ class DialecticSession:
         """
         Agent B submits antithesis: "What I observe, my concerns"
 
-        If no reviewer is assigned yet, the submitting agent becomes the reviewer
-        (assigned-on-response pattern).
-
-        Args:
-            message: Antithesis message with observations, concerns
-            api_key: Deprecated, unused. Auth handled at handler layer.
-
-        Returns:
-            Status dict (includes reviewer_auto_assigned=True if assignment happened)
+        Requires reasoning. If no reviewer assigned, submitter becomes reviewer.
         """
-        # Auto-assign reviewer if none set -- whoever responds becomes the reviewer
+        # Auto-assign reviewer if none set
         if self.reviewer_agent_id is None:
             if message.agent_id == self.paused_agent_id:
                 return {"success": False, "error": "Requestor cannot review their own session (use reviewer_mode='self' for self-review)"}
             self.reviewer_agent_id = message.agent_id
 
-        # Verify agent
         if message.agent_id != self.reviewer_agent_id:
             return {"success": False, "error": "Only reviewer can submit antithesis"}
 
-        # Verify phase
         if self.phase != DialecticPhase.ANTITHESIS:
             return {"success": False, "error": f"Cannot submit antithesis in phase {self.phase.value}"}
 
-        # Store message
+        # Content validation: antithesis must provide a counter-perspective
+        if not message.reasoning or not message.reasoning.strip():
+            return {"success": False, "error": "Antithesis requires reasoning: provide your counter-perspective or observations"}
+
         self.transcript.append(message)
         self.phase = DialecticPhase.SYNTHESIS
         self.synthesis_round = 1
@@ -557,23 +549,26 @@ class DialecticSession:
         """
         Check if both agents have agreed on the same proposal.
 
-        Improved convergence detection:
+        Convergence requires:
         - Both agents must agree (agrees=True)
-        - Both must reference similar conditions (semantic matching via normalized keywords)
-        - Both must agree on root cause (semantic similarity)
+        - Both must reference similar conditions (>=50% semantic match)
+        - Both must agree on root cause (>=15% word overlap, always required)
 
-        FIXED: Now uses semantic comparison instead of exact string matching.
-        Normalizes conditions by extracting key action verbs and objects before comparing.
+        Self-review requires 2 synthesis messages with agrees=True and conditions.
         """
-        # Get last synthesis messages from both agents
         recent_synthesis = [msg for msg in self.transcript[-6:] if msg.phase == "synthesis"]
 
-        # Self-review shortcut: when paused_agent == reviewer, a single agrees=True is sufficient
+        # Self-review: require at least 2 synthesis messages with agrees=True
+        # (prevents single-message rubber-stamp convergence)
         if self.paused_agent_id == self.reviewer_agent_id:
-            for msg in reversed(recent_synthesis):
-                if msg.agrees and msg.agent_id == self.paused_agent_id:
-                    return True
-            return False
+            agreed = [msg for msg in recent_synthesis
+                      if msg.agrees and msg.agent_id == self.paused_agent_id]
+            if len(agreed) < 2:
+                return False
+            # Last message must have conditions
+            if not (agreed[-1].proposed_conditions):
+                return False
+            return True
 
         if len(recent_synthesis) < 2:
             return False
@@ -592,56 +587,47 @@ class DialecticSession:
         if not (msg_a.agrees and msg_b.agrees):
             return False
 
-        # Check if they're agreeing on similar conditions (SEMANTIC MATCHING)
+        # At least one side must propose conditions
         conditions_a = msg_a.proposed_conditions or []
         conditions_b = msg_b.proposed_conditions or []
 
+        if not conditions_a and not conditions_b:
+            return False
+
+        # Check conditions match semantically
         if conditions_a and conditions_b:
-            # Normalize conditions by extracting key semantic elements
             normalized_a = [self._normalize_condition(c) for c in conditions_a]
             normalized_b = [self._normalize_condition(c) for c in conditions_b]
 
-            # Compare normalized conditions using word-based similarity
-            # Count how many conditions from A have a match in B (and vice versa)
             matches = 0
             total = len(normalized_a) + len(normalized_b)
 
             for norm_a in normalized_a:
                 for norm_b in normalized_b:
-                    # Check semantic similarity (word overlap)
                     similarity = self._semantic_similarity(norm_a, norm_b)
-                    if similarity >= 0.6:  # 60% word overlap = same condition
+                    if similarity >= 0.6:
                         matches += 1
                         break
 
-            # Require at least 50% of conditions to match semantically
             match_ratio = (matches * 2) / total if total > 0 else 0.0
             if match_ratio < 0.5:
                 return False
 
-            # If conditions match well (>= 60%, same as similarity threshold), root cause check is optional
-            # This allows agents to agree on actions even if they frame the problem differently
-            conditions_match_well = match_ratio >= 0.6
-        else:
-            conditions_match_well = False
-
-        # Check root cause agreement (basic string similarity)
-        # NOTE: Root cause matching is optional if conditions match well (>= 70%)
-        # This allows agents to agree on actions even if they frame the problem differently
+        # Root cause agreement is ALWAYS required (not optional)
+        # Both agents must demonstrate shared understanding of the problem
         root_cause_a = (msg_a.root_cause or "").lower()
         root_cause_b = (msg_b.root_cause or "").lower()
 
         if root_cause_a and root_cause_b:
-            # Simple word overlap check
             words_a = set(root_cause_a.split())
             words_b = set(root_cause_b.split())
             if words_a and words_b:
                 word_overlap = len(words_a & words_b) / len(words_a | words_b)
-                # If conditions match well, root cause check is optional (just needs > 0%)
-                # Otherwise require 20% word overlap
-                threshold = 0.0 if conditions_match_well else 0.2
-                if word_overlap < threshold:
+                if word_overlap < 0.15:
                     return False
+        elif not root_cause_a and not root_cause_b:
+            # Neither provided root cause — cannot converge without understanding the problem
+            return False
 
         return True
 
@@ -761,12 +747,19 @@ class DialecticSession:
         else:
             merged_root_cause = root_cause_a or root_cause_b
 
-        # If synthesis messages had no root_cause, pull from thesis
+        # If synthesis messages had no root_cause, combine thesis + antithesis perspectives
         if not merged_root_cause:
+            thesis_rc = None
+            antithesis_rc = None
             for msg in self.transcript:
-                if msg.phase == "thesis" and msg.root_cause:
-                    merged_root_cause = msg.root_cause
-                    break
+                if msg.phase == "thesis" and msg.root_cause and not thesis_rc:
+                    thesis_rc = msg.root_cause
+                if msg.phase == "antithesis" and msg.root_cause and not antithesis_rc:
+                    antithesis_rc = msg.root_cause
+            if thesis_rc and antithesis_rc and thesis_rc.lower() != antithesis_rc.lower():
+                merged_root_cause = f"{thesis_rc} (reviewer: {antithesis_rc})"
+            else:
+                merged_root_cause = thesis_rc or antithesis_rc or ""
 
         # Merge reasoning
         reasoning_a = msg_a.reasoning or ""
@@ -835,13 +828,14 @@ class DialecticSession:
         if self.phase != DialecticPhase.RESOLVED:
             raise ValueError(f"Cannot finalize in phase {self.phase.value}")
 
-        # Get root_cause from thesis (the authoritative source)
-        # Synthesis messages typically don't carry root_cause
+        # Get root_cause from thesis AND antithesis (both perspectives matter)
         thesis_root_cause = None
+        antithesis_root_cause = None
         for msg in self.transcript:
-            if msg.phase == "thesis" and msg.root_cause:
+            if msg.phase == "thesis" and msg.root_cause and not thesis_root_cause:
                 thesis_root_cause = msg.root_cause
-                break
+            if msg.phase == "antithesis" and msg.root_cause and not antithesis_root_cause:
+                antithesis_root_cause = msg.root_cause
 
         # Check for mediator resolution (third-party synthesis)
         participants = {self.paused_agent_id, self.reviewer_agent_id}
@@ -874,7 +868,7 @@ class DialecticSession:
 
                 merged = {
                     "conditions": agreed_message.proposed_conditions or [],
-                    "root_cause": agreed_message.root_cause or thesis_root_cause or "Unknown",
+                    "root_cause": agreed_message.root_cause or thesis_root_cause or antithesis_root_cause or "Unknown",
                     "reasoning": agreed_message.reasoning or ""
                 }
             else:
@@ -986,15 +980,20 @@ class DialecticSession:
         if not resolution.conditions:
             return False, "Resolution must include at least one condition"
 
-        # Check for conditions that are too vague
-        vague_patterns = [r"^maybe", r"^perhaps", r"^try", r"^consider"]
-        for cond in resolution.conditions:
-            if any(re.match(pattern, cond.lower()) for pattern in vague_patterns):
-                return False, f"Condition too vague: '{cond}'"
+        # For recovery sessions only: strict checks on vagueness and root cause
+        # Exploration and design_review sessions have different semantics
+        is_recovery = self.session_type in ("recovery", "dispute")
 
-        # Check root cause is meaningful
-        if not resolution.root_cause or len(resolution.root_cause.strip()) < 10:
-            return False, "Root cause must be at least 10 characters"
+        if is_recovery:
+            # Check for conditions that are too vague
+            vague_patterns = [r"^maybe", r"^perhaps", r"^try", r"^consider"]
+            for cond in resolution.conditions:
+                if any(re.match(pattern, cond.lower()) for pattern in vague_patterns):
+                    return False, f"Condition too vague: '{cond}'"
+
+            # Check root cause is meaningful (recovery sessions must explain what happened)
+            if not resolution.root_cause or len(resolution.root_cause.strip()) < 10:
+                return False, "Root cause must be at least 10 characters"
 
         return True, None
 

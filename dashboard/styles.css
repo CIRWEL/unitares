@@ -2522,49 +2522,23 @@ body {
     color: var(--color-entropy-text);
 }
 
-/* Agent name badge in title - prominent to show whose data this is */
-.pulse-agent-badge {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: #fff;
-    padding: 0.35rem 0.9rem;
-    background: linear-gradient(135deg, var(--accent-cyan), #0891b2);
-    border: none;
-    border-radius: 8px;
-    font-family: var(--font-mono);
-    margin-left: 0.75rem;
-    vertical-align: middle;
-    box-shadow: 0 2px 8px rgba(6, 182, 212, 0.35);
-    letter-spacing: 0.02em;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-.pulse-agent-badge:not(:empty):hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(6, 182, 212, 0.45);
-}
-
-/* Dim state when no agent yet */
-.pulse-agent-badge:empty,
-.pulse-agent-badge:contains("—") {
-    background: var(--bg-tertiary);
+/* Agent name in pulse header */
+.pulse-agent-name {
+    font-size: 0.9rem;
+    font-weight: 500;
     color: var(--text-secondary);
-    box-shadow: none;
+    font-family: var(--font-mono);
+    margin-left: 0.5rem;
 }
+
 
 .local-device-badge {
-    background: rgba(0, 240, 255, 0.15);
-    border: 1px solid var(--accent-cyan);
-    color: var(--accent-cyan);
-    border-radius: var(--radius-sm);
-    padding: 2px 6px;
-    font-size: 0.85em;
-    font-weight: 700;
-    margin-left: 6px;
-    box-shadow: 0 0 8px rgba(0, 240, 255, 0.2);
-    vertical-align: middle;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-left: 0.35rem;
+    opacity: 0.8;
 }
-
 
 /* Risk adjustment detail */
 .pulse-metric-detail {
@@ -2572,17 +2546,6 @@ body {
     font-family: var(--font-mono);
     margin-left: 0.3rem;
     opacity: 0.9;
-}
-
-/* Agent name in pulse header */
-.pulse-agent-name {
-    font-size: 0.85rem;
-    font-weight: 500;
-    color: var(--accent-cyan);
-    padding: 0.2rem 0.5rem;
-    background: rgba(6, 182, 212, 0.1);
-    border-radius: 4px;
-    font-family: var(--font-mono);
 }
 
 /* Risk adjustment detail */

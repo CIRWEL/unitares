@@ -230,14 +230,16 @@ class DialecticDB:
         resolution: Dict[str, Any],
         status: str = "resolved"
     ) -> bool:
-        """Mark session as resolved."""
+        """Mark session as resolved or failed with resolution data."""
         await self._ensure_pool()
+        # Phase should match status - don't hardcode 'resolved' when status is 'failed'
+        phase = "resolved" if status == "resolved" else status
         async with self._pool.acquire() as conn:
             result = await conn.execute("""
                 UPDATE core.dialectic_sessions
-                SET status = $1, phase = 'resolved', resolution_json = $2, updated_at = now()
-                WHERE session_id = $3
-            """, status, json.dumps(resolution), session_id)
+                SET status = $1, phase = $2, resolution_json = $3, updated_at = now()
+                WHERE session_id = $4
+            """, status, phase, json.dumps(resolution), session_id)
             logger.info(f"Resolved session {session_id[:16]}... with status {status}")
             return "UPDATE 1" in result
 

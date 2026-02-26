@@ -565,6 +565,7 @@ class TestHandleSubmitThesis:
                 "session_id": session.session_id,
                 "agent_id": "agent-paused",
                 "root_cause": "Loaded from disk",
+                "proposed_conditions": ["Monitor for 1 hour"],
                 "api_key": "key",
             })
 

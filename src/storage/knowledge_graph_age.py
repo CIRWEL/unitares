@@ -401,7 +401,9 @@ class KnowledgeGraphAGE:
         # Handle tags - AGE doesn't support EXISTS subqueries or re-matching
         # a variable with different labels. We need a single MATCH pattern.
         if tags:
-            params["tags"] = tags
+            # Normalize search tags to match stored normalized form
+            from src.knowledge_graph import normalize_tags
+            params["tags"] = normalize_tags(tags)
             # Combined MATCH: Discovery with tag relationship
             base_match = "MATCH (d:Discovery)-[:TAGGED]->(t:Tag) WHERE t.name IN ${tags}"
             if where_clause:

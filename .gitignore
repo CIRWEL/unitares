@@ -37,8 +37,10 @@ data/.metadata.lock
 data/locks/
 data/processes/
 
-# Local Claude/Cursor settings (never commit credentials / machine-local perms)
-.claude/settings.local.json
+# Claude Code / Cursor local state (machine-specific, never commit)
+.claude/
+.hypothesis/
+data/gov-data-preserve/
 *.log
 
 # Session history files (archived, not tracked)

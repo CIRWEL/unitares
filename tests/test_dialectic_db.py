@@ -718,20 +718,23 @@ class TestResolveSession:
 
         assert result is True
         call_args = conn.execute.call_args[0]
-        assert call_args[1] == "resolved"
-        assert call_args[2] == json.dumps(resolution)
-        assert call_args[3] == "sess-001"
+        # args: status, phase, resolution_json, session_id
+        assert call_args[1] == "resolved"  # status
+        assert call_args[2] == "resolved"  # phase matches status
+        assert call_args[3] == json.dumps(resolution)
+        assert call_args[4] == "sess-001"
 
     @pytest.mark.asyncio
     async def test_resolve_session_custom_status(self, db):
-        """resolve_session accepts custom status."""
+        """resolve_session accepts custom status (e.g. failed)."""
         instance, pool, conn = db
         conn.execute = AsyncMock(return_value="UPDATE 1")
 
         result = await instance.resolve_session("sess-001", {"x": 1}, status="failed")
         assert result is True
         call_args = conn.execute.call_args[0]
-        assert call_args[1] == "failed"
+        assert call_args[1] == "failed"   # status
+        assert call_args[2] == "failed"   # phase matches status (no longer hardcoded 'resolved')
 
     @pytest.mark.asyncio
     async def test_resolve_session_not_found(self, db):
@@ -1303,7 +1306,8 @@ class TestEdgeCases:
         await instance.resolve_session("sess-complex", resolution)
 
         call_args = conn.execute.call_args[0]
-        assert json.loads(call_args[2]) == resolution
+        # args: status, phase, resolution_json, session_id
+        assert json.loads(call_args[3]) == resolution
 
     @pytest.mark.asyncio
     async def test_add_message_json_serialization(self, db):
