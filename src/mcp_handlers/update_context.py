@@ -18,7 +18,7 @@ class UpdateContext:
 
     # ── Identity (Phase 1) ─────────────────────────────────────────
     agent_uuid: str = ""
-    agent_id: str = ""           # Same as agent_uuid (backward compat alias)
+    agent_id: str = ""           # Same as agent_uuid (UUID). Label/display in declared_agent_id.
     session_key: Optional[str] = None
     declared_agent_id: str = ""
     label: Optional[str] = None

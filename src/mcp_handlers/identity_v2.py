@@ -358,7 +358,7 @@ async def resolve_session_identity(
 
                     return {
 
-                        "agent_id": agent_id,
+                        "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
 
                         "agent_uuid": agent_uuid,
 
@@ -448,7 +448,7 @@ async def resolve_session_identity(
 
                 return {
 
-                    "agent_id": agent_id,
+                    "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
 
                     "agent_uuid": agent_uuid,
 
@@ -560,7 +560,7 @@ async def resolve_session_identity(
             logger.info(f"Created new agent: {agent_id} (uuid: {agent_uuid[:8]}...)")
 
             return {
-                "agent_id": agent_id,
+                "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
                 "agent_uuid": agent_uuid,
                 "display_name": label,
                 "label": label,
@@ -579,7 +579,7 @@ async def resolve_session_identity(
     logger.debug(f"Created new agent (lazy): {agent_id} (uuid: {agent_uuid[:8]}...)")
 
     return {
-        "agent_id": agent_id,
+        "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
         "agent_uuid": agent_uuid,
         "display_name": None,
         "label": None,  # backward compat

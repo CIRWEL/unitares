@@ -810,8 +810,9 @@ def require_agent_id(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextConte
     - Only validates format (filesystem safety) and reserved names (security)
     
     CANONICAL ID CLARIFICATION (Dec 2025):
-    - Session-bound UUID is the canonical identifier
-    - Explicit agent_id parameter is optional and may cause confusion
+    - Session-bound identity is always UUID (36 chars, 4 hyphens)
+    - display_agent_id / agent_id in API responses may be model+date (e.g. mcp_20260226)
+    - Internal maps (monitors, metadata) are keyed by UUID only
     - For write operations, session-bound identity is authoritative
     
     Args:
