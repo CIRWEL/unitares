@@ -230,16 +230,15 @@ async def call_pi_tool(tool_name: str, arguments: Dict[str, Any],
             # This ensures each attempt gets the full timeout budget
             # Include stable session headers so Pi resolves all Mac calls
             # to the same identity instead of minting a new UUID each time
-            http_client = httpx.AsyncClient(
+            async with httpx.AsyncClient(
                 http2=True,
                 timeout=timeout,
                 headers={
                     "X-Session-ID": PI_STABLE_SESSION_ID,
                     "X-Agent-Name": "mac-governance",
                 },
-            )
-            
-            async with streamable_http_client(pi_url, http_client=http_client) as (read, write, _):
+            ) as http_client:
+              async with streamable_http_client(pi_url, http_client=http_client) as (read, write, _):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     

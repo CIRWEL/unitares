@@ -477,6 +477,7 @@ class TestDialecticProtocolFlow:
             phase="synthesis",
             agent_id=agent_id,
             timestamp=datetime.now().isoformat(),
+            root_cause="Risk threshold exceeded due to high complexity",
             proposed_conditions=["Reduce complexity to 0.3", "Monitor for 1h"],
             reasoning="Agreed on approach",
             agrees=agrees,

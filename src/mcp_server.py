@@ -2069,29 +2069,11 @@ async def main():
                 # DEPRECATED: SSE-specific tools removed
                 # These tools are no longer registered but kept for backward compat
                 if tool_name == "get_connected_clients":
-                    # Return deprecation notice
                     return JSONResponse({
                         "name": tool_name,
                         "result": {"error": "Tool deprecated. SSE transport deprecated by MCP. Use Streamable HTTP."},
                         "success": False
                     })
-                    # Old code:
-                    # clients = connection_tracker.get_connected_clients()
-                    # Enrich with health info
-                    enriched_clients = {}
-                    for client_id, data in clients.items():
-                        health = await connection_tracker.check_health(client_id)
-                        enriched_clients[client_id] = {**data, "health": health}
-                    
-                    result_data = {
-                        "success": True,
-                        "transport": "SSE",
-                        "server_version": SERVER_VERSION,
-                        "connected_clients": enriched_clients,
-                        "total_clients": connection_tracker.count,
-                        "message": f"{connection_tracker.count} client(s) currently connected"
-                    }
-                    return JSONResponse({"name": tool_name, "result": result_data, "success": True})
                 
                 if tool_name == "get_connection_diagnostics":
                     # DEPRECATED: SSE-specific tool
