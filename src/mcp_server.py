@@ -1854,39 +1854,11 @@ async def main():
         HTTP_API_TOKEN = os.getenv("UNITARES_HTTP_API_TOKEN")
         HTTP_CORS_ALLOW_ORIGIN = os.getenv("UNITARES_HTTP_CORS_ALLOW_ORIGIN")  # e.g. "*" or "http://localhost:3000"
 
-        # Trusted networks: localhost, Tailscale CGNAT, private RFC1918 ranges
-        import ipaddress as _ipaddress
-        _TRUSTED_NETWORKS = [
-            _ipaddress.ip_network("127.0.0.0/8"),
-            _ipaddress.ip_network("::1/128"),
-            _ipaddress.ip_network("100.64.0.0/10"),   # Tailscale CGNAT
-            _ipaddress.ip_network("192.168.0.0/16"),
-            _ipaddress.ip_network("10.0.0.0/8"),
-            _ipaddress.ip_network("172.16.0.0/12"),
-        ]
-
-        def _is_trusted_network(request) -> bool:
-            """Check if request originates from a trusted network."""
-            forwarded = request.headers.get("x-forwarded-for")
-            if forwarded:
-                client_ip = forwarded.split(",")[0].strip()
-            else:
-                client_ip = request.client.host if request.client else None
-            if not client_ip:
-                return False
-            try:
-                addr = _ipaddress.ip_address(client_ip)
-                return any(addr in net for net in _TRUSTED_NETWORKS)
-            except ValueError:
-                return False
-
         def _http_unauthorized():
             return JSONResponse({"success": False, "error": "Unauthorized"}, status_code=401)
 
         def _check_http_auth(request) -> bool:
-            """Bearer token auth for HTTP endpoints. Trusted networks bypass auth."""
-            if _is_trusted_network(request):
-                return True
+            """Optional bearer token auth for HTTP endpoints."""
             if not HTTP_API_TOKEN:
                 return True
             auth = request.headers.get("authorization") or request.headers.get("Authorization")
@@ -2249,7 +2221,9 @@ async def main():
                 }, status_code=500)
         
         async def http_health(request):
-            """Health check endpoint — always public (monitoring, load balancers)"""
+            """Health check endpoint with uptime and monitoring info"""
+            if not _check_http_auth(request):
+                return _http_unauthorized()
             
             # Calculate uptime
             uptime_seconds = time.time() - SERVER_START_TIME
