@@ -938,7 +938,7 @@ async def debug_request_context(ctx: Context = None) -> dict:
     bound_agent_id = None
     session_bound = False
     try:
-        from mcp_handlers.identity import get_bound_agent_id
+        from src.mcp_handlers.identity_shared import get_bound_agent_id
         bound_agent_id = get_bound_agent_id(arguments={"client_session_id": session_id} if session_id else {})
         session_bound = bool(bound_agent_id)
     except Exception as e:
