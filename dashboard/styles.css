@@ -453,16 +453,6 @@ body {
     height: 400px;
 }
 
-#roi-card.stat-card {
-    border-left: 4px solid var(--accent-green);
-    background: linear-gradient(135deg, var(--card-bg) 0%, rgba(34, 197, 94, 0.05) 100%);
-}
-
-#roi-card .value {
-    color: var(--accent-green);
-    text-shadow: 0 0 15px rgba(34, 197, 94, 0.3);
-}
-
 /* ============================================
    3. Layout (Header, Toolbar, Grid)
    ============================================ */
@@ -790,6 +780,12 @@ body {
     letter-spacing: 1px;
     margin-bottom: 8px;
     font-weight: 600;
+}
+
+.stat-of {
+    font-size: 0.55em;
+    color: var(--text-secondary);
+    font-weight: 400;
 }
 
 .stat-card .value {
@@ -1580,20 +1576,6 @@ body {
     color: var(--text-primary);
     padding: 2px 4px;
     border-radius: 3px;
-}
-
-/* ============================================
-   Refresh Info
-   ============================================ */
-.refresh-info {
-    text-align: center;
-    color: var(--text-secondary);
-    font-size: 0.9em;
-    margin-top: 20px;
-    padding: 15px;
-    max-width: 1400px;
-    margin-left: auto;
-    margin-right: auto;
 }
 
 /* ============================================

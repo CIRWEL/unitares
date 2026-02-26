@@ -60,6 +60,7 @@
         previousStats: {},
         cachedAgents: [],
         cachedDiscoveries: [],
+        filteredDiscoveries: [],
         cachedStuckAgents: [],
         cachedDialecticSessions: [],
         eisvChartUpper: null,

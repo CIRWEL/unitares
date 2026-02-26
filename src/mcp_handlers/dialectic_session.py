@@ -10,7 +10,7 @@ from pathlib import Path
 import json
 import os
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.dialectic_protocol import DialecticSession, DialecticPhase
 from src.db.acquire_compat import compatible_acquire
@@ -270,17 +270,19 @@ async def load_all_sessions() -> int:
                 # Load session (already async, uses executor)
                 session = await load_session(session_id)
                 if session:
-                    # Only restore active sessions (not resolved/failed/escalated)
-                    if session.phase not in [DialecticPhase.RESOLVED, DialecticPhase.FAILED, DialecticPhase.ESCALATED]:
-                        ACTIVE_SESSIONS[session_id] = session
-                        return session_id
-                    # Check for timeout - mark as failed if expired
-                    elif session.phase == DialecticPhase.THESIS or session.phase == DialecticPhase.ANTITHESIS:
+                    # Check for timeout BEFORE storing in ACTIVE_SESSIONS
+                    if session.phase in (DialecticPhase.THESIS, DialecticPhase.ANTITHESIS):
                         max_total = getattr(session, '_max_total_time', DialecticSession.MAX_TOTAL_TIME)
-                        if datetime.now() - session.created_at > max_total:
-                            # Session expired - mark as failed
+                        created = session.created_at
+                        if created.tzinfo is None:
+                            created = created.replace(tzinfo=timezone.utc)
+                        if datetime.now(timezone.utc) - created > max_total:
                             session.phase = DialecticPhase.FAILED
                             await save_session(session)
+                            return None
+                    if session.phase not in (DialecticPhase.RESOLVED, DialecticPhase.FAILED, DialecticPhase.ESCALATED):
+                        ACTIVE_SESSIONS[session_id] = session
+                        return session_id
                 return None
             except (IOError, json.JSONDecodeError, KeyError, ValueError) as e:
                 logger.warning(f"Could not load session {session_file.stem}: {e}")

@@ -87,10 +87,10 @@ function expandPanel(panelType) {
     const modalBody = document.getElementById('modal-body');
 
     if (panelType === 'discoveries') {
-        modalTitle.textContent = `Recent Discoveries (${cachedDiscoveries.length})`;
+        modalTitle.textContent = `Discoveries (${cachedDiscoveries.length})`;
         modalBody.innerHTML = renderDiscoveriesForModal(cachedDiscoveries);
     } else if (panelType === 'dialectic') {
-        modalTitle.textContent = `Dialectic Sessions (${cachedDialecticSessions.length})`;
+        modalTitle.textContent = `Dialectic (${cachedDialecticSessions.length})`;
         modalBody.innerHTML = renderDialecticForModal(cachedDialecticSessions);
     } else if (panelType === 'stuck-agents') {
         modalTitle.textContent = `Stuck Agents (${cachedStuckAgents.length})`;
@@ -818,27 +818,23 @@ async function loadAgents() {
             ...(agentsObj.unknown || [])
         ];
 
-        // Update stats with animated counters
-        animateValue(document.getElementById('total-agents'), total);
-        animateValue(document.getElementById('active-agents'), active);
+        // Update stats with animated counters (merged Agents card: active / total)
+        const totalEl = document.getElementById('total-agents');
+        const activeEl = document.getElementById('active-agents');
+        const agentsChangeEl = document.getElementById('agents-change');
+        if (totalEl) animateValue(totalEl, total);
+        if (activeEl) animateValue(activeEl, active);
 
         const agentsChange = formatChange(total, previousStats.totalAgents);
-        // Show breakdown: active, paused, archived, deleted, unknown
         const breakdown = [];
         if (active > 0) breakdown.push(`${active} active`);
         if (paused > 0) breakdown.push(`${paused} paused`);
         if (archived > 0) breakdown.push(`${archived} archived`);
         if (deleted > 0) breakdown.push(`${deleted} deleted`);
         if (unknown > 0) breakdown.push(`${unknown} unknown`);
-        document.getElementById('agents-change').innerHTML = agentsChange || (total > 0 ? breakdown.join(', ') || 'All agents' : 'No agents yet');
-
-        const activeChange = formatChange(active, previousStats.activeAgents);
-        // Show what's not active
-        const inactiveBreakdown = [];
-        if (paused > 0) inactiveBreakdown.push(`${paused} paused`);
-        if (archived > 0) inactiveBreakdown.push(`${archived} archived`);
-        if (deleted > 0) inactiveBreakdown.push(`${deleted} deleted`);
-        document.getElementById('active-change').innerHTML = activeChange || (total > 0 ? (inactiveBreakdown.join(', ') || 'All active') : 'Start by calling onboard()');
+        if (agentsChangeEl) {
+            agentsChangeEl.innerHTML = agentsChange || (total > 0 ? breakdown.join(', ') || 'All active' : 'No agents yet');
+        }
 
         previousStats.totalAgents = total;
         previousStats.activeAgents = active;
@@ -1029,31 +1025,6 @@ async function loadSystemHealth() {
 }
 
 /**
- * Load ROI metrics and update stat card
- */
-async function loadROIMetrics() {
-    try {
-        const data = await callTool(
-            'get_roi_metrics',
-            { agent_id: 'mac-orchestrator' },
-            { retry: false, useCache: true, cacheTimeout: 60000 }
-        );
-        const valueEl = document.getElementById('roi-value');
-        const detailEl = document.getElementById('roi-detail');
-        if (!valueEl || !detailEl) return;
-
-        if (data && data.time_saved) {
-            const hours = data.time_saved.hours || 0;
-            const savings = data.cost_savings?.estimated_usd || 0;
-            valueEl.textContent = `${hours}h`;
-            detailEl.innerHTML = `Est. $${savings.toLocaleString()} saved`;
-        }
-    } catch (e) {
-        console.debug('Could not load ROI metrics:', e);
-    }
-}
-
-/**
  * Load discoveries from API and render to panel.
  * Updates cachedDiscoveries and stats.
  * @returns {Promise<void>}
@@ -1226,15 +1197,18 @@ async function loadDiscoveries(searchQuery = '') {
         }
 
         showError(userMessage);
-        document.getElementById('discoveries-container').innerHTML =
-            `<div class="loading">${escapeHtml(userMessage)}<br><small>You can try refreshing or check the server status.</small></div>`;
         cachedDiscoveries = [];
+        state.set({ filteredDiscoveries: [] });
         updateDiscoveryFilterInfo(0);
         updateDiscoveryLegend([]);
-
-        // Still update count to show error state
-        document.getElementById('discoveries-count').textContent = '?';
-        document.getElementById('discoveries-change').innerHTML = 'Error loading';
+        const container = document.getElementById('discoveries-container');
+        if (container) {
+            container.innerHTML = `<div class="loading">${escapeHtml(userMessage)}<br><small>Try Refresh or check server.</small></div>`;
+        }
+        const countEl = document.getElementById('discoveries-count');
+        const changeEl = document.getElementById('discoveries-change');
+        if (countEl) countEl.textContent = '?';
+        if (changeEl) changeEl.innerHTML = 'Error loading';
 
         return false;
     }
@@ -1265,7 +1239,8 @@ async function loadDialecticSessions() {
         // Check for error
         if (result.error || result.success === false) {
             console.warn('Dialectic sessions error:', result.error || result.message);
-            updateDialecticDisplay([], 'Error loading');
+            cachedDialecticSessions = [];
+            updateDialecticDisplay([], 'Error loading', { error: true });
             return false;
         }
 
@@ -1300,7 +1275,8 @@ async function loadDialecticSessions() {
         return true;
     } catch (error) {
         console.error('Error loading dialectic sessions:', error);
-        updateDialecticDisplay([], 'Error loading');
+        cachedDialecticSessions = [];
+        updateDialecticDisplay([], 'Error loading', { error: true });
         return false;
     }
 }
@@ -1333,15 +1309,9 @@ async function refresh(options = {}) {
 
     console.log('Refreshing dashboard...', { force, paused: autoRefreshPaused });
 
-    // Don't auto-refresh if valid search text exists (to prevent overwriting search results)
-    const searchInput = document.getElementById('discovery-search');
-    if (searchInput && searchInput.value.trim().length > 0 && !force) {
-        // Only refresh agents
-        console.log('Search active, skipping discovery refresh');
-        await loadAgents();
-        await loadDialecticSessions();
-        return;
-    }
+    // When search is active, still refresh discoveries (search filters the cache)
+    // but skip only if we're doing a non-forced refresh and user is mid-search.
+    // Always do full refresh on force or when search is empty.
 
     clearError();
     const lastUpdateEl = document.getElementById('last-update');
@@ -1356,8 +1326,7 @@ async function refresh(options = {}) {
             loadDiscoveries(),
             loadDialecticSessions(),
             loadStuckAgents(),
-            loadSystemHealth(),
-            loadROIMetrics()
+            loadSystemHealth()
         ]);
         console.log('Load results:', results);
 
@@ -1618,9 +1587,11 @@ if (discoveriesContainer) {
         const item = event.target.closest('.discovery-item');
         if (!item) return;
         const index = parseInt(item.getAttribute('data-discovery-index'), 10);
-        if (isNaN(index) || index < 0 || index >= cachedDiscoveries.length) return;
+        if (isNaN(index) || index < 0) return;
 
-        const discovery = cachedDiscoveries[index];
+        const filtered = state.get('filteredDiscoveries') || cachedDiscoveries;
+        if (index >= filtered.length) return;
+        const discovery = filtered[index];
         showDiscoveryDetail(discovery);
     });
 }

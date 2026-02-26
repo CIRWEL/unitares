@@ -458,13 +458,13 @@ def _sanitize_error_message(message: str) -> str:
     message = re.sub(r'line \d+', 'line N', message)
 
     # Remove full stack traces but keep the actual error message
-    # Capture the last error line which usually has the useful message
-    traceback_match = re.search(r'Traceback.*\n(.+)$', message, flags=re.DOTALL)
+    # Capture the last non-empty line which usually has the useful message
+    traceback_match = re.search(r'Traceback[\s\S]*\n(\S[^\n]+)$', message, flags=re.MULTILINE)
     if traceback_match:
         # Extract just the final error message from the traceback
         final_error = traceback_match.group(1).strip()
         # Replace the full traceback with a simplified version
-        message = re.sub(r'Traceback.*$', f'Error: {final_error}', message, flags=re.DOTALL)
+        message = re.sub(r'Traceback[\s\S]*', f'Error: {final_error}', message)
 
     # Remove "File X, line N" patterns but preserve context
     message = re.sub(r'File "[^"]+", line \d+(?:, in \w+)?', '', message)

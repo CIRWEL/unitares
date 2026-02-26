@@ -826,11 +826,11 @@ class TestHandleSubmitSynthesis:
         assert data["success"] is False
 
     @pytest.mark.asyncio
-    async def test_synthesis_unknown_agent(
+    async def test_synthesis_third_party_mediator(
         self, mock_server, mock_pg_add_message, mock_pg_update_phase,
         mock_save_session, mock_context_agent,
     ):
-        """Synthesis from unknown agent (not paused or reviewer) fails."""
+        """Third-party mediator can submit synthesis (resolves if agrees=True)."""
         from src.mcp_handlers.dialectic import handle_submit_synthesis
 
         session = _make_session(phase=DialecticPhase.SYNTHESIS)
@@ -842,13 +842,13 @@ class TestHandleSubmitSynthesis:
              mock_context_agent:
             result = await handle_submit_synthesis({
                 "session_id": session.session_id,
-                "agent_id": "agent-unknown",
+                "agent_id": "agent-mediator",
                 "proposed_conditions": ["Test"],
                 "api_key": "key",
             })
 
         data = _parse(result)
-        assert data["success"] is False
+        assert data["success"] is True
 
     @pytest.mark.asyncio
     async def test_max_rounds_exceeded(

@@ -89,14 +89,6 @@ from src.dialectic_db import (
 from src.db import get_db
 
 
-# Check for aiofiles availability
-try:
-    import aiofiles
-    AIOFILES_AVAILABLE = True
-except ImportError:
-    AIOFILES_AVAILABLE = False
-
-
 
 # ==============================================================================
 # NOTE: Dialectic handlers (Feb 2026)
@@ -434,7 +426,7 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                         "session": session.to_dict(),
                         "recovery": {
                             "action": "Session aborted because reviewer didn't respond within timeout",
-                            "what_happened": f"Reviewer '{session.reviewer_agent_id}' was assigned but didn't submit antithesis within 30 minutes",
+                            "what_happened": f"Reviewer '{session.reviewer_agent_id}' was assigned but didn't submit antithesis within 2 hours",
                             "what_you_can_do": [
                                 "1. Check your state with get_governance_metrics",
                                 "2. Use self_recovery(action='quick') if you believe you can proceed safely",

@@ -108,21 +108,25 @@
     function renderDiscoveriesList(discoveries, searchTerm) {
         searchTerm = searchTerm || '';
         var container = document.getElementById('discoveries-container');
-        var cachedDiscoveries = state.get('cachedDiscoveries');
+        var cachedDiscoveries = state.get('cachedDiscoveries') || [];
+        if (!container) return;
 
         if (cachedDiscoveries.length === 0) {
-            container.innerHTML = '<div class="loading">No recent discoveries. Use store_knowledge_graph() to add discoveries.</div>';
+            container.innerHTML = '<div class="loading">No discoveries yet. Agents add them via store_knowledge_graph().</div>';
+            state.set({ filteredDiscoveries: [] });
             updateDiscoveryFilterInfo(0);
             return;
         }
 
         if (discoveries.length === 0) {
-            container.innerHTML = '<div class="loading">No discoveries match the current filters.</div>';
+            container.innerHTML = '<div class="loading">No matches. Clear filters or change search.</div>';
+            state.set({ filteredDiscoveries: [] });
             updateDiscoveryFilterInfo(0);
             return;
         }
 
         updateDiscoveryFilterInfo(discoveries.length);
+        state.set({ filteredDiscoveries: discoveries });
         var displayDiscoveries = discoveries.slice(0, 10);
         container.innerHTML = displayDiscoveries.map(function (d, idx) {
             var type = normalizeDiscoveryType(d.type || d.discovery_type || 'note');

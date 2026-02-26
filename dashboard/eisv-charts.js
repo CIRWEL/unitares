@@ -73,7 +73,7 @@
 
         select.innerHTML = '';
         select.add(new Option('Fleet Average', '__fleet__'));
-        select.add(new Option('All (raw)', '__all__'));
+        select.add(new Option('All agents', '__all__'));
 
         if (agentOpts.length > 0) {
             var sep = new Option('\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500', '');

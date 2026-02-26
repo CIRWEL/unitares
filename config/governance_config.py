@@ -352,9 +352,12 @@ class GovernanceConfig:
             return GovernanceConfig.VOID_THRESHOLD_INITIAL
         
         # Use last N observations
-        recent = history[-GovernanceConfig.VOID_ADAPTIVE_WINDOW:]
-        mean_V = np.mean(np.abs(recent))
-        std_V = np.std(np.abs(recent))
+        recent = np.abs(history[-GovernanceConfig.VOID_ADAPTIVE_WINDOW:])
+        recent = recent[~np.isnan(recent)]
+        if len(recent) < 10:
+            return GovernanceConfig.VOID_THRESHOLD_INITIAL
+        mean_V = np.mean(recent)
+        std_V = np.std(recent)
         
         threshold = mean_V + GovernanceConfig.VOID_THRESHOLD_SIGMA * std_V
         

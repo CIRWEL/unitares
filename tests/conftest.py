@@ -91,6 +91,17 @@ def _isolate_db_backend(monkeypatch):
     mock_backend.init.return_value = None
     mock_backend.close.return_value = None
     mock_backend.health_check.return_value = {"status": "ok", "backend": "test_mock"}
+    # acquire() — must be a regular (non-async) call returning an async context manager
+    from unittest.mock import MagicMock
+    mock_conn = AsyncMock()
+    mock_conn.fetch.return_value = []
+    mock_conn.fetchval.return_value = None
+    mock_conn.fetchrow.return_value = None
+    mock_conn.execute.return_value = "SELECT 0"
+    mock_backend.acquire = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=mock_conn),
+        __aexit__=AsyncMock(return_value=False),
+    ))
 
     # Set mock as the singleton — ALL get_db() calls return this
     monkeypatch.setattr(db_module, "_db_instance", mock_backend)
@@ -149,12 +160,22 @@ def _isolate_identity_state():
     try:
         from src.pattern_tracker import get_pattern_tracker
         tracker = get_pattern_tracker()
-        if hasattr(tracker, '_agents'):
-            tracker._agents.clear()
-        if hasattr(tracker, '_tool_history'):
-            tracker._tool_history.clear()
-        if hasattr(tracker, '_hypotheses'):
-            tracker._hypotheses.clear()
+        if hasattr(tracker, 'pattern_history'):
+            tracker.pattern_history.clear()
+        if hasattr(tracker, 'investigations'):
+            tracker.investigations.clear()
+        if hasattr(tracker, 'hypotheses'):
+            tracker.hypotheses.clear()
+    except Exception:
+        pass
+
+    # --- dialectic session in-memory state ---
+    try:
+        from src.mcp_handlers.dialectic_session import (
+            ACTIVE_SESSIONS, _SESSION_METADATA_CACHE,
+        )
+        ACTIVE_SESSIONS.clear()
+        _SESSION_METADATA_CACHE.clear()
     except Exception:
         pass
 

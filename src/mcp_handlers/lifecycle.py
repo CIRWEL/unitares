@@ -1093,7 +1093,7 @@ async def handle_archive_old_test_agents(arguments: Dict[str, Any]) -> Sequence[
     await mcp_server.load_metadata_async(force=True)
     
     archived_agents = []
-    cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
     
     for agent_id, meta in list(mcp_server.agent_metadata.items()):
         # Filter: only test/demo agents unless include_all
@@ -1124,12 +1124,14 @@ async def handle_archive_old_test_agents(arguments: Dict[str, Any]) -> Sequence[
 
         # Check age for agents with more updates
         try:
-            last_update_dt = datetime.fromisoformat(meta.last_update.replace('Z', '+00:00').replace('+00:00', ''))
-        except:
+            last_update_dt = datetime.fromisoformat(meta.last_update.replace('Z', '+00:00'))
+            if last_update_dt.tzinfo is None:
+                last_update_dt = last_update_dt.replace(tzinfo=timezone.utc)
+        except Exception:
             continue
 
         if last_update_dt < cutoff_time:
-            age_hours = (datetime.now() - last_update_dt).total_seconds() / 3600
+            age_hours = (datetime.now(timezone.utc) - last_update_dt).total_seconds() / 3600
             age_days = age_hours / 24
             if not dry_run:
                 meta.status = "archived"
@@ -1792,6 +1794,12 @@ def _detect_stuck_agents(
         if meta.status != "active":
             continue
 
+        # Skip autonomous/embodied agents (they manage their own lifecycle)
+        agent_tags = getattr(meta, "tags", []) or []
+        skip_tags = {"autonomous", "embodied", "anima"}
+        if skip_tags & set(t.lower() for t in agent_tags):
+            continue
+
         # Skip agents with too few updates (likely orphan/test agents)
         total_updates = getattr(meta, "total_updates", 0) or 0
         if total_updates < min_updates:
@@ -2272,7 +2280,7 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence[Text
                 "total_recovered": len(recovered) if auto_recover else 0,
                 "by_reason": {
                     reason: sum(1 for s in stuck_agents if s["reason"] == reason)
-                    for reason in ["critical_margin_timeout", "tight_margin_timeout", "activity_timeout"]
+                    for reason in ["critical_margin_timeout", "tight_margin_timeout", "cognitive_loop", "time_box_exceeded"]
                 }
             }
         })

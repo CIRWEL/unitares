@@ -45,7 +45,7 @@
         <key>DB_POSTGRES_MIN_CONN</key>
         <string>2</string>
         <key>DB_POSTGRES_MAX_CONN</key>
-        <string>10</string>
+        <string>25</string>
         <key>UNITARES_KNOWLEDGE_BACKEND</key>
         <string>age</string>
         <key>UNITARES_DIALECTIC_BACKEND</key>
@@ -58,6 +58,8 @@
         <string>1</string>
         <key>HF_HUB_OFFLINE</key>
         <string>1</string>
+        <key>UNITARES_HTTP_API_TOKEN</key>
+        <string>QUGz-6QPKoOwrBDn1hWZmWOk1U0q5g2I5Bkad2MCvtY</string>
     </dict>
 </dict>
 </plist>

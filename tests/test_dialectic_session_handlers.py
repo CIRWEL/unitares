@@ -455,23 +455,21 @@ class TestSaveSession:
         assert data["transcript"][0]["root_cause"] == "Test root cause"
 
     @pytest.mark.asyncio
-    async def test_save_session_error_propagates(self, tmp_path):
-        """When the underlying write fails, save_session should re-raise."""
+    async def test_save_session_error_logged_not_raised(self, tmp_path):
+        """When the underlying write fails, save_session logs error but does not raise."""
         from src.mcp_handlers.dialectic_session import save_session
 
         session = _make_session()
-        # Use a non-writable path
         storage_dir = tmp_path / "sessions"
 
         with patch("src.mcp_handlers.dialectic_session.SESSION_STORAGE_DIR", storage_dir), \
              patch("src.mcp_handlers.dialectic_session.UNITARES_DIALECTIC_WRITE_JSON_SNAPSHOT", True):
-            # Patch the executor to raise
             with patch("asyncio.get_running_loop") as mock_loop:
                 mock_loop.return_value.run_in_executor = AsyncMock(
                     side_effect=IOError("Disk full")
                 )
-                with pytest.raises(IOError, match="Disk full"):
-                    await save_session(session)
+                # Should not raise — error is caught and logged
+                await save_session(session)
 
 
 # ---------------------------------------------------------------------------

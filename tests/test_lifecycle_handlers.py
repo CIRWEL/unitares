@@ -810,17 +810,17 @@ class TestArchiveAgent:
             assert "not found" in text.lower()
 
     @pytest.mark.asyncio
-    async def test_archive_ownership_denied(self, server):
+    async def test_archive_no_ownership_check(self, server):
+        """Archive intentionally skips ownership check -- operators/dashboard need to archive others."""
         meta = make_agent_meta(status="active")
         server.agent_metadata = {"agent-1": meta}
 
         with patch("src.mcp_handlers.lifecycle.mcp_server", server), \
-             patch("src.mcp_handlers.lifecycle.require_registered_agent", return_value=("agent-1", None)), \
-             patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=False):
+             patch("src.mcp_handlers.lifecycle.require_registered_agent", return_value=("agent-1", None)):
             from src.mcp_handlers.lifecycle import handle_archive_agent
             result = await handle_archive_agent({"agent_id": "agent-1"})
             text = result[0].text
-            assert "auth" in text.lower()
+            assert "archived successfully" in text.lower()
 
     @pytest.mark.asyncio
     async def test_archive_not_registered(self, server):
@@ -960,19 +960,19 @@ class TestDeleteAgent:
             assert "not found" in text.lower()
 
     @pytest.mark.asyncio
-    async def test_delete_ownership_denied(self, server):
+    async def test_delete_no_ownership_check(self, server):
+        """Delete intentionally skips ownership check -- operators/dashboard need to manage agents."""
         meta = make_agent_meta(status="active", tags=[])
         server.agent_metadata = {"agent-1": meta}
 
         with patch("src.mcp_handlers.lifecycle.mcp_server", server), \
-             patch("src.mcp_handlers.lifecycle.require_registered_agent", return_value=("agent-1", None)), \
-             patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=False):
+             patch("src.mcp_handlers.lifecycle.require_registered_agent", return_value=("agent-1", None)):
             from src.mcp_handlers.lifecycle import handle_delete_agent
             result = await handle_delete_agent({
                 "agent_id": "agent-1", "confirm": True,
             })
             text = result[0].text
-            assert "auth" in text.lower()
+            assert "deleted successfully" in text.lower()
 
     @pytest.mark.asyncio
     async def test_delete_removes_monitor(self, server):
@@ -2104,13 +2104,8 @@ class TestListAgentsFullModeEdgeCases:
             assert data["summary"]["total"] == 1
 
     @pytest.mark.asyncio
-    async def test_full_mode_infers_status_for_unknown_hits_error(self, server):
-        """Lines 215-241 -> 480-481: agents with unrecognized status trigger status
-        inference code, but timezone is not imported in the full-mode branch (it's only
-        imported in the lite branch at line 75), causing an UnboundLocalError that gets
-        caught by the outer try/except at lines 480-481, returning a system error.
-        This test verifies the error handling path.
-        """
+    async def test_full_mode_handles_unknown_status(self, server):
+        """Agents with unrecognized status are handled gracefully (timezone is imported)."""
         recent = datetime.now(timezone.utc).isoformat()
         meta_unknown = make_agent_meta(status="unknown_status", total_updates=5, notes="", last_update=recent)
         server.agent_metadata = {"unknown-agent": meta_unknown}
@@ -2122,9 +2117,8 @@ class TestListAgentsFullModeEdgeCases:
                 "lite": False, "grouped": False, "include_metrics": False,
                 "status_filter": "all",
             })
-            text = result[0].text
-            # Lines 480-481: system_error_helper is called
-            assert "error" in text.lower()
+            data = _parse(result)
+            assert data["success"] is True
 
     @pytest.mark.asyncio
     async def test_full_mode_metrics_error_in_monitor(self, server):

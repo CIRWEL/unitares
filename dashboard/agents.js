@@ -232,7 +232,6 @@
                     '<div class="agent-title">' +
                         statusIndicator +
                         '<span class="agent-name">' + nameHtml + '</span>' +
-                        '<span class="status-chip ' + status + '">' + statusLabel + '</span>' +
                         stuckBadgeHtml +
                         trustTierHtml + anomalyHtml +
                         sparklineHtml +

@@ -78,27 +78,22 @@
     <main>
         <div class="stats-grid" id="stats-section">
             <div class="stat-card">
-                <h2>Total Agents</h2>
-                <div class="value" id="total-agents">-</div>
+                <h2>Agents</h2>
+                <div class="value"><span id="active-agents">-</span><span class="stat-of"> / <span id="total-agents">-</span></span></div>
                 <div class="change" id="agents-change"></div>
             </div>
             <div class="stat-card">
-                <h2>Active Agents</h2>
-                <div class="value" id="active-agents">-</div>
-                <div class="change" id="active-change"></div>
-            </div>
-            <div class="stat-card">
-                <h2>Knowledge Discoveries</h2>
+                <h2>Discoveries</h2>
                 <div class="value" id="discoveries-count">-</div>
                 <div class="change" id="discoveries-change"></div>
             </div>
             <div class="stat-card">
-                <h2>Dialectic Sessions</h2>
+                <h2>Dialectic</h2>
                 <div class="value" id="dialectic-sessions">-</div>
                 <div class="change" id="dialectic-change"></div>
             </div>
             <div class="stat-card">
-                <h2>Fleet Health</h2>
+                <h2>Fleet Coherence</h2>
                 <div class="value" id="fleet-coherence">-</div>
                 <div class="change" id="fleet-health-detail"></div>
             </div>
@@ -107,11 +102,6 @@
                 <div class="value" id="stuck-agents-count">-</div>
                 <div class="change" id="stuck-agents-detail"></div>
             </div>
-            <div class="stat-card" id="roi-card">
-                <h2>Value Generated</h2>
-                <div class="value" id="roi-value">-</div>
-                <div class="change" id="roi-detail"></div>
-            </div>
             <div class="stat-card" id="system-health-card">
                 <h2>System Health</h2>
                 <div class="value" id="system-health-value">-</div>
@@ -119,10 +109,10 @@
             </div>
         </div>
 
-        <!-- Latest Check-in — shows last agent's governance decision -->
+        <!-- Pulse — last agent's governance decision -->
         <div class="live-chart-panel" id="governance-pulse-panel">
             <div class="panel-header">
-                <h2>Latest Check-in <span class="pulse-agent-badge" id="pulse-agent-name"
+                <h2>Pulse <span class="pulse-agent-badge" id="pulse-agent-name"
                         title="Last agent to check in">—</span></h2>
                 <div class="vitals-header-right">
                     <span class="governance-verdict" id="gov-verdict">
@@ -218,16 +208,16 @@
             </div>
         </div>
 
-        <!-- Live EISV Charts -->
+        <!-- EISV Charts -->
         <div class="live-chart-panel" id="eisv-chart-panel">
             <div class="panel-header">
-                <h2>Live EISV</h2>
+                <h2>EISV</h2>
                 <div class="panel-controls">
                     <label class="panel-select-label">View:</label>
-                    <select id="eisv-agent-select" class="panel-select" title="Select agent or fleet view"
+                    <select id="eisv-agent-select" class="panel-select" title="Fleet Average = aggregated; All agents = per-agent traces"
                         aria-label="Select agent for EISV view">
                         <option value="__fleet__">Fleet Average</option>
-                        <option value="__all__">All (raw)</option>
+                        <option value="__all__">All agents</option>
                     </select>
                     <span class="eisv-chart-info" id="eisv-chart-info"></span>
                     <button id="heatmap-toggle" class="panel-button" type="button">Heatmap</button>
@@ -326,9 +316,9 @@
                         <option value="deleted">Deleted</option>
                         <option value="unknown">Unknown</option>
                     </select>
-                    <label class="toolbar-toggle">
+                    <label class="toolbar-toggle" title="Show only agents that have checked in">
                         <input id="agent-metrics-only" type="checkbox">
-                        Metrics only
+                        With metrics
                     </label>
                     <div class="export-buttons">
                         <button id="export-agents-csv" class="export-button" type="button"
@@ -348,7 +338,7 @@
             <!-- Right Column: Discoveries -->
             <div class="panel" id="discoveries-section" style="--panel-dot-color: var(--accent-purple);">
                 <div class="panel-header">
-                    <h2>Recent Discoveries</h2>
+                    <h2>Discoveries</h2>
                     <div class="panel-controls">
                         <input id="discovery-search" type="text" placeholder="Search" aria-label="Search discoveries">
                         <select id="discovery-type-filter" aria-label="Filter discoveries by type">
@@ -370,6 +360,8 @@
                             <option value="30d">Last 30 days</option>
                         </select>
                         <button id="discovery-clear-filters" class="panel-button" type="button">Clear</button>
+                        <button id="export-discoveries-csv" class="panel-button" type="button" title="Export as CSV">CSV</button>
+                        <button id="export-discoveries-json" class="panel-button" type="button" title="Export as JSON">JSON</button>
                     </div>
                 </div>
                 <div id="discoveries-filter-info" class="filter-info"></div>
@@ -380,11 +372,11 @@
             </div>
         </div>
 
-        <!-- Dialectic Sessions - Full width centered -->
+        <!-- Dialectic - Full width -->
         <div class="dialectic-section" id="dialectic-section">
             <div class="panel" style="--panel-dot-color: var(--accent-yellow);">
                 <div class="panel-header">
-                    <h2>Dialectic Sessions</h2>
+                    <h2>Dialectic</h2>
                     <div class="panel-controls">
                         <select id="dialectic-status-filter" aria-label="Filter dialectic sessions">
                             <option value="all">All sessions</option>
@@ -404,9 +396,6 @@
             </div>
         </div>
 
-        <div class="refresh-info">
-            Tip: use search and filters to narrow results quickly.
-        </div>
     </main>
 
     <!-- Detail modal for expandable items -->

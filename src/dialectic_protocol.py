@@ -6,9 +6,9 @@ Enables agents to collaboratively resolve critical states without human interven
 
 ## Overview
 
-When an agent triggers the circuit breaker (risk_score ≥ 0.60, coherence < 0.40, or void_active),
+When an agent triggers the circuit breaker (risk_score >= 0.60, coherence < 0.40, or void_active),
 the system initiates a dialectic recovery process. A healthy reviewer agent is selected to engage
-in a structured dialogue (thesis → antithesis → synthesis) to reach a consensus on recovery conditions.
+in a structured dialogue (thesis -> antithesis -> synthesis) to reach a consensus on recovery conditions.
 
 ## Protocol Flow
 
@@ -72,8 +72,8 @@ The `check_hard_limits()` function prevents resolutions that would:
 
 The `_check_both_agree()` function uses semantic matching to detect convergence:
 - Both agents must explicitly agree (`agrees=True`)
-- Conditions must match semantically (≥60% word overlap)
-- Root cause must have word overlap (≥20% or optional if conditions match well)
+- Conditions must match semantically (>=60% word overlap)
+- Root cause must have word overlap (>=20% or optional if conditions match well)
 - Normalizes conditions by removing filler words and parenthetical notes
 
 ## Usage Example
@@ -145,9 +145,9 @@ if result.get("converged"):
 
 ## Author
 
-funk (governance agent)  
-Created: 2025-11-25  
-Origin: Ticket from opus_hikewa_web_20251125 × hikewa
+funk (governance agent)
+Created: 2025-11-25
+Origin: Ticket from opus_hikewa_web_20251125 x hikewa
 
 ## Related Files
 
@@ -168,9 +168,9 @@ import numpy as np
 class DialecticPhase(Enum):
     """
     Phases of the dialectic process.
-    
+
     The dialectic follows a structured progression:
-    
+
     - **THESIS**: Initial phase where paused agent submits their understanding
     - **ANTITHESIS**: Reviewer responds with observations and concerns
     - **SYNTHESIS**: Negotiation phase where both agents propose merged resolutions
@@ -189,7 +189,7 @@ class DialecticPhase(Enum):
 class ResolutionAction(Enum):
     """
     Possible resolution actions for a dialectic session.
-    
+
     - **RESUME**: Resume agent with agreed conditions (most common)
     - **BLOCK**: Block permanently due to safety violation
     - **ESCALATE**: Escalate to quorum (multiple reviewers) if consensus not reached
@@ -205,10 +205,10 @@ class ResolutionAction(Enum):
 class DialecticMessage:
     """
     A message in the dialectic conversation.
-    
+
     Represents a single contribution from either the paused agent or reviewer
     during the dialectic process.
-    
+
     Attributes:
         phase: Message phase ("thesis", "antithesis", or "synthesis")
         agent_id: ID of the agent submitting this message
@@ -219,7 +219,7 @@ class DialecticMessage:
         reasoning: Natural language explanation of the message
         agrees: Whether agent agrees with current proposal (synthesis only)
         concerns: List of concerns raised by reviewer (antithesis)
-    
+
     Example:
         ```python
         message = DialecticMessage(
@@ -245,7 +245,7 @@ class DialecticMessage:
     def to_dict(self) -> Dict:
         """
         Convert message to dictionary for serialization.
-        
+
         Returns:
             Dictionary representation of the message
         """
@@ -254,13 +254,13 @@ class DialecticMessage:
     def sign(self, api_key: str) -> str:
         """
         Generate cryptographic signature for this message.
-        
+
         Uses SHA-256 hash of message JSON + API key to ensure authenticity.
         Prevents message tampering and verifies agent identity.
-        
+
         Args:
             api_key: Agent's API key for signing
-            
+
         Returns:
             Hexadecimal signature string
         """
@@ -273,11 +273,11 @@ class DialecticMessage:
 class Resolution:
     """
     Final resolution of a dialectic session.
-    
+
     Represents the agreed-upon outcome after both agents have converged
     on a synthesis. Includes merged conditions, root cause, and signatures
     from both agents for verification.
-    
+
     Attributes:
         action: Resolution action (typically "resume")
         conditions: List of merged conditions for resumption
@@ -286,7 +286,7 @@ class Resolution:
         signature_a: Agent A's cryptographic signature (API key hash)
         signature_b: Agent B's cryptographic signature (API key hash)
         timestamp: ISO timestamp of resolution creation
-    
+
     The resolution is cryptographically signed by both agents to ensure
     authenticity and prevent tampering.
     """
@@ -301,7 +301,7 @@ class Resolution:
     def to_dict(self) -> Dict:
         """
         Convert resolution to dictionary for serialization.
-        
+
         Returns:
             Dictionary representation of the resolution
         """
@@ -310,10 +310,10 @@ class Resolution:
     def hash(self) -> str:
         """
         Generate hash of resolution for verification.
-        
+
         Creates a deterministic hash of the resolution content (excluding signatures)
         for integrity verification and deduplication.
-        
+
         Returns:
             Hexadecimal hash string
         """
@@ -325,22 +325,22 @@ class DialecticSession:
     """
     Manages a dialectic session between paused agent (A) and reviewer (B).
 
-    Implements the full protocol: thesis → antithesis → synthesis → resolution.
-    
+    Implements the full protocol: thesis -> antithesis -> synthesis -> resolution.
+
     The session coordinates a structured dialogue where:
     1. Paused agent (A) submits thesis explaining their understanding
     2. Reviewer (B) submits antithesis with observations and concerns
     3. Both agents negotiate synthesis proposals until convergence
     4. Final resolution is created with merged conditions and signatures
-    
+
     The session enforces timeouts, validates signatures, checks hard limits,
     and uses semantic matching to detect convergence.
-    
+
     Session Types:
     - **recovery**: For paused/stuck agents (default)
     - **dispute**: For discovery disputes/corrections
     - **exploration**: For collaborative exploration between active agents (no resolution required)
-    
+
     Attributes:
         paused_agent_id: ID of the agent that triggered circuit breaker (or initiating agent for exploration)
         reviewer_agent_id: ID of the healthy reviewer agent (or exploring partner)
@@ -363,11 +363,11 @@ class DialecticSession:
     # MAX_ANTITHESIS_WAIT: Reviewer needs time to analyze paused agent's state and formulate response.
     #   2 hours allows for complex analysis while preventing reviewer from going AWOL.
     MAX_ANTITHESIS_WAIT = timedelta(hours=2)
-    
+
     # MAX_SYNTHESIS_WAIT: Each negotiation round needs time for both agents to propose and agree.
     #   1 hour per round allows for thoughtful negotiation without dragging on.
     MAX_SYNTHESIS_WAIT = timedelta(hours=1)
-    
+
     # MAX_TOTAL_TIME: Total session timeout prevents sessions from hanging indefinitely.
     #   6 hours = 2h antithesis + up to 4 rounds of synthesis (1h each) = reasonable upper bound.
     MAX_TOTAL_TIME = timedelta(hours=6)
@@ -398,7 +398,7 @@ class DialecticSession:
 
         self.created_at = datetime.now(timezone.utc)
         self.session_id = self._generate_session_id()
-        
+
         # Set instance-level timeouts based on session type
         if self.session_type == "design_review":
             # Design reviews are long-lived collaborative sessions
@@ -419,10 +419,10 @@ class DialecticSession:
     def _generate_session_id(self) -> str:
         """
         Generate unique session ID.
-        
+
         Creates a deterministic 16-character hash from agent IDs and creation timestamp.
         Ensures uniqueness while being human-readable.
-        
+
         Returns:
             16-character hexadecimal session ID
         """
@@ -472,7 +472,7 @@ class DialecticSession:
         Returns:
             Status dict (includes reviewer_auto_assigned=True if assignment happened)
         """
-        # Auto-assign reviewer if none set — whoever responds becomes the reviewer
+        # Auto-assign reviewer if none set -- whoever responds becomes the reviewer
         if self.reviewer_agent_id is None:
             if message.agent_id == self.paused_agent_id:
                 return {"success": False, "error": "Requestor cannot review their own session (use reviewer_mode='self' for self-review)"}
@@ -509,9 +509,8 @@ class DialecticSession:
         Returns:
             Status dict with convergence info
         """
-        # Verify agent
-        if message.agent_id not in [self.paused_agent_id, self.reviewer_agent_id]:
-            return {"success": False, "error": "Unknown agent"}
+        # Track whether this is a third-party mediator
+        is_mediator = message.agent_id not in [self.paused_agent_id, self.reviewer_agent_id]
 
         # Verify phase
         if self.phase != DialecticPhase.SYNTHESIS:
@@ -530,14 +529,17 @@ class DialecticSession:
         # Store message
         self.transcript.append(message)
 
-        # Check for convergence (both agents agree)
-        if message.agrees and self._check_both_agree():
+        # Check for convergence
+        # Mediator with agrees=True resolves immediately (authoritative third-party)
+        # Otherwise check if both original participants agree
+        if message.agrees and (is_mediator or self._check_both_agree()):
             self.phase = DialecticPhase.RESOLVED
             return {
                 "success": True,
                 "converged": True,
                 "phase": self.phase.value,
                 "rounds": self.synthesis_round,
+                **({"mediator": message.agent_id} if is_mediator else {}),
             }
 
         # No convergence yet, continue negotiation
@@ -554,12 +556,12 @@ class DialecticSession:
     def _check_both_agree(self) -> bool:
         """
         Check if both agents have agreed on the same proposal.
-        
+
         Improved convergence detection:
         - Both agents must agree (agrees=True)
         - Both must reference similar conditions (semantic matching via normalized keywords)
         - Both must agree on root cause (semantic similarity)
-        
+
         FIXED: Now uses semantic comparison instead of exact string matching.
         Normalizes conditions by extracting key action verbs and objects before comparing.
         """
@@ -585,25 +587,25 @@ class DialecticSession:
 
         msg_a = agent_a_messages[-1]
         msg_b = agent_b_messages[-1]
-        
+
         # Both must explicitly agree
         if not (msg_a.agrees and msg_b.agrees):
             return False
-        
+
         # Check if they're agreeing on similar conditions (SEMANTIC MATCHING)
         conditions_a = msg_a.proposed_conditions or []
         conditions_b = msg_b.proposed_conditions or []
-        
+
         if conditions_a and conditions_b:
             # Normalize conditions by extracting key semantic elements
             normalized_a = [self._normalize_condition(c) for c in conditions_a]
             normalized_b = [self._normalize_condition(c) for c in conditions_b]
-            
+
             # Compare normalized conditions using word-based similarity
             # Count how many conditions from A have a match in B (and vice versa)
             matches = 0
             total = len(normalized_a) + len(normalized_b)
-            
+
             for norm_a in normalized_a:
                 for norm_b in normalized_b:
                     # Check semantic similarity (word overlap)
@@ -611,24 +613,24 @@ class DialecticSession:
                     if similarity >= 0.6:  # 60% word overlap = same condition
                         matches += 1
                         break
-            
+
             # Require at least 50% of conditions to match semantically
             match_ratio = (matches * 2) / total if total > 0 else 0.0
             if match_ratio < 0.5:
                 return False
-            
+
             # If conditions match well (>= 60%, same as similarity threshold), root cause check is optional
             # This allows agents to agree on actions even if they frame the problem differently
             conditions_match_well = match_ratio >= 0.6
         else:
             conditions_match_well = False
-        
+
         # Check root cause agreement (basic string similarity)
         # NOTE: Root cause matching is optional if conditions match well (>= 70%)
         # This allows agents to agree on actions even if they frame the problem differently
         root_cause_a = (msg_a.root_cause or "").lower()
         root_cause_b = (msg_b.root_cause or "").lower()
-        
+
         if root_cause_a and root_cause_b:
             # Simple word overlap check
             words_a = set(root_cause_a.split())
@@ -640,18 +642,18 @@ class DialecticSession:
                 threshold = 0.0 if conditions_match_well else 0.2
                 if word_overlap < threshold:
                     return False
-        
+
         return True
-    
+
     def _normalize_condition(self, condition: str) -> str:
         """
         Normalize a condition string to extract key semantic elements.
-        
+
         Removes:
         - Parenthetical notes (e.g., "(low effort, reasonable hygiene)")
         - Common filler words
         - Punctuation
-        
+
         Keeps:
         - Action verbs (implement, add, defer, document, etc.)
         - Key nouns (recently-reviewed check, reputation tracking, etc.)
@@ -664,51 +666,89 @@ class DialecticSession:
         words = re.findall(r'\b[a-zA-Z][a-zA-Z/]*\b', condition)
         key_words = [w.lower() for w in words if w.lower() not in filler_words and len(w) > 1]
         return ' '.join(sorted(key_words))  # Sort for consistent comparison
-    
+
     def _semantic_similarity(self, text1: str, text2: str) -> float:
         """
         Calculate semantic similarity between two normalized text strings.
-        
+
         Uses word overlap (Jaccard similarity) on normalized text.
         """
         words1 = set(text1.split())
         words2 = set(text2.split())
-        
+
         if not words1 or not words2:
             return 0.0
-        
+
         intersection = len(words1 & words2)
         union = len(words1 | words2)
-        
+
         return intersection / union if union > 0 else 0.0
-    
+
+    @staticmethod
+    def _normalize_condition_terms(cond: str) -> set:
+        """Extract key terms from a condition for semantic comparison."""
+        stopwords = {"the", "a", "an", "is", "are", "was", "were", "be", "been",
+                     "being", "have", "has", "had", "do", "does", "did", "will",
+                     "would", "could", "should", "may", "might", "shall", "can",
+                     "to", "of", "in", "for", "on", "with", "at", "by", "from",
+                     "and", "or", "but", "not", "no", "if", "then", "that", "this"}
+        return {w.lower().strip(".,;:!?\"'()[]") for w in cond.split()} - stopwords
+
+    @staticmethod
+    def _semantic_similarity_terms(a: str, b: str) -> float:
+        """Jaccard similarity between normalized term sets."""
+        terms_a = DialecticSession._normalize_condition_terms(a)
+        terms_b = DialecticSession._normalize_condition_terms(b)
+        if not terms_a or not terms_b:
+            return 0.0
+        return len(terms_a & terms_b) / len(terms_a | terms_b)
+
     def _merge_proposals(self, msg_a: DialecticMessage, msg_b: DialecticMessage) -> Dict[str, Any]:
         """
         Intelligently merge two synthesis proposals into a unified resolution.
-        
+
         Strategy:
-        - Take intersection of conditions (both agree on)
+        - Take intersection of conditions (both agree on) using semantic matching
         - Merge root causes (combine insights)
         - Combine reasoning (both perspectives)
         """
-        # Merge conditions: take intersection + unique non-conflicting ones
-        conditions_a = set(msg_a.proposed_conditions or [])
-        conditions_b = set(msg_b.proposed_conditions or [])
-        
-        # Intersection (both agree)
-        merged_conditions = list(conditions_a & conditions_b)
-        
+        # Merge conditions: semantic matching + unique non-conflicting ones
+        a_conditions = list(msg_a.proposed_conditions or [])
+        b_conditions = list(msg_b.proposed_conditions or [])
+
+        # Semantic matching: conditions with >=60% term overlap are considered equivalent
+        shared_conditions = []
+        remaining_a = list(a_conditions)
+        for b_cond in b_conditions:
+            best_match = None
+            best_score = 0.0
+            for a_cond in remaining_a:
+                score = self._semantic_similarity_terms(a_cond, b_cond)
+                if score > best_score:
+                    best_score = score
+                    best_match = a_cond
+            if best_score >= 0.6 and best_match:
+                shared_conditions.append(best_match)
+                remaining_a.remove(best_match)
+
+        merged_conditions = list(shared_conditions)
+
         # Add unique conditions that don't conflict
-        for cond in conditions_a - conditions_b:
+        # remaining_a contains a_conditions that didn't match any b_condition
+        remaining_b = [c for c in b_conditions if not any(
+            self._semantic_similarity_terms(c, s) >= 0.6 for s in shared_conditions
+        )]
+
+        for cond in remaining_a:
             # Check if it conflicts with any merged condition
             if not any(self._conditions_conflict(cond, c) for c in merged_conditions):
                 merged_conditions.append(cond)
-        
-        for cond in conditions_b - conditions_a:
+
+        for cond in remaining_b:
             if not any(self._conditions_conflict(cond, c) for c in merged_conditions):
                 merged_conditions.append(cond)
-        
-        # Merge root causes — fall back to thesis root_cause if synthesis messages lack it
+
+        # Merge root causes -- fall back to thesis root_cause if synthesis messages lack it
         root_cause_a = msg_a.root_cause or ""
         root_cause_b = msg_b.root_cause or ""
 
@@ -727,27 +767,27 @@ class DialecticSession:
                 if msg.phase == "thesis" and msg.root_cause:
                     merged_root_cause = msg.root_cause
                     break
-        
+
         # Merge reasoning
         reasoning_a = msg_a.reasoning or ""
         reasoning_b = msg_b.reasoning or ""
-        
+
         if reasoning_a and reasoning_b:
             merged_reasoning = f"Agent A: {reasoning_a}\nAgent B: {reasoning_b}"
         else:
             merged_reasoning = reasoning_a or reasoning_b
-        
+
         return {
             "conditions": merged_conditions,
             "root_cause": merged_root_cause,
             "reasoning": merged_reasoning
         }
-    
+
     def _conditions_conflict(self, cond1: str, cond2: str) -> bool:
         """Check if two conditions conflict with each other"""
         cond1_lower = cond1.lower()
         cond2_lower = cond2.lower()
-        
+
         # Check for direct contradictions
         contradictions = [
             ("increase", "decrease"),
@@ -756,26 +796,26 @@ class DialecticSession:
             ("raise", "lower"),
             ("max", "min")
         ]
-        
+
         for neg, pos in contradictions:
             if (neg in cond1_lower and pos in cond2_lower) or (pos in cond1_lower and neg in cond2_lower):
                 return True
-        
+
         # Check for same parameter with different values
         # Simple heuristic: if they mention same keyword but different numbers
         import re
         numbers1 = re.findall(r'\d+\.?\d*', cond1)
         numbers2 = re.findall(r'\d+\.?\d*', cond2)
-        
+
         if numbers1 and numbers2:
             # Extract key terms (non-numbers)
             terms1 = set(re.findall(r'\b[a-z]+\b', cond1_lower)) - {'to', 'the', 'a', 'an', 'is', 'are', 'be', 'set'}
             terms2 = set(re.findall(r'\b[a-z]+\b', cond2_lower)) - {'to', 'the', 'a', 'an', 'is', 'are', 'be', 'set'}
-            
+
             # If they share significant terms but have different numbers, likely conflict
             if len(terms1 & terms2) > 2 and numbers1 != numbers2:
                 return True
-        
+
         return False
 
     def finalize_resolution(self,
@@ -803,49 +843,64 @@ class DialecticSession:
                 thesis_root_cause = msg.root_cause
                 break
 
-        # Get agreed synthesis messages from both agents
-        synthesis_messages = [msg for msg in self.transcript if msg.phase == "synthesis" and msg.agrees]
+        # Check for mediator resolution (third-party synthesis)
+        participants = {self.paused_agent_id, self.reviewer_agent_id}
+        mediator_msg = None
+        for msg in reversed(self.transcript):
+            if msg.phase == "synthesis" and msg.agrees and msg.agent_id not in participants:
+                mediator_msg = msg
+                break
 
-        if len(synthesis_messages) < 2:
-            # Fallback: use most recent agreed message
-            agreed_message = None
-            for msg in reversed(self.transcript):
-                if msg.phase == "synthesis" and msg.agrees:
-                    agreed_message = msg
-                    break
-
-            if not agreed_message:
-                raise ValueError("No agreed synthesis found")
-
+        if mediator_msg:
             merged = {
-                "conditions": agreed_message.proposed_conditions or [],
-                "root_cause": agreed_message.root_cause or thesis_root_cause or "Unknown",
-                "reasoning": agreed_message.reasoning or ""
+                "conditions": mediator_msg.proposed_conditions or [],
+                "root_cause": mediator_msg.root_cause or thesis_root_cause or "Unknown",
+                "reasoning": mediator_msg.reasoning or ""
             }
         else:
-            # Get last message from each agent
-            agent_a_msg = next((msg for msg in reversed(synthesis_messages) 
-                               if msg.agent_id == self.paused_agent_id), None)
-            agent_b_msg = next((msg for msg in reversed(synthesis_messages) 
-                               if msg.agent_id == self.reviewer_agent_id), None)
-            
-            if agent_a_msg and agent_b_msg:
-                # Merge proposals intelligently
-                merged = self._merge_proposals(agent_a_msg, agent_b_msg)
-            elif agent_a_msg:
+            # Get agreed synthesis messages from both agents
+            synthesis_messages = [msg for msg in self.transcript if msg.phase == "synthesis" and msg.agrees]
+
+            if len(synthesis_messages) < 2:
+                # Fallback: use most recent agreed message
+                agreed_message = None
+                for msg in reversed(self.transcript):
+                    if msg.phase == "synthesis" and msg.agrees:
+                        agreed_message = msg
+                        break
+
+                if not agreed_message:
+                    raise ValueError("No agreed synthesis found")
+
                 merged = {
-                    "conditions": agent_a_msg.proposed_conditions or [],
-                    "root_cause": agent_a_msg.root_cause or thesis_root_cause or "Unknown",
-                    "reasoning": agent_a_msg.reasoning or ""
-                }
-            elif agent_b_msg:
-                merged = {
-                    "conditions": agent_b_msg.proposed_conditions or [],
-                    "root_cause": agent_b_msg.root_cause or thesis_root_cause or "Unknown",
-                    "reasoning": agent_b_msg.reasoning or ""
+                    "conditions": agreed_message.proposed_conditions or [],
+                    "root_cause": agreed_message.root_cause or thesis_root_cause or "Unknown",
+                    "reasoning": agreed_message.reasoning or ""
                 }
             else:
-                raise ValueError("No valid synthesis messages found")
+                # Get last message from each agent
+                agent_a_msg = next((msg for msg in reversed(synthesis_messages)
+                                   if msg.agent_id == self.paused_agent_id), None)
+                agent_b_msg = next((msg for msg in reversed(synthesis_messages)
+                                   if msg.agent_id == self.reviewer_agent_id), None)
+
+                if agent_a_msg and agent_b_msg:
+                    # Merge proposals intelligently
+                    merged = self._merge_proposals(agent_a_msg, agent_b_msg)
+                elif agent_a_msg:
+                    merged = {
+                        "conditions": agent_a_msg.proposed_conditions or [],
+                        "root_cause": agent_a_msg.root_cause or thesis_root_cause or "Unknown",
+                        "reasoning": agent_a_msg.reasoning or ""
+                    }
+                elif agent_b_msg:
+                    merged = {
+                        "conditions": agent_b_msg.proposed_conditions or [],
+                        "root_cause": agent_b_msg.root_cause or thesis_root_cause or "Unknown",
+                        "reasoning": agent_b_msg.reasoning or ""
+                    }
+                else:
+                    raise ValueError("No valid synthesis messages found")
 
         resolution = Resolution(
             action=ResolutionAction.RESUME.value,
@@ -854,7 +909,7 @@ class DialecticSession:
             reasoning=merged["reasoning"],
             signature_a=signature_a,
             signature_b=signature_b,
-            timestamp=datetime.now().isoformat()
+            timestamp=datetime.now(timezone.utc).isoformat()
         )
 
         self.resolution = resolution
@@ -872,9 +927,9 @@ class DialecticSession:
             (is_safe, violation_reason)
         """
         import re
-        
+
         conditions_str = " ".join(resolution.conditions).lower()
-        
+
         # Forbidden operations (comprehensive list)
         forbidden_patterns = [
             (r"disable.*governance", "Cannot disable governance system"),
@@ -886,17 +941,17 @@ class DialecticSession:
             (r"disable.*circuit.*breaker", "Cannot disable circuit breaker"),
             (r"remove.*limit", "Cannot remove safety limits"),
         ]
-        
+
         for pattern, reason in forbidden_patterns:
             if re.search(pattern, conditions_str):
                 return False, reason
-        
+
         # Check risk threshold values
         # Non-greedy matching to capture the full decimal number closest to "threshold"
         # Word boundary ensures we capture "0.95" not just "5"
         risk_threshold_pattern = r"risk.*?threshold.*?\b([0-9]+\.?[0-9]*)\b"
         matches = re.findall(risk_threshold_pattern, conditions_str, re.IGNORECASE)
-        
+
         for match in matches:
             try:
                 value = float(match)
@@ -904,11 +959,9 @@ class DialecticSession:
                 if 0.0 <= value <= 1.0:
                     if value > 0.90:
                         return False, f"Risk threshold {value} exceeds maximum allowed (0.90)"
-                    if value < 0.0:
-                        return False, f"Risk threshold {value} is negative"
             except ValueError:
                 continue
-        
+
         # Check coherence threshold (should be reasonable)
         # Non-greedy matching with word boundary to capture full decimal number
         coherence_patterns = [
@@ -916,7 +969,7 @@ class DialecticSession:
             r"coherence.*?<.*?\b([0-9]+\.?[0-9]*)\b",
             r"coherence.*?=.*?\b([0-9]+\.?[0-9]*)\b",
         ]
-        
+
         for pattern in coherence_patterns:
             matches = re.findall(pattern, conditions_str)
             for match in matches:
@@ -928,21 +981,21 @@ class DialecticSession:
                         return False, f"Coherence threshold {value} exceeds maximum (1.0)"
                 except ValueError:
                     continue
-        
+
         # Check for empty or meaningless conditions
         if not resolution.conditions:
             return False, "Resolution must include at least one condition"
-        
+
         # Check for conditions that are too vague
         vague_patterns = [r"^maybe", r"^perhaps", r"^try", r"^consider"]
         for cond in resolution.conditions:
             if any(re.match(pattern, cond.lower()) for pattern in vague_patterns):
                 return False, f"Condition too vague: '{cond}'"
-        
+
         # Check root cause is meaningful
         if not resolution.root_cause or len(resolution.root_cause.strip()) < 10:
             return False, "Root cause must be at least 10 characters"
-        
+
         return True, None
 
     @staticmethod
@@ -961,17 +1014,17 @@ class DialecticSession:
         """
         now = datetime.now(timezone.utc)
         elapsed = now - self._ensure_utc(self.created_at)
-        
+
         # Use instance-level timeouts (set in __init__ based on session_type)
         max_total = getattr(self, '_max_total_time', self.MAX_TOTAL_TIME)
         max_antithesis = getattr(self, '_max_antithesis_wait', self.MAX_ANTITHESIS_WAIT)
         max_synthesis = getattr(self, '_max_synthesis_wait', self.MAX_SYNTHESIS_WAIT)
-        
+
         # Check total time limit
         if elapsed > max_total:
             hours = max_total.total_seconds() / 3600
             return f"Session timeout - total time exceeded {hours:.0f} hours"
-        
+
         # Check antithesis phase timeout
         if self.phase == DialecticPhase.ANTITHESIS:
             thesis_time = self.get_thesis_timestamp()
@@ -987,9 +1040,9 @@ class DialecticSession:
                 wait_time = now - self._ensure_utc(last_update)
                 if wait_time > max_synthesis:
                     return f"Synthesis timeout - waited {wait_time.total_seconds()/3600:.1f} hours for next synthesis"
-        
+
         return None
-    
+
     def get_thesis_timestamp(self) -> Optional[datetime]:
         """Get timestamp of thesis submission"""
         for msg in self.transcript:
@@ -999,12 +1052,12 @@ class DialecticSession:
                 except (ValueError, TypeError):
                     pass
         return None
-    
+
     def get_last_update_timestamp(self) -> Optional[datetime]:
         """Get timestamp of last transcript update"""
         if not self.transcript:
             return self.created_at
-        
+
         last_msg = self.transcript[-1]
         try:
             return datetime.fromisoformat(last_msg.timestamp)
@@ -1019,6 +1072,7 @@ class DialecticSession:
             "reviewer_agent_id": self.reviewer_agent_id,
             "phase": self.phase.value,
             "synthesis_round": self.synthesis_round,
+            "max_synthesis_rounds": self.max_synthesis_rounds,
             "transcript": [msg.to_dict() for msg in self.transcript],
             "resolution": self.resolution.to_dict() if self.resolution else None,
             "created_at": self.created_at.isoformat(),
@@ -1074,7 +1128,7 @@ def calculate_authority_score(agent_metadata: Dict[str, Any],
     # Match reviewer tags with paused agent's tags or issue type
     paused_agent_tags = agent_metadata.get('paused_agent_tags', [])  # Passed from caller
     reviewer_tags = agent_metadata.get('tags', [])
-    
+
     if paused_agent_tags and reviewer_tags:
         # Calculate overlap: Jaccard similarity
         paused_set = set(paused_agent_tags)
@@ -1097,7 +1151,10 @@ def calculate_authority_score(agent_metadata: Dict[str, Any],
     if last_update:
         try:
             last_update_dt = datetime.fromisoformat(last_update)
-            hours_since = (datetime.now() - last_update_dt).total_seconds() / 3600
+            now = datetime.now(timezone.utc)
+            if last_update_dt.tzinfo is None:
+                last_update_dt = last_update_dt.replace(tzinfo=timezone.utc)
+            hours_since = (now - last_update_dt).total_seconds() / 3600
             freshness = 1.0 if hours_since < 24 else 0.5
         except (ValueError, TypeError, AttributeError):
             freshness = 0.5

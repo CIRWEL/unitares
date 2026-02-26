@@ -478,10 +478,10 @@ class UNITARESMonitor:
             len(self.state.S_history) < 2 or len(self.state.I_history) < 2):
             return "DIVERGENCE"  # Default for early updates
         
-        # Get deltas (safe to access [-1] after length check)
+        # Get deltas: use [-2] because current value is already appended at [-1]
         try:
-            dS = S - self.state.S_history[-1]
-            dI = I - self.state.I_history[-1]
+            dS = S - self.state.S_history[-2]
+            dI = I - self.state.I_history[-2]
         except (IndexError, AttributeError):
             # Fallback if history access fails
             return "DIVERGENCE"
@@ -653,7 +653,7 @@ class UNITARESMonitor:
                     'I': self.state.I_history[i],
                     'S': self.state.S_history[i],
                     'V': self.state.V_history[i],
-                    'decision': self.state.decision_history[i] if i < len(self.state.decision_history) else None
+                    'decision': self.state.decision_history[i] if abs(i) <= len(self.state.decision_history) else None
                 }
                 state_snapshots.append(snapshot)
             except IndexError:
@@ -1355,7 +1355,9 @@ class UNITARESMonitor:
         # Adjust decision based on task_type context for S=0 interpretation
         # Convergent tasks (standardization): S=0 is healthy compliance
         # Divergent tasks (divergence): S=0 may indicate lack of creative risk-taking
-        task_type = agent_state.get("task_type", "mixed")
+        # Prefer explicit function argument; fall back to agent_state
+        if task_type == "mixed":
+            task_type = agent_state.get("task_type", "mixed")
         task_type_adjustment = None
         original_risk_score = risk_score
         

@@ -128,7 +128,9 @@ class DiscoveryNode:
             references_files=data.get("references_files", []),
             resolved_at=data.get("resolved_at"),
             updated_at=data.get("updated_at"),
-            confidence=data.get("confidence")
+            confidence=data.get("confidence"),
+            provenance=data.get("provenance"),
+            provenance_chain=data.get("provenance_chain"),
         )
 
 

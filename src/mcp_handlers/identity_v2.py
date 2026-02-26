@@ -516,29 +516,31 @@ async def resolve_session_identity(
         try:
             db = get_db()
 
-            # Create agent in PostgreSQL with UUID as key
+            # Create agent in PostgreSQL with UUID as key (label set atomically)
             await db.upsert_agent(
                 agent_id=agent_uuid,  # UUID is the primary key
                 api_key="",  # Legacy field, not used
                 status="active",
+                label=label,  # Set auto-label at creation time
             )
 
-            # Set auto-generated label so future sessions can claim this identity
             if label:
-                await db.update_agent_fields(agent_uuid, label=label)
                 logger.info(f"[AUTO_NAME] New agent '{label}' (uuid: {agent_uuid[:8]}...)")
 
             # Create identity record with agent_id (display name) in metadata
+            identity_metadata = {
+                "source": "identity_v2",
+                "created_at": datetime.now().isoformat(),
+                "agent_id": agent_id,  # Human-readable label (model+date)
+                "model_type": model_type,
+                "total_updates": 0,  # Initialize counter for persistence
+            }
+            if label:
+                identity_metadata["label"] = label
             await db.upsert_identity(
                 agent_id=agent_uuid,
                 api_key_hash="",
-                metadata={
-                    "source": "identity_v2",
-                    "created_at": datetime.now().isoformat(),
-                    "agent_id": agent_id,  # Human-readable label (model+date)
-                    "model_type": model_type,
-                    "total_updates": 0,  # Initialize counter for persistence
-                }
+                metadata=identity_metadata,
             )
 
             # Create session binding
@@ -617,6 +619,18 @@ async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str
         success = await db.update_agent_fields(agent_uuid, label=label)
 
         if success:
+            # Sync label into core.identities.metadata JSONB so both sources agree
+            try:
+                identity = await db.get_identity(agent_uuid)
+                if identity:
+                    await db.upsert_identity(
+                        agent_id=agent_uuid,
+                        api_key_hash="",
+                        metadata={"label": label},
+                    )
+            except Exception as e:
+                logger.debug(f"Could not sync label to identities metadata: {e}")
+
             # Sync label to runtime cache so compute_agent_signature can find it
             try:
                 from .shared import get_mcp_server

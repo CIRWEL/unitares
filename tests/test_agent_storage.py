@@ -88,12 +88,16 @@ def _mock_db(**overrides) -> MagicMock:
     db.record_agent_state = AsyncMock(return_value=overrides.get("record_agent_state", 1))
     db.get_agent_state_history = AsyncMock(return_value=overrides.get("get_agent_state_history", []))
 
-    # For list_agents label fetching -- provide a mock pool
-    mock_conn = AsyncMock()
-    mock_conn.fetch = AsyncMock(return_value=[])
-    mock_pool = MagicMock()
-    mock_pool.acquire = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_conn), __aexit__=AsyncMock(return_value=False)))
-    db._pool = overrides.get("_pool", mock_pool)
+    # For list_agents label fetching -- db.acquire() is an async context manager
+    if "acquire" in overrides:
+        db.acquire = overrides["acquire"]
+    else:
+        mock_conn = AsyncMock()
+        mock_conn.fetch = AsyncMock(return_value=[])
+        db.acquire = MagicMock(return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_conn),
+            __aexit__=AsyncMock(return_value=False),
+        ))
 
     return db
 
@@ -679,17 +683,16 @@ class TestListAgents:
     async def test_label_merged_from_pool_query(self):
         identity = _make_identity("a1", identity_id=1, metadata={"tags": []})
 
-        # Build a mock pool that returns a label row
+        # Build a mock acquire() that returns a connection with label rows
         mock_row = {"id": "a1", "label": "My Agent"}
         mock_conn = AsyncMock()
         mock_conn.fetch = AsyncMock(return_value=[mock_row])
-        mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
+        mock_acquire = MagicMock(return_value=AsyncMock(
             __aenter__=AsyncMock(return_value=mock_conn),
             __aexit__=AsyncMock(return_value=False),
         ))
 
-        db = _mock_db(list_identities=[identity], get_latest_agent_state=None, _pool=mock_pool)
+        db = _mock_db(list_identities=[identity], get_latest_agent_state=None, acquire=mock_acquire)
         with patch("src.agent_storage.get_db", return_value=db):
             from src.agent_storage import list_agents
             result = await list_agents()
@@ -698,13 +701,12 @@ class TestListAgents:
 
     @pytest.mark.asyncio
     async def test_label_fetch_failure_is_silent(self):
-        """If the pool query for labels fails, agents still return."""
+        """If the acquire() call for labels fails, agents still return."""
         identity = _make_identity("a1", identity_id=1)
 
-        mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock(side_effect=Exception("pool gone"))
+        mock_acquire = MagicMock(side_effect=Exception("pool gone"))
 
-        db = _mock_db(list_identities=[identity], get_latest_agent_state=None, _pool=mock_pool)
+        db = _mock_db(list_identities=[identity], get_latest_agent_state=None, acquire=mock_acquire)
         with patch("src.agent_storage.get_db", return_value=db):
             from src.agent_storage import list_agents
             result = await list_agents()
@@ -712,10 +714,11 @@ class TestListAgents:
         assert len(result) == 1
 
     @pytest.mark.asyncio
-    async def test_no_pool_does_not_crash(self):
-        """If _pool is None, label fetch is skipped gracefully."""
+    async def test_acquire_returns_empty_labels_gracefully(self):
+        """If acquire() returns no label rows, agents still load without labels."""
         identity = _make_identity("a1", identity_id=1)
-        db = _mock_db(list_identities=[identity], get_latest_agent_state=None, _pool=None)
+        # Default mock_db already returns empty rows from acquire()
+        db = _mock_db(list_identities=[identity], get_latest_agent_state=None)
         with patch("src.agent_storage.get_db", return_value=db):
             from src.agent_storage import list_agents
             result = await list_agents()

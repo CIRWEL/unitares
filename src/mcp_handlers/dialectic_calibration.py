@@ -99,9 +99,12 @@ async def update_calibration_from_dialectic(session: DialecticSession, resolutio
         
         # Update calibration with weighted peer agreement
         # Use record_prediction which accepts confidence, predicted_correct, actual_correct, complexity_discrepancy
+        # predicted_correct: did the agent expect to be right?
+        # If confidence >= 0.5, agent predicted it was correct
+        predicted_correct = (confidence >= 0.5)
         calibration_checker.record_prediction(
             confidence=confidence,  # Original agent's confidence
-            predicted_correct=actual_correct,  # What peer decided
+            predicted_correct=predicted_correct,  # Agent's implicit prediction from confidence
             actual_correct=actual_correct,  # Ground truth (from peer)
             complexity_discrepancy=complexity_discrepancy
         )

@@ -57,8 +57,8 @@ FORBIDDEN_CONDITIONS = [
     "skip checks",
 ]
 
-MAX_RISK_FOR_SELF_RECOVERY = 0.70  # Above this, escalate to human
-MIN_COHERENCE_FOR_SELF_RECOVERY = 0.30  # Below this, escalate to human
+MAX_RISK_FOR_SELF_RECOVERY = 0.65  # Matches lifecycle.py review thresholds
+MIN_COHERENCE_FOR_SELF_RECOVERY = 0.35  # Matches lifecycle.py review thresholds
 
 
 def clear_loop_detector_state(meta) -> None:

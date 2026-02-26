@@ -550,14 +550,30 @@ class TestDialecticProtocolFlow:
         assert result["converged"] is False
         assert session.synthesis_round == 2
 
-    def test_synthesis_unknown_agent(self):
+    def test_synthesis_third_party_mediator_resolves(self):
+        """Third-party mediator with agrees=True resolves session."""
         session = self._make_session()
         session.submit_thesis(self._thesis_msg(), "key-a")
         session.submit_antithesis(self._antithesis_msg(), "key-b")
         msg = self._synthesis_msg("agent-c")
+        msg.agrees = True
         result = session.submit_synthesis(msg, "key-c")
-        assert result["success"] is False
-        assert "Unknown agent" in result["error"]
+        assert result["success"] is True
+        assert result["converged"] is True
+        assert result.get("mediator") == "agent-c"
+        assert session.phase == DialecticPhase.RESOLVED
+
+    def test_synthesis_third_party_no_agree_continues(self):
+        """Third-party mediator without agrees continues negotiation."""
+        session = self._make_session()
+        session.submit_thesis(self._thesis_msg(), "key-a")
+        session.submit_antithesis(self._antithesis_msg(), "key-b")
+        msg = self._synthesis_msg("agent-c")
+        msg.agrees = False
+        result = session.submit_synthesis(msg, "key-c")
+        assert result["success"] is True
+        assert result["converged"] is False
+        assert session.synthesis_round == 2
 
     def test_synthesis_wrong_phase(self):
         session = self._make_session()

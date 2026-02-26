@@ -44,11 +44,25 @@
     // Dialectic UI helpers
     // ========================================================================
 
-    function updateDialecticDisplay(sessions, message) {
+    function updateDialecticDisplay(sessions, message, options) {
         var sessionsEl = document.getElementById('dialectic-sessions');
         var changeEl = document.getElementById('dialectic-change');
-        if (sessionsEl) sessionsEl.textContent = sessions.length || '?';
+        if (sessionsEl) sessionsEl.textContent = (sessions && sessions.length) ? sessions.length : '?';
         if (changeEl) changeEl.innerHTML = message || '';
+
+        // When error, clear skeleton and show error state in container
+        if (options && options.error) {
+            var container = document.getElementById('dialectic-container');
+            if (container) {
+                container.innerHTML = '<div class="dialectic-empty">' +
+                    '<div class="dialectic-empty-icon">⚠</div>' +
+                    '<div>Error loading dialectic sessions</div>' +
+                    '<div style="font-size: 0.85em; margin-top: 5px; opacity: 0.7">' +
+                        'Check server connection and try Refresh' +
+                    '</div>' +
+                '</div>';
+            }
+        }
     }
 
     function updateDialecticFilterInfo(count) {

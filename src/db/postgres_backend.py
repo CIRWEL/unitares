@@ -298,7 +298,9 @@ class PostgresBackend(DatabaseBackend):
                 "backend": "postgres",
                 "db_url": self._db_url.split("@")[-1] if "@" in self._db_url else "***",  # Hide credentials
                 "pool_size": self._pool.get_size(),
-                "pool_free": self._pool.get_idle_size(),
+                "pool_idle": self._pool.get_idle_size(),
+                "pool_free": self._pool.get_idle_size(),  # Alias for compatibility
+                "pool_max": self._pool.get_max_size(),
                 "schema_version": version,
                 "identity_count": identity_count,
                 "active_session_count": session_count,
@@ -347,10 +349,11 @@ class PostgresBackend(DatabaseBackend):
         parent_agent_id: Optional[str] = None,
         spawn_reason: Optional[str] = None,
         created_at: Optional[datetime] = None,
+        label: Optional[str] = None,
     ) -> bool:
         """
         Create or update an agent in core.agents table.
-        
+
         This is required for foreign key references in dialectic_sessions.
         Returns True if successful.
         """
@@ -360,8 +363,8 @@ class PostgresBackend(DatabaseBackend):
                     """
                     INSERT INTO core.agents (
                         id, api_key, status, purpose, notes, tags,
-                        created_at, parent_agent_id, spawn_reason
-                    ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, now()), $8, $9)
+                        created_at, parent_agent_id, spawn_reason, label
+                    ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, now()), $8, $9, $10)
                     ON CONFLICT (id) DO UPDATE SET
                         -- Only overwrite api_key if the existing value is empty and we have a non-empty one.
                         api_key = CASE
@@ -372,6 +375,7 @@ class PostgresBackend(DatabaseBackend):
                         purpose = COALESCE(EXCLUDED.purpose, core.agents.purpose),
                         notes = COALESCE(EXCLUDED.notes, core.agents.notes),
                         tags = EXCLUDED.tags,
+                        label = COALESCE(EXCLUDED.label, core.agents.label),
                         updated_at = now()
                     """,
                     agent_id,
@@ -383,6 +387,7 @@ class PostgresBackend(DatabaseBackend):
                     created_at,
                     parent_agent_id,
                     spawn_reason,
+                    label,
                 )
                 return True
             except Exception as e:
@@ -1524,7 +1529,7 @@ class PostgresBackend(DatabaseBackend):
             result = await conn.execute("""
                 UPDATE core.dialectic_sessions
                 SET status = $1, updated_at = now()
-                WHERE id = $2
+                WHERE session_id = $2
             """, phase, session_id)
             return "UPDATE 1" in result
 
@@ -1537,7 +1542,7 @@ class PostgresBackend(DatabaseBackend):
             result = await conn.execute("""
                 UPDATE core.dialectic_sessions
                 SET reviewer_agent_id = $1, updated_at = now()
-                WHERE id = $2
+                WHERE session_id = $2
             """, reviewer_agent_id, session_id)
             return "UPDATE 1" in result
 
