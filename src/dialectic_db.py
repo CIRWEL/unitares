@@ -303,14 +303,17 @@ class DialecticDB:
         paused_agent_id: str,
         hours: int = 24
     ) -> bool:
-        """Check if reviewer has recently reviewed this agent."""
+        """Check if reviewer has recently reviewed this agent.
+
+        Counts ALL session outcomes (resolved, failed, timeout, escalated) to prevent
+        a reviewer from bypassing the cooldown by deliberately failing sessions.
+        """
         await self._ensure_pool()
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow("""
                 SELECT 1 FROM core.dialectic_sessions
                 WHERE reviewer_agent_id = $1
                 AND paused_agent_id = $2
-                AND status = 'resolved'
                 AND created_at >= now() - interval '1 hour' * $3
                 LIMIT 1
             """, reviewer_id, paused_agent_id, hours)

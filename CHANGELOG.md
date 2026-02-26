@@ -7,6 +7,144 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.0] - 2026-02-26
+
+### Added — Dashboard Redesign
+
+Major dashboard overhaul — Alpine.js + htmx interactive architecture replacing static HTML.
+
+- **Slide panel component** with agent detail view, EISV trend charts, and quick action buttons
+- **Alpine.js identity store** with "Me mode" — AI agents see themselves highlighted in the dashboard
+- **Hash-based router** for deep-linking to agents, sessions, and discoveries
+- **Scoped search** with agents/all toggle and debounced input
+- **Keyboard shortcuts** (vim-style navigation) with tooltip directive and help store
+- **Loading skeletons** and smart empty states for all data-fetching panels
+- **Error handling wrapper** and connection health checker
+- **Expandable agent cards** with accordion, inline IDs, and hover actions
+- **Bold visual redesign** — accent-tinted cards, colored EISV values, stronger badges, panel identity
+- **help.json** terminology database for contextual tooltips
+- **EISV history + incidents endpoints** for htmx fragment rendering
+- **Event IDs + `?since=` cursor** on `/api/events` for Discord bridge polling
+- **Discovery expand-on-click** with expandable details in list items
+- Removed redundant Activity Timeline panel (duplicated Agents list)
+- Removed Lumen sensor panel from governance dashboard
+
+### Added — Outcome Events Infrastructure
+
+- **Outcome event tracking** for EISV validation — correlate governance state with actual results
+- **Auto-emit outcome events** from check-ins, enabling calibration feedback loops
+- `outcome_event()` tool for manual event recording
+
+### Added — Stuck Agent Improvements
+
+- **Cross-referencing** stuck agents with recent activity across knowledge graph
+- **Unstick action** in dashboard with one-click recovery button
+- **Zombie prevention** — prevent archived agents from resurrecting via auto-resume
+- **Auto-unarchive** on onboard reconnect for legitimately returning agents
+- **Dedup recovery notes** in knowledge graph to reduce noise
+
+### Added — Knowledge Graph Lifecycle
+
+- **Ephemeral notes** with automatic expiration
+- **Periodic cleanup** for stale KG entries
+- **`last_referenced` tracking** for discovery recency
+- **Improved search UX** with better result formatting
+
+### Added — Developer Documentation
+
+- Developer guide for repo protection from agent damage
+- Dashboard redesign design document and implementation plan
+- Unified DB architecture design doc and implementation plan
+
+### Changed — Streamable HTTP Migration
+
+- **Primary transport migrated from SSE to Streamable HTTP** (`/mcp/` endpoint)
+- Removed dead SSE code paths from server and pi_orchestration
+- Network trust bypass for HTTP auth (local network clients)
+- System health metrics added to dashboard
+
+### Changed — Dialectic Protocol Hardening
+
+- **Simplified convergence** — `agrees=True` resolves directly, no fourth phase needed
+- **UUID alignment** via `require_registered_agent` — dialectic sessions use onboard identity
+- **Synthesizer attribution** displayed in session transcripts
+- **Reviewer auto-persist** and AGE tag normalization
+- **Reviewer auto-assign** fix for empty string default
+- **Mediator hijack prevention** (audit round 2)
+- **`finalize_resolution` fallback** to thesis `root_cause` when synthesis missing
+- **Ownership check removed** from archive/delete — dashboard can manage sessions
+- **Agent UUID → label resolution** in dialectic panel
+- Removed dead convergence code, fixed `agrees` coercion
+- 7 correctness bugs found and fixed via protocol audit
+- `DialecticDB` detects closed pool and auto-refreshes from backend
+
+### Changed — Identity Consolidation
+
+- **Unified `derive_session_key()`** — consolidated 6 separate derivation sites
+- Removed deprecated `_derive_session_key` (underscore-prefixed)
+- Fixed `get_bound_agent_id` import (identity_shared, not identity)
+- Clarified agent_id vs UUID terminology in comments and docs
+- Updated AGI-forward spec for identity_v2 current state
+- Fixed identity churn, display dispatch, and tag normalization (audit)
+
+### Changed — Lifecycle Module Refactoring
+
+- **Split `lifecycle.py` monolith** — extracted `lifecycle_resume.py` (142 lines) and `lifecycle_stuck.py` (557 lines) into focused modules
+- Lifecycle handler reduced from ~720 lines to focused orchestration
+
+### Changed — Dashboard Performance & Accessibility
+
+- **CSS containment** for render optimization
+- **`requestAnimationFrame`** for chart updates, EISV chart capped at 60 data points
+- **Debounced search** inputs, removed duplicate listeners
+- **CONFIG object** with timing constants, replaced magic numbers
+- **Semantic color CSS variables** and section headers for CSS navigation
+- **ARIA labels**, modal roles, skip link, focus management, and focus trap
+- Fixed heading hierarchy for perfect a11y score
+- Removed 4 unused component classes
+- JSDoc added to core dashboard functions
+
+### Changed — Database & Backend
+
+- Removed SQLite backend and dual-write entirely (complement to v2.7.0 cleanup)
+- `normalize_tags` for knowledge graph entries
+- Connection pool release and `acquire_compat` safety
+- Cross-event-loop DB corruption fix with system health tracking
+- Batch update counter persistence to prevent DB contention
+- Update count regression prevention on server restart
+
+### Fixed
+
+- **httpx client leak** in `pi_orchestration` — unclosed async client
+- **datetime shadowing bug** broke dashboard agent listing
+- **False-positive stuck agent detection** and dashboard noise eliminated
+- **Leave_note limit** raised from 500 → 6,000 chars, split into summary+details
+- **Reject out-of-range** complexity/confidence, guard `observe(compare)` NoneType
+- **Knowledge `content→details` param_map** for store action (alias fix)
+- **Self-recovery** — allow archived agents to self-restore via `self_recovery(quick)`
+- **UUID validation + auth checks** on dashboard fragment endpoints
+- 7 dogfood friction issues from Sonnet 4.6 Web session
+- 15 audit fixes + 8 audit round 2 fixes
+- 3 CI failures (async calibration tests + observability mock)
+- 2 pre-existing test failures resolved
+- Async metadata loading and handler improvements
+
+### Removed
+
+- SQLite backend and all related test files (final cleanup)
+- Dead SSE transport code
+- Lumen sensor panel from dashboard
+- Activity Timeline panel (redundant)
+- 4 unused dashboard component classes
+- Dead convergence code from dialectic protocol
+
+### Tests
+
+- 5,654 tests collected, 80% coverage target
+- Test updates for async metadata, dialectic phase, KG truncation limits
+
+---
+
 ## [2.7.0] - 2026-02-20
 
 ### Added — CIRS v2 Resonance Wiring

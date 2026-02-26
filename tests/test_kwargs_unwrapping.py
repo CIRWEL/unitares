@@ -47,7 +47,7 @@ async def cleanup_test_agents():
 
 def _extract_agent_id(data: dict):
     """Extract and track agent ID from identity response for cleanup."""
-    agent_id = data.get("resolved_agent_id") or (
+    agent_id = data.get("caller_agent_id") or (
         data.get("agent_signature", {}).get("agent_id")
     )
     if agent_id:
@@ -68,7 +68,7 @@ async def test_dispatch_tool_kwargs_string_unwrap():
     # With identity_v2, identity() succeeds and returns agent_signature
     assert data.get("success") is True, f"Identity should succeed, got: {data}"
     # The name parameter was unwrapped correctly - verify we got a valid response
-    assert "agent_signature" in data or "resolved_agent_id" in data or "existing_agent" in data, \
+    assert "agent_signature" in data or "caller_agent_id" in data or "existing_agent" in data, \
         f"Should have identity info, got: {data}"
 
 
@@ -86,7 +86,7 @@ async def test_dispatch_tool_kwargs_dict_unwrap():
     # With identity_v2, identity() succeeds and returns agent_signature
     assert data.get("success") is True, f"Identity should succeed, got: {data}"
     # The name parameter was unwrapped correctly - verify we got a valid response
-    assert "agent_signature" in data or "resolved_agent_id" in data or "existing_agent" in data, \
+    assert "agent_signature" in data or "caller_agent_id" in data or "existing_agent" in data, \
         f"Should have identity info, got: {data}"
 
 
@@ -104,5 +104,5 @@ async def test_handle_identity_kwargs_dict_direct():
     # With identity_v2, identity() succeeds and returns agent_signature
     assert data.get("success") is True, f"Identity should succeed, got: {data}"
     # The name parameter was unwrapped correctly - verify we got a valid response
-    assert "agent_signature" in data or "resolved_agent_id" in data or "existing_agent" in data, \
+    assert "agent_signature" in data or "caller_agent_id" in data or "existing_agent" in data, \
         f"Should have identity info, got: {data}"

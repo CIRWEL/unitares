@@ -189,9 +189,9 @@ class TestGetConnectionStatus:
 
             data = parse_result(result)
             assert data["session_bound"] is True
-            # Note: success_response overwrites resolved_agent_id with the raw UUID
-            # The structured_id is in the handler's local variable but gets overwritten
-            assert data["resolved_agent_id"] == "uuid-123"
+            # success_response adds caller_agent_id (calling session's bound UUID)
+            # The handler's resolved_agent_id (display name) is now preserved separately
+            assert data["caller_agent_id"] == "uuid-123"
             assert data["resolved_uuid"] == "uuid-123..."
 
     @pytest.mark.asyncio
@@ -2354,9 +2354,8 @@ class TestGetConnectionStatusAdditional:
     async def test_connection_status_with_structured_id(self):
         """Test connection with resolved structured_id covers lines 2314-2317.
 
-        Note: success_response() overwrites resolved_agent_id with context agent_id,
-        so the handler's structured_id lookup is not visible in the final response.
-        We verify the code path is exercised by checking session_bound and resolved_uuid.
+        success_response() adds caller_agent_id (calling session's bound UUID).
+        The handler's resolved_agent_id (display name) is now preserved separately.
         """
         mock_server = MagicMock()
         meta = MagicMock()
@@ -2374,8 +2373,10 @@ class TestGetConnectionStatusAdditional:
             assert data["session_bound"] is True
             # resolved_uuid is the truncated UUID from the handler
             assert data["resolved_uuid"] == "uuid-xyz..."
-            # resolved_agent_id is overwritten by success_response with context_agent_id
-            assert data["resolved_agent_id"] == "uuid-xyz"
+            # caller_agent_id is the calling session's bound UUID (from success_response envelope)
+            assert data["caller_agent_id"] == "uuid-xyz"
+            # resolved_agent_id is now the display name from the handler (no longer overwritten)
+            assert data["resolved_agent_id"] == "Claude_Opus_20260101"
 
 
 # ============================================================================

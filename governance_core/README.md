@@ -1,8 +1,8 @@
 # UNITARES Governance Core
 
-**Version:** 2.7.0
+**Version:** 2.8.0
 **Status:** Active
-**Last Updated:** 2026-02-20
+**Last Updated:** 2026-02-26
 
 ---
 

@@ -79,16 +79,16 @@ async def _has_recently_reviewed(reviewer_id: str, paused_agent_id: str, hours: 
 
                     if (session_data.get('reviewer_agent_id') == reviewer_id and
                         session_data.get('paused_agent_id') == paused_agent_id):
-                        phase = session_data.get('phase')
-                        if phase == 'resolved':
-                            created_at_str = session_data.get('created_at')
-                            if created_at_str:
-                                try:
-                                    created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
-                                    if created_at >= cutoff_time:
-                                        return True
-                                except (ValueError, AttributeError):
-                                    continue
+                        # Count ALL session outcomes — not just resolved — to prevent
+                        # a reviewer from bypassing cooldown by deliberately failing sessions.
+                        created_at_str = session_data.get('created_at')
+                        if created_at_str:
+                            try:
+                                created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                                if created_at >= cutoff_time:
+                                    return True
+                            except (ValueError, AttributeError):
+                                continue
                 except (json.JSONDecodeError, KeyError, IOError, OSError) as e:
                     logger.debug(f"Skipping unreadable session file: {e}")
                     continue

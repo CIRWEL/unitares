@@ -8,7 +8,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                    MCP Server (mcp_server.py)                   │
 │  - Streamable HTTP transport (port 8767)                       │
-│  - 30 registered tools + aliases (v2.7.0)                       │
+│  - 30 registered tools + aliases (v2.8.0)                       │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Handlers (mcp_handlers/)                      │
 │  - core.py: process_agent_update, get_governance_metrics        │

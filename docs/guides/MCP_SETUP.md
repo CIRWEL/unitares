@@ -1,6 +1,6 @@
 # MCP Server Setup Guide
 
-**UNITARES Governance MCP Server v2.7.3**
+**UNITARES Governance MCP Server v2.8.0**
 
 This guide shows you how to connect to the governance MCP server from any MCP-compatible client.
 

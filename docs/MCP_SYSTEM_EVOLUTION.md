@@ -1,4 +1,4 @@
-# MCP System Evolution: v1.0.0 → v2.7.0+
+# MCP System Evolution: v1.0.0 → v2.8.0
 
 **Complete history of how the UNITARES Governance MCP system has evolved**
 
@@ -29,6 +29,7 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 - **v2.6.3** (Feb 2026) - Dialectic audit: sqlite→pg aliases, LLM reviewer, dialectic consolidation (30 tools), EISV sensor sync, dead code removal. 2,602 tests at 49% coverage
 - **v2.6.4** (Feb 2026) - KG bias fixes (temporal decay, status scoring, SUPERSEDES edge), CI test fixes. 6,344 tests at 80% coverage
 - **v2.7.0** (Feb 2026) - CIRS v2 resonance wiring (AdaptiveGovernor PID, auto-emit hooks, neighbor pressure), I-dynamics linear mode (v5 paper), dialectic fixes. 6,407 tests at 80% coverage
+- **v2.8.0** (Feb 2026) - Dashboard redesign (Alpine.js + htmx), Streamable HTTP migration, dialectic hardening, identity consolidation, outcome events, lifecycle module split, stuck agent improvements. 5,654 tests at 80% coverage
 
 ---
 
@@ -395,6 +396,7 @@ v2.6.2:  Architecture refactoring, 31 tools, 2,194 tests
 v2.6.3:  Dialectic audit, EISV sensor sync, 30 tools, 6,306 tests at 80% coverage
 v2.6.4:  KG bias fixes, CI test fixes, 6,344 tests at 80% coverage
 v2.7.0:  CIRS v2 resonance wiring, I-dynamics linear, 6,407 tests at 80% coverage
+v2.8.0:  Dashboard redesign, Streamable HTTP, dialectic hardening, lifecycle split, 5,654 tests
 ```
 
 ### Tool Count Evolution
@@ -411,6 +413,7 @@ v2.7.0:  CIRS v2 resonance wiring, I-dynamics linear, 6,407 tests at 80% coverag
 - **v2.6.3:** 30 tools (dialectic consolidated, identity audit, dead code removal, 6,306 tests)
 - **v2.6.4:** 30 tools (KG bias fixes: temporal decay, status scoring, SUPERSEDES edge, 6,344 tests)
 - **v2.7.0:** 30 tools (CIRS v2 resonance wiring, I-dynamics linear mode, 6,407 tests)
+- **v2.8.0:** 30 tools (dashboard redesign, Streamable HTTP, dialectic hardening, outcome events, 5,654 tests)
 
 ### Performance Improvements
 
@@ -438,7 +441,7 @@ v2.7.0:  CIRS v2 resonance wiring, I-dynamics linear, 6,407 tests at 80% coverag
 
 ---
 
-## Current State (v2.7.0)
+## Current State (v2.8.0)
 
 ### Core Features
 
@@ -456,7 +459,10 @@ v2.7.0:  CIRS v2 resonance wiring, I-dynamics linear, 6,407 tests at 80% coverag
 - ✅ Pi/Lumen orchestration via anima-mcp
 - ✅ PostgreSQL + AGE for all persistent data (dialectic migrated Feb 2026)
 - ✅ KG search bias mitigation (temporal decay, status scoring, connectivity cap, SUPERSEDES edges)
-- ✅ **5,733 tests** with 80% overall coverage (after SQLite backend removal)
+- ✅ **5,654 tests** with 80% overall coverage
+- ✅ Streamable HTTP as primary transport (migrated from SSE)
+- ✅ Dashboard redesign with Alpine.js + htmx interactive architecture
+- ✅ Outcome events for EISV validation and calibration feedback
 
 ### Architecture
 
@@ -498,6 +504,6 @@ v2.7.0:  CIRS v2 resonance wiring, I-dynamics linear, 6,407 tests at 80% coverag
 
 ---
 
-**Last Updated:** February 19, 2026
-**Current Version:** v2.7.0
-**Total Evolution:** 1.0.0 → 2.7.0 (23 versions)
+**Last Updated:** February 26, 2026
+**Current Version:** v2.8.0
+**Total Evolution:** 1.0.0 → 2.8.0 (24 versions)

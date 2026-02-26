@@ -141,7 +141,7 @@ async def test_authentication_failures():
     assert result is not None, "Should return result"
     response_data = json.loads(result[0].text)
     assert response_data.get("success") == True, "Should succeed with auto-binding"
-    bound_agent = response_data.get("agent_signature", {}).get("uuid") or response_data.get("resolved_agent_id")
+    bound_agent = response_data.get("agent_signature", {}).get("uuid") or response_data.get("caller_agent_id")
     assert bound_agent is not None, "Should have bound agent"
     print(f"✅ Session bound to agent: {bound_agent[:8]}...")
 

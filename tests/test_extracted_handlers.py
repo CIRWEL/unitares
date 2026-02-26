@@ -39,7 +39,7 @@ async def test_get_governance_metrics():
     response_data = json.loads(result[0].text)
     # With identity_v2, auto-binding creates a new agent, so success=True
     assert response_data.get("success") == True, "Should succeed with auto-binding"
-    assert "agent_signature" in response_data or "resolved_agent_id" in response_data, \
+    assert "agent_signature" in response_data or "caller_agent_id" in response_data, \
         "Should have identity info from auto-binding"
     print("✅ Auto-binds agent when agent_id missing (identity_v2)")
 
