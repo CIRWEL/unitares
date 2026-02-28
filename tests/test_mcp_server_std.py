@@ -59,41 +59,41 @@ class TestNormalizeHttpProxyBase:
     """Tests for URL normalization used by stdio proxy mode."""
 
     def test_plain_url_unchanged(self):
-        from src.mcp_server_std import _normalize_http_proxy_base
+        from src.agent_state import _normalize_http_proxy_base
         assert _normalize_http_proxy_base("http://localhost:8765") == "http://localhost:8765"
 
     def test_strips_trailing_slash(self):
-        from src.mcp_server_std import _normalize_http_proxy_base
+        from src.agent_state import _normalize_http_proxy_base
         assert _normalize_http_proxy_base("http://localhost:8765/") == "http://localhost:8765"
 
     def test_strips_v1_tools(self):
-        from src.mcp_server_std import _normalize_http_proxy_base
+        from src.agent_state import _normalize_http_proxy_base
         assert _normalize_http_proxy_base("http://localhost:8765/v1/tools") == "http://localhost:8765"
 
     def test_strips_v1_tools_call(self):
-        from src.mcp_server_std import _normalize_http_proxy_base
+        from src.agent_state import _normalize_http_proxy_base
         assert _normalize_http_proxy_base("http://localhost:8765/v1/tools/call") == "http://localhost:8765"
 
     def test_strips_v1_tools_with_trailing_slash(self):
-        from src.mcp_server_std import _normalize_http_proxy_base
+        from src.agent_state import _normalize_http_proxy_base
         result = _normalize_http_proxy_base("http://localhost:8765/v1/tools/")
         # After rstrip("/"), becomes "http://localhost:8765/v1/tools", then strips suffix
         assert result == "http://localhost:8765"
 
     def test_empty_string(self):
-        from src.mcp_server_std import _normalize_http_proxy_base
+        from src.agent_state import _normalize_http_proxy_base
         assert _normalize_http_proxy_base("") == ""
 
     def test_none_value(self):
-        from src.mcp_server_std import _normalize_http_proxy_base
+        from src.agent_state import _normalize_http_proxy_base
         assert _normalize_http_proxy_base(None) == ""
 
     def test_whitespace_only(self):
-        from src.mcp_server_std import _normalize_http_proxy_base
+        from src.agent_state import _normalize_http_proxy_base
         assert _normalize_http_proxy_base("   ") == ""
 
     def test_url_with_subpath(self):
-        from src.mcp_server_std import _normalize_http_proxy_base
+        from src.agent_state import _normalize_http_proxy_base
         # URL with a subpath that does not end in /v1/tools
         result = _normalize_http_proxy_base("http://localhost:8765/api/governance")
         assert result == "http://localhost:8765/api/governance"
@@ -107,7 +107,7 @@ class TestLoadVersion:
     """Tests for version file loading."""
 
     def test_loads_from_version_file(self, tmp_path):
-        from src.mcp_server_std import _load_version
+        from src.agent_state import _load_version
         version_file = tmp_path / "VERSION"
         version_file.write_text("3.1.4\n")
         with patch("src.agent_state.project_root", tmp_path):
@@ -115,14 +115,14 @@ class TestLoadVersion:
         assert result == "3.1.4"
 
     def test_fallback_when_file_missing(self, tmp_path):
-        from src.mcp_server_std import _load_version
+        from src.agent_state import _load_version
         from src.versioning import DEFAULT_VERSION_FALLBACK
         with patch("src.agent_state.project_root", tmp_path):
             result = _load_version()
         assert result == DEFAULT_VERSION_FALLBACK
 
     def test_strips_whitespace(self, tmp_path):
-        from src.mcp_server_std import _load_version
+        from src.agent_state import _load_version
         version_file = tmp_path / "VERSION"
         version_file.write_text("  2.8.0  \n")
         with patch("src.agent_state.project_root", tmp_path):
@@ -138,7 +138,7 @@ class TestAgentMetadata:
     """Tests for the AgentMetadata dataclass behavior."""
 
     def _make_meta(self, **kwargs):
-        from src.mcp_server_std import AgentMetadata
+        from src.agent_state import AgentMetadata
         defaults = {
             "agent_id": "test_agent_001",
             "status": "active",
@@ -226,7 +226,7 @@ class TestParseMetadataDict:
     """Tests for metadata parsing from raw dict."""
 
     def test_valid_dict_parsed(self):
-        from src.mcp_server_std import _parse_metadata_dict, AgentMetadata
+        from src.agent_state import _parse_metadata_dict, AgentMetadata
         now = datetime.now().isoformat()
         data = {
             "agent1": {
@@ -242,7 +242,7 @@ class TestParseMetadataDict:
         assert result["agent1"].status == "active"
 
     def test_non_dict_entry_skipped(self):
-        from src.mcp_server_std import _parse_metadata_dict
+        from src.agent_state import _parse_metadata_dict
         data = {
             "bad_agent": "this is a string, not a dict"
         }
@@ -251,7 +251,7 @@ class TestParseMetadataDict:
 
     def test_unknown_fields_dropped(self):
         """Fields not present on AgentMetadata should be dropped (forward compat)."""
-        from src.mcp_server_std import _parse_metadata_dict, AgentMetadata
+        from src.agent_state import _parse_metadata_dict, AgentMetadata
         now = datetime.now().isoformat()
         data = {
             "agent1": {
@@ -269,7 +269,7 @@ class TestParseMetadataDict:
 
     def test_defaults_applied_for_missing_fields(self):
         """Missing optional fields should get defaults."""
-        from src.mcp_server_std import _parse_metadata_dict
+        from src.agent_state import _parse_metadata_dict
         now = datetime.now().isoformat()
         data = {
             "agent1": {
@@ -288,7 +288,7 @@ class TestParseMetadataDict:
 
     def test_invalid_metadata_skipped(self):
         """Entries that fail AgentMetadata construction should be skipped."""
-        from src.mcp_server_std import _parse_metadata_dict
+        from src.agent_state import _parse_metadata_dict
         data = {
             "bad": {"agent_id": "bad"}  # Missing required fields
         }
@@ -296,7 +296,7 @@ class TestParseMetadataDict:
         assert "bad" not in result
 
     def test_empty_dict_returns_empty(self):
-        from src.mcp_server_std import _parse_metadata_dict
+        from src.agent_state import _parse_metadata_dict
         result = _parse_metadata_dict({})
         assert result == {}
 
@@ -309,64 +309,64 @@ class TestValidateAgentIdFormat:
     """Tests for agent ID validation rules."""
 
     def test_valid_id_accepted(self):
-        from src.mcp_server_std import validate_agent_id_format
+        from src.agent_state import validate_agent_id_format
         is_valid, error, suggestion = validate_agent_id_format("cursor_ide_20251124_143022")
         assert is_valid is True
         assert error == ""
 
     def test_generic_id_rejected(self):
-        from src.mcp_server_std import validate_agent_id_format
+        from src.agent_state import validate_agent_id_format
         is_valid, error, suggestion = validate_agent_id_format("test")
         assert is_valid is False
         assert "generic" in error.lower()
         assert suggestion  # Should suggest an alternative
 
     def test_too_short_rejected(self):
-        from src.mcp_server_std import validate_agent_id_format
+        from src.agent_state import validate_agent_id_format
         is_valid, error, suggestion = validate_agent_id_format("ab")
         assert is_valid is False
         assert "too short" in error.lower()
 
     def test_invalid_characters_rejected(self):
-        from src.mcp_server_std import validate_agent_id_format
+        from src.agent_state import validate_agent_id_format
         is_valid, error, suggestion = validate_agent_id_format("agent with spaces")
         assert is_valid is False
         assert "invalid characters" in error.lower()
 
     def test_test_prefix_without_timestamp_rejected(self):
-        from src.mcp_server_std import validate_agent_id_format
+        from src.agent_state import validate_agent_id_format
         is_valid, error, suggestion = validate_agent_id_format("test_foo")
         assert is_valid is False
         assert "timestamp" in error.lower()
 
     def test_demo_prefix_without_timestamp_rejected(self):
-        from src.mcp_server_std import validate_agent_id_format
+        from src.agent_state import validate_agent_id_format
         is_valid, error, suggestion = validate_agent_id_format("demo_foo")
         assert is_valid is False
         assert "timestamp" in error.lower()
 
     def test_test_with_timestamp_accepted(self):
-        from src.mcp_server_std import validate_agent_id_format
+        from src.agent_state import validate_agent_id_format
         is_valid, error, suggestion = validate_agent_id_format("test_20251124_143022")
         assert is_valid is True
 
     def test_generic_tool_ids_rejected(self):
         """IDs like 'claude_code_cli' should be rejected as too generic."""
-        from src.mcp_server_std import validate_agent_id_format
+        from src.agent_state import validate_agent_id_format
         is_valid, error, suggestion = validate_agent_id_format("claude_code_cli")
         assert is_valid is False
         assert "generic" in error.lower() or "collision" in error.lower()
 
     def test_uuid_format_accepted(self):
         """UUID-format IDs should be accepted."""
-        from src.mcp_server_std import validate_agent_id_format
+        from src.agent_state import validate_agent_id_format
         import uuid
         test_uuid = str(uuid.uuid4())
         is_valid, error, suggestion = validate_agent_id_format(test_uuid)
         assert is_valid is True
 
     def test_hyphenated_id_accepted(self):
-        from src.mcp_server_std import validate_agent_id_format
+        from src.agent_state import validate_agent_id_format
         is_valid, error, suggestion = validate_agent_id_format("production-agent-v2")
         assert is_valid is True
 
@@ -379,7 +379,7 @@ class TestCheckAgentStatus:
     """Tests for agent status gating logic."""
 
     def test_active_agent_allowed(self):
-        from src.mcp_server_std import check_agent_status, agent_metadata, AgentMetadata
+        from src.agent_state import check_agent_status, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         agent_metadata["status_test_active"] = AgentMetadata(
             agent_id="status_test_active", status="active", created_at=now, last_update=now
@@ -391,7 +391,7 @@ class TestCheckAgentStatus:
             del agent_metadata["status_test_active"]
 
     def test_paused_agent_blocked(self):
-        from src.mcp_server_std import check_agent_status, agent_metadata, AgentMetadata
+        from src.agent_state import check_agent_status, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         agent_metadata["status_test_paused"] = AgentMetadata(
             agent_id="status_test_paused", status="paused", created_at=now, last_update=now
@@ -404,7 +404,7 @@ class TestCheckAgentStatus:
             del agent_metadata["status_test_paused"]
 
     def test_archived_agent_blocked(self):
-        from src.mcp_server_std import check_agent_status, agent_metadata, AgentMetadata
+        from src.agent_state import check_agent_status, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         agent_metadata["status_test_arch"] = AgentMetadata(
             agent_id="status_test_arch", status="archived", created_at=now, last_update=now
@@ -417,7 +417,7 @@ class TestCheckAgentStatus:
             del agent_metadata["status_test_arch"]
 
     def test_deleted_agent_blocked(self):
-        from src.mcp_server_std import check_agent_status, agent_metadata, AgentMetadata
+        from src.agent_state import check_agent_status, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         agent_metadata["status_test_del"] = AgentMetadata(
             agent_id="status_test_del", status="deleted", created_at=now, last_update=now
@@ -431,7 +431,7 @@ class TestCheckAgentStatus:
 
     def test_unknown_agent_allowed(self):
         """Agent not in metadata should return None (no error)."""
-        from src.mcp_server_std import check_agent_status
+        from src.agent_state import check_agent_status
         result = check_agent_status("nonexistent_agent_xyz_99999")
         assert result is None
 
@@ -444,18 +444,18 @@ class TestCheckAgentIdDefault:
     """Tests for default agent ID warning."""
 
     def test_default_agent_id_warns(self):
-        from src.mcp_server_std import check_agent_id_default
+        from src.agent_state import check_agent_id_default
         result = check_agent_id_default("default_agent")
         assert result is not None
         assert "default" in result.lower()
 
     def test_empty_agent_id_warns(self):
-        from src.mcp_server_std import check_agent_id_default
+        from src.agent_state import check_agent_id_default
         result = check_agent_id_default("")
         assert result is not None
 
     def test_specific_agent_id_no_warning(self):
-        from src.mcp_server_std import check_agent_id_default
+        from src.agent_state import check_agent_id_default
         result = check_agent_id_default("my_specific_agent_20260207")
         assert result is None
 
@@ -468,57 +468,57 @@ class TestDetectCiStatus:
     """Tests for CI environment detection logic."""
 
     def test_not_in_ci(self):
-        from src.mcp_server_std import _detect_ci_status
+        from src.agent_state import _detect_ci_status
         with patch.dict(os.environ, {}, clear=True):
             assert _detect_ci_status() is False
 
     def test_ci_true_no_status(self):
-        from src.mcp_server_std import _detect_ci_status
+        from src.agent_state import _detect_ci_status
         with patch.dict(os.environ, {"CI": "true"}, clear=True):
             assert _detect_ci_status() is False
 
     def test_ci_with_custom_status_passed(self):
-        from src.mcp_server_std import _detect_ci_status
+        from src.agent_state import _detect_ci_status
         with patch.dict(os.environ, {"CI": "true", "CI_STATUS": "passed"}, clear=True):
             assert _detect_ci_status() is True
 
     def test_ci_with_custom_status_success(self):
-        from src.mcp_server_std import _detect_ci_status
+        from src.agent_state import _detect_ci_status
         with patch.dict(os.environ, {"CI": "true", "CI_STATUS": "success"}, clear=True):
             assert _detect_ci_status() is True
 
     def test_github_actions_success(self):
-        from src.mcp_server_std import _detect_ci_status
+        from src.agent_state import _detect_ci_status
         env = {"CI": "true", "GITHUB_ACTIONS": "true", "GITHUB_WORKFLOW_STATUS": "success"}
         with patch.dict(os.environ, env, clear=True):
             assert _detect_ci_status() is True
 
     def test_github_actions_no_status(self):
-        from src.mcp_server_std import _detect_ci_status
+        from src.agent_state import _detect_ci_status
         env = {"CI": "true", "GITHUB_ACTIONS": "true"}
         with patch.dict(os.environ, env, clear=True):
             assert _detect_ci_status() is False
 
     def test_travis_ci_passed(self):
-        from src.mcp_server_std import _detect_ci_status
+        from src.agent_state import _detect_ci_status
         env = {"CI": "true", "TRAVIS": "true", "TRAVIS_TEST_RESULT": "0"}
         with patch.dict(os.environ, env, clear=True):
             assert _detect_ci_status() is True
 
     def test_travis_ci_failed(self):
-        from src.mcp_server_std import _detect_ci_status
+        from src.agent_state import _detect_ci_status
         env = {"CI": "true", "TRAVIS": "true", "TRAVIS_TEST_RESULT": "1"}
         with patch.dict(os.environ, env, clear=True):
             assert _detect_ci_status() is False
 
     def test_circle_ci_success(self):
-        from src.mcp_server_std import _detect_ci_status
+        from src.agent_state import _detect_ci_status
         env = {"CI": "true", "CIRCLE_CI": "true", "CIRCLE_BUILD_STATUS": "success"}
         with patch.dict(os.environ, env, clear=True):
             assert _detect_ci_status() is True
 
     def test_gitlab_ci_success(self):
-        from src.mcp_server_std import _detect_ci_status
+        from src.agent_state import _detect_ci_status
         env = {"CI": "true", "GITLAB_CI": "true", "CI_JOB_STATUS": "success"}
         with patch.dict(os.environ, env, clear=True):
             assert _detect_ci_status() is True
@@ -532,28 +532,28 @@ class TestGenerateApiKey:
     """Tests for API key generation."""
 
     def test_returns_string(self):
-        from src.mcp_server_std import generate_api_key
+        from src.agent_state import generate_api_key
         key = generate_api_key()
         assert isinstance(key, str)
 
     def test_key_is_nonempty(self):
-        from src.mcp_server_std import generate_api_key
+        from src.agent_state import generate_api_key
         key = generate_api_key()
         assert len(key) > 0
 
     def test_keys_are_unique(self):
-        from src.mcp_server_std import generate_api_key
+        from src.agent_state import generate_api_key
         keys = {generate_api_key() for _ in range(100)}
         assert len(keys) == 100
 
     def test_key_has_no_padding(self):
-        from src.mcp_server_std import generate_api_key
+        from src.agent_state import generate_api_key
         key = generate_api_key()
         assert "=" not in key
 
     def test_key_is_url_safe(self):
         """Key should only contain URL-safe base64 characters."""
-        from src.mcp_server_std import generate_api_key
+        from src.agent_state import generate_api_key
         import re
         key = generate_api_key()
         assert re.match(r'^[A-Za-z0-9_-]+$', key)
@@ -567,13 +567,13 @@ class TestVerifyAgentOwnership:
     """Tests for agent ownership verification logic."""
 
     def test_session_bound_always_valid(self):
-        from src.mcp_server_std import verify_agent_ownership
+        from src.agent_state import verify_agent_ownership
         is_valid, error = verify_agent_ownership("any_agent", None, session_bound=True)
         assert is_valid is True
         assert error is None
 
     def test_nonexistent_agent(self):
-        from src.mcp_server_std import verify_agent_ownership, agent_metadata
+        from src.agent_state import verify_agent_ownership, agent_metadata
         # Make sure agent does not exist
         test_id = "nonexistent_verify_test_99999"
         agent_metadata.pop(test_id, None)
@@ -583,7 +583,7 @@ class TestVerifyAgentOwnership:
 
     def test_agent_with_no_stored_key_allows_access(self):
         """Agents without stored keys (legacy/UUID-based) should pass."""
-        from src.mcp_server_std import verify_agent_ownership, agent_metadata, AgentMetadata
+        from src.agent_state import verify_agent_ownership, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "verify_no_key_test"
         agent_metadata[test_id] = AgentMetadata(
@@ -597,7 +597,7 @@ class TestVerifyAgentOwnership:
             del agent_metadata[test_id]
 
     def test_correct_key_passes(self):
-        from src.mcp_server_std import verify_agent_ownership, agent_metadata, AgentMetadata
+        from src.agent_state import verify_agent_ownership, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "verify_correct_key_test"
         agent_metadata[test_id] = AgentMetadata(
@@ -612,7 +612,7 @@ class TestVerifyAgentOwnership:
             del agent_metadata[test_id]
 
     def test_wrong_key_fails(self):
-        from src.mcp_server_std import verify_agent_ownership, agent_metadata, AgentMetadata
+        from src.agent_state import verify_agent_ownership, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "verify_wrong_key_test"
         agent_metadata[test_id] = AgentMetadata(
@@ -627,7 +627,7 @@ class TestVerifyAgentOwnership:
             del agent_metadata[test_id]
 
     def test_empty_api_key_with_stored_key_fails(self):
-        from src.mcp_server_std import verify_agent_ownership, agent_metadata, AgentMetadata
+        from src.agent_state import verify_agent_ownership, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "verify_empty_key_test"
         agent_metadata[test_id] = AgentMetadata(
@@ -641,7 +641,7 @@ class TestVerifyAgentOwnership:
             del agent_metadata[test_id]
 
     def test_none_api_key_with_stored_key_fails(self):
-        from src.mcp_server_std import verify_agent_ownership, agent_metadata, AgentMetadata
+        from src.agent_state import verify_agent_ownership, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "verify_none_key_test"
         agent_metadata[test_id] = AgentMetadata(
@@ -663,7 +663,7 @@ class TestRequireAgentId:
     """Tests for agent_id argument extraction and validation."""
 
     def test_missing_agent_id(self):
-        from src.mcp_server_std import require_agent_id
+        from src.agent_state import require_agent_id
         agent_id, error = require_agent_id({})
         assert agent_id is None
         assert error is not None
@@ -671,13 +671,13 @@ class TestRequireAgentId:
         assert parsed["success"] is False
 
     def test_empty_agent_id(self):
-        from src.mcp_server_std import require_agent_id
+        from src.agent_state import require_agent_id
         agent_id, error = require_agent_id({"agent_id": ""})
         assert agent_id is None
         assert error is not None
 
     def test_valid_agent_id_new(self):
-        from src.mcp_server_std import require_agent_id, agent_metadata
+        from src.agent_state import require_agent_id, agent_metadata
         test_id = "cursor_session_20260207_test"
         agent_metadata.pop(test_id, None)
         agent_id, error = require_agent_id({"agent_id": test_id})
@@ -685,7 +685,7 @@ class TestRequireAgentId:
         assert error is None
 
     def test_reject_existing_true_blocks_existing(self):
-        from src.mcp_server_std import require_agent_id, agent_metadata, AgentMetadata
+        from src.agent_state import require_agent_id, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "require_existing_test"
         agent_metadata[test_id] = AgentMetadata(
@@ -701,7 +701,7 @@ class TestRequireAgentId:
             del agent_metadata[test_id]
 
     def test_reject_existing_false_allows_existing(self):
-        from src.mcp_server_std import require_agent_id, agent_metadata, AgentMetadata
+        from src.agent_state import require_agent_id, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "require_allow_existing_test"
         agent_metadata[test_id] = AgentMetadata(
@@ -723,7 +723,7 @@ class TestRequireAgentAuth:
     """Tests for authentication requirement logic."""
 
     def test_new_agent_passes(self):
-        from src.mcp_server_std import require_agent_auth, agent_metadata
+        from src.agent_state import require_agent_auth, agent_metadata
         test_id = "auth_new_agent_test_99999"
         agent_metadata.pop(test_id, None)
         is_valid, error = require_agent_auth(test_id, {})
@@ -731,7 +731,7 @@ class TestRequireAgentAuth:
         assert error is None
 
     def test_agent_no_key_no_enforce_passes(self):
-        from src.mcp_server_std import require_agent_auth, agent_metadata, AgentMetadata
+        from src.agent_state import require_agent_auth, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "auth_nokey_noforce_test"
         agent_metadata[test_id] = AgentMetadata(
@@ -745,7 +745,7 @@ class TestRequireAgentAuth:
             del agent_metadata[test_id]
 
     def test_agent_no_key_enforce_fails(self):
-        from src.mcp_server_std import require_agent_auth, agent_metadata, AgentMetadata
+        from src.agent_state import require_agent_auth, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "auth_nokey_enforce_test"
         agent_metadata[test_id] = AgentMetadata(
@@ -760,7 +760,7 @@ class TestRequireAgentAuth:
             del agent_metadata[test_id]
 
     def test_agent_with_key_correct_passes(self):
-        from src.mcp_server_std import require_agent_auth, agent_metadata, AgentMetadata
+        from src.agent_state import require_agent_auth, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "auth_correct_key_test"
         agent_metadata[test_id] = AgentMetadata(
@@ -775,7 +775,7 @@ class TestRequireAgentAuth:
             del agent_metadata[test_id]
 
     def test_agent_with_key_missing_key_fails(self):
-        from src.mcp_server_std import require_agent_auth, agent_metadata, AgentMetadata
+        from src.agent_state import require_agent_auth, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "auth_missing_key_test"
         agent_metadata[test_id] = AgentMetadata(
@@ -790,7 +790,7 @@ class TestRequireAgentAuth:
             del agent_metadata[test_id]
 
     def test_agent_with_key_wrong_key_fails(self):
-        from src.mcp_server_std import require_agent_auth, agent_metadata, AgentMetadata
+        from src.agent_state import require_agent_auth, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "auth_wrong_key_test"
         agent_metadata[test_id] = AgentMetadata(
@@ -815,7 +815,7 @@ class TestGetAgentOrError:
     """Tests for monitor lookup with error messaging."""
 
     def test_existing_monitor_returned(self):
-        from src.mcp_server_std import get_agent_or_error, monitors
+        from src.agent_state import get_agent_or_error, monitors
         mock_monitor = MagicMock()
         monitors["lookup_test_agent"] = mock_monitor
         try:
@@ -826,7 +826,7 @@ class TestGetAgentOrError:
             del monitors["lookup_test_agent"]
 
     def test_missing_monitor_no_agents(self):
-        from src.mcp_server_std import get_agent_or_error, monitors
+        from src.agent_state import get_agent_or_error, monitors
         # Ensure no agents
         saved = dict(monitors)
         monitors.clear()
@@ -839,7 +839,7 @@ class TestGetAgentOrError:
             monitors.update(saved)
 
     def test_missing_monitor_with_other_agents(self):
-        from src.mcp_server_std import get_agent_or_error, monitors
+        from src.agent_state import get_agent_or_error, monitors
         monitors["other_agent"] = MagicMock()
         try:
             monitor, error = get_agent_or_error("missing_agent")
@@ -858,21 +858,21 @@ class TestResolveMetadataBackend:
     """Tests for metadata backend resolution logic."""
 
     def test_json_returns_json(self):
-        from src.mcp_server_std import _resolve_metadata_backend
+        from src.agent_state import _resolve_metadata_backend
         with patch("src.agent_state._metadata_backend_resolved", None):
             with patch("src.agent_state.UNITARES_METADATA_BACKEND", "json"):
                 result = _resolve_metadata_backend()
                 assert result == "json"
 
     def test_postgres_returns_postgres(self):
-        from src.mcp_server_std import _resolve_metadata_backend
+        from src.agent_state import _resolve_metadata_backend
         with patch("src.agent_state._metadata_backend_resolved", None):
             with patch("src.agent_state.UNITARES_METADATA_BACKEND", "postgres"):
                 result = _resolve_metadata_backend()
                 assert result == "postgres"
 
     def test_auto_returns_postgres(self):
-        from src.mcp_server_std import _resolve_metadata_backend
+        from src.agent_state import _resolve_metadata_backend
         with patch("src.agent_state._metadata_backend_resolved", None):
             with patch("src.agent_state.UNITARES_METADATA_BACKEND", "auto"):
                 result = _resolve_metadata_backend()
@@ -880,7 +880,7 @@ class TestResolveMetadataBackend:
 
     def test_cached_result_returned(self):
         """Once resolved, should return cached result without re-computing."""
-        from src.mcp_server_std import _resolve_metadata_backend
+        from src.agent_state import _resolve_metadata_backend
         with patch("src.agent_state._metadata_backend_resolved", "cached_value"):
             result = _resolve_metadata_backend()
             assert result == "cached_value"
@@ -895,7 +895,7 @@ class TestDetectLoopPattern:
 
     def _setup_agent(self, agent_id, timestamps, decisions, **kwargs):
         """Helper to set up agent metadata for loop detection testing."""
-        from src.mcp_server_std import agent_metadata, AgentMetadata
+        from src.agent_state import agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         meta = AgentMetadata(
             agent_id=agent_id,
@@ -910,17 +910,17 @@ class TestDetectLoopPattern:
         return meta
 
     def _cleanup(self, agent_id):
-        from src.mcp_server_std import agent_metadata
+        from src.agent_state import agent_metadata
         agent_metadata.pop(agent_id, None)
 
     def test_nonexistent_agent_no_loop(self):
-        from src.mcp_server_std import detect_loop_pattern
+        from src.agent_state import detect_loop_pattern
         is_loop, reason = detect_loop_pattern("does_not_exist_loop_test")
         assert is_loop is False
         assert reason == ""
 
     def test_fewer_than_3_updates_no_loop(self):
-        from src.mcp_server_std import detect_loop_pattern
+        from src.agent_state import detect_loop_pattern
         test_id = "loop_few_updates_test"
         now = datetime.now()
         self._setup_agent(
@@ -935,7 +935,7 @@ class TestDetectLoopPattern:
             self._cleanup(test_id)
 
     def test_cooldown_active(self):
-        from src.mcp_server_std import detect_loop_pattern
+        from src.agent_state import detect_loop_pattern
         test_id = "loop_cooldown_test"
         now = datetime.now()
         self._setup_agent(
@@ -953,7 +953,7 @@ class TestDetectLoopPattern:
 
     def test_pattern2_reject_loop_detected(self):
         """Pattern 2: 3+ updates within 10s with 2+ reject/pause decisions."""
-        from src.mcp_server_std import detect_loop_pattern
+        from src.agent_state import detect_loop_pattern
         test_id = "loop_pattern2_test"
         now = datetime.now()
         # Server start was recent, so skip Pattern 1 but Pattern 2 should still fire
@@ -973,7 +973,7 @@ class TestDetectLoopPattern:
 
     def test_pattern4_decision_loop_detected(self):
         """Pattern 4: Same decision repeated 5+ times (pause only)."""
-        from src.mcp_server_std import detect_loop_pattern
+        from src.agent_state import detect_loop_pattern
         test_id = "loop_pattern4_test"
         now = datetime.now()
         # Space them out so rapid-fire patterns don't trigger
@@ -992,7 +992,7 @@ class TestDetectLoopPattern:
 
     def test_normal_proceed_no_loop(self):
         """All-proceed with reasonable spacing should NOT trigger loop detection."""
-        from src.mcp_server_std import detect_loop_pattern
+        from src.agent_state import detect_loop_pattern
         test_id = "loop_normal_test"
         now = datetime.now()
         # Well-spaced updates, all proceed
@@ -1017,7 +1017,7 @@ class TestBuildStandardizedAgentInfo:
     """Tests for standardized agent info structure building."""
 
     def test_basic_structure_without_monitor(self):
-        from src.mcp_server_std import build_standardized_agent_info, AgentMetadata
+        from src.agent_state import build_standardized_agent_info, AgentMetadata
         now = datetime.now().isoformat()
         meta = AgentMetadata(
             agent_id="info_test",
@@ -1038,7 +1038,7 @@ class TestBuildStandardizedAgentInfo:
         assert result["state"]["loaded_in_process"] is False
 
     def test_notes_preview_truncation(self):
-        from src.mcp_server_std import build_standardized_agent_info, AgentMetadata
+        from src.agent_state import build_standardized_agent_info, AgentMetadata
         now = datetime.now().isoformat()
         long_notes = "A" * 200
         meta = AgentMetadata(
@@ -1054,7 +1054,7 @@ class TestBuildStandardizedAgentInfo:
         assert notes_preview.endswith("...")
 
     def test_short_notes_no_truncation(self):
-        from src.mcp_server_std import build_standardized_agent_info, AgentMetadata
+        from src.agent_state import build_standardized_agent_info, AgentMetadata
         now = datetime.now().isoformat()
         meta = AgentMetadata(
             agent_id="info_short_notes_test",
@@ -1067,7 +1067,7 @@ class TestBuildStandardizedAgentInfo:
         assert result["metadata"]["notes_preview"] == "short note"
 
     def test_lineage_info_with_parent(self):
-        from src.mcp_server_std import build_standardized_agent_info, AgentMetadata, agent_metadata
+        from src.agent_state import build_standardized_agent_info, AgentMetadata, agent_metadata
         now = datetime.now().isoformat()
         # Create parent in metadata
         parent_meta = AgentMetadata(
@@ -1093,7 +1093,7 @@ class TestBuildStandardizedAgentInfo:
             agent_metadata.pop("parent_agent", None)
 
     def test_lineage_info_missing_parent(self):
-        from src.mcp_server_std import build_standardized_agent_info, AgentMetadata, agent_metadata
+        from src.agent_state import build_standardized_agent_info, AgentMetadata, agent_metadata
         now = datetime.now().isoformat()
         # Do NOT create parent
         agent_metadata.pop("nonexistent_parent", None)
@@ -1110,7 +1110,7 @@ class TestBuildStandardizedAgentInfo:
         assert lineage["parent_status"] == "deleted"
 
     def test_no_lineage_without_parent(self):
-        from src.mcp_server_std import build_standardized_agent_info, AgentMetadata
+        from src.agent_state import build_standardized_agent_info, AgentMetadata
         now = datetime.now().isoformat()
         meta = AgentMetadata(
             agent_id="solo_agent",
@@ -1122,7 +1122,7 @@ class TestBuildStandardizedAgentInfo:
         assert result["metadata"]["lineage_info"] is None
 
     def test_primary_tags_capped_at_3(self):
-        from src.mcp_server_std import build_standardized_agent_info, AgentMetadata
+        from src.agent_state import build_standardized_agent_info, AgentMetadata
         now = datetime.now().isoformat()
         meta = AgentMetadata(
             agent_id="tags_test",
@@ -1143,7 +1143,7 @@ class TestGetStateFile:
     """Tests for state file path resolution and migration."""
 
     def test_returns_agents_subdir_path(self, tmp_path):
-        from src.mcp_server_std import get_state_file
+        from src.agent_state import get_state_file
         with patch("src.agent_state.project_root", tmp_path):
             agents_dir = tmp_path / "data" / "agents"
             agents_dir.mkdir(parents=True, exist_ok=True)
@@ -1151,7 +1151,7 @@ class TestGetStateFile:
             assert result == agents_dir / "my_agent_state.json"
 
     def test_migrates_from_old_path(self, tmp_path):
-        from src.mcp_server_std import get_state_file
+        from src.agent_state import get_state_file
         with patch("src.agent_state.project_root", tmp_path):
             data_dir = tmp_path / "data"
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -1177,7 +1177,7 @@ class TestAutoArchiveOldTestAgents:
 
     @pytest.mark.asyncio
     async def test_archives_low_update_test_agent(self):
-        from src.mcp_server_std import auto_archive_old_test_agents, agent_metadata, AgentMetadata
+        from src.agent_state import auto_archive_old_test_agents, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "test_archive_low_update"
         agent_metadata[test_id] = AgentMetadata(
@@ -1193,7 +1193,7 @@ class TestAutoArchiveOldTestAgents:
 
     @pytest.mark.asyncio
     async def test_skips_already_archived(self):
-        from src.mcp_server_std import auto_archive_old_test_agents, agent_metadata, AgentMetadata
+        from src.agent_state import auto_archive_old_test_agents, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "test_already_archived"
         agent_metadata[test_id] = AgentMetadata(
@@ -1209,7 +1209,7 @@ class TestAutoArchiveOldTestAgents:
 
     @pytest.mark.asyncio
     async def test_skips_non_test_agents(self):
-        from src.mcp_server_std import auto_archive_old_test_agents, agent_metadata, AgentMetadata
+        from src.agent_state import auto_archive_old_test_agents, agent_metadata, AgentMetadata
         now = datetime.now().isoformat()
         test_id = "production_agent_v2_20260207"
         agent_metadata[test_id] = AgentMetadata(
@@ -1224,7 +1224,7 @@ class TestAutoArchiveOldTestAgents:
 
     @pytest.mark.asyncio
     async def test_archives_old_test_agent_by_age(self):
-        from src.mcp_server_std import auto_archive_old_test_agents, agent_metadata, AgentMetadata
+        from src.agent_state import auto_archive_old_test_agents, agent_metadata, AgentMetadata
         old_time = (datetime.now() - timedelta(hours=10)).isoformat()
         test_id = "test_old_agent_age"
         agent_metadata[test_id] = AgentMetadata(
@@ -1248,7 +1248,7 @@ class TestAutoArchiveOrphanAgents:
 
     @pytest.mark.asyncio
     async def test_archives_uuid_agent_zero_updates(self):
-        from src.mcp_server_std import auto_archive_orphan_agents, agent_metadata, AgentMetadata
+        from src.agent_state import auto_archive_orphan_agents, agent_metadata, AgentMetadata
         old_time = (datetime.now() - timedelta(hours=2)).isoformat()
         test_id = "12345678-1234-4234-8234-123456789abc"
         agent_metadata[test_id] = AgentMetadata(
@@ -1264,7 +1264,7 @@ class TestAutoArchiveOrphanAgents:
 
     @pytest.mark.asyncio
     async def test_preserves_pioneer_agents(self):
-        from src.mcp_server_std import auto_archive_orphan_agents, agent_metadata, AgentMetadata
+        from src.agent_state import auto_archive_orphan_agents, agent_metadata, AgentMetadata
         old_time = (datetime.now() - timedelta(hours=24)).isoformat()
         test_id = "12345678-1234-4234-8234-123456789999"
         agent_metadata[test_id] = AgentMetadata(
@@ -1280,7 +1280,7 @@ class TestAutoArchiveOrphanAgents:
     @pytest.mark.asyncio
     async def test_preserves_labeled_agents(self):
         """Labeled non-UUID agents should be preserved (Rule 2 checks has_label)."""
-        from src.mcp_server_std import auto_archive_orphan_agents, agent_metadata, AgentMetadata
+        from src.agent_state import auto_archive_orphan_agents, agent_metadata, AgentMetadata
         old_time = (datetime.now() - timedelta(hours=24)).isoformat()
         # Use a non-UUID agent_id so Rule 1 (UUID-specific) does not fire
         # Rule 2 checks: not has_label and updates <= 1 -- so labeled agent is preserved
@@ -1648,7 +1648,7 @@ class TestWriteStateFile:
     """Tests for state file writing helper."""
 
     def test_writes_json_to_file(self, tmp_path):
-        from src.mcp_server_std import _write_state_file
+        from src.agent_state import _write_state_file
         state_file = tmp_path / "test_state.json"
         state_data = {"key": "value", "nested": {"a": 1}}
         _write_state_file(state_file, state_data)
@@ -1657,7 +1657,7 @@ class TestWriteStateFile:
         assert loaded == state_data
 
     def test_overwrites_existing_file(self, tmp_path):
-        from src.mcp_server_std import _write_state_file
+        from src.agent_state import _write_state_file
         state_file = tmp_path / "overwrite_test.json"
         _write_state_file(state_file, {"version": 1})
         _write_state_file(state_file, {"version": 2})

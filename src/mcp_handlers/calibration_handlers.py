@@ -1,0 +1,315 @@
+"""
+Calibration tool handlers.
+
+Extracted from admin.py for maintainability.
+"""
+
+from typing import Dict, Any, List, Sequence, Optional
+from mcp.types import TextContent
+import json
+import sys
+import os
+from datetime import datetime
+from pathlib import Path
+from .utils import success_response, error_response, require_agent_id, require_registered_agent
+from .decorators import mcp_tool
+from src.logging_utils import get_logger
+
+logger = get_logger(__name__)
+
+@mcp_tool("check_calibration", timeout=10.0, rate_limit_exempt=True, register=False)
+async def handle_check_calibration(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Check calibration of confidence estimates.
+    
+    NOTE ON "ACCURACY":
+    This system is AI-for-AI and typically does not have access to external correctness
+    (tests passing, real-world outcomes, user satisfaction). As a result, the primary
+    calibration signal is a trajectory/consensus proxy (see returned honesty note).
+    
+    We keep the `accuracy` field for backward compatibility, but it should be read as
+    "trajectory_health" unless you explicitly provide an external truth signal.
+    """
+    from src.calibration import calibration_checker
+    
+    is_calibrated, metrics = calibration_checker.check_calibration(include_complexity=True)
+    
+    # Calculate overall trajectory health from strategic bins
+    # (the strategic "accuracy" field is conceptually trajectory_health)
+    bins_data = metrics.get('bins', {})
+    total_samples = sum(bin_data.get('count', 0) for bin_data in bins_data.values())
+    weighted_sum = sum(
+        float(bin_data.get('count', 0)) * float(bin_data.get('accuracy', 0.0))
+        for bin_data in bins_data.values()
+    )
+    overall_trajectory_health = weighted_sum / total_samples if total_samples > 0 else 0.0
+    
+    # Calculate confidence distribution from bins
+    confidence_values = []
+    for bin_key, bin_data in bins_data.items():
+        count = bin_data.get('count', 0)
+        expected_acc = bin_data.get('expected_accuracy', 0.0)
+        # Add confidence value for each sample in this bin
+        confidence_values.extend([expected_acc] * count)
+    
+    if confidence_values:
+        import numpy as np
+        n_samples = len(confidence_values)
+        conf_dist = {
+            "mean": float(np.mean(confidence_values)),
+            "samples": n_samples,
+        }
+        if n_samples >= 5:
+            conf_dist["std"] = float(np.std(confidence_values))
+            conf_dist["min"] = float(np.min(confidence_values))
+            conf_dist["max"] = float(np.max(confidence_values))
+        else:
+            conf_dist["note"] = f"Only {n_samples} sample(s) — std/min/max suppressed (need >= 5)"
+    else:
+        conf_dist = {"mean": 0.0, "samples": 0, "note": "No calibration data yet"}
+    
+    response = {
+        "calibrated": is_calibrated,
+        "issues": metrics.get('issues', []),  # Surface calibration issues
+        # Backward compatibility: historically named "accuracy"
+        "accuracy": overall_trajectory_health,
+        # Preferred name: what this metric actually represents in UNITARES
+        "trajectory_health": overall_trajectory_health,
+        "truth_channel": "confidence_outcome_match",  # Updated: now compares confidence to outcome quality
+        "confidence_distribution": conf_dist,
+        "pending_updates": calibration_checker.get_pending_updates(),
+        "total_samples": total_samples,
+        "message": "Calibration check complete",
+        "calibration_note": (
+            "Ground truth evaluates if confidence matched outcome quality. "
+            "High confidence + poor outcome = overconfident (False). "
+            "Low confidence + excellent outcome = underconfident (False)."
+        )
+    }
+    
+    # Add complexity calibration metrics if available
+    if 'complexity_calibration' in metrics:
+        complexity_data = metrics['complexity_calibration']
+        total_complexity_samples = sum(v.get('count', 0) for v in complexity_data.values())
+        high_discrepancy_total = sum(
+            v.get('count', 0) * v.get('high_discrepancy_rate', 0) 
+            for v in complexity_data.values()
+        )
+        high_discrepancy_rate = high_discrepancy_total / total_complexity_samples if total_complexity_samples > 0 else 0
+        
+        response["complexity_calibration"] = {
+            "total_samples": total_complexity_samples,
+            "high_discrepancy_rate": high_discrepancy_rate,
+            "bins": complexity_data
+        }
+    
+    return success_response(response)
+
+
+@mcp_tool("rebuild_calibration", timeout=60.0, rate_limit_exempt=True, register=False)
+async def handle_rebuild_calibration(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Rebuild calibration from scratch using auto ground truth collection.
+
+    This resets calibration state and re-evaluates all historical decisions
+    using the current evaluation logic (confidence vs outcome quality matching).
+
+    Use this after updating evaluation logic or to fix corrupted calibration state.
+
+    Args:
+        dry_run: If true, show what would be updated without modifying state
+        min_age_hours: Minimum age of decisions to evaluate (default: 0.5)
+        max_decisions: Maximum decisions to process (default: 0 = all)
+    """
+    from src.auto_ground_truth import collect_ground_truth_automatically
+
+    dry_run = arguments.get("dry_run", False)
+    if isinstance(dry_run, str):
+        dry_run = dry_run.lower() in ("true", "1", "yes")
+
+    min_age_hours = float(arguments.get("min_age_hours", 0.5))
+    max_decisions = int(arguments.get("max_decisions", 0))
+
+    try:
+        result = await collect_ground_truth_automatically(
+            min_age_hours=min_age_hours,
+            max_decisions=max_decisions,
+            dry_run=dry_run,
+            rebuild=True  # Reset and rebuild from scratch
+        )
+
+        return success_response({
+            "success": True,
+            "action": "dry_run" if dry_run else "rebuild",
+            "processed": result.get("processed", 0),
+            "updated": result.get("updated", 0),
+            "skipped": result.get("skipped", 0),
+            "errors": result.get("errors", 0),
+            "message": f"Calibration {'would be' if dry_run else 'has been'} rebuilt with {result.get('updated', 0)} ground truth samples"
+        })
+    except Exception as e:
+        logger.error(f"Error rebuilding calibration: {e}", exc_info=True)
+        return error_response(f"Failed to rebuild calibration: {e}")
+
+
+@mcp_tool("update_calibration_ground_truth", timeout=10.0, register=False)
+async def handle_update_calibration_ground_truth(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """Optional: Update calibration with an external truth signal after review
+    
+    Supports two modes:
+    1. Direct mode: Provide confidence, predicted_correct, actual_correct directly
+    2. Timestamp mode: Provide timestamp (and optional agent_id), actual_correct. 
+       System looks up confidence and decision from audit log.
+
+    IMPORTANT (AI-for-AI truth model):
+    UNITARES does not assume access to objective external correctness. Use this tool
+    only when you have an external signal you trust (human review, tests, verifiers).
+    """
+    from src.calibration import calibration_checker
+    from src.audit_log import AuditLogger
+    from datetime import datetime
+    
+    # Check if using timestamp-based mode
+    timestamp = arguments.get("timestamp")
+    agent_id = arguments.get("agent_id")
+    actual_correct = arguments.get("actual_correct")
+    
+    if timestamp:
+        # TIMESTAMP MODE: Look up confidence and decision from audit log
+        if actual_correct is None:
+            return [error_response("Missing required parameter: actual_correct (required for timestamp mode). This should be an external truth signal (e.g., human review, tests).")]
+        
+        try:
+            # Parse timestamp
+            if isinstance(timestamp, str):
+                decision_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            else:
+                return [error_response("timestamp must be ISO format string (e.g., '2025-12-08T13:00:00')")]
+            
+            # Query audit log for decision at that timestamp
+            # Use a small window around the timestamp to account for slight timing differences
+            from datetime import timedelta
+            window_start = (decision_time - timedelta(seconds=5)).isoformat()
+            window_end = (decision_time + timedelta(seconds=5)).isoformat()
+            
+            audit_logger = AuditLogger()
+            entries = audit_logger.query_audit_log(
+                agent_id=agent_id,
+                event_type="auto_attest",
+                start_time=window_start,
+                end_time=window_end
+            )
+            
+            if not entries:
+                return [error_response(
+                    f"No decision found at timestamp {timestamp}" + 
+                    (f" for agent {agent_id}" if agent_id else ""),
+                    details={
+                        "suggestion": "Check timestamp format (ISO) and ensure decision was logged",
+                        "related_tools": ["get_telemetry_metrics"]
+                    }
+                )]
+            
+            # Use most recent entry if multiple found (shouldn't happen with exact timestamp, but be safe)
+            entry = entries[-1]
+            confidence = entry.get("confidence", 0.0)
+            decision = entry.get("details", {}).get("decision", "unknown")
+            # FIXED: Use confidence-based prediction, not decision-based
+            # High confidence (>=0.5) = we predicted correct
+            predicted_correct = float(confidence) >= 0.5
+            
+            # Update calibration with external truth signal
+            calibration_checker.update_ground_truth(
+                confidence=float(confidence),
+                predicted_correct=bool(predicted_correct),
+                actual_correct=bool(actual_correct)
+            )
+            
+            # Save calibration state
+            calibration_checker.save_state()
+            
+            return success_response({
+                "message": "External truth signal recorded successfully (timestamp mode)",
+                "truth_channel": "external",
+                "looked_up": {
+                    "confidence": confidence,
+                    "decision": decision,
+                    "predicted_correct": predicted_correct
+                },
+                "pending_updates": calibration_checker.get_pending_updates()
+            })
+            
+        except ValueError as e:
+            return [error_response(f"Invalid timestamp format: {str(e)}")]
+        except Exception as e:
+            return [error_response(f"Error looking up decision: {str(e)}")]
+    
+    else:
+        # DIRECT MODE: Require all parameters
+        confidence = arguments.get("confidence")
+        predicted_correct = arguments.get("predicted_correct")
+        
+        if confidence is None or predicted_correct is None or actual_correct is None:
+            return [error_response(
+                "Missing required parameters. Use either:\n"
+                "1. Direct mode: confidence, predicted_correct, actual_correct\n"
+                "2. Timestamp mode: timestamp, actual_correct (optional: agent_id)",
+                details={
+                    "direct_mode": {"required": ["confidence", "predicted_correct", "actual_correct"]},
+                    "timestamp_mode": {"required": ["timestamp", "actual_correct"], "optional": ["agent_id"]}
+                }
+            )]
+        
+        try:
+            calibration_checker.update_ground_truth(
+                confidence=float(confidence),
+                predicted_correct=bool(predicted_correct),
+                actual_correct=bool(actual_correct)
+            )
+            
+            # Save calibration state after update
+            calibration_checker.save_state()
+            
+            return success_response({
+                "message": "External truth signal recorded successfully (direct mode)",
+                "truth_channel": "external",
+                "pending_updates": calibration_checker.get_pending_updates()
+            })
+        except Exception as e:
+            return [error_response(str(e))]
+
+
+@mcp_tool("backfill_calibration_from_dialectic", timeout=20.0, rate_limit_exempt=True, register=False)
+async def handle_backfill_calibration_from_dialectic(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Retroactively update calibration from historical resolved verification-type dialectic sessions.
+    
+    This processes all existing resolved verification sessions that were created before
+    automatic calibration was implemented, ensuring they contribute to calibration.
+    
+    USE CASES:
+    - One-time migration after implementing automatic calibration
+    - Backfill historical peer verification data
+    - Ensure all resolved verification sessions contribute to calibration
+    
+    RETURNS:
+    {
+      "success": true,
+      "processed": int,
+      "updated": int,
+      "errors": int,
+      "sessions": [{"session_id": "...", "agent_id": "...", "status": "..."}]
+    }
+    """
+    from src.mcp_handlers.dialectic import backfill_calibration_from_historical_sessions
+    
+    try:
+        results = await backfill_calibration_from_historical_sessions()
+        return success_response({
+            "success": True,
+            "message": f"Backfill complete: {results['updated']}/{results['processed']} sessions updated",
+            **results
+        })
+    except Exception as e:
+        return [error_response(f"Error during backfill: {str(e)}")]
+

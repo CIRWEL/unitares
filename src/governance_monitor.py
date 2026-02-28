@@ -38,11 +38,10 @@ from src.drift_telemetry import record_drift
 
 # Import UNITARES Phase-3 engine from governance_core (v2.0)
 # Core dynamics are now in governance_core module
-from src._imports import ensure_project_root, ensure_unitaires_server_path
+from src._imports import ensure_project_root
 
 # Ensure project root is in path for imports
 ensure_project_root()
-ensure_unitaires_server_path()
 
 # Import core dynamics from governance_core (canonical implementation)
 from governance_core import (
@@ -54,17 +53,12 @@ from governance_core import (
     DynamicsParams, DEFAULT_PARAMS,
     # Concrete ethical drift (Δη) - measurable components
     EthicalDriftVector, AgentBaseline, compute_ethical_drift, get_agent_baseline,
+    # Research tools (migrated from unitaires_core)
+    approximate_stability_check, suggest_theta_update,
 )
 
 # UNITARES params profile selection (optional v4.1 alignment)
 from governance_core.parameters import get_active_params, get_params_profile_name
-
-# Import analysis/optimization functions from unitaires_core
-# These are research tools, not core dynamics
-from unitaires_core import (
-    approximate_stability_check,
-    suggest_theta_update,
-)
 
 # Import extracted modules
 from src.governance_state import GovernanceState

@@ -50,19 +50,4 @@ def get_project_root() -> Path:
     return _project_root
 
 
-def ensure_unitaires_server_path() -> Path:
-    """
-    Ensure unitaires-server path is in sys.path.
-    
-    Returns:
-        Path to unitaires-server directory
-    """
-    project_root = ensure_project_root()
-    unitaires_path = project_root / "src" / "unitaires-server"
-    unitaires_path_str = str(unitaires_path)
-    
-    if unitaires_path_str not in sys.path:
-        sys.path.insert(0, unitaires_path_str)
-    
-    return unitaires_path
 

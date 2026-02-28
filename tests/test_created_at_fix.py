@@ -98,7 +98,7 @@ def test_created_at_fallback_to_metadata():
     print("\n3. Testing created_at fallback to metadata...")
     
     # This tests the build_standardized_agent_info fallback logic
-    from src.mcp_server_std import build_standardized_agent_info, get_or_create_metadata
+    from src.agent_state import build_standardized_agent_info, get_or_create_metadata
     
     # Get or create metadata (this will have created_at)
     meta = get_or_create_metadata('test_fallback')

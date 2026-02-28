@@ -5,7 +5,7 @@ Test MCP server with bug fixes through the tool interface
 
 import json
 
-from src.mcp_server_std import monitors, agent_metadata
+from src.agent_state import monitors, agent_metadata
 
 def reset_test_state():
     """Clear test agents"""
@@ -24,7 +24,7 @@ def test_coherence_bug_fix():
 
     reset_test_state()
 
-    from src.mcp_server_std import monitors
+    from src.agent_state import monitors
     from src.governance_monitor import UNITARESMonitor
 
     # Create monitor
@@ -109,7 +109,7 @@ def test_varied_coherence():
 
     reset_test_state()
 
-    from src.mcp_server_std import monitors
+    from src.agent_state import monitors
     from src.governance_monitor import UNITARESMonitor
 
     agent_id = "mcp_coherence_test"

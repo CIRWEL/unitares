@@ -467,7 +467,7 @@ class TestDescribeTool:
         mock_tool.inputSchema = {"type": "object", "properties": {}}
 
         with patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool]):
-            from src.mcp_handlers.admin import handle_describe_tool
+            from src.mcp_handlers.tool_introspection import handle_describe_tool
             result = await handle_describe_tool({
                 "tool_name": "health_check",
                 "lite": False
@@ -479,7 +479,7 @@ class TestDescribeTool:
 
     @pytest.mark.asyncio
     async def test_describe_missing_tool_name(self, patch_context_agent_id):
-        from src.mcp_handlers.admin import handle_describe_tool
+        from src.mcp_handlers.tool_introspection import handle_describe_tool
         result = await handle_describe_tool({})
 
         data = parse_result(result)
@@ -489,7 +489,7 @@ class TestDescribeTool:
     @pytest.mark.asyncio
     async def test_describe_unknown_tool(self, patch_context_agent_id):
         with patch("src.tool_schemas.get_tool_definitions", return_value=[]):
-            from src.mcp_handlers.admin import handle_describe_tool
+            from src.mcp_handlers.tool_introspection import handle_describe_tool
             result = await handle_describe_tool({"tool_name": "nonexistent_tool"})
 
             data = parse_result(result)
@@ -514,7 +514,7 @@ class TestDescribeTool:
         with patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool]), \
              patch("src.mcp_handlers.validators.TOOL_PARAM_SCHEMAS", {}), \
              patch("src.mcp_handlers.validators.PARAM_ALIASES", {}):
-            from src.mcp_handlers.admin import handle_describe_tool
+            from src.mcp_handlers.tool_introspection import handle_describe_tool
             result = await handle_describe_tool({
                 "tool_name": "some_tool",
                 "lite": True
@@ -529,7 +529,7 @@ class TestDescribeTool:
     async def test_describe_tool_error_handling(self, patch_context_agent_id):
         with patch("src.tool_schemas.get_tool_definitions",
                     side_effect=ImportError("module not found")):
-            from src.mcp_handlers.admin import handle_describe_tool
+            from src.mcp_handlers.tool_introspection import handle_describe_tool
             result = await handle_describe_tool({"tool_name": "health_check"})
 
             data = parse_result(result)
@@ -670,7 +670,7 @@ class TestCheckCalibration:
         mock_checker.get_pending_updates.return_value = 0
 
         with patch("src.calibration.calibration_checker", mock_checker):
-            from src.mcp_handlers.admin import handle_check_calibration
+            from src.mcp_handlers.calibration_handlers import handle_check_calibration
             result = await handle_check_calibration({})
 
             data = parse_result(result)
@@ -698,7 +698,7 @@ class TestCheckCalibration:
         mock_checker.get_pending_updates.return_value = 2
 
         with patch("src.calibration.calibration_checker", mock_checker):
-            from src.mcp_handlers.admin import handle_check_calibration
+            from src.mcp_handlers.calibration_handlers import handle_check_calibration
             result = await handle_check_calibration({})
 
             data = parse_result(result)
@@ -713,7 +713,7 @@ class TestCheckCalibration:
         mock_checker.get_pending_updates.return_value = 0
 
         with patch("src.calibration.calibration_checker", mock_checker):
-            from src.mcp_handlers.admin import handle_check_calibration
+            from src.mcp_handlers.calibration_handlers import handle_check_calibration
             result = await handle_check_calibration({})
 
             data = parse_result(result)
@@ -733,7 +733,7 @@ class TestRebuildCalibration:
         mock_result = {"processed": 10, "updated": 8, "skipped": 2, "errors": 0}
         with patch("src.auto_ground_truth.collect_ground_truth_automatically",
                     new_callable=AsyncMock, return_value=mock_result):
-            from src.mcp_handlers.admin import handle_rebuild_calibration
+            from src.mcp_handlers.calibration_handlers import handle_rebuild_calibration
             result = await handle_rebuild_calibration({})
 
             data = parse_result(result)
@@ -747,7 +747,7 @@ class TestRebuildCalibration:
         mock_result = {"processed": 5, "updated": 5, "skipped": 0, "errors": 0}
         with patch("src.auto_ground_truth.collect_ground_truth_automatically",
                     new_callable=AsyncMock, return_value=mock_result):
-            from src.mcp_handlers.admin import handle_rebuild_calibration
+            from src.mcp_handlers.calibration_handlers import handle_rebuild_calibration
             result = await handle_rebuild_calibration({"dry_run": True})
 
             data = parse_result(result)
@@ -759,7 +759,7 @@ class TestRebuildCalibration:
         mock_result = {"processed": 1, "updated": 1, "skipped": 0, "errors": 0}
         with patch("src.auto_ground_truth.collect_ground_truth_automatically",
                     new_callable=AsyncMock, return_value=mock_result):
-            from src.mcp_handlers.admin import handle_rebuild_calibration
+            from src.mcp_handlers.calibration_handlers import handle_rebuild_calibration
             result = await handle_rebuild_calibration({"dry_run": "true"})
 
             data = parse_result(result)
@@ -770,7 +770,7 @@ class TestRebuildCalibration:
         with patch("src.auto_ground_truth.collect_ground_truth_automatically",
                     new_callable=AsyncMock,
                     side_effect=RuntimeError("no data")):
-            from src.mcp_handlers.admin import handle_rebuild_calibration
+            from src.mcp_handlers.calibration_handlers import handle_rebuild_calibration
             result = await handle_rebuild_calibration({})
 
             data = parse_result(result)
@@ -782,7 +782,7 @@ class TestRebuildCalibration:
         mock_result = {"processed": 3, "updated": 3, "skipped": 0, "errors": 0}
         with patch("src.auto_ground_truth.collect_ground_truth_automatically",
                     new_callable=AsyncMock, return_value=mock_result) as mock_fn:
-            from src.mcp_handlers.admin import handle_rebuild_calibration
+            from src.mcp_handlers.calibration_handlers import handle_rebuild_calibration
             result = await handle_rebuild_calibration({
                 "min_age_hours": 2.0,
                 "max_decisions": 50,
@@ -807,7 +807,7 @@ class TestUpdateCalibrationGroundTruth:
         mock_checker.get_pending_updates.return_value = 1
 
         with patch("src.calibration.calibration_checker", mock_checker):
-            from src.mcp_handlers.admin import handle_update_calibration_ground_truth
+            from src.mcp_handlers.calibration_handlers import handle_update_calibration_ground_truth
             result = await handle_update_calibration_ground_truth({
                 "confidence": 0.8,
                 "predicted_correct": True,
@@ -822,7 +822,7 @@ class TestUpdateCalibrationGroundTruth:
 
     @pytest.mark.asyncio
     async def test_direct_mode_missing_params(self, patch_context_agent_id):
-        from src.mcp_handlers.admin import handle_update_calibration_ground_truth
+        from src.mcp_handlers.calibration_handlers import handle_update_calibration_ground_truth
         result = await handle_update_calibration_ground_truth({
             "confidence": 0.8,
             # missing predicted_correct and actual_correct
@@ -834,7 +834,7 @@ class TestUpdateCalibrationGroundTruth:
 
     @pytest.mark.asyncio
     async def test_timestamp_mode_missing_actual_correct(self, patch_context_agent_id):
-        from src.mcp_handlers.admin import handle_update_calibration_ground_truth
+        from src.mcp_handlers.calibration_handlers import handle_update_calibration_ground_truth
         result = await handle_update_calibration_ground_truth({
             "timestamp": "2026-01-01T00:00:00",
             # missing actual_correct
@@ -850,7 +850,7 @@ class TestUpdateCalibrationGroundTruth:
 
         with patch("src.calibration.calibration_checker", MagicMock()), \
              patch("src.audit_log.AuditLogger", return_value=mock_audit):
-            from src.mcp_handlers.admin import handle_update_calibration_ground_truth
+            from src.mcp_handlers.calibration_handlers import handle_update_calibration_ground_truth
             result = await handle_update_calibration_ground_truth({
                 "timestamp": "2026-01-01T00:00:00",
                 "actual_correct": True,
@@ -871,7 +871,7 @@ class TestUpdateCalibrationGroundTruth:
 
         with patch("src.calibration.calibration_checker", mock_checker), \
              patch("src.audit_log.AuditLogger", return_value=mock_audit):
-            from src.mcp_handlers.admin import handle_update_calibration_ground_truth
+            from src.mcp_handlers.calibration_handlers import handle_update_calibration_ground_truth
             result = await handle_update_calibration_ground_truth({
                 "timestamp": "2026-01-01T00:00:00",
                 "actual_correct": True,
@@ -884,7 +884,7 @@ class TestUpdateCalibrationGroundTruth:
 
     @pytest.mark.asyncio
     async def test_timestamp_mode_invalid_format(self, patch_context_agent_id):
-        from src.mcp_handlers.admin import handle_update_calibration_ground_truth
+        from src.mcp_handlers.calibration_handlers import handle_update_calibration_ground_truth
         result = await handle_update_calibration_ground_truth({
             "timestamp": 12345,  # not a string
             "actual_correct": True,
@@ -967,7 +967,7 @@ class TestBackfillCalibration:
             new_callable=AsyncMock,
             return_value=mock_result
         ):
-            from src.mcp_handlers.admin import handle_backfill_calibration_from_dialectic
+            from src.mcp_handlers.calibration_handlers import handle_backfill_calibration_from_dialectic
             result = await handle_backfill_calibration_from_dialectic({})
 
             data = parse_result(result)
@@ -982,7 +982,7 @@ class TestBackfillCalibration:
             new_callable=AsyncMock,
             side_effect=RuntimeError("DB down")
         ):
-            from src.mcp_handlers.admin import handle_backfill_calibration_from_dialectic
+            from src.mcp_handlers.calibration_handlers import handle_backfill_calibration_from_dialectic
             result = await handle_backfill_calibration_from_dialectic({})
 
             data = parse_result(result)
@@ -1240,7 +1240,7 @@ class TestListTools:
              patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
              patch("src.tool_schemas.get_tool_definitions", return_value=[]):
 
-            from src.mcp_handlers.admin import handle_list_tools
+            from src.mcp_handlers.tool_introspection import handle_list_tools
             result = await handle_list_tools({"lite": True})
 
             data = parse_result(result)
@@ -1281,7 +1281,7 @@ class TestListTools:
              patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
              patch("src.tool_schemas.get_tool_definitions", return_value=[]):
 
-            from src.mcp_handlers.admin import handle_list_tools
+            from src.mcp_handlers.tool_introspection import handle_list_tools
             result = await handle_list_tools({"lite": False})
 
             data = parse_result(result)
@@ -1338,7 +1338,7 @@ class TestListTools:
              patch("src.tool_schemas.get_tool_definitions", return_value=[]), \
              patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=mock_tracker):
 
-            from src.mcp_handlers.admin import handle_list_tools
+            from src.mcp_handlers.tool_introspection import handle_list_tools
 
             # Test full mode with progressive
             result = await handle_list_tools({"lite": False, "progressive": True})
@@ -1385,7 +1385,7 @@ class TestListTools:
              patch("src.tool_schemas.get_tool_definitions", return_value=[]), \
              patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=mock_tracker):
 
-            from src.mcp_handlers.admin import handle_list_tools
+            from src.mcp_handlers.tool_introspection import handle_list_tools
             result = await handle_list_tools({"lite": True, "progressive": True})
 
             data = parse_result(result)
@@ -1419,7 +1419,7 @@ class TestListTools:
              patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
              patch("src.tool_schemas.get_tool_definitions", return_value=[]):
 
-            from src.mcp_handlers.admin import handle_list_tools
+            from src.mcp_handlers.tool_introspection import handle_list_tools
             result = await handle_list_tools({"lite": False, "essential_only": True})
 
             data = parse_result(result)
@@ -1454,7 +1454,7 @@ class TestListTools:
              patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
              patch("src.tool_schemas.get_tool_definitions", return_value=[]):
 
-            from src.mcp_handlers.admin import handle_list_tools
+            from src.mcp_handlers.tool_introspection import handle_list_tools
             result = await handle_list_tools({"lite": False, "include_advanced": False})
 
             data = parse_result(result)
@@ -1487,7 +1487,7 @@ class TestListTools:
              patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
              patch("src.tool_schemas.get_tool_definitions", return_value=[]):
 
-            from src.mcp_handlers.admin import handle_list_tools
+            from src.mcp_handlers.tool_introspection import handle_list_tools
             result = await handle_list_tools({"lite": False, "tier": "common"})
 
             data = parse_result(result)
@@ -1524,7 +1524,7 @@ class TestListTools:
              patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
              patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool_schema]):
 
-            from src.mcp_handlers.admin import handle_list_tools
+            from src.mcp_handlers.tool_introspection import handle_list_tools
             result = await handle_list_tools({"lite": False})
 
             data = parse_result(result)
@@ -1559,7 +1559,7 @@ class TestListTools:
              patch("src.mcp_handlers.decorators.get_tool_description", return_value=""), \
              patch("src.tool_schemas.get_tool_definitions", return_value=[]):
 
-            from src.mcp_handlers.admin import handle_list_tools
+            from src.mcp_handlers.tool_introspection import handle_list_tools
             result = await handle_list_tools({"lite": False})
 
             data = parse_result(result)
@@ -1589,7 +1589,7 @@ class TestListTools:
              patch("src.mcp_handlers.decorators.get_tool_description", return_value="Test tool"), \
              patch("src.tool_schemas.get_tool_definitions", return_value=[]):
 
-            from src.mcp_handlers.admin import handle_list_tools
+            from src.mcp_handlers.tool_introspection import handle_list_tools
             result = await handle_list_tools({"lite": False})
 
             data = parse_result(result)
@@ -1620,7 +1620,7 @@ class TestListTools:
              patch("src.tool_schemas.get_tool_definitions", return_value=[]), \
              patch("src.mcp_handlers.context.get_context_agent_id", return_value=None):
 
-            from src.mcp_handlers.admin import handle_list_tools
+            from src.mcp_handlers.tool_introspection import handle_list_tools
             result = await handle_list_tools({"lite": True})
 
             data = parse_result(result)
@@ -2114,7 +2114,7 @@ class TestDescribeToolAdditional:
              patch("src.mcp_handlers.validators.DISCOVERY_TYPE_ALIASES", {}), \
              patch("src.tool_modes.TOOL_TIERS", {"essential": {"process_agent_update"}, "common": set(), "advanced": set()}), \
              patch("src.tool_modes.TOOL_OPERATIONS", {"process_agent_update": "write"}):
-            from src.mcp_handlers.admin import handle_describe_tool
+            from src.mcp_handlers.tool_introspection import handle_describe_tool
             result = await handle_describe_tool({
                 "tool_name": "process_agent_update",
                 "lite": True
@@ -2147,7 +2147,7 @@ class TestDescribeToolAdditional:
         with patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool]), \
              patch("src.mcp_handlers.validators.TOOL_PARAM_SCHEMAS", {}), \
              patch("src.mcp_handlers.validators.PARAM_ALIASES", {"custom_tool": {"text": "param1"}}):
-            from src.mcp_handlers.admin import handle_describe_tool
+            from src.mcp_handlers.tool_introspection import handle_describe_tool
             result = await handle_describe_tool({
                 "tool_name": "custom_tool",
                 "lite": True
@@ -2167,7 +2167,7 @@ class TestDescribeToolAdditional:
         mock_tool.inputSchema = {"type": "object", "properties": {"agent_id": {"type": "string"}}}
 
         with patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool]):
-            from src.mcp_handlers.admin import handle_describe_tool
+            from src.mcp_handlers.tool_introspection import handle_describe_tool
             result = await handle_describe_tool({
                 "tool_name": "health_check",
                 "lite": False
@@ -2188,7 +2188,7 @@ class TestDescribeToolAdditional:
         mock_tool.inputSchema = {"type": "object"}
 
         with patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool]):
-            from src.mcp_handlers.admin import handle_describe_tool
+            from src.mcp_handlers.tool_introspection import handle_describe_tool
             result = await handle_describe_tool({
                 "tool_name": "health_check",
                 "lite": False,
@@ -2247,7 +2247,7 @@ class TestUpdateCalibrationGroundTruthAdditional:
             mock_checker.get_pending_updates.return_value = 0
 
             with patch("src.calibration.calibration_checker", mock_checker):
-                from src.mcp_handlers.admin import handle_update_calibration_ground_truth
+                from src.mcp_handlers.calibration_handlers import handle_update_calibration_ground_truth
                 result = await handle_update_calibration_ground_truth({
                     "timestamp": "not-a-valid-timestamp",
                     "actual_correct": True,
@@ -2263,7 +2263,7 @@ class TestUpdateCalibrationGroundTruthAdditional:
         mock_checker.update_ground_truth.side_effect = RuntimeError("calibration broken")
 
         with patch("src.calibration.calibration_checker", mock_checker):
-            from src.mcp_handlers.admin import handle_update_calibration_ground_truth
+            from src.mcp_handlers.calibration_handlers import handle_update_calibration_ground_truth
             result = await handle_update_calibration_ground_truth({
                 "confidence": 0.8,
                 "predicted_correct": True,

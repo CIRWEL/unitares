@@ -8,9 +8,9 @@ import json
 import numpy as np
 from datetime import datetime
 
-from src.mcp_server_std import monitors, agent_metadata, load_metadata
+from src.agent_state import monitors, agent_metadata, load_metadata
 from src.governance_monitor import UNITARESMonitor
-from src.mcp_server_std import AgentMetadata
+from src.agent_state import AgentMetadata
 
 
 def create_validation_agent():

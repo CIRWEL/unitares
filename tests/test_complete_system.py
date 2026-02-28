@@ -8,7 +8,7 @@ import json
 import numpy as np
 from datetime import datetime
 
-from src.mcp_server_std import monitors, agent_metadata, load_metadata
+from src.agent_state import monitors, agent_metadata, load_metadata
 from src.governance_monitor import UNITARESMonitor
 
 # Configuration
@@ -37,7 +37,7 @@ def setup_agent():
     monitors[AGENT_ID] = UNITARESMonitor(agent_id=AGENT_ID)
 
     # Initialize metadata
-    from src.mcp_server_std import AgentMetadata
+    from src.agent_state import AgentMetadata
     agent_metadata[AGENT_ID] = AgentMetadata(
         agent_id=AGENT_ID,
         status="active",

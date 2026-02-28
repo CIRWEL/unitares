@@ -19,7 +19,7 @@ def test_state_file_read_write():
     """Test reading and writing state files"""
     print("Testing state file read/write...")
     
-    from src.mcp_server_std import get_state_file
+    from src.agent_state import get_state_file
     
     test_agent_id = "test_functional_state"
     state_file = get_state_file(test_agent_id)
@@ -103,7 +103,7 @@ def test_state_file_migration():
     """Test automatic migration from old location"""
     print("Testing state file migration...")
     
-    from src.mcp_server_std import get_state_file
+    from src.agent_state import get_state_file
     
     test_agent_id = "test_migration"
     

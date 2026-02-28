@@ -1,6 +1,6 @@
 """Version consistency guardrails."""
 
-from scripts.version_manager import (
+from scripts.ops.version_manager import (
     PROJECT_ROOT,
     VERSION_REFERENCES,
     check_file_versions,

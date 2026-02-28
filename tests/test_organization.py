@@ -23,7 +23,7 @@ def test_state_file_paths():
     """Test that state files use correct paths"""
     print("Testing state file paths...")
     
-    from src.mcp_server_std import get_state_file
+    from src.agent_state import get_state_file
     
     test_agent_id = "test_org_verification"
     state_file = get_state_file(test_agent_id)

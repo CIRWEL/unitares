@@ -67,6 +67,11 @@ from .phase_aware import (
     get_phase_aware_thresholds,
 )
 
+from .research import (
+    approximate_stability_check,
+    suggest_theta_update,
+)
+
 __all__ = [
     # Core state and dynamics
     'State',
@@ -115,6 +120,10 @@ __all__ = [
     'GovernorConfig',
     'GovernorState',
     'Verdict',
+
+    # Research tools
+    'approximate_stability_check',
+    'suggest_theta_update',
 ]
 
 __version__ = '2.3.0'  # CIRS v2 Adaptive Governor

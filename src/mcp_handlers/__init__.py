@@ -49,16 +49,21 @@ from .admin import (
     handle_get_server_info,
     handle_health_check,
     handle_get_connection_status,
-    handle_check_calibration,
-    handle_rebuild_calibration,
-    handle_update_calibration_ground_truth,
-    handle_backfill_calibration_from_dialectic,
     handle_get_telemetry_metrics,
-    handle_list_tools,
     handle_cleanup_stale_locks,
     handle_get_workspace_health,
     handle_get_tool_usage_stats,
     handle_validate_file_path,
+)
+from .calibration_handlers import (
+    handle_check_calibration,
+    handle_rebuild_calibration,
+    handle_update_calibration_ground_truth,
+    handle_backfill_calibration_from_dialectic,
+)
+from .tool_introspection import (
+    handle_list_tools,
+    handle_describe_tool,
 )
 # Knowledge Graph
 from .knowledge_graph import (

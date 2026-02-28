@@ -38,11 +38,13 @@ from .lifecycle import (
     handle_resume_agent,
     handle_delete_agent,
 )
-from .admin import (
+from .calibration_handlers import (
     handle_check_calibration,
     handle_update_calibration_ground_truth,
     handle_backfill_calibration_from_dialectic,
     handle_rebuild_calibration,
+)
+from .admin import (
     handle_get_telemetry_metrics,
 )
 from .config import (

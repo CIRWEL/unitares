@@ -25,7 +25,7 @@ def test_imports():
     from src.telemetry import telemetry_collector
     from src.audit_log import audit_logger
     # knowledge_layer is deprecated and moved to archive
-    from src.mcp_server_std import monitors
+    from src.agent_state import monitors
     print("  ✅ All imports successful")
 
 
