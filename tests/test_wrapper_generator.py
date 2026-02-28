@@ -102,8 +102,8 @@ class TestCreateSimpleWrapper:
             return handler
 
         param_info = [
-            ("name", str, True),
-            ("age", int, False),
+            ("name", str, True, None, None),
+            ("age", int, False, None, None),
         ]
         wrapper = _create_simple_wrapper("test_tool", param_info, get_handler)
         sig = inspect.signature(wrapper)
@@ -117,7 +117,7 @@ class TestCreateSimpleWrapper:
                 return {}
             return handler
 
-        param_info = [("required_param", str, True)]
+        param_info = [("required_param", str, True, None, None)]
         wrapper = _create_simple_wrapper("test_tool", param_info, get_handler)
         sig = inspect.signature(wrapper)
         assert sig.parameters["required_param"].default is inspect.Parameter.empty

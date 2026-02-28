@@ -8,11 +8,14 @@ Benefits:
 - Claude.ai sends parameters directly (no kwargs wrapper needed)
 - CLI's kwargs wrapping still works (dispatch_tool unwraps)
 - Proper IDE/client autocomplete from typed signatures
+- Schema metadata (descriptions, enums) preserved for MCP clients
 """
 
 import inspect
 import logging
-from typing import Any, Callable, Optional, Union
+from typing import Annotated, Any, Callable, Optional, Union
+
+from pydantic import Field
 
 logger = logging.getLogger(__name__)
 
@@ -39,13 +42,15 @@ def create_typed_wrapper(
     """
     properties = input_schema.get("properties", {})
     required = set(input_schema.get("required", []))
-    
-    # Build parameter info for signature
+
+    # Build parameter info for signature, preserving schema metadata
     param_info = []
     for param_name, param_def in properties.items():
         param_type = _json_type_to_python(param_def.get("type", "string"))
         is_required = param_name in required
-        param_info.append((param_name, param_type, is_required))
+        description = param_def.get("description")
+        enum_values = param_def.get("enum")
+        param_info.append((param_name, param_type, is_required, description, enum_values))
     
     # Generate the wrapper dynamically
     if inject_session:
@@ -103,33 +108,59 @@ def _json_type_to_python(json_type: Any) -> Any:
     return type_map.get(json_type, str)
 
 
+def _build_annotated_type(
+    base_type: Any,
+    is_required: bool,
+    description: Optional[str] = None,
+    enum_values: Optional[list] = None,
+) -> Any:
+    """Build an Annotated type that carries schema metadata through to FastMCP/Pydantic.
+
+    Returns Annotated[type, Field(...)] when metadata exists, plain type otherwise.
+    """
+    field_kwargs: dict[str, Any] = {}
+    if description:
+        field_kwargs["description"] = description
+    if enum_values:
+        field_kwargs["json_schema_extra"] = {"enum": enum_values}
+
+    if not field_kwargs:
+        return Optional[base_type] if not is_required else base_type
+
+    if is_required:
+        return Annotated[base_type, Field(**field_kwargs)]
+    else:
+        return Annotated[Optional[base_type], Field(default=None, **field_kwargs)]
+
+
 def _create_simple_wrapper(
     tool_name: str,
     param_info: list,
     get_handler: Callable,
 ) -> Callable:
     """Create wrapper for tools that don't need session injection.
-    
+
     Args:
         tool_name: Name of the tool
-        param_info: List of (name, type, is_required) tuples
+        param_info: List of (name, type, is_required, description, enum_values) tuples
         get_handler: Function that returns the actual handler (e.g., get_tool_wrapper)
     """
-    # Build proper signature with typed parameters
+    # Build proper signature with typed parameters, preserving schema metadata
     params = []
-    for name, ptype, is_required in param_info:
+    for name, ptype, is_required, description, enum_values in param_info:
+        annotated_type = _build_annotated_type(ptype, is_required, description, enum_values)
         if is_required:
             param = inspect.Parameter(
                 name,
                 inspect.Parameter.KEYWORD_ONLY,
-                annotation=ptype,
+                annotation=annotated_type,
             )
         else:
             param = inspect.Parameter(
                 name,
                 inspect.Parameter.KEYWORD_ONLY,
                 default=None,
-                annotation=Optional[ptype],
+                annotation=annotated_type,
             )
         params.append(param)
     
@@ -169,15 +200,15 @@ def _create_session_wrapper(
     session_extractor: Callable,
 ) -> Callable:
     """Create wrapper for tools that need session injection.
-    
+
     Args:
         tool_name: Name of the tool
-        param_info: List of (name, type, is_required) tuples
+        param_info: List of (name, type, is_required, description, enum_values) tuples
         get_handler: Function that returns the actual handler (e.g., get_tool_wrapper)
         session_extractor: Function to extract session_id from context (ctx -> str)
     """
     from mcp.server.fastmcp import Context
-    
+
     # Build signature: ctx first, then typed params
     params = [
         inspect.Parameter(
@@ -187,20 +218,21 @@ def _create_session_wrapper(
             annotation=Optional[Context],
         )
     ]
-    
-    for name, ptype, is_required in param_info:
+
+    for name, ptype, is_required, description, enum_values in param_info:
+        annotated_type = _build_annotated_type(ptype, is_required, description, enum_values)
         if is_required:
             param = inspect.Parameter(
                 name,
                 inspect.Parameter.KEYWORD_ONLY,
-                annotation=ptype,
+                annotation=annotated_type,
             )
         else:
             param = inspect.Parameter(
                 name,
                 inspect.Parameter.KEYWORD_ONLY,
                 default=None,
-                annotation=Optional[ptype],
+                annotation=annotated_type,
             )
         params.append(param)
     
