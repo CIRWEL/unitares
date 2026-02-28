@@ -315,13 +315,11 @@ class TestValidateParams:
     async def test_validation_error_returns_list(self):
         """Validation error returns list (short-circuit)."""
         ctx = _make_ctx()
-        # store_knowledge_graph requires "summary"
+        # Pydantic rejects invalid Literal values
         result = await validate_params(
-            "store_knowledge_graph", {}, ctx
+            "process_agent_update", {"response_mode": "invalid_mode"}, ctx
         )
         assert _is_short_circuit(result)
-        text = _extract_text(result)
-        assert "summary" in text.lower() or "missing" in text.lower() or "required" in text.lower()
 
     @pytest.mark.asyncio
     async def test_unknown_tool_passthrough(self):

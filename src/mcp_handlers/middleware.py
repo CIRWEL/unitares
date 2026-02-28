@@ -360,19 +360,97 @@ async def inject_identity(name: str, arguments: Dict[str, Any], ctx: DispatchCon
 # ============================================================
 
 async def validate_params(name: str, arguments: Dict[str, Any], ctx: DispatchContext) -> MiddlewareResult:
-    """Lite model parameter coercion and validation."""
-    from .validators import validate_and_coerce_params, apply_param_aliases
+    """Parameter validation: aliases → generic coercion → Pydantic model_validate (if available)."""
+    from .validators import apply_param_aliases, _apply_generic_coercion
 
+    # Step 1: Fuzzy parameter aliases (e.g., "content" → "summary")
     arguments = apply_param_aliases(name, arguments)
-    coerced_args, validation_error, param_coercions = validate_and_coerce_params(name, arguments)
-    if validation_error:
-        return [validation_error]
-    arguments = coerced_args
 
-    if param_coercions:
-        arguments["_param_coercions"] = param_coercions
+    # Step 2: Generic type coercion (handles MCP transport quirks: "0.5" → 0.5, "true" → True)
+    arguments = _apply_generic_coercion(arguments)
+
+    # Step 3: Pydantic model validation (structural + range + enum validation)
+    try:
+        from src.tool_schemas import PYDANTIC_SCHEMAS
+        schema_model = PYDANTIC_SCHEMAS.get(name)
+    except Exception:
+        schema_model = None
+
+    if schema_model:
+        try:
+            from pydantic import ValidationError
+            validated = schema_model.model_validate(arguments)
+            validated_dict = validated.model_dump()
+            # Preserve extra fields not in the model (e.g., _param_coercions, client_hint)
+            for key, value in arguments.items():
+                if key not in validated_dict:
+                    validated_dict[key] = value
+            arguments = validated_dict
+        except ValidationError as e:
+            return [_format_pydantic_error(e, name)]
+        except Exception as e:
+            # Non-validation errors (import failure, etc.): log and continue with coerced dict
+            logger.debug(f"Pydantic validation skipped for {name}: {e}")
+    else:
+        # No Pydantic schema: fall back to legacy per-tool validation
+        from .validators import validate_and_coerce_params
+        coerced_args, validation_error, param_coercions = validate_and_coerce_params(name, arguments)
+        if validation_error:
+            return [validation_error]
+        arguments = coerced_args
+        if param_coercions:
+            arguments["_param_coercions"] = param_coercions
 
     return name, arguments, ctx
+
+
+def _format_pydantic_error(error, tool_name: str):
+    """Format a Pydantic ValidationError into a helpful TextContent error response."""
+    from .error_helpers import invalid_parameter_type_error, missing_parameter_error
+
+    errors = error.errors()
+    if not errors:
+        return error_response(f"Validation error for '{tool_name}': {error}")
+
+    first = errors[0]
+    loc = ".".join(str(x) for x in first.get("loc", []))
+    msg = first.get("msg", "")
+    err_type = first.get("type", "")
+
+    # Map common Pydantic error types to our error taxonomy
+    if err_type == "missing":
+        return missing_parameter_error(loc, tool_name=tool_name)[0]
+
+    if err_type in ("int_parsing", "float_parsing", "bool_parsing"):
+        expected = err_type.replace("_parsing", "")
+        provided = str(first.get("input", ""))[:50]
+        return invalid_parameter_type_error(loc, expected, type(first.get("input")).__name__, tool_name=tool_name)[0]
+
+    # General error: include all issues for multi-error cases
+    detail_lines = []
+    for err in errors[:5]:  # Cap at 5 errors
+        err_loc = ".".join(str(x) for x in err.get("loc", []))
+        detail_lines.append(f"  - {err_loc}: {err.get('msg', '')}")
+    detail_text = "\n".join(detail_lines)
+
+    return error_response(
+        f"Parameter validation error for '{tool_name}':\n{detail_text}",
+        error_code="PARAMETER_ERROR",
+        error_category="validation_error",
+        details={
+            "tool_name": tool_name,
+            "errors": [{"field": ".".join(str(x) for x in e["loc"]), "message": e["msg"]} for e in errors[:5]],
+        },
+        recovery={
+            "action": "Check parameter types and try again",
+            "related_tools": ["describe_tool"],
+            "workflow": [
+                f"1. Use describe_tool(tool_name='{tool_name}') for full schema",
+                "2. Fix the parameters listed above",
+                "3. Retry the tool call"
+            ]
+        }
+    )
 
 
 # ============================================================

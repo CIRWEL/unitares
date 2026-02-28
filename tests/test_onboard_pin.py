@@ -561,13 +561,21 @@ class TestToolSchemaClientSessionId:
 
     @pytest.mark.parametrize("tool_name", CRITICAL_TOOLS)
     def test_client_session_id_is_string_type(self, tool_schemas, tool_name):
-        """client_session_id should be typed as string."""
+        """client_session_id should be typed as string (or anyOf including string)."""
         tool = tool_schemas[tool_name]
         input_schema = tool.inputSchema or {}
         props = input_schema.get("properties", {})
         if "client_session_id" in props:
-            assert props["client_session_id"].get("type") == "string", (
-                f"Tool '{tool_name}': client_session_id should be type 'string'"
+            csid = props["client_session_id"]
+            # Accept both plain {"type": "string"} and Pydantic's
+            # {"anyOf": [{"type": "string"}, {"type": "null"}]}
+            is_string = csid.get("type") == "string"
+            if not is_string and "anyOf" in csid:
+                is_string = any(
+                    alt.get("type") == "string" for alt in csid["anyOf"]
+                )
+            assert is_string, (
+                f"Tool '{tool_name}': client_session_id should accept type 'string'"
             )
 
     def test_no_critical_tool_missing(self, tool_schemas):

@@ -1686,7 +1686,7 @@ class TestDataStructuresExtended:
 
     def test_generic_param_types_values_valid(self):
         """All GENERIC_PARAM_TYPES values are known type strings."""
-        valid_types = {"float", "float_01", "int", "bool"}
+        valid_types = {"float", "float_01", "int", "bool", "list"}
         for param, ptype in GENERIC_PARAM_TYPES.items():
             assert ptype in valid_types, f"Param '{param}' has unknown type '{ptype}'"
 

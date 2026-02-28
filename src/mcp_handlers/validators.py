@@ -241,20 +241,20 @@ GENERIC_PARAM_TYPES: Dict[str, str] = {
     "lite": "bool",
     "essential_only": "bool",
     "include_advanced": "bool",
-    "include_details": "bool",
-    "include_metrics": "bool",
-    "include_state": "bool",
     "include_provenance": "bool",
-    "include_calibration": "bool",
-    "include_health_breakdown": "bool",
-    "include_history": "bool",
     "include_response_chain": "bool",
-    "semantic": "bool",
     "dry_run": "bool",
     "complete_package": "bool",
     "multiline": "bool",
     "auto_export_on_significance": "bool",
+
+    # List parameters
+    "tags": "list",
+    "related_to": "list",
 }
+
+# Version for diagnostics
+VALIDATOR_VERSION = "2.0.0"
 
 
 def _apply_generic_coercion(arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -315,9 +315,23 @@ def _apply_generic_coercion(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 elif isinstance(value, int):
                     coerced[param] = bool(value)
 
+            elif param_type == "list":
+                # List - handle comma-separated strings
+                if isinstance(value, str):
+                    if "," in value:
+                        coerced[param] = [item.strip() for item in value.split(",")]
+                    else:
+                        coerced[param] = [value]
+
         except (ValueError, TypeError):
             # Coercion failed - leave original value for handler to deal with
             pass
+
+    # Resolve discovery_type aliases (e.g., "bug" → "bug_found")
+    if "discovery_type" in coerced and isinstance(coerced["discovery_type"], str):
+        dtype = coerced["discovery_type"].lower().strip()
+        if dtype in DISCOVERY_TYPE_ALIASES:
+            coerced["discovery_type"] = DISCOVERY_TYPE_ALIASES[dtype]
 
     return coerced
 
