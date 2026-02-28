@@ -2,7 +2,7 @@
 
 ### Digital proprioception for AI agents.
 
-[![Tests](https://github.com/CIRWEL/governance-mcp-v1-backup/actions/workflows/tests.yml/badge.svg)](https://github.com/CIRWEL/governance-mcp-v1-backup/actions/workflows/tests.yml)
+[![Tests](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml/badge.svg)](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -77,7 +77,7 @@ That's it. Everything else is optional. See [Getting Started](docs/guides/GETTIN
 **Prerequisites:** Python 3.11+, PostgreSQL 16+ with [AGE extension](https://github.com/apache/age), Redis (optional)
 
 ```bash
-git clone https://github.com/CIRWEL/governance-mcp-v1-backup.git
+git clone https://github.com/CIRWEL/unitares.git
 cd governance-mcp-v1
 pip install -r requirements-core.txt
 

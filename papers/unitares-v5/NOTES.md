@@ -2,9 +2,18 @@
 
 ## Status: Ready for Overleaf Upload
 
-The LaTeX source `unitares-v5.tex` is a complete paper (1592 lines) with all sections written, production data filled in, contraction proof completed, 6 figures integrated, and all review feedback addressed. Linear I-dynamics mode has been rolled out as the production default.
+The LaTeX source `unitares-v5.tex` is a complete paper with all sections written, production data filled in, contraction proof completed, 6 figures integrated, and all review feedback addressed. Linear I-dynamics mode has been rolled out as the production default.
 
 ## Revision Log
+
+### Pre-submission proofread (2026-02-28)
+- **Contraction proof reworked** (Appendix B): Fixed off-diagonal entries F_24 (was missing -m_V*kappa cross-term) and F_34 (wrong metric subscript m_V→m_S). Gershgorin row-sum approach replaced with direct eigenvalue verification. New metric M=diag(1.0, 2.5, 5.0, 2.5) certifies alpha_c=0.14 (up from 0.019). Spectral abscissa -0.15 confirms tightness.
+- **Equilibrium I* fixed** (Proposition 2.7): Replaced incorrect algebraic form with clean linear-mode expression I* = (beta_I*C(V*) - k*S*) / gamma_I
+- **Saturation margin corrected**: Inline computation now shows -1.19 (correct arithmetic); data-derived mean -1.23 from appendix table referenced explicitly
+- **lambda_1 parameter table fixed**: Changed 0.30 → .05--.20 (matching text and drift table)
+- **Bibliography cleaned**: Added \cite{ito1944} in stochastic section, added \cite{landauer1961} in thermodynamics discussion. Removed dead \bibliographystyle{plainnat}
+- **Date changed**: "Draft — \today" → "February 2026"
+- **Minor**: Commented out \todo command, fixed \graphicspath, "since-changed"→"that have since changed"
 
 ### Final integration (2026-02-20)
 - **6 figures added** from production data (PDF + PNG at 300dpi):

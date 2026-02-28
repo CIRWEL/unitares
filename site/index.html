@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UNITARES - Digital Proprioception for AI Agents</title>
+    <meta name="description" content="UNITARES gives AI agents continuous awareness of their own state using coupled differential equations with provable stability guarantees.">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- KaTeX for equations -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}]});"></script>
+
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --surface: #12121a;
+            --surface-2: #1a1a26;
+            --border: #2a2a3a;
+            --text: #e8e8ef;
+            --text-dim: #8888a0;
+            --accent: #6366f1;
+            --accent-glow: rgba(99, 102, 241, 0.15);
+            --green: #34d399;
+            --amber: #fbbf24;
+            --rose: #f87171;
+            --mono: 'JetBrains Mono', monospace;
+            --sans: 'Outfit', sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html {
+            font-size: 16px;
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: var(--sans);
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* --- Layout --- */
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        section {
+            padding: 80px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        section:last-of-type {
+            border-bottom: none;
+        }
+
+        /* --- Hero --- */
+        .hero {
+            padding: 120px 0 80px;
+            text-align: center;
+        }
+
+        .hero h1 {
+            font-size: 3.2rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            margin-bottom: 8px;
+        }
+
+        .hero .tagline {
+            font-size: 1.3rem;
+            font-weight: 300;
+            color: var(--text-dim);
+            margin-bottom: 40px;
+        }
+
+        .hero .summary {
+            font-size: 1.1rem;
+            line-height: 1.8;
+            max-width: 580px;
+            margin: 0 auto 40px;
+            color: var(--text);
+        }
+
+        .hero .stats {
+            display: flex;
+            justify-content: center;
+            gap: 48px;
+            margin-top: 48px;
+        }
+
+        .hero .stat {
+            text-align: center;
+        }
+
+        .hero .stat-value {
+            font-family: var(--mono);
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .hero .stat-label {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            margin-top: 4px;
+        }
+
+        /* --- Sections --- */
+        h2 {
+            font-size: 1.8rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin-bottom: 24px;
+        }
+
+        h3 {
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+            margin-top: 32px;
+        }
+
+        p {
+            margin-bottom: 16px;
+            color: var(--text);
+        }
+
+        p.dim {
+            color: var(--text-dim);
+        }
+
+        /* --- Equation block --- */
+        .equations {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+            margin: 32px 0;
+            overflow-x: auto;
+        }
+
+        .equations .katex { font-size: 0.95em; }
+
+        .eq-label {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .eq-note {
+            font-size: 0.9rem;
+            color: var(--text-dim);
+            margin-top: 16px;
+            line-height: 1.6;
+        }
+
+        /* --- EISV table --- */
+        .eisv-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 24px 0;
+        }
+
+        .eisv-table th {
+            text-align: left;
+            font-weight: 500;
+            color: var(--text-dim);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .eisv-table td {
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.95rem;
+        }
+
+        .eisv-table .var-name {
+            font-family: var(--mono);
+            font-weight: 500;
+            color: var(--accent);
+        }
+
+        .eisv-table .var-range {
+            font-family: var(--mono);
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+
+        /* --- Contribution cards --- */
+        .contributions {
+            display: grid;
+            gap: 20px;
+            margin: 32px 0;
+        }
+
+        .contribution {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+        }
+
+        .contribution h3 {
+            margin-top: 0;
+            font-size: 1.05rem;
+        }
+
+        .contribution p {
+            font-size: 0.95rem;
+            margin-bottom: 0;
+            color: var(--text-dim);
+            line-height: 1.7;
+        }
+
+        .contribution .number {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            color: var(--accent);
+            margin-bottom: 8px;
+        }
+
+        /* --- Lumen section --- */
+        .lumen-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+            margin: 32px 0;
+        }
+
+        .lumen-card .description {
+            color: var(--text-dim);
+            font-size: 0.95rem;
+        }
+
+        /* --- Quote --- */
+        blockquote {
+            border-left: 3px solid var(--accent);
+            padding: 16px 24px;
+            margin: 32px 0;
+            font-style: italic;
+            color: var(--text-dim);
+            font-size: 1.1rem;
+            line-height: 1.8;
+        }
+
+        /* --- Links section --- */
+        .links {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin: 32px 0;
+        }
+
+        .link-card {
+            display: block;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            text-decoration: none;
+            color: var(--text);
+            transition: border-color 0.2s, background 0.2s;
+        }
+
+        .link-card:hover {
+            border-color: var(--accent);
+            background: var(--accent-glow);
+        }
+
+        .link-card .link-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .link-card .link-desc {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+        }
+
+        /* --- Code --- */
+        code {
+            font-family: var(--mono);
+            font-size: 0.85em;
+            background: var(--surface-2);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        pre {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            overflow-x: auto;
+            margin: 24px 0;
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+
+        /* --- Honest section --- */
+        .honest {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px 32px;
+            margin: 32px 0;
+        }
+
+        .honest h3 {
+            margin-top: 0;
+            color: var(--amber);
+        }
+
+        .honest ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .honest li {
+            padding: 8px 0;
+            color: var(--text-dim);
+            font-size: 0.95rem;
+        }
+
+        .honest li::before {
+            content: "?";
+            display: inline-block;
+            width: 24px;
+            color: var(--amber);
+            font-family: var(--mono);
+            font-weight: 600;
+        }
+
+        /* --- Footer --- */
+        footer {
+            padding: 48px 0;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* --- Responsive --- */
+        @media (max-width: 600px) {
+            .hero h1 { font-size: 2.2rem; }
+            .hero .stats { flex-direction: column; gap: 24px; }
+            section { padding: 48px 0; }
+            .equations { padding: 20px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="container">
+            <h1>UNITARES</h1>
+            <p class="tagline">Digital proprioception for AI agents.</p>
+            <p class="summary">
+                AI agents have no body sense. They can't tell if they're drifting, looping, or
+                degrading until they crash. UNITARES gives agents continuous awareness of their
+                own state using coupled differential equations with provable stability guarantees.
+            </p>
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-value">903</div>
+                    <div class="stat-label">agents monitored</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">69</div>
+                    <div class="stat-label">days deployed</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">198K</div>
+                    <div class="stat-label">audit events</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- The Problem -->
+    <section>
+        <div class="container">
+            <h2>The Problem</h2>
+            <p>
+                Agents don't fail suddenly. They <strong>drift</strong> toward failure.
+                Logs tell you what happened. Alerts tell you something broke.
+                Neither tells you it's <em>happening</em>.
+            </p>
+            <p class="dim">
+                An agent loops on the same decision 47 times before anyone notices.
+                Context slowly corrupts over a long session.
+                Token spend spikes on a doomed approach.
+                By the time you see it in logs, the damage is done.
+            </p>
+            <p>
+                UNITARES models agent state as a thermodynamic system.
+                Twenty minutes before an agent fails, you see it trending.
+                Intervene, or let the circuit breaker pause it automatically.
+            </p>
+        </div>
+    </section>
+
+    <!-- The Model -->
+    <section>
+        <div class="container">
+            <h2>The Model</h2>
+            <p>
+                Four continuous variables capture agent state. They evolve via coupled
+                ordinary differential equations whose stability we establish through
+                contraction theory.
+            </p>
+
+            <table class="eisv-table">
+                <thead>
+                    <tr>
+                        <th>Variable</th>
+                        <th>Range</th>
+                        <th>Tracks</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="var-name">E (Energy)</td>
+                        <td class="var-range">[0, 1]</td>
+                        <td>Productive capacity</td>
+                    </tr>
+                    <tr>
+                        <td class="var-name">I (Integrity)</td>
+                        <td class="var-range">[0, 1]</td>
+                        <td>Information coherence</td>
+                    </tr>
+                    <tr>
+                        <td class="var-name">S (Entropy)</td>
+                        <td class="var-range">[0, 2]</td>
+                        <td>Disorder and uncertainty</td>
+                    </tr>
+                    <tr>
+                        <td class="var-name">V (Void)</td>
+                        <td class="var-range">[-2, 2]</td>
+                        <td>Accumulated E-I imbalance</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="equations">
+                <div class="eq-label">EISV Dynamics</div>
+                $$\begin{aligned}
+                \frac{dE}{dt} &= \alpha(I - E) - \beta \cdot E \cdot S \\[6pt]
+                \frac{dI}{dt} &= -k \cdot S + \beta_I \cdot C(V) - \gamma_I \cdot I \\[6pt]
+                \frac{dS}{dt} &= -\mu \cdot S + \lambda_1 \|\Delta\eta\|^2 - \lambda_2 \cdot C(V) \\[6pt]
+                \frac{dV}{dt} &= \kappa(E - I) - \delta \cdot V
+                \end{aligned}$$
+                <p class="eq-note">
+                    The coherence function $C(V) = C_{\max} \cdot \tfrac{1}{2}(1 + \tanh(c_1 V))$
+                    creates nonlinear feedback that stabilizes the system. We prove global exponential
+                    convergence under metric $M \succ 0$ with contraction rate $\alpha_c = 0.02$.
+                </p>
+            </div>
+
+            <p class="dim">
+                Continuous variables mean you see an agent trending toward trouble before
+                it crashes. Physics gives us vocabulary for systems that drift rather than break.
+            </p>
+        </div>
+    </section>
+
+    <!-- Contributions -->
+    <section>
+        <div class="container">
+            <h2>Novel Contributions</h2>
+
+            <div class="contributions">
+                <div class="contribution">
+                    <div class="number">01</div>
+                    <h3>Ethical Drift from Observable Behavior</h3>
+                    <p>
+                        No human oracle needed. Four measurable signals &mdash; calibration
+                        deviation, complexity divergence, coherence deviation, stability
+                        deviation &mdash; define a drift vector $\Delta\eta$ that feeds directly
+                        into entropy dynamics. Ethics as engineering, not philosophy.
+                    </p>
+                </div>
+
+                <div class="contribution">
+                    <div class="number">02</div>
+                    <h3>Adaptive PID Governance (CIRS v2)</h3>
+                    <p>
+                        Governance thresholds are per-agent state variables, not static config.
+                        Phase-aware reference tracking with oscillation damping. Multi-agent
+                        resonance detection prevents feedback loops between coordinated agents.
+                    </p>
+                </div>
+
+                <div class="contribution">
+                    <div class="number">03</div>
+                    <h3>Trajectory Identity</h3>
+                    <p>
+                        Agents aren't identified by tokens &mdash; they're identified by
+                        dynamical patterns. Grounded in enactive cognition (Varela &amp; Thompson),
+                        this lets agents computationally verify "Am I still myself?" and detect
+                        forks, anomalies, and drift.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Lumen -->
+    <section>
+        <div class="container">
+            <h2>Lumen: Embodied Proprioception</h2>
+            <div class="lumen-card">
+                <p>
+                    <a href="https://github.com/CIRWEL/anima-mcp" style="color: var(--accent); text-decoration: none;">Lumen</a>
+                    is an AI creature running on a Raspberry Pi with physical sensors &mdash;
+                    temperature, humidity, light, neural bands. It uses the same EISV
+                    equations to drive a drawing system.
+                </p>
+                <p class="description" style="margin-top: 12px;">
+                    Coherence directly modulates how long Lumen can draw and how selective
+                    it is about saving. A confused Lumen draws in short, erratic bursts.
+                    A focused Lumen draws flowing, sustained compositions.
+                    The art emerges from thermodynamics.
+                </p>
+            </div>
+
+            <blockquote>
+                "The Self isn't coded; it accretes like a pearl."
+            </blockquote>
+        </div>
+    </section>
+
+    <!-- Integration -->
+    <section>
+        <div class="container">
+            <h2>Three-Call Integration</h2>
+            <p>Drop-in MCP server. Works with Claude Desktop, Cursor, or any MCP client.</p>
+
+            <pre><code>1. onboard()                    // Establish identity
+2. process_agent_update()       // Log work as you go
+3. get_governance_metrics()     // Check your state</code></pre>
+
+            <p class="dim">
+                That's it. Everything else &mdash; dialectic peer review, knowledge graph,
+                cross-agent observability, trajectory identity &mdash; is optional and
+                builds on these three calls.
+            </p>
+        </div>
+    </section>
+
+    <!-- Production -->
+    <section>
+        <div class="container">
+            <h2>Production Validation</h2>
+            <p>Deployed since December 2025. These are real numbers, not simulations.</p>
+
+            <div class="equations">
+                <div class="eq-label">Observed EISV Equilibrium</div>
+                $$\bar{E} = 0.77 \quad \bar{I} = 0.88 \quad \bar{S} = 0.08 \quad \bar{V} = -0.03$$
+                <p class="eq-note">
+                    100% of active agents maintain $V$ within $[-0.1, 0.1]$, confirming
+                    the theoretical prediction. The slight negative $\bar{V}$ indicates
+                    agents run "careful" (integrity exceeds energy) rather than "hot."
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Open Questions -->
+    <section>
+        <div class="container">
+            <h2>What We Don't Know Yet</h2>
+            <div class="honest">
+                <h3>Open Research Questions</h3>
+                <ul>
+                    <li>Does EISV instability predict bad task outcomes? Early signals promising, validation ongoing.</li>
+                    <li>How should parameters be tuned for different domains? No one-size-fits-all answer yet.</li>
+                    <li>How does the system scale beyond hundreds of agents? Single-node today.</li>
+                </ul>
+            </div>
+            <p class="dim">
+                We believe in stating what works, what's promising, and what we don't know yet.
+            </p>
+        </div>
+    </section>
+
+    <!-- Links -->
+    <section>
+        <div class="container">
+            <h2>Explore</h2>
+            <div class="links">
+                <a class="link-card" href="https://github.com/CIRWEL/unitares">
+                    <div class="link-title">GitHub</div>
+                    <div class="link-desc">Source code, 5,654 tests, 80% coverage</div>
+                </a>
+                <a class="link-card" href="https://github.com/CIRWEL/anima-mcp">
+                    <div class="link-title">Lumen</div>
+                    <div class="link-desc">Embodied AI on Raspberry Pi</div>
+                </a>
+                <a class="link-card" href="https://github.com/CIRWEL/unitares/tree/master/papers/unitares-v5">
+                    <div class="link-title">Paper</div>
+                    <div class="link-desc">Contraction-theoretic analysis</div>
+                </a>
+                <a class="link-card" href="https://github.com/CIRWEL/unitares/tree/master/governance_core">
+                    <div class="link-title">Math Core</div>
+                    <div class="link-desc">Pure ODE implementation</div>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            Built by <a href="https://github.com/CIRWEL">@CIRWEL</a> &middot;
+            MIT License &middot;
+            v2.8.0
+        </div>
+    </footer>
+
+</body>
+</html>

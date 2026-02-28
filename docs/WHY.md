@@ -87,8 +87,8 @@ Three calls:
 MCP server drops into Claude Desktop, Cursor, or any MCP client. REST API for everything else.
 
 ```bash
-git clone https://github.com/CIRWEL/governance-mcp-v1.git
-cd governance-mcp-v1
+git clone https://github.com/CIRWEL/unitares.git
+cd unitares
 pip install -r requirements-core.txt
 python src/mcp_server.py --port 8767
 ```
