@@ -16,6 +16,7 @@ build
 .venv
 venv
 env
+uv.lock
 
 # Data (will be mounted as volume)
 data/
@@ -24,20 +25,28 @@ logs/
 *.db-shm
 *.db-wal
 
-# IDE
+# IDE / tools
+.claude
+.cursor
 .vscode
 .idea
 *.swp
 *.swo
 
-# Documentation (optional - can include if needed)
-# docs/
-
 # Tests
 tests/
 .pytest_cache
+.coverage
 coverage.xml
 htmlcov/
+
+# Documentation / non-runtime
+papers/
+scripts/archive/
+docs/
+site/
+sketch/
+examples/
 
 # Archives
 archive/
@@ -47,4 +56,3 @@ archives/
 *.tmp
 *.log
 .DS_Store
-

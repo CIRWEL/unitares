@@ -1,0 +1,67 @@
+# UNITARES Governance — Docker Compose
+#
+# Quick start:
+#   docker compose up
+#   → Connect MCP client to http://localhost:8767/mcp/ and call onboard()
+
+services:
+  postgres-age:
+    build:
+      context: db/postgres
+      dockerfile: Dockerfile.age-vector
+    container_name: postgres-age
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: governance
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-age-data:/var/lib/postgresql/data
+      - ./db/postgres/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./db/postgres/partitions.sql:/docker-entrypoint-initdb.d/02-partitions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d governance"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: governance-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  governance-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: governance-mcp
+    ports:
+      - "8767:8767"
+    environment:
+      DB_POSTGRES_URL: postgresql://postgres:postgres@postgres-age:5432/governance
+      REDIS_URL: redis://governance-redis:6379/0
+      UNITARES_KNOWLEDGE_BACKEND: age
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres-age:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-age-data:
+  redis-data:

@@ -2,7 +2,7 @@
 # Combines graph queries (AGE) with vector similarity search (pgvector)
 #
 # Build:
-#   docker build -t postgres-age-vector -f db/postgres/Dockerfile.age-vector .
+#   docker build -t postgres-age-vector db/postgres/
 #
 # Run:
 #   docker run -d --name postgres-age-vector \
@@ -34,4 +34,4 @@ RUN cd /tmp && \
 USER postgres
 
 # Add initialization script to create extensions
-COPY --chown=postgres:postgres db/postgres/init-extensions.sql /docker-entrypoint-initdb.d/00-init-extensions.sql
+COPY --chown=postgres:postgres init-extensions.sql /docker-entrypoint-initdb.d/00-init-extensions.sql
