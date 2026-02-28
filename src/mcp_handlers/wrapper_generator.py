@@ -46,7 +46,7 @@ def create_typed_wrapper(
     # Build parameter info for signature, preserving schema metadata
     param_info = []
     for param_name, param_def in properties.items():
-        param_type = _json_type_to_python(param_def.get("type", "string"))
+        param_type = _resolve_param_type(param_def)
         is_required = param_name in required
         description = param_def.get("description")
         enum_values = param_def.get("enum")
@@ -63,6 +63,63 @@ def create_typed_wrapper(
     wrapper.__qualname__ = tool_name
     
     return wrapper
+
+
+def _resolve_param_type(param_def: dict) -> Any:
+    """Resolve a JSON Schema parameter definition to a Python type.
+
+    Handles simple ``{"type": "string"}``, Pydantic-generated ``{"anyOf": [...]}``
+    union schemas, and nested anyOf (e.g. ``Union[float, str, None]`` with
+    constraints generates ``anyOf: [{anyOf: [{number}, {string}], ge: ...}, {null}]``).
+    """
+    any_of = param_def.get("anyOf")
+    if any_of:
+        types = []
+        has_null = False
+        for variant in any_of:
+            vtype = variant.get("type")
+            if vtype == "null":
+                has_null = True
+            elif vtype:
+                types.append(_json_type_to_python(vtype))
+            elif "anyOf" in variant:
+                # Nested anyOf (Pydantic wraps constrained unions this way)
+                inner = _resolve_param_type(variant)
+                if inner is not None:
+                    types.append(inner)
+        if not types:
+            base = str
+        elif len(types) == 1:
+            base = types[0]
+        else:
+            # Flatten: if an inner type is already a Union, collect its args
+            flat = []
+            for t in types:
+                origin = getattr(t, "__origin__", None)
+                if origin is Union:
+                    flat.extend(t.__args__)
+                else:
+                    flat.append(t)
+            # Deduplicate while preserving order
+            seen = set()
+            unique = []
+            for t in flat:
+                if t not in seen:
+                    seen.add(t)
+                    unique.append(t)
+            if len(unique) == 1:
+                base = unique[0]
+            elif len(unique) == 2:
+                base = Union[unique[0], unique[1]]  # type: ignore
+            elif len(unique) == 3:
+                base = Union[unique[0], unique[1], unique[2]]  # type: ignore
+            else:
+                base = unique[0]  # fallback
+        if has_null:
+            return Optional[base]  # type: ignore
+        return base
+
+    return _json_type_to_python(param_def.get("type", "string"))
 
 
 def _json_type_to_python(json_type: Any) -> Any:
