@@ -22,13 +22,16 @@ from src import agent_storage
 
 from .update_context import UpdateContext
 from .utils import error_response
-from .validators import (
-    validate_complexity,
-    validate_confidence,
-    validate_ethical_drift,
-    validate_response_text,
-    validate_task_type,
-)
+
+
+class _LazyMCPServer:
+    def __getattr__(self, name):
+        from src.mcp_handlers.shared import get_mcp_server
+        return getattr(get_mcp_server(), name)
+        
+mcp_server = _LazyMCPServer()
+
+
 
 logger = get_logger(__name__)
 
@@ -345,59 +348,39 @@ async def handle_onboarding_and_resume(ctx: UpdateContext) -> Optional[Sequence[
 # ─── Phase 3: Validate Inputs ──────────────────────────────────────────
 
 def validate_inputs(ctx: UpdateContext) -> Optional[Sequence[TextContent]]:
-    """Validate all parameters BEFORE acquiring lock (fail fast).
+    """Transfer validated parameters to context BEFORE acquiring lock.
+    (Pydantic handles the actual validation in middleware, so these values
+    are guaranteed to be structurally correct).
 
-    Returns an early-exit error response, or None to continue.
+    Returns an early-exit error response (None if successful).
     """
-    # Validate response_text
-    response_text_raw = ctx.arguments.get("response_text", "")
-    response_text, error = validate_response_text(response_text_raw, max_length=50000)
-    if error:
-        return [error]
-    ctx.response_text = response_text
+    # Response Text
+    ctx.response_text = ctx.arguments.get("response_text", "")
 
-    # Validate complexity
-    reported_complexity = ctx.arguments.get("complexity", 0.5)
-    complexity, error = validate_complexity(reported_complexity)
-    if error:
-        return [error]
-    ctx.complexity = complexity or 0.5
+    # Complexity
+    ctx.complexity = ctx.arguments.get("complexity", 0.5)
 
-    # Validate confidence
+    # Confidence & Auto-Calibration
     reported_confidence = ctx.arguments.get("confidence")
-    ctx.confidence = None
+    ctx.confidence = reported_confidence
     ctx.calibration_correction_info = None
+
     if reported_confidence is not None:
-        confidence, error = validate_confidence(reported_confidence)
-        if error:
-            return [error]
-        # Auto-calibration correction
         try:
             from src.calibration import calibration_checker
-            corrected, correction_info = calibration_checker.apply_confidence_correction(confidence)
+            corrected, correction_info = calibration_checker.apply_confidence_correction(reported_confidence)
             if correction_info:
                 ctx.calibration_correction_info = correction_info
                 logger.info(f"Agent {ctx.agent_id}: {correction_info}")
-            confidence = corrected
+            ctx.confidence = corrected
         except Exception as e:
             logger.debug(f"Calibration correction skipped: {e}")
-        ctx.confidence = confidence
 
-    # Validate ethical_drift
-    ethical_drift_raw = ctx.arguments.get("ethical_drift", [0.0, 0.0, 0.0])
-    ethical_drift, error = validate_ethical_drift(ethical_drift_raw)
-    if error:
-        return [error]
-    ctx.ethical_drift = ethical_drift or [0.0, 0.0, 0.0]
+    # Ethical Drift
+    ctx.ethical_drift = ctx.arguments.get("ethical_drift", [0.0, 0.0, 0.0])
 
-    # Validate task_type
-    task_type = ctx.arguments.get("task_type", "mixed")
-    validated_task_type, error = validate_task_type(task_type)
-    if error:
-        logger.warning(f"Invalid task_type '{task_type}' for agent '{ctx.agent_id}', defaulting to 'mixed'")
-        ctx.task_type = "mixed"
-    else:
-        ctx.task_type = validated_task_type
+    # Task Type
+    ctx.task_type = ctx.arguments.get("task_type", "mixed")
 
     return None  # Continue
 
@@ -507,6 +490,19 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
             ctx.previous_void_active = bool(monitor.state.void_active)
     except Exception:
         pass
+
+    # Preload agent baseline from PostgreSQL (if not already cached in-memory)
+    try:
+        from governance_core.ethical_drift import _baseline_cache, AgentBaseline
+        if ctx.agent_id not in _baseline_cache:
+            from src.db import get_db
+            db = get_db()
+            baseline_data = await db.load_agent_baseline(ctx.agent_id)
+            if baseline_data:
+                _baseline_cache[ctx.agent_id] = AgentBaseline.from_dict(baseline_data)
+                logger.debug(f"Loaded baseline from PostgreSQL for {ctx.agent_id[:12]}...")
+    except Exception as e:
+        logger.debug(f"Baseline preload skipped: {e}")
 
     # Execute ODE update
     ctx.agent_state["task_type"] = ctx.task_type
@@ -660,6 +656,19 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
             logger.warning(f"PostgreSQL create+record failed: {create_error}", exc_info=True)
     except Exception as e:
         logger.warning(f"PostgreSQL record_agent_state failed: {e}", exc_info=True)
+
+    # PostgreSQL: Save agent baseline (fire-and-forget, matches record_agent_state pattern)
+    try:
+        from governance_core.ethical_drift import _baseline_cache
+        baseline = _baseline_cache.get(agent_id)
+        if baseline:
+            from src.db import get_db
+            db = get_db()
+            if db:
+                await db.save_agent_baseline(baseline.to_dict())
+                logger.debug(f"PostgreSQL: Saved baseline for {agent_id[:12]}...")
+    except Exception as e:
+        logger.debug(f"Baseline save skipped: {e}")
 
     # Auto-emit outcome event
     ctx.outcome_event_id = None
