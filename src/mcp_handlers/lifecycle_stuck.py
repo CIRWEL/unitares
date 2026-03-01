@@ -8,16 +8,19 @@ import asyncio
 from typing import Dict, Any, Sequence
 from datetime import datetime, timezone
 
-from .shared import get_mcp_server
 from .decorators import mcp_tool
 from .utils import success_response, error_response
-from src.governance_monitor import UNITARESMonitor
 from src.logging_utils import get_logger
 from config.governance_config import GovernanceConfig
+from src.mcp_handlers.shared import get_mcp_server
 
 logger = get_logger(__name__)
-mcp_server = get_mcp_server()
 
+class _LazyMCPServer:
+    def __getattr__(self, name):
+        return getattr(get_mcp_server(), name)
+        
+mcp_server = _LazyMCPServer()
 
 async def _should_add_stuck_note(agent_id: str, meta, note_cooldown_minutes: float) -> bool:
     """Check if we should add a stuck note (no existing open note + cooldown respected)."""
@@ -183,7 +186,7 @@ def _detect_stuck_agents(
                 # Try to load state
                 persisted_state = mcp_server.load_monitor_state(agent_id)
                 if persisted_state:
-                    monitor = UNITARESMonitor(agent_id, load_state=False)
+                    monitor = __import__('src.governance_monitor', fromlist=['UNITARESMonitor']).UNITARESMonitor(agent_id, load_state=False)
                     monitor.state = persisted_state
                 else:
                     # No state - can't compute margin, can't determine if stuck

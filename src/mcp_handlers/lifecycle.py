@@ -11,8 +11,13 @@ from datetime import datetime, timedelta, timezone
 from src import agent_storage
 
 # Import from mcp_server_std module (using shared utility)
-from .shared import get_mcp_server
-mcp_server = get_mcp_server()
+from src.mcp_handlers.shared import get_mcp_server
+
+class _LazyMCPServer:
+    def __getattr__(self, name):
+        return getattr(get_mcp_server(), name)
+        
+mcp_server = _LazyMCPServer()
 
 from .types import ToolArgumentsDict
 from .utils import (
@@ -28,7 +33,6 @@ from .error_helpers import (
     system_error as system_error_helper
 )
 from .decorators import mcp_tool
-from src.governance_monitor import UNITARESMonitor
 from src.logging_utils import get_logger
 from config.governance_config import GovernanceConfig
 
@@ -511,7 +515,7 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
         
         # Add EISV labels for API documentation (only if metrics are included)
         if include_metrics:
-            response_data["eisv_labels"] = UNITARESMonitor.get_eisv_labels()
+            response_data["eisv_labels"] = __import__('src.governance_monitor', fromlist=['UNITARESMonitor']).UNITARESMonitor.get_eisv_labels()
         
         return success_response(response_data)
         
@@ -564,8 +568,8 @@ async def handle_get_agent_metadata(arguments: Sequence[TextContent]) -> list:
                     }
                 else:
                     metadata_response["current_state"] = None
-                # Add EISV labels (UNITARESMonitor imported at module level)
-                metadata_response["eisv_labels"] = UNITARESMonitor.get_eisv_labels()
+                # Add EISV labels (__import__('src.governance_monitor', fromlist=['UNITARESMonitor']).UNITARESMonitor imported at module level)
+                metadata_response["eisv_labels"] = __import__('src.governance_monitor', fromlist=['UNITARESMonitor']).UNITARESMonitor.get_eisv_labels()
                 return success_response(metadata_response)
         except Exception as e:
             logger.debug(f"Metadata cache check failed: {e}")
@@ -661,7 +665,7 @@ async def handle_get_agent_metadata(arguments: Sequence[TextContent]) -> list:
     
     # Add EISV labels for API documentation (only if current_state exists)
     if "current_state" in metadata_response:
-        metadata_response["eisv_labels"] = UNITARESMonitor.get_eisv_labels()
+        metadata_response["eisv_labels"] = __import__('src.governance_monitor', fromlist=['UNITARESMonitor']).UNITARESMonitor.get_eisv_labels()
     
     return success_response(metadata_response)
 

@@ -33,7 +33,6 @@ from mcp.types import TextContent
 from datetime import datetime, timezone
 import json
 
-from .shared import get_mcp_server
 from .utils import (
     require_registered_agent,
     success_response,
@@ -43,10 +42,15 @@ from .utils import (
 from .decorators import mcp_tool
 from src.logging_utils import get_logger
 from config.governance_config import GovernanceConfig
+from src.mcp_handlers.shared import get_mcp_server
 
 logger = get_logger(__name__)
-mcp_server = get_mcp_server()
 
+class _LazyMCPServer:
+    def __getattr__(self, name):
+        return getattr(get_mcp_server(), name)
+        
+mcp_server = _LazyMCPServer()
 
 # Safety limits for recovery conditions
 FORBIDDEN_CONDITIONS = [

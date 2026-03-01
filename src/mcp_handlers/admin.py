@@ -13,13 +13,17 @@ from .utils import success_response, error_response, require_agent_id, require_r
 from .decorators import mcp_tool
 from .validators import validate_file_path_policy
 from src.logging_utils import get_logger
+from src.mcp_handlers.shared import get_mcp_server
 
 logger = get_logger(__name__)
 
 # Import from mcp_server_std module (using shared utility)
-from .shared import get_mcp_server
-mcp_server = get_mcp_server()
 
+class _LazyMCPServer:
+    def __getattr__(self, name):
+        return getattr(get_mcp_server(), name)
+        
+mcp_server = _LazyMCPServer()
 
 @mcp_tool("get_server_info", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_get_server_info(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -158,8 +162,6 @@ async def handle_check_continuity_health(arguments: Dict[str, Any]) -> Sequence[
         }
 
         # Check agent metadata persistence
-        from .shared import get_mcp_server
-        mcp_server = get_mcp_server()
         metadata_count = len(mcp_server.agent_metadata) if hasattr(mcp_server, 'agent_metadata') else 0
 
         # Check knowledge graph persistence
@@ -869,8 +871,6 @@ async def handle_get_connection_status(arguments: Dict[str, Any]) -> Sequence[Te
     Helps agents verify they're connected to the MCP server and can use tools.
     Especially useful for detecting when tools are not available (e.g., wrong chatbox in Mac ChatGPT).
     """
-    from .shared import get_mcp_server
-    mcp_server = get_mcp_server()
     
     # Check if we can access server
     server_available = mcp_server is not None

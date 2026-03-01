@@ -10,15 +10,18 @@ import json
 from datetime import datetime
 from .utils import success_response, error_response, require_agent_id, require_registered_agent
 from .decorators import mcp_tool
-from src.governance_monitor import UNITARESMonitor
 from src.logging_utils import get_logger
+from src.mcp_handlers.shared import get_mcp_server
 
 logger = get_logger(__name__)
 
 # Import from mcp_server_std module (using shared utility)
-from .shared import get_mcp_server
-mcp_server = get_mcp_server()
 
+class _LazyMCPServer:
+    def __getattr__(self, name):
+        return getattr(get_mcp_server(), name)
+        
+mcp_server = _LazyMCPServer()
 
 @mcp_tool("get_system_history", timeout=20.0, register=False)
 async def handle_get_system_history(arguments: Dict[str, Any]) -> Sequence[TextContent]:

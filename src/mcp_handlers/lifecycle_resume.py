@@ -8,16 +8,20 @@ from typing import Dict, Any, Sequence
 
 from mcp.types import TextContent
 
-from .shared import get_mcp_server
 from .decorators import mcp_tool
 from .utils import success_response, error_response, require_registered_agent
 from .error_helpers import agent_not_found_error, system_error as system_error_helper
 from src import agent_storage
 from src.logging_utils import get_logger
+from src.mcp_handlers.shared import get_mcp_server
 
 logger = get_logger(__name__)
-mcp_server = get_mcp_server()
 
+class _LazyMCPServer:
+    def __getattr__(self, name):
+        return getattr(get_mcp_server(), name)
+        
+mcp_server = _LazyMCPServer()
 
 @mcp_tool("direct_resume_if_safe", timeout=10.0, deprecated=True, superseded_by="quick_resume or self_recovery_review")
 async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[TextContent]:
