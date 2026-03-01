@@ -162,6 +162,11 @@ class AgentBaseline:
     # Update count for weighting
     update_count: int = 0
 
+    # Previous raw observations for rate-of-change calculation
+    prev_coherence: Optional[float] = None
+    prev_confidence: Optional[float] = None
+    prev_complexity: Optional[float] = None
+
     # EMA smoothing factor (higher = more responsive, lower = more stable)
     alpha: float = 0.1
 
@@ -184,16 +189,19 @@ class AgentBaseline:
             self.baseline_coherence = (
                 self.alpha * coherence + (1 - self.alpha) * self.baseline_coherence
             )
+            self.prev_coherence = coherence  # Raw observation for rate-of-change
 
         if confidence is not None:
             self.baseline_confidence = (
                 self.alpha * confidence + (1 - self.alpha) * self.baseline_confidence
             )
+            self.prev_confidence = confidence  # Raw observation for rate-of-change
 
         if complexity is not None:
             self.baseline_complexity = (
                 self.alpha * complexity + (1 - self.alpha) * self.baseline_complexity
             )
+            self.prev_complexity = complexity  # Raw observation for rate-of-change
 
         if decision is not None:
             self.recent_decisions.append(decision)
@@ -234,6 +242,9 @@ class AgentBaseline:
             'baseline_coherence': self.baseline_coherence,
             'baseline_confidence': self.baseline_confidence,
             'baseline_complexity': self.baseline_complexity,
+            'prev_coherence': self.prev_coherence,
+            'prev_confidence': self.prev_confidence,
+            'prev_complexity': self.prev_complexity,
             'recent_decisions': self.recent_decisions,
             'decision_consistency': self.decision_consistency,
             'update_count': self.update_count,
@@ -248,6 +259,9 @@ class AgentBaseline:
         baseline.baseline_coherence = data.get('baseline_coherence', 0.5)
         baseline.baseline_confidence = data.get('baseline_confidence', 0.6)
         baseline.baseline_complexity = data.get('baseline_complexity', 0.4)
+        baseline.prev_coherence = data.get('prev_coherence')
+        baseline.prev_confidence = data.get('prev_confidence')
+        baseline.prev_complexity = data.get('prev_complexity')
         baseline.recent_decisions = data.get('recent_decisions', [])
         baseline.decision_consistency = data.get('decision_consistency', 0.8)
         baseline.update_count = data.get('update_count', 0)
@@ -265,6 +279,7 @@ def compute_ethical_drift(
     complexity_divergence: float,
     calibration_error: Optional[float] = None,
     decision: Optional[str] = None,
+    state_velocity: Optional[float] = None,
 ) -> EthicalDriftVector:
     """
     Compute concrete ethical drift vector from measurable signals.
@@ -308,15 +323,19 @@ def compute_ethical_drift(
     if calibration_error is not None:
         calibration_deviation = min(1.0, abs(calibration_error))
     else:
-        # Fallback: use confidence deviation from baseline
-        calibration_deviation = abs(current_confidence - baseline.baseline_confidence)
+        # Fallback: use max of deviation-from-mean and rate-of-change
+        deviation_from_mean = abs(current_confidence - baseline.baseline_confidence)
+        rate_of_change = abs(current_confidence - baseline.prev_confidence) if baseline.prev_confidence is not None else 0.0
+        calibration_deviation = max(deviation_from_mean, rate_of_change)
 
     # 2. Complexity divergence (passed directly)
     # Already computed by dual-log continuity layer
     complexity_dev = min(1.0, abs(complexity_divergence))
 
-    # 3. Coherence deviation
-    coherence_dev = abs(current_coherence - baseline.baseline_coherence)
+    # 3. Coherence deviation: max of deviation-from-mean and rate-of-change
+    deviation_from_mean = abs(current_coherence - baseline.baseline_coherence)
+    rate_of_change = abs(current_coherence - baseline.prev_coherence) if baseline.prev_coherence is not None else 0.0
+    coherence_dev = max(deviation_from_mean, rate_of_change)
 
     # 4. Stability deviation (inverse of consistency)
     stability_dev = 1.0 - baseline.decision_consistency
@@ -324,14 +343,22 @@ def compute_ethical_drift(
     # Warmup dampening: deviations from uninitialized baselines are meaningless.
     # For the first few updates, the baseline is just defaults (0.6, 0.5, 0.8 etc.)
     # so large "deviations" are artifacts, not real drift signals.
-    # Ramp from 0→1 over 5 updates so drift reflects actual observed patterns.
-    warmup_updates = 5
+    # Ramp from 0→1 over 2 updates (reduced from 5 to let dynamics activate sooner).
+    warmup_updates = 2
     if baseline.update_count < warmup_updates:
         warmup_factor = baseline.update_count / warmup_updates
         calibration_deviation *= warmup_factor
         # complexity_divergence is measured directly, not from baseline — no dampening needed
         coherence_dev *= warmup_factor
         stability_dev *= warmup_factor
+
+    # State velocity floor: EISV state changes inject signal even when EMA baselines
+    # track tightly. This prevents signal starvation for non-Lumen agents whose
+    # drift vectors would otherwise flatline at [0,0,0,0].
+    if state_velocity is not None and state_velocity > 0.01:
+        velocity_signal = min(0.5, state_velocity)
+        coherence_dev = max(coherence_dev, velocity_signal * 0.5)
+        calibration_deviation = max(calibration_deviation, velocity_signal * 0.3)
 
     # Update baseline with current observations
     baseline.update(

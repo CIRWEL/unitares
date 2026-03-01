@@ -238,10 +238,13 @@ class ContinuityLayer:
         """
         self.agent_id = agent_id
         self.redis = redis_client
-        
+
         # In-memory fallback
         self._memory_storage: Dict[str, Any] = {}
-        
+
+        # Track previous derived complexity for rate-of-change calculation
+        self._prev_derived_complexity: Optional[float] = None
+
         # Load or initialize state
         self._prev_session_id: Optional[str] = None
         self._prev_timestamp: Optional[datetime] = None
@@ -260,6 +263,7 @@ class ContinuityLayer:
                     if state.get('prev_timestamp'):
                         self._prev_timestamp = datetime.fromisoformat(state['prev_timestamp'])
                     self._prev_topic_hash = state.get('prev_topic_hash')
+                    self._prev_derived_complexity = state.get('prev_derived_complexity')
             except Exception as e:
                 logger.warning(f"Failed to load dual-log state: {e}")
     
@@ -272,6 +276,7 @@ class ContinuityLayer:
                     'prev_session_id': self._prev_session_id,
                     'prev_timestamp': self._prev_timestamp.isoformat() if self._prev_timestamp else None,
                     'prev_topic_hash': self._prev_topic_hash,
+                    'prev_derived_complexity': self._prev_derived_complexity,
                 }
                 self.redis.setex(state_key, self.LOG_TTL_SECONDS, json.dumps(state))
             except Exception as e:
@@ -324,7 +329,15 @@ class ContinuityLayer:
         metrics = compute_continuity_metrics(
             op_entry, refl_entry, calibration_weight
         )
-        
+
+        # 3b. When no self-reported complexity, use rate-of-change of derived
+        # complexity instead of hardcoded 0.2. This gives non-Lumen agents a
+        # real signal that varies with actual task changes.
+        if refl_entry.self_complexity is None and self._prev_derived_complexity is not None:
+            complexity_roc = min(1.0, abs(metrics.derived_complexity - self._prev_derived_complexity))
+            metrics.complexity_divergence = complexity_roc
+        self._prev_derived_complexity = metrics.derived_complexity
+
         # 4. Store entries
         self._store_operational(op_entry)
         self._store_reflective(refl_entry)
