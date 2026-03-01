@@ -225,9 +225,12 @@ class UNITARESMonitor:
         self._last_restorative_status = None
         self._last_drift_vector = None  # Concrete ethical drift (Δη)
 
-        # HCK v3.0: Track previous E and I for update coherence ρ(t) computation
+        # HCK v3.0: Track previous EISV for update coherence ρ(t) and state velocity
         self._prev_E: Optional[float] = None
         self._prev_I: Optional[float] = None
+        self._prev_S: Optional[float] = None
+        self._prev_V: Optional[float] = None
+        self._last_state_velocity: float = 0.0
 
         # CIRS: Initialize oscillation detector / adaptive governor
         from config.governance_config import GovernanceConfig as GovConfig
@@ -617,18 +620,27 @@ class UNITARESMonitor:
 
         # =================================================================
         # HCK v3.0: Compute and store update coherence ρ(t) and CE
+        # Also compute 4D state velocity for ethical drift signal injection
         # =================================================================
-        # Compute ρ(t) from E and I deltas
-        if self._prev_E is not None and self._prev_I is not None:
+        import math as _math
+        if all(v is not None for v in [self._prev_E, self._prev_I, self._prev_S, self._prev_V]):
             delta_E = float(self.state.E) - self._prev_E
             delta_I = float(self.state.I) - self._prev_I
+            delta_S = float(self.state.S) - self._prev_S
+            delta_V = float(self.state.V) - self._prev_V
             rho = self.compute_update_coherence(delta_E, delta_I)
+            self._last_state_velocity = _math.sqrt(
+                delta_E**2 + delta_I**2 + delta_S**2 + delta_V**2
+            )
         else:
             rho = 0.0  # First update, no previous state
+            self._last_state_velocity = 0.0
 
         # Update prev values for next iteration
         self._prev_E = float(self.state.E)
         self._prev_I = float(self.state.I)
+        self._prev_S = float(self.state.S)
+        self._prev_V = float(self.state.V)
 
         # Store ρ(t) in state
         self.state.current_rho = rho
@@ -1211,6 +1223,7 @@ class UNITARESMonitor:
             complexity_divergence=continuity_metrics.complexity_divergence,
             calibration_error=calibration_error,
             decision=None,  # Will be updated after decision is made
+            state_velocity=self._last_state_velocity,
         )
 
         # Blend agent-sent drift with governance-computed drift.
