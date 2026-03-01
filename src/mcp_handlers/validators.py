@@ -339,6 +339,18 @@ def validate_file_path_policy(file_path: str) -> Tuple[Optional[str], Optional[T
                         return (warning, None)
     return (None, None)
 
+def sanitize_agent_name(agent_id: str) -> str:
+    """Strip invalid characters from agent_id, keeping only [a-zA-Z0-9_-]."""
+    import re
+    sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', agent_id)
+    # Collapse multiple underscores and strip leading/trailing
+    sanitized = re.sub(r'_+', '_', sanitized).strip('_-')
+    # Ensure minimum length
+    if len(sanitized) < 3:
+        sanitized = sanitized + '_agent'
+    return sanitized
+
+
 def validate_agent_id_format(agent_id: str) -> Tuple[Optional[str], Optional[TextContent]]:
     """
     Validate and sanitize agent_id format for safety (filesystem, URLs, etc).
