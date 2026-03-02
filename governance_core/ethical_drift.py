@@ -280,6 +280,7 @@ def compute_ethical_drift(
     calibration_error: Optional[float] = None,
     decision: Optional[str] = None,
     state_velocity: Optional[float] = None,
+    task_context: str = "mixed",
 ) -> EthicalDriftVector:
     """
     Compute concrete ethical drift vector from measurable signals.
@@ -351,6 +352,13 @@ def compute_ethical_drift(
         # complexity_divergence is measured directly, not from baseline — no dampening needed
         coherence_dev *= warmup_factor
         stability_dev *= warmup_factor
+
+    # Epistemic context: exploration/introspection tasks expect low confidence.
+    # Honest uncertainty is not drift — attenuate deviation signals so the dynamics
+    # engine doesn't penalize appropriate epistemic humility.
+    if task_context in ("exploration", "introspection"):
+        calibration_deviation *= 0.3
+        complexity_dev *= 0.5
 
     # State velocity floor: EISV state changes inject signal even when EMA baselines
     # track tightly. This prevents signal starvation for non-Lumen agents whose

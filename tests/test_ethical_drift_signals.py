@@ -408,3 +408,83 @@ class TestNonLumenDriftAlive:
                 f"Drift norms are constant: {post_warmup}"
 
         clear_baseline("integration_test")
+
+
+# ─── Epistemic Context Attenuation ────────────────────────────────────
+
+
+class TestEpistemicContextAttenuation:
+    """Test that exploration/introspection task_context attenuates drift signals."""
+
+    def test_introspection_attenuates_calibration_deviation(self):
+        """Low confidence on introspection should produce less drift than on convergent tasks."""
+        baseline = get_agent_baseline("epistemic_test_1")
+        for _ in range(3):
+            baseline.update(coherence=0.5, confidence=0.6, complexity=0.5, decision="proceed")
+
+        drift_mixed = compute_ethical_drift(
+            agent_id="epistemic_test_1",
+            baseline=baseline,
+            current_coherence=0.5,
+            current_confidence=0.3,  # Low confidence
+            complexity_divergence=0.4,
+            task_context="mixed",
+        )
+
+        clear_baseline("epistemic_test_1")
+        baseline2 = get_agent_baseline("epistemic_test_2")
+        for _ in range(3):
+            baseline2.update(coherence=0.5, confidence=0.6, complexity=0.5, decision="proceed")
+
+        drift_introspection = compute_ethical_drift(
+            agent_id="epistemic_test_2",
+            baseline=baseline2,
+            current_coherence=0.5,
+            current_confidence=0.3,
+            complexity_divergence=0.4,
+            task_context="introspection",
+        )
+
+        assert drift_introspection.calibration_deviation < drift_mixed.calibration_deviation
+        assert drift_introspection.complexity_divergence < drift_mixed.complexity_divergence
+        assert drift_introspection.norm < drift_mixed.norm
+
+        clear_baseline("epistemic_test_1")
+        clear_baseline("epistemic_test_2")
+
+    def test_exploration_attenuates_similarly(self):
+        """exploration task_context should also attenuate drift."""
+        baseline = get_agent_baseline("explore_test")
+        for _ in range(3):
+            baseline.update(coherence=0.5, confidence=0.6, complexity=0.5, decision="proceed")
+
+        drift = compute_ethical_drift(
+            agent_id="explore_test",
+            baseline=baseline,
+            current_coherence=0.5,
+            current_confidence=0.3,
+            complexity_divergence=0.4,
+            task_context="exploration",
+        )
+
+        # Calibration deviation attenuated by 0.3x
+        assert drift.calibration_deviation < 0.15
+        clear_baseline("explore_test")
+
+    def test_convergent_no_attenuation(self):
+        """convergent task_context should NOT attenuate drift."""
+        baseline = get_agent_baseline("convergent_test")
+        for _ in range(3):
+            baseline.update(coherence=0.5, confidence=0.6, complexity=0.5, decision="proceed")
+
+        drift = compute_ethical_drift(
+            agent_id="convergent_test",
+            baseline=baseline,
+            current_coherence=0.5,
+            current_confidence=0.3,
+            complexity_divergence=0.4,
+            task_context="convergent",
+        )
+
+        assert drift.calibration_deviation >= 0.2
+        clear_baseline("convergent_test")

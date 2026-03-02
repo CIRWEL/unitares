@@ -633,8 +633,6 @@ async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str
 
             # Sync label to runtime cache so compute_agent_signature can find it
             try:
-                from .shared import get_mcp_server
-                mcp_server = get_mcp_server()
                 if agent_uuid in mcp_server.agent_metadata:
                     meta = mcp_server.agent_metadata[agent_uuid]
                     meta.label = label
@@ -874,7 +872,15 @@ async def _agent_exists_in_postgres(agent_uuid: str) -> bool:
 # LAZY CREATION HELPERS (v2.4.1+)
 # =============================================================================
 
-async def ensure_agent_persisted(agent_uuid: str, session_key: str) -> bool:
+async def ensure_agent_persisted(
+    agent_uuid: str,
+    session_key: str,
+    *,
+    parent_agent_id: Optional[str] = None,
+    spawn_reason: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    thread_position: Optional[int] = None,
+) -> bool:
     """
     Persist agent to PostgreSQL if not already persisted.
 
@@ -884,6 +890,10 @@ async def ensure_agent_persisted(agent_uuid: str, session_key: str) -> bool:
     Args:
         agent_uuid: The agent's UUID (from resolve_session_identity)
         session_key: The session key for session binding
+        parent_agent_id: UUID of parent agent (for thread/fork lineage)
+        spawn_reason: Why this fork was created
+        thread_id: Thread this agent belongs to
+        thread_position: Node position within thread
 
     Returns:
         True if newly persisted, False if already existed
@@ -903,15 +913,23 @@ async def ensure_agent_persisted(agent_uuid: str, session_key: str) -> bool:
             agent_id=agent_uuid,
             api_key="",
             status="active",
+            parent_agent_id=parent_agent_id,
+            spawn_reason=spawn_reason,
+            thread_id=thread_id,
+            thread_position=thread_position,
         )
 
         await db.upsert_identity(
             agent_id=agent_uuid,
             api_key_hash="",
+            parent_agent_id=parent_agent_id,
             metadata={
                 "source": "lazy_creation",
                 "created_at": datetime.now().isoformat(),
                 "total_updates": 0,  # Initialize counter for persistence
+                "thread_id": thread_id,
+                "thread_position": thread_position,
+                "node_index": thread_position,  # AgentMetadata uses node_index
             }
         )
 
@@ -1024,6 +1042,15 @@ from mcp.types import TextContent
 from .decorators import mcp_tool
 from .utils import success_response
 import os
+
+
+class _LazyMCPServer:
+    def __getattr__(self, name):
+        from src.mcp_handlers.shared import get_mcp_server
+        return getattr(get_mcp_server(), name)
+        
+mcp_server = _LazyMCPServer()
+
 
 
 async def derive_session_key(
@@ -1342,8 +1369,6 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     # Get structured_id from metadata (three-tier identity model v2.5.0+)
     structured_id = None
     try:
-        from .shared import get_mcp_server
-        mcp_server = get_mcp_server()
         if agent_uuid in mcp_server.agent_metadata:
             meta = mcp_server.agent_metadata[agent_uuid]
             structured_id = getattr(meta, 'structured_id', None)
@@ -1469,6 +1494,11 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     force_new = arguments.get("force_new", False)  # Force new identity creation
     model_type = arguments.get("model_type")
 
+    # Thread identity parameters (honest forking)
+    _parent_agent_id = arguments.get("parent_agent_id")  # UUID of predecessor
+    _spawn_reason = arguments.get("spawn_reason")  # compaction|subagent|new_session|explicit
+    _thread_id_hint = arguments.get("thread_id")  # Explicit thread to join
+
     # Auto-detect client_hint from transport if not provided
     client_hint = arguments.get("client_hint")
     if not client_hint or client_hint == "unknown":
@@ -1521,7 +1551,6 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                     await db.update_agent_fields(agent_uuid, status="active")
                     # 2. Update runtime metadata cache
                     try:
-                        from .shared import get_mcp_server
                         srv = get_mcp_server()
                         if agent_uuid in srv.agent_metadata:
                             srv.agent_metadata[agent_uuid].status = "active"
@@ -1584,8 +1613,39 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         # CRITICAL FIX (v2.5.7): Persist the fresh identity we already created
         # instead of calling resolve_session_identity again (which could create a different UUID)
         try:
+            # THREAD IDENTITY: Create/join thread for new agent
+            _thread_id = None
+            _thread_position = None
+            try:
+                from src.thread_identity import generate_thread_id, infer_spawn_reason
+                db = get_db()
+
+                _thread_id = _thread_id_hint or generate_thread_id(session_key)
+                await db.create_or_get_thread(_thread_id)
+                _thread_position = await db.claim_thread_position(_thread_id)
+
+                # Get existing nodes to infer spawn reason
+                existing_nodes = await db.get_thread_nodes(_thread_id)
+                # Exclude self (just claimed position but not yet persisted)
+                prior_nodes = [n for n in existing_nodes if n.get("agent_id") != agent_uuid]
+                if not _spawn_reason:
+                    _spawn_reason = infer_spawn_reason(arguments, prior_nodes)
+
+                logger.info(
+                    f"[THREAD] Agent {agent_uuid[:8]}... -> thread {_thread_id[:12]} "
+                    f"position {_thread_position} reason={_spawn_reason}"
+                )
+            except Exception as e:
+                logger.debug(f"[THREAD] Could not assign thread (non-fatal): {e}")
+
             # Persist the identity we got from the persist=False call
-            newly_persisted = await ensure_agent_persisted(agent_uuid, session_key)
+            newly_persisted = await ensure_agent_persisted(
+                agent_uuid, session_key,
+                parent_agent_id=_parent_agent_id,
+                spawn_reason=_spawn_reason,
+                thread_id=_thread_id,
+                thread_position=_thread_position,
+            )
             if newly_persisted:
                 logger.info(f"[ONBOARD] Persisted fresh identity {agent_uuid[:8]}... to PostgreSQL")
             else:
@@ -1739,8 +1799,6 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     structured_id = agent_id if agent_id and agent_id != agent_uuid else None
     if not structured_id:
         try:
-            from .shared import get_mcp_server
-            mcp_server = get_mcp_server()
             if agent_uuid in mcp_server.agent_metadata:
                 meta = mcp_server.agent_metadata[agent_uuid]
                 structured_id = getattr(meta, 'structured_id', None)
@@ -1752,8 +1810,44 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         structured_id = f"agent_{agent_uuid[:8]}"
     friendly_name = agent_label or structured_id
 
+    # THREAD CONTEXT: Build fork-aware context for response (non-blocking)
+    thread_context = None
+    try:
+        db = get_db()
+        thread_info = await db.get_agent_thread_info(agent_uuid)
+        if thread_info and thread_info.get("thread_id"):
+            _tid = thread_info["thread_id"]
+            all_nodes = await db.get_thread_nodes(_tid)
+
+            from src.thread_identity import build_fork_context
+            thread_context = build_fork_context(
+                thread_id=_tid,
+                position=thread_info.get("thread_position", 1),
+                parent_uuid=thread_info.get("parent_agent_id") or _parent_agent_id,
+                spawn_reason=thread_info.get("spawn_reason") or _spawn_reason or "new_session",
+                all_nodes=all_nodes,
+            )
+    except Exception as e:
+        logger.debug(f"[THREAD] Could not build thread context: {e}")
+
     # Welcome message — embed session ID directly in welcome so agents can't miss it
-    if is_new:
+    # Honest forking: if thread context exists, use it for legible discontinuity
+    if thread_context:
+        if thread_context["is_root"]:
+            welcome = (
+                f"Your session ID is `{stable_session_id}`. "
+                f"You are node 1 in thread {thread_context['thread_id'][:12]}."
+            )
+        else:
+            pred = thread_context.get("predecessor")
+            pred_desc = f" (position {pred['position']})" if pred and pred.get("position") else ""
+            welcome = (
+                f"Your session ID is `{stable_session_id}`. "
+                f"You are node {thread_context['position']} in thread {thread_context['thread_id'][:12]}. "
+                f"A predecessor exists{pred_desc}."
+            )
+        welcome_message = thread_context["honest_message"]
+    elif is_new:
         welcome = f"Welcome! Your session ID is `{stable_session_id}`. Pass this as `client_session_id` in all calls."
         welcome_message = "This system monitors your work like a health monitor tracks your heart. It helps you stay on track, avoid getting stuck, and work more effectively. Your identity is created—use the templates below to get started."
     else:
@@ -1799,6 +1893,10 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             "tip": "Read this MCP resource for full framework orientation instead of calling list_tools/describe_tool",
         },
     }
+
+    # Add thread context to response (honest forking)
+    if thread_context:
+        result["thread_context"] = thread_context
 
     # Add tool mode info so agents know what subset they're seeing
     try:

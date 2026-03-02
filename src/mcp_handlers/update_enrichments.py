@@ -12,9 +12,17 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.logging_utils import get_logger
-from src.governance_monitor import UNITARESMonitor
 
 from .update_context import UpdateContext
+
+
+class _LazyMCPServer:
+    def __getattr__(self, name):
+        from src.mcp_handlers.shared import get_mcp_server
+        return getattr(get_mcp_server(), name)
+        
+mcp_server = _LazyMCPServer()
+
 
 logger = get_logger(__name__)
 
@@ -930,3 +938,19 @@ async def enrich_websocket_broadcast(ctx: UpdateContext) -> None:
         logger.debug(f"Broadcast EISV update for agent {ctx.declared_agent_id}: eisv={eisv_data}, coherence={coherence_val}")
     except Exception as e:
         logger.debug(f"Could not broadcast EISV update: {e}")
+
+
+# ─── Thread Identity ───────────────────────────────────────────────────
+
+def enrich_thread_identity(ctx: UpdateContext) -> None:
+    """Provide thread continuity context across sessions (honest forking)."""
+    try:
+        if ctx.meta and getattr(ctx.meta, "thread_id", None):
+            position = getattr(ctx.meta, "node_index", 1)
+            ctx.response_data["thread_context"] = {
+                "thread_id": ctx.meta.thread_id,
+                "position": position,
+                "is_fork": position > 1,
+            }
+    except Exception as e:
+        logger.debug(f"Could not enrich thread identity: {e}")

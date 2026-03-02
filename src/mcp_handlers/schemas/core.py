@@ -116,12 +116,12 @@ class ProcessAgentUpdateParams(AgentIdentityMixin):
         description="If true, automatically export governance history when thermodynamically significant events occur."
     )
     task_type: Literal[
-        "convergent", "divergent", "mixed", "refactoring", "bugfix", "testing", 
-        "documentation", "feature", "exploration", "research", "design", "debugging", 
-        "review", "deployment"
+        "convergent", "divergent", "mixed", "refactoring", "bugfix", "testing",
+        "documentation", "feature", "exploration", "research", "design", "debugging",
+        "review", "deployment", "introspection"
     ] = Field(
         default="mixed",
-        description="Task type context. Core types: convergent | divergent | mixed."
+        description="Task type context. Core types: convergent | divergent | mixed. Use 'introspection' for epistemic self-examination where low confidence is appropriate."
     )
     trajectory_signature: Optional[dict] = Field(
         default=None,

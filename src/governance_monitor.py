@@ -1224,6 +1224,7 @@ class UNITARESMonitor:
             calibration_error=calibration_error,
             decision=None,  # Will be updated after decision is made
             state_velocity=self._last_state_velocity,
+            task_context=task_type,
         )
 
         # Blend agent-sent drift with governance-computed drift.
@@ -1392,6 +1393,19 @@ class UNITARESMonitor:
                     "adjusted_risk": risk_score,
                     "adjustment": "increased"
                 }
+        elif task_type in ("exploration", "introspection") and risk_score > 0.5:
+            # Honest uncertainty on exploratory/introspective tasks is not degradation.
+            # Low confidence is the appropriate epistemic state — don't trigger pause.
+            risk_adjustment = -0.08
+            risk_score = max(0.35, risk_score + risk_adjustment)
+            task_type_adjustment = {
+                "applied": True,
+                "reason": f"{task_type} task: low confidence is appropriate epistemic state",
+                "original_risk": original_risk_score,
+                "adjusted_risk": risk_score,
+                "adjustment": "reduced",
+                "risk_adjusted_by": risk_adjustment,
+            }
 
         # =================================================================
         # CIRS: Oscillation detection and resonance damping

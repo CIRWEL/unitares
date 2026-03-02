@@ -60,6 +60,19 @@ class OnboardParams(AgentIdentityMixin):
         default=None,
         description="Trajectory signature dict"
     )
+    # Thread identity (honest forking)
+    parent_agent_id: Optional[str] = Field(
+        default=None,
+        description="UUID of predecessor agent (for fork lineage)"
+    )
+    spawn_reason: Optional[str] = Field(
+        default=None,
+        description="Why this fork was created: compaction, subagent, new_session, explicit"
+    )
+    thread_id: Optional[str] = Field(
+        default=None,
+        description="Explicit thread ID to join (auto-derived from session if not provided)"
+    )
 
     @model_validator(mode='after')
     def coerce_booleans(self):
