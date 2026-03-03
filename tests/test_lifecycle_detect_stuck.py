@@ -555,7 +555,7 @@ class TestBaselineRelativeMargin:
         from config.governance_config import GovernanceConfig
         history = [0.80] * 20
         result = GovernanceConfig.compute_proprioceptive_margin(
-            risk_score=0.50,  # risk_margin = 0.60 - 0.50 = 0.10 (nearest edge)
+            risk_score=0.60,  # risk_margin = 0.70 - 0.60 = 0.10 (nearest edge)
             coherence=0.80,   # coherence_margin = 0.40 (far away)
             void_active=False,
             void_value=0.0,

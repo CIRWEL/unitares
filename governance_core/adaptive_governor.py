@@ -39,14 +39,15 @@ class GovernorConfig:
     """
 
     # Default thresholds (starting point -- will adapt)
+    # beta_default synced with GovernanceConfig.RISK_REVISE_THRESHOLD (Mar 2026: 0.60 → 0.70)
     tau_default: float = 0.40        # Coherence threshold
-    beta_default: float = 0.60       # Risk threshold
+    beta_default: float = 0.70       # Risk threshold
 
     # Hard safety bounds (cannot be overridden by adaptation)
     tau_floor: float = 0.25
     tau_ceiling: float = 0.75
     beta_floor: float = 0.20
-    beta_ceiling: float = 0.70
+    beta_ceiling: float = 0.80       # Raised to match RISK_REJECT_THRESHOLD (was 0.70)
 
     # PID gains
     K_p: float = 0.05               # Proportional -- gentle
@@ -60,7 +61,7 @@ class GovernorConfig:
     exploration_tau_ref: float = 0.35
     exploration_beta_ref: float = 0.55
     integration_tau_ref: float = 0.40
-    integration_beta_ref: float = 0.60
+    integration_beta_ref: float = 0.70  # Synced with beta_default / RISK_REVISE_THRESHOLD
 
     # Phase modulation of D-term
     exploration_d_factor: float = 0.5   # Gentler damping during exploration
@@ -86,7 +87,7 @@ class GovernorState:
 
     # Adaptive thresholds
     tau: float = 0.40
-    beta: float = 0.60
+    beta: float = 0.70
     phase: str = "integration"
 
     # PID accumulators

@@ -63,7 +63,7 @@ class TestInitialization:
         gov = AdaptiveGovernor()
         state = gov.state
         assert state.tau == pytest.approx(0.40)
-        assert state.beta == pytest.approx(0.60)
+        assert state.beta == pytest.approx(0.70)
         assert state.phase == "integration"
         assert state.error_integral_tau == 0.0
         assert state.error_integral_beta == 0.0
@@ -84,7 +84,7 @@ class TestInitialization:
         assert config.tau_floor == 0.25
         assert config.tau_ceiling == 0.75
         assert config.beta_floor == 0.20
-        assert config.beta_ceiling == 0.70
+        assert config.beta_ceiling == 0.80
 
     def test_pid_gains_in_config(self):
         config = GovernorConfig()
@@ -98,12 +98,12 @@ class TestInitialization:
         assert config.exploration_tau_ref == 0.35
         assert config.exploration_beta_ref == 0.55
         assert config.integration_tau_ref == 0.40
-        assert config.integration_beta_ref == 0.60
+        assert config.integration_beta_ref == 0.70
 
     def test_governor_state_defaults(self):
         state = GovernorState()
         assert state.tau == 0.40
-        assert state.beta == 0.60
+        assert state.beta == 0.70
         assert state.history == []
         assert state.resonant is False
         assert state.trigger is None
@@ -126,14 +126,14 @@ class TestPIDUpdate:
     def test_stable_input_no_change(self):
         """When thresholds are at reference, no adaptation occurs."""
         gov = AdaptiveGovernor()
-        # Integration phase: ref is (0.40, 0.60) -- same as defaults.
+        # Integration phase: ref is (0.40, 0.70) -- same as defaults.
         result = gov.update(
             coherence=0.65, risk=0.30, verdict="safe",
             **_stable_histories(),
         )
         # Thresholds should stay near defaults (tiny float noise OK).
         assert gov.state.tau == pytest.approx(0.40, abs=0.01)
-        assert gov.state.beta == pytest.approx(0.60, abs=0.01)
+        assert gov.state.beta == pytest.approx(0.70, abs=0.01)
         # Result dict must include key fields.
         assert "verdict" in result
         assert "tau" in result
@@ -158,13 +158,13 @@ class TestPIDUpdate:
         """P-term nudges beta toward phase reference too."""
         config = GovernorConfig(K_p=0.10, K_i=0.0, K_d=0.0, decay_rate=0.0)
         gov = AdaptiveGovernor(config=config)
-        # Force beta away from integration reference of 0.60.
+        # Force beta away from integration reference of 0.70.
         gov.state.beta = 0.50  # below ref
         gov.update(
             coherence=0.65, risk=0.30, verdict="safe",
             **_stable_histories(),
         )
-        # P-term should push beta back toward 0.60.
+        # P-term should push beta back toward 0.70.
         assert gov.state.beta > 0.50
 
     def test_d_term_damps_oscillation(self):
@@ -207,7 +207,7 @@ class TestPIDUpdate:
         """Thresholds cannot exceed hard safety bounds."""
         gov = AdaptiveGovernor()
         gov.state.tau = 0.20  # Below floor
-        gov.state.beta = 0.80  # Above ceiling
+        gov.state.beta = 0.90  # Above ceiling
         gov.update(
             coherence=0.65, risk=0.30, verdict="safe",
             **_stable_histories(),
@@ -258,7 +258,7 @@ class TestPIDUpdate:
         gov = AdaptiveGovernor(config=config)
         gov.state.neighbor_pressure = 0.05
         initial_tau = gov.state.tau  # 0.40
-        initial_beta = gov.state.beta  # 0.60
+        initial_beta = gov.state.beta  # 0.70
         gov.update(
             coherence=0.65, risk=0.30, verdict="safe",
             **_stable_histories(),
@@ -281,12 +281,12 @@ class TestVerdict:
 
     def test_safe_verdict(self):
         gov = AdaptiveGovernor()
-        # coherence >= tau(0.40) AND risk < beta_approve(0.60 + (-0.25) = 0.35)
+        # coherence >= tau(0.40) AND risk < beta_approve(0.70 + (-0.25) = 0.45)
         assert gov.make_verdict(coherence=0.70, risk=0.20) == Verdict.SAFE
 
     def test_caution_verdict(self):
         gov = AdaptiveGovernor()
-        # coherence >= tau(0.40), risk between beta_approve(0.35) and beta(0.60)
+        # coherence >= tau(0.40), risk between beta_approve(0.45) and beta(0.70)
         assert gov.make_verdict(coherence=0.70, risk=0.50) == Verdict.CAUTION
 
     def test_high_risk_verdict(self):
@@ -296,8 +296,8 @@ class TestVerdict:
 
     def test_high_risk_via_risk(self):
         gov = AdaptiveGovernor()
-        # coherence OK but risk >= beta(0.60), but not > beta_ceiling(0.70)
-        assert gov.make_verdict(coherence=0.70, risk=0.65) == Verdict.HIGH_RISK
+        # coherence OK but risk >= beta(0.70), but not > beta_ceiling(0.80)
+        assert gov.make_verdict(coherence=0.70, risk=0.72) == Verdict.HIGH_RISK
 
     def test_hard_block_low_coherence(self):
         gov = AdaptiveGovernor()
@@ -305,7 +305,7 @@ class TestVerdict:
 
     def test_hard_block_high_risk(self):
         gov = AdaptiveGovernor()
-        assert gov.make_verdict(coherence=0.70, risk=0.75) == Verdict.HARD_BLOCK
+        assert gov.make_verdict(coherence=0.70, risk=0.85) == Verdict.HARD_BLOCK
 
     def test_adaptive_threshold_changes_verdict(self):
         """Lowering tau makes marginal coherence safe."""
@@ -329,8 +329,8 @@ class TestVerdict:
     def test_hard_block_risk_exactly_at_ceiling(self):
         """Risk exactly at ceiling should NOT hard-block (it's <=)."""
         gov = AdaptiveGovernor()
-        # risk == beta_ceiling (0.70) -> not > ceiling -> no hard block.
-        v = gov.make_verdict(coherence=0.70, risk=0.70)
+        # risk == beta_ceiling (0.80) -> not > ceiling -> no hard block.
+        v = gov.make_verdict(coherence=0.70, risk=0.80)
         assert v != Verdict.HARD_BLOCK
 
 
@@ -403,14 +403,14 @@ class TestThresholdDecay:
         """Beta also decays toward default when stable."""
         config = GovernorConfig(K_p=0.0, K_i=0.0, K_d=0.0, decay_rate=0.05)
         gov = AdaptiveGovernor(config=config)
-        gov.state.beta = 0.50  # Below default 0.60
+        gov.state.beta = 0.60  # Below default 0.70
         histories = _stable_histories()
 
         for _ in range(40):
             gov.update(coherence=0.65, risk=0.30, verdict="safe", **histories)
 
         assert gov.state.beta > 0.50
-        assert gov.state.beta == pytest.approx(0.60, abs=0.02)
+        assert gov.state.beta == pytest.approx(0.70, abs=0.02)
 
 
 # ===========================================================================
