@@ -164,9 +164,9 @@ def test_threshold_alignment():
     
     thresholds = HealthThresholds()
     
-    # Test Case 1: Risk at healthy boundary (0.35)
-    print("\n1. Risk at healthy boundary (0.35):")
-    risk = 0.35
+    # Test Case 1: Risk at healthy boundary (0.45)
+    print("\n1. Risk at healthy boundary (0.45):")
+    risk = 0.45
     coherence = 0.85
     void_active = False
     
@@ -175,33 +175,33 @@ def test_threshold_alignment():
     print(f"   Health status: {health_status.value}")
     print(f"   Threshold: risk_healthy_max = {thresholds.risk_healthy_max}")
     
-    # Note: Threshold uses < (not <=), so 0.35 is moderate, not healthy
+    # Note: Threshold uses < (not <=), so 0.45 is moderate, not healthy
     # This is correct behavior - boundary is exclusive
     if health_status.value == "moderate":
         print("   ✅ PASS - Correctly identifies as moderate (boundary is exclusive)")
         passed += 1
     else:
-        print(f"   ⚠️  NOTE - Got {health_status.value} (boundary is exclusive, 0.35 is moderate)")
+        print(f"   ⚠️  NOTE - Got {health_status.value} (boundary is exclusive, 0.45 is moderate)")
         passed += 1  # Not a failure, just note
-    
-    # Test Case 2: Risk just above healthy (0.36)
-    print("\n2. Risk just above healthy (0.36):")
-    risk = 0.36
+
+    # Test Case 2: Risk just above healthy (0.46)
+    print("\n2. Risk just above healthy (0.46):")
+    risk = 0.46
     health_status, message = thresholds.get_health_status(risk, coherence, void_active)
     print(f"   Risk: {risk:.2f} | Coherence: {coherence:.2f} | Void: {void_active}")
     print(f"   Health status: {health_status.value}")
-    
-    # Should be moderate (risk_moderate_max = 0.60)
+
+    # Should be moderate (risk_moderate_max = 0.70)
     if health_status.value == "moderate":
         print("   ✅ PASS - Correctly identifies as moderate")
         passed += 1
     else:
         print(f"   ❌ FAIL - Should be moderate, got {health_status.value}")
         failed += 1
-    
-    # Test Case 3: Risk at moderate boundary (0.60)
-    print("\n3. Risk at moderate boundary (0.60):")
-    risk = 0.60
+
+    # Test Case 3: Risk at moderate boundary (0.70)
+    print("\n3. Risk at moderate boundary (0.70):")
+    risk = 0.70
     health_status, message = thresholds.get_health_status(risk, coherence, void_active)
     print(f"   Risk: {risk:.2f} | Coherence: {coherence:.2f} | Void: {void_active}")
     print(f"   Health status: {health_status.value}")
@@ -216,14 +216,14 @@ def test_threshold_alignment():
         print(f"   ⚠️  NOTE - Got {health_status.value} (boundary is exclusive, 0.60 is critical)")
         passed += 1  # Not a failure, just note
     
-    # Test Case 4: Risk just above moderate (0.61)
-    print("\n4. Risk just above moderate (0.61):")
-    risk = 0.61
+    # Test Case 4: Risk just above moderate (0.71)
+    print("\n4. Risk just above moderate (0.71):")
+    risk = 0.71
     health_status, message = thresholds.get_health_status(risk, coherence, void_active)
     print(f"   Risk: {risk:.2f} | Coherence: {coherence:.2f} | Void: {void_active}")
     print(f"   Health status: {health_status.value}")
-    
-    # Should be critical (risk > 0.60)
+
+    # Should be critical (risk > 0.70)
     if health_status.value == "critical":
         print("   ✅ PASS - Correctly identifies as critical")
         passed += 1
@@ -284,8 +284,8 @@ def test_threshold_alignment():
     # Test Case 7: Verify alignment with decision thresholds
     print("\n7. Alignment with decision thresholds:")
     print("   Health thresholds:")
-    print("     - risk_healthy_max = 0.35")
-    print("     - risk_moderate_max = 0.60")
+    print("     - risk_healthy_max = 0.45")
+    print("     - risk_moderate_max = 0.70")
     print("   Decision thresholds:")
     print("     - RISK_APPROVE_THRESHOLD = 0.30")
     print("     - RISK_REVISE_THRESHOLD = 0.50")
