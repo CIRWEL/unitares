@@ -29,8 +29,8 @@ class TestHealthThresholdsDefaults:
 
     def test_default_risk_thresholds(self):
         ht = HealthThresholds()
-        assert ht.risk_healthy_max == 0.35
-        assert ht.risk_moderate_max == 0.60
+        assert ht.risk_healthy_max == 0.45
+        assert ht.risk_moderate_max == 0.70
 
     def test_default_coherence_thresholds(self):
         ht = HealthThresholds()
@@ -84,7 +84,7 @@ class TestGetHealthStatus:
 
     def test_risk_at_healthy_boundary(self):
         """Risk exactly at healthy max is NOT healthy."""
-        status, _ = self.ht.get_health_status(risk_score=0.35)
+        status, _ = self.ht.get_health_status(risk_score=0.45)
         assert status == HealthStatus.MODERATE
 
     def test_risk_moderate(self):
@@ -94,7 +94,7 @@ class TestGetHealthStatus:
 
     def test_risk_at_moderate_boundary(self):
         """Risk exactly at moderate max is critical."""
-        status, _ = self.ht.get_health_status(risk_score=0.60)
+        status, _ = self.ht.get_health_status(risk_score=0.70)
         assert status == HealthStatus.CRITICAL
 
     def test_risk_critical(self):
@@ -151,13 +151,13 @@ class TestShouldAlert:
         self.ht = HealthThresholds()
 
     def test_high_risk_alerts(self):
-        assert self.ht.should_alert(risk_score=0.65) is True
+        assert self.ht.should_alert(risk_score=0.75) is True
 
     def test_low_risk_no_alert(self):
         assert self.ht.should_alert(risk_score=0.30) is False
 
     def test_risk_at_boundary_alerts(self):
-        assert self.ht.should_alert(risk_score=0.60) is True
+        assert self.ht.should_alert(risk_score=0.70) is True
 
     def test_low_coherence_alerts(self):
         assert self.ht.should_alert(coherence=0.45) is True

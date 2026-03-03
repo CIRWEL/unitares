@@ -383,7 +383,13 @@ async def handle_quick_resume(arguments: Dict[str, Any]) -> Sequence[TextContent
         )]
     
     reason = arguments.get("reason", "Quick resume - state is safe")
-    
+
+    # Mark recovery attempt so loop detector grants a 120s grace period.
+    # Set before safety checks so even failed attempts suppress Pattern 2/5/6.
+    meta_early = mcp_server.agent_metadata.get(agent_uuid)
+    if meta_early:
+        meta_early.recovery_attempt_at = datetime.now(timezone.utc).isoformat()
+
     # Get current metrics (use safe_float for uninitialized agents)
     try:
         monitor = mcp_server.get_or_create_monitor(agent_uuid)

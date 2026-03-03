@@ -163,6 +163,7 @@ class AgentMetadata:
     recent_decisions: list[str] = None  # Recent decision actions (approve/reflect/reject)
     loop_detected_at: str = None  # ISO timestamp when loop was detected
     loop_cooldown_until: str = None  # ISO timestamp until which updates are blocked
+    recovery_attempt_at: str = None  # ISO timestamp of last self_recovery attempt (grace period)
     # Response completion tracking
     last_response_at: str = None  # ISO timestamp when response completed
     response_completed: bool = False  # Flag for completion detection
@@ -518,6 +519,7 @@ def _parse_metadata_dict(data: dict) -> dict:
             "recent_decisions": None,
             "loop_detected_at": None,
             "loop_cooldown_until": None,
+            "recovery_attempt_at": None,
             "last_response_at": None,
             "response_completed": False,
             "health_status": "unknown",  # Cached health status for list_agents
@@ -1655,7 +1657,21 @@ def detect_loop_pattern(agent_id: str) -> tuple[bool, str]:
     # Need at least 3 recent updates to detect pattern
     if len(meta.recent_update_timestamps) < 3:
         return False, ""
-    
+
+    # Check recovery grace period: if agent recently attempted self_recovery,
+    # suppress time-windowed pause patterns (2, 5, 6) for 120s.
+    # Rationale: failed recovery attempts mean the agent is stuck but trying —
+    # escalating loop detection on top of that creates a death spiral where
+    # self_recovery attempts worsen the loop score they're trying to escape.
+    in_recovery_grace = False
+    recovery_attempt_at = getattr(meta, 'recovery_attempt_at', None)
+    if recovery_attempt_at:
+        try:
+            recovery_time = datetime.fromisoformat(recovery_attempt_at)
+            in_recovery_grace = (datetime.now() - recovery_time).total_seconds() < 120.0
+        except (ValueError, TypeError):
+            pass
+
     # Get last 10 updates (or all if fewer) - expanded window for Pattern 6 (5+ updates in 120s)
     # This ensures we can detect extended patterns while still checking recent behavior
     all_timestamps = meta.recent_update_timestamps[-10:]
@@ -1766,7 +1782,8 @@ def detect_loop_pattern(agent_id: str) -> tuple[bool, str]:
             pass
     
     # Pattern 2: 3+ updates within 10 seconds, all with "reject" decisions
-    if len(recent_timestamps) >= 3:
+    # Skipped during recovery grace period: agent is actively trying to recover, not looping.
+    if not in_recovery_grace and len(recent_timestamps) >= 3:
         last_three_timestamps = recent_timestamps[-3:]
         last_three_decisions = recent_decisions[-3:]
         
@@ -1829,7 +1846,8 @@ def detect_loop_pattern(agent_id: str) -> tuple[bool, str]:
     # FIXED: Require 2+ pauses, not 1. A single pause in 3 updates is normal governance
     # feedback (e.g. periodic heartbeat agents like Lumen). A real stuck agent retries
     # the same failing action and accumulates multiple pause/reject decisions.
-    if len(recent_timestamps) >= 3:
+    # Skipped during recovery grace period: agent is actively trying to recover, not looping.
+    if not in_recovery_grace and len(recent_timestamps) >= 3:
         last_three_timestamps = recent_timestamps[-3:]
         last_three_decisions = recent_decisions[-3:]
 
@@ -1850,7 +1868,8 @@ def detect_loop_pattern(agent_id: str) -> tuple[bool, str]:
     # FIXED: Require 3+ pauses (majority), not 1. Periodic heartbeat agents (like Lumen)
     # naturally send 5+ updates in 120s — that's their job. A single pause/reject is normal
     # governance feedback. A real stuck agent accumulates multiple consecutive rejections.
-    if len(recent_timestamps) >= 5:
+    # Skipped during recovery grace period: agent is actively trying to recover, not looping.
+    if not in_recovery_grace and len(recent_timestamps) >= 5:
         # Get last 5+ timestamps and decisions
         last_five_timestamps = recent_timestamps[-5:]
         last_five_decisions = recent_decisions[-5:]

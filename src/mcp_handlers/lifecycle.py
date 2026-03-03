@@ -1439,7 +1439,12 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
     meta = mcp_server.agent_metadata.get(agent_uuid)
     if not meta:
         return agent_not_found_error(agent_id)
-    
+
+    # Mark recovery attempt before safety checks so loop detector grants a 120s
+    # grace period even if this review attempt fails (agent not yet safe to resume).
+    from datetime import timezone as _tz
+    meta.recovery_attempt_at = datetime.now(_tz.utc).isoformat()
+
     monitor = mcp_server.get_or_create_monitor(agent_uuid)
     metrics = monitor.get_metrics()
 

@@ -454,17 +454,15 @@ class GovernanceConfig:
     # DECISION POINT 5: Decision Logic Thresholds
     # =================================================================
     
-    # Risk-based decision thresholds (recalibrated Nov 2025)
-    # Adjusted to match observed risk distribution
+    # Risk-based decision thresholds (recalibrated Mar 2026)
+    # Tuned for coding agent population — not autonomous weapons or financial trading.
+    # Coding work naturally scores higher (code blocks, technical terms, longer responses
+    # all increase complexity signals). Over-pausing costs more than under-pausing here.
     # NOTE: Risk score is a blend: 70% UNITARES phi-based (includes ethical drift) + 30% traditional safety
     # See governance_monitor.py estimate_risk() for details
-    # UPDATED: Raised approve threshold from 0.30 to 0.35 to reduce false "revise" decisions
-    # "Revise" is feedback, not blocking - agents with risk 30-35% are safe to proceed
-    RISK_APPROVE_THRESHOLD = 0.35    # < 35%: Proceed without guidance
-    RISK_REVISE_THRESHOLD = 0.60     # 35-60%: Proceed with guidance, >= 60%: Pause
-    RISK_REJECT_THRESHOLD = 0.70     # >= 70%: Critical pause
-    # Updated: Raised from 0.50 to 0.60 for better calibration with current LLMs
-    # Aligns with health status threshold (0.60 for critical) for consistency
+    RISK_APPROVE_THRESHOLD = 0.45    # < 45%: Proceed without guidance (was 0.35)
+    RISK_REVISE_THRESHOLD = 0.70     # 45-70%: Proceed with guidance, >= 70%: Pause (was 0.60)
+    RISK_REJECT_THRESHOLD = 0.80     # >= 80%: Critical pause (was 0.70, must stay > revise)
     
     # Risk blend weights (used in estimate_risk)
     RISK_PHI_WEIGHT = 0.7            # Weight for UNITARES phi-based risk (includes ethical drift)

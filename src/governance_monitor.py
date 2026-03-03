@@ -1397,7 +1397,7 @@ class UNITARESMonitor:
             # Honest uncertainty on exploratory/introspective tasks is not degradation.
             # Low confidence is the appropriate epistemic state — don't trigger pause.
             risk_adjustment = -0.08
-            risk_score = max(0.35, risk_score + risk_adjustment)
+            risk_score = max(0.45, risk_score + risk_adjustment)  # floor raised to match RISK_APPROVE_THRESHOLD
             task_type_adjustment = {
                 "applied": True,
                 "reason": f"{task_type} task: low confidence is appropriate epistemic state",

@@ -20,11 +20,10 @@ class HealthStatus(Enum):
 class HealthThresholds:
     """Define health status based on risk score and other metrics"""
     
-    # Risk-based thresholds (recalibrated Nov 2025, aligned Nov 2025)
-    # Based on observed risk distribution: most agents show 30-60% risk
-    # Aligned with decision threshold (0.35) to reduce confusion
-    risk_healthy_max: float = 0.35    # < 35%: Healthy (aligned with RISK_APPROVE_THRESHOLD)
-    risk_moderate_max: float = 0.60   # 35-60%: Moderate, 60%+: Critical
+    # Risk-based thresholds (recalibrated Mar 2026 for coding agent population)
+    # Aligned with RISK_APPROVE_THRESHOLD (0.45) and RISK_REVISE_THRESHOLD (0.70)
+    risk_healthy_max: float = 0.45    # < 45%: Healthy (aligned with RISK_APPROVE_THRESHOLD)
+    risk_moderate_max: float = 0.70   # 45-70%: Moderate, 70%+: Critical
     
     # Coherence thresholds (fallback if risk not available)
     # Updated for pure thermodynamic C(V) signal (removed param_coherence blend)
