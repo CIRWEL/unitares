@@ -3,7 +3,7 @@
 ### Digital proprioception for AI agents.
 
 [![Tests](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml/badge.svg)](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 AI agents today have no body sense. They can't tell if they're drifting, looping, or degrading until they crash. UNITARES gives agents continuous awareness of their own state using coupled differential equations with [provable stability guarantees](governance_core/README.md).
@@ -74,11 +74,11 @@ That's it. Everything else is optional. See [Getting Started](docs/guides/GETTIN
 
 ### Installation
 
-**Prerequisites:** Python 3.11+, PostgreSQL 16+ with [AGE extension](https://github.com/apache/age), Redis (optional)
+**Prerequisites:** Python 3.12+, PostgreSQL 16+ with [AGE extension](https://github.com/apache/age), Redis (optional)
 
 ```bash
 git clone https://github.com/CIRWEL/unitares.git
-cd governance-mcp-v1
+cd unitares
 pip install -r requirements-core.txt
 
 # MCP server (multi-client)
@@ -135,9 +135,9 @@ Deployed since December 2025. Current numbers:
 ```
 governance_core/       Pure math — ODEs, coherence, scoring (no I/O)
 src/                   MCP server, agent state, knowledge graph, dialectic
-dashboard/             Web dashboard (Alpine.js + htmx)
+dashboard/             Web dashboard (vanilla JS + Chart.js)
 papers/                Academic paper with contraction proofs
-tests/                 5,654 tests
+tests/                 5,300+ tests
 ```
 
 | Storage | Purpose | Required |

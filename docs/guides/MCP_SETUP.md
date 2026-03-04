@@ -8,7 +8,7 @@ This guide shows you how to connect to the governance MCP server from any MCP-co
 
 ## What is This?
 
-The MCP server provides 31 governance tools accessible from:
+The MCP server provides governance tools accessible from:
 - **Claude Code** (via MCP integration)
 - **Cursor IDE** (via MCP integration)
 - **Claude Desktop** (via MCP integration)
@@ -97,7 +97,7 @@ Same JSON format as above. Restart Claude Desktop after changes.
 
 ## Available Tools
 
-The server exposes **31 registered tools**. Key tools:
+The server exposes registered tools across governance, identity, knowledge, and observability. Key tools:
 
 | Tool | Purpose |
 |------|---------|

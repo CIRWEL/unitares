@@ -29,7 +29,7 @@ The MCP system has evolved from a simple governance monitor to a comprehensive m
 - **v2.6.3** (Feb 2026) - Dialectic audit: sqlite→pg aliases, LLM reviewer, dialectic consolidation (30 tools), EISV sensor sync, dead code removal. 2,602 tests at 49% coverage
 - **v2.6.4** (Feb 2026) - KG bias fixes (temporal decay, status scoring, SUPERSEDES edge), CI test fixes. 6,344 tests at 80% coverage
 - **v2.7.0** (Feb 2026) - CIRS v2 resonance wiring (AdaptiveGovernor PID, auto-emit hooks, neighbor pressure), I-dynamics linear mode (v5 paper), dialectic fixes. 6,407 tests at 80% coverage
-- **v2.8.0** (Feb 2026) - Dashboard redesign (Alpine.js + htmx), Streamable HTTP migration, dialectic hardening, identity consolidation, outcome events, lifecycle module split, stuck agent improvements. 5,654 tests at 80% coverage
+- **v2.8.0** (Feb 2026) - Dashboard redesign (vanilla JS + Chart.js), Streamable HTTP migration, dialectic hardening, identity consolidation, outcome events, lifecycle module split, stuck agent improvements. 5,300+ tests at 80% coverage
 
 ---
 
@@ -461,7 +461,7 @@ v2.8.0:  Dashboard redesign, Streamable HTTP, dialectic hardening, lifecycle spl
 - ✅ KG search bias mitigation (temporal decay, status scoring, connectivity cap, SUPERSEDES edges)
 - ✅ **5,654 tests** with 80% overall coverage
 - ✅ Streamable HTTP as primary transport (migrated from SSE)
-- ✅ Dashboard redesign with Alpine.js + htmx interactive architecture
+- ✅ Dashboard redesign with vanilla JS + Chart.js modular architecture
 - ✅ Outcome events for EISV validation and calibration feedback
 
 ### Architecture

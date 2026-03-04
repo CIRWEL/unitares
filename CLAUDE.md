@@ -6,7 +6,7 @@ UNITARES governance MCP server. Thermodynamic governance framework for AI agents
 
 ## Stack
 
-- Python 3.14, asyncio
+- Python 3.12+, asyncio
 - PostgreSQL + AGE (Apache Graph Extension) via Docker (`postgres-age` on port 5432)
 - Redis (optional session cache, port 6379)
 - Pydantic v2 for parameter validation
