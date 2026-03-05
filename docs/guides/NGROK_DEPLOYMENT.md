@@ -1,7 +1,7 @@
 # ngrok Deployment Guide
 
-**Last Updated:** February 4, 2026
-**Transport:** Streamable HTTP (SSE deprecated)
+**Last Updated:** March 2026
+**Transport:** Streamable HTTP (`/mcp/` endpoint)
 **Port:** 8767
 
 > **Note:** This guide uses placeholder values. Replace `your-domain.ngrok.io` with your own [ngrok reserved domain](https://dashboard.ngrok.com/domains).
@@ -121,17 +121,21 @@ tail -f /path/to/governance-mcp-v1/data/logs/mcp_server_error.log
 
 ### ngrok as a Service
 
-For persistent ngrok tunnel, use tmux:
+For a persistent ngrok tunnel, install as a launchd service:
 
 ```bash
-# Create persistent session
+# Copy the example plist
+cp config/com.unitares.ngrok.plist.example ~/Library/LaunchAgents/com.unitares.ngrok-governance.plist
+# Edit to match your domain, then load:
+launchctl load ~/Library/LaunchAgents/com.unitares.ngrok-governance.plist
+```
+
+Or use tmux for quick testing:
+
+```bash
 tmux new -s ngrok
-
-# Run deploy script
 ./scripts/deploy_ngrok.sh
-
 # Detach: Ctrl+B, then D
-# Reattach: tmux attach -t ngrok
 ```
 
 ---

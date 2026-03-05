@@ -1,7 +1,11 @@
 # Database Architecture
 
-**Last Updated**: 2026-02-20
+**Last Updated**: 2026-03-05
 **Status**: PostgreSQL-only (SQLite backend removed Feb 2026)
+
+> **WARNING**: Homebrew `postgresql@17` on port 5433 is NOT UNITARES — it belongs to a
+> separate project. The ONLY PostgreSQL for UNITARES is Docker `postgres-age` on port 5432.
+> Always use `docker exec postgres-age psql -U postgres -d governance` for queries.
 
 ## Overview
 
@@ -59,7 +63,7 @@ The governance MCP uses PostgreSQL as the sole database backend:
 
 ### 2. Redis (Session Cache)
 
-**Service**: Homebrew Redis (127.0.0.1:6379)
+**Service**: Docker `governance-redis` (127.0.0.1:6379)
 **Purpose**: Fast ephemeral data with persistence across server restarts
 
 **What's Stored:**

@@ -1,6 +1,6 @@
 # Self-Hosted Deployment Guide
 
-**Last Updated:** February 2026
+**Last Updated:** March 2026
 **Transport:** Streamable HTTP (`/mcp/` endpoint)
 **Port:** 8767 (default)
 
@@ -19,8 +19,8 @@
 ### 1. Install Dependencies
 
 ```bash
-brew install postgresql@16
 pip install -r requirements-full.txt
+# Docker is required for PostgreSQL + AGE (do NOT use Homebrew PostgreSQL)
 ```
 
 ### 2. Set Up PostgreSQL + AGE
@@ -36,7 +36,7 @@ Or install AGE natively — see `db/postgres/README.md`.
 Then apply the schema:
 
 ```bash
-psql postgresql://postgres:postgres@localhost:5432/governance -f db/postgres/schema.sql
+docker exec -i postgres-age psql -U postgres -d governance < db/postgres/schema.sql
 ```
 
 ### 3. Configure Environment
@@ -128,10 +128,10 @@ See also: [NGROK_DEPLOYMENT.md](NGROK_DEPLOYMENT.md)
 
 ```bash
 # Backup PostgreSQL
-pg_dump -U postgres governance > backup.sql
+docker exec postgres-age pg_dump -U postgres governance > backup.sql
 
 # Restore
-psql -U postgres governance < backup.sql
+docker exec -i postgres-age psql -U postgres -d governance < backup.sql
 ```
 
 ---
