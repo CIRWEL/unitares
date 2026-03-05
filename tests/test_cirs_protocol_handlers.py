@@ -23,6 +23,7 @@ import pytest
 import json
 import sys
 from pathlib import Path
+from contextlib import ExitStack, contextmanager
 from unittest.mock import patch, MagicMock, AsyncMock
 from types import SimpleNamespace
 from datetime import datetime, timedelta
@@ -34,8 +35,25 @@ sys.path.insert(0, str(project_root))
 
 from mcp.types import TextContent
 
-# Module under test
+# Module under test (facade)
 MODULE = "src.mcp_handlers.cirs_protocol"
+
+# Sub-modules where mcp_server / require_registered_agent are looked up at runtime
+_CIRS_MODULES_WITH_MCP_SERVER = [
+    "src.mcp_handlers.cirs_void",
+    "src.mcp_handlers.cirs_state",
+    "src.mcp_handlers.cirs_hooks",
+    "src.mcp_handlers.cirs_coherence",
+    "src.mcp_handlers.cirs_governance_action",
+]
+_CIRS_MODULES_WITH_REQUIRE = [
+    "src.mcp_handlers.cirs_void",
+    "src.mcp_handlers.cirs_state",
+    "src.mcp_handlers.cirs_coherence",
+    "src.mcp_handlers.cirs_boundary",
+    "src.mcp_handlers.cirs_governance_action",
+    "src.mcp_handlers.cirs_resonance",
+]
 
 
 # ============================================================================
@@ -171,18 +189,24 @@ def mock_server():
             "agent-2": _make_monitor("agent-2", V=0.1, coherence=0.5),
         },
     )
-    with patch(f"{MODULE}.mcp_server", server):
+    with ExitStack() as stack:
+        for mod in _CIRS_MODULES_WITH_MCP_SERVER:
+            stack.enter_context(patch(f"{mod}.mcp_server", server))
         yield server
 
 
 @pytest.fixture
 def patch_require_registered():
     """Factory fixture to mock require_registered_agent."""
+    @contextmanager
     def _factory(agent_id="agent-1", error=None):
-        return patch(
-            f"{MODULE}.require_registered_agent",
-            return_value=(agent_id, error),
-        )
+        with ExitStack() as stack:
+            for mod in _CIRS_MODULES_WITH_REQUIRE:
+                stack.enter_context(patch(
+                    f"{mod}.require_registered_agent",
+                    return_value=(agent_id, error),
+                ))
+            yield
     return _factory
 
 
@@ -620,7 +644,7 @@ class TestAutoEmitStateAnnounce:
             "phi": 0.5, "verdict": "safe",
             "risk_score": 0.3, "updates": 5,
         }
-        with patch(f"{MODULE}.mcp_server", _make_mock_server()):
+        with patch("src.mcp_handlers.cirs_hooks.mcp_server", _make_mock_server()):
             result = auto_emit_state_announce("agent-1", metrics, None)
         assert result is not None
         assert result["agent_id"] == "agent-1"
@@ -633,7 +657,7 @@ class TestAutoEmitStateAnnounce:
             "phi": 0.5, "verdict": "safe",
             "risk_score": 0.2, "updates": 10,
         }
-        with patch(f"{MODULE}.mcp_server", _make_mock_server()):
+        with patch("src.mcp_handlers.cirs_hooks.mcp_server", _make_mock_server()):
             result = auto_emit_state_announce("agent-1", metrics, None)
         assert result is not None
 
@@ -651,7 +675,7 @@ class TestAutoEmitStateAnnounce:
             "phi": 0.1, "verdict": "caution",
             "risk_score": 0.5, "updates": 1,
         }
-        with patch(f"{MODULE}.mcp_server", _make_mock_server()):
+        with patch("src.mcp_handlers.cirs_hooks.mcp_server", _make_mock_server()):
             result = auto_emit_state_announce("agent-1", metrics, None)
         # updates=1 -> 1 % 5 != 0 but update_count > 1 is False, so it emits
         assert result is not None
@@ -664,7 +688,7 @@ class TestAutoEmitStateAnnounce:
             "phi": 0.1, "verdict": "caution",
             "risk_score": 0.5, "updates": 0,
         }
-        with patch(f"{MODULE}.mcp_server", _make_mock_server()):
+        with patch("src.mcp_handlers.cirs_hooks.mcp_server", _make_mock_server()):
             result = auto_emit_state_announce("agent-1", metrics, None)
         # updates=0 -> 0 % 5 == 0, so it emits
         assert result is not None
@@ -678,7 +702,7 @@ class TestAutoEmitStateAnnounce:
         broken_server = MagicMock()
         broken_server.agent_metadata = MagicMock()
         broken_server.agent_metadata.get = MagicMock(side_effect=Exception("boom"))
-        with patch(f"{MODULE}.mcp_server", broken_server):
+        with patch("src.mcp_handlers.cirs_hooks.mcp_server", broken_server):
             result = auto_emit_state_announce("agent-1", metrics, None)
         # Still succeeds because mcp_server access is only for trust_tier (inner try)
         assert result is not None
@@ -688,7 +712,7 @@ class TestAutoEmitStateAnnounce:
         from src.mcp_handlers.cirs_protocol import auto_emit_state_announce
         # Cause the outer try to fail by providing non-numeric data
         metrics = {"updates": 5, "E": "not_a_number"}
-        with patch(f"{MODULE}.mcp_server", _make_mock_server()):
+        with patch("src.mcp_handlers.cirs_hooks.mcp_server", _make_mock_server()):
             result = auto_emit_state_announce("agent-1", metrics, None)
         # float("not_a_number") raises ValueError, caught by outer try
         assert result is None
@@ -819,7 +843,7 @@ class TestHandleVoidAlert:
         err = TextContent(type="text", text=json.dumps({
             "success": False, "error": "Not registered",
         }))
-        with patch(f"{MODULE}.require_registered_agent", return_value=(None, err)):
+        with patch("src.mcp_handlers.cirs_void.require_registered_agent", return_value=(None, err)):
             result = await handle_void_alert.__wrapped__({
                 "action": "emit",
                 "severity": "warning",
@@ -1011,7 +1035,7 @@ class TestHandleStateAnnounce:
         err = TextContent(type="text", text=json.dumps({
             "success": False, "error": "Not registered",
         }))
-        with patch(f"{MODULE}.require_registered_agent", return_value=(None, err)):
+        with patch("src.mcp_handlers.cirs_state.require_registered_agent", return_value=(None, err)):
             result = await handle_state_announce.__wrapped__({"action": "emit"})
         data = _parse(result)
         assert data["success"] is False
@@ -1142,7 +1166,7 @@ class TestHandleCoherenceReport:
         err = TextContent(type="text", text=json.dumps({
             "success": False, "error": "Not registered",
         }))
-        with patch(f"{MODULE}.require_registered_agent", return_value=(None, err)):
+        with patch("src.mcp_handlers.cirs_coherence.require_registered_agent", return_value=(None, err)):
             result = await handle_coherence_report.__wrapped__({
                 "action": "compute",
                 "target_agent_id": "agent-2",
@@ -1228,7 +1252,7 @@ class TestHandleBoundaryContract:
         err = TextContent(type="text", text=json.dumps({
             "success": False, "error": "Not registered",
         }))
-        with patch(f"{MODULE}.require_registered_agent", return_value=(None, err)):
+        with patch("src.mcp_handlers.cirs_boundary.require_registered_agent", return_value=(None, err)):
             result = await handle_boundary_contract.__wrapped__({"action": "set"})
         data = _parse(result)
         assert data["success"] is False
@@ -1440,7 +1464,7 @@ class TestHandleGovernanceAction:
         err = TextContent(type="text", text=json.dumps({
             "success": False, "error": "Not registered",
         }))
-        with patch(f"{MODULE}.require_registered_agent", return_value=(None, err)):
+        with patch("src.mcp_handlers.cirs_governance_action.require_registered_agent", return_value=(None, err)):
             result = await handle_governance_action.__wrapped__({
                 "action": "initiate",
                 "action_type": "void_intervention",
@@ -1602,7 +1626,7 @@ class TestHandleGovernanceAction:
         err = TextContent(type="text", text=json.dumps({
             "success": False, "error": "Not registered",
         }))
-        with patch(f"{MODULE}.require_registered_agent", return_value=(None, err)):
+        with patch("src.mcp_handlers.cirs_governance_action.require_registered_agent", return_value=(None, err)):
             result = await handle_governance_action.__wrapped__({
                 "action": "respond",
                 "action_id": "abc",
@@ -1745,7 +1769,7 @@ class TestHandleGovernanceAction:
         err = TextContent(type="text", text=json.dumps({
             "success": False, "error": "Not registered",
         }))
-        with patch(f"{MODULE}.require_registered_agent", return_value=(None, err)):
+        with patch("src.mcp_handlers.cirs_governance_action.require_registered_agent", return_value=(None, err)):
             result = await handle_governance_action.__wrapped__({
                 "action": "query",
             })

@@ -1134,7 +1134,7 @@ class TestUpdateCalibrationFromDialectic:
         mock_server = MagicMock()
         mock_checker = MagicMock()
 
-        with patch("src.mcp_handlers.cirs_protocol.mcp_server", mock_server), \
+        with patch("src.mcp_handlers.dialectic_calibration.mcp_server", mock_server), \
              patch("src.mcp_handlers.dialectic_calibration.audit_logger") as mock_audit, \
              patch("src.mcp_handlers.dialectic_calibration.calibration_checker", mock_checker):
             mock_audit.query_audit_log.return_value = audit_entries
@@ -1148,7 +1148,7 @@ class TestUpdateCalibrationFromDialectic:
         resolution = MagicMock(action="resume")
 
         mock_server = MagicMock()
-        with patch("src.mcp_handlers.cirs_protocol.mcp_server", mock_server), \
+        with patch("src.mcp_handlers.dialectic_calibration.mcp_server", mock_server), \
              patch("src.mcp_handlers.dialectic_calibration.audit_logger") as mock_audit:
             mock_audit.query_audit_log.return_value = []
             result = await update_calibration_from_dialectic(session, resolution=resolution)
@@ -1173,7 +1173,7 @@ class TestUpdateCalibrationFromDisagreement:
     async def test_no_confidence(self):
         session = _make_mock_session(dispute_type="verification", discovery_id="d1")
         mock_server = MagicMock()
-        with patch("src.mcp_handlers.cirs_protocol.mcp_server", mock_server), \
+        with patch("src.mcp_handlers.dialectic_calibration.mcp_server", mock_server), \
              patch("src.mcp_handlers.dialectic_calibration.audit_logger") as mock_audit:
             mock_audit.query_audit_log.return_value = []
             assert await update_calibration_from_dialectic_disagreement(session) is False
@@ -1183,7 +1183,7 @@ class TestUpdateCalibrationFromDisagreement:
         session = _make_mock_session(dispute_type="verification", discovery_id="d1")
         entries = [{"discovery_id": "d1", "confidence": 0.9, "complexity_discrepancy": 0.2}]
         mock_server = MagicMock()
-        with patch("src.mcp_handlers.cirs_protocol.mcp_server", mock_server), \
+        with patch("src.mcp_handlers.dialectic_calibration.mcp_server", mock_server), \
              patch("src.mcp_handlers.dialectic_calibration.audit_logger") as mock_audit:
             mock_audit.query_audit_log.return_value = entries
             result = await update_calibration_from_dialectic_disagreement(session)
@@ -1196,7 +1196,7 @@ class TestUpdateCalibrationFromDisagreement:
         session.created_at = now
         entries = [{"timestamp": now.isoformat(), "confidence": 0.8, "complexity_discrepancy": 0.1}]
         mock_server = MagicMock()
-        with patch("src.mcp_handlers.cirs_protocol.mcp_server", mock_server), \
+        with patch("src.mcp_handlers.dialectic_calibration.mcp_server", mock_server), \
              patch("src.mcp_handlers.dialectic_calibration.audit_logger") as mock_audit:
             mock_audit.query_audit_log.return_value = entries
             result = await update_calibration_from_dialectic_disagreement(session)
