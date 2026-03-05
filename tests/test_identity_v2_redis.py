@@ -80,11 +80,12 @@ def patch_identity_deps(session_cache, mock_db, fake_redis):
         return fake_redis
 
     # Reset the module-level _redis_cache so _get_redis() re-initializes
-    with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+    with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
          patch("src.cache.get_session_cache", return_value=session_cache), \
          patch("src.cache.session_cache.get_redis", new=_get_fake_raw), \
          patch("src.cache.redis_client.get_redis", new=_get_fake_raw), \
-         patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+         patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+         patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
         yield
 
 
@@ -342,7 +343,7 @@ class TestCacheSession:
         # _cache_session calls _get_redis() which does local import from src.cache
         # Then for display_agent_id path, it also does local import from src.cache.redis_client
         with patch("src.cache.session_cache.get_redis", new=_get_fake_redis), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=sc), \
              patch("src.cache.redis_client.get_redis", new=_get_fake_redis):
 
@@ -359,7 +360,7 @@ class TestCacheSession:
     @pytest.mark.asyncio
     async def test_cache_without_display_id_uses_bind(self, session_cache, fake_redis):
         """Without display_agent_id, uses SessionCache.bind()."""
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=session_cache):
 
             from src.mcp_handlers.identity_v2 import _cache_session
@@ -422,7 +423,7 @@ class TestAgentExistsInPostgres:
         mock_db = AsyncMock()
         mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             from src.mcp_handlers.identity_v2 import _agent_exists_in_postgres
             assert await _agent_exists_in_postgres("uuid-1") is True
 
@@ -431,7 +432,7 @@ class TestAgentExistsInPostgres:
         mock_db = AsyncMock()
         mock_db.get_identity.return_value = None
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             from src.mcp_handlers.identity_v2 import _agent_exists_in_postgres
             assert await _agent_exists_in_postgres("uuid-2") is False
 
@@ -440,7 +441,7 @@ class TestAgentExistsInPostgres:
         mock_db = AsyncMock()
         mock_db.get_identity.side_effect = Exception("DB down")
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             from src.mcp_handlers.identity_v2 import _agent_exists_in_postgres
             assert await _agent_exists_in_postgres("uuid-3") is False
 

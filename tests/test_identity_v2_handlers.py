@@ -91,8 +91,10 @@ def patch_all_deps(mock_db, mock_redis, mock_raw_redis):
     async def _get_raw():
         return mock_raw_redis
 
-    with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+    with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
          patch("src.cache.get_session_cache", return_value=mock_redis), \
+         patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+         patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
          patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
          patch("src.cache.redis_client.get_redis", new=_get_raw):
         yield
@@ -101,7 +103,9 @@ def patch_all_deps(mock_db, mock_redis, mock_raw_redis):
 @pytest.fixture
 def patch_no_redis(mock_db):
     """Patch dependencies with Redis unavailable (cache returns None)."""
-    with patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+    with patch("src.mcp_handlers.identity_persistence._redis_cache", False), \
+         patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+         patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
          patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
         yield
 
@@ -351,7 +355,7 @@ class TestUnifiedDeriveSessionKey:
         from src.mcp_handlers.identity_v2 import derive_session_key
         from src.mcp_handlers.context import SessionSignals
         signals = SessionSignals(ip_ua_fingerprint="1.2.3.4:abc123")
-        with patch("src.mcp_handlers.identity_v2.lookup_onboard_pin", new_callable=AsyncMock, return_value=None):
+        with patch("src.mcp_handlers.identity_session.lookup_onboard_pin", new_callable=AsyncMock, return_value=None):
             result = await derive_session_key(signals, {})
         assert result == "1.2.3.4:abc123"
 
@@ -361,7 +365,7 @@ class TestUnifiedDeriveSessionKey:
         from src.mcp_handlers.identity_v2 import derive_session_key
         from src.mcp_handlers.context import SessionSignals
         signals = SessionSignals(ip_ua_fingerprint="1.2.3.4:abc123")
-        with patch("src.mcp_handlers.identity_v2.lookup_onboard_pin", new_callable=AsyncMock, return_value="agent-pinned123"):
+        with patch("src.mcp_handlers.identity_session.lookup_onboard_pin", new_callable=AsyncMock, return_value="agent-pinned123"):
             result = await derive_session_key(signals, {})
         assert result == "agent-pinned123"
 
@@ -924,7 +928,7 @@ class TestAgentExistsInPostgres:
         mock_db = AsyncMock()
         mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             assert await _agent_exists_in_postgres("uuid-exists") is True
 
     @pytest.mark.asyncio
@@ -934,7 +938,7 @@ class TestAgentExistsInPostgres:
         mock_db = AsyncMock()
         mock_db.get_identity.return_value = None
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             assert await _agent_exists_in_postgres("uuid-not-found") is False
 
     @pytest.mark.asyncio
@@ -944,7 +948,7 @@ class TestAgentExistsInPostgres:
         mock_db = AsyncMock()
         mock_db.get_identity.side_effect = Exception("DB down")
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             assert await _agent_exists_in_postgres("uuid-error") is False
 
 
@@ -961,7 +965,7 @@ class TestGetAgentLabel:
         mock_db = AsyncMock()
         mock_db.get_agent_label.return_value = "MyAgent"
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await _get_agent_label("uuid-label")
             assert result == "MyAgent"
 
@@ -972,7 +976,7 @@ class TestGetAgentLabel:
         mock_db = AsyncMock()
         mock_db.get_agent_label.return_value = None
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await _get_agent_label("uuid-no-label")
             assert result is None
 
@@ -983,7 +987,7 @@ class TestGetAgentLabel:
         mock_db = AsyncMock()
         mock_db.get_agent_label.side_effect = Exception("DB error")
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await _get_agent_label("uuid-error")
             assert result is None
 
@@ -1004,7 +1008,7 @@ class TestGetAgentIdFromMetadata:
             metadata={"agent_id": "Claude_Opus_20260206"}
         )
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await _get_agent_id_from_metadata("uuid-meta")
             assert result == "Claude_Opus_20260206"
 
@@ -1015,7 +1019,7 @@ class TestGetAgentIdFromMetadata:
         mock_db = AsyncMock()
         mock_db.get_identity.return_value = None
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await _get_agent_id_from_metadata("uuid-no-identity")
             assert result is None
 
@@ -1028,7 +1032,7 @@ class TestGetAgentIdFromMetadata:
             identity_id="i1", metadata=None
         )
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await _get_agent_id_from_metadata("uuid-no-meta")
             assert result is None
 
@@ -1041,7 +1045,7 @@ class TestGetAgentIdFromMetadata:
             identity_id="i1", metadata={"some_other": "data"}
         )
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await _get_agent_id_from_metadata("uuid-no-aid")
             assert result is None
 
@@ -1052,7 +1056,7 @@ class TestGetAgentIdFromMetadata:
         mock_db = AsyncMock()
         mock_db.get_identity.side_effect = Exception("DB error")
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await _get_agent_id_from_metadata("uuid-error")
             assert result is None
 
@@ -1070,7 +1074,7 @@ class TestFindAgentByLabel:
         mock_db = AsyncMock()
         mock_db.find_agent_by_label.return_value = "uuid-found-by-label"
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await _find_agent_by_label("MyAgent")
             assert result == "uuid-found-by-label"
 
@@ -1081,7 +1085,7 @@ class TestFindAgentByLabel:
         mock_db = AsyncMock()
         mock_db.find_agent_by_label.return_value = None
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await _find_agent_by_label("Nonexistent")
             assert result is None
 
@@ -1092,7 +1096,7 @@ class TestFindAgentByLabel:
         mock_db = AsyncMock()
         mock_db.find_agent_by_label.side_effect = Exception("DB error")
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await _find_agent_by_label("Error")
             assert result is None
 
@@ -1119,7 +1123,7 @@ class TestEnsureAgentPersisted:
         mock_db.upsert_identity = AsyncMock()
         mock_db.create_session = AsyncMock()
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await ensure_agent_persisted("uuid-lazy", "session-lazy")
 
         assert result is True
@@ -1138,7 +1142,7 @@ class TestEnsureAgentPersisted:
             identity_id="existing-ident", metadata={}
         )
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await ensure_agent_persisted("uuid-existing", "session-existing")
 
         assert result is False
@@ -1153,7 +1157,7 @@ class TestEnsureAgentPersisted:
         mock_db.init = AsyncMock()
         mock_db.get_identity.side_effect = Exception("DB error")
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await ensure_agent_persisted("uuid-error", "session-error")
 
         assert result is False
@@ -1179,8 +1183,8 @@ class TestSetAgentLabel:
         mock_db.upsert_identity = AsyncMock()
         mock_db.create_session = AsyncMock()
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", False), \
              patch("src.mcp_handlers.shared.get_mcp_server", side_effect=Exception("no server")):
             result = await set_agent_label("uuid-label-set", "NewLabel")
 
@@ -1214,8 +1218,8 @@ class TestSetAgentLabel:
         mock_db.upsert_identity = AsyncMock()
         mock_db.create_session = AsyncMock()
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", False), \
              patch("src.mcp_handlers.shared.get_mcp_server", side_effect=Exception("no server")):
             result = await set_agent_label(test_uuid, "DuplicateName")
 
@@ -1506,7 +1510,7 @@ class TestResolveByNameClaim:
         mock_db = AsyncMock()
         mock_db.find_agent_by_label.return_value = None
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db):
             result = await resolve_by_name_claim("UnknownAgent", "session-1")
             assert result is None
 
@@ -1532,8 +1536,9 @@ class TestResolveByNameClaim:
         async def _get_raw():
             return mock_raw
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_cache), \
              patch("src.cache.redis_client.get_redis", new=_get_raw):
             result = await resolve_by_name_claim("FoundAgent", "session-resolve")
@@ -1558,8 +1563,8 @@ class TestResolveByNameClaim:
             "tiers": {"lineage": {"similarity": 0.3}},  # Way below 0.6
         }
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", False), \
              patch("src.trajectory_identity.verify_trajectory_identity", new_callable=AsyncMock, return_value=mock_verification):
             result = await resolve_by_name_claim(
                 "SomeAgent", "session-traj",
@@ -1585,7 +1590,7 @@ class TestCacheSession:
         async def _get_raw():
             return mock_raw_redis
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_cache), \
              patch("src.cache.redis_client.get_redis", new=_get_raw):
             await _cache_session("sess-1", "uuid-1234", display_agent_id="Claude_20260206")
@@ -1605,7 +1610,7 @@ class TestCacheSession:
         mock_cache = AsyncMock()
         mock_cache.bind = AsyncMock()
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_cache):
             await _cache_session("sess-2", "uuid-5678")
 
@@ -1619,7 +1624,7 @@ class TestCacheSession:
         mock_cache = AsyncMock()
         mock_cache.bind = AsyncMock()
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_cache):
             await _cache_session("sess-3", "uuid-same", display_agent_id="uuid-same")
 
@@ -1630,7 +1635,7 @@ class TestCacheSession:
         """When Redis is unavailable, _cache_session does not raise."""
         from src.mcp_handlers.identity_v2 import _cache_session
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", False):
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", False):
             # Should not raise
             await _cache_session("sess-4", "uuid-noop")
 
@@ -1713,8 +1718,8 @@ class TestIdentityResolutionIntegration:
         mock_db.get_session.side_effect = Exception("PG down")
         mock_db.find_agent_by_label.return_value = None
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", False), \
-             patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db):
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", False), \
+             patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db):
             result = await resolve_session_identity(session_key="all-down-test")
 
         assert result["created"] is True
@@ -1823,7 +1828,7 @@ class TestGetRedisExceptionPath:
 
     def test_redis_exception_marks_unavailable(self):
         """When get_session_cache raises, _get_redis sets cache to False."""
-        import src.mcp_handlers.identity_v2 as mod
+        import src.mcp_handlers.identity_persistence as mod
 
         # Save original
         original = mod._redis_cache
@@ -1840,7 +1845,7 @@ class TestGetRedisExceptionPath:
 
     def test_redis_already_false_returns_none(self):
         """When _redis_cache is False (marked unavailable), returns None."""
-        import src.mcp_handlers.identity_v2 as mod
+        import src.mcp_handlers.identity_persistence as mod
 
         original = mod._redis_cache
         try:
@@ -1875,9 +1880,10 @@ class TestRedisTtlRefreshException:
         async def _raise_redis():
             raise Exception("Redis expire failed")
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_redis), \
-             patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
              patch("src.cache.redis_client.get_redis", side_effect=Exception("Redis error")):
             result = await resolve_session_identity(session_key="ttl-fail-test")
 
@@ -1934,8 +1940,8 @@ class TestSetAgentLabelCacheManagement:
         meta = SimpleNamespace(label=None, structured_id="existing_id")
         mock_server.agent_metadata = {test_uuid: meta}
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", False), \
              patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server):
             result = await set_agent_label(test_uuid, "NewLabel")
 
@@ -1964,8 +1970,8 @@ class TestSetAgentLabelCacheManagement:
         )
         mock_meta_class.return_value = mock_meta_instance
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", False), \
              patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
              patch("src.agent_state.AgentMetadata", mock_meta_class), \
              patch("src.mcp_handlers.identity_v2.detect_interface_context", return_value={"type": "test"}, create=True), \
@@ -1994,8 +2000,8 @@ class TestSetAgentLabelCacheManagement:
         mock_server.agent_metadata = {test_uuid: meta}
 
         # detect_interface_context raises
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", False), \
              patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
              patch("src.mcp_handlers.naming_helpers.detect_interface_context", side_effect=Exception("No context")):
             result = await set_agent_label(test_uuid, "LabelWithoutStructured")
@@ -2024,8 +2030,8 @@ class TestSetAgentLabelCacheManagement:
             "test-session": {"bound_agent_id": test_uuid, "agent_label": None}
         }
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", False), \
              patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
              patch("src.mcp_handlers.identity_shared._session_identities", session_identities):
             result = await set_agent_label(test_uuid, "UpdatedLabel")
@@ -2049,8 +2055,8 @@ class TestSetAgentLabelCacheManagement:
         meta = SimpleNamespace(label=None, structured_id="existing_id")
         mock_server.agent_metadata = {test_uuid: meta}
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", False), \
              patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
              patch("src.mcp_handlers.identity_shared._session_identities", side_effect=Exception("import fail")):
             result = await set_agent_label(test_uuid, "StillWorks")
@@ -2073,8 +2079,8 @@ class TestSetAgentLabelCacheManagement:
         mock_metadata_cache = AsyncMock()
         mock_metadata_cache.invalidate = AsyncMock()
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._get_redis", return_value=mock_redis), \
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._get_redis", return_value=mock_redis), \
              patch("src.mcp_handlers.shared.get_mcp_server", side_effect=Exception("no server")), \
              patch("src.cache.get_metadata_cache", return_value=mock_metadata_cache):
             result = await set_agent_label(test_uuid, "InvalidateTest")
@@ -2096,8 +2102,8 @@ class TestSetAgentLabelCacheManagement:
 
         mock_redis = MagicMock()
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._get_redis", return_value=mock_redis), \
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._get_redis", return_value=mock_redis), \
              patch("src.mcp_handlers.shared.get_mcp_server", side_effect=Exception("no server")), \
              patch("src.cache.get_metadata_cache", side_effect=Exception("cache error")):
             result = await set_agent_label(test_uuid, "StillOK")
@@ -2111,7 +2117,7 @@ class TestSetAgentLabelCacheManagement:
 
         test_uuid = "aaaabbbb-1111-2222-3333-444455556666"
 
-        with patch("src.mcp_handlers.identity_v2.get_db", side_effect=Exception("Fatal DB error")):
+        with patch("src.mcp_handlers.identity_persistence.get_db", side_effect=Exception("Fatal DB error")):
             result = await set_agent_label(test_uuid, "WillFail")
 
         assert result is False
@@ -2129,8 +2135,8 @@ class TestSetAgentLabelCacheManagement:
         mock_db.find_agent_by_label.return_value = None
         mock_db.update_agent_fields.return_value = True
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", False), \
              patch("src.mcp_handlers.shared.get_mcp_server", side_effect=Exception("no server")):
             result = await set_agent_label(test_uuid, "PersistLabel", session_key="sess-key")
 
@@ -2166,8 +2172,9 @@ class TestResolveByNameClaimTrajectoryException:
         async def _get_raw():
             return mock_raw
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_cache), \
              patch("src.cache.redis_client.get_redis", new=_get_raw), \
              patch("src.trajectory_identity.verify_trajectory_identity", side_effect=Exception("Module not loaded")):
@@ -2204,8 +2211,9 @@ class TestResolveByNameClaimTrajectoryException:
         async def _get_raw():
             return mock_raw
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_cache), \
              patch("src.cache.redis_client.get_redis", new=_get_raw):
             result = await resolve_by_name_claim("SessionFailAgent", "session-fail")
@@ -2231,7 +2239,7 @@ class TestCacheSessionEdgeCases:
         async def _get_no_raw():
             return None
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_cache), \
              patch("src.cache.redis_client.get_redis", new=_get_no_raw):
             await _cache_session("sess-fallback", "uuid-fb", display_agent_id="Agent_20260206")
@@ -2246,7 +2254,7 @@ class TestCacheSessionEdgeCases:
         mock_cache = AsyncMock()
         mock_cache.bind.side_effect = Exception("Redis write error")
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_cache):
             # Should not raise
             await _cache_session("sess-err", "uuid-err")
@@ -2366,9 +2374,11 @@ class TestHandleIdentityAdapter:
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_redis), \
              patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
              patch("src.cache.redis_client.get_redis", new=_get_raw), \
              patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value=None), \
@@ -2648,9 +2658,11 @@ class TestHandleOnboardV2:
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_redis), \
              patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
              patch("src.cache.redis_client.get_redis", new=_get_raw), \
              patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value="test-ctx-key"), \
@@ -3342,8 +3354,8 @@ class TestSetAgentLabelStructuredIdMigration:
         # Ensure getattr returns None for structured_id
         mock_server.agent_metadata = {test_uuid: meta}
 
-        with patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity_v2._redis_cache", False), \
+        with patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence._redis_cache", False), \
              patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
              patch("src.mcp_handlers.naming_helpers.detect_interface_context", return_value={"type": "test"}), \
              patch("src.mcp_handlers.naming_helpers.generate_structured_id", return_value="migrated_id_1"), \
@@ -3369,9 +3381,11 @@ class TestIdentityAdapterStructuredIdRegeneration:
 
         mock_server = MagicMock()
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_redis), \
              patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
              patch("src.cache.redis_client.get_redis", new=_get_raw), \
              patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value=None), \
@@ -3444,9 +3458,11 @@ class TestOnboardForceNewModelNormalization:
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_redis), \
              patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
              patch("src.cache.redis_client.get_redis", new=_get_raw), \
              patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value="force-ctx-key"), \
@@ -3526,9 +3542,11 @@ class TestOnboardResolveSessionIdentityFailure:
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_redis), \
              patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
              patch("src.cache.redis_client.get_redis", new=_get_raw), \
              patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value="ctx-key"), \
@@ -3569,9 +3587,11 @@ class TestOnboardAlreadyPersistedFreshIdentity:
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_redis), \
              patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
              patch("src.cache.redis_client.get_redis", new=_get_raw), \
              patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value="ctx-key"), \
@@ -3614,9 +3634,11 @@ class TestContextUpdateExceptions:
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_redis), \
              patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
              patch("src.cache.redis_client.get_redis", new=_get_raw), \
              patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value=None), \
@@ -3682,9 +3704,11 @@ class TestOnboardStructuredIdFallback:
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_redis), \
              patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
              patch("src.cache.redis_client.get_redis", new=_get_raw), \
              patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value="ctx"), \
@@ -3758,9 +3782,11 @@ class TestOnboardPinAndPrefixExceptions:
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
-        with patch("src.mcp_handlers.identity_v2._redis_cache", None), \
+        with patch("src.mcp_handlers.identity_persistence._redis_cache", None), \
              patch("src.cache.get_session_cache", return_value=mock_redis), \
              patch("src.mcp_handlers.identity_v2.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity_persistence.get_db", return_value=mock_db), \
              patch("src.cache.redis_client.get_redis", new=_get_raw), \
              patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_session_key", return_value="ctx"), \

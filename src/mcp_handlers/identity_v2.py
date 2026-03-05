@@ -1,72 +1,80 @@
 """
 Identity V2 - Simplified Session-to-UUID Resolution
 
-Design principles:
-1. ONE source of truth: PostgreSQL (core.agents + core.sessions)
-2. ONE cache layer: Redis (for performance)
-3. THREE paths only: Redis hit → PostgreSQL hit → Create new
-4. LAZY CREATION: Don't persist until first real work (v2.4.1+)
+Re-export facade — functions have moved to focused modules.
+Existing imports continue to work unchanged.
 
-Separates two concerns that were previously conflated:
-- resolve_session_identity(): "Who am I?" (session → UUID)
-- lookup_agent(): "Who is agent X?" (moved to get_agent_metadata)
-
-Lazy creation (v2.4.1):
-- resolve_session_identity(persist=False) returns UUID without PostgreSQL write
-- ensure_agent_persisted() persists on first real work (process_agent_update)
-- Prevents orphan agents from discovery/testing calls
-
-Three-tier identity (v2.5.3):
-- UUID: Immutable technical identifier, used for lookup/persistence (primary key)
-- agent_id: Model+date format (e.g., "Claude_Opus_20251227") - system generated, useful for tracking
-- display_name: User-chosen name (set via identity(name='...')), also aliased as 'label' in responses
-
-UUID is ALWAYS the cached/stored value. agent_id provides model awareness.
-Same UUID = same agent.
+Modules:
+  identity_session      — session key derivation, fingerprinting, pin operations
+  identity_persistence  — agent persistence, caching, label management
+  identity_resolution   — core identity resolution, agent ID generation
 """
 
-from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
-import uuid
-import hashlib
+from typing import Optional, Dict, Any, Sequence
+from datetime import datetime
 import os
+
+from mcp.types import TextContent
 
 from src.logging_utils import get_logger
 from src.db import get_db
 from .utils import success_response, error_response
+from .decorators import mcp_tool
 
 # Import GovernanceConfig with fallback defaults
 try:
     from config.governance_config import GovernanceConfig
 except ImportError:
-    # Fallback if config module not available
     class GovernanceConfig:
         SESSION_TTL_SECONDS = 86400  # 24 hours
         SESSION_TTL_HOURS = 24
 
 logger = get_logger(__name__)
 
+
+# --- identity_session (leaf) ---
+from .identity_session import (
+    derive_session_key,
+    _extract_base_fingerprint,
+    ua_hash_from_header,
+    _PIN_TTL,
+    lookup_onboard_pin,
+    set_onboard_pin,
+)
+
+# --- identity_persistence ---
+from .identity_persistence import (
+    _redis_cache,
+    _get_redis,
+    _cache_session,
+    _agent_exists_in_postgres,
+    _get_agent_label,
+    _get_agent_id_from_metadata,
+    _find_agent_by_label,
+    ensure_agent_persisted,
+    set_agent_label,
+)
+
+# --- identity_resolution ---
+from .identity_resolution import (
+    _generate_agent_id,
+    _generate_auto_label,
+    _normalize_model_type,
+    resolve_session_identity,
+    resolve_by_name_claim,
+)
+
+
+class _LazyMCPServer:
+    def __getattr__(self, name):
+        from src.mcp_handlers.shared import get_mcp_server
+        return getattr(get_mcp_server(), name)
+
+mcp_server = _LazyMCPServer()
+
+
 # =============================================================================
-# CACHE LAYER (Redis)
-# =============================================================================
-
-_redis_cache = None
-
-def _get_redis():
-    """Lazy load Redis connection."""
-    global _redis_cache
-    if _redis_cache is None:
-        try:
-            from src.cache import get_session_cache
-            _redis_cache = get_session_cache()
-        except Exception as e:
-            logger.debug(f"Redis not available: {e}")
-            _redis_cache = False  # Mark as unavailable
-    return _redis_cache if _redis_cache else None
-
-
-# =============================================================================
-# DATE CONTEXT HELPER
+# DATE CONTEXT HELPER (only used by onboard handler)
 # =============================================================================
 
 def _get_date_context() -> dict:
@@ -87,872 +95,6 @@ def _get_date_context() -> dict:
 
 
 # =============================================================================
-# AGENT ID GENERATION (model+date format)
-# =============================================================================
-
-def _generate_agent_id(model_type: Optional[str] = None, client_hint: Optional[str] = None) -> str:
-    """
-    Generate agent_id in model+client+date format.
-
-    Priority:
-    1. model_type (e.g., "claude-opus-4-5") → "Claude_Opus_4_5_20251227"
-    2. client_hint (e.g., "cursor") → "cursor_20251227"
-    3. fallback → "mcp_20251227"
-
-    Args:
-        model_type: Model identifier (e.g., "claude-opus-4-5", "gemini-pro")
-        client_hint: Client identifier (e.g., "cursor", "vscode", "claude_desktop")
-
-    Returns:
-        Human-readable agent_id string
-    """
-    timestamp = datetime.now().strftime("%Y%m%d")
-
-    if model_type:
-        # Normalize and format model name
-        model = model_type.strip()
-        # Capitalize first letter of each word, replace separators with underscore
-        model = model.replace("-", " ").replace(".", " ").replace("_", " ")
-        model = "_".join(word.capitalize() for word in model.split())
-        return f"{model}_{timestamp}"
-    elif client_hint and client_hint not in ("unknown", ""):
-        # Use client as fallback identifier
-        client = client_hint.strip().lower().replace(" ", "_")
-        return f"{client}_{timestamp}"
-    else:
-        return f"mcp_{timestamp}"
-
-
-def _generate_auto_label(model_type: Optional[str] = None, client_hint: Optional[str] = None) -> Optional[str]:
-    """
-    Generate a stable, deterministic label from client signals.
-
-    Unlike _generate_agent_id (which includes date), this produces a
-    time-independent label so repeated sessions converge to one identity.
-
-    Examples:
-        ("claude-opus-4", "claude-code") → "claude-code-opus"
-        ("claude-sonnet-4", None) → "sonnet"
-        (None, "cursor") → "cursor"
-        (None, None) → None (can't generate)
-    """
-    parts = []
-
-    # Client type first (if meaningful)
-    if client_hint and client_hint not in ("unknown", "", "mcp"):
-        parts.append(client_hint.strip().lower().replace(" ", "-"))
-
-    # Model family (extract short name, drop version numbers)
-    if model_type:
-        model = model_type.strip().lower()
-        # Extract model family: "claude-opus-4-5" → "opus"
-        for family in ["opus", "sonnet", "haiku"]:
-            if family in model:
-                parts.append(family)
-                break
-        else:
-            # Non-Claude model: use full name
-            parts.append(model.replace(" ", "-"))
-
-    if not parts:
-        return None
-
-    return "-".join(parts)
-
-
-def _normalize_model_type(model_type: str) -> str:
-    """Normalize model_type to a canonical family name for session key suffixing.
-
-    Used by handle_identity_adapter and handle_onboard_v2 to prevent identity
-    collision across different models from the same transport.
-
-    Examples:
-        "claude-opus-4-5" -> "claude"
-        "gemini-pro" -> "gemini"
-        "gpt-4o" -> "gpt"
-    """
-    normalized = model_type.lower().replace("-", "_").replace(".", "_")
-    if "claude" in normalized:
-        return "claude"
-    elif "gemini" in normalized:
-        return "gemini"
-    elif "gpt" in normalized or "chatgpt" in normalized:
-        return "gpt"
-    elif "composer" in normalized or "cursor" in normalized:
-        return "composer"
-    elif "llama" in normalized:
-        return "llama"
-    return normalized
-
-
-# =============================================================================
-# CORE IDENTITY RESOLUTION (3 paths)
-# =============================================================================
-
-async def resolve_session_identity(
-
-    session_key: str,
-
-    persist: bool = False,
-
-    model_type: Optional[str] = None,
-
-    client_hint: Optional[str] = None,
-
-    force_new: bool = False,
-
-    agent_name: Optional[str] = None,
-
-    trajectory_signature: Optional[dict] = None,
-
-) -> Dict[str, Any]:
-
-    """
-
-    Resolve session to agent identity. Optionally creates new agent in PostgreSQL.
-
-
-
-    This is the ONLY identity resolution function. All tools use this.
-
-
-
-    Args:
-
-        session_key: The session identifier (from SSE connection or stdio PID)
-
-        persist: If True, create agent in PostgreSQL. If False (default),
-
-                 return UUID without persisting (lazy creation).
-
-        model_type: Model identifier (e.g., "claude-opus-4", "gemini"). Used to
-
-                    generate agent_id in model+date format.
-
-        client_hint: Client/interface hint (e.g., "cursor", "vscode"). Used in
-
-                     agent_id generation.
-
-        force_new: If True, ignore existing binding and create fresh identity.
-
-
-
-    Returns:
-
-        {
-
-            "agent_id": str,        # The agent's ID (model+date format, e.g., "claude_20251227")
-
-            "agent_uuid": str,      # Internal UUID (immutable)
-
-            "label": str | None,    # Display name (if set)
-
-            "created": bool,        # True if newly created this call
-
-            "persisted": bool,      # True if agent exists in PostgreSQL
-
-            "source": str,          # "redis" | "postgres" | "created" | "memory_only"
-
-        }
-
-    """
-
-    if not session_key:
-        raise ValueError("session_key is required")
-
-    # SECURITY (Feb 2026): Validate and sanitize session_key to prevent injection attacks
-    # Session keys should be reasonable length and contain only safe characters
-    MAX_SESSION_KEY_LENGTH = 256
-    if len(session_key) > MAX_SESSION_KEY_LENGTH:
-        logger.warning(f"[SECURITY] Session key too long ({len(session_key)} chars), truncating")
-        session_key = session_key[:MAX_SESSION_KEY_LENGTH]
-
-    # Sanitize: Replace potentially dangerous characters
-    # Allow: alphanumeric, dash, underscore, colon, dot, at-sign (for email-like IDs)
-    import re
-    if not re.match(r'^[\w\-.:@]+$', session_key):
-        # Contains characters outside allowed set - sanitize
-        original = session_key
-        session_key = re.sub(r'[^\w\-.:@]', '_', session_key)
-        logger.warning(f"[SECURITY] Session key sanitized: {original[:30]}... -> {session_key[:30]}...")
-
-    # If force_new is requested, skip lookup paths and go straight to creation
-
-    if not force_new:
-
-        # PATH 1: Redis cache (fast path)
-
-        # NOTE: As of v2.5.2, we always cache UUID (the true identity).
-
-        # The model+date agent_id is just a display label in metadata.
-
-        redis = _get_redis()
-
-        if redis:
-
-            try:
-
-                cached = await redis.get(session_key)
-
-                if cached and cached.get("agent_id"):
-
-                    cached_id = cached["agent_id"]
-
-                    # Detect format: UUID (correct) vs model+date (legacy, pre-v2.5.2)
-
-                    is_uuid = len(cached_id) == 36 and cached_id.count("-") == 4
-
-                    if is_uuid:
-
-                        # Correct format: cached value is UUID
-
-                        agent_uuid = cached_id
-
-                        # First check if display_agent_id is in cache (v2.5.2+)
-
-                        agent_id = cached.get("display_agent_id")
-
-                        if not agent_id:
-
-                            # Fall back to metadata lookup
-
-                            agent_id = await _get_agent_id_from_metadata(agent_uuid) or agent_uuid
-
-                    else:
-
-                        # Legacy format (pre-v2.5.2): treat as both agent_id and UUID fallback
-                        # v1 identity deleted Feb 2026 — no new entries in this format
-
-                        agent_uuid = cached_id
-
-                        agent_id = cached_id
-
-
-
-                    # Check if persisted in PostgreSQL
-
-                    persisted = await _agent_exists_in_postgres(agent_uuid)
-
-                    # Fetch label
-
-                    label = await _get_agent_label(agent_uuid) if persisted else None
-
-
-
-                    # SLIDING TTL: Refresh Redis expiry on every hit (v2.5.5)
-
-                    try:
-
-                        from src.cache.redis_client import get_redis
-
-                        raw_redis = await get_redis()
-
-                        if raw_redis:
-                            await raw_redis.expire(f"session:{session_key}", GovernanceConfig.SESSION_TTL_SECONDS)
-
-                    except Exception:
-
-                        pass
-
-
-
-                    return {
-
-                        "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
-
-                        "agent_uuid": agent_uuid,
-
-                        "display_name": label,
-
-                        "label": label,  # backward compat
-
-                        "created": False,
-
-                        "persisted": persisted,
-
-                        "source": "redis",
-
-                    }
-
-            except Exception as e:
-                # INFO level (v2.5.7): Redis lookup failures are recoverable but should be visible
-                logger.info(f"Redis lookup failed for session {session_key[:20]}...: {e}")
-
-
-
-        # PATH 2: PostgreSQL session lookup
-
-        # NOTE: As of v2.5.2, sessions reference agents by UUID.
-
-        try:
-
-            db = get_db()
-
-            if hasattr(db, "init"):
-
-                await db.init()
-
-
-
-            session = await db.get_session(session_key)
-
-            if session and session.agent_id:
-
-                stored_id = session.agent_id
-
-                # Detect format: UUID (correct) vs model+date (legacy)
-
-                is_uuid = len(stored_id) == 36 and stored_id.count("-") == 4
-
-                if is_uuid:
-
-                    agent_uuid = stored_id
-
-                    # Fetch agent_id (model+date) from metadata
-
-                    agent_id = await _get_agent_id_from_metadata(agent_uuid) or agent_uuid
-
-                else:
-
-                    # Legacy format (pre-v2.5.2): treat as both agent_id and UUID fallback
-
-                    agent_uuid = stored_id
-
-                    agent_id = stored_id
-
-
-
-                label = await _get_agent_label(agent_uuid)
-
-
-
-                # Warm Redis cache for next time (cache UUID + display agent_id)
-
-                # This also resets the TTL to 24h (sliding window)
-
-                await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
-
-
-
-                # Update DB last_active (non-blocking best effort)
-
-                try:
-
-                    await db.update_session_activity(session_key)
-
-                except Exception:
-
-                    pass
-
-
-
-                return {
-
-                    "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
-
-                    "agent_uuid": agent_uuid,
-
-                    "display_name": label,
-
-                    "label": label,  # backward compat
-
-                    "created": False,
-
-                    "persisted": True,  # Found in PostgreSQL = persisted
-
-                    "source": "postgres",
-
-                }
-
-        except Exception as e:
-
-            logger.debug(f"PostgreSQL session lookup failed: {e}")
-
-
-
-    # PATH 2.5: Name-based identity claim
-    # If agent provides a name, try to resolve to existing identity by label.
-    # This enables reconnection even when session keys rotate.
-    if agent_name:
-        name_result = await resolve_by_name_claim(
-            agent_name, session_key, trajectory_signature
-        )
-        if name_result:
-            return name_result
-
-    # PATH 2.75: Auto-name from client signals (prevents ghost proliferation)
-    # If no explicit agent_name was provided, generate a stable label from
-    # model_type + client_hint and try to claim an existing identity.
-    #
-    # IDENTITY INTEGRITY FIX (v2.7.1): Auto-name claims now REQUIRE trajectory
-    # signature verification. Without it, every fresh session of the same model
-    # type silently inherits prior history and relational context — false continuity.
-    # An agent ends up believing it has 30 visits to Lumen when it has none.
-    #
-    # Rule: only auto-claim an *existing* identity if trajectory_signature is
-    # provided and passes verification. Without it, PATH 3 creates a fresh UUID
-    # (the auto_label is still assigned so the new agent can be found later).
-    if not agent_name and (model_type or client_hint) and trajectory_signature:
-        auto_label = _generate_auto_label(model_type, client_hint)
-        if auto_label:
-            auto_result = await resolve_by_name_claim(
-                auto_label, session_key, trajectory_signature
-            )
-            if auto_result:
-                logger.info(f"[AUTO_NAME] Reused identity via auto-label '{auto_label}' (trajectory verified)")
-                return auto_result
-
-    # PATH 3: Create new agent
-
-    # UUID is the true identity (for lookup/persistence)
-    # agent_id is human-readable label (model+date format, for display)
-    agent_uuid = str(uuid.uuid4())
-    agent_id = _generate_agent_id(model_type, client_hint)
-    # Auto-assign label from client signals to prevent future ghosts
-    label = _generate_auto_label(model_type, client_hint) if not agent_name else None
-
-    if persist:
-        # Persist immediately to PostgreSQL
-        try:
-            db = get_db()
-
-            # Create agent in PostgreSQL with UUID as key (label set atomically)
-            await db.upsert_agent(
-                agent_id=agent_uuid,  # UUID is the primary key
-                api_key="",  # Legacy field, not used
-                status="active",
-                label=label,  # Set auto-label at creation time
-            )
-
-            if label:
-                logger.info(f"[AUTO_NAME] New agent '{label}' (uuid: {agent_uuid[:8]}...)")
-
-            # Create identity record with agent_id (display name) in metadata
-            identity_metadata = {
-                "source": "identity_v2",
-                "created_at": datetime.now().isoformat(),
-                "agent_id": agent_id,  # Human-readable label (model+date)
-                "model_type": model_type,
-                "total_updates": 0,  # Initialize counter for persistence
-            }
-            if label:
-                identity_metadata["label"] = label
-            await db.upsert_identity(
-                agent_id=agent_uuid,
-                api_key_hash="",
-                metadata=identity_metadata,
-            )
-
-            # Create session binding
-            identity = await db.get_identity(agent_uuid)
-            if identity:
-                await db.create_session(
-                    session_id=session_key,
-                    identity_id=identity.identity_id,
-                    expires_at=datetime.now() + timedelta(hours=GovernanceConfig.SESSION_TTL_HOURS),
-                    client_type="mcp",
-                    client_info={"agent_uuid": agent_uuid, "agent_id": agent_id}
-                )
-
-            # Cache in Redis (session -> UUID + display agent_id)
-            await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
-
-            logger.info(f"Created new agent: {agent_id} (uuid: {agent_uuid[:8]}...)")
-
-            return {
-                "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
-                "agent_uuid": agent_uuid,
-                "display_name": label,
-                "label": label,
-                "created": True,
-                "persisted": True,
-                "source": "created",
-            }
-
-        except Exception as e:
-            logger.warning(f"Failed to persist new agent: {e}")
-            # Fall through to memory-only path
-
-    # Lazy creation: just cache in Redis, don't write to PostgreSQL
-    # Cache UUID + display agent_id for retrieval on next call
-    await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
-    logger.debug(f"Created new agent (lazy): {agent_id} (uuid: {agent_uuid[:8]}...)")
-
-    return {
-        "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
-        "agent_uuid": agent_uuid,
-        "display_name": None,
-        "label": None,  # backward compat
-        "created": True,
-        "persisted": False,
-        "source": "memory_only",
-    }
-
-
-async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str] = None) -> bool:
-    """
-    Set display name for an agent.
-
-    This is a simple UPDATE, not identity resolution.
-    Label uniqueness is NOT enforced - duplicates get UUID suffix.
-
-    If agent is not yet persisted (lazy creation), this will persist it first.
-    """
-    if not agent_uuid or not label:
-        return False
-
-    try:
-        # Ensure agent is persisted before setting label (lazy creation support)
-        if session_key:
-            await ensure_agent_persisted(agent_uuid, session_key)
-
-        db = get_db()
-
-        # Check for duplicate labels
-        existing = await _find_agent_by_label(label)
-        if existing and existing != agent_uuid:
-            # Append UUID suffix to make unique
-            label = f"{label}_{agent_uuid[:8]}"
-            logger.info(f"Label collision, using: {label}")
-
-        # Update agent label using the proper backend method
-        success = await db.update_agent_fields(agent_uuid, label=label)
-
-        if success:
-            # Sync label into core.identities.metadata JSONB so both sources agree
-            try:
-                identity = await db.get_identity(agent_uuid)
-                if identity:
-                    await db.upsert_identity(
-                        agent_id=agent_uuid,
-                        api_key_hash="",
-                        metadata={"label": label},
-                    )
-            except Exception as e:
-                logger.debug(f"Could not sync label to identities metadata: {e}")
-
-            # Sync label to runtime cache so compute_agent_signature can find it
-            try:
-                if agent_uuid in mcp_server.agent_metadata:
-                    meta = mcp_server.agent_metadata[agent_uuid]
-                    meta.label = label
-
-                    # Generate structured_id if missing (migration for pre-v2.5.0 agents)
-                    if not getattr(meta, 'structured_id', None):
-                        try:
-                            from .naming_helpers import detect_interface_context, generate_structured_id
-                            from .context import get_context_client_hint
-                            context = detect_interface_context()
-                            existing_ids = [
-                                getattr(m, 'structured_id', None)
-                                for m in mcp_server.agent_metadata.values()
-                                if getattr(m, 'structured_id', None)
-                            ]
-                            meta.structured_id = generate_structured_id(
-                                context=context,
-                                existing_ids=existing_ids,
-                                client_hint=get_context_client_hint()
-                            )
-                            logger.info(f"Migrated structured_id: {meta.structured_id}")
-                        except Exception as e:
-                            logger.debug(f"Could not generate structured_id: {e}")
-
-                    logger.info(f"Synced label '{label}' to existing cache entry for {agent_uuid[:8]}")
-                else:
-                    # Agent not in cache yet - create proper AgentMetadata entry
-                    # Import the real AgentMetadata class to avoid missing attribute errors
-                    from src.agent_state import AgentMetadata
-                    from datetime import datetime
-                    now = datetime.now().isoformat()
-                    meta = AgentMetadata(
-                        agent_id=agent_uuid,
-                        status='active',
-                        created_at=now,
-                        last_update=now,
-                    )
-                    meta.label = label  # Set label after creation
-                    meta.agent_uuid = agent_uuid  # Set UUID attribute
-
-                    # Generate structured_id (three-tier identity model v2.5.0+)
-                    try:
-                        from .naming_helpers import detect_interface_context, generate_structured_id
-                        from .context import get_context_client_hint
-                        context = detect_interface_context()
-                        existing_ids = [
-                            getattr(m, 'structured_id', None)
-                            for m in mcp_server.agent_metadata.values()
-                            if getattr(m, 'structured_id', None)
-                        ]
-                        meta.structured_id = generate_structured_id(
-                            context=context,
-                            existing_ids=existing_ids,
-                            client_hint=get_context_client_hint()
-                        )
-                        logger.info(f"Generated structured_id: {meta.structured_id}")
-                    except Exception as e:
-                        logger.debug(f"Could not generate structured_id: {e}")
-
-                    mcp_server.agent_metadata[agent_uuid] = meta
-                    logger.info(f"Created cache entry with label '{label}' for {agent_uuid[:8]}")
-
-                # Also update session binding cache so get_or_create_session_identity returns correct label
-                try:
-                    from .identity_shared import _session_identities
-                    for session_key, binding in _session_identities.items():
-                        if binding.get("bound_agent_id") == agent_uuid or binding.get("agent_uuid") == agent_uuid:
-                            binding["agent_label"] = label
-                            logger.debug(f"Updated session binding label for {session_key}")
-                except Exception as e:
-                    logger.debug(f"Could not update session binding cache: {e}")
-            except Exception as e:
-                logger.warning(f"Runtime cache sync failed: {e}")
-
-            # Invalidate any other cached data
-            redis = _get_redis()
-            if redis:
-                try:
-                    from src.cache import get_metadata_cache
-                    await get_metadata_cache().invalidate(agent_uuid)
-                except Exception:
-                    pass
-
-        return success
-
-    except Exception as e:
-        logger.warning(f"Failed to set label: {e}")
-        return False
-
-
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-async def _get_agent_label(agent_uuid: str) -> Optional[str]:
-    """Fetch agent's label from PostgreSQL."""
-    try:
-        db = get_db()
-        return await db.get_agent_label(agent_uuid)
-    except Exception:
-        return None
-
-
-async def _get_agent_id_from_metadata(agent_uuid: str) -> Optional[str]:
-    """Fetch agent_id (model+date format) from identity metadata."""
-    try:
-        db = get_db()
-        identity = await db.get_identity(agent_uuid)
-        if identity and identity.metadata:
-            return identity.metadata.get("agent_id")
-    except Exception:
-        pass
-    return None
-
-
-async def _find_agent_by_label(label: str) -> Optional[str]:
-    """Find agent UUID by label (for collision detection)."""
-    try:
-        db = get_db()
-        return await db.find_agent_by_label(label)
-    except Exception:
-        return None
-
-
-async def resolve_by_name_claim(
-    agent_name: str,
-    session_key: str,
-    trajectory_signature: Optional[dict] = None,
-) -> Optional[Dict[str, Any]]:
-    """
-    PATH 2.5: Resolve identity by name claim.
-
-    If an agent provides its name, look up the existing identity by label
-    in PostgreSQL. If found, bind this session to that identity.
-    Optional trajectory verification prevents impersonation.
-    """
-    if not agent_name or len(agent_name) < 2:
-        return None
-
-    # Look up existing agent by label
-    agent_uuid = await _find_agent_by_label(agent_name)
-    if not agent_uuid:
-        logger.debug(f"[NAME_CLAIM] No agent found with label '{agent_name}'")
-        return None
-
-    # Optional: trajectory verification (anti-impersonation)
-    if trajectory_signature and isinstance(trajectory_signature, dict):
-        try:
-            from src.trajectory_identity import verify_trajectory_identity
-            verification = await verify_trajectory_identity(agent_uuid, trajectory_signature)
-            if verification and not verification.get("verified", True):
-                lineage_sim = verification.get("tiers", {}).get("lineage", {}).get("similarity", 1.0)
-                if lineage_sim < 0.6:
-                    logger.warning(
-                        f"[NAME_CLAIM] Trajectory mismatch for '{agent_name}' "
-                        f"(lineage={lineage_sim:.3f}) - rejecting claim"
-                    )
-                    return None
-        except Exception as e:
-            logger.debug(f"[NAME_CLAIM] Trajectory verification skipped: {e}")
-
-    # Fetch display metadata
-    agent_id = await _get_agent_id_from_metadata(agent_uuid) or agent_uuid
-    label = await _get_agent_label(agent_uuid) or agent_name
-
-    # Bind this session to the existing identity (Redis + PG)
-    await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
-    try:
-        db = get_db()
-        identity = await db.get_identity(agent_uuid)
-        if identity:
-            await db.create_session(
-                session_id=session_key,
-                identity_id=identity.identity_id,
-                expires_at=datetime.now() + timedelta(hours=GovernanceConfig.SESSION_TTL_HOURS),
-                client_type="mcp",
-                client_info={"agent_uuid": agent_uuid, "resumed_by_name": True}
-            )
-    except Exception as e:
-        logger.debug(f"[NAME_CLAIM] Session persist failed (non-fatal): {e}")
-
-    logger.info(f"[NAME_CLAIM] Resolved '{agent_name}' -> {agent_uuid[:8]}... via name claim")
-
-    return {
-        "agent_id": agent_id,
-        "agent_uuid": agent_uuid,
-        "display_name": label,
-        "label": label,
-        "created": False,
-        "persisted": True,
-        "source": "name_claim",
-        "resumed_by_name": True,
-    }
-
-
-async def _cache_session(session_key: str, agent_uuid: str, display_agent_id: str = None) -> None:
-    """Cache session→UUID mapping in Redis, with optional display agent_id."""
-    session_cache = _get_redis()
-    if session_cache:
-        try:
-            # Store both UUID and display agent_id if provided
-            if display_agent_id and display_agent_id != agent_uuid:
-                # Get raw Redis client for custom write
-                from src.cache.redis_client import get_redis
-                import json
-                from datetime import datetime, timezone
-                redis = await get_redis()
-                if redis:
-                    data = {
-                        "agent_id": agent_uuid,
-                        "display_agent_id": display_agent_id,
-                        "bound_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                    key = f"session:{session_key}"
-                    await redis.setex(key, GovernanceConfig.SESSION_TTL_SECONDS, json.dumps(data))
-                else:
-                    # Fallback to normal bind without display_agent_id
-                    await session_cache.bind(session_key, agent_uuid)
-            else:
-                await session_cache.bind(session_key, agent_uuid)
-        except Exception as e:
-            # WARNING level (v2.5.7): Cache failures can cause identity loss
-            logger.warning(f"Redis cache write failed for session {session_key[:20]}...: {e}")
-
-
-async def _agent_exists_in_postgres(agent_uuid: str) -> bool:
-    """Check if agent exists in PostgreSQL."""
-    try:
-        db = get_db()
-        identity = await db.get_identity(agent_uuid)
-        return identity is not None
-    except Exception:
-        return False
-
-
-# =============================================================================
-# LAZY CREATION HELPERS (v2.4.1+)
-# =============================================================================
-
-async def ensure_agent_persisted(
-    agent_uuid: str,
-    session_key: str,
-    *,
-    parent_agent_id: Optional[str] = None,
-    spawn_reason: Optional[str] = None,
-    thread_id: Optional[str] = None,
-    thread_position: Optional[int] = None,
-) -> bool:
-    """
-    Persist agent to PostgreSQL if not already persisted.
-
-    Call this from write operations (process_agent_update, identity(name=...))
-    to ensure the agent exists before recording state.
-
-    Args:
-        agent_uuid: The agent's UUID (from resolve_session_identity)
-        session_key: The session key for session binding
-        parent_agent_id: UUID of parent agent (for thread/fork lineage)
-        spawn_reason: Why this fork was created
-        thread_id: Thread this agent belongs to
-        thread_position: Node position within thread
-
-    Returns:
-        True if newly persisted, False if already existed
-    """
-    try:
-        db = get_db()
-        # Note: db.init() is called once at startup (mcp_server.py:1306).
-        # Do NOT call it here — it was creating a new connection pool on every request.
-
-        # Check if already persisted
-        identity = await db.get_identity(agent_uuid)
-        if identity:
-            return False  # Already persisted
-
-        # Persist now
-        await db.upsert_agent(
-            agent_id=agent_uuid,
-            api_key="",
-            status="active",
-            parent_agent_id=parent_agent_id,
-            spawn_reason=spawn_reason,
-            thread_id=thread_id,
-            thread_position=thread_position,
-        )
-
-        await db.upsert_identity(
-            agent_id=agent_uuid,
-            api_key_hash="",
-            parent_agent_id=parent_agent_id,
-            metadata={
-                "source": "lazy_creation",
-                "created_at": datetime.now().isoformat(),
-                "total_updates": 0,  # Initialize counter for persistence
-                "thread_id": thread_id,
-                "thread_position": thread_position,
-                "node_index": thread_position,  # AgentMetadata uses node_index
-            }
-        )
-
-        # Create session binding
-        identity = await db.get_identity(agent_uuid)
-        if identity:
-            await db.create_session(
-                session_id=session_key,
-                identity_id=identity.identity_id,
-                expires_at=datetime.now() + timedelta(hours=GovernanceConfig.SESSION_TTL_HOURS),
-                client_type="mcp",
-                client_info={"agent_id": agent_uuid, "lazy_created": True}
-            )
-
-        logger.info(f"Lazy-persisted agent on first work: {agent_uuid[:8]}...")
-        return True
-
-    except Exception as e:
-        logger.warning(f"Failed to persist agent: {e}")
-        return False
-
-
-# =============================================================================
 # TOOL HANDLER (replaces identity() tool)
 # =============================================================================
 
@@ -965,8 +107,8 @@ async def handle_identity_v2(
     identity() tool handler - simplified.
 
     Usage:
-        identity()              → Returns your UUID and label (lazy, not persisted)
-        identity(name="X")      → Sets your label to X, returns UUID (persists agent)
+        identity()              -> Returns your UUID and label (lazy, not persisted)
+        identity(name="X")      -> Sets your label to X, returns UUID (persists agent)
 
     This tool does NOT look up other agents. Use get_agent_metadata for that.
     """
@@ -1037,210 +179,10 @@ async def handle_identity_v2(
 # DECORATOR-COMPATIBLE ADAPTER
 # =============================================================================
 
-from typing import Sequence
-from mcp.types import TextContent
-from .decorators import mcp_tool
-from .utils import success_response
-import os
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
-
-async def derive_session_key(
-    signals: "Optional[SessionSignals]" = None,
-    arguments: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Single source of truth for session key derivation.
-
-    Priority (highest to lowest):
-    1. arguments["client_session_id"]  — explicit from caller
-    2. MCP protocol session ID         — stable, no pin needed
-    3. Explicit HTTP session header     — stable, no pin needed
-    4. OAuth client identity            — stable, no pin needed
-    5. Explicit client ID header        — stable-ish
-    6. IP:UA fingerprint + pin lookup   — unstable, needs pin
-    7. Contextvars fallback             — backward compat (remove once all callers pass signals)
-    8. stdio fallback                   — single-user / Claude Desktop
-    """
-    from .context import SessionSignals  # type hint import
-
-    arguments = arguments or {}
-
-    # 1. Explicit from arguments (highest priority)
-    if arguments.get("client_session_id"):
-        return str(arguments["client_session_id"])
-
-    # 2. MCP protocol session ID (stable, no pin needed)
-    if signals and signals.mcp_session_id:
-        return f"mcp:{signals.mcp_session_id}"
-
-    # 3. Explicit HTTP session header (stable, no pin needed)
-    if signals and signals.x_session_id:
-        return signals.x_session_id
-
-    # 4. OAuth client identity (stable, no pin needed)
-    if signals and signals.oauth_client_id:
-        return signals.oauth_client_id
-
-    # 5. Explicit client ID header
-    if signals and signals.x_client_id:
-        return signals.x_client_id
-
-    # 6. IP:UA fingerprint with integrated pin lookup
-    if signals and signals.ip_ua_fingerprint:
-        base_fp = _extract_base_fingerprint(signals.ip_ua_fingerprint)
-        if base_fp:
-            pinned = await lookup_onboard_pin(base_fp)
-            if pinned:
-                return pinned
-        return signals.ip_ua_fingerprint
-
-    # 7. Fallback: contextvars (for callers without signals)
-    # Backward compat — remove once all callers pass signals
-    try:
-        from .context import get_mcp_session_id, get_context_session_key
-        mcp_sid = get_mcp_session_id()
-        if mcp_sid:
-            return f"mcp:{mcp_sid}"
-        ctx_key = get_context_session_key()
-        if ctx_key:
-            return str(ctx_key)
-    except Exception:
-        pass
-
-    # 8. stdio fallback
-    return f"stdio:{os.getpid()}"
-
-
-def _extract_base_fingerprint(session_key: str) -> Optional[str]:
-    """Extract stable base fingerprint from a session key.
-
-    For HTTP transports, session keys follow the pattern IP:UA_hash or
-    IP:UA_hash:random_suffix. Claude.ai's proxy pool rotates IPs per
-    request, so we pin by UA_hash ONLY — the UA string is stable across
-    requests from the same conversation/model.
-
-    Returns None for keys that already provide stable identity (mcp:*,
-    stdio:*, agent-*) since those don't need onboard pinning.
-    """
-    if not session_key:
-        return None
-    # Keys with stable identity don't need pinning
-    if session_key.startswith(("mcp:", "stdio:", "agent-", "oauth:")):
-        logger.debug(f"[ONBOARD_PIN] Skipping stable key: {session_key[:30]}...")
-        return None
-    # Pattern: IP:UA_hash or IP:UA_hash:random_suffix or IP:UA_hash:model_hint
-    # Pin by UA_hash only (parts[1]) — IP rotates across Claude.ai proxy pool
-    parts = session_key.split(":")
-    if len(parts) >= 2:
-        ua_hash = parts[1]
-        logger.debug(f"[ONBOARD_PIN] extract_fp: raw={session_key!r} ({len(parts)} parts) -> ua_hash={ua_hash!r}")
-        return f"ua:{ua_hash}"
-    # Single-part key (unusual) — return as-is
-    logger.debug(f"[ONBOARD_PIN] extract_fp: raw={session_key!r} (single part) -> as-is")
-    return session_key
-
-
-def ua_hash_from_header(user_agent: str) -> Optional[str]:
-    """Compute the canonical UA hash from a raw User-Agent string.
-
-    This is the SINGLE SOURCE OF TRUTH for UA hash computation.
-    Both REST and MCP paths must use this to ensure pin keys match.
-
-    Returns: "ua:{md5_prefix}" or None if no user_agent.
-    """
-    if not user_agent:
-        return None
-    import hashlib
-    ua_hash = hashlib.md5(user_agent.encode()).hexdigest()[:6]
-    return f"ua:{ua_hash}"
-
-
-_PIN_TTL = 1800  # 30 minutes — refresh on use
-
-
-async def lookup_onboard_pin(base_fingerprint: str, *, refresh_ttl: bool = True) -> Optional[str]:
-    """Look up a pinned client_session_id from a recent onboard.
-
-    Shared by REST path (_extract_client_session_id) and MCP dispatcher
-    (dispatch_tool) to eliminate duplication and divergence risk.
-
-    Args:
-        base_fingerprint: Output of _extract_base_fingerprint() or ua_hash_from_header(),
-                          e.g. "ua:d20c2f"
-        refresh_ttl: Whether to extend the pin's TTL on successful lookup (default True)
-
-    Returns: The pinned client_session_id, or None.
-    """
-    if not base_fingerprint:
-        return None
-    try:
-        from src.cache.redis_client import get_redis
-        import json as _json
-        raw_redis = await get_redis()
-        if not raw_redis:
-            return None
-        pin_key = f"recent_onboard:{base_fingerprint}"
-        pin_data = await raw_redis.get(pin_key)
-        if not pin_data:
-            logger.debug(f"[ONBOARD_PIN] No pin at {pin_key}")
-            return None
-        pin = _json.loads(pin_data if isinstance(pin_data, str) else pin_data.decode())
-        pinned_session_id = pin.get("client_session_id")
-        if pinned_session_id and refresh_ttl:
-            await raw_redis.expire(pin_key, _PIN_TTL)
-        return pinned_session_id
-    except Exception as e:
-        logger.debug(f"[ONBOARD_PIN] Pin lookup failed: {e}")
-        return None
-
-
-async def set_onboard_pin(base_fingerprint: str, agent_uuid: str, client_session_id: str) -> bool:
-    """Set a pin mapping a transport fingerprint to an onboarded agent.
-
-    Called by handle_onboard_v2() after successful onboard.
-
-    Args:
-        base_fingerprint: Output of _extract_base_fingerprint(), e.g. "ua:d20c2f"
-        agent_uuid: The newly onboarded agent's UUID
-        client_session_id: The stable session ID to inject on subsequent calls
-
-    Returns: True if the pin was set successfully.
-    """
-    if not base_fingerprint:
-        logger.debug("[ONBOARD_PIN] No fingerprint — skip pin-set")
-        return False
-    try:
-        from src.cache.redis_client import get_redis
-        import json as _json
-        raw_redis = await get_redis()
-        if not raw_redis:
-            logger.warning("[ONBOARD_PIN] Redis not available for pin-setting")
-            return False
-        pin_key = f"recent_onboard:{base_fingerprint}"
-        pin_data = _json.dumps({
-            "agent_uuid": agent_uuid,
-            "client_session_id": client_session_id,
-        })
-        await raw_redis.setex(pin_key, _PIN_TTL, pin_data)
-        logger.info(f"[ONBOARD_PIN] Set {pin_key} -> {agent_uuid[:8]}...")
-        return True
-    except Exception as e:
-        logger.warning(f"[ONBOARD_PIN] Could not set pin: {e}")
-        return False
-
-
 @mcp_tool("identity", timeout=10.0)
 async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
-    🪞 IDENTITY - Who am I? Auto-creates identity if first call.
+    IDENTITY - Who am I? Auto-creates identity if first call.
 
     Simplified v2 implementation with 3 paths:
     - Redis cache (fast)
@@ -1397,10 +339,10 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     # Format response - four-tier identity (v2.5.2)
     final_agent_id = agent_id or structured_id or agent_uuid
     user_name = result.get("label")
-    
+
     # Derive client_session_id for session continuity
     client_session_id = base_session_key
-    
+
     response_data = {
         "uuid": agent_uuid,
         "agent_id": final_agent_id,
@@ -1409,9 +351,8 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     }
     if model_type:
         response_data["model_type"] = model_type
-    
+
     # UX ENHANCEMENT: Comprehensive identity summary (all fields in one place)
-    # This consolidates all identity-related fields to reduce confusion
     response_data["identity_summary"] = {
         "uuid": {
             "value": agent_uuid,
@@ -1436,7 +377,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
             "critical": True
         }
     }
-    
+
     # Add quick reference for common use cases
     response_data["quick_reference"] = {
         "for_knowledge_graph": user_name or final_agent_id,
@@ -1444,7 +385,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         "for_internal_lookup": agent_uuid,
         "to_set_display_name": "identity(name='YourName')"
     }
-    
+
     # Session continuity guidance (if not already set)
     if not result.get("session_continuity"):
         response_data["session_continuity"] = {
@@ -1463,7 +404,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
 @mcp_tool("onboard", timeout=15.0)
 async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
-    🚀 ONBOARD - Single entry point for new agents.
+    ONBOARD - Single entry point for new agents.
 
     This is THE portal tool. Call it first, get back everything you need:
     - Your identity (auto-created)
@@ -1472,6 +413,8 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     Returns a "toolcard" payload with next_calls array.
     """
+    from .shared import get_mcp_server
+
     # DEBUG: Log entry
     logger.debug(f"[SESSION_DEBUG] onboard() entry: args_keys={list(arguments.keys()) if arguments else []}")
 
@@ -1513,7 +456,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     # Extract resume flag early (before checking existing identity)
     resume = arguments.get("resume", False)
-    
+
     # STEP 1: Check if an identity already exists for this session (base key)
     # This prevents forking when model_type is passed for an existing agent
     # Skip this check if force_new is requested
@@ -1712,7 +655,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                     "confidence": sig.identity_confidence,
                     "observations": sig.observation_count,
                 }
-                logger.info(f"[TRAJECTORY] Stored genesis Σ₀ for {agent_uuid[:8]}... at onboard")
+                logger.info(f"[TRAJECTORY] Stored genesis for {agent_uuid[:8]}... at onboard")
         except Exception as e:
             logger.debug(f"[TRAJECTORY] Could not store genesis at onboard: {e}")
             # Non-blocking - trajectory is optional
@@ -1726,7 +669,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     # This allows future calls using stable_session_id to find the agent
     # even if the transport session key changes
     await _cache_session(stable_session_id, agent_uuid, display_agent_id=agent_id)
-    
+
     # Also register in O(1) prefix index (legacy support)
     try:
         from .identity_shared import _register_uuid_prefix
@@ -1746,7 +689,64 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     except Exception as e:
         logger.warning(f"[ONBOARD_PIN] Could not set pin: {e}")
 
-    # STEP 5: Build toolcard payload
+    # STEP 5: Build thread context (async — must happen before sync helper)
+    thread_context = None
+    try:
+        db = get_db()
+        thread_info = await db.get_agent_thread_info(agent_uuid)
+        if thread_info and thread_info.get("thread_id"):
+            _tid = thread_info["thread_id"]
+            all_nodes = await db.get_thread_nodes(_tid)
+            from src.thread_identity import build_fork_context
+            thread_context = build_fork_context(
+                agent_uuid=agent_uuid,
+                thread_id=_tid,
+                nodes=all_nodes,
+                spawn_reason=_spawn_reason,
+            )
+    except Exception as e:
+        logger.debug(f"[THREAD] Could not build thread context: {e}")
+
+    # STEP 6: Build response
+    result = _build_onboard_response(
+        agent_uuid=agent_uuid,
+        agent_id=agent_id,
+        agent_label=agent_label,
+        stable_session_id=stable_session_id,
+        is_new=is_new,
+        force_new=force_new,
+        client_hint=client_hint,
+        _was_archived=_was_archived,
+        trajectory_result=trajectory_result,
+        _parent_agent_id=_parent_agent_id,
+        _spawn_reason=_spawn_reason,
+        thread_context=thread_context,
+    )
+
+    logger.info(f"[ONBOARD] Agent {agent_uuid[:8]}... onboarded (is_new={is_new}, label={agent_label})")
+
+    # Use lite_response to skip redundant signature
+    arguments["lite_response"] = True
+    return success_response(result, agent_id=agent_uuid, arguments=arguments)
+
+
+def _build_onboard_response(
+    *,
+    agent_uuid: str,
+    agent_id: str,
+    agent_label: Optional[str],
+    stable_session_id: str,
+    is_new: bool,
+    force_new: bool,
+    client_hint: str,
+    _was_archived: bool,
+    trajectory_result: Optional[dict],
+    _parent_agent_id: Optional[str],
+    _spawn_reason: Optional[str],
+    thread_context: Optional[dict] = None,
+) -> dict:
+    """Build the onboard response payload (templates, tips, welcome, thread context)."""
+
     next_calls = [
         {
             "tool": "process_agent_update",
@@ -1788,14 +788,13 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     # Client-specific tips
     client_tips = {
-        "chatgpt": "⚠️ ChatGPT loses session state. ALWAYS include client_session_id in every call.",
+        "chatgpt": "ChatGPT loses session state. ALWAYS include client_session_id in every call.",
         "cursor": "Cursor maintains sessions well. client_session_id optional but recommended.",
         "claude_desktop": "Claude Desktop has stable sessions. client_session_id optional.",
         "unknown": "For best session continuity, include client_session_id in all tool calls."
     }
 
-    # Get structured_id - USE agent_id from resolve_session_identity (properly generated with model_type)
-    # Only fall back to metadata lookup if agent_id was not properly set
+    # Get structured_id
     structured_id = agent_id if agent_id and agent_id != agent_uuid else None
     if not structured_id:
         try:
@@ -1805,33 +804,12 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         except Exception:
             pass
 
-    # Determine friendly name - final fallback to UUID-based if nothing else
+    # Determine friendly name
     if not structured_id:
         structured_id = f"agent_{agent_uuid[:8]}"
     friendly_name = agent_label or structured_id
 
-    # THREAD CONTEXT: Build fork-aware context for response (non-blocking)
-    thread_context = None
-    try:
-        db = get_db()
-        thread_info = await db.get_agent_thread_info(agent_uuid)
-        if thread_info and thread_info.get("thread_id"):
-            _tid = thread_info["thread_id"]
-            all_nodes = await db.get_thread_nodes(_tid)
-
-            from src.thread_identity import build_fork_context
-            thread_context = build_fork_context(
-                thread_id=_tid,
-                position=thread_info.get("thread_position", 1),
-                parent_uuid=thread_info.get("parent_agent_id") or _parent_agent_id,
-                spawn_reason=thread_info.get("spawn_reason") or _spawn_reason or "new_session",
-                all_nodes=all_nodes,
-            )
-    except Exception as e:
-        logger.debug(f"[THREAD] Could not build thread context: {e}")
-
     # Welcome message — embed session ID directly in welcome so agents can't miss it
-    # Honest forking: if thread context exists, use it for legible discontinuity
     if thread_context:
         if thread_context["is_root"]:
             welcome = (
@@ -1939,11 +917,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             "reason": "Genesis stored at onboard. Identity will mature with behavioral consistency.",
         }
 
-    logger.info(f"[ONBOARD] Agent {agent_uuid[:8]}... onboarded (is_new={is_new}, label={agent_label})")
-
-    # Use lite_response to skip redundant signature
-    arguments["lite_response"] = True
-    return success_response(result, agent_id=agent_uuid, arguments=arguments)
+    return result
 
 
 # =============================================================================
@@ -1953,7 +927,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 @mcp_tool("verify_trajectory_identity", timeout=10.0)
 async def handle_verify_trajectory_identity(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
-    🔬 VERIFY_TRAJECTORY_IDENTITY - Two-tier identity verification via trajectory signature.
+    VERIFY_TRAJECTORY_IDENTITY - Two-tier identity verification via trajectory signature.
 
     Verifies agent identity using the Trajectory Identity framework:
     - Tier 1 (Coherence): Compare to recent signature (short-term consistency)
@@ -2013,7 +987,7 @@ async def handle_verify_trajectory_identity(arguments: Dict[str, Any]) -> Sequen
 @mcp_tool("get_trajectory_status", timeout=10.0)
 async def handle_get_trajectory_status(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
-    📊 GET_TRAJECTORY_STATUS - Check trajectory identity status for an agent.
+    GET_TRAJECTORY_STATUS - Check trajectory identity status for an agent.
 
     Returns information about the agent's trajectory identity including:
     - Whether genesis signature exists

@@ -110,9 +110,9 @@ class TestResolveSessionIdentityAgentId:
         today = datetime.now().strftime("%Y%m%d")
 
         # Mock Redis and DB to force PATH 3 (new agent)
-        with patch('src.mcp_handlers.identity_v2._get_redis') as mock_redis, \
-             patch('src.mcp_handlers.identity_v2.get_db') as mock_db, \
-             patch('src.mcp_handlers.identity_v2._cache_session', new_callable=AsyncMock):
+        with patch('src.mcp_handlers.identity_resolution._get_redis') as mock_redis, \
+             patch('src.mcp_handlers.identity_resolution.get_db') as mock_db, \
+             patch('src.mcp_handlers.identity_resolution._cache_session', new_callable=AsyncMock):
 
             # Redis returns no cached session
             mock_redis.return_value = None
@@ -139,9 +139,9 @@ class TestResolveSessionIdentityAgentId:
 
         today = datetime.now().strftime("%Y%m%d")
 
-        with patch('src.mcp_handlers.identity_v2._get_redis') as mock_redis, \
-             patch('src.mcp_handlers.identity_v2.get_db') as mock_db, \
-             patch('src.mcp_handlers.identity_v2._cache_session', new_callable=AsyncMock):
+        with patch('src.mcp_handlers.identity_resolution._get_redis') as mock_redis, \
+             patch('src.mcp_handlers.identity_resolution.get_db') as mock_db, \
+             patch('src.mcp_handlers.identity_resolution._cache_session', new_callable=AsyncMock):
 
             mock_redis.return_value = None
             mock_db_instance = MagicMock()
