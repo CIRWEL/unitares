@@ -110,14 +110,14 @@ class TestLoadVersion:
         from src.agent_state import _load_version
         version_file = tmp_path / "VERSION"
         version_file.write_text("3.1.4\n")
-        with patch("src.agent_state.project_root", tmp_path):
+        with patch("src.agent_metadata_model.project_root", tmp_path):
             result = _load_version()
         assert result == "3.1.4"
 
     def test_fallback_when_file_missing(self, tmp_path):
         from src.agent_state import _load_version
         from src.versioning import DEFAULT_VERSION_FALLBACK
-        with patch("src.agent_state.project_root", tmp_path):
+        with patch("src.agent_metadata_model.project_root", tmp_path):
             result = _load_version()
         assert result == DEFAULT_VERSION_FALLBACK
 
@@ -125,7 +125,7 @@ class TestLoadVersion:
         from src.agent_state import _load_version
         version_file = tmp_path / "VERSION"
         version_file.write_text("  2.8.0  \n")
-        with patch("src.agent_state.project_root", tmp_path):
+        with patch("src.agent_metadata_model.project_root", tmp_path):
             result = _load_version()
         assert result == "2.8.0"
 
@@ -859,29 +859,29 @@ class TestResolveMetadataBackend:
 
     def test_json_returns_json(self):
         from src.agent_state import _resolve_metadata_backend
-        with patch("src.agent_state._metadata_backend_resolved", None):
-            with patch("src.agent_state.UNITARES_METADATA_BACKEND", "json"):
+        with patch("src.agent_metadata_persistence._metadata_backend_resolved", None):
+            with patch("src.agent_metadata_persistence.UNITARES_METADATA_BACKEND", "json"):
                 result = _resolve_metadata_backend()
                 assert result == "json"
 
     def test_postgres_returns_postgres(self):
         from src.agent_state import _resolve_metadata_backend
-        with patch("src.agent_state._metadata_backend_resolved", None):
-            with patch("src.agent_state.UNITARES_METADATA_BACKEND", "postgres"):
+        with patch("src.agent_metadata_persistence._metadata_backend_resolved", None):
+            with patch("src.agent_metadata_persistence.UNITARES_METADATA_BACKEND", "postgres"):
                 result = _resolve_metadata_backend()
                 assert result == "postgres"
 
     def test_auto_returns_postgres(self):
         from src.agent_state import _resolve_metadata_backend
-        with patch("src.agent_state._metadata_backend_resolved", None):
-            with patch("src.agent_state.UNITARES_METADATA_BACKEND", "auto"):
+        with patch("src.agent_metadata_persistence._metadata_backend_resolved", None):
+            with patch("src.agent_metadata_persistence.UNITARES_METADATA_BACKEND", "auto"):
                 result = _resolve_metadata_backend()
                 assert result == "postgres"
 
     def test_cached_result_returned(self):
         """Once resolved, should return cached result without re-computing."""
         from src.agent_state import _resolve_metadata_backend
-        with patch("src.agent_state._metadata_backend_resolved", "cached_value"):
+        with patch("src.agent_metadata_persistence._metadata_backend_resolved", "cached_value"):
             result = _resolve_metadata_backend()
             assert result == "cached_value"
 
@@ -1144,7 +1144,7 @@ class TestGetStateFile:
 
     def test_returns_agents_subdir_path(self, tmp_path):
         from src.agent_state import get_state_file
-        with patch("src.agent_state.project_root", tmp_path):
+        with patch("src.agent_monitor_state.project_root", tmp_path):
             agents_dir = tmp_path / "data" / "agents"
             agents_dir.mkdir(parents=True, exist_ok=True)
             result = get_state_file("my_agent")
@@ -1152,7 +1152,7 @@ class TestGetStateFile:
 
     def test_migrates_from_old_path(self, tmp_path):
         from src.agent_state import get_state_file
-        with patch("src.agent_state.project_root", tmp_path):
+        with patch("src.agent_monitor_state.project_root", tmp_path):
             data_dir = tmp_path / "data"
             data_dir.mkdir(parents=True, exist_ok=True)
             agents_dir = data_dir / "agents"
@@ -1472,7 +1472,7 @@ class TestResourceHandlers:
         skill_file = skill_dir / "SKILL.md"
         skill_file.write_text("# Test Skill Content")
         # Patch both agent_state (canonical) and mcp_server_std (local binding)
-        with patch("src.agent_state.project_root", tmp_path), \
+        with patch("src.agent_metadata_model.project_root", tmp_path), \
              patch("src.mcp_server_std.project_root", tmp_path):
             content = await read_resource("unitares://skill")
             assert "Test Skill Content" in content
@@ -1480,7 +1480,7 @@ class TestResourceHandlers:
     @pytest.mark.asyncio
     async def test_read_resource_skill_not_found(self, tmp_path):
         from src.mcp_server_std import read_resource
-        with patch("src.agent_state.project_root", tmp_path), \
+        with patch("src.agent_metadata_model.project_root", tmp_path), \
              patch("src.mcp_server_std.project_root", tmp_path):
             content = await read_resource("unitares://skill")
             assert "SKILL.md not found" in content
@@ -1500,14 +1500,14 @@ class TestSignalHandler:
     """Tests for graceful shutdown signal handling."""
 
     def test_signal_handler_sets_flag(self):
-        import src.agent_state as state
-        original = state._shutdown_requested
+        import src.agent_process_mgmt as pm
+        original = pm._shutdown_requested
         try:
-            state._shutdown_requested = False
-            state.signal_handler(None, None)
-            assert state._shutdown_requested is True
+            pm._shutdown_requested = False
+            pm.signal_handler(None, None)
+            assert pm._shutdown_requested is True
         finally:
-            state._shutdown_requested = original
+            pm._shutdown_requested = original
 
 
 # ============================================================================
@@ -1518,30 +1518,30 @@ class TestPidFile:
     """Tests for PID file management."""
 
     def test_write_and_remove_pid_file(self, tmp_path):
-        import src.agent_state as state
+        import src.agent_process_mgmt as pm
         pid_file = tmp_path / ".mcp_server.pid"
-        original_pid_file = state.PID_FILE
+        original_pid_file = pm.PID_FILE
         try:
-            state.PID_FILE = pid_file
-            state.write_pid_file()
+            pm.PID_FILE = pid_file
+            pm.write_pid_file()
             assert pid_file.exists()
             content = pid_file.read_text().strip()
             assert content == str(os.getpid())
-            state.remove_pid_file()
+            pm.remove_pid_file()
             assert not pid_file.exists()
         finally:
-            state.PID_FILE = original_pid_file
+            pm.PID_FILE = original_pid_file
 
     def test_remove_nonexistent_pid_file(self, tmp_path):
-        import src.agent_state as state
+        import src.agent_process_mgmt as pm
         pid_file = tmp_path / ".mcp_server.pid"
-        original_pid_file = state.PID_FILE
+        original_pid_file = pm.PID_FILE
         try:
-            state.PID_FILE = pid_file
+            pm.PID_FILE = pid_file
             # Should not raise
-            state.remove_pid_file()
+            pm.remove_pid_file()
         finally:
-            state.PID_FILE = original_pid_file
+            pm.PID_FILE = original_pid_file
 
 
 # ============================================================================

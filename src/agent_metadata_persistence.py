@@ -1,0 +1,369 @@
+"""
+Agent metadata persistence.
+
+Loading/saving metadata from PostgreSQL, JSON snapshots, cache management.
+"""
+
+from __future__ import annotations
+
+import os
+import json
+import time
+import fcntl
+import asyncio
+import threading
+from pathlib import Path
+from datetime import datetime
+
+from src.logging_utils import get_logger
+from src.agent_metadata_model import (
+    project_root,
+    AgentMetadata,
+    agent_metadata,
+    _metadata_loading_lock,
+    _metadata_cache_state,
+    _metadata_loaded_event,
+)
+# Use module import for patchable access to loading flags
+from src import agent_metadata_model as _model
+
+logger = get_logger(__name__)
+
+# Path to metadata file
+METADATA_FILE = Path(project_root) / "data" / "agent_metadata.json"
+
+# Metadata backend configuration
+UNITARES_METADATA_BACKEND = os.getenv("UNITARES_METADATA_BACKEND", "postgres").strip().lower()
+UNITARES_METADATA_WRITE_JSON_SNAPSHOT = os.getenv("UNITARES_METADATA_WRITE_JSON_SNAPSHOT", "0").strip().lower() in (
+    "1", "true", "yes",
+)
+
+_metadata_backend_resolved: str | None = None
+
+
+def _resolve_metadata_backend() -> str:
+    """
+    Resolve metadata backend.
+
+    - json: always use METADATA_FILE (legacy)
+    - postgres: use PostgreSQL (default)
+    - auto: use PostgreSQL
+    """
+    global _metadata_backend_resolved
+    if _metadata_backend_resolved:
+        return _metadata_backend_resolved
+
+    backend = UNITARES_METADATA_BACKEND
+    if backend == "json":
+        _metadata_backend_resolved = backend
+        return backend
+
+    _metadata_backend_resolved = "postgres"
+    return _metadata_backend_resolved
+
+
+def _write_metadata_snapshot_json_sync() -> None:
+    """Write JSON snapshot of in-memory agent_metadata for backward compatibility."""
+    if not UNITARES_METADATA_WRITE_JSON_SNAPSHOT:
+        return
+    METADATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    metadata_lock_file = METADATA_FILE.parent / ".metadata.lock"
+    lock_fd = os.open(str(metadata_lock_file), os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        snapshot = {aid: meta.to_dict() for aid, meta in agent_metadata.items() if isinstance(meta, AgentMetadata)}
+        with open(METADATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(snapshot, f, indent=2, ensure_ascii=False)
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        except Exception:
+            pass
+        os.close(lock_fd)
+
+
+async def _load_metadata_from_postgres_async() -> dict:
+    """
+    Load agent metadata from PostgreSQL into AgentMetadata dict.
+
+    PostgreSQL-native loading path for agent metadata.
+    Returns dict of agent_id -> AgentMetadata.
+    """
+    from src import agent_storage
+
+    agents = await agent_storage.list_agents(
+        limit=10000,
+        include_archived=True,
+        include_deleted=False,
+    )
+
+    result = {}
+    now = datetime.now().isoformat()
+
+    metadata_cache = None
+    try:
+        from src.cache import get_metadata_cache
+        metadata_cache = get_metadata_cache()
+    except Exception:
+        pass
+
+    for agent in agents:
+        meta = AgentMetadata(
+            agent_id=agent.agent_id,
+            status=agent.status or "active",
+            created_at=agent.created_at.isoformat() if agent.created_at else now,
+            last_update=(agent.last_activity_at or agent.updated_at).isoformat() if (agent.last_activity_at or agent.updated_at) else now,
+            tags=agent.tags or [],
+            notes=agent.notes or "",
+            purpose=agent.purpose,
+            parent_agent_id=agent.parent_agent_id,
+            spawn_reason=agent.spawn_reason,
+            health_status=agent.health_status or "unknown",
+            api_key=agent.metadata.get("api_key", ""),
+            agent_uuid=agent.metadata.get("agent_uuid"),
+            label=agent.metadata.get("label"),
+            structured_id=agent.metadata.get("structured_id"),
+            preferences=agent.metadata.get("preferences", {}),
+            active_session_key=agent.metadata.get("active_session_key"),
+            session_bound_at=agent.metadata.get("session_bound_at"),
+            thread_id=agent.metadata.get("thread_id", None),
+            node_index=agent.metadata.get("node_index", 1),
+            dialectic_conditions=agent.metadata.get("dialectic_conditions", []),
+            lifecycle_events=agent.metadata.get("lifecycle_events", []),
+            recent_update_timestamps=agent.metadata.get("recent_update_timestamps", []),
+            recent_decisions=agent.metadata.get("recent_decisions", []),
+            total_updates=agent.metadata.get("total_updates", 0),
+        )
+        result[agent.agent_id] = meta
+
+        if metadata_cache:
+            try:
+                await metadata_cache.set(agent.agent_id, meta.to_dict(), ttl=300)
+            except Exception as e:
+                logger.debug(f"Failed to cache metadata for {agent.agent_id[:8]}...: {e}")
+
+    # Batch-load trust tiers
+    try:
+        from src.trajectory_identity import compute_trust_tier
+        from src.db import get_db
+        db = get_db()
+        agent_ids = list(result.keys())
+        identities = await db.get_identities_batch(agent_ids)
+        if not isinstance(identities, dict):
+            logger.debug(
+                "Batch trust tier load expected dict from get_identities_batch, got %s",
+                type(identities).__name__,
+            )
+            identities = {}
+        for aid, identity in identities.items():
+            if identity and identity.metadata and "trajectory_current" in identity.metadata:
+                tier_info = compute_trust_tier(identity.metadata)
+                result[aid].trust_tier = tier_info.get("name", "unknown")
+                result[aid].trust_tier_num = tier_info.get("tier", 0)
+    except Exception as e:
+        logger.debug(f"Batch trust tier load skipped: {e}")
+
+    return result
+
+
+def _parse_metadata_dict(data: dict) -> dict:
+    """
+    Helper function to parse metadata dictionary and create AgentMetadata objects.
+    Handles missing fields and validation.
+    """
+    from dataclasses import fields as dataclass_fields
+    allowed_fields = {f.name for f in dataclass_fields(AgentMetadata)}
+
+    parsed_metadata = {}
+    for agent_id, meta in data.items():
+        if not isinstance(meta, dict):
+            logger.warning(f"Metadata for {agent_id} is not a dict (type: {type(meta).__name__}), skipping")
+            continue
+
+        meta = {k: v for k, v in meta.items() if k in allowed_fields}
+
+        defaults = {
+            "parent_agent_id": None,
+            "spawn_reason": None,
+            "thread_id": None,
+            "node_index": 1,
+            "recent_update_timestamps": None,
+            "recent_decisions": None,
+            "loop_detected_at": None,
+            "loop_cooldown_until": None,
+            "recovery_attempt_at": None,
+            "last_response_at": None,
+            "response_completed": False,
+            "health_status": "unknown",
+            "dialectic_conditions": None,
+        }
+        for key, default_value in defaults.items():
+            if key not in meta:
+                meta[key] = default_value
+
+        try:
+            parsed_metadata[agent_id] = AgentMetadata(**meta)
+        except (TypeError, KeyError) as e:
+            logger.warning(f"Could not create AgentMetadata for {agent_id}: {e}", exc_info=True)
+            continue
+
+    return parsed_metadata
+
+
+def _acquire_metadata_read_lock(timeout: float = 2.0) -> tuple[int, bool]:
+    """
+    Helper function to acquire shared lock for metadata reads.
+
+    Returns:
+        Tuple of (lock_fd, lock_acquired)
+    """
+    metadata_lock_file = METADATA_FILE.parent / ".metadata.lock"
+    lock_fd = os.open(str(metadata_lock_file), os.O_CREAT | os.O_RDWR)
+    lock_acquired = False
+    start_time = time.time()
+
+    try:
+        while time.time() - start_time < timeout:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                lock_acquired = True
+                break
+            except IOError:
+                time.sleep(0.05)
+
+        if not lock_acquired:
+            logger.warning(f"Metadata lock timeout ({timeout}s) for read, reading without lock")
+    except Exception:
+        lock_acquired = False
+
+    return lock_fd, lock_acquired
+
+
+async def load_metadata_async(force: bool = False) -> None:
+    """
+    Async version of load_metadata() for use in async contexts.
+
+    Directly calls the async PostgreSQL loader without sync wrappers.
+    Set force=True to reload from DB even if already loaded.
+    """
+    # Fast path: already loaded (unless forced)
+    if _model._metadata_loaded and not force:
+        return
+
+    try:
+        result = await _load_metadata_from_postgres_async()
+        # CRITICAL: Use .clear()/.update() to preserve the dict reference
+        # across all modules that imported agent_metadata.
+        agent_metadata.clear()
+        agent_metadata.update(result)
+        _metadata_cache_state["last_load_time"] = time.time()
+        _metadata_cache_state["dirty"] = False
+        _model._metadata_loaded = True
+        _metadata_loaded_event.set()
+        logger.debug(f"Loaded {len(agent_metadata)} agents from PostgreSQL (async)")
+    except Exception as e:
+        logger.error(f"Could not load metadata from PostgreSQL: {e}", exc_info=True)
+        _metadata_loaded_event.set()
+        raise
+
+
+def ensure_metadata_loaded() -> None:
+    """
+    Ensure metadata is loaded (lazy load if needed).
+
+    Schedules async load if needed, then blocks (up to 5s) until complete.
+    Thread-safe.
+    """
+    if _model._metadata_loaded:
+        return
+
+    with _metadata_loading_lock:
+        if _model._metadata_loaded:
+            return
+
+        if _model._metadata_loading:
+            pass
+        else:
+            _model._metadata_loading = True
+            _metadata_loaded_event.clear()
+
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.run_coroutine_threadsafe(load_metadata_async(), loop)
+                logger.info("Scheduled async metadata load from ensure_metadata_loaded()")
+            except RuntimeError:
+                logger.warning("No running event loop for metadata load — metadata will be empty until async load completes")
+                _model._metadata_loading = False
+                return
+
+    if not _model._metadata_loaded:
+        if _metadata_loaded_event.wait(timeout=5.0):
+            logger.debug("ensure_metadata_loaded: async load completed")
+        else:
+            logger.warning("ensure_metadata_loaded: timed out waiting for async metadata load (5s)")
+        _model._metadata_loading = False
+
+
+def load_metadata() -> None:
+    """
+    Load agent metadata from storage with caching.
+
+    PostgreSQL is the single source of truth.
+    WARNING: PostgreSQL backend requires async loading. This sync version
+    uses in-memory cache if available; use load_metadata_async() in async functions.
+    """
+    if agent_metadata:
+        logger.debug(f"Using in-memory metadata cache ({len(agent_metadata)} agents)")
+        return
+    raise RuntimeError("PostgreSQL backend requires async load_metadata_async(). Sync load_metadata() is not supported.")
+
+
+def get_or_create_metadata(agent_id: str, **kwargs) -> AgentMetadata:
+    """
+    Get metadata for agent, creating if needed.
+
+    Args:
+        agent_id: Agent identifier (human-readable label, can be renamed)
+        **kwargs: Optional fields to set on creation (e.g., purpose, notes, tags)
+    """
+    ensure_metadata_loaded()
+
+    if agent_id not in agent_metadata:
+        from src.agent_identity_auth import generate_api_key
+        now = datetime.now().isoformat()
+        api_key = generate_api_key()
+        import uuid
+        import re
+        UUID4_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', re.I)
+        if UUID4_PATTERN.match(agent_id):
+            agent_uuid = agent_id
+        else:
+            agent_uuid = str(uuid.uuid4())
+        metadata = AgentMetadata(
+            agent_id=agent_id,
+            status="active",
+            created_at=now,
+            last_update=now,
+            api_key=api_key,
+            agent_uuid=agent_uuid
+        )
+        metadata.add_lifecycle_event("created")
+
+        if agent_id == "default_agent":
+            metadata.tags.append("pioneer")
+            metadata.notes = "First agent - pioneer of the governance system"
+
+        for key, value in kwargs.items():
+            if hasattr(metadata, key) and value is not None:
+                setattr(metadata, key, value)
+
+        agent_metadata[agent_id] = metadata
+
+        logger.info(f"Created new agent '{agent_id}'")
+        logger.info(f"API Key: {api_key}")
+        logger.warning("⚠️  Save this key - you'll need it for future updates!")
+    return agent_metadata[agent_id]
+
+
+# Alias for cleaner naming (backward compatible)
+register_agent = get_or_create_metadata
