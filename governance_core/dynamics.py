@@ -179,11 +179,15 @@ def compute_dynamics(
     )
 
     # Sensor anchoring: spring coupling pulls ODE toward observed sensor state
+    # Normalize by dimension range so coupling strength is proportional across all dimensions
     if sensor_eisv is not None:
-        dE_dt += params.k_anchor * (sensor_eisv.E - E)
-        dI_dt += params.k_anchor * (sensor_eisv.I - I)
-        dS_dt += params.k_anchor * (sensor_eisv.S - S)
-        dV_dt += params.k_anchor * (sensor_eisv.V - V)
+        E_range = params.E_max - params.E_min  # 1.0
+        S_range = params.S_max - params.S_min  # ~2.0
+        V_range = params.V_max - params.V_min  # 4.0
+        dE_dt += params.k_anchor * (sensor_eisv.E - E) / E_range
+        dI_dt += params.k_anchor * (sensor_eisv.I - I) / E_range  # I has same range as E
+        dS_dt += params.k_anchor * (sensor_eisv.S - S) / S_range
+        dV_dt += params.k_anchor * (sensor_eisv.V - V) / V_range
 
     # Euler integration with clipping to physical bounds
     E_new = clip(E + dE_dt * dt, params.E_min, params.E_max)
