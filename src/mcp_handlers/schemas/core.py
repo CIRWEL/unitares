@@ -131,6 +131,10 @@ class ProcessAgentUpdateParams(AgentIdentityMixin):
         default=None,
         description="Your display name for identity reconnection."
     )
+    sensor_data: Optional[dict] = Field(
+        default=None,
+        description="Physical sensor data from embodied agents (e.g. Lumen). Contains eisv, anima, raw readings."
+    )
 
     @model_validator(mode='after')
     def coerce_types(self):
