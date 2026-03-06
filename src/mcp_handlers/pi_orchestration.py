@@ -657,7 +657,6 @@ async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent
                     f"presence={anima.get('presence', 0):.2f}"
                 ),
                 "complexity": sensor_complexity,
-                "sensor_eisv": eisv,  # Spring coupling: anchors ODE to sensor reality
             }
 
             gov_result = await mcp_server.process_update_authenticated_async(

@@ -548,12 +548,11 @@ class UNITARESMonitor:
         raw_sensor_eisv = agent_state.get('sensor_eisv')
         if raw_sensor_eisv and isinstance(raw_sensor_eisv, dict):
             try:
-                from governance_core.dynamics import State as CoreState
-                sensor_eisv = CoreState(
-                    E=float(raw_sensor_eisv.get('E', 0.5)),
-                    I=float(raw_sensor_eisv.get('I', 0.5)),
-                    S=float(raw_sensor_eisv.get('S', 0.2)),
-                    V=float(raw_sensor_eisv.get('V', 0.0)),
+                sensor_eisv = State(
+                    E=float(np.clip(raw_sensor_eisv.get('E', 0.5), 0.0, 1.0)),
+                    I=float(np.clip(raw_sensor_eisv.get('I', 0.5), 0.0, 1.0)),
+                    S=float(np.clip(raw_sensor_eisv.get('S', 0.2), 0.001, 2.0)),
+                    V=float(np.clip(raw_sensor_eisv.get('V', 0.0), -2.0, 2.0)),
                 )
             except (TypeError, ValueError, KeyError):
                 sensor_eisv = None
