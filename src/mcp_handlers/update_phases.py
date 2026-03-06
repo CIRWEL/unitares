@@ -658,6 +658,13 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"CIRS resonance auto-emit skipped: {e}")
 
+    # CIRS: Auto-emit coherence reports for peers in resonance (feeds neighbor pressure)
+    try:
+        from .cirs_hooks import auto_emit_coherence_reports
+        auto_emit_coherence_reports(agent_id=agent_id)
+    except Exception as e:
+        logger.debug(f"CIRS auto-coherence emission skipped: {e}")
+
     # CIRS: Neighbor pressure
     try:
         from .cirs_protocol import maybe_apply_neighbor_pressure

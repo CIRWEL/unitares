@@ -15,6 +15,99 @@ from .cirs_storage import _store_coherence_report, _get_coherence_reports
 logger = get_logger(__name__)
 
 
+def compute_pairwise_similarity(source_monitor, target_monitor) -> Optional[CoherenceReport]:
+    """Compute similarity between two monitors. Returns CoherenceReport or None on error.
+
+    Pure computation — no MCP, no persistence. Caller decides what to do with the report.
+    """
+    try:
+        source_metrics = source_monitor.get_metrics()
+        target_metrics = target_monitor.get_metrics()
+
+        source_eisv = {
+            "E": float(source_metrics.get("E", 0.7)),
+            "I": float(source_metrics.get("I", 0.8)),
+            "S": float(source_metrics.get("S", 0.2)),
+            "V": float(source_metrics.get("V", 0.0)),
+        }
+        target_eisv = {
+            "E": float(target_metrics.get("E", 0.7)),
+            "I": float(target_metrics.get("I", 0.8)),
+            "S": float(target_metrics.get("S", 0.2)),
+            "V": float(target_metrics.get("V", 0.0)),
+        }
+
+        eisv_similarity = {}
+        for dim in ["E", "I", "S", "V"]:
+            diff = abs(source_eisv[dim] - target_eisv[dim])
+            if dim == "V":
+                sim = 1.0 - min(1.0, diff / 0.4)
+            else:
+                sim = 1.0 - diff
+            eisv_similarity[dim] = round(sim, 3)
+
+        overall_eisv_sim = (
+            eisv_similarity["E"] * 0.25 +
+            eisv_similarity["I"] * 0.35 +
+            eisv_similarity["S"] * 0.25 +
+            eisv_similarity["V"] * 0.15
+        )
+
+        source_regime = str(source_metrics.get("regime", "divergence"))
+        target_regime = str(target_metrics.get("regime", "divergence"))
+        regime_match = source_regime == target_regime
+
+        source_verdict = str(source_metrics.get("verdict", "caution"))
+        target_verdict = str(target_metrics.get("verdict", "caution"))
+        verdict_match = source_verdict == target_verdict
+
+        trajectory_similarity = None
+        try:
+            source_state = source_monitor.state
+            target_state = target_monitor.state
+
+            traj_sims = {}
+            lambda_diff = abs(float(source_state.lambda1) - float(target_state.lambda1))
+            traj_sims["lambda1"] = 1.0 - min(1.0, lambda_diff / 2.0)
+
+            coh_diff = abs(float(source_state.coherence) - float(target_state.coherence))
+            traj_sims["coherence"] = 1.0 - coh_diff
+
+            max_updates = max(source_state.update_count, target_state.update_count, 1)
+            update_diff = abs(source_state.update_count - target_state.update_count)
+            traj_sims["maturity"] = 1.0 - min(1.0, update_diff / max_updates)
+
+            trajectory_similarity = {k: round(v, 3) for k, v in traj_sims.items()}
+        except Exception:
+            pass
+
+        traj_factor = 1.0
+        if trajectory_similarity:
+            traj_factor = sum(trajectory_similarity.values()) / len(trajectory_similarity)
+
+        similarity_score = round(
+            overall_eisv_sim * 0.6 +
+            traj_factor * 0.2 +
+            (0.1 if regime_match else 0.0) +
+            (0.1 if verdict_match else 0.0),
+            3
+        )
+
+        return CoherenceReport(
+            source_agent_id=getattr(source_monitor, 'agent_id', ''),
+            timestamp=datetime.now().isoformat(),
+            target_agent_id=getattr(target_monitor, 'agent_id', ''),
+            similarity_score=similarity_score,
+            eisv_similarity=eisv_similarity,
+            regime_match=regime_match,
+            verdict_match=verdict_match,
+            trajectory_similarity=trajectory_similarity,
+        )
+    except Exception as e:
+        logger.debug(f"Could not compute pairwise similarity: {e}")
+        return None
+
+
 class _LazyMCPServer:
     def __getattr__(self, name):
         from src.mcp_handlers.shared import get_mcp_server
@@ -68,7 +161,6 @@ async def _handle_coherence_report_compute(arguments: Dict[str, Any]) -> Sequenc
 
     # Get source agent state
     source_monitor = mcp_server.get_or_create_monitor(source_agent_id)
-    source_metrics = source_monitor.get_metrics()
 
     # Get target agent state
     target_monitor = mcp_server.monitors.get(target_agent_id)
@@ -89,99 +181,28 @@ async def _handle_coherence_report_compute(arguments: Dict[str, Any]) -> Sequenc
                 }
             )]
 
-    target_metrics = target_monitor.get_metrics()
-
-    # Compute EISV similarity
-    source_eisv = {
-        "E": float(source_metrics.get("E", 0.7)),
-        "I": float(source_metrics.get("I", 0.8)),
-        "S": float(source_metrics.get("S", 0.2)),
-        "V": float(source_metrics.get("V", 0.0)),
-    }
-    target_eisv = {
-        "E": float(target_metrics.get("E", 0.7)),
-        "I": float(target_metrics.get("I", 0.8)),
-        "S": float(target_metrics.get("S", 0.2)),
-        "V": float(target_metrics.get("V", 0.0)),
-    }
-
-    eisv_similarity = {}
-    for dim in ["E", "I", "S", "V"]:
-        diff = abs(source_eisv[dim] - target_eisv[dim])
-        if dim == "V":
-            sim = 1.0 - min(1.0, diff / 0.4)
-        else:
-            sim = 1.0 - diff
-        eisv_similarity[dim] = round(sim, 3)
-
-    overall_eisv_sim = (
-        eisv_similarity["E"] * 0.25 +
-        eisv_similarity["I"] * 0.35 +
-        eisv_similarity["S"] * 0.25 +
-        eisv_similarity["V"] * 0.15
-    )
-
-    # Check regime and verdict match
-    source_regime = str(source_metrics.get("regime", "divergence"))
-    target_regime = str(target_metrics.get("regime", "divergence"))
-    regime_match = source_regime == target_regime
-
-    source_verdict = str(source_metrics.get("verdict", "caution"))
-    target_verdict = str(target_metrics.get("verdict", "caution"))
-    verdict_match = source_verdict == target_verdict
-
-    # Compute trajectory similarity
-    trajectory_similarity = None
-    try:
-        source_state = source_monitor.state
-        target_state = target_monitor.state
-
-        traj_sims = {}
-        lambda_diff = abs(float(source_state.lambda1) - float(target_state.lambda1))
-        traj_sims["lambda1"] = 1.0 - min(1.0, lambda_diff / 2.0)
-
-        coh_diff = abs(float(source_state.coherence) - float(target_state.coherence))
-        traj_sims["coherence"] = 1.0 - coh_diff
-
-        max_updates = max(source_state.update_count, target_state.update_count, 1)
-        update_diff = abs(source_state.update_count - target_state.update_count)
-        traj_sims["maturity"] = 1.0 - min(1.0, update_diff / max_updates)
-
-        trajectory_similarity = {k: round(v, 3) for k, v in traj_sims.items()}
-    except Exception as e:
-        logger.debug(f"Could not compute trajectory similarity: {e}")
-
-    # Compute overall similarity score
-    traj_factor = 1.0
-    if trajectory_similarity:
-        traj_factor = sum(trajectory_similarity.values()) / len(trajectory_similarity)
-
-    similarity_score = round(
-        overall_eisv_sim * 0.6 +
-        traj_factor * 0.2 +
-        (0.1 if regime_match else 0.0) +
-        (0.1 if verdict_match else 0.0),
-        3
-    )
-
-    recommendation = _generate_coherence_recommendation(
-        similarity_score, regime_match, verdict_match,
-        source_regime, target_regime
-    )
-
-    report = CoherenceReport(
-        source_agent_id=source_agent_id,
-        timestamp=datetime.now().isoformat(),
-        target_agent_id=target_agent_id,
-        similarity_score=similarity_score,
-        eisv_similarity=eisv_similarity,
-        regime_match=regime_match,
-        verdict_match=verdict_match,
-        trajectory_similarity=trajectory_similarity,
-        recommendation=recommendation
-    )
+    report = compute_pairwise_similarity(source_monitor, target_monitor)
+    if report is None:
+        return [error_response("Failed to compute similarity")]
 
     _store_coherence_report(report)
+
+    source_metrics = source_monitor.get_metrics()
+    target_metrics = target_monitor.get_metrics()
+    source_eisv = {d: float(source_metrics.get(d, 0.5)) for d in ["E", "I", "S", "V"]}
+    target_eisv = {d: float(target_metrics.get(d, 0.5)) for d in ["E", "I", "S", "V"]}
+
+    overall_eisv_sim = (
+        report.eisv_similarity["E"] * 0.25 +
+        report.eisv_similarity["I"] * 0.35 +
+        report.eisv_similarity["S"] * 0.25 +
+        report.eisv_similarity["V"] * 0.15
+    )
+
+    source_regime = str(source_metrics.get("regime", "divergence"))
+    target_regime = str(target_metrics.get("regime", "divergence"))
+    source_verdict = str(source_metrics.get("verdict", "caution"))
+    target_verdict = str(target_metrics.get("verdict", "caution"))
 
     return success_response({
         "action": "compute",
@@ -194,7 +215,7 @@ async def _handle_coherence_report_compute(arguments: Dict[str, Any]) -> Sequenc
             "source_verdict": source_verdict,
             "target_verdict": target_verdict,
         },
-        "message": f"Coherence report: {similarity_score:.1%} similarity with {target_agent_id}",
+        "message": f"Coherence report: {report.similarity_score:.1%} similarity with {target_agent_id}",
         "cirs_protocol": "COHERENCE_REPORT"
     }, agent_id=source_agent_id)
 

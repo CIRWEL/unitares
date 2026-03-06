@@ -172,6 +172,53 @@ def maybe_emit_resonance_signal(
         return restored.to_dict()
 
 
+def auto_emit_coherence_reports(agent_id: str) -> int:
+    """Auto-compute coherence reports for peers that emitted RESONANCE_ALERT.
+
+    Called before maybe_apply_neighbor_pressure() so the buffer has data.
+    Only computes reports for peers we don't already have a recent report for.
+
+    Returns number of reports computed.
+    """
+    signals = _get_recent_resonance_signals(max_age_minutes=30)
+    computed = 0
+
+    for signal in signals:
+        peer_id = signal.get("agent_id")
+        if not peer_id or peer_id == agent_id:
+            continue
+        if signal.get("type") != "RESONANCE_ALERT":
+            continue
+
+        # Skip if we already have a report for this pair
+        key_fwd = f"{agent_id}:{peer_id}"
+        key_rev = f"{peer_id}:{agent_id}"
+        if _coherence_report_buffer.get(key_fwd) or _coherence_report_buffer.get(key_rev):
+            continue
+
+        # Get both monitors
+        source_monitor = mcp_server.monitors.get(agent_id)
+        target_monitor = mcp_server.monitors.get(peer_id)
+        if not source_monitor or not target_monitor:
+            continue
+
+        try:
+            from .cirs_coherence import compute_pairwise_similarity
+            from .cirs_storage import _store_coherence_report
+            report = compute_pairwise_similarity(source_monitor, target_monitor)
+            if report:
+                _store_coherence_report(report)
+                computed += 1
+                logger.debug(
+                    f"[CIRS/AUTO_COHERENCE] {agent_id} <-> {peer_id}: "
+                    f"similarity={report.similarity_score:.3f}"
+                )
+        except Exception as e:
+            logger.debug(f"Auto-emit coherence report failed for {agent_id}<->{peer_id}: {e}")
+
+    return computed
+
+
 def maybe_apply_neighbor_pressure(
     agent_id: str,
     governor,
