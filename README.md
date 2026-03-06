@@ -3,6 +3,7 @@
 ### Digital proprioception for AI agents.
 
 [![Tests](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml/badge.svg)](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml)
+[![Coverage](https://img.shields.io/badge/coverage-78%25-brightgreen.svg)](https://github.com/CIRWEL/unitares)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -64,17 +65,43 @@ A confused Lumen draws in short, erratic bursts. A focused Lumen draws flowing, 
 
 ## Quick Start
 
+Three calls to go from zero to governed:
+
 ```
 1. onboard()                    → Get your identity
 2. process_agent_update()       → Log your work
 3. get_governance_metrics()     → Check your state
 ```
 
-That's it. Everything else is optional. See [Getting Started](docs/guides/GETTING_STARTED_SIMPLE.md) for the full walkthrough.
+Here's what `onboard()` returns:
+
+```json
+{
+  "welcome": "Welcome, my_agent_20260306_a1b2c3d4!",
+  "agent_id": "mcp_20260306",
+  "client_session_id": "agent-a1b2c3d4-001",
+  "session_continuity": {
+    "instruction": "Include client_session_id in ALL future tool calls"
+  },
+  "next_calls": [
+    {
+      "tool": "process_agent_update",
+      "why": "Log your work. Call after completing tasks.",
+      "args_min": { "response_text": "...", "complexity": 0.5 }
+    },
+    {
+      "tool": "get_governance_metrics",
+      "why": "Check your state (energy, coherence, etc.)"
+    }
+  ]
+}
+```
+
+The response includes ready-to-use templates for your next calls — no guessing at parameter names. See [Getting Started](docs/guides/GETTING_STARTED_SIMPLE.md) for the full walkthrough.
 
 ### Installation
 
-**Prerequisites:** Python 3.12+, PostgreSQL 16+ with [AGE extension](https://github.com/apache/age), Redis (optional)
+**Prerequisites:** Python 3.12+, PostgreSQL 16+ with [AGE extension](https://github.com/apache/age), Redis (optional — session cache only, not required)
 
 ```bash
 git clone https://github.com/CIRWEL/unitares.git
@@ -125,10 +152,18 @@ Deployed since December 2025. Current numbers:
 | EISV equilibrium | E=0.77, I=0.88, S=0.08, V=-0.03 |
 | V operating range | 100% of agents within [-0.1, 0.1] |
 | Dialectic sessions | 66 |
-| Knowledge discoveries | 500 |
-| Test suite | 5,700+ tests, ~80% coverage |
+| Knowledge discoveries | 536 |
+| Test suite | 5,400+ tests, 78% coverage |
 
 ### See It In Action
+
+<p align="center">
+  <img src="docs/images/dashboard.png" width="80%" alt="UNITARES web dashboard showing fleet coherence, agent status, and system health"/>
+</p>
+
+<p align="center">
+  <em>Web dashboard — fleet coherence, agent status, calibration, anomaly detection. Auto-refreshes every 30 seconds.</em>
+</p>
 
 <p align="center">
   <img src="papers/unitares-v5/figures/fig1_ei_scatter.png" width="45%" alt="Energy-Integrity scatter showing basin structure"/>
@@ -179,13 +214,13 @@ governance_core/       Pure math — ODEs, coherence, scoring (no I/O)
 src/                   MCP server, agent state, knowledge graph, dialectic
 dashboard/             Web dashboard (vanilla JS + Chart.js)
 papers/                Academic paper with contraction proofs
-tests/                 5,700+ tests, ~80% coverage
+tests/                 5,400+ tests
 ```
 
 | Storage | Purpose | Required |
 |---------|---------|----------|
 | PostgreSQL + AGE | Agent state, knowledge graph, dialectic, calibration | Yes |
-| Redis | Session cache, rate limiting | Optional |
+| Redis | Session cache only — falls back gracefully without it | Optional |
 
 ---
 
@@ -205,6 +240,21 @@ tests/                 5,700+ tests, ~80% coverage
 
 ---
 
+## How It Compares
+
+Most agent monitoring is **retrospective** — logs, traces, metrics dashboards that tell you what already happened. UNITARES is **prospective**: the ODE system models drift as it's happening, before failure.
+
+| Approach | Tells you | When |
+|----------|-----------|------|
+| Logging (OpenTelemetry, etc.) | What happened | After |
+| Guardrails (Guardrails AI, NeMo) | Whether output is safe | Per-request |
+| Evals (Braintrust, LangSmith) | Whether quality changed | After batch |
+| **UNITARES** | Whether the agent is drifting | Continuously, ~20 min early warning |
+
+UNITARES doesn't replace these — it adds a layer they don't cover. You can run guardrails on every request and still miss that your agent's calibration has been degrading for the last hour. The EISV dynamics catch that.
+
+---
+
 ## Active Research
 
 These are open questions, not solved problems:
@@ -221,6 +271,16 @@ We believe in stating what works, what's promising, and what we don't know yet.
 
 - [**Lumen / anima-mcp**](https://github.com/CIRWEL/anima-mcp) — Embodied AI on Raspberry Pi with physical sensors and EISV-driven art
 - [**unitares-discord-bridge**](https://github.com/CIRWEL/unitares-discord-bridge) — Discord bot surfacing governance events, agent presence, and Lumen state
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and code style. The test suite has 5,400+ tests — run it before submitting:
+
+```bash
+python3 -m pytest tests/ -x -q --ignore=tests/test_admin_handlers.py
+```
 
 ---
 

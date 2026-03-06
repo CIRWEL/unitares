@@ -1,0 +1,374 @@
+"""
+Background tasks for the governance MCP server.
+
+Extracted from mcp_server.py to reduce file size and improve maintainability.
+Each task runs as an asyncio coroutine, started during server initialization.
+"""
+
+import asyncio
+from datetime import datetime
+
+from src.logging_utils import get_logger
+from src.connection_tracker import CONNECTIONS_ACTIVE
+
+logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Connection heartbeat
+# ---------------------------------------------------------------------------
+
+async def connection_heartbeat_task(connection_tracker):
+    """
+    Comprehensive connection health monitoring:
+    - Clean up stale connections every 5 minutes
+    - Check health of all connections every 2 minutes
+    - Log diagnostic summary every 10 minutes
+    """
+    consecutive_failures = 0
+    max_consecutive_failures = 5
+    iteration = 0
+
+    while True:
+        try:
+            await asyncio.sleep(60)
+            iteration += 1
+
+            if iteration % 2 == 0:
+                for client_id in list(connection_tracker.connections.keys()):
+                    try:
+                        health = await connection_tracker.check_health(client_id)
+                        if not health.get("healthy"):
+                            logger.warning(
+                                f"[HEARTBEAT] Unhealthy connection: {client_id} - {health.get('issues', [])}"
+                            )
+                    except Exception as e:
+                        logger.debug(f"[HEARTBEAT] Health check failed for {client_id}: {e}")
+
+            if iteration % 5 == 0:
+                await connection_tracker.cleanup_stale_connections(max_idle_minutes=30.0)
+
+            if iteration % 10 == 0:
+                diagnostics = await connection_tracker.get_diagnostics()
+                health_summary = diagnostics.get("health_summary", {})
+                reconnect_summary = diagnostics.get("reconnection_summary", {})
+
+                logger.info(
+                    f"[HEARTBEAT] Connection summary: "
+                    f"{diagnostics['total_connections']} connected, "
+                    f"{health_summary.get('healthy', 0)} healthy, "
+                    f"{health_summary.get('degraded', 0)} degraded"
+                )
+
+                high_reconnectors = {k: v for k, v in reconnect_summary.items() if v > 5}
+                if high_reconnectors:
+                    logger.warning(
+                        f"[HEARTBEAT] High reconnection clients: {high_reconnectors}. "
+                        f"Check network stability."
+                    )
+
+                CONNECTIONS_ACTIVE.set(diagnostics['total_connections'])
+
+            consecutive_failures = 0
+
+        except asyncio.CancelledError:
+            logger.info("[HEARTBEAT] Connection heartbeat task cancelled")
+            break
+        except Exception as e:
+            consecutive_failures += 1
+            logger.warning(
+                f"[HEARTBEAT] Error (failure {consecutive_failures}/{max_consecutive_failures}): {e}",
+                exc_info=True
+            )
+            if consecutive_failures >= max_consecutive_failures:
+                logger.error(
+                    f"[HEARTBEAT] Failed {consecutive_failures} times consecutively. "
+                    f"Connection monitoring degraded. Consider restarting the server."
+                )
+                consecutive_failures = 0
+
+
+# ---------------------------------------------------------------------------
+# Auto calibration / ground truth
+# ---------------------------------------------------------------------------
+
+async def startup_auto_calibration():
+    """Start automatic ground truth collection at startup and periodically."""
+    await asyncio.sleep(1.0)
+    try:
+        from src.auto_ground_truth import collect_ground_truth_automatically, auto_ground_truth_collector_task
+
+        result = await collect_ground_truth_automatically(
+            min_age_hours=2.0, max_decisions=50, dry_run=False
+        )
+        if result.get('updated', 0) > 0:
+            logger.info(f"Auto-collected ground truth: {result['updated']} decisions updated")
+
+        asyncio.create_task(auto_ground_truth_collector_task(interval_hours=6.0))
+        logger.info("Started periodic auto ground truth collector (runs every 6 hours)")
+    except Exception as e:
+        logger.warning(f"Could not start auto ground truth collector: {e}", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# KG lifecycle cleanup
+# ---------------------------------------------------------------------------
+
+async def startup_kg_lifecycle():
+    """Start periodic KG lifecycle cleanup after server init."""
+    await asyncio.sleep(5.0)
+    try:
+        from src.knowledge_graph_lifecycle import kg_lifecycle_background_task, run_kg_lifecycle_cleanup
+
+        result = await run_kg_lifecycle_cleanup(dry_run=False)
+        archived = result.get("ephemeral_archived", 0) + result.get("discoveries_archived", 0)
+        if archived > 0:
+            logger.info(f"KG lifecycle startup: archived {archived} entries")
+
+        asyncio.create_task(kg_lifecycle_background_task(interval_hours=24.0))
+        logger.info("Started periodic KG lifecycle cleanup (runs every 24 hours)")
+    except Exception as e:
+        logger.warning(f"Could not start KG lifecycle task: {e}", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Concept extraction
+# ---------------------------------------------------------------------------
+
+async def concept_extraction_background_task(interval_hours: float = 24.0):
+    """Daily concept extraction from tags + embeddings."""
+    await asyncio.sleep(300)  # 5 min startup delay
+    while True:
+        try:
+            from src.concept_extraction import ConceptExtractor
+            extractor = ConceptExtractor()
+            result = await extractor.run()
+            logger.info(f"[CONCEPT_EXTRACTION] {result}")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.debug(f"[CONCEPT_EXTRACTION] Skipped: {e}")
+        await asyncio.sleep(interval_hours * 3600)
+
+
+# ---------------------------------------------------------------------------
+# Partition maintenance
+# ---------------------------------------------------------------------------
+
+async def periodic_partition_maintenance():
+    """Run audit.partition_maintenance() weekly to create/drop partitions."""
+    await asyncio.sleep(60.0)
+    while True:
+        try:
+            from src.db import get_db
+            db = get_db()
+            async with db.acquire() as conn:
+                result = await conn.fetchval("SELECT audit.partition_maintenance()")
+            logger.info(f"Partition maintenance completed: {result}")
+        except Exception as e:
+            logger.debug(f"Partition maintenance skipped: {e}")
+        await asyncio.sleep(7 * 24 * 3600)
+
+
+# ---------------------------------------------------------------------------
+# Metadata loading
+# ---------------------------------------------------------------------------
+
+async def background_metadata_load():
+    """Load metadata in background after server starts accepting connections."""
+    await asyncio.sleep(0.5)
+    try:
+        from src.agent_state import load_metadata_async
+        await load_metadata_async()
+        logger.info("[STARTUP] Background metadata load complete")
+    except Exception as e:
+        logger.warning(f"[STARTUP] Background metadata load failed: {e}. Lazy loading will handle on first access.")
+
+
+# ---------------------------------------------------------------------------
+# Orphan agent cleanup
+# ---------------------------------------------------------------------------
+
+async def startup_orphan_cleanup():
+    """Aggressively clean up orphan agents to prevent proliferation."""
+    await asyncio.sleep(2.0)
+
+    try:
+        from src.agent_metadata_persistence import load_metadata_async
+        await load_metadata_async()
+    except Exception:
+        pass
+
+    try:
+        from src.mcp_handlers.lifecycle import handle_archive_orphan_agents
+        import json
+
+        result = await handle_archive_orphan_agents({
+            "zero_update_hours": 4.0,
+            "low_update_hours": 12.0,
+            "unlabeled_hours": 24.0,
+            "dry_run": False
+        })
+        if result and len(result) > 0:
+            try:
+                data = json.loads(result[0].text)
+                if data.get("archived_count", 0) > 0:
+                    logger.info(f"[STARTUP] Orphan cleanup: archived {data['archived_count']} agents")
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"Could not run orphan cleanup: {e}", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Stuck agent recovery
+# ---------------------------------------------------------------------------
+
+async def stuck_agent_recovery_task():
+    """Automatically detect and recover stuck agents every 5 minutes."""
+    await asyncio.sleep(10.0)
+
+    interval_minutes = 5.0
+    interval_seconds = interval_minutes * 60
+
+    logger.info(f"[STUCK_AGENT_RECOVERY] Starting automatic recovery (runs every {interval_minutes} minutes)")
+
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+
+            from src.mcp_handlers.lifecycle import handle_detect_stuck_agents
+
+            result = await handle_detect_stuck_agents({
+                "max_age_minutes": 30.0,
+                "critical_margin_timeout_minutes": 5.0,
+                "tight_margin_timeout_minutes": 15.0,
+                "auto_recover": True,
+                "min_updates": 1,
+                "note_cooldown_minutes": 120.0
+            })
+
+            if result and len(result) > 0:
+                import json
+                try:
+                    from mcp.types import TextContent
+                    result_text = result[0].text if isinstance(result[0], TextContent) else str(result[0])
+
+                    if result_text.strip().startswith('{'):
+                        result_data = json.loads(result_text)
+                        stuck_agents = result_data.get('stuck_agents', [])
+                        recovered = result_data.get('recovered', [])
+
+                        if len(stuck_agents) > 0 or len(recovered) > 0:
+                            logger.info(
+                                f"[STUCK_AGENT_RECOVERY] Detected {len(stuck_agents)} stuck agent(s), "
+                                f"recovered {len(recovered)} safe agent(s)"
+                            )
+                            for rec in recovered:
+                                logger.debug(
+                                    f"[STUCK_AGENT_RECOVERY] Recovered agent {rec.get('agent_id', 'unknown')[:8]}... "
+                                    f"(reason: {rec.get('reason', 'unknown')})"
+                                )
+                except (json.JSONDecodeError, AttributeError, KeyError) as e:
+                    logger.debug(f"[STUCK_AGENT_RECOVERY] Could not parse result: {e}")
+
+        except asyncio.CancelledError:
+            logger.info("[STUCK_AGENT_RECOVERY] Task cancelled")
+            break
+        except Exception as e:
+            logger.warning(f"[STUCK_AGENT_RECOVERY] Error in recovery task: {e}", exc_info=True)
+            await asyncio.sleep(60.0)
+
+
+# ---------------------------------------------------------------------------
+# Server warmup
+# ---------------------------------------------------------------------------
+
+async def server_warmup_task(set_ready):
+    """Set server ready flag after short warmup to allow MCP initialization."""
+    await asyncio.sleep(2.0)
+    set_ready()
+    logger.info("[WARMUP] Server ready to accept requests (warmup complete)")
+
+
+# ---------------------------------------------------------------------------
+# Session cleanup
+# ---------------------------------------------------------------------------
+
+async def session_cleanup_task(interval_hours: float = 6.0):
+    """Delete expired sessions from PG and orphaned Redis session cache keys."""
+    while True:
+        await asyncio.sleep(interval_hours * 3600)
+        pg_deleted = 0
+        redis_deleted = 0
+
+        expired_session_keys = []
+        try:
+            from src.db import get_db
+            db = get_db()
+            async with db.acquire() as conn:
+                async with conn.transaction():
+                    rows = await conn.fetch(
+                        "SELECT session_id FROM core.sessions WHERE expires_at <= now()"
+                    )
+                    expired_session_keys = [r["session_id"] for r in rows]
+                    result = await conn.execute("DELETE FROM core.sessions WHERE expires_at <= now()")
+                    pg_deleted = int(result.split()[-1]) if result else 0
+        except Exception as e:
+            logger.warning(f"[SESSION_CLEANUP] PG cleanup failed: {e}")
+
+        if expired_session_keys:
+            try:
+                from src.cache.redis_client import get_redis
+                redis = await get_redis()
+                if redis is not None:
+                    for sk in expired_session_keys:
+                        try:
+                            removed = await redis.delete(f"session:{sk}")
+                            if removed:
+                                redis_deleted += 1
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.warning(f"[SESSION_CLEANUP] Redis cleanup failed: {e}")
+
+        if pg_deleted or redis_deleted:
+            logger.info(
+                f"[SESSION_CLEANUP] Deleted {pg_deleted} expired PG sessions, "
+                f"{redis_deleted} Redis cache keys"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator — called from mcp_server.py
+# ---------------------------------------------------------------------------
+
+def start_all_background_tasks(connection_tracker, set_ready):
+    """
+    Start all background tasks. Call once during server initialization.
+
+    Args:
+        connection_tracker: The ConnectionTracker instance
+        set_ready: Callable that sets SERVER_READY = True
+    """
+    asyncio.create_task(connection_heartbeat_task(connection_tracker))
+    logger.info("[HEARTBEAT] Connection health monitoring started")
+
+    asyncio.create_task(startup_auto_calibration())
+    asyncio.create_task(startup_kg_lifecycle())
+    asyncio.create_task(concept_extraction_background_task())
+    asyncio.create_task(periodic_partition_maintenance())
+    asyncio.create_task(background_metadata_load())
+    asyncio.create_task(startup_orphan_cleanup())
+    asyncio.create_task(stuck_agent_recovery_task())
+    asyncio.create_task(server_warmup_task(set_ready))
+
+    try:
+        from src.mcp_handlers.pi_orchestration import eisv_sync_task
+        asyncio.create_task(eisv_sync_task(interval_minutes=5.0))
+        logger.info("[EISV_SYNC] Started periodic Pi EISV sync")
+    except Exception as e:
+        logger.warning(f"[EISV_SYNC] Could not start: {e}")
+
+    asyncio.create_task(session_cleanup_task(interval_hours=6.0))
+    logger.info("[SESSION_CLEANUP] Started periodic expired session cleanup (every 6h)")

@@ -58,9 +58,16 @@ jobs:
       run: |
         python scripts/check_ci_python_version_sync.py
 
-    - name: Run tests
+    - name: Run tests with coverage
       run: |
-        python -m pytest tests/ -v
+        python -m pytest tests/ -v --cov=src --cov-report=term-missing --cov-report=html
+
+    - name: Upload coverage report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report-${{ matrix.python-version }}
+        path: htmlcov/
 
     - name: Run tool count validation
       continue-on-error: true

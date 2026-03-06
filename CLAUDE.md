@@ -22,7 +22,7 @@ UNITARES governance MCP server. Thermodynamic governance framework for AI agents
 
 ## Architecture Patterns
 
-- **LazyMCPServer**: All handler modules use `_LazyMCPServer` for deferred server access (avoids circular imports). Tests patch `{MODULE}.mcp_server` not `get_mcp_server`.
+- **LazyMCPServer**: All handler modules import `lazy_mcp_server as mcp_server` from `shared.py` (single definition, no per-file copies). Tests patch `{MODULE}.mcp_server` not `get_mcp_server`.
 - **Pydantic validation**: Parameter validation uses Pydantic schemas in `src/mcp_handlers/schemas/`. Legacy `validate_and_coerce_params` is removed.
 - **Handler modules**: Each in `src/mcp_handlers/`, decorated with `@mcp_tool`.
 

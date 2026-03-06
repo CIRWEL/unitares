@@ -22,7 +22,7 @@ async def _should_add_stuck_note(agent_id: str, meta, note_cooldown_minutes: flo
         from src.db import get_db
         db = get_db()
         if hasattr(db, '_pool') and db._pool:
-            async with db._pool.acquire() as conn:
+            async with db.acquire() as conn:
                 existing_note = await conn.fetchval("""
                     SELECT 1 FROM knowledge.discoveries
                     WHERE agent_id = $1
@@ -278,6 +278,157 @@ def _detect_stuck_agents(
 
     return stuck_agents
 
+def _parse_last_update(meta) -> float | None:
+    """Return age in minutes since last update, or None on failure."""
+    try:
+        last_update_str = meta.last_update or meta.created_at
+        if isinstance(last_update_str, str):
+            last_update_dt = datetime.fromisoformat(
+                last_update_str.replace('Z', '+00:00') if 'Z' in last_update_str else last_update_str
+            )
+            if last_update_dt.tzinfo is None:
+                last_update_dt = last_update_dt.replace(tzinfo=timezone.utc)
+        else:
+            last_update_dt = last_update_str
+        return (datetime.now(timezone.utc) - last_update_dt).total_seconds() / 60
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+async def _log_stuck_intervention(agent_id: str, stuck_reason: str) -> None:
+    """Best-effort KG note for a stuck agent (deduped)."""
+    try:
+        from src.knowledge_graph import get_knowledge_graph
+        kg = await get_knowledge_graph()
+        existing = await kg.query(status="open", agent_id=agent_id, limit=50)
+        has_open_stuck = any("stuck-agent" in (d.tags or []) for d in existing)
+        if not has_open_stuck:
+            from .knowledge_graph import handle_leave_note
+            await handle_leave_note({
+                "summary": f"Auto-recovered stuck agent {agent_id[:8]}... (Reason: {stuck_reason}, Action: auto-resume)",
+                "tags": ["auto-recovery", "stuck-agent"]
+            })
+    except Exception as e:
+        logger.debug(f"Could not log auto-recovery: {e}")
+
+
+async def _handle_safe_active_agent(agent_id, meta, stuck, risk_score, coherence, void_active, note_cooldown_minutes) -> list:
+    """Handle recovery for an active agent with safe metrics."""
+    results = []
+    age_minutes = _parse_last_update(meta)
+
+    if age_minutes is not None and age_minutes > 60.0:
+        # Stuck > 1 hour — trigger dialectic
+        try:
+            result = await _trigger_dialectic_for_stuck_agent(
+                agent_id,
+                paused_agent_state={
+                    "risk_score": risk_score, "coherence": coherence,
+                    "void_active": void_active, "stuck_reason": stuck["reason"],
+                    "safe_but_stuck": True, "age_minutes": age_minutes,
+                },
+                note=f"Safe but stuck {age_minutes:.1f} min - triggered dialectic",
+            )
+            if result:
+                results.append(result)
+        except Exception as e:
+            logger.warning(f"[STUCK_AGENT_RECOVERY] Could not trigger dialectic for safe stuck {agent_id[:8]}...: {e}", exc_info=True)
+        return results
+
+    # Not stuck long enough for dialectic — track via note
+    effective_age = age_minutes if age_minutes is not None else 0
+    should_note = await _should_add_stuck_note(agent_id, meta, note_cooldown_minutes)
+    if should_note:
+        meta.add_lifecycle_event("stuck_detected", f"{stuck['reason']} ({effective_age:.1f} min)")
+        results.append({
+            "agent_id": agent_id, "action": "stuck_tracked",
+            "reason": stuck["reason"],
+            "note": f"Stuck {effective_age:.1f} min - tracked via detect_stuck_agents (no KG write)"
+        })
+    else:
+        results.append({
+            "agent_id": agent_id, "action": "note_skipped_recent",
+            "reason": stuck["reason"],
+            "note": f"Skipped note - recent note within {note_cooldown_minutes:.0f} min"
+        })
+
+    await _log_stuck_intervention(agent_id, stuck["reason"])
+    return results
+
+
+async def _try_recover_agent(stuck: dict, note_cooldown_minutes: float) -> list:
+    """Attempt recovery for a single stuck agent. Returns list of recovery results."""
+    agent_id = stuck["agent_id"]
+    results = []
+
+    try:
+        # Check if agent is responsive
+        try:
+            monitor = mcp_server.get_or_create_monitor(agent_id)
+            metrics = monitor.get_metrics()
+            coherence = float(monitor.state.coherence)
+            risk_score = float(metrics.get("mean_risk") or 0.5)
+            void_active = bool(monitor.state.void_active)
+            responsive = True
+        except Exception as e:
+            logger.warning(f"[STUCK_AGENT_RECOVERY] Agent {agent_id[:8]}... is unresponsive: {e}")
+            responsive = False
+            coherence, risk_score, void_active = 0.5, 0.5, False
+
+        # Unresponsive — trigger dialectic immediately
+        if not responsive:
+            try:
+                result = await _trigger_dialectic_for_stuck_agent(
+                    agent_id,
+                    paused_agent_state={
+                        "risk_score": risk_score, "coherence": coherence,
+                        "void_active": void_active, "stuck_reason": stuck["reason"],
+                        "unresponsive": True, "age_minutes": stuck.get("age_minutes", 0),
+                    },
+                    note="Unresponsive - triggered dialectic immediately",
+                )
+                if result:
+                    results.append(result)
+            except Exception as e:
+                logger.warning(f"[STUCK_AGENT_RECOVERY] Could not trigger dialectic for unresponsive {agent_id[:8]}...: {e}", exc_info=True)
+            return results
+
+        is_safe = coherence > 0.40 and risk_score < 0.60 and not void_active
+
+        if is_safe:
+            meta = mcp_server.agent_metadata.get(agent_id)
+            if not meta:
+                return results
+
+            if meta.status in ["paused", "waiting_input"]:
+                meta.status = "active"
+                results.append({"agent_id": agent_id, "action": "auto_resumed", "reason": stuck["reason"]})
+            elif meta.status == "active":
+                results.extend(await _handle_safe_active_agent(
+                    agent_id, meta, stuck, risk_score, coherence, void_active, note_cooldown_minutes
+                ))
+        else:
+            # Unsafe — trigger dialectic
+            try:
+                result = await _trigger_dialectic_for_stuck_agent(
+                    agent_id,
+                    paused_agent_state={
+                        "risk_score": risk_score, "coherence": coherence,
+                        "void_active": void_active, "stuck_reason": stuck["reason"],
+                    },
+                    note=f"Unsafe stuck - triggered dialectic (risk={risk_score:.2f}, coherence={coherence:.2f})",
+                )
+                if result:
+                    results.append(result)
+            except Exception as e:
+                logger.warning(f"[STUCK_AGENT_RECOVERY] Could not trigger dialectic for {agent_id[:8]}...: {e}", exc_info=True)
+
+    except Exception as e:
+        logger.debug(f"Could not auto-recover {agent_id}: {e}")
+
+    return results
+
+
 @mcp_tool("detect_stuck_agents", timeout=15.0, rate_limit_exempt=True)
 async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence:
     """Detect stuck agents using proprioceptive margin + patterns.
@@ -327,155 +478,9 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence:
         recovered = []
         if auto_recover and stuck_agents:
             for stuck in stuck_agents:
-                agent_id = stuck["agent_id"]
-                try:
-                    # Check if agent is responsive (can get metrics)
-                    responsive = True
-                    try:
-                        monitor = mcp_server.get_or_create_monitor(agent_id)
-                        metrics = monitor.get_metrics()
-                        coherence = float(monitor.state.coherence)
-                        risk_score = float(metrics.get("mean_risk") or 0.5)
-                        void_active = bool(monitor.state.void_active)
-                    except Exception as e:
-                        # Agent is unresponsive - can't get metrics
-                        logger.warning(f"[STUCK_AGENT_RECOVERY] Agent {agent_id[:8]}... is unresponsive: {e}")
-                        responsive = False
-                        coherence = 0.5
-                        risk_score = 0.5
-                        void_active = False
-
-                    # If unresponsive AND stuck, trigger dialectic immediately (can't self-rescue)
-                    if not responsive:
-                        try:
-                            result = await _trigger_dialectic_for_stuck_agent(
-                                agent_id,
-                                paused_agent_state={
-                                    "risk_score": risk_score, "coherence": coherence,
-                                    "void_active": void_active, "stuck_reason": stuck["reason"],
-                                    "unresponsive": True, "age_minutes": stuck.get("age_minutes", 0),
-                                },
-                                note="Unresponsive - triggered dialectic immediately",
-                            )
-                            if result:
-                                recovered.append(result)
-                        except Exception as e:
-                            logger.warning(f"[STUCK_AGENT_RECOVERY] Could not trigger dialectic for unresponsive {agent_id[:8]}...: {e}", exc_info=True)
-                        continue
-
-                    # Agent is responsive - proceed with normal recovery logic
-                    # Safe if: coherence > 0.40, risk < 0.60, void_active == False
-                    if coherence > 0.40 and risk_score < 0.60 and not void_active:
-                        meta = mcp_server.agent_metadata.get(agent_id)
-                        if meta:
-                            # Handle paused/waiting_input agents - resume them
-                            if meta.status in ["paused", "waiting_input"]:
-                                meta.status = "active"
-                                recovered.append({
-                                    "agent_id": agent_id,
-                                    "action": "auto_resumed",
-                                    "reason": stuck["reason"]
-                                })
-                            # Handle active stuck agents - trigger dialectic if stuck long enough
-                            elif meta.status == "active":
-                                try:
-                                    last_update_str = meta.last_update or meta.created_at
-                                    if isinstance(last_update_str, str):
-                                        last_update_dt = datetime.fromisoformat(
-                                            last_update_str.replace('Z', '+00:00') if 'Z' in last_update_str else last_update_str
-                                        )
-                                        if last_update_dt.tzinfo is None:
-                                            last_update_dt = last_update_dt.replace(tzinfo=timezone.utc)
-                                    else:
-                                        last_update_dt = last_update_str
-
-                                    age_minutes = (datetime.now(timezone.utc) - last_update_dt).total_seconds() / 60
-
-                                    # Trigger dialectic for safe stuck agents if stuck > 1 hour
-                                    if age_minutes > 60.0:
-                                        try:
-                                            result = await _trigger_dialectic_for_stuck_agent(
-                                                agent_id,
-                                                paused_agent_state={
-                                                    "risk_score": risk_score, "coherence": coherence,
-                                                    "void_active": void_active, "stuck_reason": stuck["reason"],
-                                                    "safe_but_stuck": True, "age_minutes": age_minutes,
-                                                },
-                                                note=f"Safe but stuck {age_minutes:.1f} min - triggered dialectic",
-                                            )
-                                            if result:
-                                                recovered.append(result)
-                                        except Exception as e:
-                                            logger.warning(f"[STUCK_AGENT_RECOVERY] Could not trigger dialectic for safe stuck {agent_id[:8]}...: {e}", exc_info=True)
-                                    else:
-                                        should_note = await _should_add_stuck_note(agent_id, meta, note_cooldown_minutes)
-
-                                        if should_note:
-                                            if meta:
-                                                meta.add_lifecycle_event("stuck_detected", f"{stuck['reason']} ({age_minutes:.1f} min)")
-                                            recovered.append({
-                                                "agent_id": agent_id,
-                                                "action": "stuck_tracked",
-                                                "reason": stuck["reason"],
-                                                "note": f"Stuck {age_minutes:.1f} min - tracked via detect_stuck_agents (no KG write)"
-                                            })
-                                        else:
-                                            recovered.append({
-                                                "agent_id": agent_id,
-                                                "action": "note_skipped_recent",
-                                                "reason": stuck["reason"],
-                                                "note": f"Skipped note - recent note within {note_cooldown_minutes:.0f} min"
-                                            })
-                                        # Log intervention (optional - deduped, don't fail)
-                                        try:
-                                            from src.knowledge_graph import get_knowledge_graph
-                                            kg = await get_knowledge_graph()
-                                            existing = await kg.query(status="open", agent_id=agent_id, limit=50)
-                                            has_open_stuck = any("stuck-agent" in (d.tags or []) for d in existing)
-                                            if not has_open_stuck:
-                                                from .knowledge_graph import handle_leave_note
-                                                await handle_leave_note({
-                                                    "summary": f"Auto-recovered stuck agent {agent_id[:8]}... (Reason: {stuck['reason']}, Action: auto-resume)",
-                                                    "tags": ["auto-recovery", "stuck-agent"]
-                                                })
-                                        except Exception as e:
-                                            logger.debug(f"Could not log auto-recovery: {e}")
-                                except (ValueError, TypeError, AttributeError) as e:
-                                    logger.debug(f"Could not calculate age for stuck agent: {e}")
-                                    should_note = await _should_add_stuck_note(agent_id, meta, note_cooldown_minutes)
-                                    if should_note:
-                                        if meta:
-                                            meta.add_lifecycle_event("stuck_detected", stuck["reason"])
-                                        recovered.append({
-                                            "agent_id": agent_id,
-                                            "action": "stuck_tracked",
-                                            "reason": stuck["reason"],
-                                            "note": "Tracked via detect_stuck_agents (no KG write)"
-                                        })
-                                    else:
-                                        recovered.append({
-                                            "agent_id": agent_id,
-                                            "action": "note_skipped_recent",
-                                            "reason": stuck["reason"],
-                                            "note": f"Skipped note - recent note within {note_cooldown_minutes:.0f} min"
-                                        })
-                    else:
-                        # Not safe - trigger dialectic review
-                        try:
-                            result = await _trigger_dialectic_for_stuck_agent(
-                                agent_id,
-                                paused_agent_state={
-                                    "risk_score": risk_score, "coherence": coherence,
-                                    "void_active": void_active, "stuck_reason": stuck["reason"],
-                                },
-                                note=f"Unsafe stuck - triggered dialectic (risk={risk_score:.2f}, coherence={coherence:.2f})",
-                            )
-                            if result:
-                                recovered.append(result)
-                        except Exception as e:
-                            logger.warning(f"[STUCK_AGENT_RECOVERY] Could not trigger dialectic for {agent_id[:8]}...: {e}", exc_info=True)
-                except Exception as e:
-                    logger.debug(f"Could not auto-recover {agent_id}: {e}")
+                result = await _try_recover_agent(stuck, note_cooldown_minutes)
+                if result:
+                    recovered.extend(result if isinstance(result, list) else [result])
 
         return success_response({
             "stuck_agents": stuck_agents,
