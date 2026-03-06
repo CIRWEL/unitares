@@ -16,13 +16,7 @@ from src.mcp_handlers.shared import get_mcp_server
 logger = get_logger(__name__)
 
 # Import from mcp_server_std module (using shared utility)
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 @mcp_tool("get_system_history", timeout=20.0, register=False)
 async def handle_get_system_history(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Export complete governance history for an agent"""
@@ -72,7 +66,6 @@ async def handle_get_system_history(arguments: Dict[str, Any]) -> Sequence[TextC
         "history": history_data,
         "agent_id": agent_id
     })
-
 
 @mcp_tool("export_to_file", timeout=45.0, register=False)
 async def handle_export_to_file(arguments: Dict[str, Any]) -> Sequence[TextContent]:

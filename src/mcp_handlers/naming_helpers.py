@@ -6,17 +6,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 import os
 import re
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 def detect_interface_context() -> Dict[str, str]:
     """
     Detect interface and context information for name generation.
@@ -58,7 +48,6 @@ def detect_interface_context() -> Dict[str, str]:
         context["environment"] = "test"
     
     return context
-
 
 def generate_name_suggestions(
     context: Optional[Dict[str, str]] = None,
@@ -151,7 +140,6 @@ def generate_name_suggestions(
     
     return suggestions[:4]  # Return top 4 suggestions
 
-
 def generate_structured_id(
     context: Optional[Dict[str, str]] = None,
     existing_ids: Optional[List[str]] = None,
@@ -225,7 +213,6 @@ def generate_structured_id(
         return f"{base_id}_{counter}"
 
     return base_id
-
 
 def format_naming_guidance(
     suggestions: List[Dict[str, Any]],

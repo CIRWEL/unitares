@@ -21,17 +21,7 @@ from pathlib import Path
 # Get mcp_server_std module (using shared utility)
 
 from datetime import datetime
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 def _assess_thermodynamic_significance(
     monitor: Optional[Any],  # UNITARESMonitor type (can be None)
     result: Dict[str, Any]
@@ -112,7 +102,6 @@ def _assess_thermodynamic_significance(
         'reasons': reasons,
         'timestamp': datetime.now().isoformat(),
     }
-
 
 @mcp_tool("get_governance_metrics", timeout=10.0)
 async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequence[TextContent]:
@@ -325,7 +314,6 @@ async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequenc
 
     return success_response(standardized_metrics)
 
-
 @mcp_tool("simulate_update", timeout=30.0, register=False)
 async def handle_simulate_update(arguments: ToolArgumentsDict) -> Sequence[TextContent]:
     """Handle simulate_update tool - dry-run governance cycle without persisting state.
@@ -456,7 +444,6 @@ async def handle_simulate_update(arguments: ToolArgumentsDict) -> Sequence[TextC
         response["dialectic_condition_warnings"] = dialectic_warnings
 
     return success_response(response)
-
 
 @mcp_tool("process_agent_update", timeout=60.0)
 async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[TextContent]:

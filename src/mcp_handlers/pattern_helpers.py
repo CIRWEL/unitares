@@ -7,18 +7,8 @@ Detects code changes and prompts for testing.
 from typing import Dict, Any, List, Optional
 from src.pattern_tracker import get_pattern_tracker
 from src.logging_utils import get_logger
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
-
 
 def detect_code_changes(tool_name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
@@ -63,7 +53,6 @@ def detect_code_changes(tool_name: str, arguments: Dict[str, Any]) -> Optional[D
         "tool": tool_name
     }
 
-
 def record_hypothesis_if_needed(agent_id: str, tool_name: str, arguments: Dict[str, Any]) -> None:
     """Record a hypothesis if the tool call involves code changes."""
     change_info = detect_code_changes(tool_name, arguments)
@@ -77,7 +66,6 @@ def record_hypothesis_if_needed(agent_id: str, tool_name: str, arguments: Dict[s
         )
         logger.debug(f"[PATTERN_TRACKING] Recorded hypothesis for {agent_id[:8]}...: {change_info['files_changed']}")
 
-
 def check_untested_hypotheses(agent_id: str) -> Optional[str]:
     """
     Check if agent has untested hypotheses and return warning message.
@@ -90,7 +78,6 @@ def check_untested_hypotheses(agent_id: str) -> Optional[str]:
     if warning:
         return warning["message"]
     return None
-
 
 def mark_hypothesis_tested(agent_id: str, tool_name: str, arguments: Dict[str, Any]) -> None:
     """

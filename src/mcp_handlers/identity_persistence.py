@@ -23,22 +23,12 @@ except ImportError:
         SESSION_TTL_HOURS = 24
 
 logger = get_logger(__name__)
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 # =============================================================================
 # CACHE LAYER (Redis)
 # =============================================================================
 
 _redis_cache = None
-
 
 def _get_redis():
     """Lazy load Redis connection."""
@@ -51,7 +41,6 @@ def _get_redis():
             logger.debug(f"Redis not available: {e}")
             _redis_cache = False  # Mark as unavailable
     return _redis_cache if _redis_cache else None
-
 
 # =============================================================================
 # CACHE HELPERS
@@ -85,7 +74,6 @@ async def _cache_session(session_key: str, agent_uuid: str, display_agent_id: st
             # WARNING level (v2.5.7): Cache failures can cause identity loss
             logger.warning(f"Redis cache write failed for session {session_key[:20]}...: {e}")
 
-
 # =============================================================================
 # DB HELPERS
 # =============================================================================
@@ -98,7 +86,6 @@ async def _agent_exists_in_postgres(agent_uuid: str) -> bool:
         return identity is not None
     except Exception:
         return False
-
 
 async def _get_agent_status(agent_uuid: str) -> Optional[str]:
     """Fetch agent's status from PostgreSQL (e.g., 'active', 'archived', 'deleted').
@@ -114,7 +101,6 @@ async def _get_agent_status(agent_uuid: str) -> Optional[str]:
     except Exception:
         return None
 
-
 async def _get_agent_label(agent_uuid: str) -> Optional[str]:
     """Fetch agent's label from PostgreSQL."""
     try:
@@ -122,7 +108,6 @@ async def _get_agent_label(agent_uuid: str) -> Optional[str]:
         return await db.get_agent_label(agent_uuid)
     except Exception:
         return None
-
 
 async def _get_agent_id_from_metadata(agent_uuid: str) -> Optional[str]:
     """Fetch agent_id (model+date format) from identity metadata."""
@@ -135,7 +120,6 @@ async def _get_agent_id_from_metadata(agent_uuid: str) -> Optional[str]:
         pass
     return None
 
-
 async def _find_agent_by_label(label: str) -> Optional[str]:
     """Find agent UUID by label (for collision detection)."""
     try:
@@ -143,7 +127,6 @@ async def _find_agent_by_label(label: str) -> Optional[str]:
         return await db.find_agent_by_label(label)
     except Exception:
         return None
-
 
 # =============================================================================
 # LAZY CREATION HELPERS (v2.4.1+)
@@ -227,7 +210,6 @@ async def ensure_agent_persisted(
     except Exception as e:
         logger.warning(f"Failed to persist agent: {e}")
         return False
-
 
 # =============================================================================
 # LABEL MANAGEMENT

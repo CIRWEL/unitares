@@ -27,7 +27,6 @@ from src.dialectic_protocol import (
 from .utils import success_response, error_response, require_registered_agent
 from .decorators import mcp_tool
 
-
 async def _resolve_dialectic_agent_id(arguments: Dict[str, Any]) -> tuple:
     """
     Resolve agent_id for dialectic submit tools — same UUID as onboard/identity.
@@ -65,16 +64,9 @@ import os
 
 logger = get_logger(__name__)
 
-
 # Import from mcp_server_std module (using shared utility)
 from .shared import get_mcp_server
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 # Import session persistence from new module
 from .dialectic_session import (
     save_session,
@@ -97,7 +89,6 @@ try:
     AIOFILES_AVAILABLE = True
 except ImportError:
     AIOFILES_AVAILABLE = False
-
 
 # NOTE: save_session, load_session, and load_all_sessions are now imported from dialectic_session.py
 # NOTE: Calibration functions are now imported from dialectic_calibration.py
@@ -124,8 +115,6 @@ from src.dialectic_db import (
 # Import database abstraction for dual-write (Phase 4 migration)
 from src.db import get_db
 
-
-
 # ==============================================================================
 # NOTE: Dialectic handlers (Feb 2026)
 # ==============================================================================
@@ -133,7 +122,6 @@ from src.db import get_db
 # ACTIVE: get_dialectic_session, list_dialectic_sessions, llm_assisted_dialectic
 # Still removed: request_exploration_session, nudge_dialectic_session, handle_self_recovery
 # ==============================================================================
-
 
 async def check_reviewer_stuck(session: DialecticSession) -> bool:
     """
@@ -180,7 +168,6 @@ async def check_reviewer_stuck(session: DialecticSession) -> bool:
         return wait_time > stuck_threshold
     except (ValueError, TypeError, AttributeError):
         return False  # Can't determine — don't kill the session
-
 
 @mcp_tool("request_dialectic_review", timeout=60.0, register=True)
 async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -583,7 +570,6 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
             }
         )]
 
-
 @mcp_tool("list_dialectic_sessions", timeout=15.0, rate_limit_exempt=True, register=False)
 async def handle_list_dialectic_sessions(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
@@ -649,7 +635,6 @@ async def handle_list_dialectic_sessions(arguments: Dict[str, Any]) -> Sequence[
                 "related_tools": ["get_dialectic_session", "health_check"]
             }
         )]
-
 
 @mcp_tool("submit_thesis", timeout=10.0, register=True)
 async def handle_submit_thesis(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -739,7 +724,6 @@ async def handle_submit_thesis(arguments: Dict[str, Any]) -> Sequence[TextConten
 
     except Exception as e:
         return [error_response(f"Error submitting thesis: {str(e)}")]
-
 
 @mcp_tool("submit_antithesis", timeout=10.0, register=True)
 async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -857,7 +841,6 @@ async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextCo
 
     except Exception as e:
         return [error_response(f"Error submitting antithesis: {str(e)}")]
-
 
 @mcp_tool("submit_synthesis", timeout=15.0, register=True)
 async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -1041,7 +1024,6 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
 
     except Exception as e:
         return [error_response(f"Error submitting synthesis: {str(e)}")]
-
 
 @mcp_tool("llm_assisted_dialectic", timeout=45.0, register=False)
 async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -1291,7 +1273,6 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
         logger.debug(f"Could not store dialectic discovery: {e}")
 
     return success_response(response_data, agent_id=agent_uuid, arguments=arguments)
-
 
 def _get_dialectic_next_steps(recommendation: str) -> List[str]:
     """Get next steps based on dialectic recommendation."""

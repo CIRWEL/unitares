@@ -10,13 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 
 from src.logging_utils import get_logger
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 from src.dialectic_db import (
     get_dialectic_db,
     get_active_sessions_async,
@@ -31,7 +25,6 @@ logger = get_logger(__name__)
 # Rationale: DialecticProtocol.MAX_ANTITHESIS_WAIT is 2 hours - agents need time to think
 # 30 min was still too aggressive for real dialectic interactions (see session 5551079c40546c65)
 STUCK_SESSION_THRESHOLD = timedelta(hours=2)
-
 
 async def auto_resolve_stuck_sessions() -> Dict[str, Any]:
     """
@@ -150,7 +143,6 @@ async def auto_resolve_stuck_sessions() -> Dict[str, Any]:
             "error": str(e),
             "message": "Failed to auto-resolve stuck sessions"
         }
-
 
 async def check_and_resolve_stuck_sessions() -> Dict[str, Any]:
     """

@@ -14,7 +14,6 @@ from .cirs_storage import _store_coherence_report, _get_coherence_reports
 
 logger = get_logger(__name__)
 
-
 def compute_pairwise_similarity(source_monitor, target_monitor) -> Optional[CoherenceReport]:
     """Compute similarity between two monitors. Returns CoherenceReport or None on error.
 
@@ -106,16 +105,7 @@ def compute_pairwise_similarity(source_monitor, target_monitor) -> Optional[Cohe
     except Exception as e:
         logger.debug(f"Could not compute pairwise similarity: {e}")
         return None
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 @mcp_tool("coherence_report", timeout=15.0, register=False, description="CIRS Protocol: Compute and share pairwise similarity metrics between agents")
 async def handle_coherence_report(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
@@ -141,7 +131,6 @@ async def handle_coherence_report(arguments: Dict[str, Any]) -> Sequence[TextCon
         return await _handle_coherence_report_compute(arguments)
     else:
         return await _handle_coherence_report_query(arguments)
-
 
 async def _handle_coherence_report_compute(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Handle COHERENCE_REPORT compute action"""
@@ -219,7 +208,6 @@ async def _handle_coherence_report_compute(arguments: Dict[str, Any]) -> Sequenc
         "cirs_protocol": "COHERENCE_REPORT"
     }, agent_id=source_agent_id)
 
-
 async def _handle_coherence_report_query(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Handle COHERENCE_REPORT query action"""
     source_agent_id = arguments.get("source_agent_id")
@@ -256,7 +244,6 @@ async def _handle_coherence_report_query(arguments: Dict[str, Any]) -> Sequence[
             "limit": limit
         }
     })
-
 
 def _generate_coherence_recommendation(
     similarity: float,

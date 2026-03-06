@@ -15,16 +15,7 @@ from .cirs_types import StateAnnounce
 from .cirs_storage import _store_state_announce, _get_state_announces, _state_announce_buffer
 
 logger = get_logger(__name__)
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 # =============================================================================
 # Trajectory Signature Helper Functions
 # =============================================================================
@@ -44,7 +35,6 @@ def _compute_decision_bias(state) -> str:
         return "pause_bias"
     return "balanced"
 
-
 def _compute_focus_stability(state) -> float:
     """Compute focus stability from coherence history"""
     if not hasattr(state, 'coherence_history') or len(state.coherence_history) < 5:
@@ -58,7 +48,6 @@ def _compute_focus_stability(state) -> float:
     variance = np.var(recent)
     return float(max(0, 1 - variance * 4))
 
-
 def _compute_maturity(state) -> str:
     """Compute agent maturity from update count"""
     updates = getattr(state, 'update_count', 0)
@@ -70,7 +59,6 @@ def _compute_maturity(state) -> str:
         return "maturing"
     else:
         return "mature"
-
 
 def _compute_convergence_rate(state) -> float:
     """Compute convergence rate from entropy history"""
@@ -85,7 +73,6 @@ def _compute_convergence_rate(state) -> float:
     x = np.arange(len(recent))
     slope, _ = np.polyfit(x, recent, 1)
     return float(-slope)
-
 
 def _compute_risk_trend(state) -> str:
     """Compute risk trend from risk history"""
@@ -105,7 +92,6 @@ def _compute_risk_trend(state) -> str:
     elif diff < -0.1:
         return "decreasing"
     return "stable"
-
 
 # =============================================================================
 # STATE_ANNOUNCE Tool Handler
@@ -136,7 +122,6 @@ async def handle_state_announce(arguments: Dict[str, Any]) -> Sequence[TextConte
         return await _handle_state_announce_emit(arguments)
     else:
         return await _handle_state_announce_query(arguments)
-
 
 async def _handle_state_announce_emit(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Handle STATE_ANNOUNCE emit action"""
@@ -224,7 +209,6 @@ async def _handle_state_announce_emit(arguments: Dict[str, Any]) -> Sequence[Tex
         "cirs_protocol": "STATE_ANNOUNCE",
         "active_agents": len(_state_announce_buffer)
     }, agent_id=agent_id)
-
 
 async def _handle_state_announce_query(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Handle STATE_ANNOUNCE query action"""

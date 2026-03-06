@@ -23,18 +23,8 @@ from mcp.types import TextContent
 import os
 
 from src.logging_utils import get_logger
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
-
 
 # =============================================================================
 # SHARED SESSION STATE
@@ -47,7 +37,6 @@ _session_identities: Dict[str, Dict[str, Any]] = {}
 # O(1) lookup index: uuid_prefix (12 chars) -> full UUID
 # Populated when identity() registers a stable session binding
 _uuid_prefix_index: Dict[str, str] = {}
-
 
 # =============================================================================
 # UUID PREFIX INDEX
@@ -66,11 +55,9 @@ def _register_uuid_prefix(uuid_prefix: str, full_uuid: str) -> None:
     _uuid_prefix_index[uuid_prefix] = full_uuid
     logger.debug(f"[UUID_PREFIX] Registered {uuid_prefix} -> {full_uuid[:8]}...")
 
-
 def _lookup_uuid_by_prefix(uuid_prefix: str) -> Optional[str]:
     """O(1) lookup of full UUID by prefix. Returns None if not found."""
     return _uuid_prefix_index.get(uuid_prefix)
-
 
 # =============================================================================
 # SESSION KEY DERIVATION
@@ -108,7 +95,6 @@ def _get_session_key(arguments: Optional[Dict[str, Any]] = None, session_id: Opt
     logger.debug(f"_get_session_key: using fallback={fallback}")
     return fallback
 
-
 # =============================================================================
 # SESSION ID FORMATTING
 # =============================================================================
@@ -132,7 +118,6 @@ def make_client_session_id(agent_uuid: str) -> str:
     if not agent_uuid or len(agent_uuid) < 12:
         raise ValueError(f"Invalid UUID: {agent_uuid}")
     return f"agent-{agent_uuid[:12]}"
-
 
 # =============================================================================
 # BOUND AGENT LOOKUP
@@ -199,7 +184,6 @@ def _get_identity_record_sync(session_id: Optional[str] = None, arguments: Optio
         }
     return _session_identities[key]
 
-
 def get_bound_agent_id(session_id: Optional[str] = None, arguments: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """Get currently bound agent_id (if any) for this session.
 
@@ -220,11 +204,9 @@ def get_bound_agent_id(session_id: Optional[str] = None, arguments: Optional[Dic
     rec = _get_identity_record_sync(session_id=session_id, arguments=arguments)
     return rec.get("bound_agent_id")
 
-
 def is_session_bound(session_id: Optional[str] = None, arguments: Optional[Dict[str, Any]] = None) -> bool:
     """Check if session has bound identity."""
     return get_bound_agent_id(session_id=session_id, arguments=arguments) is not None
-
 
 # =============================================================================
 # WRITE PERMISSION
@@ -254,7 +236,6 @@ def require_write_permission(arguments: Optional[Dict[str, Any]] = None) -> Tupl
         )
     return True, None
 
-
 # =============================================================================
 # LINEAGE HELPERS
 # =============================================================================
@@ -277,7 +258,6 @@ def _get_lineage(agent_id: str) -> list:
 
     lineage.reverse()  # Oldest ancestor first
     return lineage
-
 
 # =============================================================================
 # EXPORTS

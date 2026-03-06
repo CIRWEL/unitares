@@ -16,13 +16,7 @@ from src.logging_utils import get_logger
 from src.mcp_handlers.shared import get_mcp_server
 
 logger = get_logger(__name__)
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 @mcp_tool("direct_resume_if_safe", timeout=10.0, deprecated=True, superseded_by="quick_resume or self_recovery_review")
 async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """⚠️ DEPRECATED: Use quick_resume() or self_recovery_review() instead.

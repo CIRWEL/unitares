@@ -8,18 +8,8 @@ import re
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from src.logging_utils import get_logger
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
-
 
 class ParsedCondition:
     """Structured representation of a parsed condition"""
@@ -39,7 +29,6 @@ class ParsedCondition:
             "unit": self.unit,
             "original": self.original
         }
-
 
 def parse_condition(condition: str) -> ParsedCondition:
     """
@@ -141,7 +130,6 @@ def parse_condition(condition: str) -> ParsedCondition:
     logger.warning(f"Could not parse condition: {condition}")
     return parsed
 
-
 def _normalize_target(target: str) -> str:
     """Normalize target names to standard format"""
     target_lower = target.lower()
@@ -163,7 +151,6 @@ def _normalize_target(target: str) -> str:
     }
     
     return mappings.get(target_lower, target_lower)
-
 
 async def apply_condition(parsed: ParsedCondition, agent_id: str, mcp_server) -> Dict[str, Any]:
     """

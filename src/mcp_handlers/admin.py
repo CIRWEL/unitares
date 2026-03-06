@@ -18,13 +18,7 @@ from src.mcp_handlers.shared import get_mcp_server
 logger = get_logger(__name__)
 
 # Import from mcp_server_std module (using shared utility)
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 @mcp_tool("get_server_info", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_get_server_info(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get MCP server version, process information, and health status"""
@@ -135,7 +129,6 @@ async def handle_get_server_info(arguments: Dict[str, Any]) -> Sequence[TextCont
         "health": "healthy"
     })
 
-
 @mcp_tool("check_continuity_health", timeout=15.0, register=False)
 async def handle_check_continuity_health(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
@@ -231,7 +224,6 @@ async def handle_check_continuity_health(arguments: Dict[str, Any]) -> Sequence[
         logger.error(f"Continuity health check failed: {e}", exc_info=True)
         return [error_response(f"Continuity health check failed: {e}")]
 
-
 @mcp_tool("get_tool_usage_stats", timeout=15.0, rate_limit_exempt=True, register=False)
 async def handle_get_tool_usage_stats(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get tool usage statistics to identify which tools are actually used vs unused"""
@@ -250,11 +242,9 @@ async def handle_get_tool_usage_stats(arguments: Dict[str, Any]) -> Sequence[Tex
     
     return success_response(stats)
 
-
 def get_workspace_last_agent_file(mcp_server) -> Path:
     """Get the file path for storing last active agent."""
     return Path(mcp_server.project_root) / "data" / ".last_active_agent"
-
 
 def get_workspace_last_agent(mcp_server) -> Optional[str]:
     """Get the last active agent for this workspace."""
@@ -269,7 +259,6 @@ def get_workspace_last_agent(mcp_server) -> Optional[str]:
         pass
     return None
 
-
 def set_workspace_last_agent(mcp_server, agent_id: str) -> None:
     """Set the last active agent for this workspace."""
     try:
@@ -278,7 +267,6 @@ def set_workspace_last_agent(mcp_server, agent_id: str) -> None:
         last_agent_file.write_text(agent_id)
     except Exception:
         pass  # Non-critical
-
 
 @mcp_tool("health_check", timeout=10.0, rate_limit_exempt=True)
 async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -567,8 +555,6 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
         "timestamp": datetime.now().isoformat()
     })
 
-
-
 @mcp_tool("get_telemetry_metrics", timeout=15.0, rate_limit_exempt=True, register=False)
 async def handle_get_telemetry_metrics(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get comprehensive telemetry metrics: skip rates, confidence distributions, calibration status
@@ -628,7 +614,6 @@ async def handle_get_telemetry_metrics(arguments: Dict[str, Any]) -> Sequence[Te
         logger.error(f"Error in get_telemetry_metrics: {e}")
         return [error_response(f"Error collecting telemetry: {str(e)}")]
 
-
 @mcp_tool("reset_monitor", timeout=10.0, register=False)
 async def handle_reset_monitor(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Reset governance state for an agent"""
@@ -647,7 +632,6 @@ async def handle_reset_monitor(arguments: Dict[str, Any]) -> Sequence[TextConten
         "message": message,
         "agent_id": agent_id
     })
-
 
 @mcp_tool("cleanup_stale_locks", timeout=15.0, rate_limit_exempt=True, register=False)
 async def handle_cleanup_stale_locks(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -674,8 +658,6 @@ async def handle_cleanup_stale_locks(arguments: Dict[str, Any]) -> Sequence[Text
     except Exception as e:
         return [error_response(f"Error cleaning stale locks: {str(e)}")]
 
-
-
 @mcp_tool("get_workspace_health", timeout=20.0, rate_limit_exempt=True, register=False)
 async def handle_get_workspace_health(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Handle get_workspace_health tool - comprehensive workspace health status"""
@@ -696,7 +678,6 @@ async def handle_get_workspace_health(arguments: Dict[str, Any]) -> Sequence[Tex
                 "related_tools": ["health_check", "get_server_info"]
             }
         )]
-
 
 @mcp_tool("debug_request_context", timeout=5.0, rate_limit_exempt=True, register=False)
 async def handle_debug_request_context(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -804,7 +785,6 @@ async def handle_debug_request_context(arguments: Dict[str, Any]) -> Sequence[Te
 
     return success_response(result)
 
-
 @mcp_tool("validate_file_path", timeout=5.0, rate_limit_exempt=True, register=False)
 async def handle_validate_file_path(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
@@ -876,7 +856,6 @@ async def handle_validate_file_path(arguments: Dict[str, Any]) -> Sequence[TextC
         "message": "File path complies with project policies"
     })
 
-
 @mcp_tool("get_connection_status", timeout=5.0, rate_limit_exempt=True, register=False)
 async def handle_get_connection_status(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
@@ -934,7 +913,6 @@ async def handle_get_connection_status(arguments: Dict[str, Any]) -> Sequence[Te
         "message": "✅ Tools Connected" if status == "connected" else "❌ Tools Not Available",
         "recommendation": "You can use MCP tools" if status == "connected" else "Check MCP server connection and configuration"
     }, arguments=arguments)
-
 
 # REMOVED: quick_start - deprecated Dec 2025, identity auto-binds on first tool call
 # Use identity(name="...") to set display name, or just call any tool (identity auto-creates)

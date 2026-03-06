@@ -20,16 +20,7 @@ from .cirs_storage import (
 )
 
 logger = get_logger(__name__)
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 def maybe_emit_void_alert(
     agent_id: str,
     V: float,
@@ -66,7 +57,6 @@ def maybe_emit_void_alert(
         return alert.to_dict()
 
     return None
-
 
 def auto_emit_state_announce(
     agent_id: str,
@@ -122,7 +112,6 @@ def auto_emit_state_announce(
         logger.debug(f"Auto-emit state_announce failed: {e}")
         return None
 
-
 def maybe_emit_resonance_signal(
     agent_id: str,
     cirs_result: Dict[str, Any],
@@ -171,7 +160,6 @@ def maybe_emit_resonance_signal(
         )
         return restored.to_dict()
 
-
 def auto_emit_coherence_reports(agent_id: str) -> int:
     """Auto-compute coherence reports for peers that emitted RESONANCE_ALERT.
 
@@ -218,7 +206,6 @@ def auto_emit_coherence_reports(agent_id: str) -> int:
 
     return computed
 
-
 def maybe_apply_neighbor_pressure(
     agent_id: str,
     governor,
@@ -258,7 +245,6 @@ def maybe_apply_neighbor_pressure(
                 f"[CIRS/NEIGHBOR] Pressure decayed for {agent_id} "
                 f"(peer {peer_id} stabilized)"
             )
-
 
 def _lookup_similarity(agent_id: str, peer_id: str) -> Optional[float]:
     """

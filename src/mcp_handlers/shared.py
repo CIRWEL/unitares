@@ -8,6 +8,16 @@ All business logic lives in src.agent_state (canonical module).
 import sys
 
 
+class _LazyMCPServer:
+    """Lazy proxy to agent_state module. Avoids circular imports."""
+    def __getattr__(self, name):
+        return getattr(get_mcp_server(), name)
+
+
+# Singleton instance — import this instead of defining _LazyMCPServer per file
+lazy_mcp_server = _LazyMCPServer()
+
+
 def get_mcp_server():
     """
     Get the agent_state module singleton (canonical business logic module).

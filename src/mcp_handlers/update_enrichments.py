@@ -14,18 +14,8 @@ from typing import Any
 from src.logging_utils import get_logger
 
 from .update_context import UpdateContext
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
-
 
 # ─── Interpretation & Feedback ──────────────────────────────────────────
 
@@ -47,7 +37,6 @@ async def enrich_state_interpretation(ctx: UpdateContext) -> None:
         ctx.response_data['summary'] = f"{health} | {mode} | {basin} basin"
     except Exception as e:
         logger.debug(f"Could not generate state interpretation: {e}")
-
 
 def enrich_actionable_feedback(ctx: UpdateContext) -> None:
     """Generate context-aware actionable feedback."""
@@ -76,7 +65,6 @@ def enrich_actionable_feedback(ctx: UpdateContext) -> None:
             ctx.response_data['actionable_feedback'] = actionable_feedback
     except Exception as e:
         logger.debug(f"Could not generate actionable feedback: {e}")
-
 
 def enrich_calibration_feedback(ctx: UpdateContext) -> None:
     """Add calibration feedback (complexity + confidence)."""
@@ -116,7 +104,6 @@ def enrich_calibration_feedback(ctx: UpdateContext) -> None:
             ctx.response_data['calibration_feedback'] = calibration_feedback
     except Exception as e:
         logger.debug(f"Could not generate calibration feedback: {e}")
-
 
 # ─── Warnings & Loop Detection ─────────────────────────────────────────
 
@@ -170,7 +157,6 @@ def enrich_warnings(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"Could not enrich warnings: {e}")
 
-
 # ─── Metric Standardization ────────────────────────────────────────────
 
 def enrich_metric_standardization(ctx: UpdateContext) -> None:
@@ -192,7 +178,6 @@ def enrich_metric_standardization(ctx: UpdateContext) -> None:
         ctx.response_data["agent_id"] = ctx.agent_id
     except Exception as e:
         logger.debug(f"Could not standardize metrics: {e}")
-
 
 def enrich_health_status_toplevel(ctx: UpdateContext) -> None:
     """Ensure health_status is at top level for easy access."""
@@ -239,7 +224,6 @@ def enrich_health_status_toplevel(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"Could not enrich health status: {e}")
 
-
 # ─── CIRS Response Fields ──────────────────────────────────────────────
 
 def enrich_cirs_response_fields(ctx: UpdateContext) -> None:
@@ -271,7 +255,6 @@ def enrich_cirs_response_fields(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"Could not enrich CIRS fields: {e}")
 
-
 def enrich_cirs_dampening_advisory(ctx: UpdateContext) -> None:
     """Surface CIRS oscillation dampening as an advisory when resonance is active."""
     try:
@@ -292,7 +275,6 @@ def enrich_cirs_dampening_advisory(ctx: UpdateContext) -> None:
         })
     except Exception as e:
         logger.debug(f"Could not enrich CIRS dampening advisory: {e}")
-
 
 def enrich_detected_patterns(ctx: UpdateContext) -> None:
     """Surface pattern tracker detections (loops, time-box, untested hypotheses) as advisories."""
@@ -342,7 +324,6 @@ def enrich_detected_patterns(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"Could not enrich detected patterns: {e}")
 
-
 # ─── Knowledge Surfacing ───────────────────────────────────────────────
 
 async def enrich_knowledge_surfacing(ctx: UpdateContext) -> None:
@@ -374,7 +355,6 @@ async def enrich_knowledge_surfacing(ctx: UpdateContext) -> None:
                 }
     except Exception as e:
         logger.debug(f"Could not surface relevant discoveries: {e}")
-
 
 # ─── Onboarding Info ───────────────────────────────────────────────────
 
@@ -428,7 +408,6 @@ def enrich_onboarding_info(ctx: UpdateContext) -> None:
             )
     except Exception as e:
         logger.debug(f"Could not enrich onboarding info: {e}")
-
 
 # ─── Convergence Guidance ──────────────────────────────────────────────
 
@@ -519,7 +498,6 @@ async def enrich_convergence_guidance(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"Could not generate convergence guidance: {e}", exc_info=True)
 
-
 # ─── Anti-Stasis Perturbation ──────────────────────────────────────────
 
 async def enrich_anti_stasis_perturbation(ctx: UpdateContext) -> None:
@@ -565,7 +543,6 @@ async def enrich_anti_stasis_perturbation(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"Could not generate perturbation: {e}")
 
-
 # ─── Basin Tracking ────────────────────────────────────────────────────
 
 def enrich_basin_tracking(ctx: UpdateContext) -> None:
@@ -577,7 +554,6 @@ def enrich_basin_tracking(ctx: UpdateContext) -> None:
             ctx.response_data["unitares_v41"] = v41_block
     except Exception:
         pass
-
 
 # ─── Trajectory Identity ───────────────────────────────────────────────
 
@@ -670,7 +646,6 @@ async def enrich_trajectory_identity(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"[TRAJECTORY] Could not update trajectory: {e}")
 
-
 # ─── Saturation Diagnostics ────────────────────────────────────────────
 
 def enrich_saturation_diagnostics(ctx: UpdateContext) -> None:
@@ -701,7 +676,6 @@ def enrich_saturation_diagnostics(ctx: UpdateContext) -> None:
             }
     except Exception as e:
         logger.debug(f"Could not compute saturation diagnostics: {e}")
-
 
 # ─── Pending Dialectic ─────────────────────────────────────────────────
 
@@ -743,7 +717,6 @@ async def enrich_pending_dialectic(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"Could not check pending dialectic sessions: {e}")
 
-
 # ─── EISV Validation ───────────────────────────────────────────────────
 
 def enrich_eisv_validation(ctx: UpdateContext) -> None:
@@ -756,7 +729,6 @@ def enrich_eisv_validation(ctx: UpdateContext) -> None:
     except Exception as validation_error:
         logger.warning(f"EISV validation warning: {validation_error}")
         ctx.response_data["_eisv_validation_warning"] = str(validation_error)
-
 
 # ─── Learning Context ──────────────────────────────────────────────────
 
@@ -894,7 +866,6 @@ async def enrich_learning_context(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"Could not build learning context: {e}")
 
-
 # ─── WebSocket Broadcast ───────────────────────────────────────────────
 
 async def enrich_websocket_broadcast(ctx: UpdateContext) -> None:
@@ -1011,7 +982,6 @@ async def enrich_websocket_broadcast(ctx: UpdateContext) -> None:
         logger.debug(f"Broadcast EISV update for agent {ctx.declared_agent_id}: eisv={eisv_data}, coherence={coherence_val}")
     except Exception as e:
         logger.debug(f"Could not broadcast EISV update: {e}")
-
 
 # ─── Thread Identity ───────────────────────────────────────────────────
 

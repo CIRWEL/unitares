@@ -66,13 +66,7 @@ from .dialectic import (
     handle_get_dialectic_session,
     handle_list_dialectic_sessions,
 )
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 from .pi_orchestration import (
     handle_pi_list_tools,
     handle_pi_get_context,
@@ -87,7 +81,6 @@ from .pi_orchestration import (
     handle_pi_git_pull,
     handle_pi_system_power,
 )
-
 
 # ============================================================
 # Consolidated Knowledge Graph Tool
@@ -121,7 +114,6 @@ handle_knowledge = action_router(
     ],
 )
 
-
 # ============================================================
 # Consolidated Agent Lifecycle Tool
 # ============================================================
@@ -147,7 +139,6 @@ handle_agent = action_router(
     ],
 )
 
-
 # ============================================================
 # Consolidated Calibration Tool
 # ============================================================
@@ -169,7 +160,6 @@ handle_calibration = action_router(
     ],
 )
 
-
 # ============================================================
 # Consolidated Config Tool
 # ============================================================
@@ -189,7 +179,6 @@ handle_config = action_router(
     ],
 )
 
-
 # ============================================================
 # Consolidated Export Tool
 # ============================================================
@@ -208,7 +197,6 @@ handle_export = action_router(
         "export(action='file', format='json', filename='my_export')",
     ],
 )
-
 
 # ============================================================
 # Consolidated Observe Tool
@@ -235,7 +223,6 @@ handle_observe = action_router(
         "observe(action='telemetry')",
     ],
 )
-
 
 # ============================================================
 # Consolidated Pi Orchestration Tool
@@ -266,7 +253,6 @@ handle_pi = action_router(
         "pi(action='say', text='Hello!')",
     ],
 )
-
 
 # ============================================================
 # Consolidated Dialectic Tool

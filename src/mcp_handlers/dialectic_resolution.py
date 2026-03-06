@@ -11,18 +11,8 @@ from datetime import datetime
 from src.dialectic_protocol import DialecticSession, Resolution
 from src.logging_utils import get_logger
 from .condition_parser import parse_condition, apply_condition
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
-
 
 async def execute_resolution(session: DialecticSession, resolution: Resolution) -> Dict[str, Any]:
     """

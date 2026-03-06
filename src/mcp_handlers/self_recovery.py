@@ -45,13 +45,7 @@ from config.governance_config import GovernanceConfig
 from src.mcp_handlers.shared import get_mcp_server
 
 logger = get_logger(__name__)
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 # Safety limits for recovery conditions
 FORBIDDEN_CONDITIONS = [
     "disable governance",
@@ -64,7 +58,6 @@ FORBIDDEN_CONDITIONS = [
 MAX_RISK_FOR_SELF_RECOVERY = 0.65  # Matches lifecycle.py review thresholds
 MIN_COHERENCE_FOR_SELF_RECOVERY = 0.35  # Matches lifecycle.py review thresholds
 
-
 def _safe_float(val, default: float = 0.5):
     """Coerce to float, handling None for uninitialized metrics."""
     if val is None:
@@ -73,7 +66,6 @@ def _safe_float(val, default: float = 0.5):
         return float(val)
     except (TypeError, ValueError):
         return default
-
 
 def clear_loop_detector_state(meta) -> None:
     """Clear loop detector state after successful recovery.
@@ -85,7 +77,6 @@ def clear_loop_detector_state(meta) -> None:
     meta.loop_detected_at = None
     meta.recent_update_timestamps = []
     meta.recent_decisions = []
-
 
 def validate_recovery_conditions(conditions: List[str]) -> tuple[bool, Optional[str]]:
     """
@@ -112,7 +103,6 @@ def validate_recovery_conditions(conditions: List[str]) -> tuple[bool, Optional[
                 return False, f"Condition '{condition}' is too vague (contains '{vague}')"
     
     return True, None
-
 
 def assess_recovery_safety(
     coherence: float,
@@ -193,12 +183,10 @@ def assess_recovery_safety(
         "metrics": metrics,
     }
 
-
 # NOTE: handle_self_recovery_review is defined in lifecycle.py (canonical version)
 # This duplicate was removed Feb 2026 to avoid registration conflicts.
 # The helper functions below (assess_recovery_safety, validate_recovery_conditions)
 # are still used by the lifecycle.py version.
-
 
 # ============================================================================
 # CONSOLIDATED SELF_RECOVERY TOOL
@@ -244,7 +232,6 @@ async def handle_self_recovery(arguments: Dict[str, Any]) -> Sequence[TextConten
                 ],
             }
         )]
-
 
 @mcp_tool("check_recovery_options", timeout=10.0, register=False)
 async def handle_check_recovery_options(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -343,8 +330,6 @@ async def handle_check_recovery_options(arguments: Dict[str, Any]) -> Sequence[T
         },
         "recommendations": recommendations,
     })
-
-
 
 @mcp_tool("quick_resume", timeout=10.0, register=False)
 async def handle_quick_resume(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -506,8 +491,6 @@ async def handle_quick_resume(arguments: Dict[str, Any]) -> Sequence[TextContent
             "risk_score": risk_score,
         },
     })
-
-
 
 # ============================================================================
 # OPERATOR-ASSISTED RECOVERY

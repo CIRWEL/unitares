@@ -14,16 +14,7 @@ from pathlib import Path
 from .utils import success_response, error_response, require_agent_id, require_registered_agent
 from .decorators import mcp_tool
 from src.logging_utils import get_logger
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
 @mcp_tool("check_calibration", timeout=10.0, rate_limit_exempt=True, register=False)
@@ -114,7 +105,6 @@ async def handle_check_calibration(arguments: Dict[str, Any]) -> Sequence[TextCo
     
     return success_response(response)
 
-
 @mcp_tool("rebuild_calibration", timeout=60.0, rate_limit_exempt=True, register=False)
 async def handle_rebuild_calibration(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
@@ -159,7 +149,6 @@ async def handle_rebuild_calibration(arguments: Dict[str, Any]) -> Sequence[Text
     except Exception as e:
         logger.error(f"Error rebuilding calibration: {e}", exc_info=True)
         return error_response(f"Failed to rebuild calibration: {e}")
-
 
 @mcp_tool("update_calibration_ground_truth", timeout=10.0, register=False)
 async def handle_update_calibration_ground_truth(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -286,7 +275,6 @@ async def handle_update_calibration_ground_truth(arguments: Dict[str, Any]) -> S
             })
         except Exception as e:
             return [error_response(str(e))]
-
 
 @mcp_tool("backfill_calibration_from_dialectic", timeout=20.0, rate_limit_exempt=True, register=False)
 async def handle_backfill_calibration_from_dialectic(arguments: Dict[str, Any]) -> Sequence[TextContent]:

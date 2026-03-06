@@ -79,16 +79,7 @@ from .decorators import mcp_tool
 from .utils import success_response, error_response
 from src.audit_log import audit_logger
 from src.logging_utils import get_logger
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
 # Pi MCP endpoint configuration
@@ -128,7 +119,6 @@ PI_TOOL_MAPPING = {
 PI_RETRY_MAX_ATTEMPTS = 3
 PI_RETRY_BASE_DELAY = 0.5  # Base delay in seconds for exponential backoff
 
-
 def _extract_error_message(result: Dict[str, Any]) -> Optional[str]:
     """
     Extract error message from standardized error format.
@@ -138,7 +128,6 @@ def _extract_error_message(result: Dict[str, Any]) -> Optional[str]:
     if "error" not in result:
         return None
     return result.get("error", "Unknown error")
-
 
 def _standardize_error(error: Any) -> Dict[str, Any]:
     """
@@ -182,7 +171,6 @@ def _standardize_error(error: Any) -> Dict[str, Any]:
             "error_type": "unknown",
             "error_details": None
         }
-
 
 async def call_pi_tool(tool_name: str, arguments: Dict[str, Any],
                        agent_id: str = "mac-orchestrator",
@@ -382,7 +370,6 @@ async def call_pi_tool(tool_name: str, arguments: Dict[str, Any],
     )
     return standardized_error
 
-
 def map_anima_to_eisv(
     anima: Dict[str, float],
     pre_computed_eisv: Optional[Dict[str, float]] = None,
@@ -416,7 +403,6 @@ def map_anima_to_eisv(
         "S": 1.0 - anima.get("stability", 0.5),  # Stability inverts to entropy
         "V": (1.0 - anima.get("presence", 0.5)) * 0.3,  # Match Pi's scaling
     }
-
 
 # ============================================================
 # MCP Tool Handlers
@@ -497,7 +483,6 @@ async def handle_pi_list_tools(arguments: Dict[str, Any]) -> Sequence[TextConten
     except Exception as e:
         return error_response(f"Error listing Pi tools: {e}")
 
-
 @mcp_tool("pi_get_context", timeout=30.0, register=False, description="Get Lumen's complete context. Use pi(action='context') instead.")
 async def handle_pi_get_context(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get Lumen's complete context from Pi via orchestrated call to get_lumen_context."""
@@ -514,7 +499,6 @@ async def handle_pi_get_context(arguments: Dict[str, Any]) -> Sequence[TextConte
         "source": "pi",
         "context": result
     })
-
 
 @mcp_tool("pi_health", timeout=15.0, register=False, description="Check Pi health. Use pi(action='health') instead.")
 async def handle_pi_health(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -572,7 +556,6 @@ async def handle_pi_health(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         "components": components,
         "raw_diagnostics": result
     })
-
 
 @mcp_tool("pi_sync_eisv", timeout=30.0, register=False, description="Sync anima to EISV. Use pi(action='sync_eisv') instead.")
 async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -679,7 +662,6 @@ async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent
 
     return success_response(result)
 
-
 @mcp_tool("pi_display", timeout=15.0, register=False, description="Control Pi display. Use pi(action='display') instead.")
 async def handle_pi_display(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Control Pi's display via orchestrated call to manage_display.
@@ -724,7 +706,6 @@ async def handle_pi_display(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         "result": result
     })
 
-
 @mcp_tool("pi_say", timeout=30.0, register=False, description="Lumen speak. Use pi(action='say') instead.")
 async def handle_pi_say(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Have Lumen speak via orchestrated call to Pi's say tool."""
@@ -746,7 +727,6 @@ async def handle_pi_say(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         "spoken": text,
         "result": result
     })
-
 
 @mcp_tool("pi_post_message", timeout=15.0, register=False, description="Post message. Use pi(action='message') instead.")
 async def handle_pi_post_message(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -779,7 +759,6 @@ async def handle_pi_post_message(arguments: Dict[str, Any]) -> Sequence[TextCont
         "message_posted": True,
         "result": result
     })
-
 
 @mcp_tool("pi_lumen_qa", timeout=15.0, register=False, description="Lumen Q&A. Use pi(action='qa') instead.")
 async def handle_pi_lumen_qa(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -821,7 +800,6 @@ async def handle_pi_lumen_qa(arguments: Dict[str, Any]) -> Sequence[TextContent]
         "result": result
     })
 
-
 @mcp_tool("pi_query", timeout=45.0, register=False, description="Query Lumen knowledge. Use pi(action='query') instead.")
 async def handle_pi_query(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Query Lumen's knowledge via orchestrated call to Pi's query tool."""
@@ -848,7 +826,6 @@ async def handle_pi_query(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         "query_type": query_type,
         "result": result
     })
-
 
 @mcp_tool("pi_workflow", timeout=120.0, register=False, description="Pi workflow. Use pi(action='workflow') instead.")
 async def handle_pi_workflow(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -929,7 +906,6 @@ async def handle_pi_workflow(arguments: Dict[str, Any]) -> Sequence[TextContent]
         "errors": errors if errors else None
     })
 
-
 @mcp_tool("pi_git_pull", timeout=120.0, register=False, description="Pi git pull. Use pi(action='git_pull') instead.")
 async def handle_pi_git_pull(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
@@ -964,7 +940,6 @@ async def handle_pi_git_pull(arguments: Dict[str, Any]) -> Sequence[TextContent]
         "result": result
     })
 
-
 @mcp_tool("pi_system_power", timeout=30.0, register=False, description="Pi power control. Use pi(action='power') instead.")
 async def handle_pi_system_power(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
@@ -993,7 +968,6 @@ async def handle_pi_system_power(arguments: Dict[str, Any]) -> Sequence[TextCont
         "result": result
     })
 
-
 # ============================================================
 # SSH-Based Pi Service Control (Fallback when MCP is down)
 # ============================================================
@@ -1002,7 +976,6 @@ async def handle_pi_system_power(arguments: Dict[str, Any]) -> Sequence[TextCont
 PI_SSH_USER = "unitares-anima"
 PI_SSH_HOST_TAILSCALE = "100.79.215.83"
 PI_SSH_KEY = os.path.expanduser("~/.ssh/id_ed25519_pi")
-
 
 @mcp_tool("pi_restart_service", timeout=60.0, register=True, description="Restart anima service on Pi via SSH. Works even when MCP is down.")
 async def handle_pi_restart_service(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -1096,7 +1069,6 @@ async def handle_pi_restart_service(arguments: Dict[str, Any]) -> Sequence[TextC
     except Exception as e:
         return error_response(f"SSH command failed: {e}")
 
-
 # ============================================================
 # Periodic EISV Sync Task (Background)
 # ============================================================
@@ -1148,7 +1120,6 @@ async def sync_eisv_once(update_governance: bool = False) -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"[EISV_SYNC] Sync failed: {e}")
         return {"success": False, "error": str(e)}
-
 
 async def eisv_sync_task(interval_minutes: float = 5.0):
     """

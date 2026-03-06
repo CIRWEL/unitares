@@ -9,20 +9,10 @@ import sys
 from .utils import success_response, error_response, require_argument, require_registered_agent
 from .decorators import mcp_tool
 from src.logging_utils import get_logger
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
 # Import from mcp_server_std module (using shared utility)
-
 
 @mcp_tool("observe_agent", timeout=15.0, register=False)
 async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -126,7 +116,6 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
     }
     
     return success_response(response_data)
-
 
 @mcp_tool("compare_agents", timeout=15.0, register=False)
 async def handle_compare_agents(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -266,7 +255,6 @@ async def handle_compare_agents(arguments: Dict[str, Any]) -> Sequence[TextConte
     }
     
     return success_response(response_data)
-
 
 @mcp_tool("compare_me_to_similar", timeout=15.0, register=False)
 async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -516,7 +504,6 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
     
     return success_response(comparison_data)
 
-
 @mcp_tool("detect_anomalies", timeout=15.0, register=False)
 async def handle_detect_anomalies(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Detect anomalies across agents"""
@@ -614,7 +601,6 @@ async def handle_detect_anomalies(arguments: Dict[str, Any]) -> Sequence[TextCon
         "eisv_labels": UNITARESMonitor.get_eisv_labels()
     })
 
-
 @mcp_tool("aggregate_metrics", timeout=15.0, register=False)
 async def handle_aggregate_metrics(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get fleet-level health overview"""
@@ -706,7 +692,6 @@ async def handle_aggregate_metrics(arguments: Dict[str, Any]) -> Sequence[TextCo
         "aggregate": aggregate_data,
         "eisv_labels": UNITARESMonitor.get_eisv_labels()
     })
-
 
 # REMOVED: handle_get_status - redundant with status alias → get_governance_metrics
 # Use status() or get_governance_metrics() instead

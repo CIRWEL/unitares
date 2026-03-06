@@ -18,16 +18,7 @@ from src.logging_utils import get_logger
 from ..rate_limiter import get_rate_limiter
 from .utils import error_response
 from .error_helpers import rate_limit_error
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
 # Type alias for middleware return
@@ -35,7 +26,6 @@ MiddlewareResult = Union[
     Tuple[str, Dict[str, Any], "DispatchContext"],  # continue
     list,  # short-circuit
 ]
-
 
 @dataclass
 class DispatchContext:
@@ -49,7 +39,6 @@ class DispatchContext:
     original_name: Optional[str] = None
     client_hint: Optional[str] = None
     identity_result: Optional[dict] = None
-
 
 # ============================================================
 # Step 1: Resolve Session Identity
@@ -188,7 +177,6 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx: DispatchCo
     ctx.identity_result = identity_result
     return name, arguments, ctx
 
-
 # ============================================================
 # Step 2: Verify Trajectory Identity
 # ============================================================
@@ -222,7 +210,6 @@ async def verify_trajectory(name: str, arguments: Dict[str, Any], ctx: DispatchC
 
     return name, arguments, ctx
 
-
 # ============================================================
 # Step 3: Unwrap kwargs
 # ============================================================
@@ -247,7 +234,6 @@ async def unwrap_kwargs(name: str, arguments: Dict[str, Any], ctx: DispatchConte
 
     return name, arguments, ctx
 
-
 # ============================================================
 # Step 4: Resolve Tool Alias
 # ============================================================
@@ -268,7 +254,6 @@ async def resolve_alias(name: str, arguments: Dict[str, Any], ctx: DispatchConte
             logger.debug(f"[ALIAS] Injected action='{alias_info.inject_action}' for consolidated tool '{actual_name}'")
 
     return name, arguments, ctx
-
 
 # ============================================================
 # Step 5: Inject Session Identity
@@ -361,7 +346,6 @@ async def inject_identity(name: str, arguments: Dict[str, Any], ctx: DispatchCon
 
     return name, arguments, ctx
 
-
 # ============================================================
 # Step 6: Validate Parameters
 # ============================================================
@@ -400,7 +384,6 @@ async def validate_params(name: str, arguments: Dict[str, Any], ctx: DispatchCon
         logger.warning(f"[VALIDATION] Schema for {name} not found in Pydantic models!")
 
     return name, arguments, ctx
-
 
 def _format_pydantic_error(error, tool_name: str):
     """Format a Pydantic ValidationError into a helpful TextContent error response."""
@@ -450,14 +433,12 @@ def _format_pydantic_error(error, tool_name: str):
         }
     )
 
-
 # ============================================================
 # Step 7: Check Rate Limit
 # ============================================================
 
 # Persistent state for expensive-read-only loop detection
-_tool_call_history: Dict[str, deque] = defaultdict(lambda: deque())
-
+_tool_call_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=200))
 
 async def check_rate_limit(name: str, arguments: Dict[str, Any], ctx: DispatchContext) -> MiddlewareResult:
     """Rate limiting for non-read-only tools + loop detection for expensive reads."""
@@ -472,6 +453,8 @@ async def check_rate_limit(name: str, arguments: Dict[str, Any], ctx: DispatchCo
         cutoff = now - 60
         while tool_history and tool_history[0] < cutoff:
             tool_history.popleft()
+        if not tool_history:
+            del _tool_call_history[name]
 
         if len(tool_history) >= 20:
             return [error_response(
@@ -489,7 +472,7 @@ async def check_rate_limit(name: str, arguments: Dict[str, Any], ctx: DispatchCo
                 }
             )]
 
-        tool_history.append(now)
+        _tool_call_history[name].append(now)
 
     # General rate limiting (skip for read-only tools)
     read_only_tools = {'health_check', 'get_server_info', 'list_tools', 'get_thresholds', 'search_knowledge_graph', 'get_governance_metrics'}
@@ -502,7 +485,6 @@ async def check_rate_limit(name: str, arguments: Dict[str, Any], ctx: DispatchCo
             return rate_limit_error(agent_id, rate_limiter.get_stats(agent_id))
 
     return name, arguments, ctx
-
 
 # ============================================================
 # Step 8: Track Patterns
@@ -534,7 +516,6 @@ async def track_patterns(name: str, arguments: Dict[str, Any], ctx: DispatchCont
         logger.debug(f"Pattern tracking failed: {e}")
 
     return name, arguments, ctx
-
 
 # ============================================================
 # Pipeline orchestrator

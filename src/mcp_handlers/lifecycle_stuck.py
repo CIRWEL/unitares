@@ -15,13 +15,7 @@ from config.governance_config import GovernanceConfig
 from src.mcp_handlers.shared import get_mcp_server
 
 logger = get_logger(__name__)
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 async def _should_add_stuck_note(agent_id: str, meta, note_cooldown_minutes: float) -> bool:
     """Check if we should add a stuck note (no existing open note + cooldown respected)."""
     try:
@@ -58,7 +52,6 @@ async def _should_add_stuck_note(agent_id: str, meta, note_cooldown_minutes: flo
                 continue
 
     return True
-
 
 async def _trigger_dialectic_for_stuck_agent(
     agent_id: str,
@@ -104,7 +97,6 @@ async def _trigger_dialectic_for_stuck_agent(
         "session_id": session.session_id,
         "note": note,
     }
-
 
 def _detect_stuck_agents(
     max_age_minutes: float = 30.0,  # Unused, kept for API compatibility
@@ -285,7 +277,6 @@ def _detect_stuck_agents(
             # An agent can be legitimately idle without being stuck
 
     return stuck_agents
-
 
 @mcp_tool("detect_stuck_agents", timeout=15.0, rate_limit_exempt=True)
 async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence:

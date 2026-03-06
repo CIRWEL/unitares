@@ -23,14 +23,7 @@ from .dialectic_session import (
     _SESSION_METADATA_CACHE,
     _CACHE_TTL
 )
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 # Import PostgreSQL async functions for cross-process visibility
 from src.dialectic_db import (
     is_agent_in_active_session_async as pg_is_agent_in_active_session,
@@ -38,7 +31,6 @@ from src.dialectic_db import (
 )
 
 logger = get_logger(__name__)
-
 
 async def _has_recently_reviewed(reviewer_id: str, paused_agent_id: str, hours: int = 24) -> bool:
     """
@@ -105,7 +97,6 @@ async def _has_recently_reviewed(reviewer_id: str, paused_agent_id: str, hours: 
     except Exception as e:
         logger.warning(f"Fallback disk check failed for _has_recently_reviewed: {e}")
         return False
-
 
 async def is_agent_in_active_session(agent_id: str) -> bool:
     """
@@ -240,7 +231,6 @@ async def is_agent_in_active_session(agent_id: str) -> bool:
         }
 
     return False
-
 
 async def select_reviewer(paused_agent_id: str,
                    metadata: Dict[str, Any] = None,

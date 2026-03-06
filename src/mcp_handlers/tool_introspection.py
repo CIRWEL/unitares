@@ -14,18 +14,8 @@ from pathlib import Path
 from .utils import success_response, error_response, require_agent_id, require_registered_agent
 from .decorators import mcp_tool
 from src.logging_utils import get_logger
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
-
 
 @mcp_tool("list_tools", timeout=10.0, rate_limit_exempt=True)
 async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -994,7 +984,6 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             tools_info["sections"] = progressive_sections
     
     return success_response(tools_info)
-
 
 @mcp_tool("describe_tool", timeout=10.0, rate_limit_exempt=True)
 async def handle_describe_tool(arguments: Dict[str, Any]) -> Sequence[TextContent]:

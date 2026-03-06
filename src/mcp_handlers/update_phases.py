@@ -22,19 +22,8 @@ from src import agent_storage
 
 from .update_context import UpdateContext
 from .utils import error_response
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
-
 
 # ─── Phase 1: Identity Resolution & Guards ─────────────────────────────
 
@@ -118,7 +107,6 @@ async def resolve_identity_and_guards(ctx: UpdateContext) -> Optional[Sequence[T
     ctx.dialectic_enforcement_warning = None
 
     return None  # Continue to next phase
-
 
 # ─── Phase 2: Onboarding & Auto-Resume ─────────────────────────────────
 
@@ -344,7 +332,6 @@ async def handle_onboarding_and_resume(ctx: UpdateContext) -> Optional[Sequence[
 
     return None  # Continue
 
-
 # ─── Phase 3: Validate Inputs ──────────────────────────────────────────
 
 def validate_inputs(ctx: UpdateContext) -> Optional[Sequence[TextContent]]:
@@ -396,7 +383,6 @@ def validate_inputs(ctx: UpdateContext) -> Optional[Sequence[TextContent]]:
     ctx.task_type = ctx.arguments.get("task_type", "mixed")
 
     return None  # Continue
-
 
 # ─── Phase 4: Locked Update ────────────────────────────────────────────
 
@@ -573,7 +559,6 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
         raise Exception(f"Error processing update: {str(e)}") from e
 
     return None  # Continue
-
 
 # ─── Phase 5: Post-Update Side Effects ─────────────────────────────────
 

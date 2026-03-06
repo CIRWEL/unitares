@@ -10,20 +10,10 @@ from .utils import success_response, error_response
 from .decorators import mcp_tool
 from .error_helpers import agent_not_found_error, authentication_error
 from src.logging_utils import get_logger
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
 # Import from mcp_server_std module (using shared utility)
-
 
 @mcp_tool("get_thresholds", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_get_thresholds(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -39,7 +29,6 @@ async def handle_get_thresholds(arguments: Dict[str, Any]) -> Sequence[TextConte
         },
         arguments=arguments,
     )
-
 
 @mcp_tool("set_thresholds", timeout=15.0, register=False)
 async def handle_set_thresholds(arguments: Dict[str, Any]) -> Sequence[TextContent]:

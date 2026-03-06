@@ -13,16 +13,7 @@ from .cirs_types import VoidAlert, VoidSeverity
 from .cirs_storage import _store_void_alert, _get_recent_void_alerts, _void_alert_buffer
 
 logger = get_logger(__name__)
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 @mcp_tool("void_alert", timeout=10.0, register=False, description="CIRS Protocol: Broadcast or query void state alerts for multi-agent coordination")
 async def handle_void_alert(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
@@ -48,7 +39,6 @@ async def handle_void_alert(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         return await _handle_void_alert_emit(arguments)
     else:
         return await _handle_void_alert_query(arguments)
-
 
 async def _handle_void_alert_emit(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Handle VOID_ALERT emit action"""
@@ -117,7 +107,6 @@ async def _handle_void_alert_emit(arguments: Dict[str, Any]) -> Sequence[TextCon
         "cirs_protocol": "VOID_ALERT",
         "active_alerts_count": len(_void_alert_buffer)
     }, agent_id=agent_id)
-
 
 async def _handle_void_alert_query(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Handle VOID_ALERT query action"""

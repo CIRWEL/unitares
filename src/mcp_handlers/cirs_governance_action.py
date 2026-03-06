@@ -18,16 +18,7 @@ from .cirs_storage import (
 )
 
 logger = get_logger(__name__)
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 @mcp_tool("governance_action", timeout=15.0, register=False, description="CIRS Protocol: Coordinate interventions across agents for collaborative governance")
 async def handle_governance_action(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
@@ -55,7 +46,6 @@ async def handle_governance_action(arguments: Dict[str, Any]) -> Sequence[TextCo
         return await _handle_governance_action_query(arguments)
     else:
         return await _handle_governance_action_status(arguments)
-
 
 async def _handle_governance_action_initiate(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Handle GOVERNANCE_ACTION initiate"""
@@ -133,7 +123,6 @@ async def _handle_governance_action_initiate(arguments: Dict[str, Any]) -> Seque
 
     return success_response(response, agent_id=agent_id)
 
-
 async def _handle_governance_action_respond(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Handle GOVERNANCE_ACTION respond"""
     agent_id, error = require_registered_agent(arguments)
@@ -187,7 +176,6 @@ async def _handle_governance_action_respond(arguments: Dict[str, Any]) -> Sequen
         "cirs_protocol": "GOVERNANCE_ACTION"
     }, agent_id=agent_id)
 
-
 async def _handle_governance_action_query(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Handle GOVERNANCE_ACTION query"""
     agent_id, error = require_registered_agent(arguments)
@@ -222,7 +210,6 @@ async def _handle_governance_action_query(arguments: Dict[str, Any]) -> Sequence
         "summary": summary,
         "cirs_protocol": "GOVERNANCE_ACTION"
     }, agent_id=agent_id)
-
 
 async def _handle_governance_action_status(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Handle GOVERNANCE_ACTION status"""

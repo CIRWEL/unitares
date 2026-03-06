@@ -12,16 +12,7 @@ from typing import Dict, List, Optional, Set
 from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 class ToolStability(Enum):
     """Tool stability tier - helps users know what to expect"""
     STABLE = "stable"  # Production-ready, won't change
@@ -52,7 +43,6 @@ class ToolLifecycle:
     def __post_init__(self):
         if self.aliases is None:
             self.aliases = []
-
 
 # ============================================================================
 # Tool Aliases Registry
@@ -333,7 +323,6 @@ for alias in _TOOL_ALIASES.values():
         _ALIAS_REVERSE[alias.new_name] = []
     _ALIAS_REVERSE[alias.new_name].append(alias.old_name)
 
-
 # ============================================================================
 # Tool Stability Registry
 # ============================================================================
@@ -381,7 +370,6 @@ _TOOL_STABILITY: Dict[str, ToolStability] = {
 # Default stability for unlisted tools
 _DEFAULT_STABILITY = ToolStability.BETA
 
-
 # ============================================================================
 # Public API
 # ============================================================================
@@ -398,16 +386,13 @@ def resolve_tool_alias(tool_name: str) -> tuple[str, Optional[ToolAlias]]:
         return alias.new_name, alias
     return tool_name, None
 
-
 def get_tool_stability(tool_name: str) -> ToolStability:
     """Get stability tier for a tool"""
     return _TOOL_STABILITY.get(tool_name, _DEFAULT_STABILITY)
 
-
 def get_tool_aliases(tool_name: str) -> List[str]:
     """Get all aliases (old names) for a tool"""
     return _ALIAS_REVERSE.get(tool_name, [])
-
 
 def get_migration_guide(old_name: str) -> Optional[str]:
     """Get migration guide for a deprecated/renamed tool"""
@@ -416,16 +401,13 @@ def get_migration_guide(old_name: str) -> Optional[str]:
         return alias.migration_note
     return None
 
-
 def list_all_aliases() -> Dict[str, ToolAlias]:
     """Get all tool aliases (for admin/debugging)"""
     return _TOOL_ALIASES.copy()
 
-
 def is_stable_tool(tool_name: str) -> bool:
     """Check if tool is marked as stable"""
     return get_tool_stability(tool_name) == ToolStability.STABLE
-
 
 def is_experimental_tool(tool_name: str) -> bool:
     """Check if tool is marked as experimental"""

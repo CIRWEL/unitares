@@ -12,13 +12,7 @@ from src import agent_storage
 
 # Import from mcp_server_std module (using shared utility)
 from src.mcp_handlers.shared import get_mcp_server
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 from .types import ToolArgumentsDict
 from .utils import (
     require_agent_id,
@@ -42,7 +36,6 @@ from .lifecycle_resume import handle_direct_resume_if_safe
 
 logger = get_logger(__name__)
 
-
 def _safe_float(val, default=0.0):
     """Safely convert a value to float, returning default on failure."""
     if val is None:
@@ -51,7 +44,6 @@ def _safe_float(val, default=0.0):
         return float(val)
     except (TypeError, ValueError):
         return default
-
 
 def _is_test_agent(agent_id: str) -> bool:
     """Identify test/demo agents by naming patterns.
@@ -66,7 +58,6 @@ def _is_test_agent(agent_id: str) -> bool:
         "test" in agent_id_lower or
         "demo" in agent_id_lower
     )
-
 
 @mcp_tool("list_agents", timeout=15.0, rate_limit_exempt=True, register=False)
 async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextContent]:
@@ -535,7 +526,6 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
             e
         )
 
-
 @mcp_tool("get_agent_metadata", timeout=10.0, register=False)
 async def handle_get_agent_metadata(arguments: Sequence[TextContent]) -> list:
     """Get complete metadata for an agent including lifecycle events, current state, and computed fields.
@@ -679,7 +669,6 @@ async def handle_get_agent_metadata(arguments: Sequence[TextContent]) -> list:
     
     return success_response(metadata_response)
 
-
 @mcp_tool("update_agent_metadata", timeout=10.0, register=False)
 async def handle_update_agent_metadata(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Update agent tags and notes
@@ -817,7 +806,6 @@ async def handle_update_agent_metadata(arguments: Dict[str, Any]) -> Sequence[Te
         "updated_at": datetime.now().isoformat()
     })
 
-
 @mcp_tool("archive_agent", timeout=15.0, register=False)
 async def handle_archive_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Archive an agent for long-term storage.
@@ -891,7 +879,6 @@ async def handle_archive_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
         "kept_in_memory": keep_in_memory
     })
 
-
 @mcp_tool("resume_agent", timeout=15.0, register=False)
 async def handle_resume_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Resume a paused/stuck agent from the dashboard.
@@ -963,7 +950,6 @@ async def handle_resume_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
         "reason": reason,
         "resumed_at": datetime.now().isoformat()
     })
-
 
 @mcp_tool("delete_agent", timeout=15.0, register=False)
 async def handle_delete_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -1067,7 +1053,6 @@ async def handle_delete_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
         "backup_path": backup_path
     })
 
-
 @mcp_tool("archive_old_test_agents", timeout=20.0, rate_limit_exempt=True, register=False)
 async def handle_archive_old_test_agents(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Archive stale agents - test agents by default, or ALL stale agents with include_all=true
@@ -1158,7 +1143,6 @@ async def handle_archive_old_test_agents(arguments: Dict[str, Any]) -> Sequence[
         "include_all": include_all,
         "action": "preview - use dry_run=false to execute" if dry_run else "archived"
     })
-
 
 @mcp_tool("archive_orphan_agents", timeout=30.0, rate_limit_exempt=True)
 async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -1270,11 +1254,9 @@ async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[Te
         "action": "preview - set dry_run=false to execute" if dry_run else "archived"
     })
 
-
 # REMOVED: get_agent_api_key (Dec 2025)
 # API keys deprecated - UUID-based session auth is now primary.
 # Calls to get_agent_api_key are aliased to identity() via tool_stability.py
-
 
 @mcp_tool("mark_response_complete", timeout=5.0, register=False)
 async def handle_mark_response_complete(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -1393,7 +1375,6 @@ async def handle_mark_response_complete(arguments: Dict[str, Any]) -> Sequence[T
         }
     
     return success_response(response_data)
-
 
 @mcp_tool("self_recovery_review", timeout=15.0, register=False)  # Use self_recovery(action="review") instead
 async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -1579,7 +1560,6 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
                 "Or wait for metrics to improve naturally"
             ]
         })
-
 
 @mcp_tool("ping_agent", timeout=5.0, rate_limit_exempt=True, register=False)
 async def handle_ping_agent(arguments: Dict[str, Any]) -> Sequence[TextContent]:

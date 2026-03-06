@@ -15,17 +15,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 import os
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 # =============================================================================
 # SESSION SIGNALS (unified transport signal capture)
 # =============================================================================
@@ -50,28 +40,23 @@ class SessionSignals:
     x_agent_id: Optional[str] = None          # X-Agent-Id header
     transport: str = "unknown"                # "mcp", "rest", "sse", "stdio"
 
-
 # Contextvar for SessionSignals — set once per request at the transport layer
 _session_signals: ContextVar[Optional[SessionSignals]] = ContextVar('session_signals', default=None)
-
 
 def set_session_signals(signals: SessionSignals) -> object:
     """Store SessionSignals for the current request. Returns token for reset."""
     return _session_signals.set(signals)
 
-
 def get_session_signals() -> Optional[SessionSignals]:
     """Get SessionSignals for the current request, or None if not set."""
     return _session_signals.get()
-
 
 def reset_session_signals(token: object) -> None:
     """Reset SessionSignals using token from set_session_signals."""
     _session_signals.reset(token)
 
-
 # Session context - set at request entry, accessible throughout the request lifecycle
-_session_context: ContextVar[Dict[str, Any]] = ContextVar('session_context', default={})
+_session_context: ContextVar[Optional[Dict[str, Any]]] = ContextVar('session_context', default=None)
 
 # Transport-level client hint - set at ASGI/HTTP layer, before MCP SDK processing
 # This allows auto-detection of client type (e.g., "cursor") even when MCP SDK
@@ -81,7 +66,6 @@ _transport_client_hint: ContextVar[Optional[str]] = ContextVar('transport_client
 # MCP session ID - extracted from mcp-session-id header at ASGI layer
 # This enables implicit identity binding without clients manually passing client_session_id
 _mcp_session_id: ContextVar[Optional[str]] = ContextVar('mcp_session_id', default=None)
-
 
 def set_session_context(
     session_key: Optional[str] = None,
@@ -111,16 +95,13 @@ def set_session_context(
     }
     return _session_context.set(ctx)
 
-
 def reset_session_context(token: object) -> None:
     """Reset session context using token from set_session_context."""
     _session_context.reset(token)
 
-
 def get_session_context() -> Dict[str, Any]:
     """Get the current session context dict."""
-    return _session_context.get()
-
+    return _session_context.get() or {}
 
 def get_context_session_key() -> Optional[str]:
     """
@@ -129,28 +110,25 @@ def get_context_session_key() -> Optional[str]:
     Returns None if no context is set (caller should use fallback).
     """
     ctx = _session_context.get()
-    return ctx.get('session_key')
-
+    return ctx.get('session_key') if ctx else None
 
 def get_context_client_session_id() -> Optional[str]:
     """Get raw client_session_id from context."""
     ctx = _session_context.get()
-    return ctx.get('client_session_id')
-
+    return ctx.get('client_session_id') if ctx else None
 
 def get_context_agent_id() -> Optional[str]:
     """Get bound agent_id from context if known."""
     ctx = _session_context.get()
-    return ctx.get('agent_id')
-
+    return ctx.get('agent_id') if ctx else None
 
 def update_context_agent_id(agent_id: str) -> None:
     """Update agent_id in context (e.g., after binding)."""
     ctx = _session_context.get()
-    if ctx:
-        ctx['agent_id'] = agent_id
-        _session_context.set(ctx)
-
+    if ctx is None:
+        return
+    # Create a new dict to avoid mutating shared state
+    _session_context.set({**ctx, 'agent_id': agent_id})
 
 def get_context_client_hint() -> Optional[str]:
     """
@@ -162,13 +140,12 @@ def get_context_client_hint() -> Optional[str]:
     """
     # First check session context
     ctx = _session_context.get()
-    hint = ctx.get('client_hint')
+    hint = ctx.get('client_hint') if ctx else None
     if hint:
         return hint
 
     # Fall back to transport-level contextvar
     return _transport_client_hint.get()
-
 
 def set_transport_client_hint(hint: str) -> object:
     """
@@ -178,11 +155,9 @@ def set_transport_client_hint(hint: str) -> object:
     """
     return _transport_client_hint.set(hint)
 
-
 def reset_transport_client_hint(token: object) -> None:
     """Reset transport-level client hint."""
     _transport_client_hint.reset(token)
-
 
 def set_mcp_session_id(session_id: str) -> object:
     """
@@ -192,11 +167,9 @@ def set_mcp_session_id(session_id: str) -> object:
     """
     return _mcp_session_id.set(session_id)
 
-
 def reset_mcp_session_id(token: object) -> None:
     """Reset MCP session ID."""
     _mcp_session_id.reset(token)
-
 
 def get_mcp_session_id() -> Optional[str]:
     """
@@ -207,25 +180,20 @@ def get_mcp_session_id() -> Optional[str]:
     """
     return _mcp_session_id.get()
 
-
 # Trajectory identity confidence - set during dispatch if verification runs
 _trajectory_confidence: ContextVar[Optional[float]] = ContextVar('trajectory_confidence', default=None)
-
 
 def set_trajectory_confidence(confidence: float) -> object:
     """Set trajectory confidence for current request. Returns token for reset."""
     return _trajectory_confidence.set(confidence)
 
-
 def reset_trajectory_confidence(token: object) -> None:
     """Reset trajectory confidence."""
     _trajectory_confidence.reset(token)
 
-
 def get_trajectory_confidence() -> Optional[float]:
     """Get trajectory confidence from context, or None if not set."""
     return _trajectory_confidence.get()
-
 
 def detect_client_from_user_agent(user_agent: str) -> Optional[str]:
     """

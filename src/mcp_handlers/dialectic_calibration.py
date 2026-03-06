@@ -16,18 +16,8 @@ from src.calibration import calibration_checker
 from src.audit_log import audit_logger
 from src.logging_utils import get_logger
 from .dialectic_session import SESSION_STORAGE_DIR, load_session
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
-
 
 async def update_calibration_from_dialectic(session: DialecticSession, resolution: Optional[Resolution] = None) -> bool:
     """
@@ -129,7 +119,6 @@ async def update_calibration_from_dialectic(session: DialecticSession, resolutio
         logger.warning(f"Could not update calibration from dialectic session {session.session_id}: {e}", exc_info=True)
         return False
 
-
 async def update_calibration_from_dialectic_disagreement(session: DialecticSession) -> bool:
     """
     Update calibration from dialectic disagreement (when agents don't converge).
@@ -202,7 +191,6 @@ async def update_calibration_from_dialectic_disagreement(session: DialecticSessi
     except Exception as e:
         logger.warning(f"Could not record disagreement from dialectic session {session.session_id}: {e}", exc_info=True)
         return False
-
 
 async def backfill_calibration_from_historical_sessions() -> Dict[str, Any]:
     """

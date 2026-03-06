@@ -24,16 +24,7 @@ from typing import Optional, List, Dict, Any
 import os
 
 from src.logging_utils import get_logger
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
 # Check if OpenAI SDK available
@@ -42,7 +33,6 @@ try:
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
-
 
 def _get_ollama_client() -> Optional[Any]:
     """Get Ollama client if available."""
@@ -59,7 +49,6 @@ def _get_ollama_client() -> Optional[Any]:
         logger.debug(f"Ollama client not available: {e}")
         return None
 
-
 def _get_default_model() -> str:
     """Get default model for local inference."""
     # Check environment for override
@@ -70,7 +59,6 @@ def _get_default_model() -> str:
     # Default to gemma3:27b (fast, good quality for synthesis)
     # Smaller than llama3:70b but still capable
     return "gemma3:27b"
-
 
 async def call_local_llm(
     prompt: str,
@@ -137,7 +125,6 @@ async def call_local_llm(
         logger.warning(f"Local LLM call failed: {type(e).__name__}: {e}")
         return None
 
-
 async def synthesize_results(
     discoveries: List[Dict[str, Any]],
     query: Optional[str] = None,
@@ -195,7 +182,6 @@ Give 2-3 key insights in 2-3 sentences total. Be concise."""
         "_note": "AI-synthesized summary via local LLM"
     }
 
-
 async def explain_anomaly(
     agent_id: str,
     anomaly_type: str,
@@ -235,7 +221,6 @@ Give a brief root cause hypothesis and one concrete action."""
         max_tokens=max_tokens,
         temperature=0.7
     )
-
 
 async def generate_recovery_coaching(
     agent_id: str,
@@ -278,7 +263,6 @@ Give ONE clear, specific action they can take right now."""
         temperature=0.7
     )
 
-
 # ==============================================================================
 # DIALECTIC LLM DELEGATION
 # ==============================================================================
@@ -288,7 +272,6 @@ Give ONE clear, specific action they can take right now."""
 # Using local LLM as a "synthetic reviewer" preserves the dialectic structure
 # while making single-agent recovery viable.
 # ==============================================================================
-
 
 async def generate_antithesis(
     thesis: Dict[str, Any],
@@ -387,7 +370,6 @@ SUGGESTED_CONDITIONS: [modified or additional conditions]"""
             antithesis[current_section] = antithesis.get(current_section, "") + " " + line.strip()
 
     return antithesis
-
 
 async def generate_synthesis(
     thesis: Dict[str, Any],
@@ -489,7 +471,6 @@ REASONING: [brief justification]"""
 
     return synthesis
 
-
 async def run_full_dialectic(
     thesis: Dict[str, Any],
     agent_state: Optional[Dict[str, Any]] = None,
@@ -549,7 +530,6 @@ async def run_full_dialectic(
     result["success"] = True
 
     return result
-
 
 async def is_llm_available() -> bool:
     """Check if local LLM is available for delegation."""

@@ -28,16 +28,7 @@ from .llm_delegation import synthesize_results
 logger = get_logger(__name__)
 
 import re
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 def normalize_tag(tag: str) -> str:
     """Normalize a tag to canonical form: lowercase, strip, collapse separators to hyphens.
 
@@ -57,7 +48,6 @@ def normalize_tag(tag: str) -> str:
     t = t.strip('-')
     return t
 
-
 def normalize_tags(tags: list) -> list:
     """Normalize and deduplicate a list of tags."""
     seen = set()
@@ -70,7 +60,6 @@ def normalize_tags(tags: list) -> list:
             seen.add(normalized)
             result.append(normalized)
     return result
-
 
 async def _discovery_not_found(discovery_id: str, graph) -> TextContent:
     """Build a 'not found' error with prefix-match suggestions.
@@ -109,7 +98,6 @@ async def _discovery_not_found(discovery_id: str, graph) -> TextContent:
         )
     return error_response(f"Discovery '{discovery_id}' not found")
 
-
 def _check_display_name_required(agent_id: str, arguments: Dict[str, Any]) -> tuple[Optional[TextContent], Optional[str]]:
     """
     Check if agent has a meaningful display_name set for KG attribution.
@@ -127,7 +115,6 @@ def _check_display_name_required(agent_id: str, arguments: Dict[str, Any]) -> tu
     try:
         from .context import get_context_agent_id
         import uuid as uuid_module
-
 
         # Get the actual UUID for this agent
         bound_uuid = get_context_agent_id()
@@ -180,7 +167,6 @@ def _check_display_name_required(agent_id: str, arguments: Dict[str, Any]) -> tu
         logger.debug(f"Could not check display_name: {e}")
         return None, None  # Don't block on check failures
 
-
 def _resolve_agent_display(agent_id: str) -> Dict[str, str]:
     """
     Resolve agent_id to display info (v2.5.4).
@@ -216,7 +202,6 @@ def _resolve_agent_display(agent_id: str) -> Dict[str, str]:
         pass
     # Fallback: use agent_id as-is
     return {"agent_id": agent_id, "display_name": agent_id}
-
 
 @mcp_tool("store_knowledge_graph", timeout=20.0, register=False)
 async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -509,7 +494,6 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
         return [error_response(error_msg)]
     except Exception as e:
         return [error_response(f"Failed to store knowledge: {str(e)}")]
-
 
 @mcp_tool("search_knowledge_graph", timeout=15.0, rate_limit_exempt=True)
 async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -979,7 +963,6 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
     except Exception as e:
         return [error_response(f"Failed to search knowledge: {str(e)}")]
 
-
 @mcp_tool("get_knowledge_graph", timeout=15.0, rate_limit_exempt=True, register=False)
 async def handle_get_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get all knowledge for an agent - summaries only (use get_discovery_details for full content)"""
@@ -1037,7 +1020,6 @@ async def handle_get_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Text
     except Exception as e:
         return [error_response(f"Failed to retrieve knowledge: {str(e)}")]
 
-
 @mcp_tool("list_knowledge_graph", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_list_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """List knowledge graph statistics - full transparency"""
@@ -1054,7 +1036,6 @@ async def handle_list_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Tex
         
     except Exception as e:
         return [error_response(f"Failed to list knowledge: {str(e)}")]
-
 
 @mcp_tool("update_discovery_status_graph", timeout=10.0, register=False)
 async def handle_update_discovery_status_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -1134,7 +1115,6 @@ async def handle_update_discovery_status_graph(arguments: Dict[str, Any]) -> Seq
         
     except Exception as e:
         return [error_response(f"Failed to update discovery: {str(e)}")]
-
 
 @mcp_tool("get_discovery_details", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_get_discovery_details(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -1238,7 +1218,6 @@ async def handle_get_discovery_details(arguments: Dict[str, Any]) -> Sequence[Te
 
     except Exception as e:
         return [error_response(f"Failed to get discovery details: {str(e)}")]
-
 
 async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_id: str) -> Sequence[TextContent]:
     """Internal batch handler - called by store_knowledge_graph when discoveries array is provided"""
@@ -1409,7 +1388,6 @@ async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_i
     except Exception as e:
         return [error_response(f"Failed to store batch knowledge: {str(e)}")]
 
-
 @mcp_tool("answer_question", timeout=15.0, register=False)
 async def handle_answer_question(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Answer a question in the knowledge graph - closes the Q&A loop.
@@ -1520,7 +1498,6 @@ async def handle_answer_question(arguments: Dict[str, Any]) -> Sequence[TextCont
 
     except Exception as e:
         return [error_response(f"Failed to answer question: {str(e)}")]
-
 
 @mcp_tool("leave_note", timeout=10.0)
 async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -1660,7 +1637,6 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     except Exception as e:
         return [error_response(f"Failed to leave note: {str(e)}")]
 
-
 @mcp_tool("cleanup_knowledge_graph", timeout=60.0, register=False)
 async def handle_cleanup_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Run knowledge graph lifecycle cleanup.
@@ -1691,7 +1667,6 @@ async def handle_cleanup_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[
     except Exception as e:
         return [error_response(f"Failed to run lifecycle cleanup: {str(e)}")]
 
-
 @mcp_tool("get_lifecycle_stats", timeout=30.0, rate_limit_exempt=True, register=False)
 async def handle_get_lifecycle_stats(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get knowledge graph lifecycle statistics.
@@ -1712,7 +1687,6 @@ async def handle_get_lifecycle_stats(arguments: Dict[str, Any]) -> Sequence[Text
 
     except Exception as e:
         return [error_response(f"Failed to get lifecycle stats: {str(e)}")]
-
 
 @mcp_tool("supersede_discovery", timeout=15.0, register=False)
 async def handle_supersede_discovery(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -1745,5 +1719,4 @@ async def handle_supersede_discovery(arguments: Dict[str, Any]) -> Sequence[Text
             return [error_response(result.get("error", "Failed to create SUPERSEDES edge"))]
     except Exception as e:
         return [error_response(f"Failed to supersede discovery: {str(e)}")]
-
 

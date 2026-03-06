@@ -8,18 +8,8 @@ import os
 from typing import Any, Dict, Optional
 
 from src.logging_utils import get_logger
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
-
 
 def format_response(
     response_data: dict,
@@ -114,7 +104,6 @@ def format_response(
 
     return response_data
 
-
 def _format_standard(response_data: dict, task_type: str) -> dict:
     """Build standard (interpreted) response."""
     from governance_state import GovernanceState
@@ -155,7 +144,6 @@ def _format_standard(response_data: dict, task_type: str) -> dict:
         result["thread_context"] = response_data["thread_context"]
     return result
 
-
 def _format_minimal(response_data: dict, using_default_mode: bool, saved_trust_tier: Optional[str]) -> dict:
     """Build minimal response: action + EISV + margin."""
     decision = response_data.get("decision", {}) if isinstance(response_data.get("decision"), dict) else {}
@@ -186,7 +174,6 @@ def _format_minimal(response_data: dict, using_default_mode: bool, saved_trust_t
         result["thread_context"] = response_data["thread_context"]
 
     return result
-
 
 def _format_compact(response_data: dict, using_default_mode: bool, saved_trust_tier: Optional[str]) -> dict:
     """Build compact response: brief metrics + decision summary."""
@@ -246,7 +233,6 @@ def _format_compact(response_data: dict, using_default_mode: bool, saved_trust_t
         result["thread_context"] = response_data["thread_context"]
 
     return result
-
 
 def _strip_context(response_data: dict, is_new_agent: bool, key_was_generated: bool, api_key_auto_retrieved: bool):
     """Strip optional context fields for minimal/compact modes (in-place)."""

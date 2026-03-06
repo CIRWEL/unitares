@@ -19,16 +19,7 @@ import os
 from .utils import success_response, error_response, require_argument
 from .decorators import mcp_tool
 from src.logging_utils import get_logger
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
 # Check if OpenAI SDK available (used for ngrok.ai compatibility)
@@ -37,7 +28,6 @@ try:
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
-
 
 @mcp_tool("call_model", timeout=30.0)
 async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -357,7 +347,6 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                 ]
             }
         )]
-
 
 def create_model_inference_client():
     """Factory function to create model inference client if available."""

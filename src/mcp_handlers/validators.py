@@ -11,15 +11,7 @@ LITE MODEL SUPPORT:
 from typing import Dict, Any, Optional, Tuple, List
 from mcp.types import TextContent
 from .utils import error_response
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 PARAM_ALIASES: Dict[str, Dict[str, str]] = {'store_knowledge_graph': {'discovery': 'summary', 'insight': 'summary', 'finding': 'summary', 'content': 'summary', 'text': 'summary', 'message': 'summary', 'note': 'summary', 'learning': 'summary', 'observation': 'summary', 'type': 'discovery_type', 'kind': 'discovery_type', 'category': 'discovery_type'}, 'leave_note': {'discovery': 'summary', 'insight': 'summary', 'finding': 'summary', 'text': 'summary', 'note': 'summary', 'content': 'summary', 'message': 'summary', 'learning': 'summary'}, 'search_knowledge_graph': {'search': 'query', 'term': 'query', 'text': 'query', 'find': 'query'}, 'process_agent_update': {'text': 'response_text', 'message': 'response_text', 'update': 'response_text', 'content': 'response_text', 'work': 'response_text', 'summary': 'response_text'}, 'identity': {'label': 'name', 'display_name': 'name', 'nickname': 'name'}, 'agent': {'op': 'action'}}
 
 def apply_param_aliases(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -95,7 +87,6 @@ def sanitize_agent_name(agent_id: str) -> str:
         sanitized = sanitized + '_agent'
     return sanitized
 
-
 def validate_agent_id_format(agent_id: str) -> Tuple[Optional[str], Optional[TextContent]]:
     """
     Validate and sanitize agent_id format for safety (filesystem, URLs, etc).
@@ -135,7 +126,6 @@ def validate_agent_id_reserved_names(agent_id: str) -> Tuple[Optional[str], Opti
         return (None, error_response(f"SECURITY: agent_id '{agent_id}' uses reserved prefix", details={'error_type': 'reserved_prefix', 'reason': 'Reserved prefixes blocked to prevent privilege confusion'}, recovery={'action': 'Choose an agent_id without system/admin/governance prefixes', 'example': 'my_agent_work_20251209'}))
     return (agent_id, None)
 
-
 def validate_agent_id_policy(agent_id: str) -> Tuple[Optional[str], Optional[TextContent]]:
     """Policy check on agent_id (reserved names only).
 
@@ -148,7 +138,6 @@ def validate_agent_id_policy(agent_id: str) -> Tuple[Optional[str], Optional[Tex
     if err:
         return ("Agent ID uses a reserved name", None)
     return (None, None)
-
 
 def detect_script_creation_avoidance(response_text: str) -> List[str]:
     """Detect patterns in response text that suggest test/script avoidance.

@@ -17,14 +17,7 @@ from src.db.acquire_compat import compatible_acquire
 from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 # PostgreSQL backend (cross-process shared state)
 from src.dialectic_db import (
     get_session_async as pg_get_session,
@@ -49,7 +42,6 @@ UNITARES_DIALECTIC_WRITE_JSON_SNAPSHOT = os.getenv("UNITARES_DIALECTIC_WRITE_JSO
     "no",
 )
 
-
 def _resolve_dialectic_backend() -> str:
     """
     Resolve dialectic backend.
@@ -62,7 +54,6 @@ def _resolve_dialectic_backend() -> str:
         return UNITARES_DIALECTIC_BACKEND
     # auto: prefer postgres
     return "postgres"
-
 
 def _reconstruct_session_from_dict(session_id: str, session_data: Dict) -> Optional[DialecticSession]:
     """Reconstruct DialecticSession from a dict (from JSON file or PostgreSQL)."""
@@ -152,7 +143,6 @@ def _reconstruct_session_from_dict(session_id: str, session_data: Dict) -> Optio
         logger.error(f"Error reconstructing session {session_id}: {e}", exc_info=True)
         return None
 
-
 async def save_session(session: DialecticSession) -> None:
     """
     Persist dialectic session to PostgreSQL (upsert) and JSON (snapshot).
@@ -200,7 +190,6 @@ async def save_session(session: DialecticSession) -> None:
 
     except Exception as e:
         logger.error(f"JSON snapshot save failed for session {session.session_id}: {e}", exc_info=True)
-
 
 async def load_all_sessions() -> int:
     """
@@ -303,7 +292,6 @@ async def load_all_sessions() -> int:
         logger.error(f"Unexpected error loading sessions from disk: {e}", exc_info=True)
         return 0
 
-
 async def load_session(session_id: str) -> Optional[DialecticSession]:
     """Load dialectic session from disk - ASYNC to prevent blocking"""
     try:
@@ -353,7 +341,6 @@ async def load_session(session_id: str) -> Optional[DialecticSession]:
     except Exception as e:
         logger.error(f"Unexpected error loading session {session_id}: {e}", exc_info=True)
         return None
-
 
 async def load_session_as_dict(session_id: str) -> Optional[Dict[str, Any]]:
     """Load session data formatted for API response, skipping object reconstruction.
@@ -439,16 +426,13 @@ async def load_session_as_dict(session_id: str) -> Optional[Dict[str, Any]]:
         logger.warning(f"Fast load failed for session {session_id}: {e}")
         return None
 
-
 async def verify_data_consistency() -> Dict[str, Any]:
     """Verify dialectic data consistency. PostgreSQL is the sole backend."""
     return {"consistent": True, "stats": {}, "issues": []}
 
-
 async def run_startup_consolidation() -> Dict[str, Any]:
     """No-op. PostgreSQL is the sole dialectic backend."""
     return {"exported": 0, "synced": 0, "errors": []}
-
 
 async def list_all_sessions(
     agent_id: Optional[str] = None,

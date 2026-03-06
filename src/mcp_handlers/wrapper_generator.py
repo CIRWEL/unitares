@@ -16,18 +16,8 @@ import logging
 from typing import Annotated, Any, Callable, Optional, Union
 
 from pydantic import Field
-
-
-class _LazyMCPServer:
-    def __getattr__(self, name):
-        from src.mcp_handlers.shared import get_mcp_server
-        return getattr(get_mcp_server(), name)
-        
-mcp_server = _LazyMCPServer()
-
-
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = logging.getLogger(__name__)
-
 
 def create_typed_wrapper(
     tool_name: str,
@@ -72,7 +62,6 @@ def create_typed_wrapper(
     wrapper.__qualname__ = tool_name
     
     return wrapper
-
 
 def _resolve_param_type(param_def: dict) -> Any:
     """Resolve a JSON Schema parameter definition to a Python type.
@@ -130,7 +119,6 @@ def _resolve_param_type(param_def: dict) -> Any:
 
     return _json_type_to_python(param_def.get("type", "string"))
 
-
 def _json_type_to_python(json_type: Any) -> Any:
     """Convert JSON Schema type to Python type annotation."""
     if isinstance(json_type, list):
@@ -173,7 +161,6 @@ def _json_type_to_python(json_type: Any) -> Any:
     }
     return type_map.get(json_type, str)
 
-
 def _build_annotated_type(
     base_type: Any,
     is_required: bool,
@@ -197,7 +184,6 @@ def _build_annotated_type(
         return Annotated[base_type, Field(**field_kwargs)]
     else:
         return Annotated[Optional[base_type], Field(default=None, **field_kwargs)]
-
 
 def _create_simple_wrapper(
     tool_name: str,
@@ -257,7 +243,6 @@ def _create_simple_wrapper(
     typed_wrapper.__qualname__ = tool_name
     
     return typed_wrapper
-
 
 def _create_session_wrapper(
     tool_name: str,
