@@ -1199,21 +1199,28 @@ class KnowledgeGraphAGE:
             status_weight: If True, apply status multipliers (archived/resolved rank lower)
 
         Returns:
-            List of (DiscoveryNode, final_score) tuples, sorted by score descending
+            List of (DiscoveryNode, final_score) tuples, sorted by score descending.
+            If embeddings are unavailable, returns ([], error_info_dict) instead.
+            Callers should check: if isinstance(result, tuple) and len(result) == 2
+            and isinstance(result[1], dict), it's a degraded response.
         """
         try:
             from src.embeddings import get_embeddings_service, embeddings_available
         except ImportError:
-            logger.warning("Embeddings module not available")
-            return []
-        
+            logger.warning("Embeddings module not available — semantic search degraded")
+            return ([], {"error": "embeddings_import_failed", "message": "Embeddings module not available"})
+
         if not embeddings_available():
-            logger.warning("sentence-transformers not installed, semantic search unavailable")
-            return []
-        
+            logger.warning("sentence-transformers not installed — semantic search degraded")
+            return ([], {"error": "embeddings_unavailable", "message": "sentence-transformers not installed, semantic search unavailable"})
+
         # Get embedding service and embed query
-        embeddings = await get_embeddings_service()
-        query_embedding = await embeddings.embed(query)
+        try:
+            embeddings = await get_embeddings_service()
+            query_embedding = await embeddings.embed(query)
+        except Exception as e:
+            logger.warning(f"Embedding service failed — semantic search degraded: {e}")
+            return ([], {"error": "embeddings_failed", "message": f"Embedding service error: {e}"})
         
         # Try pgvector first (fast, indexed)
         use_pgvector = await self._pgvector_available()

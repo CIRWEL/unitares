@@ -100,6 +100,21 @@ async def _agent_exists_in_postgres(agent_uuid: str) -> bool:
         return False
 
 
+async def _get_agent_status(agent_uuid: str) -> Optional[str]:
+    """Fetch agent's status from PostgreSQL (e.g., 'active', 'archived', 'deleted').
+
+    Returns None if agent not found or on error.
+    """
+    try:
+        db = get_db()
+        identity = await db.get_identity(agent_uuid)
+        if identity and hasattr(identity, "status"):
+            return identity.status
+        return None
+    except Exception:
+        return None
+
+
 async def _get_agent_label(agent_uuid: str) -> Optional[str]:
     """Fetch agent's label from PostgreSQL."""
     try:

@@ -246,6 +246,24 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
             agent_uuid = existing_identity.get("agent_uuid")
             agent_id = existing_identity.get("agent_id", agent_uuid)
             label = existing_identity.get("label")
+
+            # FIX: Don't silently resume archived agents — warn the caller
+            if existing_identity.get("archived"):
+                logger.info(f"[IDENTITY] Found archived agent {agent_uuid[:8]}... — returning warning instead of silent resume")
+                return success_response({
+                    "uuid": agent_uuid,
+                    "agent_id": agent_id,
+                    "display_name": label,
+                    "archived": True,
+                    "resumed": False,
+                    "message": f"Session maps to archived agent '{label or agent_id}'. Use onboard() to reactivate or force_new=true for a fresh identity.",
+                    "hint": "onboard() will auto-reactivate this agent. force_new=true creates a new one.",
+                    "options": {
+                        "reactivate": "Call onboard() to resume this archived agent",
+                        "fresh": "Call identity(force_new=true) or onboard(force_new=true) for a new identity"
+                    }
+                })
+
             logger.info(f"[IDENTITY] Auto-resuming existing agent {agent_uuid[:8]}... (found under base key)")
 
             # Update label if requested
@@ -275,10 +293,27 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     if not force_new and model_type and session_key != base_session_key:
         existing_identity = await resolve_session_identity(session_key, persist=False)
         if not existing_identity.get("created"):
-            # EXISTING AGENT FOUND - auto-resume
             agent_uuid = existing_identity.get("agent_uuid")
             agent_id = existing_identity.get("agent_id", agent_uuid)
             label = existing_identity.get("label")
+
+            # FIX: Don't silently resume archived agents
+            if existing_identity.get("archived"):
+                logger.info(f"[IDENTITY] Found archived agent {agent_uuid[:8]}... (model-suffixed key) — returning warning")
+                return success_response({
+                    "uuid": agent_uuid,
+                    "agent_id": agent_id,
+                    "display_name": label,
+                    "archived": True,
+                    "resumed": False,
+                    "message": f"Session maps to archived agent '{label or agent_id}'. Use onboard() to reactivate or force_new=true for a fresh identity.",
+                    "hint": "onboard() will auto-reactivate this agent. force_new=true creates a new one.",
+                    "options": {
+                        "reactivate": "Call onboard() to resume this archived agent",
+                        "fresh": "Call identity(force_new=true) or onboard(force_new=true) for a new identity"
+                    }
+                })
+
             logger.info(f"[IDENTITY] Auto-resuming existing agent {agent_uuid[:8]}...")
 
             # Update label if requested

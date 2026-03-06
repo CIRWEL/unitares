@@ -1911,18 +1911,20 @@ class TestSupersedeDiscovery:
 class TestSemanticSearch:
 
     @pytest.mark.asyncio
-    async def test_returns_empty_when_embeddings_unavailable(self):
-        """Should return empty list when embeddings module not available."""
+    async def test_returns_degraded_when_embeddings_unavailable(self):
+        """Should return ([], error_info) when embeddings module not available."""
         kg, _ = make_kg_with_mock_db()
 
         with patch.dict("sys.modules", {"src.embeddings": None}):
             with patch("builtins.__import__", side_effect=ImportError("no module")):
                 result = await kg.semantic_search("test query")
-                assert result == []
+                assert isinstance(result, tuple)
+                assert result[0] == []
+                assert result[1]["error"] == "embeddings_import_failed"
 
     @pytest.mark.asyncio
-    async def test_returns_empty_when_embeddings_not_available_flag(self):
-        """Should return empty list when embeddings_available() returns False."""
+    async def test_returns_degraded_when_embeddings_not_available_flag(self):
+        """Should return ([], error_info) when embeddings_available() returns False."""
         kg, _ = make_kg_with_mock_db()
 
         mock_module = MagicMock()
@@ -1931,7 +1933,9 @@ class TestSemanticSearch:
 
         with patch.dict("sys.modules", {"src.embeddings": mock_module}):
             result = await kg.semantic_search("test query")
-            assert result == []
+            assert isinstance(result, tuple)
+            assert result[0] == []
+            assert result[1]["error"] == "embeddings_unavailable"
 
     @pytest.mark.asyncio
     async def test_pgvector_path_returns_blended_results(self):

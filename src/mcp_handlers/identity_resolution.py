@@ -18,6 +18,7 @@ from .identity_persistence import (
     _cache_session,
     _agent_exists_in_postgres,
     _get_agent_label,
+    _get_agent_status,
     _get_agent_id_from_metadata,
     _find_agent_by_label,
 )
@@ -283,7 +284,9 @@ async def resolve_session_identity(
 
                     label = await _get_agent_label(agent_uuid) if persisted else None
 
-
+                    # Check archived status (prevents silent binding to archived agents)
+                    agent_status = await _get_agent_status(agent_uuid) if persisted else None
+                    is_archived = agent_status == "archived"
 
                     # SLIDING TTL: Refresh Redis expiry on every hit (v2.5.5)
 
@@ -315,6 +318,8 @@ async def resolve_session_identity(
                         "created": False,
 
                         "persisted": persisted,
+
+                        "archived": is_archived,
 
                         "source": "redis",
 
@@ -370,7 +375,9 @@ async def resolve_session_identity(
 
                 label = await _get_agent_label(agent_uuid)
 
-
+                # Check archived status
+                agent_status = await _get_agent_status(agent_uuid)
+                is_archived = agent_status == "archived"
 
                 # Warm Redis cache for next time (cache UUID + display agent_id)
 
@@ -405,6 +412,8 @@ async def resolve_session_identity(
                     "created": False,
 
                     "persisted": True,  # Found in PostgreSQL = persisted
+
+                    "archived": is_archived,
 
                     "source": "postgres",
 

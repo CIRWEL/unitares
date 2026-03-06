@@ -457,11 +457,25 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
             # JSON backend: at least report that graph loaded and basic stats are accessible.
             kg_info = await graph.get_stats()
 
-        checks["knowledge_graph"] = {
-            "status": "healthy",
+        # Validate embeddings availability (semantic search depends on this)
+        embeddings_ok = False
+        try:
+            from src.embeddings import embeddings_available
+            embeddings_ok = embeddings_available()
+        except Exception:
+            pass
+
+        kg_status = "healthy" if embeddings_ok else "degraded"
+        kg_check = {
+            "status": kg_status,
             "backend": backend_name,
-            "info": kg_info
+            "info": kg_info,
+            "embeddings_available": embeddings_ok,
         }
+        if not embeddings_ok:
+            kg_check["warning"] = "Semantic search unavailable — embeddings service not loaded. KG search will fall back to text search."
+
+        checks["knowledge_graph"] = kg_check
     except Exception as e:
         checks["knowledge_graph"] = {
             "status": "error",

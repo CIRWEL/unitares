@@ -544,7 +544,8 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
 
         # Track semantic scores if semantic search is used
         semantic_scores_dict = {}
-        
+        search_degraded_warning = None
+
         t0 = time.perf_counter()
         if query_text:
             # UX FIX (Dec 2025): Auto-enable semantic search for conceptual queries
@@ -563,7 +564,6 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 # Single-word queries benefit from semantic search too (substring_scan
                 # is limited to 50 recent entries and misses most results)
                 use_semantic = has_semantic
-            
             if use_semantic:
                 # Semantic search using vector embeddings
                 # Default 0.3 for precision; auto-fallback to 0.2 catches edge cases
@@ -573,15 +573,27 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                     limit=limit * 2,  # Get extra for filtering
                     min_similarity=min_similarity
                 )
-                candidates = [d for d, _ in semantic_results]
-                semantic_scores_dict = {d.id: score for d, score in semantic_results}
-                search_mode = "semantic"
-            elif hasattr(graph, "full_text_search"):
-                # Prefer DB-native FTS when available
+                # Check for degraded response: ([], error_info_dict)
+                if (isinstance(semantic_results, tuple) and len(semantic_results) == 2
+                        and isinstance(semantic_results[1], dict)):
+                    _results, error_info = semantic_results
+                    search_degraded_warning = (
+                        f"Semantic search unavailable: {error_info.get('message', 'unknown error')}. "
+                        f"Falling back to text search."
+                    )
+                    logger.warning(f"[KG_SEARCH] {search_degraded_warning}")
+                    # Fall through to FTS/substring fallback below
+                    use_semantic = False
+                else:
+                    candidates = [d for d, _ in semantic_results]
+                    semantic_scores_dict = {d.id: score for d, score in semantic_results}
+                    search_mode = "semantic"
+            if not use_semantic and hasattr(graph, "full_text_search"):
+                # Prefer DB-native FTS when available (fallback from degraded semantic or no semantic)
                 candidate_limit = int(min(max(limit * 5, limit), 500))
                 candidates = await graph.full_text_search(str(query_text), limit=candidate_limit)
                 search_mode = "fts"
-            else:
+            elif not use_semantic:
                 # JSON backend fallback: bounded scan of most recent entries (kept small to prevent context bloat).
                 # Reduced from 500 to 50 to prevent context bloat
                 candidates = await graph.query(limit=50)
@@ -835,6 +847,11 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             "count": len(results),
             "message": f"Found {len(results)} discovery(ies)" + (" (details auto-included for small result set)" if auto_details else "" if include_details else " (summaries only)")
         }
+
+        # Surface semantic search degradation to caller
+        if search_degraded_warning:
+            response_data["search_degraded"] = True
+            response_data["search_degraded_message"] = search_degraded_warning
 
         # UX FIX: Make fallback behavior explicit and transparent
         if fallback_used:
@@ -1596,6 +1613,13 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             note_summary = text[:split_pos].rstrip()
             note_details = text[split_pos:].strip()
 
+        # Tag-based severity inference: auto-bump infrastructure bugs to medium
+        note_severity = "low"
+        tag_set = set(tags)
+        INFRA_TAGS = {"infrastructure", "search", "embedding", "silent-failure", "degraded", "database", "service"}
+        if "bug" in tag_set and (tag_set & INFRA_TAGS):
+            note_severity = "medium"
+
         # Create note with minimal ceremony
         note = DiscoveryNode(
             id=datetime.now().isoformat(),
@@ -1604,7 +1628,7 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             summary=note_summary,
             details=note_details,
             tags=tags,
-            severity="low",
+            severity=note_severity,
             status="open",
             response_to=response_to
         )
