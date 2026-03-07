@@ -60,7 +60,7 @@ jobs:
 
     - name: Run tests with coverage
       run: |
-        python -m pytest tests/ -v --cov=src --cov-report=term-missing --cov-report=html --ignore=tests/test_admin_handlers.py
+        python -m pytest tests/ -v --cov=src --cov-report=term-missing --cov-report=html
 
     - name: Upload coverage report
       if: always()

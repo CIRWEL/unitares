@@ -2332,19 +2332,31 @@ class TestGetConnectionStatusAdditional:
 
     @pytest.mark.asyncio
     async def test_connection_status_tool_import_error(self):
-        """Test TOOL_HANDLERS import error covers lines 2299-2300."""
+        """Test TOOL_HANDLERS import error path (tools_available stays False)."""
+        from src.mcp_handlers.admin import handle_get_connection_status
+
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
-        with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_server), \
-             patch("src.mcp_handlers.admin.mcp_server", mock_server), \
-             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
-             patch.dict("sys.modules", {"src.mcp_handlers": MagicMock(TOOL_HANDLERS={})}):
-            from src.mcp_handlers.admin import handle_get_connection_status
-            result = await handle_get_connection_status({})
+        # Make the 'from . import TOOL_HANDLERS' raise an ImportError
+        # by temporarily removing the attribute from the real module
+        import src.mcp_handlers as pkg
+        had_attr = hasattr(pkg, 'TOOL_HANDLERS')
+        if had_attr:
+            saved = pkg.TOOL_HANDLERS
+            delattr(pkg, 'TOOL_HANDLERS')
+        try:
+            with patch("src.mcp_handlers.admin.get_mcp_server", return_value=mock_server), \
+                 patch("src.mcp_handlers.admin.mcp_server", mock_server), \
+                 patch("src.mcp_handlers.context.get_context_agent_id", return_value=None):
+                result = await handle_get_connection_status({})
 
-            data = parse_result(result)
-            assert "status" in data
+                data = parse_result(result)
+                assert "status" in data
+                assert data["tools_available"] is False
+        finally:
+            if had_attr:
+                pkg.TOOL_HANDLERS = saved
 
     @pytest.mark.asyncio
     async def test_connection_status_with_structured_id(self):
