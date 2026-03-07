@@ -111,11 +111,11 @@ class TestParameterConsistency:
         print(f"Current beta_I: {DEFAULT_PARAMS.beta_I} (paper: 0.05)")
         print(f"Current gamma_I: {DEFAULT_PARAMS.gamma_I} (paper: 0.3)")
         print(f"Current mu: {DEFAULT_PARAMS.mu} (paper: 0.8)")
-        print(f"Current delta: {DEFAULT_PARAMS.delta} (paper: 0.4)")
-        
-        # These should match paper
+        print(f"Current delta: {DEFAULT_PARAMS.delta} (tuned: 0.25)")
+
+        # These should match tuned values
         assert DEFAULT_PARAMS.mu == 0.8, "mu should be 0.8"
-        assert DEFAULT_PARAMS.delta == 0.4, "delta should be 0.4"
+        assert DEFAULT_PARAMS.delta == 0.25, "delta should be 0.25 (reduced from paper 0.4 for coherence differentiation)"
         assert DEFAULT_PARAMS.k == 0.1, "k should be 0.1"
 
 

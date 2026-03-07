@@ -18,6 +18,10 @@ def compute_behavioral_sensor_eisv(
     calibration_error: float | None = None,
     drift_norm: float | None = None,
     complexity_divergence: float | None = None,
+    continuity_E_input: float | None = None,
+    continuity_I_input: float | None = None,
+    continuity_S_input: float | None = None,
+    outcome_history: list | None = None,
 ) -> dict | None:
     """Compute behavioral sensor EISV from governance observables.
 
@@ -26,10 +30,19 @@ def compute_behavioral_sensor_eisv(
     if len(decision_history) < 3 or len(coherence_history) < 3:
         return None
 
-    E = _compute_E(decision_history, coherence_history, complexity_divergence)
-    I = _compute_I(coherence_history, calibration_error)
+    E = _compute_E(decision_history, coherence_history, complexity_divergence, outcome_history)
+    I = _compute_I(coherence_history, calibration_error, outcome_history)
     S = _compute_S(drift_norm, regime_history, complexity_divergence)
     V = _compute_V(E_history, I_history)
+
+    # Blend continuity-derived signals (20% weight) when available.
+    # These are grounded in operational log analysis (token rates, divergence).
+    if continuity_E_input is not None:
+        E = 0.80 * E + 0.20 * continuity_E_input
+    if continuity_I_input is not None:
+        I = 0.80 * I + 0.20 * continuity_I_input
+    if continuity_S_input is not None:
+        S = 0.80 * S + 0.20 * continuity_S_input
 
     return {"E": E, "I": I, "S": S, "V": V}
 
@@ -48,13 +61,14 @@ def _compute_E(
     decision_history: list,
     coherence_history: list | None = None,
     complexity_divergence: float | None = None,
+    outcome_history: list | None = None,
 ) -> float:
-    """E from decision success (40%), coherence level (30%), complexity calibration (30%).
+    """E from decision success, coherence level, complexity calibration, and outcome success.
 
     Pure decision-based E saturates at 1.0 for healthy agents (all "proceed").
-    Blending with coherence and calibration makes E reflect actual capacity.
+    Blending with coherence, calibration, and outcomes makes E reflect actual capacity.
     """
-    # Decision success (40%) — exponentially weighted
+    # Decision success — exponentially weighted
     window = decision_history[-10:]
     if not window:
         decision_e = 0.65
@@ -68,30 +82,55 @@ def _compute_E(
             for w, d in zip(weights, window)
         ) / total_w
 
-    # Coherence level (30%) — map mean coherence [0.40, 0.55] → [0.3, 0.9]
+    # Coherence level — map mean coherence [0.35, 0.65] → [0.3, 0.9]
     if coherence_history and len(coherence_history) >= 3:
         recent_coh = coherence_history[-10:]
         mean_coh = sum(recent_coh) / len(recent_coh)
-        coh_e = 0.3 + (mean_coh - 0.40) * 4.0  # 0.40→0.3, 0.55→0.9
+        coh_e = 0.3 + (mean_coh - 0.35) * 2.0  # 0.35→0.3, 0.65→0.9
         coh_e = max(0.3, min(0.9, coh_e))
     else:
         coh_e = 0.6
 
-    # Complexity calibration (30%) — low divergence = high capacity awareness
+    # Complexity calibration — low divergence = high capacity awareness
     cd = complexity_divergence if complexity_divergence is not None else 0.15
     cal_e = max(0.3, min(1.0, 1.0 - cd))
 
-    raw = 0.40 * decision_e + 0.30 * coh_e + 0.30 * cal_e
+    # Outcome success rate — successful outcomes indicate productive energy
+    if outcome_history and len(outcome_history) >= 3:
+        good_count = sum(1 for o in outcome_history if not o.get('is_bad', True))
+        success_rate = good_count / len(outcome_history)
+        outcome_e = 0.3 + success_rate * 0.6  # Map [0,1] -> [0.3, 0.9]
+        # Weights: 35% decision, 25% coherence, 20% calibration, 20% outcomes
+        raw = 0.35 * decision_e + 0.25 * coh_e + 0.20 * cal_e + 0.20 * outcome_e
+    else:
+        # Without outcomes: 40% decision, 30% coherence, 30% calibration (original)
+        raw = 0.40 * decision_e + 0.30 * coh_e + 0.30 * cal_e
+
     return max(0.0, min(1.0, raw))
 
 
 # --- I: Calibration accuracy + coherence trend ---
 
-def _compute_I(coherence_history: list, calibration_error: float | None) -> float:
+def _compute_I(
+    coherence_history: list,
+    calibration_error: float | None,
+    outcome_history: list | None = None,
+) -> float:
     cal_I = 1.0 - calibration_error if calibration_error is not None else 0.75
     cal_I = max(0.0, min(1.0, cal_I))
 
     coh_I = _coherence_trend(coherence_history)
+
+    # Outcome consistency — consistent scores indicate information integrity
+    if outcome_history and len(outcome_history) >= 3:
+        scores = [o.get('outcome_score', 0.5) for o in outcome_history
+                  if o.get('outcome_score') is not None]
+        if len(scores) >= 3:
+            mean_s = sum(scores) / len(scores)
+            score_var = sum((s - mean_s) ** 2 for s in scores) / len(scores)
+            consistency_I = max(0.3, 1.0 - score_var * 4)  # Low variance = high consistency
+            # Weights: 50% calibration, 30% coherence trend, 20% outcome consistency
+            return max(0.0, min(1.0, 0.50 * cal_I + 0.30 * coh_I + 0.20 * consistency_I))
 
     return max(0.0, min(1.0, 0.6 * cal_I + 0.4 * coh_I))
 

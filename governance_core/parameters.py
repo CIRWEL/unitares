@@ -43,7 +43,7 @@ class DynamicsParams:
 
     # V dynamics
     kappa: float = 0.3           # (E-I) → V coupling
-    delta: float = 0.4           # V decay rate
+    delta: float = 0.25          # V decay rate (reduced from 0.4 to let V accumulate more E-I signal)
 
     # Sensor anchoring (for agents with physical sensors, e.g. Lumen)
     k_anchor: float = 0.2        # Spring coupling to sensor-derived EISV (0 = no anchoring)

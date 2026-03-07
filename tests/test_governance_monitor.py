@@ -940,12 +940,12 @@ class TestUpdateDynamics:
         assert monitor.state.S >= 0.001
 
     def test_v_bounds(self, monitor):
-        """V should be clamped to [-1, 1] after dynamics."""
+        """V should be clamped to [-2, 2] after dynamics."""
         # Use extreme ethical drift to push V
         for _ in range(20):
             agent_state = {'ethical_drift': [1.0, 1.0, 1.0], 'complexity': 1.0}
             monitor.update_dynamics(agent_state)
-        assert -1.0 <= monitor.state.V <= 1.0
+        assert -2.0 <= monitor.state.V <= 2.0
 
     def test_history_appended(self, monitor):
         """Each dynamics update should append to histories."""

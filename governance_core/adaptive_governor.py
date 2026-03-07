@@ -77,6 +77,12 @@ class GovernorConfig:
     oi_threshold: float = 2.5
     flip_threshold: int = 4
 
+    # V damping adaptation
+    delta_default: float = 0.25          # V damping (matches parameters.py)
+    delta_floor: float = 0.15            # Min damping (more sensitive)
+    delta_ceiling: float = 0.50          # Max damping (more stable)
+    delta_ref_variance: float = 0.005    # Target V variance for coherence spread
+
     # Verdict thresholds (relative to adaptive tau/beta)
     beta_approve_offset: float = -0.25  # beta_approve = beta + offset
 
@@ -110,6 +116,12 @@ class GovernorState:
     neighbor_pressure: float = 0.0
     agents_in_resonance: int = 0
 
+    # Per-agent V damping
+    delta: float = 0.25
+    error_integral_delta: float = 0.0
+    prev_error_delta: float = 0.0
+    v_variance_ema: float = 0.0
+
     # Controller output (for observability)
     last_p_tau: float = 0.0
     last_i_tau: float = 0.0
@@ -137,6 +149,10 @@ class GovernorState:
             "neighbor_pressure": self.neighbor_pressure,
             "agents_in_resonance": self.agents_in_resonance,
             "history": self.history[-10:] if self.history else [],
+            "delta": self.delta,
+            "error_integral_delta": self.error_integral_delta,
+            "prev_error_delta": self.prev_error_delta,
+            "v_variance_ema": self.v_variance_ema,
         }
 
     @classmethod
@@ -145,7 +161,8 @@ class GovernorState:
         state = cls()
         for key in ("tau", "beta", "phase", "error_integral_tau", "error_integral_beta",
                      "prev_error_tau", "prev_error_beta", "oi", "ema_coherence", "ema_risk",
-                     "neighbor_pressure"):
+                     "neighbor_pressure", "delta", "error_integral_delta",
+                     "prev_error_delta", "v_variance_ema"):
             if key in data:
                 setattr(state, key, data[key])
         state.flips = int(data.get("flips", 0))
@@ -195,6 +212,7 @@ class AdaptiveGovernor:
         I_history: List[float],
         S_history: List[float],
         complexity_history: List[float],
+        V_history: Optional[List[float]] = None,
     ) -> Dict:
         """
         Core PID update cycle. Called once per process_agent_update.
@@ -207,6 +225,7 @@ class AdaptiveGovernor:
             I_history: Recent I values for phase detection.
             S_history: Recent S values for phase detection.
             complexity_history: Recent complexity values for phase detection.
+            V_history: Recent V values for delta adaptation.
 
         Returns:
             Dict with verdict and full state for observability.
@@ -304,7 +323,55 @@ class AdaptiveGovernor:
                 self.state.beta, self.config.beta_floor, self.config.beta_ceiling
             )
 
-        # 8. Store controller output for observability
+        # 8. Delta adaptation: tune V damping per-agent based on V variance
+        if V_history and len(V_history) >= 5:
+            recent_V = V_history[-10:]
+            v_mean = sum(recent_V) / len(recent_V)
+            v_var = sum((v - v_mean) ** 2 for v in recent_V) / len(recent_V)
+            self.state.v_variance_ema = (
+                0.3 * v_var + 0.7 * self.state.v_variance_ema
+            )
+
+            # Error: positive when variance is below target (need less damping)
+            e_delta = self.config.delta_ref_variance - self.state.v_variance_ema
+
+            # PID for delta (inverted: low variance -> reduce delta -> more sensitivity)
+            p_delta = self.config.K_p * e_delta * (-1.0)
+
+            if self.state.prev_error_delta * e_delta < 0:
+                self.state.error_integral_delta = 0.0
+            self.state.error_integral_delta = _clamp(
+                self.state.error_integral_delta + e_delta,
+                -self.config.integral_max,
+                self.config.integral_max,
+            )
+            i_delta = self.config.K_i * self.state.error_integral_delta * (-1.0)
+
+            d_delta = self.config.K_d * d_factor * (e_delta - self.state.prev_error_delta) * (-1.0)
+            self.state.prev_error_delta = e_delta
+
+            adjustment_delta = p_delta + i_delta + d_delta
+            self.state.delta = _clamp(
+                self.state.delta + adjustment_delta,
+                self.config.delta_floor,
+                self.config.delta_ceiling,
+            )
+
+            # Delta decay when stable (return to default)
+            if (
+                abs(self.state.oi) < self.config.decay_oi_threshold
+                and self.state.flips == 0
+            ):
+                self.state.delta += self.config.decay_rate * (
+                    self.config.delta_default - self.state.delta
+                )
+                self.state.delta = _clamp(
+                    self.state.delta,
+                    self.config.delta_floor,
+                    self.config.delta_ceiling,
+                )
+
+        # 9. Store controller output for observability
         self.state.last_p_tau = p_tau
         self.state.last_i_tau = i_tau
         self.state.last_d_tau = d_tau
@@ -312,7 +379,7 @@ class AdaptiveGovernor:
         self.state.last_i_beta = i_beta
         self.state.last_d_beta = d_beta
 
-        # 9. Make verdict using adaptive thresholds
+        # 10. Make verdict using adaptive thresholds
         verdict_result = self.make_verdict(coherence, risk)
 
         return self._build_result(verdict_result)
@@ -471,6 +538,8 @@ class AdaptiveGovernor:
             "response_tier": verdict,  # Backward compat key
             "neighbor_pressure": self.state.neighbor_pressure,
             "agents_in_resonance": self.state.agents_in_resonance,
+            "delta": self.state.delta,
+            "v_variance_ema": self.state.v_variance_ema,
         }
 
 

@@ -448,6 +448,28 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
                 if cm is not None:
                     comp_div = getattr(cm, 'complexity_divergence', None)
 
+                # Continuity-derived EISV inputs (grounded in operational log analysis)
+                cont_E, cont_I, cont_S = None, None, None
+                cm = getattr(monitor, '_last_continuity_metrics', None)
+                if cm is not None:
+                    cont_E = getattr(cm, 'E_input', None)
+                    cont_I = getattr(cm, 'I_input', None)
+                    cont_S = getattr(cm, 'S_input', None)
+
+                # Recent outcome events for behavioral feedback
+                outcome_hist = None
+                try:
+                    from src.db import get_db
+                    _db = get_db()
+                    if _db and hasattr(_db, 'get_recent_outcomes'):
+                        outcome_hist = await _db.get_recent_outcomes(
+                            agent_id=ctx.agent_id,
+                            limit=20,
+                            since_hours=24.0,
+                        )
+                except Exception:
+                    pass  # Fail-safe: sensor works without outcomes
+
                 behavioral_eisv = compute_behavioral_sensor_eisv(
                     decision_history=list(monitor.state.decision_history),
                     coherence_history=list(monitor.state.coherence_history),
@@ -459,6 +481,10 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
                     calibration_error=cal_error,
                     drift_norm=drift_n,
                     complexity_divergence=comp_div,
+                    continuity_E_input=cont_E,
+                    continuity_I_input=cont_I,
+                    continuity_S_input=cont_S,
+                    outcome_history=outcome_hist,
                 )
                 if behavioral_eisv:
                     ctx.agent_state["sensor_eisv"] = behavioral_eisv

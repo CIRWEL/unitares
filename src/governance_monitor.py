@@ -466,6 +466,13 @@ class UNITARESMonitor:
         # - UNITARES_PARAMS_JSON='{"beta_I": 0.05, ...}'
         active_params = get_active_params()
 
+        # Apply per-agent delta from adaptive governor
+        if self.adaptive_governor is not None:
+            from dataclasses import replace as dataclass_replace
+            active_params = dataclass_replace(
+                active_params, delta=self.adaptive_governor.state.delta
+            )
+
         # Calibration feedback: overconfidence raises entropy S
         # When agents claim high confidence but achieve low trajectory health,
         # the calibration error becomes a thermodynamic price on S.
@@ -500,9 +507,9 @@ class UNITARESMonitor:
             # Maintain epistemic humility: "I could be wrong about something I can't see"
             self.state.unitaires_state.S = 0.001
 
-        # V bounds: allow negative V (I > E imbalance) — core already clips to [-2, 2]
+        # V bounds: match ODE's built-in range [-2, 2]
         # Negative V is physically meaningful: coherence(V) is designed for V ∈ [-2, 2]
-        self.state.unitaires_state.V = max(-1.0, min(1.0, self.state.unitaires_state.V))
+        self.state.unitaires_state.V = max(-2.0, min(2.0, self.state.unitaires_state.V))
 
         # Update coherence from governance_core coherence function (pure thermodynamic)
         # Removed param_coherence blend - using pure C(V) signal for honest calibration
@@ -671,8 +678,8 @@ class UNITARESMonitor:
                 if not (0.0 <= self.state.S <= 1.0):
                     self.state.unitaires_state.S = np.clip(self.state.S, 0.0, 1.0)
                     logger.info(f"Auto-fixed S to {self.state.S}")
-                if not (-1.0 <= self.state.V <= 1.0):
-                    self.state.unitaires_state.V = np.clip(self.state.V, -1.0, 1.0)
+                if not (-2.0 <= self.state.V <= 2.0):
+                    self.state.unitaires_state.V = np.clip(self.state.V, -2.0, 2.0)
                     logger.info(f"Auto-fixed V to {self.state.V}")
                 if not (0.0 <= self.state.coherence <= 1.0):
                     self.state.coherence = np.clip(self.state.coherence, 0.0, 1.0)
@@ -1392,6 +1399,7 @@ class UNITARESMonitor:
                 I_history=list(getattr(self.state, 'I_history', [0.5]*6)),
                 S_history=list(getattr(self.state, 'S_history', [0.5]*6)),
                 complexity_history=list(getattr(self.state, 'complexity_history', [0.3]*6)),
+                V_history=list(getattr(self.state, 'V_history', [0.0]*6)),
             )
             oscillation_state = OscillationState(
                 oi=cirs_result['oi'],

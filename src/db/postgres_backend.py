@@ -1229,6 +1229,30 @@ class PostgresBackend(DatabaseBackend):
             except Exception:
                 return None
 
+    async def get_recent_outcomes(
+        self,
+        agent_id: str,
+        limit: int = 20,
+        since_hours: float = 24.0,
+    ) -> List[Dict[str, Any]]:
+        """Fetch recent outcome events for an agent."""
+        async with self.acquire() as conn:
+            try:
+                rows = await conn.fetch(
+                    """
+                    SELECT outcome_type, is_bad, outcome_score, ts
+                    FROM audit.outcome_events
+                    WHERE agent_id = $1
+                      AND ts >= now() - make_interval(hours => $2)
+                    ORDER BY ts DESC
+                    LIMIT $3
+                    """,
+                    agent_id, since_hours, limit,
+                )
+                return [dict(r) for r in rows]
+            except Exception:
+                return []
+
     async def get_latest_eisv_by_agent_id(self, agent_id: str) -> Optional[Dict[str, Any]]:
         """Fetch latest EISV snapshot for an agent. Returns dict with E, I, S, V, phi, verdict, coherence, regime."""
         async with self.acquire() as conn:
