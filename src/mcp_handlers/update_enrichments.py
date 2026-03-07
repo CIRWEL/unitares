@@ -558,8 +558,48 @@ def enrich_basin_tracking(ctx: UpdateContext) -> None:
 # ─── Trajectory Identity ───────────────────────────────────────────────
 
 async def enrich_trajectory_identity(ctx: UpdateContext) -> None:
-    """Compare trajectory signature if provided (lineage tracking, trust tier)."""
+    """Compare trajectory signature if provided, or compute behavioral trajectory."""
     trajectory_signature = ctx.arguments.get("trajectory_signature")
+
+    # Compute behavioral trajectory for non-embodied agents (no anima sensors)
+    if not trajectory_signature or not isinstance(trajectory_signature, dict):
+        try:
+            _mcp = ctx.mcp_server
+            monitor = _mcp.monitors.get(ctx.agent_uuid)
+            if monitor and getattr(monitor.state, 'update_count', 0) >= 10:
+                # Track task_type counts on the monitor
+                monitor._task_type_counts = getattr(monitor, '_task_type_counts', {})
+                tt = getattr(ctx, 'task_type', 'mixed') or 'mixed'
+                monitor._task_type_counts[tt] = monitor._task_type_counts.get(tt, 0) + 1
+
+                from src.behavioral_trajectory import compute_behavioral_trajectory
+                from src.calibration import calibration_checker
+
+                cal_error = None
+                try:
+                    metrics = calibration_checker.compute_calibration_metrics()
+                    if metrics:
+                        errors = [b.calibration_error for b in metrics.values() if b.count >= 5]
+                        if errors:
+                            cal_error = sum(errors) / len(errors)
+                except Exception:
+                    pass
+
+                trajectory_signature = compute_behavioral_trajectory(
+                    E_history=list(monitor.state.E_history),
+                    I_history=list(monitor.state.I_history),
+                    S_history=list(monitor.state.S_history),
+                    V_history=list(monitor.state.V_history),
+                    coherence_history=list(monitor.state.coherence_history),
+                    decision_history=list(getattr(monitor.state, 'decision_history', [])),
+                    regime_history=list(getattr(monitor.state, 'regime_history', [])),
+                    update_count=monitor.state.update_count,
+                    task_type_counts=getattr(monitor, '_task_type_counts', None),
+                    calibration_error=cal_error,
+                )
+        except Exception:
+            pass  # Fail-safe: trajectory stays None, no crash
+
     if not trajectory_signature or not isinstance(trajectory_signature, dict):
         return
 
