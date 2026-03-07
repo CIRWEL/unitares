@@ -344,8 +344,12 @@ def transform_inputs(ctx: UpdateContext) -> Optional[Sequence[TextContent]]:
     # Response Text
     ctx.response_text = ctx.arguments.get("response_text", "")
 
-    # Complexity
-    ctx.complexity = ctx.arguments.get("complexity", 0.5)
+    # Complexity (coerce to float — Pydantic schema accepts str|float|None)
+    raw_complexity = ctx.arguments.get("complexity", 0.5)
+    try:
+        ctx.complexity = float(raw_complexity) if raw_complexity is not None else 0.5
+    except (TypeError, ValueError):
+        ctx.complexity = 0.5
 
     # Pre-ODE: Enforce complexity_limit from dialectic conditions
     if ctx.meta and getattr(ctx.meta, "dialectic_conditions", None):
@@ -360,8 +364,12 @@ def transform_inputs(ctx: UpdateContext) -> Optional[Sequence[TextContent]]:
         except Exception as e:
             logger.warning(f"Could not enforce complexity limit: {e}", exc_info=True)
 
-    # Confidence & Auto-Calibration
-    reported_confidence = ctx.arguments.get("confidence")
+    # Confidence & Auto-Calibration (coerce to float — same str|float|None pattern)
+    raw_confidence = ctx.arguments.get("confidence")
+    try:
+        reported_confidence = float(raw_confidence) if raw_confidence is not None else None
+    except (TypeError, ValueError):
+        reported_confidence = None
     ctx.confidence = reported_confidence
     ctx.calibration_correction_info = None
 
@@ -454,7 +462,9 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
                 )
                 if behavioral_eisv:
                     ctx.agent_state["sensor_eisv"] = behavioral_eisv
-        except Exception:
+                    logger.info(f"Behavioral sensor_eisv injected for {ctx.agent_id}: {behavioral_eisv}")
+        except Exception as e:
+            logger.debug(f"Behavioral sensor skipped for {ctx.agent_id}: {e}")
             pass  # Fail-safe: ODE runs open-loop if anything fails
 
     # Policy checks
