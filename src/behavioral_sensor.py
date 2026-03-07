@@ -26,7 +26,7 @@ def compute_behavioral_sensor_eisv(
     if len(decision_history) < 3 or len(coherence_history) < 3:
         return None
 
-    E = _compute_E(decision_history)
+    E = _compute_E(decision_history, coherence_history, complexity_divergence)
     I = _compute_I(coherence_history, calibration_error)
     S = _compute_S(drift_norm, regime_history, complexity_divergence)
     V = _compute_V(E_history, I_history)
@@ -44,21 +44,45 @@ _DECISION_SCORES = {
 }
 
 
-def _compute_E(decision_history: list) -> float:
+def _compute_E(
+    decision_history: list,
+    coherence_history: list | None = None,
+    complexity_divergence: float | None = None,
+) -> float:
+    """E from decision success (40%), coherence level (30%), complexity calibration (30%).
+
+    Pure decision-based E saturates at 1.0 for healthy agents (all "proceed").
+    Blending with coherence and calibration makes E reflect actual capacity.
+    """
+    # Decision success (40%) — exponentially weighted
     window = decision_history[-10:]
     if not window:
-        return 0.65
+        decision_e = 0.65
+    else:
+        n = len(window)
+        alpha = 0.3
+        weights = [math.exp(alpha * (i - n + 1)) for i in range(n)]
+        total_w = sum(weights)
+        decision_e = sum(
+            w * _DECISION_SCORES.get(str(d).lower(), 0.5)
+            for w, d in zip(weights, window)
+        ) / total_w
 
-    n = len(window)
-    alpha = 0.3  # exponential decay rate
-    weights = [math.exp(alpha * (i - n + 1)) for i in range(n)]
-    total_w = sum(weights)
+    # Coherence level (30%) — map mean coherence [0.40, 0.55] → [0.3, 0.9]
+    if coherence_history and len(coherence_history) >= 3:
+        recent_coh = coherence_history[-10:]
+        mean_coh = sum(recent_coh) / len(recent_coh)
+        coh_e = 0.3 + (mean_coh - 0.40) * 4.0  # 0.40→0.3, 0.55→0.9
+        coh_e = max(0.3, min(0.9, coh_e))
+    else:
+        coh_e = 0.6
 
-    score = sum(
-        w * _DECISION_SCORES.get(str(d).lower(), 0.5)
-        for w, d in zip(weights, window)
-    )
-    return max(0.0, min(1.0, score / total_w))
+    # Complexity calibration (30%) — low divergence = high capacity awareness
+    cd = complexity_divergence if complexity_divergence is not None else 0.15
+    cal_e = max(0.3, min(1.0, 1.0 - cd))
+
+    raw = 0.40 * decision_e + 0.30 * coh_e + 0.30 * cal_e
+    return max(0.0, min(1.0, raw))
 
 
 # --- I: Calibration accuracy + coherence trend ---

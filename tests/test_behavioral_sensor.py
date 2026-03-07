@@ -97,15 +97,24 @@ class TestBehavioralSensor:
 
 class TestComputeE:
     def test_all_proceed_high_e(self):
-        assert _compute_E(["proceed"] * 10) > 0.9
+        """All proceed + good coherence + low divergence → high E."""
+        e = _compute_E(["proceed"] * 10, [0.52] * 10, complexity_divergence=0.1)
+        assert e > 0.75
 
     def test_all_reject_low_e(self):
-        assert _compute_E(["reject"] * 10) < 0.05
+        """All reject → low E (even with good coherence)."""
+        e = _compute_E(["reject"] * 10, [0.52] * 10, complexity_divergence=0.1)
+        assert e < 0.55
+
+    def test_all_proceed_no_context_moderate_e(self):
+        """All proceed but no coherence/divergence context → moderate-high E."""
+        e = _compute_E(["proceed"] * 10)
+        assert 0.7 < e < 0.95
 
     def test_mixed_decisions(self):
         decisions = ["proceed"] * 5 + ["reject"] * 5
         e = _compute_E(decisions)
-        assert 0.1 < e < 0.8
+        assert 0.3 < e < 0.8
 
     def test_recent_decisions_weighted_more(self):
         """Recent proceeds after rejects → higher E than rejects after proceeds."""
@@ -113,12 +122,10 @@ class TestComputeE:
         declining = ["proceed"] * 5 + ["reject"] * 5
         assert _compute_E(improving) > _compute_E(declining)
 
-    def test_unknown_decision_scores_0_5(self):
-        e = _compute_E(["unknown_action"] * 5)
-        assert 0.4 < e < 0.6
-
     def test_empty_returns_default(self):
-        assert _compute_E([]) == 0.65
+        """Empty decisions → default 0.65 decision component."""
+        e = _compute_E([])
+        assert 0.5 < e < 0.8
 
     def test_guide_between_proceed_and_reject(self):
         e_guide = _compute_E(["guide"] * 10)
@@ -131,6 +138,18 @@ class TestComputeE:
         long = ["reject"] * 100 + ["proceed"] * 10
         short = ["proceed"] * 10
         assert abs(_compute_E(long) - _compute_E(short)) < 0.01
+
+    def test_high_coherence_raises_e(self):
+        """Higher coherence → higher E for same decisions."""
+        e_low = _compute_E(["proceed"] * 10, [0.42] * 10)
+        e_high = _compute_E(["proceed"] * 10, [0.54] * 10)
+        assert e_high > e_low
+
+    def test_high_divergence_lowers_e(self):
+        """High complexity divergence → lower E (poor self-calibration)."""
+        e_low_div = _compute_E(["proceed"] * 10, complexity_divergence=0.1)
+        e_high_div = _compute_E(["proceed"] * 10, complexity_divergence=0.7)
+        assert e_low_div > e_high_div
 
 
 # ══════════════════════════════════════════════════

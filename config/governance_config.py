@@ -596,11 +596,12 @@ class GovernanceConfig:
         distance_to_edge = valid_margins[nearest_edge]
 
         # Baseline-relative tight threshold for coherence.
-        # With enough history, "tight" = within 10% of the agent's baseline.
-        # This prevents false-positive tight signals for agents at ODE steady
-        # state (~0.49) where the fixed 0.15 threshold is never reachable.
+        # Uses first half of history as baseline so slow decline is caught
+        # (if we averaged the whole window, baseline would track the decline).
+        # "tight" = within 10% of the agent's established baseline.
         if coherence_history and len(coherence_history) >= 10:
-            baseline = sum(coherence_history) / len(coherence_history)
+            mid = len(coherence_history) // 2
+            baseline = sum(coherence_history[:mid]) / mid
             coherence_tight_threshold = max(baseline * 0.10, 0.03)
         else:
             coherence_tight_threshold = 0.15
