@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Identity & Session Management
+
+- **`bind_session` tool** — bridges the identity gap between REST hooks (which onboard via curl) and MCP Streamable HTTP (which uses a different session key). One call at session start syncs both namespaces to the same agent.
+- **Thread-based identity** with honest forking — agents acknowledge fresh sessions instead of falsely claiming continuity. Epistemic context feeds into EISV dynamics.
+
+### Added — Behavioral EISV (Non-Embodied Agents)
+
+- **Behavioral sensor EISV** — non-embodied agents (Claude, Cursor) get synthetic EISV seeds derived from behavioral signals (response latency, error rates, task complexity patterns) instead of physical sensors.
+- **Behavioral trajectory identity** — trajectory fingerprinting for non-embodied agents using behavioral patterns rather than sensor readings.
+- **Coherence differentiation** — reduced V damping, wired behavioral signals into coherence calculation, adaptive delta for basin edge detection.
+
+### Added — Sensor EISV & Spring Coupling (Lumen)
+
+- **Sensor spring coupling** in EISV ODE — Lumen's physical sensor readings (temperature, humidity, light) now couple into the ODE as spring terms, grounding dynamics in physical state.
+- **Normalized spring coupling** by dimension range width for consistent cross-dimension influence.
+- Hardened sensor EISV: clip to physical bounds, removed dead code.
+
+### Added — EISV Dynamics & Governance
+
+- **State velocity feedback** — rate-of-change of EISV dimensions feeds back into dynamics, enabling faster response to rapid drift.
+- **Adaptive lambda2** via `theta.eta2` — coherence damping on entropy is now state-dependent.
+- **Coherence reports** auto-emitted for neighbor pressure detection in multi-agent scenarios.
+- **Dialectic condition enforcement** at tier-1 with genesis reseed fix.
+- **Closed feedback loops** — calibration deviation, ethical drift, and behavioral patterns now feed back into governance decisions via CIRS oscillation detection.
+- **Persistent AdaptiveGovernor state** — governor parameters survive server restarts.
+- Tuned thresholds for coding agents (beta_default 0.60 → 0.70), fixed recovery loop spiral.
+
+### Added — Knowledge Graph
+
+- **Concept extraction** — background task automatically extracts concepts from agent check-ins and creates knowledge graph entries with spawned edges linking related discoveries.
+- **Spawned edges** — knowledge graph entries can now track provenance via `SPAWNED_BY` edges and tag-based queries.
+- **Pool guard improvements** — connection pool health checks prevent stale connections from corrupting KG operations.
+
+### Added — Infrastructure
+
+- **Database hygiene** — automated retention policy, batch queries, and periodic maintenance tasks.
+- **Docker Compose** — top-level `docker-compose.yml` for one-liner setup of PostgreSQL+AGE and Redis.
+- **Gateway MCP server** — simplified 6-tool proxy on port 8768 for weak external clients (Cursor, etc.).
+- **LLM-assisted dialectic recovery** when no peers are available for review.
+- **Agent baselines** persisted to PostgreSQL for cross-session calibration tracking.
+
 ### Added — EISV Analysis Tools
 
 - **Monte Carlo basin estimation** (`scripts/basin_estimation.py`) — maps safe operating region by sampling 10K random perturbations and integrating forward via `compute_dynamics()`. Confirmed global attractivity under linear I-dynamics mode (100% convergence across full state space).
@@ -17,9 +58,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Analysis test suite** (`tests/test_analysis_tools.py`) — 36 tests covering all three tools.
 - `analysis` optional dependency group in pyproject.toml (scipy, matplotlib, editdistance).
 
+### Changed — Major Refactoring (5-Phase Module Split)
+
+Decomposed monolithic files into focused modules for maintainability:
+
+1. **Phase 1**: Extracted `tool_descriptions` to JSON
+2. **Phase 2**: Split `utils.py` into 5 focused modules
+3. **Phase 3**: Split `agent_state.py` into 7 focused modules
+4. **Phase 4**: Split `identity_v2.py` into 3 focused modules
+5. **Phase 5**: Split `cirs_protocol.py` into 9 focused modules
+
+Additional refactors:
+- Extracted `mcp_server.py` and `governance_monitor.py` into focused modules
+- Extracted background tasks, flattened `lifecycle_stuck`, renamed `response_formatting`
+- **LazyMCPServer singleton** — deduplicated `_LazyMCPServer` into `shared.lazy_mcp_server`, Pydantic runtime validation, `ConnectionTracker` extraction
+- Deleted dead code, organized scripts, decoupled transport, split `admin.py`
+
 ### Fixed
 
 - **`compute_equilibrium()` linear mode bug** — was using logistic quadratic formula regardless of I-dynamics mode, returning I*=1.0 instead of correct I*=A/γ_I≈0.85. Now checks `get_i_dynamics_mode()` and uses correct formula. Also includes `beta_complexity * complexity` term in S* and computes E* = αI*/(α + βₑS*) instead of E* ≈ I*.
+- **Inverted `is_bad` default** and unguarded NaN in outcome scores
+- **Coherence margin always "tight"** — str/float coercion and recovery tau noise fixes
+- **Behavioral sensor E saturation** and adaptive margin baseline drift
+- **Silent binding to archived agents** — prevented, with KG search degradation surfaced
+- **Metadata loaded before orphan cleanup** on startup
+- Inline validation for `discovery_type`, `severity`, and `response_to` in KG single-store and leave_note paths
+- Preserved schema metadata (descriptions, enums) in MCP tool aliases
+- Missing `sanitize_agent_name` function in validators
+- `anyOf` JSON schema handling in wrapper generator
+
+### Docs
+
+- Discord summoner design and implementation plan
+- README rewrite with production validation data, architecture diagrams, and figures
+- CLAUDE.md project instructions
+- Archived completed plans, fixed stale doc references
 
 ## [2.8.0] - 2026-02-26
 

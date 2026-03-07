@@ -105,9 +105,10 @@ class TestRecoveryFromDegraded:
     @pytest.fixture()
     def trajectory(self):
         params = get_active_params()
-        # Start degraded
+        # Start degraded. With C1=3.0, recovery from V=-0.3 is slower because
+        # C(V=-0.3) ≈ 0.14 (vs 0.36 with C1=1.0), suppressing I growth early on.
         degraded = State(E=0.4, I=0.3, S=0.8, V=-0.3)
-        return _run(degraded, delta_eta=[0.0], theta=DEFAULT_THETA, params=params, steps=200)
+        return _run(degraded, delta_eta=[0.0], theta=DEFAULT_THETA, params=params, steps=500)
 
     def test_energy_recovers(self, trajectory):
         assert trajectory[-1].E > 0.7, f"E should recover above 0.7, got {trajectory[-1].E:.4f}"

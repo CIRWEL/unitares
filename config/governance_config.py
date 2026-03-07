@@ -463,7 +463,7 @@ class GovernanceConfig:
     RISK_APPROVE_THRESHOLD = 0.45    # < 45%: Proceed without guidance (was 0.35)
     RISK_REVISE_THRESHOLD = 0.70     # 45-70%: Proceed with guidance, >= 70%: Pause (was 0.60)
     RISK_REJECT_THRESHOLD = 0.80     # >= 80%: Critical pause (was 0.70, must stay > revise)
-    
+
     # Risk blend weights (used in estimate_risk)
     RISK_PHI_WEIGHT = 0.7            # Weight for UNITARES phi-based risk (includes ethical drift)
     RISK_TRADITIONAL_WEIGHT = 0.3     # Weight for traditional safety risk (length/complexity/coherence/keywords)
@@ -774,3 +774,11 @@ class GovernanceConfig:
 
 # Export singleton config
 config = GovernanceConfig()
+
+# Invariant: APPROVE < REVISE < REJECT must always hold.
+# Violation here means a config edit broke the ordering.
+assert GovernanceConfig.RISK_APPROVE_THRESHOLD < GovernanceConfig.RISK_REVISE_THRESHOLD < GovernanceConfig.RISK_REJECT_THRESHOLD, (
+    f"Risk threshold ordering violated: APPROVE({GovernanceConfig.RISK_APPROVE_THRESHOLD}) "
+    f"< REVISE({GovernanceConfig.RISK_REVISE_THRESHOLD}) "
+    f"< REJECT({GovernanceConfig.RISK_REJECT_THRESHOLD}) must hold"
+)

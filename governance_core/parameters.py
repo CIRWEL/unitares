@@ -43,7 +43,11 @@ class DynamicsParams:
 
     # V dynamics
     kappa: float = 0.3           # (E-I) → V coupling
-    delta: float = 0.25          # V decay rate (reduced from 0.4 to let V accumulate more E-I signal)
+    delta: float = 0.25          # V decay rate. Reduced from 0.4 (commit 5dfafd8): coherence was
+                                 # flatlined at ~0.496 because V was over-damped — V ∈ ±0.02 gave
+                                 # C ∈ [0.49, 0.51], indistinguishable from 0.5. Lowering delta lets
+                                 # V accumulate more E-I signal (V ∈ ±0.06). Now adaptive via
+                                 # AdaptiveGovernor PID (bounds [0.15, 0.50], targets V variance 0.005).
 
     # Sensor anchoring (for agents with physical sensors, e.g. Lumen)
     k_anchor: float = 0.2        # Spring coupling to sensor-derived EISV (0 = no anchoring)
@@ -64,7 +68,7 @@ class DynamicsParams:
 
     # Control parameter bounds (for Theta optimization)
     C1_min: float = 0.5
-    C1_max: float = 1.5
+    C1_max: float = 4.0
     eta1_min: float = 0.1
     eta1_max: float = 0.5
 
@@ -104,7 +108,7 @@ class Weights:
 
 # Default configurations
 DEFAULT_PARAMS: DynamicsParams = DynamicsParams()
-DEFAULT_THETA: Theta = Theta(C1=1.0, eta1=0.3)
+DEFAULT_THETA: Theta = Theta(C1=3.0, eta1=0.3)
 DEFAULT_WEIGHTS: Weights = Weights()
 
 # UNITARES v4.1 paper-aligned parameters (opt-in)

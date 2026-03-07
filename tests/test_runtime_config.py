@@ -108,7 +108,7 @@ class TestSetThresholds:
             "risk_revise_threshold": 0.3,
         })
         assert result["success"] is False
-        assert any("must be <" in e for e in result["errors"])
+        assert any("Ordering violated" in e for e in result["errors"])
 
 
 # ============================================================================

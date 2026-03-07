@@ -43,10 +43,11 @@ def coherence(V: float, theta: Theta, params: DynamicsParams) -> float:
         
     Physical Interpretation:
         - With V typically in [-0.1, 0.1] (actual operating range due to damping),
-          coherence ranges approximately [0.45, 0.55]
-        - Mean V ≈ -0.016 → coherence ≈ 0.49 (accurate for conservative operation)
+          and C1=3.0, coherence ranges approximately [0.41, 0.59]
+        - Mean V ≈ -0.016 → coherence ≈ 0.48 (accurate for conservative operation)
         - This reflects genuine thermodynamic state: I slightly > E (information-preserving)
-        - The narrow V range is due to high damping (δ=0.4, κ=0.3) and conservative calibration
+        - The narrow V range is due to damping (δ=0.25 default, adaptive via governor) and
+          conservative calibration. C1=3.0 provides 6x more differentiation than C1=1.0
         
     Design Decision (2025-11-27):
         - Removed coherence_scale factor for accuracy
