@@ -14,7 +14,6 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Any
 from datetime import datetime
-from collections import Counter
 from pathlib import Path
 import json
 import sys
@@ -58,7 +57,7 @@ from governance_core import (
 )
 
 # UNITARES params profile selection (optional v4.1 alignment)
-from governance_core.parameters import get_active_params, get_params_profile_name
+from governance_core.parameters import get_active_params
 
 # Import extracted modules
 from src.governance_state import GovernanceState
@@ -66,6 +65,16 @@ from src.confidence import derive_confidence
 from src.cirs import (
     OscillationDetector, ResonanceDamper, OscillationState,
     classify_response, CIRS_DEFAULTS, HCK_DEFAULTS
+)
+from src.hck_reflexive import (
+    compute_update_coherence as _compute_update_coherence,
+    compute_continuity_energy as _compute_continuity_energy,
+    modulate_gains as _modulate_gains,
+)
+from src.monitor_metrics import (
+    get_monitor_metrics as _get_monitor_metrics,
+    get_eisv_labels as _get_eisv_labels,
+    export_monitor_history as _export_monitor_history,
 )
 
 
@@ -83,121 +92,11 @@ class UNITARESMonitor:
     - CIRS v0.1: Oscillation detection and resonance damping
     """
 
-    # =================================================================
-    # HCK v3.0: Update Coherence and Continuity Energy
-    # =================================================================
+    # HCK v3.0: Delegating to src/hck_reflexive.py
+    compute_update_coherence = staticmethod(_compute_update_coherence)
+    compute_continuity_energy = staticmethod(_compute_continuity_energy)
+    modulate_gains = staticmethod(_modulate_gains)
 
-    @staticmethod
-    def compute_update_coherence(delta_E: float, delta_I: float,
-                                  epsilon: float = 1e-8) -> float:
-        """
-        Compute update coherence ρ(t) per HCK v3.0.
-
-        Measures directional alignment between E and I updates.
-
-        Interpretation:
-        - ρ ≈ 1: Coherent updates (E and I moving together)
-        - ρ ≈ 0: Misaligned or unstable
-        - ρ < 0: Adversarial movement (E and I diverging)
-
-        Args:
-            delta_E: Change in Energy since last update
-            delta_I: Change in Information Integrity since last update
-            epsilon: Small value to prevent division by zero
-
-        Returns:
-            float in [-1, 1]: Update coherence value
-        """
-        norm_E = abs(delta_E) + epsilon
-        norm_I = abs(delta_I) + epsilon
-
-        # Normalized product gives directional alignment
-        rho = (delta_E * delta_I) / (norm_E * norm_I)
-
-        return float(max(-1.0, min(1.0, rho)))
-
-    @staticmethod
-    def compute_continuity_energy(state_history: List[Dict],
-                                   window: int = 10,
-                                   alpha_state: float = 0.6,
-                                   alpha_decision: float = 0.4) -> float:
-        """
-        Compute Continuity Energy CE(t) per HCK v3.0.
-
-        CE tracks how much the system state is changing - the "work required
-        to maintain consistency as system evolves."
-
-        Interpretation:
-        - High CE: Major state changes requiring stabilization
-        - Low CE: Stable operation
-
-        Args:
-            state_history: List of recent state snapshots with E, I, S, V, route keys
-            window: Number of recent states to consider
-            alpha_state: Weight for EISV state changes (default 0.6)
-            alpha_decision: Weight for decision/route changes (default 0.4)
-
-        Returns:
-            CE value (non-negative float)
-        """
-        if len(state_history) < 2:
-            return 0.0
-
-        recent = state_history[-window:] if len(state_history) > window else state_history
-
-        # State change component: sum of absolute EISV deltas
-        state_deltas = []
-        for i in range(1, len(recent)):
-            prev, curr = recent[i-1], recent[i]
-            delta = (
-                abs(curr.get('E', 0) - prev.get('E', 0)) +
-                abs(curr.get('I', 0) - prev.get('I', 0)) +
-                abs(curr.get('S', 0) - prev.get('S', 0)) +
-                abs(curr.get('V', 0) - prev.get('V', 0))
-            )
-            state_deltas.append(delta)
-
-        avg_state_delta = sum(state_deltas) / len(state_deltas) if state_deltas else 0.0
-
-        # Decision change component: count route/decision flips
-        decision_changes = 0
-        for i in range(1, len(recent)):
-            prev_route = recent[i-1].get('route') or recent[i-1].get('decision')
-            curr_route = recent[i].get('route') or recent[i].get('decision')
-            if prev_route and curr_route and prev_route != curr_route:
-                decision_changes += 1
-
-        decision_change_rate = decision_changes / (len(recent) - 1) if len(recent) > 1 else 0.0
-
-        # Weighted combination
-        CE = alpha_state * avg_state_delta + alpha_decision * decision_change_rate
-
-        return float(CE)
-
-    @staticmethod
-    def modulate_gains(K_p: float, K_i: float, rho: float,
-                       min_factor: float = 0.5) -> Tuple[float, float]:
-        """
-        Adjust PI gains based on update coherence per HCK v3.0.
-
-        When ρ(t) is low (misaligned updates), reduce controller aggressiveness
-        to prevent instability.
-
-        Args:
-            K_p: Base proportional gain
-            K_i: Base integral gain
-            rho: Update coherence [-1, 1]
-            min_factor: Minimum gain multiplier (default 0.5)
-
-        Returns:
-            (K_p_adjusted, K_i_adjusted)
-        """
-        # Map rho from [-1, 1] to [min_factor, 1.0]
-        # rho=1 → factor=1.0, rho=0 → factor=0.75, rho=-1 → factor=0.5
-        coherence_factor = max(min_factor, (rho + 1) / 2)
-
-        return K_p * coherence_factor, K_i * coherence_factor
-    
     def __init__(self, agent_id: str, load_state: bool = True):
         """
         Initialize monitor for a specific agent
@@ -1803,326 +1702,16 @@ class UNITARESMonitor:
 
         return result
     
+    # Metrics and export: delegating to src/monitor_metrics.py
     def get_metrics(self, include_state: bool = True) -> Dict:
-        """
-        Returns current governance metrics
-        
-        Args:
-            include_state: If False, excludes the nested 'state' dict to reduce response size.
-                          All state values (E, I, S, V, coherence, lambda1) are still included at top level.
-                          Default True for backward compatibility.
-        """
-        # Calculate decision statistics
-        decision_counts = {}
-        decision_history = getattr(self.state, 'decision_history', [])
-        if decision_history:
-            counts = Counter(decision_history)
-            decision_counts = {
-                'approve': counts.get('approve', 0),
-                'revise': counts.get('revise', 0),
-                'reject': counts.get('reject', 0),
-                'total': len(decision_history)
-            }
+        """Returns current governance metrics."""
+        return _get_monitor_metrics(self, include_state)
 
-        # Check stability using UNITARES Phase-3 approximate_stability_check()
-        stability_result = approximate_stability_check(
-            theta=self.state.unitaires_theta,
-            samples=200,
-            steps_per_sample=20,
-            dt=config.DT
-        )
-        
-        # Calculate status consistently with process_update()
-        # Health status uses RECENT TREND (mean of last 10 risk scores), not overall mean
-        # This reflects current behavior rather than all-time history
-        if len(self.state.risk_history) >= 10:
-            current_risk = float(np.mean(self.state.risk_history[-10:]))  # Recent trend (last 10)
-        elif self.state.risk_history:
-            current_risk = float(np.mean(self.state.risk_history))  # All available if < 10
-        else:
-            # No risk history: use coherence fallback or default to None (will show "unknown")
-            current_risk = None
-        
-        # FIX 2025-12-05: Use LATEST (point-in-time) risk_score for consistency with process_update
-        # This solves state inconsistency bug where get_metrics vs process_agent_update diverge
-        # See docs/fixes/STATE_INCONSISTENCY_BUG_20251205.md for full analysis
-        latest_risk_score = float(self.state.risk_history[-1]) if self.state.risk_history else None
-        
-        # Calculate smoothed trend (for historical context, not primary decision making)
-        smoothed_risk_score = current_risk  # Smoothed trend (mean of last 10)
-        
-        # Calculate overall mean risk (for display/comparison)
-        mean_risk = float(np.mean(self.state.risk_history)) if self.state.risk_history else 0.0
-        
-        # Status calculation - USE LATEST VALUE to match process_update behavior
-        # This ensures get_metrics and process_update return consistent status
-        from src.health_thresholds import HealthThresholds
-        health_checker = HealthThresholds()
-        
-        # Use latest_risk_score for status (matches process_update)
-        status_risk = latest_risk_score if latest_risk_score is not None else current_risk
-        
-        # Calculate health status consistently using health_checker.get_health_status()
-        # This ensures get_metrics() and process_agent_update return the same health_status
-        # FIX 2025-12-10: Use health_checker.get_health_status() instead of manual threshold checks
-        health_status_obj, _ = health_checker.get_health_status(
-            risk_score=status_risk,  # Use latest_risk_score or current_risk
-            coherence=self.state.coherence,
-            void_active=self.state.void_active
-        )
-        status = health_status_obj.value
-        
-        # Compute Φ and verdict from current state (using default ethical_drift if not available)
-        # This gives us the physics signal even when we don't have the latest ethical drift
-        from governance_core.scoring import phi_objective, verdict_from_phi
-        from governance_core.parameters import DEFAULT_WEIGHTS
-        phi = phi_objective(
-            state=self.state.unitaires_state,
-            delta_eta=[0.0, 0.0, 0.0],  # Default - get_metrics doesn't have latest ethical_drift
-            weights=DEFAULT_WEIGHTS
-        )
-        verdict = verdict_from_phi(phi)
-        
-        risk_score_value = current_risk if current_risk is not None else mean_risk
-        
-        # Get regime with fallback for backward compatibility (old state files may not have regime)
-        regime = getattr(self.state, 'regime', 'divergence')
-        
-        # Honest initialization: return None for computed metrics when no updates yet
-        # This avoids the jarring "coherence dropped from 1.0 to 0.55" UX issue
-        is_uninitialized = self.state.update_count == 0
-
-        result = {
-            'agent_id': self.agent_id,
-            # EISV metrics at top level for consistency with process_update()
-            'E': float(self.state.E),
-            'I': float(self.state.I),
-            'S': float(self.state.S),
-            'V': float(self.state.V),
-            'coherence': None if is_uninitialized else float(self.state.coherence),
-            'lambda1': float(self.state.lambda1),
-            'regime': str(regime),  # Operational regime: DIVERGENCE | TRANSITION | CONVERGENCE | STABLE
-            'status': 'uninitialized' if is_uninitialized else status,
-            'initialized': not is_uninitialized,  # Explicit flag: False until first process_update()
-            'sampling_params': config.lambda_to_params(self.state.lambda1),
-            'history_size': len(self.state.V_history),
-            'current_risk': None if is_uninitialized else current_risk,
-            'mean_risk': None if is_uninitialized else mean_risk,
-            'risk_score': None if is_uninitialized else risk_score_value,
-            'latest_risk_score': None if is_uninitialized else latest_risk_score,
-            'phi': float(phi),  # Primary physics signal: Φ objective function
-            'verdict': verdict,  # Primary governance signal: safe/caution/high-risk
-            'void_active': bool(self.state.void_active),
-            'void_frequency': float(np.mean([float(abs(v) > config.VOID_THRESHOLD_INITIAL)
-                                            for v in self.state.V_history])) if self.state.V_history else 0.0,
-            'decision_statistics': decision_counts,
-            'stability': {
-                'stable': stability_result['stable'],
-                'alpha_estimate': stability_result['alpha_estimate'],
-                'violations': stability_result['violations'],
-                'notes': stability_result['notes']
-            }
-        }
-
-        # =============================================================
-        # UNITARES v4.1 basin + convergence tracking (lightweight)
-        # =============================================================
-        profile = get_params_profile_name()
-
-        # Basin boundary warning (bistability around I≈0.5 in v4.1)
-        I = float(self.state.I)
-        basin = "unknown"
-        basin_warning = None
-        if profile == "v41":
-            if I < 0.45:
-                basin = "low"
-                basin_warning = "LOW basin: high risk of collapse equilibrium (I well below ~0.5 boundary)"
-            elif I < 0.55:
-                basin = "boundary"
-                basin_warning = "Near basin boundary (~I=0.5): small shocks can flip equilibrium"
-            else:
-                basin = "high"
-
-        # Convergence estimate: distance to target equilibrium (paper-aligned vs legacy)
-        # Note: S has an epistemic floor (S>=0.001) in the runtime.
-        S = float(self.state.S)
-        if profile == "v41":
-            I_target = 0.91
-            S_target = 0.001
-            E_target = 0.91
-        else:
-            # Legacy “equilibrium” guidance used in MCP docs/tooling
-            I_target = 1.0
-            S_target = 0.0
-            E_target = 0.7
-
-        # Euclidean distance in (I,S) plane (matches convergence guidance in core handler)
-        eq_dist = float(((I_target - I) ** 2 + (S - S_target) ** 2) ** 0.5)
-
-        # Rough contraction-based estimate using α≈0.1 (paper) and dt (config.DT)
-        # This is intentionally a heuristic; exact convergence depends on theta, drift, and complexity.
-        dt = float(getattr(config, "DT", 0.1))
-        alpha = 0.1
-        contraction = max(1e-6, 1.0 - alpha * dt)
-        eps = 0.02  # “close enough” threshold for guidance purposes
-        est_updates = None
-        if eq_dist > 0 and contraction < 1.0:
-            try:
-                import math
-                est_updates = int(math.ceil(max(0.0, math.log(eps / eq_dist) / math.log(contraction))))
-            except Exception:
-                est_updates = None
-
-        result["unitares_v41"] = {
-            "params_profile": profile,
-            "basin": basin,
-            "basin_warning": basin_warning,
-            "equilibrium": {
-                "I_target": I_target,
-                "S_target": S_target,
-                "E_target": E_target,
-            },
-            "convergence": {
-                "equilibrium_distance": eq_dist,
-                "estimated_updates_to_eps": est_updates,
-                "eps": eps,
-                "note": "Heuristic estimate (assumes contraction rate α≈0.1 and dt=config.DT).",
-            },
-        }
-        
-        # Include nested state dict only if requested (reduces context bloat)
-        if include_state:
-            result['state'] = self.state.to_dict()
-
-        # =================================================================
-        # HCK v3.0 / CIRS v0.1: Reflexive control and resonance metrics
-        # =================================================================
-        result['hck'] = {
-            'rho': float(getattr(self.state, 'current_rho', 0.0)),
-            'CE': float(self.state.CE_history[-1]) if hasattr(self.state, 'CE_history') and self.state.CE_history else 0.0,
-            'rho_history_len': len(getattr(self.state, 'rho_history', [])),
-            'CE_history_len': len(getattr(self.state, 'CE_history', []))
-        }
-
-        # Get last oscillation state if available
-        last_osc = getattr(self, '_last_oscillation_state', None)
-        result['cirs'] = {
-            'oi': float(last_osc.oi) if last_osc else 0.0,
-            'flips': int(last_osc.flips) if last_osc else 0,
-            'resonant': bool(last_osc.resonant) if last_osc else False,
-            'trigger': last_osc.trigger if last_osc else None,
-            'resonance_events': int(getattr(self.state, 'resonance_events', 0)),
-            'damping_applied_count': int(getattr(self.state, 'damping_applied_count', 0)),
-            'oi_history_len': len(getattr(self.state, 'oi_history', []))
-        }
-
-        return result
-
-    @staticmethod
-    def get_eisv_labels() -> Dict:
-        """Returns EISV metric labels and descriptions for API documentation
-        
-        EISV = the four core UNITARES state variables:
-        - E: Energy or presence
-        - I: Information integrity
-        - S: Entropy
-        - V: Void integral
-        
-        Updated 2025-11-26: Removed misleading semantic descriptions.
-        These metrics track thermodynamic structure, not semantic content quality.
-        """
-        return {
-            'E': {
-                'label': 'Energy',
-                'description': 'Energy (divergence/productive capacity)',
-                'user_friendly': 'How engaged and energized your work feels',
-                'range': '[0.0, 1.0]'
-            },
-            'I': {
-                'label': 'Information Integrity',
-                'description': 'Information integrity',
-                'user_friendly': 'Consistency and coherence of your approach',
-                'range': '[0.0, 1.0]'
-            },
-            'S': {
-                'label': 'Entropy',
-                'description': 'Entropy (disorder/uncertainty)',
-                'user_friendly': 'How scattered or fragmented things are',
-                'range': '[0.0, 1.0]'
-            },
-            'V': {
-                'label': 'Void Integral',
-                'description': 'Void integral (E-I imbalance accumulation)',
-                'user_friendly': 'Accumulated strain from energy-integrity mismatch',
-                'range': '(-inf, +inf)'
-            }
-        }
+    get_eisv_labels = staticmethod(_get_eisv_labels)
 
     def export_history(self, format: str = 'json') -> str:
-        """Exports complete history for analysis"""
-        import csv
-        import io
-        
-        # Backward compatibility: ensure decision_history and lambda1_history exist
-        decision_history = getattr(self.state, 'decision_history', [])
-        lambda1_history = getattr(self.state, 'lambda1_history', [])
-        
-        history = {
-            'agent_id': self.agent_id,
-            'timestamps': self.state.timestamp_history,  # Timestamps for each update
-            'E_history': self.state.E_history,  # Full history
-            'I_history': self.state.I_history,  # Full history
-            'S_history': self.state.S_history,  # Full history
-            'V_history': self.state.V_history,
-            'coherence_history': self.state.coherence_history,
-            'risk_history': self.state.risk_history,  # Stores risk_score values over time
-            'attention_history': self.state.risk_history,  # DEPRECATED: Use risk_history instead. Kept for backward compatibility.
-            'decision_history': decision_history,
-            'lambda1_history': lambda1_history,  # Full lambda1 adaptation history
-            'lambda1_final': self.state.lambda1,  # Current lambda1 (for backward compatibility)
-            'total_updates': self.state.update_count,
-            'total_time': self.state.time
-        }
-        
-        if format == 'json':
-            return json.dumps(history, indent=2)
-        elif format == 'csv':
-            # Convert to CSV format
-            output = io.StringIO()
-            writer = csv.writer(output)
-            
-            # Write header - standardized column order
-            # Note: 'risk_score' column contains values from risk_history (stores risk_score over time)
-            writer.writerow(['update', 'timestamp', 'E', 'I', 'S', 'V', 'coherence', 'risk_score', 'decision', 'lambda1'])
-            
-            # Write data rows - use full history for E/I/S/V/coherence/risk/decision/lambda1
-            num_rows = len(self.state.V_history)
-            for i in range(num_rows):
-                row = [
-                    i + 1,
-                    self.state.timestamp_history[i] if i < len(self.state.timestamp_history) else '',
-                    self.state.E_history[i] if i < len(self.state.E_history) else '',
-                    self.state.I_history[i] if i < len(self.state.I_history) else '',
-                    self.state.S_history[i] if i < len(self.state.S_history) else '',
-                    self.state.V_history[i] if i < len(self.state.V_history) else '',
-                    self.state.coherence_history[i] if i < len(self.state.coherence_history) else '',
-                    self.state.risk_history[i] if i < len(self.state.risk_history) else '',
-                    decision_history[i] if i < len(decision_history) else '',
-                    lambda1_history[i] if i < len(lambda1_history) else ''  # Full lambda1 history
-                ]
-                writer.writerow(row)
-            
-            # Add summary row
-            writer.writerow([])
-            writer.writerow(['Summary', '', '', '', '', '', '', '', ''])
-            writer.writerow(['agent_id', self.agent_id, '', '', '', '', '', '', ''])
-            writer.writerow(['total_updates', self.state.update_count, '', '', '', '', '', '', ''])
-            writer.writerow(['total_time', self.state.time, '', '', '', '', '', '', ''])
-            writer.writerow(['lambda1_final', self.state.lambda1, '', '', '', '', '', '', ''])
-            
-            return output.getvalue()
-        else:
-            raise ValueError(f"Unsupported format: {format}")
+        """Exports complete history for analysis."""
+        return _export_monitor_history(self, format)
 
 
 # Example usage

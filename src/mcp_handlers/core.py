@@ -465,7 +465,7 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
     from .update_phases import (
         resolve_identity_and_guards,
         handle_onboarding_and_resume,
-        validate_inputs,
+        transform_inputs,
         execute_locked_update,
         execute_post_update_effects,
     )
@@ -514,7 +514,7 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
     if early_exit:
         return early_exit
 
-    early_exit = validate_inputs(ctx)
+    early_exit = transform_inputs(ctx)
     if early_exit:
         return early_exit
 

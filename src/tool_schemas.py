@@ -27,6 +27,7 @@ def _load_pydantic_schemas():
         "src.mcp_handlers.schemas.calibration",
         "src.mcp_handlers.schemas.identity",
         "src.mcp_handlers.schemas.admin",
+        "src.mcp_handlers.schemas.dashboard",
     ]
     all_schemas = {}
     for mod_name in mods:
@@ -138,6 +139,7 @@ TOOL_ORDER = [
     "pi",
     "observe",
     "dialectic",
+    "dashboard",
 ]
 
 

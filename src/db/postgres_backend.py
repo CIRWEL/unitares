@@ -868,6 +868,21 @@ class PostgresBackend(DatabaseBackend):
             )
             return [self._row_to_agent_state(r) for r in rows]
 
+    async def get_all_latest_agent_states(self) -> list[AgentStateRecord]:
+        async with self.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT ON (s.identity_id)
+                       s.state_id, s.identity_id, i.agent_id, s.recorded_at,
+                       s.entropy, s.integrity, s.stability_index, s.volatility,
+                       s.regime, s.coherence, s.state_json
+                FROM core.agent_state s
+                JOIN core.identities i ON i.identity_id = s.identity_id
+                ORDER BY s.identity_id, s.recorded_at DESC
+                """
+            )
+            return [self._row_to_agent_state(r) for r in rows]
+
     def _row_to_agent_state(self, row) -> AgentStateRecord:
         return AgentStateRecord(
             state_id=row["state_id"],

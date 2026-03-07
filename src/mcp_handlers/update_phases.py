@@ -4,7 +4,7 @@ Update Phases — Extracted from handle_process_agent_update in core.py.
 Phases 1-5 of the process_agent_update pipeline:
   1. resolve_identity_and_guards  — UUID, circuit breaker, lazy persist, label
   2. handle_onboarding_and_resume — KG guidance, auto-resume archived agents
-  3. validate_inputs              — Param validation (fail-fast before lock)
+  3. transform_inputs             — Extract & transform params (fail-fast before lock)
   4. execute_locked_update        — Policy, agent creation, ODE update
   5. execute_post_update_effects  — Health, CIRS, PG record, outcomes
 """
@@ -334,8 +334,8 @@ async def handle_onboarding_and_resume(ctx: UpdateContext) -> Optional[Sequence[
 
 # ─── Phase 3: Validate Inputs ──────────────────────────────────────────
 
-def validate_inputs(ctx: UpdateContext) -> Optional[Sequence[TextContent]]:
-    """Transfer validated parameters to context BEFORE acquiring lock.
+def transform_inputs(ctx: UpdateContext) -> Optional[Sequence[TextContent]]:
+    """Extract and transform validated parameters to context BEFORE acquiring lock.
     (Pydantic handles the actual validation in middleware, so these values
     are guaranteed to be structurally correct).
 
@@ -408,6 +408,54 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
         sensor_eisv = sensor_data.get("eisv")
         if sensor_eisv and isinstance(sensor_eisv, dict):
             ctx.agent_state["sensor_eisv"] = sensor_eisv
+
+    # Behavioral sensor: compute EISV from governance observables for non-embodied agents
+    if "sensor_eisv" not in ctx.agent_state:
+        try:
+            monitor = mcp_server.monitors.get(ctx.agent_id)
+            if monitor and len(getattr(monitor.state, 'decision_history', [])) >= 3:
+                from src.behavioral_sensor import compute_behavioral_sensor_eisv
+                from src.calibration import calibration_checker
+
+                # Calibration error: mean across bins with sufficient data
+                cal_error = None
+                try:
+                    metrics = calibration_checker.compute_calibration_metrics()
+                    if metrics:
+                        errors = [b.calibration_error for b in metrics.values() if b.count >= 5]
+                        if errors:
+                            cal_error = sum(errors) / len(errors)
+                except Exception:
+                    pass
+
+                # Drift norm from previous check-in
+                drift_n = None
+                dv = getattr(monitor, '_last_drift_vector', None)
+                if dv is not None:
+                    drift_n = getattr(dv, 'norm', None)
+
+                # Complexity divergence from previous continuity metrics
+                comp_div = None
+                cm = getattr(monitor, '_last_continuity_metrics', None)
+                if cm is not None:
+                    comp_div = getattr(cm, 'complexity_divergence', None)
+
+                behavioral_eisv = compute_behavioral_sensor_eisv(
+                    decision_history=list(monitor.state.decision_history),
+                    coherence_history=list(monitor.state.coherence_history),
+                    regime_history=list(getattr(monitor.state, 'regime_history', [])),
+                    E_history=list(monitor.state.E_history),
+                    I_history=list(monitor.state.I_history),
+                    S_history=list(monitor.state.S_history),
+                    V_history=list(monitor.state.V_history),
+                    calibration_error=cal_error,
+                    drift_norm=drift_n,
+                    complexity_divergence=comp_div,
+                )
+                if behavioral_eisv:
+                    ctx.agent_state["sensor_eisv"] = behavioral_eisv
+        except Exception:
+            pass  # Fail-safe: ODE runs open-loop if anything fails
 
     # Policy checks
     from .validators import (

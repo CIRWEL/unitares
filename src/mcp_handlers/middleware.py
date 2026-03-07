@@ -316,6 +316,7 @@ async def inject_identity(name: str, arguments: Dict[str, Any], ctx: DispatchCon
                     "archive_agent", "archive_old_test_agents",
                     "direct_resume_if_safe", "operator_resume_agent",
                     "ping_agent",
+                    "dashboard",
                 }
                 if name not in identity_tools and name not in dialectic_tools and name not in operator_tools and not is_label_match:
                     return [error_response(

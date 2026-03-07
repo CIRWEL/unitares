@@ -295,6 +295,11 @@ class DatabaseBackend(ABC):
         """Get state history for an identity."""
         pass
 
+    @abstractmethod
+    async def get_all_latest_agent_states(self) -> List[AgentStateRecord]:
+        """Get the most recent state for every agent (bulk dashboard query)."""
+        pass
+
     # =========================================================================
     # AUDIT OPERATIONS
     # =========================================================================

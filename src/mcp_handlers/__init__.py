@@ -150,6 +150,7 @@ from .identity_shared import (
 )
 
 # Common utilities
+from .dashboard import handle_dashboard
 from .utils import error_response, success_response
 
 # Error helpers (for exception handlers)
