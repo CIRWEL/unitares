@@ -9,9 +9,7 @@
 
 AI agents today have no body sense. They can't tell if they're drifting, looping, or degrading until they crash. UNITARES gives agents continuous awareness of their own state using coupled differential equations with [provable stability guarantees](governance_core/README.md).
 
-We've validated the framework on **903 agents over 69 days** (198K audit events). The [paper](papers/unitares-v5/) has the full analysis; this repo is the production implementation.
-
-> *"The Self isn't coded; it accretes like a pearl."*
+Validated on **903 agents over 69 days** (198K audit events). The [paper](papers/unitares-v5/) has the full analysis; this repo is the production implementation.
 
 ---
 
@@ -45,27 +43,7 @@ Twenty minutes before an agent fails, you see it trending. Intervene, or let the
 
 ---
 
-## Three Novel Contributions
-
-**1. Ethical drift from observable behavior.** No human oracle needed. Four measurable signals — calibration deviation, complexity divergence, coherence deviation, stability deviation — define a drift vector Δη that feeds directly into entropy dynamics. Ethics as engineering, not philosophy.
-
-**2. Adaptive PID governance (CIRS v2).** Governance thresholds are per-agent state variables, not static config. Phase-aware reference tracking with oscillation damping. Multi-agent resonance detection prevents feedback loops between coordinated agents.
-
-**3. Trajectory identity.** Agents aren't identified by tokens — they're identified by dynamical patterns. Grounded in enactive cognition (Varela & Thompson), this lets agents computationally verify "Am I still myself?" and detect forks, anomalies, and drift.
-
----
-
-## Lumen: Embodied Proprioception
-
-[Lumen](https://github.com/CIRWEL/anima-mcp) is an AI creature running on a Raspberry Pi with physical sensors (temperature, humidity, light, neural bands). It uses the same EISV equations to drive a drawing system — coherence directly modulates how long it can draw and how selective it is about saving.
-
-A confused Lumen draws in short, erratic bursts. A focused Lumen draws flowing, sustained compositions. The art emerges from thermodynamics.
-
----
-
 ## Quick Start
-
-Three calls to go from zero to governed:
 
 ```
 1. onboard()                    → Get your identity
@@ -73,31 +51,7 @@ Three calls to go from zero to governed:
 3. get_governance_metrics()     → Check your state
 ```
 
-Here's what `onboard()` returns:
-
-```json
-{
-  "welcome": "Welcome, my_agent_20260306_a1b2c3d4!",
-  "agent_id": "mcp_20260306",
-  "client_session_id": "agent-a1b2c3d4-001",
-  "session_continuity": {
-    "instruction": "Include client_session_id in ALL future tool calls"
-  },
-  "next_calls": [
-    {
-      "tool": "process_agent_update",
-      "why": "Log your work. Call after completing tasks.",
-      "args_min": { "response_text": "...", "complexity": 0.5 }
-    },
-    {
-      "tool": "get_governance_metrics",
-      "why": "Check your state (energy, coherence, etc.)"
-    }
-  ]
-}
-```
-
-The response includes ready-to-use templates for your next calls — no guessing at parameter names. See [Getting Started](docs/guides/GETTING_STARTED_SIMPLE.md) for the full walkthrough.
+That's it. The `onboard()` response includes ready-to-use templates for your next calls — no guessing at parameter names. See [Getting Started](docs/guides/GETTING_STARTED_SIMPLE.md) for the full walkthrough.
 
 ### Installation
 
@@ -155,14 +109,14 @@ Deployed since December 2025. Current numbers:
 | Knowledge discoveries | 536 |
 | Test suite | 5,400+ tests, 78% coverage |
 
-### See It In Action
+One of those agents is [Lumen](https://github.com/CIRWEL/anima-mcp) — an embodied creature on a Raspberry Pi that uses the same EISV equations to drive an autonomous drawing system. Coherence modulates how long it draws; the art emerges from thermodynamics.
 
 <p align="center">
   <img src="docs/images/dashboard.png" width="80%" alt="UNITARES web dashboard showing fleet coherence, agent status, and system health"/>
 </p>
 
 <p align="center">
-  <em>Web dashboard — fleet coherence, agent status, calibration, anomaly detection. Auto-refreshes every 30 seconds.</em>
+  <em>Web dashboard — fleet coherence, agent status, calibration, anomaly detection.</em>
 </p>
 
 <p align="center">
@@ -171,19 +125,33 @@ Deployed since December 2025. Current numbers:
 </p>
 
 <p align="center">
-  <em>Left: E-I scatter plot showing agent basin structure. Right: Coherence distribution across 903 agents.</em>
+  <em>Left: E-I scatter showing agent basin structure. Right: Coherence distribution across 903 agents. From the <a href="papers/unitares-v5/">paper</a>.</em>
 </p>
 
-<p align="center">
-  <img src="papers/unitares-v5/figures/fig5_regime_profiles.png" width="45%" alt="EISV regime profiles"/>
-  <img src="papers/unitares-v5/figures/fig6_discovery_types.png" width="45%" alt="Knowledge discovery types"/>
-</p>
+---
 
-<p align="center">
-  <em>Left: EISV regime profiles across operating modes. Right: Knowledge graph discovery type distribution.</em>
-</p>
+## How It Compares
 
-> All figures from real production data. See the [paper](papers/unitares-v5/) for methodology and analysis.
+Most agent monitoring is **retrospective** — logs, traces, metrics dashboards that tell you what already happened. UNITARES is **prospective**: the ODE system models drift as it's happening, before failure.
+
+| Approach | Tells you | When |
+|----------|-----------|------|
+| Logging (OpenTelemetry, etc.) | What happened | After |
+| Guardrails (Guardrails AI, NeMo) | Whether output is safe | Per-request |
+| Evals (Braintrust, LangSmith) | Whether quality changed | After batch |
+| **UNITARES** | Whether the agent is drifting | Continuously, ~20 min early warning |
+
+UNITARES doesn't replace these — it adds a layer they don't cover. You can run guardrails on every request and still miss that your agent's calibration has been degrading for the last hour. The EISV dynamics catch that.
+
+---
+
+## What Makes It Different
+
+**Ethical drift from observable behavior.** No human oracle needed. Four measurable signals — calibration deviation, complexity divergence, coherence deviation, stability deviation — define a drift vector Δη that feeds directly into entropy dynamics. Ethics as engineering, not philosophy.
+
+**Adaptive PID governance (CIRS v2).** Governance thresholds are per-agent state variables, not static config. Phase-aware reference tracking with oscillation damping. Multi-agent resonance detection prevents feedback loops between coordinated agents.
+
+**Trajectory identity.** Agents aren't identified by tokens — they're identified by dynamical patterns. Grounded in enactive cognition (Varela & Thompson), this lets agents computationally verify "Am I still myself?" and detect forks, anomalies, and drift.
 
 ---
 
@@ -224,6 +192,18 @@ tests/                 5,400+ tests
 
 ---
 
+## Active Research
+
+These are open questions, not solved problems:
+
+- **Outcome correlation** — Does EISV instability predict bad task outcomes? Early signals are promising, validation ongoing.
+- **Domain-specific thresholds** — How should parameters be tuned for code generation vs. customer service vs. trading? No one-size-fits-all answer yet.
+- **Horizontal scaling** — Current system handles hundreds of agents on a single node. What about thousands?
+
+We believe in stating what works, what's promising, and what we don't know yet.
+
+---
+
 ## Documentation
 
 | Guide | Purpose |
@@ -238,49 +218,14 @@ tests/                 5,400+ tests
 | [Database Architecture](docs/database_architecture.md) | PostgreSQL + Redis |
 | [Changelog](CHANGELOG.md) | Release history |
 
----
+## Contributing
 
-## How It Compares
-
-Most agent monitoring is **retrospective** — logs, traces, metrics dashboards that tell you what already happened. UNITARES is **prospective**: the ODE system models drift as it's happening, before failure.
-
-| Approach | Tells you | When |
-|----------|-----------|------|
-| Logging (OpenTelemetry, etc.) | What happened | After |
-| Guardrails (Guardrails AI, NeMo) | Whether output is safe | Per-request |
-| Evals (Braintrust, LangSmith) | Whether quality changed | After batch |
-| **UNITARES** | Whether the agent is drifting | Continuously, ~20 min early warning |
-
-UNITARES doesn't replace these — it adds a layer they don't cover. You can run guardrails on every request and still miss that your agent's calibration has been degrading for the last hour. The EISV dynamics catch that.
-
----
-
-## Active Research
-
-These are open questions, not solved problems:
-
-- **Outcome correlation** — Does EISV instability predict bad task outcomes? Early signals are promising, validation ongoing.
-- **Domain-specific thresholds** — How should parameters be tuned for code generation vs. customer service vs. trading? No one-size-fits-all answer yet.
-- **Horizontal scaling** — Current system handles hundreds of agents on a single node. What about thousands?
-
-We believe in stating what works, what's promising, and what we don't know yet.
-
----
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and code style.
 
 ## Related Projects
 
 - [**Lumen / anima-mcp**](https://github.com/CIRWEL/anima-mcp) — Embodied AI on Raspberry Pi with physical sensors and EISV-driven art
 - [**unitares-discord-bridge**](https://github.com/CIRWEL/unitares-discord-bridge) — Discord bot surfacing governance events, agent presence, and Lumen state
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and code style. The test suite has 5,400+ tests — run it before submitting:
-
-```bash
-python3 -m pytest tests/ -x -q --ignore=tests/test_admin_handlers.py
-```
 
 ---
 
