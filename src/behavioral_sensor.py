@@ -97,7 +97,7 @@ def _compute_E(
 
     # Outcome success rate — successful outcomes indicate productive energy
     if outcome_history and len(outcome_history) >= 3:
-        good_count = sum(1 for o in outcome_history if not o.get('is_bad', True))
+        good_count = sum(1 for o in outcome_history if not o.get('is_bad', False))
         success_rate = good_count / len(outcome_history)
         outcome_e = 0.3 + success_rate * 0.6  # Map [0,1] -> [0.3, 0.9]
         # Weights: 35% decision, 25% coherence, 20% calibration, 20% outcomes
@@ -123,8 +123,9 @@ def _compute_I(
 
     # Outcome consistency — consistent scores indicate information integrity
     if outcome_history and len(outcome_history) >= 3:
-        scores = [o.get('outcome_score', 0.5) for o in outcome_history
-                  if o.get('outcome_score') is not None]
+        scores = [s for o in outcome_history
+                  if (s := o.get('outcome_score')) is not None
+                  and isinstance(s, (int, float)) and math.isfinite(s)]
         if len(scores) >= 3:
             mean_s = sum(scores) / len(scores)
             score_var = sum((s - mean_s) ** 2 for s in scores) / len(scores)
