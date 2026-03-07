@@ -159,16 +159,17 @@ class TestGenesisStorage:
             mock_db_instance.update_identity_metadata.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_genesis_immutable(self):
-        """Genesis should not be overwritten once set."""
+    async def test_genesis_immutable_at_tier_2(self):
+        """Genesis should not be overwritten at tier 2+."""
         from src.trajectory_identity import store_genesis_signature, TrajectorySignature
 
-        sig = TrajectorySignature(observation_count=20)
+        sig = TrajectorySignature(observation_count=100, identity_confidence=0.9)
 
         with patch('src.db.get_db') as mock_db:
             mock_identity = MagicMock()
             mock_identity.metadata = {
-                "trajectory_genesis": {"observation_count": 10}  # Already exists!
+                "trajectory_genesis": {"observation_count": 10, "identity_confidence": 0.3},
+                "trust_tier": {"tier": 2, "name": "established"},
             }
 
             mock_db_instance = AsyncMock()
@@ -177,7 +178,55 @@ class TestGenesisStorage:
 
             result = await store_genesis_signature("test-agent-uuid", sig)
 
-            # Should return False - genesis already exists
+            # Should return False - genesis immutable at tier 2+
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_genesis_reseed_at_tier_1(self):
+        """Genesis can be reseeded at tier 1 if new confidence is 1.5x higher."""
+        from src.trajectory_identity import store_genesis_signature, TrajectorySignature
+
+        # New signature with much higher confidence
+        sig = TrajectorySignature(observation_count=50, identity_confidence=0.25)
+
+        with patch('src.db.get_db') as mock_db:
+            mock_identity = MagicMock()
+            mock_identity.metadata = {
+                "trajectory_genesis": {"observation_count": 10, "identity_confidence": 0.05},
+                "trust_tier": {"tier": 1, "name": "emerging"},
+            }
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=mock_identity)
+            mock_db_instance.update_identity_metadata = AsyncMock()
+            mock_db.return_value = mock_db_instance
+
+            result = await store_genesis_signature("test-agent-uuid", sig)
+
+            assert result is True
+            mock_db_instance.update_identity_metadata.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_genesis_no_reseed_insufficient_improvement(self):
+        """Genesis not reseeded if new confidence isn't 1.5x higher."""
+        from src.trajectory_identity import store_genesis_signature, TrajectorySignature
+
+        sig = TrajectorySignature(observation_count=30, identity_confidence=0.10)
+
+        with patch('src.db.get_db') as mock_db:
+            mock_identity = MagicMock()
+            mock_identity.metadata = {
+                "trajectory_genesis": {"observation_count": 10, "identity_confidence": 0.08},
+                "trust_tier": {"tier": 1, "name": "emerging"},
+            }
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(return_value=mock_identity)
+            mock_db.return_value = mock_db_instance
+
+            result = await store_genesis_signature("test-agent-uuid", sig)
+
+            # 0.10 <= 0.08 * 1.5 = 0.12 → not enough improvement
             assert result is False
 
     @pytest.mark.asyncio

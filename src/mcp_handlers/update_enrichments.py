@@ -597,7 +597,10 @@ async def enrich_trajectory_identity(ctx: UpdateContext) -> None:
                     task_type_counts=getattr(monitor, '_task_type_counts', None),
                     calibration_error=cal_error,
                 )
-        except Exception:
+                if trajectory_signature:
+                    logger.debug(f"[TRAJECTORY] Behavioral trajectory computed for {ctx.agent_uuid[:8]}... (update_count={monitor.state.update_count})")
+        except Exception as e:
+            logger.debug(f"[TRAJECTORY] Behavioral trajectory computation failed: {e}")
             pass  # Fail-safe: trajectory stays None, no crash
 
     if not trajectory_signature or not isinstance(trajectory_signature, dict):

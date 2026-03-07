@@ -575,9 +575,9 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
             if not getattr(ctx.meta, "thread_id", None):
                 ctx.meta.thread_id = str(uuid.uuid4())
             if getattr(ctx.meta, "active_session_key", None) is None:
-                ctx.meta.node_index = getattr(ctx.meta, "node_index", 1)
+                ctx.meta.node_index = getattr(ctx.meta, "node_index", None) or 1
             else:
-                ctx.meta.node_index = getattr(ctx.meta, "node_index", 1) + 1
+                ctx.meta.node_index = (getattr(ctx.meta, "node_index", None) or 1) + 1
             ctx.meta.active_session_key = ctx.session_key
             
             try:

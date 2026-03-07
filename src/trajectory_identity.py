@@ -156,10 +156,30 @@ async def store_genesis_signature(
 
         metadata = identity.metadata or {}
 
-        # Check if genesis already exists (immutable)
-        if metadata.get("trajectory_genesis"):
-            logger.debug(f"[Trajectory] Genesis already exists for {agent_id[:8]}...")
-            return False
+        # Check if genesis already exists
+        existing_genesis = metadata.get("trajectory_genesis")
+        if existing_genesis:
+            # Allow reseed at tier 1 (emerging) if new signature has
+            # substantially higher confidence — early genesis from 10 data points
+            # may not be representative. Once at tier 2+, genesis is immutable.
+            trust = metadata.get("trust_tier", {})
+            tier = trust.get("tier", 0) if isinstance(trust, dict) else 0
+            existing_confidence = existing_genesis.get("identity_confidence", 0.0)
+            new_confidence = signature.identity_confidence
+
+            if tier >= 2:
+                logger.debug(f"[Trajectory] Genesis immutable at tier {tier} for {agent_id[:8]}...")
+                return False
+
+            if new_confidence <= existing_confidence * 1.5:
+                # New signature isn't sufficiently better — keep existing
+                logger.debug(f"[Trajectory] Genesis reseed skipped: {new_confidence:.2f} <= {existing_confidence:.2f}*1.5")
+                return False
+
+            logger.info(
+                f"[Trajectory] Reseeding genesis for {agent_id[:8]}... "
+                f"(tier={tier}, confidence {existing_confidence:.2f} → {new_confidence:.2f})"
+            )
 
         # Store genesis signature
         metadata["trajectory_genesis"] = signature.to_dict()
@@ -219,6 +239,21 @@ async def update_current_signature(
             if result["is_anomaly"]:
                 result["warning"] = f"Trajectory drift detected: similarity to genesis is {lineage_sim:.2f} (threshold: 0.6)"
                 logger.warning(f"[Trajectory] ANOMALY for {agent_id[:8]}...: lineage_sim={lineage_sim:.2f}")
+
+            # Attempt genesis reseed at tier 1 (store_genesis_signature handles guards)
+            trust = metadata.get("trust_tier", {})
+            tier = trust.get("tier", 0) if isinstance(trust, dict) else 0
+            if tier <= 1:
+                reseeded = await store_genesis_signature(agent_id, signature)
+                if reseeded:
+                    result["genesis_reseeded"] = True
+                    # Recompute lineage after reseed (it's now 1.0 by definition)
+                    result["lineage_similarity"] = 1.0
+                    result["is_anomaly"] = False
+                    result.pop("warning", None)
+                    # Refresh metadata after reseed
+                    identity = await db.get_identity(agent_id)
+                    metadata = identity.metadata or {}
         else:
             # No genesis - store this as genesis
             await store_genesis_signature(agent_id, signature)
