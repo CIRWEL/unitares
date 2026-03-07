@@ -350,8 +350,12 @@ async def handle_simulate_update(arguments: ToolArgumentsDict) -> Sequence[TextC
         monitor = UNITARESMonitor("_simulation_temp_", load_state=False)
         agent_id = "_simulation_temp_"
 
-    # Validate parameters for simulation
-    complexity = arguments.get("complexity", 0.5)
+    # Validate parameters for simulation (coerce str → float)
+    raw_complexity = arguments.get("complexity", 0.5)
+    try:
+        complexity = float(raw_complexity) if raw_complexity is not None else 0.5
+    except (TypeError, ValueError):
+        complexity = 0.5
 
     # Dialectic condition enforcement (only applies to existing agents)
     dialectic_warnings = []
@@ -369,7 +373,11 @@ async def handle_simulate_update(arguments: ToolArgumentsDict) -> Sequence[TextC
             logger.warning(f"Could not enforce dialectic conditions: {e}", exc_info=True)
 
     # Confidence: If not provided (None), let governance_monitor derive from state
-    confidence = arguments.get("confidence")
+    raw_confidence = arguments.get("confidence")
+    try:
+        confidence = float(raw_confidence) if raw_confidence is not None else None
+    except (TypeError, ValueError):
+        confidence = None
 
     ethical_drift = arguments.get("ethical_drift", [0.0, 0.0, 0.0])
 

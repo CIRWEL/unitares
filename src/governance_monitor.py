@@ -1006,7 +1006,8 @@ class UNITARESMonitor:
                     risk_score=risk_score,
                     coherence=self.state.coherence,
                     void_active=self.state.void_active,
-                    void_value=self.state.V
+                    void_value=self.state.V,
+                    coherence_history=self.state.coherence_history,
                 )
         else:
             # Safe verdict or no verdict: use standard decision logic
@@ -1014,7 +1015,8 @@ class UNITARESMonitor:
                 risk_score=risk_score,
                 coherence=self.state.coherence,
                 void_active=self.state.void_active,
-                void_value=self.state.V
+                void_value=self.state.V,
+                coherence_history=self.state.coherence_history,
             )
     
     def simulate_update(self, agent_state: Dict, confidence: Optional[float] = None) -> Dict:

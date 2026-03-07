@@ -628,20 +628,21 @@ class GovernanceConfig:
     def make_decision(risk_score: float,
                      coherence: float,
                      void_active: bool,
-                     void_value: float = 0.0) -> Dict[str, any]:
+                     void_value: float = 0.0,
+                     coherence_history: Optional[List[float]] = None) -> Dict[str, any]:
         """
         Makes autonomous governance decision using two-tier system: proceed/pause.
-        
+
         Decision logic (fully autonomous, no human-in-the-loop):
         1. If void_active: PAUSE (system unstable - agent should halt)
         2. If coherence < critical: PAUSE (incoherent output - agent should halt)
         3. If risk_score < 0.35: PROCEED (no guidance needed)
         4. If risk_score < 0.60: PROCEED (with optional guidance for medium risk)
         5. Else: PAUSE (agent halts or escalates to another AI layer)
-        
+
         Note: risk_score measures governance/operational risk (likelihood of issues), not ethical risk.
               attention_score is deprecated but kept for backward compatibility.
-        
+
         Returns:
             {
                 'action': 'proceed' | 'pause',
@@ -656,7 +657,8 @@ class GovernanceConfig:
             risk_score=risk_score,
             coherence=coherence,
             void_active=void_active,
-            void_value=void_value
+            void_value=void_value,
+            coherence_history=coherence_history,
         )
         
         # Critical safety checks first - always pause

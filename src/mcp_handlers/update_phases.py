@@ -462,7 +462,7 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
                 )
                 if behavioral_eisv:
                     ctx.agent_state["sensor_eisv"] = behavioral_eisv
-                    logger.info(f"Behavioral sensor_eisv injected for {ctx.agent_id}: {behavioral_eisv}")
+                    logger.debug(f"Behavioral sensor_eisv injected for {ctx.agent_id}: {behavioral_eisv}")
         except Exception as e:
             logger.debug(f"Behavioral sensor skipped for {ctx.agent_id}: {e}")
             pass  # Fail-safe: ODE runs open-loop if anything fails

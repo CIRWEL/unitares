@@ -142,21 +142,32 @@ def _compute_attractor(
 # --- Recovery (R): coherence recovery time constant ---
 
 def _compute_recovery(coherence_history: list) -> dict:
-    """Estimate recovery tau from coherence dip/recovery cycles."""
-    dip_threshold = 0.48
+    """Estimate recovery tau from coherence dip/recovery cycles.
+
+    Thresholds are set wide enough (dip < 0.46, recover >= 0.49) to avoid
+    noise from agents oscillating near steady-state coherence (~0.49).
+    Dips must persist for 2+ consecutive steps to count.
+    """
+    dip_threshold = 0.46
     recovery_threshold = 0.49
+    min_dip_duration = 2  # Must stay below threshold for 2+ steps
     recovery_times = []
 
     in_dip = False
     dip_start = 0
+    consecutive_below = 0
 
     for idx, c in enumerate(coherence_history):
-        if not in_dip and c < dip_threshold:
-            in_dip = True
-            dip_start = idx
-        elif in_dip and c >= recovery_threshold:
-            recovery_times.append(idx - dip_start)
-            in_dip = False
+        if c < dip_threshold:
+            consecutive_below += 1
+            if not in_dip and consecutive_below >= min_dip_duration:
+                in_dip = True
+                dip_start = idx - min_dip_duration + 1
+        else:
+            consecutive_below = 0
+            if in_dip and c >= recovery_threshold:
+                recovery_times.append(idx - dip_start)
+                in_dip = False
 
     if recovery_times:
         tau = sum(recovery_times) / len(recovery_times)

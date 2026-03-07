@@ -134,22 +134,41 @@ class TestRecovery:
         result = _compute_recovery(coh)
         assert result["tau_estimate"] == 3.0
 
-    def test_tau_computed_from_dip_recovery(self):
-        # Dip at index 5 (0.45), recover at index 8 (0.49) → tau = 3
-        coh = [0.5] * 5 + [0.45, 0.46, 0.47] + [0.49] + [0.5] * 11
+    def test_single_step_below_threshold_ignored(self):
+        """Single step below 0.46 doesn't count — need 2+ consecutive."""
+        coh = [0.5] * 5 + [0.44] + [0.5] * 14
         result = _compute_recovery(coh)
-        assert result["tau_estimate"] == 3.0  # 8 - 5 = 3
+        assert result["tau_estimate"] == 3.0  # Default — not a real dip
+
+    def test_tau_computed_from_sustained_dip(self):
+        # 2 consecutive steps below 0.46, then recover at 0.49
+        # Dip starts at index 5, recovers at index 9 → tau = 4
+        coh = [0.5] * 5 + [0.44, 0.43, 0.44, 0.45] + [0.49] + [0.5] * 10
+        result = _compute_recovery(coh)
+        assert result["tau_estimate"] == 4.0  # 9 - 5 = 4
 
     def test_tau_averages_multiple_dips(self):
-        # Two dips: one takes 2 steps, another takes 4 steps → mean = 3
-        coh = [0.5] * 3 + [0.45, 0.47] + [0.49] + [0.5] * 2 + [0.45, 0.46, 0.47, 0.48] + [0.49] + [0.5] * 6
+        # Two sustained dips with different recovery times
+        # Dip 1: indices 3-4 below, recover at 5 → tau=2
+        # Dip 2: indices 8-11 below, recover at 12 → tau=4
+        coh = ([0.5] * 3
+               + [0.44, 0.43] + [0.49]          # dip 1: tau = 5 - 3 = 2
+               + [0.5] * 2
+               + [0.44, 0.43, 0.44, 0.43] + [0.49]  # dip 2: tau = 12 - 8 = 4
+               + [0.5] * 5)
         result = _compute_recovery(coh)
         assert result["tau_estimate"] == 3.0  # (2 + 4) / 2
 
     def test_unrecovered_dip_not_counted(self):
-        coh = [0.5] * 10 + [0.45] * 10
+        coh = [0.5] * 10 + [0.44] * 10
         result = _compute_recovery(coh)
         assert result["tau_estimate"] == 3.0  # Default — dip never recovered
+
+    def test_near_boundary_oscillation_ignored(self):
+        """Values oscillating near 0.48-0.49 should not trigger dip detection."""
+        coh = [0.49, 0.48, 0.49, 0.48, 0.49, 0.48] * 3 + [0.5, 0.5]
+        result = _compute_recovery(coh)
+        assert result["tau_estimate"] == 3.0  # All above 0.46, no real dips
 
 
 # ══════════════════════════════════════════════════
