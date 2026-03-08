@@ -244,31 +244,3 @@ async def _handle_coherence_report_query(arguments: Dict[str, Any]) -> Sequence[
             "limit": limit
         }
     })
-
-def _generate_coherence_recommendation(
-    similarity: float,
-    regime_match: bool,
-    verdict_match: bool,
-    source_regime: str,
-    target_regime: str
-) -> str:
-    """Generate coordination recommendation based on similarity metrics"""
-    if similarity >= 0.8:
-        if regime_match and verdict_match:
-            return "High alignment - potential for direct collaboration or task delegation"
-        elif regime_match:
-            return "Same regime, different verdict - coordinate on risk assessment"
-        else:
-            return "High EISV similarity despite regime difference - monitor for convergence"
-    elif similarity >= 0.6:
-        if regime_match:
-            return "Moderate alignment in same regime - share learnings, coordinate approach"
-        else:
-            return "Moderate similarity, different regimes - complementary capabilities possible"
-    elif similarity >= 0.4:
-        if verdict_match:
-            return "Different EISV patterns but same verdict - diverse perspectives on similar problems"
-        else:
-            return "Low-moderate alignment - limited coordination value unless contexts align"
-    else:
-        return "Low similarity - independent operation recommended, minimal coordination overhead"

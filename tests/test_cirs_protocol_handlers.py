@@ -519,50 +519,6 @@ class TestHelperFunctions:
         assert _compute_risk_trend(state) == "stable"
 
 
-class TestCoherenceRecommendation:
-    """Tests for _generate_coherence_recommendation."""
-
-    def test_high_similarity_all_match(self):
-        from src.mcp_handlers.cirs_protocol import _generate_coherence_recommendation
-        rec = _generate_coherence_recommendation(0.9, True, True, "convergence", "convergence")
-        assert "collaboration" in rec.lower() or "direct" in rec.lower()
-
-    def test_high_similarity_regime_match_only(self):
-        from src.mcp_handlers.cirs_protocol import _generate_coherence_recommendation
-        rec = _generate_coherence_recommendation(0.85, True, False, "convergence", "convergence")
-        assert "risk assessment" in rec.lower() or "coordinate" in rec.lower()
-
-    def test_high_similarity_no_regime_match(self):
-        from src.mcp_handlers.cirs_protocol import _generate_coherence_recommendation
-        rec = _generate_coherence_recommendation(0.82, False, False, "convergence", "divergence")
-        assert "convergence" in rec.lower() or "monitor" in rec.lower()
-
-    def test_moderate_similarity_regime_match(self):
-        from src.mcp_handlers.cirs_protocol import _generate_coherence_recommendation
-        rec = _generate_coherence_recommendation(0.65, True, True, "stable", "stable")
-        assert "coordinate" in rec.lower() or "share" in rec.lower()
-
-    def test_moderate_similarity_no_regime_match(self):
-        from src.mcp_handlers.cirs_protocol import _generate_coherence_recommendation
-        rec = _generate_coherence_recommendation(0.65, False, False, "convergence", "divergence")
-        assert "complementary" in rec.lower()
-
-    def test_low_moderate_similarity_verdict_match(self):
-        from src.mcp_handlers.cirs_protocol import _generate_coherence_recommendation
-        rec = _generate_coherence_recommendation(0.45, False, True, "convergence", "divergence")
-        assert "diverse" in rec.lower() or "perspective" in rec.lower()
-
-    def test_low_moderate_similarity_no_verdict_match(self):
-        from src.mcp_handlers.cirs_protocol import _generate_coherence_recommendation
-        rec = _generate_coherence_recommendation(0.45, False, False, "convergence", "divergence")
-        assert "limited" in rec.lower() or "coordination" in rec.lower()
-
-    def test_low_similarity(self):
-        from src.mcp_handlers.cirs_protocol import _generate_coherence_recommendation
-        rec = _generate_coherence_recommendation(0.2, False, False, "convergence", "divergence")
-        assert "independent" in rec.lower() or "low" in rec.lower()
-
-
 # ============================================================================
 # Auto-emit Hook Tests
 # ============================================================================

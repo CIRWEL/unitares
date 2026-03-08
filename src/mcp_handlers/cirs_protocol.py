@@ -96,7 +96,6 @@ from .cirs_hooks import (
 # --- cirs_coherence ---
 from .cirs_coherence import (
     handle_coherence_report,
-    _generate_coherence_recommendation,
 )
 
 # --- cirs_boundary ---
