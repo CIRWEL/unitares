@@ -55,6 +55,10 @@ class UpdateContext:
     # ── Response accumulator (Phase 6) ─────────────────────────────
     response_data: Dict[str, Any] = field(default_factory=dict)
 
+    # ── Cached computations ────────────────────────────────────────
+    _cal_error: Optional[float] = None
+    _cal_error_ready: bool = False
+
     # ── Flags ──────────────────────────────────────────────────────
     key_was_generated: bool = False
     api_key_auto_retrieved: bool = False
@@ -67,3 +71,20 @@ class UpdateContext:
     # ── Runtime references (set by orchestrator) ─────────────────
     loop: Optional[Any] = None       # asyncio event loop
     mcp_server: Optional[Any] = None # mcp_server_std module (from core.py's patched ref)
+
+
+def get_mean_calibration_error(ctx: 'UpdateContext') -> Optional[float]:
+    """Return mean calibration error, computing once and caching on ctx."""
+    if ctx._cal_error_ready:
+        return ctx._cal_error
+    try:
+        from src.calibration import calibration_checker
+        metrics = calibration_checker.compute_calibration_metrics()
+        if metrics:
+            errors = [b.calibration_error for b in metrics.values() if b.count >= 5]
+            if errors:
+                ctx._cal_error = sum(errors) / len(errors)
+    except Exception:
+        pass
+    ctx._cal_error_ready = True
+    return ctx._cal_error

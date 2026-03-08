@@ -573,17 +573,9 @@ async def enrich_trajectory_identity(ctx: UpdateContext) -> None:
                 monitor._task_type_counts[tt] = monitor._task_type_counts.get(tt, 0) + 1
 
                 from src.behavioral_trajectory import compute_behavioral_trajectory
-                from src.calibration import calibration_checker
+                from src.mcp_handlers.update_context import get_mean_calibration_error
 
-                cal_error = None
-                try:
-                    metrics = calibration_checker.compute_calibration_metrics()
-                    if metrics:
-                        errors = [b.calibration_error for b in metrics.values() if b.count >= 5]
-                        if errors:
-                            cal_error = sum(errors) / len(errors)
-                except Exception:
-                    pass
+                cal_error = get_mean_calibration_error(ctx)
 
                 trajectory_signature = compute_behavioral_trajectory(
                     E_history=list(monitor.state.E_history),

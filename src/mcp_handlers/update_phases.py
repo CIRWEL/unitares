@@ -423,18 +423,9 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
             monitor = mcp_server.monitors.get(ctx.agent_id)
             if monitor and len(getattr(monitor.state, 'decision_history', [])) >= 3:
                 from src.behavioral_sensor import compute_behavioral_sensor_eisv
-                from src.calibration import calibration_checker
+                from src.mcp_handlers.update_context import get_mean_calibration_error
 
-                # Calibration error: mean across bins with sufficient data
-                cal_error = None
-                try:
-                    metrics = calibration_checker.compute_calibration_metrics()
-                    if metrics:
-                        errors = [b.calibration_error for b in metrics.values() if b.count >= 5]
-                        if errors:
-                            cal_error = sum(errors) / len(errors)
-                except Exception:
-                    pass
+                cal_error = get_mean_calibration_error(ctx)
 
                 # Drift norm from previous check-in
                 drift_n = None
