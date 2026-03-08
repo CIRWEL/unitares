@@ -98,7 +98,6 @@ from src.agent_metadata_persistence import (
 # --- agent_lifecycle ---
 from src.agent_lifecycle import (
     get_or_create_monitor,
-    auto_archive_old_test_agents,
     auto_archive_orphan_agents,
     get_agent_or_error,
     build_standardized_agent_info,
@@ -155,7 +154,7 @@ __all__ = [
     "cleanup_stale_processes", "write_pid_file", "remove_pid_file",
     "_shutdown_requested", "signal_handler", "init_server_process",
     "get_or_create_monitor",
-    "auto_archive_old_test_agents", "auto_archive_orphan_agents",
+    "auto_archive_orphan_agents",
     "get_agent_or_error", "build_standardized_agent_info",
     "detect_loop_pattern",
     "process_update_authenticated", "update_agent_auth",

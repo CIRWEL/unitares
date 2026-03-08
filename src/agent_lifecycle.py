@@ -47,65 +47,6 @@ def get_or_create_monitor(agent_id: str) -> UNITARESMonitor:
     return monitors[agent_id]
 
 
-async def auto_archive_old_test_agents(max_age_hours: float = 6.0) -> int:
-    """
-    Automatically archive old test/demo agents that haven't been updated recently.
-
-    Test/ping agents (1-2 updates) are archived immediately.
-    Other test agents are archived after inactivity threshold.
-
-    Returns:
-        Number of agents archived
-    """
-    archived_count = 0
-    current_time = datetime.now()
-
-    for agent_id, meta in list(agent_metadata.items()):
-        if meta.status in ["archived", "deleted"]:
-            continue
-
-        is_test_agent = (
-            agent_id.startswith("test_") or
-            agent_id.startswith("demo_") or
-            agent_id.startswith("test") or
-            "test" in agent_id.lower() or
-            "demo" in agent_id.lower()
-        )
-
-        if not is_test_agent:
-            continue
-
-        if meta.total_updates <= 2:
-            meta.status = "archived"
-            meta.archived_at = current_time.isoformat()
-            meta.add_lifecycle_event(
-                "archived",
-                f"Auto-archived: test/ping agent with {meta.total_updates} update(s)"
-            )
-            archived_count += 1
-            logger.info(f"Auto-archived test/ping agent: {agent_id} ({meta.total_updates} updates)")
-            continue
-
-        try:
-            last_update_dt = datetime.fromisoformat(meta.last_update.replace('Z', '+00:00') if 'Z' in meta.last_update else meta.last_update)
-            age_delta = (current_time.replace(tzinfo=last_update_dt.tzinfo) if last_update_dt.tzinfo else current_time) - last_update_dt
-            age_hours = age_delta.total_seconds() / 3600
-        except (ValueError, TypeError, AttributeError):
-            continue
-
-        if age_hours >= max_age_hours:
-            meta.status = "archived"
-            meta.archived_at = current_time.isoformat()
-            meta.add_lifecycle_event(
-                "archived",
-                f"Auto-archived: inactive test/demo agent ({age_hours:.1f} hours old, threshold: {max_age_hours} hours)"
-            )
-            archived_count += 1
-            logger.info(f"Auto-archived old test agent: {agent_id} ({age_hours:.1f} hours old)")
-
-    return archived_count
-
-
 async def auto_archive_orphan_agents(
     zero_update_hours: float = 1.0,
     low_update_hours: float = 3.0,
