@@ -157,3 +157,4 @@ config/generated-*.json
 data/telemetry/*.jsonl
 .kimi_governance_session
 sketch/
+wiggum/
