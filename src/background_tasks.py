@@ -189,35 +189,27 @@ async def background_metadata_load():
 # Orphan agent cleanup
 # ---------------------------------------------------------------------------
 
-async def startup_orphan_cleanup():
-    """Aggressively clean up orphan agents to prevent proliferation."""
+async def periodic_orphan_cleanup(interval_hours: float = 2.0):
+    """Periodically archive orphan and ephemeral agents to prevent proliferation."""
     await asyncio.sleep(2.0)
 
-    try:
-        from src.agent_metadata_persistence import load_metadata_async
-        await load_metadata_async()
-    except Exception:
-        pass
+    while True:
+        try:
+            from src.agent_lifecycle import auto_archive_orphan_agents
 
-    try:
-        from src.mcp_handlers.lifecycle import handle_archive_orphan_agents
-        import json
+            archived = await auto_archive_orphan_agents(
+                zero_update_hours=4.0,
+                low_update_hours=12.0,
+                unlabeled_hours=24.0,
+                ephemeral_hours=6.0,
+                ephemeral_max_updates=5,
+            )
+            if archived > 0:
+                logger.info(f"[ORPHAN_CLEANUP] Archived {archived} orphan/ephemeral agents")
+        except Exception as e:
+            logger.warning(f"[ORPHAN_CLEANUP] Error: {e}", exc_info=True)
 
-        result = await handle_archive_orphan_agents({
-            "zero_update_hours": 4.0,
-            "low_update_hours": 12.0,
-            "unlabeled_hours": 24.0,
-            "dry_run": False
-        })
-        if result and len(result) > 0:
-            try:
-                data = json.loads(result[0].text)
-                if data.get("archived_count", 0) > 0:
-                    logger.info(f"[STARTUP] Orphan cleanup: archived {data['archived_count']} agents")
-            except Exception:
-                pass
-    except Exception as e:
-        logger.warning(f"Could not run orphan cleanup: {e}", exc_info=True)
+        await asyncio.sleep(interval_hours * 3600)
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +351,7 @@ def start_all_background_tasks(connection_tracker, set_ready):
     asyncio.create_task(concept_extraction_background_task())
     asyncio.create_task(periodic_partition_maintenance())
     asyncio.create_task(background_metadata_load())
-    asyncio.create_task(startup_orphan_cleanup())
+    asyncio.create_task(periodic_orphan_cleanup())
     asyncio.create_task(stuck_agent_recovery_task())
     asyncio.create_task(server_warmup_task(set_ready))
 

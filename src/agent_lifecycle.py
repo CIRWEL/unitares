@@ -50,15 +50,29 @@ def get_or_create_monitor(agent_id: str) -> UNITARESMonitor:
 async def auto_archive_orphan_agents(
     zero_update_hours: float = 1.0,
     low_update_hours: float = 3.0,
-    unlabeled_hours: float = 6.0
+    unlabeled_hours: float = 6.0,
+    ephemeral_hours: float = 6.0,
+    ephemeral_max_updates: int = 5,
 ) -> int:
     """
-    Aggressively archive orphan agents to prevent proliferation.
+    Archive orphan and ephemeral agents to prevent proliferation.
+
+    Tiers:
+      1. UUID agents with 0 updates after zero_update_hours
+      2. Unlabeled agents with <=1 update after low_update_hours
+      3. Stale UUID agents after unlabeled_hours
+      4. Ephemeral session agents (auto-generated labels like claude_*)
+         with few updates after ephemeral_hours
+
+    Protected: agents with "pioneer" tag, "Lumen" label, or trust_tier >= "verified".
 
     Returns:
         Number of agents archived
     """
     UUID_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+    # Auto-generated session labels: claude_<project>_<date> or claude_<dir>_<date>_<uuid>
+    EPHEMERAL_LABEL = re.compile(r'^claude_\w+_\d{8}', re.I)
+    PROTECTED_TIERS = {"verified", "established", "trusted"}
 
     archived_count = 0
     current_time = datetime.now()
@@ -67,11 +81,19 @@ async def auto_archive_orphan_agents(
         if meta.status in ["archived", "deleted"]:
             continue
 
+        # Protected agents
         if "pioneer" in (meta.tags or []):
             continue
+        label = getattr(meta, 'label', None) or getattr(meta, 'display_name', None) or ""
+        if label == "Lumen":
+            continue
+        trust = getattr(meta, 'trust_tier', None)
+        if trust in PROTECTED_TIERS:
+            continue
 
-        has_label = bool(getattr(meta, 'label', None) or getattr(meta, 'display_name', None))
+        has_label = bool(label)
         is_uuid_named = bool(UUID_PATTERN.match(agent_id))
+        is_ephemeral = bool(EPHEMERAL_LABEL.match(label))
 
         try:
             last_update_str = meta.last_update or meta.created_at
@@ -105,6 +127,10 @@ async def auto_archive_orphan_agents(
         elif is_uuid_named and not has_label and updates >= 2 and age_hours >= unlabeled_hours:
             should_archive = True
             reason = f"stale UUID agent, {updates} updates, {age_hours:.1f}h old"
+
+        elif is_ephemeral and updates <= ephemeral_max_updates and age_hours >= ephemeral_hours:
+            should_archive = True
+            reason = f"ephemeral session agent '{label}', {updates} updates, {age_hours:.1f}h old"
 
         if should_archive:
             meta.status = "archived"
