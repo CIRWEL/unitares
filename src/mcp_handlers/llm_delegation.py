@@ -12,7 +12,7 @@ Use cases:
 - Background housekeeping (classifying, archiving decisions)
 
 Usage:
-    from .llm_delegation import synthesize_results
+    from .llm_delegation import synthesize_results, explain_anomaly
 
     # In any handler:
     synthesis = await synthesize_results(discoveries, query="error handling")
@@ -181,6 +181,87 @@ Give 2-3 key insights in 2-3 sentences total. Be concise."""
         "query": query,
         "_note": "AI-synthesized summary via local LLM"
     }
+
+async def explain_anomaly(
+    agent_id: str,
+    anomaly_type: str,
+    description: str,
+    metrics: Optional[Dict[str, Any]] = None,
+    max_tokens: int = 300
+) -> Optional[str]:
+    """
+    Generate explanation for governance anomaly.
+
+    Called when detect_anomalies finds unusual patterns to help
+    operators understand root cause and recommended actions.
+
+    Args:
+        agent_id: Agent experiencing anomaly
+        anomaly_type: Type of anomaly (risk_spike, coherence_drop, etc.)
+        description: Anomaly description
+        metrics: Optional EISV or other metrics for context
+        max_tokens: Max tokens for explanation
+
+    Returns:
+        Explanation text, or None if unavailable
+    """
+    metrics_context = ""
+    if metrics:
+        metrics_context = f"\nCurrent metrics: {metrics}"
+
+    prompt = f"""Agent '{agent_id[:20]}...' has a governance anomaly:
+Type: {anomaly_type}
+Description: {description}{metrics_context}
+
+What might cause this anomaly and what should the agent do?
+Give a brief root cause hypothesis and one concrete action."""
+
+    return await call_local_llm(
+        prompt=prompt,
+        max_tokens=max_tokens,
+        temperature=0.7
+    )
+
+async def generate_recovery_coaching(
+    agent_id: str,
+    blockers: List[str],
+    current_state: Optional[Dict[str, Any]] = None,
+    max_tokens: int = 200
+) -> Optional[str]:
+    """
+    Generate personalized recovery coaching for stuck agent.
+
+    Called during self-recovery when agent is blocked to provide
+    specific, actionable guidance.
+
+    Args:
+        agent_id: Agent needing recovery
+        blockers: List of current blockers
+        current_state: Optional governance state for context
+        max_tokens: Max tokens for coaching
+
+    Returns:
+        Coaching text, or None if unavailable
+    """
+    blockers_text = "\n".join(f"- {b}" for b in blockers[:5])
+
+    state_context = ""
+    if current_state:
+        eisv = current_state.get("eisv", {})
+        if eisv:
+            state_context = f"\nEISV metrics: E={eisv.get('E', '?'):.2f}, I={eisv.get('I', '?'):.2f}, S={eisv.get('S', '?'):.2f}, V={eisv.get('V', '?'):.2f}"
+
+    prompt = f"""Agent is blocked by the following issues:
+{blockers_text}{state_context}
+
+What should this agent focus on first to recover?
+Give ONE clear, specific action they can take right now."""
+
+    return await call_local_llm(
+        prompt=prompt,
+        max_tokens=max_tokens,
+        temperature=0.7
+    )
 
 # ==============================================================================
 # DIALECTIC LLM DELEGATION

@@ -560,6 +560,8 @@ from src.mcp_handlers.llm_delegation import (
     _get_default_model,
     call_local_llm,
     synthesize_results,
+    explain_anomaly,
+    generate_recovery_coaching,
     generate_antithesis,
     generate_synthesis,
     run_full_dialectic,
@@ -652,6 +654,37 @@ class TestSynthesizeResults:
         with patch("src.mcp_handlers.llm_delegation.call_local_llm", new_callable=AsyncMock, return_value=None):
             result = await synthesize_results([{"summary": "test", "type": "t"}])
             assert result is None
+
+
+class TestExplainAnomaly:
+    @pytest.mark.asyncio
+    async def test_successful_explanation(self):
+        with patch("src.mcp_handlers.llm_delegation.call_local_llm", new_callable=AsyncMock, return_value="Root cause: X"):
+            result = await explain_anomaly("agent-1", "risk_spike", "Risk spiked to 0.9")
+            assert result == "Root cause: X"
+
+    @pytest.mark.asyncio
+    async def test_with_metrics(self):
+        with patch("src.mcp_handlers.llm_delegation.call_local_llm", new_callable=AsyncMock, return_value="ok") as mock_call:
+            await explain_anomaly("agent-1", "risk_spike", "desc", metrics={"E": 0.8})
+            prompt = mock_call.call_args[1]["prompt"]
+            assert "E" in prompt
+
+
+class TestGenerateRecoveryCoaching:
+    @pytest.mark.asyncio
+    async def test_basic_coaching(self):
+        with patch("src.mcp_handlers.llm_delegation.call_local_llm", new_callable=AsyncMock, return_value="Focus on X"):
+            result = await generate_recovery_coaching("agent-1", ["blocker A", "blocker B"])
+            assert result == "Focus on X"
+
+    @pytest.mark.asyncio
+    async def test_with_state(self):
+        state = {"eisv": {"E": 0.8, "I": 0.7, "S": 0.1, "V": 0.0}}
+        with patch("src.mcp_handlers.llm_delegation.call_local_llm", new_callable=AsyncMock, return_value="ok") as mock_call:
+            await generate_recovery_coaching("agent-1", ["b1"], current_state=state)
+            prompt = mock_call.call_args[1]["prompt"]
+            assert "EISV" in prompt
 
 
 class TestGenerateAntithesis:
