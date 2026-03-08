@@ -442,16 +442,12 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
                 if dv is not None:
                     drift_n = getattr(dv, 'norm', None)
 
-                # Complexity divergence from previous continuity metrics
+                # Continuity metrics from previous check-in
                 comp_div = None
-                cm = getattr(monitor, '_last_continuity_metrics', None)
-                if cm is not None:
-                    comp_div = getattr(cm, 'complexity_divergence', None)
-
-                # Continuity-derived EISV inputs (grounded in operational log analysis)
                 cont_E, cont_I, cont_S = None, None, None
                 cm = getattr(monitor, '_last_continuity_metrics', None)
                 if cm is not None:
+                    comp_div = getattr(cm, 'complexity_divergence', None)
                     cont_E = getattr(cm, 'E_input', None)
                     cont_I = getattr(cm, 'I_input', None)
                     cont_S = getattr(cm, 'S_input', None)
@@ -642,6 +638,9 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
         logger.error(f"Unexpected error in process_update_authenticated_async: {e}", exc_info=True)
         raise Exception(f"Error processing update: {str(e)}") from e
 
+    # Cache monitor reference for Phase 5 and Phase 6 (guaranteed to exist post-ODE)
+    ctx.monitor = mcp_server.monitors.get(ctx.agent_id)
+
     return None  # Continue
 
 # ─── Phase 5: Post-Update Side Effects ─────────────────────────────────
@@ -709,7 +708,7 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
     ctx.cirs_state_announce = None
     try:
         from .cirs_protocol import auto_emit_state_announce
-        monitor = mcp_server.monitors.get(agent_id)
+        monitor = ctx.monitor
         ctx.cirs_state_announce = auto_emit_state_announce(
             agent_id=agent_id,
             metrics=ctx.metrics_dict,
@@ -722,7 +721,7 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
     try:
         from .cirs_protocol import maybe_emit_resonance_signal
         cirs_data = ctx.result.get('cirs', {})
-        monitor = mcp_server.monitors.get(agent_id)
+        monitor = ctx.monitor
         was_resonant = False
         if monitor and hasattr(monitor, 'adaptive_governor') and monitor.adaptive_governor:
             was_resonant = monitor.adaptive_governor.state.was_resonant
@@ -744,7 +743,7 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
     # CIRS: Neighbor pressure
     try:
         from .cirs_protocol import maybe_apply_neighbor_pressure
-        monitor = mcp_server.monitors.get(agent_id)
+        monitor = ctx.monitor
         if monitor and hasattr(monitor, 'adaptive_governor'):
             maybe_apply_neighbor_pressure(
                 agent_id=agent_id,
@@ -788,7 +787,7 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
 
     # Drift: Auto-trigger dialectic review after sustained high drift
     try:
-        monitor = mcp_server.monitors.get(agent_id)
+        monitor = ctx.monitor
         consecutive = getattr(monitor, '_consecutive_high_drift', 0) if monitor else 0
         if consecutive >= 3:
             # Check agent isn't already in a dialectic session
