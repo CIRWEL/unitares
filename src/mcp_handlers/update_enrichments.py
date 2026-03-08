@@ -66,6 +66,53 @@ def enrich_actionable_feedback(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"Could not generate actionable feedback: {e}")
 
+async def enrich_llm_coaching(ctx: UpdateContext) -> None:
+    """LLM-powered coaching on guide/pause/reject verdicts only."""
+    try:
+        verdict = ctx.metrics_dict.get('verdict', 'proceed')
+        if verdict == 'proceed':
+            return
+
+        from .llm_delegation import explain_anomaly, generate_recovery_coaching
+
+        eisv = {
+            'E': ctx.metrics_dict.get('E'),
+            'I': ctx.metrics_dict.get('I'),
+            'S': ctx.metrics_dict.get('S'),
+            'V': ctx.metrics_dict.get('V'),
+        }
+
+        if verdict in ('guide', 'pause', 'reject'):
+            explanation = await explain_anomaly(
+                agent_id=ctx.agent_id,
+                anomaly_type=verdict,
+                description=ctx.response_data.get('actionable_feedback', verdict),
+                metrics=eisv,
+                max_tokens=200,
+            )
+            if explanation:
+                ctx.response_data['llm_coaching'] = explanation
+
+        if verdict in ('pause', 'reject'):
+            blockers = []
+            feedback = ctx.response_data.get('actionable_feedback')
+            if isinstance(feedback, str):
+                blockers.append(feedback)
+            elif isinstance(feedback, dict):
+                blockers.append(feedback.get('message', str(feedback)))
+
+            coaching = await generate_recovery_coaching(
+                agent_id=ctx.agent_id,
+                blockers=blockers or [f"Verdict: {verdict}"],
+                current_state={'eisv': eisv},
+                max_tokens=200,
+            )
+            if coaching:
+                ctx.response_data['recovery_coaching'] = coaching
+    except Exception as e:
+        logger.debug(f"LLM coaching enrichment skipped: {e}")
+
+
 def enrich_calibration_feedback(ctx: UpdateContext) -> None:
     """Add calibration feedback (complexity + confidence)."""
     try:

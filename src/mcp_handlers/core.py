@@ -480,6 +480,7 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
     from .update_enrichments import (
         enrich_state_interpretation,
         enrich_actionable_feedback,
+        enrich_llm_coaching,
         enrich_calibration_feedback,
         enrich_warnings,
         enrich_metric_standardization,
@@ -549,6 +550,7 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             # Run enrichments (each is fail-safe internally)
             await enrich_state_interpretation(ctx)
             enrich_actionable_feedback(ctx)
+            await enrich_llm_coaching(ctx)
             enrich_calibration_feedback(ctx)
             enrich_warnings(ctx)
             enrich_metric_standardization(ctx)

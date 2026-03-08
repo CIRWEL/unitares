@@ -56,9 +56,8 @@ def _get_default_model() -> str:
     if env_model:
         return env_model
 
-    # Default to gemma3:27b (fast, good quality for synthesis)
-    # Smaller than llama3:70b but still capable
-    return "gemma3:27b"
+    # llama3:70b for governance coaching — needs real reasoning, not Alexa
+    return "llama3:70b"
 
 async def call_local_llm(
     prompt: str,

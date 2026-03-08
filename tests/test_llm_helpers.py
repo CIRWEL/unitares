@@ -21,10 +21,10 @@ from src.mcp_handlers.llm_delegation import _get_default_model
 class TestGetDefaultModel:
 
     def test_default_model(self, monkeypatch):
-        """Without env var, should return gemma3:27b."""
+        """Without env var, should return llama3:70b."""
         monkeypatch.delenv("UNITARES_LLM_MODEL", raising=False)
         model = _get_default_model()
-        assert model == "gemma3:27b"
+        assert model == "llama3:70b"
 
     def test_env_override(self, monkeypatch):
         """UNITARES_LLM_MODEL env var should override default."""
