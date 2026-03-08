@@ -30,7 +30,17 @@ def get_or_create_monitor(agent_id: str) -> UNITARESMonitor:
             monitor.state = persisted_state
             logger.info(f"Loaded persisted state for {agent_id} ({len(persisted_state.V_history)} history entries)")
         else:
-            logger.info(f"Initialized new monitor for {agent_id}")
+            # Inherit EISV from predecessor if available
+            meta = agent_metadata.get(agent_id)
+            if meta and meta.parent_agent_id:
+                parent_state = load_monitor_state(meta.parent_agent_id)
+                if parent_state:
+                    monitor.state = parent_state
+                    logger.info(f"Inherited EISV from predecessor {meta.parent_agent_id[:8]}...")
+                else:
+                    logger.info(f"Initialized new monitor for {agent_id} (predecessor {meta.parent_agent_id[:8]}... had no state)")
+            else:
+                logger.info(f"Initialized new monitor for {agent_id}")
 
         monitors[agent_id] = monitor
 

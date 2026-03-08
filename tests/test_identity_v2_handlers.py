@@ -2702,25 +2702,25 @@ class TestHandleOnboardV2:
         assert "what_this_does" not in data
 
     @pytest.mark.asyncio
-    async def test_onboard_resumes_existing_agent(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
-        """onboard() auto-resumes existing agent."""
+    async def test_onboard_creates_new_instance_for_existing_trajectory(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """onboard() creates new UUID for existing trajectory, linking predecessor."""
         from src.mcp_handlers.identity_v2 import handle_onboard_v2
 
-        test_uuid = str(uuid.uuid4())
+        predecessor_uuid = str(uuid.uuid4())
         mock_redis.get.return_value = {
-            "agent_id": test_uuid,
+            "agent_id": predecessor_uuid,
             "display_agent_id": "Claude_20260207",
         }
         mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
-        mock_db.get_agent_label.return_value = "ResumedAgent"
+        mock_db.get_agent_label.return_value = "PredecessorAgent"
 
         result = await handle_onboard_v2({"client_session_id": "onboard-resume"})
         data = _parse(result)
 
         assert data["success"] is True
-        assert data["is_new"] is False
-        assert data["uuid"] == test_uuid
-        assert "Welcome back" in data.get("welcome", "")
+        assert data["is_new"] is True
+        assert data["uuid"] != predecessor_uuid  # New UUID, not the old one
+        assert data.get("predecessor", {}).get("uuid") == predecessor_uuid
 
     @pytest.mark.asyncio
     async def test_onboard_with_name_resolves_by_name_claim(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
@@ -3739,7 +3739,8 @@ class TestOnboardStructuredIdFallback:
         meta = SimpleNamespace(structured_id="custom_agent_1")
         mock_server.agent_metadata[test_uuid] = meta
 
-        result = await handle_onboard_v2({"client_session_id": "sid-fallback"})
+        # resume=True to reuse old UUID (escape hatch) — tests structured_id fallback
+        result = await handle_onboard_v2({"client_session_id": "sid-fallback", "resume": True})
         data = _parse(result)
 
         assert data["success"] is True
@@ -3761,7 +3762,8 @@ class TestOnboardStructuredIdFallback:
         mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
         mock_db.get_agent_label.return_value = None
 
-        result = await handle_onboard_v2({"client_session_id": "uuid-prefix-fallback"})
+        # resume=True to reuse old UUID — tests uuid prefix fallback
+        result = await handle_onboard_v2({"client_session_id": "uuid-prefix-fallback", "resume": True})
         data = _parse(result)
 
         assert data["success"] is True

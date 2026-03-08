@@ -579,19 +579,15 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         else:
             existing_identity = await resolve_session_identity(base_session_key, persist=False)
         if not existing_identity.get("created"):
-            # EXISTING AGENT FOUND - auto-resume
-            agent_uuid = existing_identity.get("agent_uuid")
-            agent_id = existing_identity.get("agent_id", agent_uuid)
-            label = existing_identity.get("label")
-            logger.info(f"[ONBOARD] Auto-resuming existing agent {agent_uuid[:8]}...")
-            # Check if agent is archived — auto-unarchive on explicit onboard
-            try:
-                db = get_db()
-                identity_record = await db.get_identity(agent_uuid)
-                if identity_record and identity_record.status == "archived":
-                    # 1. Update PostgreSQL (source of truth)
+            if existing_identity.get("archived"):
+                # ARCHIVED AGENT — auto-unarchive with same UUID
+                agent_uuid = existing_identity.get("agent_uuid")
+                agent_id = existing_identity.get("agent_id", agent_uuid)
+                label = existing_identity.get("label")
+                logger.info(f"[ONBOARD] Found archived agent {agent_uuid[:8]}... — auto-unarchiving")
+                try:
+                    db = get_db()
                     await db.update_agent_fields(agent_uuid, status="active")
-                    # 2. Update runtime metadata cache
                     try:
                         srv = get_mcp_server()
                         if agent_uuid in srv.agent_metadata:
@@ -599,23 +595,52 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                             srv.agent_metadata[agent_uuid].archived_at = None
                     except Exception:
                         pass
-                    # 3. Invalidate Redis cache
                     try:
                         from src.cache import get_metadata_cache
                         await get_metadata_cache().invalidate(agent_uuid)
                     except Exception:
                         pass
-                    # 4. Reload metadata so next process_agent_update sees status=active
                     try:
                         await srv.load_metadata_async(force=True)
                     except Exception:
                         pass
-                    logger.info(f"[ONBOARD] Auto-unarchived agent {agent_uuid[:8]}... (reconnected via onboard)")
+                    logger.info(f"[ONBOARD] Auto-unarchived agent {agent_uuid[:8]}...")
                     _was_archived = True
-            except Exception as e:
-                logger.warning(f"[ONBOARD] Could not check/unarchive agent: {e}")
-            # Mark for resume flow below
-            resume = True
+                except Exception as e:
+                    logger.warning(f"[ONBOARD] Could not unarchive agent: {e}")
+                resume = True  # Route to resume path below
+            elif resume:
+                # Explicit resume=True — reuse existing UUID (escape hatch)
+                agent_uuid = existing_identity.get("agent_uuid")
+                agent_id = existing_identity.get("agent_id", agent_uuid)
+                label = existing_identity.get("label")
+                logger.info(f"[ONBOARD] Explicit resume — reusing {agent_uuid[:8]}...")
+            else:
+                # EXISTING TRAJECTORY FOUND — create new instance, link predecessor
+                predecessor_uuid = existing_identity.get("agent_uuid")
+                predecessor_label = existing_identity.get("label")
+                logger.info(f"[ONBOARD] Found existing trajectory {predecessor_uuid[:8]}... — creating new instance")
+
+                _parent_agent_id = _parent_agent_id or predecessor_uuid
+                _spawn_reason = _spawn_reason or "new_session"
+
+                import uuid as _uuid
+                agent_uuid = str(_uuid.uuid4())
+                agent_id = _generate_agent_id(model_type, client_hint)
+                existing_identity = {
+                    "agent_uuid": agent_uuid,
+                    "agent_id": agent_id,
+                    "created": True,
+                    "predecessor_uuid": predecessor_uuid,
+                    "predecessor_label": predecessor_label,
+                }
+                created_fresh_identity = True
+                is_new = True
+
+                session_key = base_session_key
+                if model_type:
+                    normalized_model = _normalize_model_type(model_type)
+                    session_key = f"{base_session_key}:{normalized_model}"
         else:
             # NEW AGENT - got a fresh identity from persist=False call
             # CRITICAL FIX (v2.5.7): Capture the fresh identity to persist it directly
@@ -934,8 +959,8 @@ def _build_onboard_response(
         welcome = f"Welcome! Your session ID is `{stable_session_id}`. Pass this as `client_session_id` in all calls."
         welcome_message = "This system monitors your work like a health monitor tracks your heart. It helps you stay on track, avoid getting stuck, and work more effectively. Your identity is created—use the templates below to get started."
     else:
-        welcome = f"Welcome back, {friendly_name}! Your session ID is `{stable_session_id}`."
-        welcome_message = f"I found your existing identity. Pass `client_session_id: \"{stable_session_id}\"` in all tool calls for best attribution."
+        welcome = f"New instance. Continuing trajectory '{friendly_name}'. Session: `{stable_session_id}`."
+        welcome_message = f"An existing trajectory was found. You are a new instance, not a continuation of a previous conversation. Pass `client_session_id: \"{stable_session_id}\"` in all tool calls for attribution."
         if _was_archived:
             welcome_message += " (Note: your agent was archived and has been reactivated.)"
 
@@ -1007,6 +1032,13 @@ def _build_onboard_response(
                 "loop": "Repeat steps 2-3. Check metrics with get_governance_metrics when curious."
             },
         })
+
+    # Add predecessor info for new instances continuing a trajectory
+    if _parent_agent_id and not force_new:
+        result["predecessor"] = {
+            "uuid": _parent_agent_id,
+            "note": "Previous instance in this trajectory. Your state was inherited from it."
+        }
 
     # Add auto-resume notice for reactivated agents
     if _was_archived:
