@@ -20,11 +20,7 @@ from src.mcp_handlers.tool_stability import (
     _TOOL_STABILITY,
     resolve_tool_alias,
     get_tool_stability,
-    get_tool_aliases,
-    get_migration_guide,
     list_all_aliases,
-    is_stable_tool,
-    is_experimental_tool,
 )
 
 
@@ -139,39 +135,6 @@ class TestGetToolStability:
 
 
 # ============================================================================
-# get_tool_aliases
-# ============================================================================
-
-class TestGetToolAliases:
-
-    def test_tool_with_aliases(self):
-        aliases = get_tool_aliases("onboard")
-        assert "start" in aliases
-        assert "init" in aliases
-        assert "register" in aliases
-
-    def test_tool_without_aliases(self):
-        aliases = get_tool_aliases("nonexistent_tool")
-        assert aliases == []
-
-
-# ============================================================================
-# get_migration_guide
-# ============================================================================
-
-class TestGetMigrationGuide:
-
-    def test_known_alias(self):
-        guide = get_migration_guide("status")
-        assert guide is not None
-        assert "get_governance_metrics" in guide
-
-    def test_unknown(self):
-        guide = get_migration_guide("nonexistent")
-        assert guide is None
-
-
-# ============================================================================
 # list_all_aliases
 # ============================================================================
 
@@ -186,21 +149,6 @@ class TestListAllAliases:
         result = list_all_aliases()
         result["test_inject"] = "bad"
         assert "test_inject" not in _TOOL_ALIASES
-
-
-# ============================================================================
-# is_stable_tool / is_experimental_tool
-# ============================================================================
-
-class TestStabilityChecks:
-
-    def test_is_stable(self):
-        assert is_stable_tool("identity") is True
-        assert is_stable_tool("simulate_update") is False
-
-    def test_is_experimental(self):
-        assert is_experimental_tool("simulate_update") is True
-        assert is_experimental_tool("identity") is False
 
 
 # ============================================================================

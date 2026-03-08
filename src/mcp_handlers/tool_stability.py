@@ -390,26 +390,7 @@ def get_tool_stability(tool_name: str) -> ToolStability:
     """Get stability tier for a tool"""
     return _TOOL_STABILITY.get(tool_name, _DEFAULT_STABILITY)
 
-def get_tool_aliases(tool_name: str) -> List[str]:
-    """Get all aliases (old names) for a tool"""
-    return _ALIAS_REVERSE.get(tool_name, [])
-
-def get_migration_guide(old_name: str) -> Optional[str]:
-    """Get migration guide for a deprecated/renamed tool"""
-    alias = _TOOL_ALIASES.get(old_name)
-    if alias:
-        return alias.migration_note
-    return None
-
 def list_all_aliases() -> Dict[str, ToolAlias]:
     """Get all tool aliases (for admin/debugging)"""
     return _TOOL_ALIASES.copy()
-
-def is_stable_tool(tool_name: str) -> bool:
-    """Check if tool is marked as stable"""
-    return get_tool_stability(tool_name) == ToolStability.STABLE
-
-def is_experimental_tool(tool_name: str) -> bool:
-    """Check if tool is marked as experimental"""
-    return get_tool_stability(tool_name) == ToolStability.EXPERIMENTAL
 

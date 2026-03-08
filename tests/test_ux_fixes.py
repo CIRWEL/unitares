@@ -557,28 +557,6 @@ class TestToolStabilityFunctions:
         stability = get_tool_stability("unknown_tool")
         assert stability == ToolStability.BETA
 
-    def test_get_tool_aliases(self):
-        """get_tool_aliases returns old names for a tool"""
-        from src.mcp_handlers.tool_stability import get_tool_aliases
-
-        aliases = get_tool_aliases("agent")
-        assert "list_agents" in aliases
-        assert "get_agent_metadata" in aliases
-
-    def test_is_stable_tool(self):
-        """is_stable_tool correctly identifies stable tools"""
-        from src.mcp_handlers.tool_stability import is_stable_tool
-
-        assert is_stable_tool("process_agent_update") == True
-        assert is_stable_tool("simulate_update") == False  # experimental
-
-    def test_get_migration_guide(self):
-        """get_migration_guide returns migration note for aliases"""
-        from src.mcp_handlers.tool_stability import get_migration_guide
-
-        guide = get_migration_guide("list_agents")
-        assert guide is not None
-        assert "agent" in guide.lower()
 
 
 # ============================================================================
