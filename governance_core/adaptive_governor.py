@@ -40,7 +40,7 @@ class GovernorConfig:
 
     # Default thresholds (starting point -- will adapt)
     # beta_default synced with GovernanceConfig.RISK_REVISE_THRESHOLD (Mar 2026: 0.60 → 0.70)
-    tau_default: float = 0.40        # Coherence threshold
+    tau_default: float = 0.44        # Coherence threshold (raised from 0.40, just below typical ~0.458)
     beta_default: float = 0.70       # Risk threshold
 
     # Hard safety bounds (cannot be overridden by adaptation)
@@ -58,9 +58,9 @@ class GovernorConfig:
     integral_max: float = 0.10
 
     # Phase reference points
-    exploration_tau_ref: float = 0.35
+    exploration_tau_ref: float = 0.38
     exploration_beta_ref: float = 0.55
-    integration_tau_ref: float = 0.40
+    integration_tau_ref: float = 0.44
     integration_beta_ref: float = 0.70  # Synced with beta_default / RISK_REVISE_THRESHOLD
 
     # Phase modulation of D-term
@@ -84,7 +84,7 @@ class GovernorConfig:
     delta_ref_variance: float = 0.005    # Target V variance for coherence spread
 
     # Verdict thresholds (relative to adaptive tau/beta)
-    beta_approve_offset: float = -0.25  # beta_approve = beta + offset
+    beta_approve_offset: float = -0.20  # beta_approve = beta + offset (was -0.25, now 0.70-0.20=0.50)
 
 
 @dataclass
@@ -92,7 +92,7 @@ class GovernorState:
     """Per-agent adaptive state. Mutable, updated each cycle."""
 
     # Adaptive thresholds
-    tau: float = 0.40
+    tau: float = 0.44
     beta: float = 0.70
     phase: str = "integration"
 

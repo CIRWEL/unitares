@@ -54,11 +54,17 @@ class TestConvergenceFromDefault:
         final = trajectory[-1]
         assert abs(final.V) < 0.05, f"|V| should stay below 0.05, got {abs(final.V):.4f}"
 
-    def test_verdict_is_safe(self, trajectory):
+    def test_verdict_is_safe_or_caution(self, trajectory):
+        """At default complexity=0.5, verdict is 'caution' (not 'high-risk').
+
+        With tightened phi_safe_threshold=0.22, the default equilibrium (phi~0.20)
+        is correctly classified as 'caution' rather than always 'safe'. Only low-
+        complexity work (complexity<0.3) produces a 'safe' verdict.
+        """
         final = trajectory[-1]
         phi = phi_objective(final, delta_eta=[0.0])
         v = verdict_from_phi(phi)
-        assert v == "safe", f"Verdict should be 'safe', got '{v}' (phi={phi:.4f})"
+        assert v in ("safe", "caution"), f"Verdict should be 'safe' or 'caution', got '{v}' (phi={phi:.4f})"
 
     def test_state_stabilizes(self, trajectory):
         """Last 20 steps should show minimal change (< 1e-3 total drift per step)."""
@@ -119,13 +125,19 @@ class TestRecoveryFromDegraded:
     def test_entropy_recovers(self, trajectory):
         assert trajectory[-1].S < 0.1, f"S should recover below 0.1, got {trajectory[-1].S:.4f}"
 
-    def test_verdict_transitions_to_safe(self, trajectory):
+    def test_verdict_transitions_from_high_risk(self, trajectory):
+        """Recovery should move verdict away from high-risk.
+
+        With tightened phi_safe_threshold=0.22, the recovered equilibrium at
+        default complexity=0.5 lands at 'caution' (phi~0.20). The key property
+        is that the system recovers from 'high-risk' to a non-critical state.
+        """
         phi_start = phi_objective(trajectory[0], delta_eta=[0.0])
         phi_end = phi_objective(trajectory[-1], delta_eta=[0.0])
         v_start = verdict_from_phi(phi_start)
         v_end = verdict_from_phi(phi_end)
         assert v_start == "high-risk", f"Initial verdict should be 'high-risk', got '{v_start}'"
-        assert v_end == "safe", f"Final verdict should be 'safe', got '{v_end}'"
+        assert v_end in ("safe", "caution"), f"Final verdict should be 'safe' or 'caution', got '{v_end}' (phi={phi_end:.4f})"
 
 
 class TestVTracksImbalance:

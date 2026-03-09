@@ -61,7 +61,7 @@ class GovernanceConfig:
     # Phi-to-risk mapping thresholds (configurable)
     # Recalibrated Dec 2025: 0.3 was too strict - typical healthy state (E=0.7, I=0.8, S=0.2)
     # gives phi=0.15, which was always "caution". Lowered to match realistic expectations.
-    PHI_SAFE_THRESHOLD = 0.15     # phi >= 0.15: safe -> low risk (typical healthy state)
+    PHI_SAFE_THRESHOLD = 0.22     # phi >= 0.22: safe -> low risk (tightened for EISV sensitivity)
     PHI_CAUTION_THRESHOLD = 0.0   # phi >= 0.0: caution -> medium risk
     # phi < 0.0: high-risk -> high risk
     
@@ -202,7 +202,7 @@ class GovernanceConfig:
     LAMBDA1_INITIAL = 0.15  # Conservative starting point
     
     # Confidence threshold for PI controller updates
-    CONTROLLER_CONFIDENCE_THRESHOLD = 0.8  # Gate lambda1 updates when confidence < this value
+    CONTROLLER_CONFIDENCE_THRESHOLD = 0.55  # Gate lambda1 updates when confidence < this value
     
     @staticmethod
     def pi_update(lambda1_current: float,

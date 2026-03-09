@@ -62,7 +62,7 @@ class TestInitialization:
     def test_default_initialization(self):
         gov = AdaptiveGovernor()
         state = gov.state
-        assert state.tau == pytest.approx(0.40)
+        assert state.tau == pytest.approx(0.44)
         assert state.beta == pytest.approx(0.70)
         assert state.phase == "integration"
         assert state.error_integral_tau == 0.0
@@ -95,14 +95,14 @@ class TestInitialization:
 
     def test_phase_references_in_config(self):
         config = GovernorConfig()
-        assert config.exploration_tau_ref == 0.35
+        assert config.exploration_tau_ref == 0.38
         assert config.exploration_beta_ref == 0.55
-        assert config.integration_tau_ref == 0.40
+        assert config.integration_tau_ref == 0.44
         assert config.integration_beta_ref == 0.70
 
     def test_governor_state_defaults(self):
         state = GovernorState()
-        assert state.tau == 0.40
+        assert state.tau == 0.44
         assert state.beta == 0.70
         assert state.history == []
         assert state.resonant is False
@@ -126,13 +126,13 @@ class TestPIDUpdate:
     def test_stable_input_no_change(self):
         """When thresholds are at reference, no adaptation occurs."""
         gov = AdaptiveGovernor()
-        # Integration phase: ref is (0.40, 0.70) -- same as defaults.
+        # Integration phase: ref is (0.44, 0.70) -- same as defaults.
         result = gov.update(
             coherence=0.65, risk=0.30, verdict="safe",
             **_stable_histories(),
         )
         # Thresholds should stay near defaults (tiny float noise OK).
-        assert gov.state.tau == pytest.approx(0.40, abs=0.01)
+        assert gov.state.tau == pytest.approx(0.44, abs=0.01)
         assert gov.state.beta == pytest.approx(0.70, abs=0.01)
         # Result dict must include key fields.
         assert "verdict" in result
@@ -145,13 +145,13 @@ class TestPIDUpdate:
         """P-term nudges thresholds toward phase reference."""
         config = GovernorConfig(K_p=0.10, K_i=0.0, K_d=0.0, decay_rate=0.0)
         gov = AdaptiveGovernor(config=config)
-        # Force tau away from integration reference of 0.40.
+        # Force tau away from integration reference of 0.44.
         gov.state.tau = 0.50
         gov.update(
             coherence=0.65, risk=0.30, verdict="safe",
             **_stable_histories(),
         )
-        # P-term should pull tau back toward 0.40.
+        # P-term should pull tau back toward 0.44.
         assert gov.state.tau < 0.50
 
     def test_p_term_direction_for_beta(self):
@@ -173,25 +173,25 @@ class TestPIDUpdate:
         gov = AdaptiveGovernor(config=config)
         histories = _stable_histories()
 
-        # First update: set prev_error from tau=0.45 (error = 0.40-0.45 = -0.05).
-        gov.state.tau = 0.45
+        # First update: set prev_error from tau=0.50 (error = 0.44-0.50 = -0.06).
+        gov.state.tau = 0.50
         gov.update(coherence=0.65, risk=0.30, verdict="safe", **histories)
         tau_after_first = gov.state.tau
 
         # Second update: move tau further away -- D-term should resist.
-        gov.state.tau = 0.50
+        gov.state.tau = 0.55
         gov.update(coherence=0.65, risk=0.30, verdict="safe", **histories)
         # D-term = K_d * d_factor * (e_new - e_prev).
-        # e_new = 0.40 - 0.50 = -0.10, e_prev = -0.05 from first update.
-        # D-term = 0.20 * 1.0 * (-0.10 - (-0.05)) = 0.20 * (-0.05) = -0.01.
-        # So adjustment is negative, pulling tau down. tau < 0.50.
-        assert gov.state.tau < 0.50
+        # e_new = 0.44 - 0.55 = -0.11, e_prev = -0.06 from first update.
+        # D-term = 0.20 * 1.0 * (-0.11 - (-0.06)) = 0.20 * (-0.05) = -0.01.
+        # So adjustment is negative, pulling tau down. tau < 0.55.
+        assert gov.state.tau < 0.55
 
     def test_i_term_accumulates(self):
         """I-term accumulates under sustained deviation."""
         config = GovernorConfig(K_p=0.0, K_i=0.05, K_d=0.0, decay_rate=0.0)
         gov = AdaptiveGovernor(config=config)
-        gov.state.tau = 0.50  # Sustained deviation from ref 0.40
+        gov.state.tau = 0.50  # Sustained deviation from ref 0.44
         histories = _stable_histories()
 
         # Multiple updates should accumulate integral.
@@ -281,13 +281,13 @@ class TestVerdict:
 
     def test_safe_verdict(self):
         gov = AdaptiveGovernor()
-        # coherence >= tau(0.40) AND risk < beta_approve(0.70 + (-0.25) = 0.45)
+        # coherence >= tau(0.44) AND risk < beta_approve(0.70 + (-0.20) = 0.50)
         assert gov.make_verdict(coherence=0.70, risk=0.20) == Verdict.SAFE
 
     def test_caution_verdict(self):
         gov = AdaptiveGovernor()
-        # coherence >= tau(0.40), risk between beta_approve(0.45) and beta(0.70)
-        assert gov.make_verdict(coherence=0.70, risk=0.50) == Verdict.CAUTION
+        # coherence >= tau(0.44), risk between beta_approve(0.50) and beta(0.70)
+        assert gov.make_verdict(coherence=0.70, risk=0.55) == Verdict.CAUTION
 
     def test_high_risk_verdict(self):
         gov = AdaptiveGovernor()
@@ -310,13 +310,13 @@ class TestVerdict:
     def test_adaptive_threshold_changes_verdict(self):
         """Lowering tau makes marginal coherence safe."""
         gov = AdaptiveGovernor()
-        # With default tau=0.40, coherence 0.38 is below tau -> not safe.
-        v1 = gov.make_verdict(coherence=0.38, risk=0.30)
+        # With default tau=0.44, coherence 0.42 is below tau -> not safe.
+        v1 = gov.make_verdict(coherence=0.42, risk=0.30)
         assert v1 != Verdict.SAFE
 
-        # Lower tau to 0.35 (exploration ref) -- now 0.38 >= tau -> safe.
-        gov.state.tau = 0.35
-        v2 = gov.make_verdict(coherence=0.38, risk=0.30)
+        # Lower tau to 0.38 (exploration ref) -- now 0.42 >= tau -> safe.
+        gov.state.tau = 0.38
+        v2 = gov.make_verdict(coherence=0.42, risk=0.30)
         assert v2 == Verdict.SAFE
 
     def test_hard_block_coherence_exactly_at_floor(self):
@@ -361,20 +361,20 @@ class TestPhaseDetection:
         assert gov.state.phase == "integration"
 
     def test_exploration_shifts_tau_reference_lower(self):
-        """In exploration, tau reference is 0.35 (lower than integration 0.40).
+        """In exploration, tau reference is 0.38 (lower than integration 0.44).
 
-        So if tau starts at 0.40, P-term should pull it down.
+        So if tau starts at 0.44, P-term should pull it down.
         """
         config = GovernorConfig(K_p=0.10, K_i=0.0, K_d=0.0, decay_rate=0.0)
         gov = AdaptiveGovernor(config=config)
-        # tau starts at default 0.40, exploration ref is 0.35
+        # tau starts at default 0.44, exploration ref is 0.38
         gov.update(
             coherence=0.65, risk=0.30, verdict="safe",
             **_exploration_histories(),
         )
         assert gov.state.phase == "exploration"
-        # P-term should push tau toward 0.35 (down from 0.40).
-        assert gov.state.tau < 0.40
+        # P-term should push tau toward 0.38 (down from 0.44).
+        assert gov.state.tau < 0.44
 
 
 # ===========================================================================
@@ -389,15 +389,15 @@ class TestThresholdDecay:
         """With P=I=D=0 and tau above default, tau decays back."""
         config = GovernorConfig(K_p=0.0, K_i=0.0, K_d=0.0, decay_rate=0.05)
         gov = AdaptiveGovernor(config=config)
-        gov.state.tau = 0.50  # Above default 0.40
+        gov.state.tau = 0.55  # Above default 0.44
         histories = _stable_histories()
 
         for _ in range(40):
             gov.update(coherence=0.65, risk=0.30, verdict="safe", **histories)
 
-        # Should have decayed toward 0.40.
-        assert gov.state.tau < 0.50
-        assert gov.state.tau == pytest.approx(0.40, abs=0.02)
+        # Should have decayed toward 0.44.
+        assert gov.state.tau < 0.55
+        assert gov.state.tau == pytest.approx(0.44, abs=0.02)
 
     def test_decay_toward_defaults_beta(self):
         """Beta also decays toward default when stable."""
@@ -624,10 +624,11 @@ class TestMonitorIntegration:
         assert GovernanceConfig.ADAPTIVE_GOVERNOR_ENABLED is True
 
     def test_governor_config_matches_monitor_defaults(self):
-        """AdaptiveGovernor defaults match GovernanceMonitor's static config."""
+        """AdaptiveGovernor defaults are consistent with GovernanceMonitor's static config."""
         from config.governance_config import GovernanceConfig
         gc = GovernorConfig()
-        assert gc.tau_default == GovernanceConfig.COHERENCE_CRITICAL_THRESHOLD
+        # tau_default (0.44) should be >= COHERENCE_CRITICAL_THRESHOLD (0.40)
+        assert gc.tau_default >= GovernanceConfig.COHERENCE_CRITICAL_THRESHOLD
         assert gc.beta_default == GovernanceConfig.RISK_REVISE_THRESHOLD
 
 

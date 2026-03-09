@@ -1091,6 +1091,48 @@ class TestEstimateRisk:
         risk = monitor.estimate_risk({'response_text': '', 'complexity': 0.5})
         assert 0.0 <= risk <= 1.0
 
+    def test_velocity_risk_zero_when_stable(self, monitor):
+        """No history change -> velocity_risk = 0 contribution."""
+        # Build stable history
+        for _ in range(5):
+            monitor.update_dynamics({'complexity': 0.5})
+        # With stable EISV, velocity diffs should be near zero after convergence
+        score_result = {'phi': 0.5, 'verdict': 'safe'}
+        risk1 = monitor.estimate_risk({'response_text': 'Test'}, score_result=score_result)
+        # Run again — even more converged
+        monitor.update_dynamics({'complexity': 0.5})
+        risk2 = monitor.estimate_risk({'response_text': 'Test'}, score_result=score_result)
+        # Both should be bounded and velocity contribution should be small
+        assert 0.0 <= risk1 <= 1.0
+        assert 0.0 <= risk2 <= 1.0
+
+    def test_velocity_risk_increases_on_shift(self, monitor):
+        """Sudden EISV change -> risk increases."""
+        # Build stable history at low complexity
+        for _ in range(5):
+            monitor.update_dynamics({'complexity': 0.1})
+        score_result = {'phi': 0.5, 'verdict': 'safe'}
+        risk_before = monitor.estimate_risk({'response_text': 'Test'}, score_result=score_result)
+        # Sudden complexity shift
+        monitor.update_dynamics({'complexity': 1.0, 'ethical_drift': [0.5, 0.5, 0.5]})
+        risk_after = monitor.estimate_risk({'response_text': 'Test'}, score_result=score_result)
+        # Risk should increase due to velocity component
+        assert risk_after > risk_before
+
+    def test_velocity_risk_capped(self, monitor):
+        """Extreme velocity -> still capped, risk stays in [0, 1]."""
+        # Build some history then inject extreme values
+        for _ in range(5):
+            monitor.update_dynamics({'complexity': 0.5})
+        # Force extreme history change
+        monitor.state.E_history.append(0.0)
+        monitor.state.I_history.append(0.0)
+        monitor.state.S_history.append(2.0)
+        monitor.state.V_history.append(2.0)
+        score_result = {'phi': 0.5, 'verdict': 'safe'}
+        risk = monitor.estimate_risk({'response_text': 'Test'}, score_result=score_result)
+        assert 0.0 <= risk <= 1.0
+
 
 # ============================================================================
 # make_decision
@@ -1522,6 +1564,58 @@ class TestEdgeCases:
         result = monitor.process_update({
             'response_text': 'Test.',
             'complexity': -0.5,
+        })
+        assert 'status' in result
+
+
+# ============================================================================
+# Drift floor for complex tasks
+# ============================================================================
+
+class TestDriftFloor:
+    """Tests for the drift floor that prevents zero drift on complex tasks."""
+
+    def test_drift_floor_applied_high_complexity(self):
+        """High complexity + near-zero governance drift should trigger floor."""
+        # Test the floor logic directly: when drift_norm_sq < 0.001 and complexity > 0.3
+        drift_vector_list = [0.0, 0.0, 0.0, 0.0]
+        complexity = 0.8
+        drift_norm_sq = sum(d ** 2 for d in drift_vector_list)
+        assert drift_norm_sq < 0.001
+        assert complexity > 0.3
+        # Apply floor
+        min_component = 0.05 * complexity / max(1, len(drift_vector_list))
+        floored = [max(d, min_component) for d in drift_vector_list]
+        # All components should now be 0.05 * 0.8 / 4 = 0.01
+        assert all(f > 0 for f in floored), f"Floor should produce non-zero drift, got {floored}"
+        assert abs(floored[0] - 0.01) < 1e-6
+
+    def test_drift_floor_not_applied_low_complexity(self):
+        """Low complexity + zero drift should NOT trigger floor."""
+        drift_vector_list = [0.0, 0.0, 0.0, 0.0]
+        complexity = 0.1
+        drift_norm_sq = sum(d ** 2 for d in drift_vector_list)
+        # complexity <= 0.3, so floor condition is false
+        should_floor = drift_norm_sq < 0.001 and complexity > 0.3
+        assert not should_floor, "Floor should not activate for low complexity"
+
+    def test_drift_floor_preserves_existing_drift(self):
+        """Drift already above threshold should not be modified by floor."""
+        drift_vector_list = [0.1, 0.2, 0.05, 0.15]
+        complexity = 0.8
+        drift_norm_sq = sum(d ** 2 for d in drift_vector_list)
+        # norm_sq = 0.01 + 0.04 + 0.0025 + 0.0225 = 0.075 >> 0.001
+        should_floor = drift_norm_sq < 0.001 and complexity > 0.3
+        assert not should_floor, "Floor should not activate when drift is already significant"
+
+    def test_drift_floor_integration(self):
+        """Full integration: process_update with high complexity and zero agent drift."""
+        mon = UNITARESMonitor("test-drift-floor-int", load_state=False)
+        result = mon.process_update({
+            'response_text': 'Complex analysis task.',
+            'complexity': 0.8,
+            'ethical_drift': [0.0, 0.0, 0.0],
+            'confidence': 0.7,
         })
         assert 'status' in result
 

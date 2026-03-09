@@ -522,16 +522,16 @@ class TestScoring:
         assert phi_low_drift > phi_high_drift
 
     def test_verdict_safe(self):
-        """Φ >= 0.15 should be 'safe'."""
-        assert verdict_from_phi(0.15) == "safe"
+        """Φ >= 0.22 should be 'safe'."""
+        assert verdict_from_phi(0.22) == "safe"
         assert verdict_from_phi(0.3) == "safe"
         assert verdict_from_phi(1.0) == "safe"
 
     def test_verdict_caution(self):
-        """0.0 <= Φ < 0.15 should be 'caution'."""
+        """0.0 <= Φ < 0.22 should be 'caution'."""
         assert verdict_from_phi(0.0) == "caution"
         assert verdict_from_phi(0.1) == "caution"
-        assert verdict_from_phi(0.14) == "caution"
+        assert verdict_from_phi(0.21) == "caution"
 
     def test_verdict_high_risk(self):
         """Φ < 0.0 should be 'high-risk'."""
@@ -607,8 +607,8 @@ class TestEthicalDrift:
         assert baseline.baseline_coherence == 0.5
         
         baseline.update(coherence=0.7)
-        # EMA: 0.5 * 0.9 + 0.7 * 0.1 = 0.45 + 0.07 = 0.52 (with alpha=0.1)
-        assert abs(baseline.baseline_coherence - 0.52) < 0.01
+        # EMA: 0.5 * 0.95 + 0.7 * 0.05 = 0.475 + 0.035 = 0.51 (with alpha=0.05)
+        assert abs(baseline.baseline_coherence - 0.51) < 0.01
 
     def test_baseline_decision_consistency(self):
         """Decision stability tracking."""

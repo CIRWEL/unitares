@@ -5,6 +5,7 @@ Tests derive_confidence with mock GovernanceState and tool_usage_tracker.
 """
 
 import pytest
+import math
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -12,7 +13,7 @@ from unittest.mock import patch, MagicMock
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.confidence import derive_confidence
+from src.confidence import derive_confidence, _compute_deviation_signal
 
 
 # ============================================================================
@@ -180,3 +181,92 @@ class TestDeriveConfidenceToolTracker:
         state = _mock_state()
         _, metadata = derive_confidence(state, agent_id="agent-123")
         assert metadata["reliability"] == "medium"
+
+
+# ============================================================================
+# _compute_deviation_signal tests
+# ============================================================================
+
+def _mock_state_with_history(coherence=0.5, I=0.5, S=0.5, V=0.0,
+                              E_history=None, I_history=None,
+                              S_history=None, V_history=None):
+    """Create a mock GovernanceState with EISV attributes and history."""
+    state = MagicMock()
+    state.coherence = coherence
+    state.E = coherence  # approximate E ~ coherence for simplicity
+    state.I = I
+    state.S = S
+    state.V = V
+    state.E_history = E_history or []
+    state.I_history = I_history or []
+    state.S_history = S_history or []
+    state.V_history = V_history or []
+    return state
+
+
+class TestDeviationSignal:
+
+    def test_deviation_no_history_returns_zero(self):
+        """No state history -> penalty 0."""
+        state = _mock_state_with_history()
+        penalty = _compute_deviation_signal(state)
+        assert penalty == 0.0
+
+    def test_deviation_short_history_returns_zero(self):
+        """Less than 5 entries -> penalty 0."""
+        state = _mock_state_with_history(
+            E_history=[0.5, 0.5, 0.5],
+            I_history=[0.8, 0.8, 0.8],
+            S_history=[0.1, 0.1, 0.1],
+            V_history=[0.0, 0.0, 0.0],
+        )
+        penalty = _compute_deviation_signal(state)
+        assert penalty == 0.0
+
+    def test_deviation_stable_state_low_penalty(self):
+        """Stable EISV -> penalty near sigmoid baseline (~0.03)."""
+        vals_E = [0.78] * 20
+        vals_I = [0.80] * 20
+        vals_S = [0.10] * 20
+        vals_V = [-0.03] * 20
+        state = _mock_state_with_history(
+            coherence=0.78, I=0.80, S=0.10, V=-0.03,
+            E_history=vals_E, I_history=vals_I,
+            S_history=vals_S, V_history=vals_V,
+        )
+        penalty = _compute_deviation_signal(state)
+        # Stable state: z-scores ≈ 0, sigmoid(0-2) is small
+        assert penalty < 0.05
+
+    def test_deviation_sudden_shift_high_penalty(self):
+        """Big EISV change -> penalty > 0.1."""
+        # History is stable at 0.78, then current jumps to 0.50
+        vals_E = [0.78] * 20
+        vals_I = [0.80] * 20
+        vals_S = [0.10] * 20
+        vals_V = [-0.03] * 20
+        state = _mock_state_with_history(
+            coherence=0.50, I=0.50, S=0.50, V=0.50,  # big shift
+            E_history=vals_E, I_history=vals_I,
+            S_history=vals_S, V_history=vals_V,
+        )
+        # Need non-zero std to get z-scores; add slight variation
+        state.E_history = [0.78 + 0.001 * (i % 3) for i in range(20)]
+        state.I_history = [0.80 + 0.001 * (i % 3) for i in range(20)]
+        state.S_history = [0.10 + 0.001 * (i % 3) for i in range(20)]
+        state.V_history = [-0.03 + 0.001 * (i % 3) for i in range(20)]
+        penalty = _compute_deviation_signal(state)
+        assert penalty > 0.1
+
+    def test_deviation_bounded(self):
+        """Penalty never > 0.25."""
+        # Extreme shift
+        state = _mock_state_with_history(
+            coherence=0.0, I=0.0, S=2.0, V=2.0,
+            E_history=[0.9 + 0.001 * i for i in range(20)],
+            I_history=[0.9 + 0.001 * i for i in range(20)],
+            S_history=[0.01 + 0.001 * i for i in range(20)],
+            V_history=[0.0 + 0.001 * i for i in range(20)],
+        )
+        penalty = _compute_deviation_signal(state)
+        assert penalty <= 0.25

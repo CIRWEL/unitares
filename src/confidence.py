@@ -3,14 +3,72 @@ Confidence Derivation Module
 
 Derives confidence from observed tool outcomes and EISV state dynamics.
 Uses epistemic (uncertainty-aware) penalties, not punitive measures.
+Includes deviation-based signal to break constant-confidence convergence.
 """
 
+import math
 from typing import Dict, Any, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.governance_state import GovernanceState
 
 from config.governance_config import config
+
+
+def _compute_deviation_signal(state: 'GovernanceState', agent_id: str = None) -> float:
+    """
+    Compute deviation penalty from EISV history.
+
+    Compares current EISV values against rolling baseline (last 20 updates).
+    When state suddenly shifts, penalty rises. When stable, penalty ≈ 0.
+
+    Returns:
+        Deviation penalty in [0, 0.25]. Returns 0 when insufficient history.
+    """
+    # Need history attributes on state
+    histories = []
+    current_vals = []
+    for attr_hist, attr_val in [
+        ('E_history', 'E'), ('I_history', 'I'),
+        ('S_history', 'S'), ('V_history', 'V'),
+    ]:
+        hist = getattr(state, attr_hist, None)
+        val = getattr(state, attr_val, None)
+        if hist is None or val is None:
+            return 0.0
+        histories.append(list(hist))
+        current_vals.append(float(val))
+
+    # Need at least 5 entries for meaningful statistics
+    min_len = min(len(h) for h in histories)
+    if min_len < 5:
+        return 0.0
+
+    # Rolling window: last 20 entries
+    window = 20
+    z_scores = []
+    for hist, current in zip(histories, current_vals):
+        recent = hist[-window:]
+        n = len(recent)
+        mean = sum(recent) / n
+        variance = sum((x - mean) ** 2 for x in recent) / n
+        std = math.sqrt(variance) if variance > 0 else 0.0
+
+        if std < 1e-8:
+            # Near-zero std: no variability to measure deviation against
+            z_scores.append(0.0)
+        else:
+            z_scores.append(abs(current - mean) / std)
+
+    # L2 norm of z-scores
+    z_norm = math.sqrt(sum(z ** 2 for z in z_scores))
+
+    # Sigmoid map to [0, 0.25]: penalty = 0.25 * sigmoid(z_norm - 2)
+    # At z_norm=0: penalty ≈ 0.03, at z_norm=2: penalty ≈ 0.125, at z_norm=4: penalty ≈ 0.22
+    sigmoid = 1.0 / (1.0 + math.exp(-(z_norm - 2.0)))
+    penalty = 0.25 * sigmoid
+
+    return penalty
 
 
 def derive_confidence(
@@ -92,6 +150,10 @@ def derive_confidence(
             ((1.0 - float(entropy_val)) * 0.10)
         ) - void_penalty - entropy_penalty
 
+        # Deviation-based penalty: breaks constant confidence when EISV shifts
+        deviation_penalty = _compute_deviation_signal(state, agent_id)
+        eisv_confidence -= deviation_penalty
+
         eisv_confidence = float(max(0.0, min(1.0, eisv_confidence)))
 
         metadata['eisv'] = {
@@ -102,6 +164,7 @@ def derive_confidence(
             'void_norm': float(void_norm),
             'void_penalty': float(void_penalty),
             'entropy_penalty': float(entropy_penalty),
+            'deviation_penalty': float(deviation_penalty),
         }
     
     # === COMBINE: EISV-only confidence for calibration consistency ===

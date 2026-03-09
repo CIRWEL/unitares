@@ -114,7 +114,7 @@ class TestParameterConsistency:
         print(f"Current delta: {DEFAULT_PARAMS.delta} (tuned: 0.25)")
 
         # These should match tuned values
-        assert DEFAULT_PARAMS.mu == 0.8, "mu should be 0.8"
+        assert DEFAULT_PARAMS.mu == 0.5, "mu should be 0.5 (reduced from 0.8 for meaningful S variability)"
         assert DEFAULT_PARAMS.delta == 0.25, "delta should be 0.25 (reduced from paper 0.4 for coherence differentiation)"
         assert DEFAULT_PARAMS.k == 0.1, "k should be 0.1"
 

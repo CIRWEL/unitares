@@ -36,7 +36,7 @@ class DynamicsParams:
     gamma_I: float = 0.25        # I self-regulation
 
     # S dynamics
-    mu: float = 0.8              # S decay rate
+    mu: float = 0.5              # S decay rate (reduced from 0.8 for meaningful S variability)
     lambda1_base: float = 0.3    # Drift → S coupling base
     lambda2_base: float = 0.05   # Coherence → S reduction base
     beta_complexity: float = 0.15  # Complexity → S coupling (task difficulty increases uncertainty)

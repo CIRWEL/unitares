@@ -193,6 +193,11 @@ def compute_dynamics(
     E_new = clip(E + dE_dt * dt, params.E_min, params.E_max)
     I_new = clip(I + dI_dt * dt, params.I_min, params.I_max)
     S_new = clip(S + dS_dt * dt, params.S_min, params.S_max)
+
+    # Complexity-proportional entropy floor: ensures S reflects task difficulty
+    complexity_floor = params.S_min + 0.049 * complexity
+    S_new = max(S_new, complexity_floor)
+
     V_new = clip(V + dV_dt * dt, params.V_min, params.V_max)
 
     return State(E=E_new, I=I_new, S=S_new, V=V_new)
@@ -283,6 +288,10 @@ def compute_equilibrium(
         (lam1 * ethical_drift_norm_sq - lam2 * C_0
          + params.beta_complexity * complexity) / params.mu,
     )
+
+    # Complexity-proportional entropy floor (matches compute_dynamics)
+    complexity_floor = params.S_min + 0.049 * complexity
+    S_star = max(S_star, complexity_floor)
 
     # Forcing term for I dynamics
     A = params.beta_I * C_0 - params.k * S_star

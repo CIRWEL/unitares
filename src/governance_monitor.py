@@ -482,11 +482,13 @@ class UNITARESMonitor:
             if metrics:
                 # Find max overconfidence across bins with sufficient data
                 for bin_metrics in metrics.values():
-                    if bin_metrics.count >= 5:
+                    if bin_metrics.count >= 2:
                         # Positive = expected > actual = overconfident
                         overconfidence = bin_metrics.expected_accuracy - bin_metrics.accuracy
                         if overconfidence > 0:
-                            calibration_penalty = max(calibration_penalty, 0.2 * overconfidence)
+                            # Dampen penalty for low-sample bins (full weight at 5+ samples)
+                            sample_weight = min(1.0, bin_metrics.count / 5.0)
+                            calibration_penalty = max(calibration_penalty, 0.2 * overconfidence * sample_weight)
         except Exception:
             pass  # Fail-safe: no penalty if calibration unavailable
 
@@ -910,7 +912,24 @@ class UNITARESMonitor:
         phi_weight = getattr(config, 'RISK_PHI_WEIGHT', 1.0)
         traditional_weight = getattr(config, 'RISK_TRADITIONAL_WEIGHT', 0.0)
         risk = phi_weight * risk + traditional_weight * traditional_risk
-        
+
+        # Velocity-based risk: rapid EISV changes increase risk even if absolute values are safe
+        velocity_risk = 0.0
+        if len(self.state.E_history) >= 3:
+            diffs = [
+                abs(h[-1] - h[-2])
+                for h in [
+                    self.state.E_history,
+                    self.state.I_history,
+                    self.state.S_history,
+                    self.state.V_history,
+                ]
+                if len(h) >= 2
+            ]
+            velocity_magnitude = sum(diffs)
+            velocity_risk = min(0.15, velocity_magnitude * 2.0)
+        risk += velocity_risk
+
         # Update history
         self.state.risk_history.append(risk)
         if len(self.state.risk_history) > config.HISTORY_WINDOW:
@@ -1223,7 +1242,17 @@ class UNITARESMonitor:
             self._consecutive_high_drift = 0
 
         # Convert to list format for dynamics engine (all 4 components)
-        grounded_agent_state['ethical_drift'] = drift_vector.to_list()
+        drift_vector_list = drift_vector.to_list()
+
+        # Prevent drift signal from vanishing on complex tasks
+        complexity = grounded_agent_state.get('complexity', 0.0)
+        drift_norm_sq = sum(d ** 2 for d in drift_vector_list)
+        if drift_norm_sq < 0.001 and complexity > 0.3:
+            # Complex work always has some uncertainty, even with stable baselines
+            min_component = 0.05 * complexity / max(1, len(drift_vector_list))
+            drift_vector_list = [max(d, min_component) for d in drift_vector_list]
+
+        grounded_agent_state['ethical_drift'] = drift_vector_list
 
         # Log drift if significant
         if drift_vector.norm > 0.3:

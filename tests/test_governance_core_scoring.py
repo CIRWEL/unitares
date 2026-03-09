@@ -86,10 +86,10 @@ class TestVerdictFromPhi:
         assert verdict_from_phi(0.5) == "safe"
 
     def test_safe_at_threshold(self):
-        assert verdict_from_phi(0.15) == "safe"
+        assert verdict_from_phi(0.22) == "safe"
 
     def test_caution(self):
-        assert verdict_from_phi(0.10) == "caution"
+        assert verdict_from_phi(0.15) == "caution"
 
     def test_caution_at_zero(self):
         assert verdict_from_phi(0.0) == "caution"
