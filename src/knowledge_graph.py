@@ -204,7 +204,7 @@ async def get_knowledge_graph() -> Any:
 
         # AGE backend (PostgreSQL + Apache AGE)
         if backend == "age":
-            from src.storage.knowledge_graph_age import KnowledgeGraphAGE
+            from src.storage.knowledge_graph import KnowledgeGraphAGE
             _graph_instance = KnowledgeGraphAGE()
             await _graph_instance.load()
             logger.info("Using AGE (PostgreSQL + Apache AGE) knowledge graph backend")
@@ -212,7 +212,7 @@ async def get_knowledge_graph() -> Any:
 
         # PostgreSQL FTS backend (unified with main database)
         if backend in ("postgres", "auto"):
-            from src.storage.knowledge_graph_postgres import KnowledgeGraphPostgres
+            from src.storage.knowledge_graph import KnowledgeGraphPostgres
             _graph_instance = KnowledgeGraphPostgres()
             await _graph_instance.load()
             logger.info("Using PostgreSQL FTS knowledge graph backend")
