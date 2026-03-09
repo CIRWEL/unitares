@@ -158,6 +158,13 @@ async def test_authentication_failures():
     assert "mismatch" in error_msg or "bound" in error_msg, f"Should mention session mismatch (got: {error_msg})"
     print("✅ Session binding prevents accessing other agents")
 
+    # Recover if agent was paused by governance thresholds
+    result = await dispatch_tool("self_recovery", {"action": "quick"})
+    if result:
+        recovery_data = json.loads(result[0].text)
+        if recovery_data.get("success"):
+            print("  (recovered agent from paused state)")
+
     # Test using the bound agent works
     result = await dispatch_tool("process_agent_update", {
         # No agent_id - uses bound identity
