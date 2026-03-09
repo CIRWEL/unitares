@@ -944,8 +944,9 @@ async function loadAgents() {
                 return m.coherence !== undefined && m.coherence !== null && (a.total_updates || 0) > 0;
             });
             if (agentsWithMetrics.length > 0) {
-                const avgCoherence = agentsWithMetrics.reduce((sum, a) => sum + Number(a.metrics.coherence), 0) / agentsWithMetrics.length;
-                animateValue(fleetCoherenceEl, avgCoherence, { decimals: 3 });
+                const totalUpdates = agentsWithMetrics.reduce((sum, a) => sum + (a.total_updates || 1), 0);
+                const avgCoherence = agentsWithMetrics.reduce((sum, a) => sum + Number(a.metrics.coherence) * (a.total_updates || 1), 0) / totalUpdates;
+                animateValue(fleetCoherenceEl, avgCoherence * 100, { decimals: 0, suffix: '%' });
                 const criticalCount = allAgents.filter(a => a.health_status === 'critical').length;
                 const highRiskCount = allAgents.filter(a => {
                     const rs = a.metrics && a.metrics.risk_score;
@@ -961,7 +962,7 @@ async function loadAgents() {
                         const arrow = cohDiff > 0 ? '▲' : '▼';
                         const dir = cohDiff > 0 ? 'up' : 'down';
                         const sign = cohDiff > 0 ? '+' : '';
-                        parts.push(`<span class="change-arrow ${dir}">${arrow} ${sign}${cohDiff.toFixed(3)}</span>`);
+                        parts.push(`<span class="change-arrow ${dir}">${arrow} ${sign}${(cohDiff * 100).toFixed(0)}%</span>`);
                     }
                 }
                 previousStats.fleetCoherence = avgCoherence;

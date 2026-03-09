@@ -221,8 +221,7 @@ class GovernanceState:
         # Recalculate immediately to prevent discontinuity on first update
         from governance_core.coherence import coherence as coherence_func
         from governance_core.parameters import get_active_params
-        loaded_coherence = float(data.get('coherence', 1.0))
-        # Recalculate from current V to ensure consistency
+        # Recalculate from current V to ensure consistency (ignore persisted value)
         recalculated_coherence = coherence_func(state.V, state.unitaires_theta, get_active_params())
         state.coherence = float(np.clip(recalculated_coherence, 0.0, 1.0))
         state.void_active = bool(data.get('void_active', False))
