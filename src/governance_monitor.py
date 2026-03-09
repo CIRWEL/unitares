@@ -29,6 +29,13 @@ from src.audit_log import audit_logger
 from src.calibration import calibration_checker
 from src.runtime_config import get_effective_threshold
 
+# Extracted monitor subsystems (Phase 6 decomposition)
+from src.monitor_void import check_void_state as _check_void_state, calculate_void_frequency as _calculate_void_frequency
+from src.monitor_risk import estimate_risk as _estimate_risk
+from src.monitor_decision import make_decision as _make_decision
+from src.monitor_regime import detect_regime as _detect_regime
+from src.monitor_lambda import update_lambda1 as _update_lambda1
+
 # Import dual-log architecture for grounded EISV inputs (Patent: Dual-Log Architecture)
 from src.dual_log import ContinuityLayer, RestorativeBalanceMonitor
 
@@ -342,67 +349,8 @@ class UNITARESMonitor:
         return float(coherence)
     
     def detect_regime(self) -> str:
-        """
-        Detect current operational regime based on state and history.
-        
-        Regimes:
-        - STABLE: I ≥ 0.999, S ≤ 0.001 (requires 3 consecutive steps)
-        - DIVERGENCE: S rising, |V| elevated
-        - TRANSITION: S peaked, starting to fall, I increasing
-        - CONVERGENCE: S low & falling, I high & stable
-        
-        Returns:
-            regime: str - Current operational regime
-        """
-        I = self.state.I
-        S = self.state.S
-        V = abs(self.state.V)
-        
-        # Thresholds for regime detection
-        eps_S = 0.001  # Entropy threshold
-        eps_I = 0.001  # Integrity threshold
-        I_STABLE_THRESHOLD = 0.999
-        S_STABLE_THRESHOLD = 0.001
-        V_ELEVATED_THRESHOLD = 0.1  # Elevated void threshold
-        
-        # Check for STABLE state (requires persistence)
-        if I >= I_STABLE_THRESHOLD and S <= S_STABLE_THRESHOLD:
-            self.state.locked_persistence_count += 1
-            if self.state.locked_persistence_count >= 3:
-                return "STABLE"
-        else:
-            # Reset persistence counter if not at threshold
-            self.state.locked_persistence_count = 0
-        
-        # Need at least 2 history points for delta-based detection
-        # Defensive check: ensure history exists and has enough entries
-        if (not hasattr(self.state, 'S_history') or not hasattr(self.state, 'I_history') or
-            len(self.state.S_history) < 2 or len(self.state.I_history) < 2):
-            return "DIVERGENCE"  # Default for early updates
-        
-        # Get deltas: use [-2] because current value is already appended at [-1]
-        try:
-            dS = S - self.state.S_history[-2]
-            dI = I - self.state.I_history[-2]
-        except (IndexError, AttributeError):
-            # Fallback if history access fails
-            return "DIVERGENCE"
-        
-        # DIVERGENCE: S rising (or stable high), |V| elevated
-        if dS > eps_S or (S > 0.1 and abs(dS) < eps_S):
-            if V > V_ELEVATED_THRESHOLD:
-                return "DIVERGENCE"
-        
-        # TRANSITION: S peaked and starting to fall, I increasing
-        if dS < -eps_S and dI > eps_I:
-            return "TRANSITION"
-        
-        # CONVERGENCE: S low & falling, I high & stable
-        if S < 0.1 and dS <= 0 and I > 0.8:
-            return "CONVERGENCE"
-        
-        # Default fallback
-        return "DIVERGENCE"
+        """Detect current operational regime based on state and history."""
+        return _detect_regime(self.state)
     
     def update_dynamics(self,
                        agent_state: Dict,
@@ -692,345 +640,25 @@ class UNITARESMonitor:
         self.state.update_count += 1
     
     def check_void_state(self) -> bool:
-        """
-        Checks if system is in void state: |V| > threshold
+        """Checks if system is in void state: |V| > threshold."""
+        return _check_void_state(self.state)
 
-        Uses adaptive threshold based on recent history.
-        """
-        V_history = np.array(self.state.V_history) if self.state.V_history else np.array([self.state.V])
-        threshold = config.get_void_threshold(V_history, adaptive=True)
-
-        # Convert numpy bool to Python bool for JSON serialization
-        void_active = bool(abs(self.state.V) > threshold)
-        self.state.void_active = void_active
-
-        return void_active
-    
     def _calculate_void_frequency(self) -> float:
-        """
-        Calculate void frequency from V history.
-        
-        Returns fraction of time system was in void state (|V| > threshold).
-        Uses adaptive threshold for each historical point.
-        """
-        if not self.state.V_history or len(self.state.V_history) < 10:
-            return 0.0
-        
-        # Use last 100 observations (or all if fewer)
-        window = min(100, len(self.state.V_history))
-        recent_V = np.array(self.state.V_history[-window:])
-        
-        # Calculate adaptive threshold for the window
-        threshold = config.get_void_threshold(recent_V, adaptive=True)
-        
-        # Count void events (|V| > threshold)
-        void_count = np.sum(np.abs(recent_V) > threshold)
-        void_freq = float(void_count) / len(recent_V)
-        
-        return void_freq
+        """Calculate void frequency from V history."""
+        return _calculate_void_frequency(self.state)
     
     def update_lambda1(self) -> float:
-        """
-        Updates λ₁ using PI controller based on void frequency and coherence targets.
-
-        Uses PI controller to adapt lambda1 to maintain:
-        - Target void frequency: 2% (TARGET_VOID_FREQ)
-        - Target coherence: 55% (TARGET_COHERENCE, matches physics ceiling V=0.1)
-
-        HCK v3.0: When update coherence ρ(t) is low (misaligned E/I updates),
-        PI gains are modulated to reduce controller aggressiveness and prevent instability.
-
-        Updates theta.eta1 to reflect new lambda1 value.
-
-        Returns updated λ₁ value.
-        """
-        # Calculate current metrics
-        void_freq_current = self._calculate_void_frequency()
-        coherence_current = self.state.coherence
-
-        # Get current lambda1
-        lambda1_current = self.state.lambda1
-
-        # Get PI controller integral state (initialize if needed)
-        if not hasattr(self.state, 'pi_integral'):
-            self.state.pi_integral = 0.0
-
-        # HCK v3.0: Modulate PI gains based on update coherence ρ(t)
-        # When ρ is low (E and I moving in opposite directions), reduce aggressiveness
-        rho = getattr(self.state, 'current_rho', 0.0)
-        base_K_p = config.PI_KP
-        base_K_i = config.PI_KI
-        K_p_adj, K_i_adj = self.modulate_gains(base_K_p, base_K_i, rho)
-
-        # Track if gains were modulated
-        self._gains_modulated = (K_p_adj != base_K_p or K_i_adj != base_K_i)
-
-        # Manual PI calculation with modulated gains (instead of using config.pi_update)
-        # This allows us to use the adjusted gains
-        error_void = config.TARGET_VOID_FREQ - void_freq_current
-        error_coherence = coherence_current - config.TARGET_COHERENCE
-
-        # Proportional term (weighted combination)
-        P = K_p_adj * (0.7 * error_void + 0.3 * error_coherence)
-
-        # Integral term (only void frequency, with anti-windup)
-        self.state.pi_integral += error_void * 1.0  # dt = 1.0
-        self.state.pi_integral = np.clip(
-            self.state.pi_integral,
-            -config.PI_INTEGRAL_MAX,
-            config.PI_INTEGRAL_MAX
-        )
-        I = K_i_adj * self.state.pi_integral
-
-        # Control signal
-        delta_lambda = P + I
-
-        # Update λ₁
-        new_lambda1 = lambda1_current + delta_lambda
-        new_lambda1 = np.clip(
-            new_lambda1,
-            config.LAMBDA1_MIN,
-            config.LAMBDA1_MAX
-        )
-        # Note: pi_integral is already updated above with anti-windup
-
-        # Map new lambda1 back to theta.eta1
-        # Inverse mapping: lambda1 [LAMBDA1_MIN, LAMBDA1_MAX] → eta1 [0.1, 0.5]
-        lambda1_range = config.LAMBDA1_MAX - config.LAMBDA1_MIN
-        eta1_min = 0.1
-        eta1_max = 0.5
-        eta1_range = eta1_max - eta1_min
-        
-        if lambda1_range > 0:
-            # Normalize lambda1 to [0, 1]
-            normalized_lambda1 = (new_lambda1 - config.LAMBDA1_MIN) / lambda1_range
-            # Map to eta1 range
-            new_eta1 = eta1_min + normalized_lambda1 * eta1_range
-            # Clamp to valid bounds
-            new_eta1 = np.clip(new_eta1, eta1_min, eta1_max)
-        else:
-            # Fallback if range is zero
-            new_eta1 = self.state.unitaires_theta.eta1
-        
-        # Update theta: C1 from system default, eta1 from PI controller
-        self.state.unitaires_theta = Theta(
-            C1=DEFAULT_THETA.C1,  # System parameter, always use current default
-            eta1=new_eta1          # Per-agent adaptive state
-        )
-        
-        # Get updated lambda1 (should match new_lambda1 from PI controller)
-        updated_lambda1 = self.state.lambda1
-        
-        # Log significant changes
-        if abs(updated_lambda1 - lambda1_current) > 0.01:
-            gain_info = ""
-            if self._gains_modulated:
-                gain_info = f", ρ={rho:.3f}, gains_modulated=True"
-            logger.info(
-                f"PI Controller λ₁ update: {lambda1_current:.4f} → {updated_lambda1:.4f} "
-                f"(void_freq={void_freq_current:.3f}, coherence={coherence_current:.3f}, "
-                f"η1→{new_eta1:.3f}{gain_info})"
-            )
-
-        return updated_lambda1
+        """Updates lambda1 using PI controller based on void frequency and coherence targets."""
+        return _update_lambda1(self.state)
     
     def estimate_risk(self, agent_state: Dict, score_result: Dict = None) -> float:
-        """
-        Estimates risk score using governance_core phi_objective and verdict_from_phi.
-
-        Uses UNITARES phi objective and verdict, then maps to risk score [0, 1].
-        
-        **Risk Score Composition:**
-        - 70% UNITARES phi-based risk (includes ethical drift ‖Δη‖², E, I, S, V state)
-        - 30% Traditional safety risk (length, complexity, coherence, keywords)
-        
-        This blend ensures risk reflects both ethical alignment (via phi) and 
-        safety/quality concerns (via traditional metrics).
-
-        Args:
-            agent_state: Agent state dictionary
-            score_result: Optional pre-computed score_result to avoid recomputation
-        """
-        # Extract delta_eta (ethical drift) if score_result not provided
-        if score_result is None:
-            ethical_signals = np.array(agent_state.get('ethical_drift', [0.0, 0.0, 0.0, 0.0]))
-            if len(ethical_signals) == 0:
-                delta_eta = [0.0, 0.0, 0.0]
-            else:
-                delta_eta = ethical_signals.tolist()
-
-            # Use governance_core phi_objective and verdict_from_phi
-            phi = phi_objective(
-                state=self.state.unitaires_state,
-                delta_eta=delta_eta,
-                weights=DEFAULT_WEIGHTS
-            )
-            verdict = verdict_from_phi(phi)
-
-            score_result = {
-                'phi': phi,
-                'verdict': verdict,
-            }
-        
-        # Map UNITARES verdict to risk score [0, 1]
-        # verdict: "safe" -> low risk, "caution" -> medium risk, "high-risk" -> high risk
-        phi = score_result['phi']
-        verdict = score_result['verdict']
-        
-        # Convert phi to risk score: phi is higher for safer states
-        # Use configurable thresholds (fixes magic number issue)
-        phi_safe_threshold = getattr(config, 'PHI_SAFE_THRESHOLD', 0.3)
-        phi_caution_threshold = getattr(config, 'PHI_CAUTION_THRESHOLD', 0.0)
-        
-        # phi >= PHI_SAFE_THRESHOLD: safe -> risk ~ 0.0-0.3
-        # phi >= PHI_CAUTION_THRESHOLD: caution -> risk ~ 0.3-0.7
-        # phi < PHI_CAUTION_THRESHOLD: high-risk -> risk ~ 0.7-1.0
-        if phi >= phi_safe_threshold:
-            # Safe: map phi [phi_safe_threshold, inf] to risk [0.0, 0.3]
-            risk = max(0.0, 0.3 - (phi - phi_safe_threshold) * 0.5)  # Decreasing risk as phi increases
-        elif phi >= phi_caution_threshold:
-            # Caution: map phi [phi_caution_threshold, phi_safe_threshold] to risk [0.3, 0.7]
-            range_size = phi_safe_threshold - phi_caution_threshold
-            if range_size > 0:
-                risk = 0.3 + (phi_safe_threshold - phi) / range_size * 0.4  # Linear interpolation
-            else:
-                risk = 0.5  # Fallback if thresholds are equal
-        else:
-            # High-risk: map phi [-inf, phi_caution_threshold] to risk [0.7, 1.0]
-            risk = min(1.0, 0.7 + abs(phi - phi_caution_threshold) * 2.0)  # Increasing risk as phi becomes more negative
-        
-        # Blend with traditional risk (keyword blocklist).
-        # With RISK_TRADITIONAL_WEIGHT = 0.0 this is a no-op, but the call is
-        # kept so the interface doesn't break if the weight is raised later.
-        response_text = agent_state.get('response_text', '')
-        traditional_risk = config.estimate_risk(
-            response_text,
-            complexity=0.5,
-            coherence=self.state.coherence,
-        )
-
-        phi_weight = getattr(config, 'RISK_PHI_WEIGHT', 1.0)
-        traditional_weight = getattr(config, 'RISK_TRADITIONAL_WEIGHT', 0.0)
-        risk = phi_weight * risk + traditional_weight * traditional_risk
-
-        # Velocity-based risk: rapid EISV changes increase risk even if absolute values are safe
-        velocity_risk = 0.0
-        if len(self.state.E_history) >= 3:
-            diffs = [
-                abs(h[-1] - h[-2])
-                for h in [
-                    self.state.E_history,
-                    self.state.I_history,
-                    self.state.S_history,
-                    self.state.V_history,
-                ]
-                if len(h) >= 2
-            ]
-            velocity_magnitude = sum(diffs)
-            velocity_risk = min(0.15, velocity_magnitude * 2.0)
-        risk += velocity_risk
-
-        # Update history
-        self.state.risk_history.append(risk)
-        if len(self.state.risk_history) > config.HISTORY_WINDOW:
-            self.state.risk_history = self.state.risk_history[-config.HISTORY_WINDOW:]
-        
-        return float(np.clip(risk, 0.0, 1.0))
+        """Estimate risk score using governance_core phi_objective and verdict_from_phi."""
+        return _estimate_risk(self.state, agent_state, score_result)
     
     def make_decision(self, risk_score: float, unitares_verdict: str = None,
                       response_tier: str = None, oscillation_state: 'OscillationState' = None) -> Dict:
-        """
-        Makes autonomous governance decision using UNITARES Phase-3 verdict and config.make_decision()
-
-        If unitares_verdict is provided, it influences the decision:
-        - "safe" -> bias toward approve
-        - "caution" -> bias toward revise
-        - "high-risk" -> bias toward reject
-
-        If response_tier is provided (from CIRS oscillation detection):
-        - "hard_block" -> force pause (pathological oscillation)
-        - "soft_dampen" -> upgrade safe verdict to caution
-        - "proceed" -> no change
-
-        Returns decision dict with action and reason (fully autonomous, no human-in-the-loop).
-        """
-        # Compute margin for proprioceptive feedback
-        margin_info = config.compute_proprioceptive_margin(
-            risk_score=risk_score,
-            coherence=self.state.coherence,
-            void_active=self.state.void_active,
-            void_value=self.state.V,
-            coherence_history=self.state.coherence_history,
-        )
-
-        # CIRS oscillation override — checked before verdict logic
-        if response_tier == 'hard_block':
-            oi = oscillation_state.oi if oscillation_state else 0.0
-            flips = oscillation_state.flips if oscillation_state else 0
-            return {
-                'action': 'pause',
-                'reason': f'CIRS resonance detected (OI={oi:.2f}, flips={flips}) — decision oscillating',
-                'guidance': 'Governance is flip-flopping. Reduce complexity or wait for state to settle.',
-                'critical': False,
-                'margin': 'critical',
-                'nearest_edge': 'oscillation'
-            }
-
-        # CIRS soft dampen — upgrade safe verdict to caution (adds guidance)
-        if response_tier == 'soft_dampen' and unitares_verdict == 'safe':
-            unitares_verdict = 'caution'
-
-        # Use UNITARES verdict to influence decision if available
-        if unitares_verdict == "high-risk":
-            # Override: high-risk verdict -> reject (check if critical)
-            # Use RISK_REJECT_THRESHOLD if available, otherwise fall back to RISK_REVISE_THRESHOLD + buffer
-            try:
-                reject_threshold = config.RISK_REJECT_THRESHOLD
-            except AttributeError:
-                # Fallback: use revise threshold + buffer (0.50 + 0.20 = 0.70)
-                reject_threshold = config.RISK_REVISE_THRESHOLD + 0.20
-            effective_reject_threshold = get_effective_threshold("risk_reject_threshold", default=reject_threshold)
-            is_critical = risk_score >= effective_reject_threshold
-            return {
-                'action': 'pause',
-                'reason': f'UNITARES high-risk verdict (risk_score={risk_score:.2f}) - safety pause suggested',
-                'guidance': 'This is a safety check, not a failure. The system detected high ethical risk and is protecting you from potential issues. Consider simplifying your approach.',
-                'critical': is_critical,
-                'margin': 'critical',
-                'nearest_edge': 'risk'
-            }
-        elif unitares_verdict == "caution":
-            # Caution verdict: proceed with guidance
-            # If risk would approve, upgrade to proceed with guidance due to caution
-            if risk_score < config.RISK_APPROVE_THRESHOLD:
-                # Low risk but caution -> proceed with guidance
-                return {
-                    'action': 'proceed',
-                    'reason': f'Proceeding mindfully (risk: {risk_score:.2f})',
-                    'guidance': 'Navigating complexity. Worth a moment of reflection.',
-                    'critical': False,
-                    'verdict_context': 'aware',  # Reframe "caution" as "aware" when proceeding
-                    'margin': margin_info['margin'],
-                    'nearest_edge': margin_info['nearest_edge']
-                }
-            else:
-                # Medium/high risk + caution -> use standard decision (likely proceed with guidance or pause)
-                return config.make_decision(
-                    risk_score=risk_score,
-                    coherence=self.state.coherence,
-                    void_active=self.state.void_active,
-                    void_value=self.state.V,
-                    coherence_history=self.state.coherence_history,
-                )
-        else:
-            # Safe verdict or no verdict: use standard decision logic
-            return config.make_decision(
-                risk_score=risk_score,
-                coherence=self.state.coherence,
-                void_active=self.state.void_active,
-                void_value=self.state.V,
-                coherence_history=self.state.coherence_history,
-            )
+        """Makes autonomous governance decision using UNITARES verdict and CIRS response tier."""
+        return _make_decision(self.state, risk_score, unitares_verdict, response_tier, oscillation_state)
     
     def simulate_update(self, agent_state: Dict, confidence: Optional[float] = None) -> Dict:
         """
