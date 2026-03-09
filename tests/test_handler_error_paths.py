@@ -160,10 +160,22 @@ async def test_authentication_failures():
 
     # Recover if agent was paused by governance thresholds
     result = await dispatch_tool("self_recovery", {"action": "quick"})
+    recovered = False
     if result:
         recovery_data = json.loads(result[0].text)
         if recovery_data.get("success"):
-            print("  (recovered agent from paused state)")
+            recovered = True
+            print("  (recovered agent from paused state via quick)")
+    # Fall back to review recovery if quick didn't work
+    if not recovered:
+        result = await dispatch_tool("self_recovery", {
+            "action": "review",
+            "reflection": "Test recovery after session mismatch triggered circuit breaker"
+        })
+        if result:
+            recovery_data = json.loads(result[0].text)
+            if recovery_data.get("success"):
+                print("  (recovered agent from paused state via review)")
 
     # Test using the bound agent works
     result = await dispatch_tool("process_agent_update", {
