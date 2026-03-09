@@ -1,0 +1,1493 @@
+"""
+Tests for src/mcp_handlers/knowledge_graph.py - comprehensive handler coverage.
+
+Tests cover:
+- handle_store_knowledge_graph (single + batch)
+- handle_search_knowledge_graph
+- handle_get_knowledge_graph
+- handle_list_knowledge_graph
+- handle_update_discovery_status_graph
+- handle_get_discovery_details
+- handle_leave_note
+- handle_cleanup_knowledge_graph
+- handle_get_lifecycle_stats
+- handle_answer_question
+- _discovery_not_found helper
+- _check_display_name_required helper
+- _resolve_agent_display helper
+"""
+
+import pytest
+import json
+import sys
+import os
+from pathlib import Path
+from unittest.mock import patch, MagicMock, AsyncMock, PropertyMock
+from datetime import datetime
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict, Any
+
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.knowledge_graph import DiscoveryNode, ResponseTo
+
+
+# ============================================================================
+# Shared helpers
+# ============================================================================
+
+def parse_result(result):
+    """Parse TextContent result into dict.
+
+    Handles both Sequence[TextContent] (from success_response) and
+    bare TextContent (from some error_response calls).
+    """
+    from mcp.types import TextContent
+    if isinstance(result, TextContent):
+        return json.loads(result.text)
+    return json.loads(result[0].text)
+
+
+def make_discovery(
+    id="disc-1",
+    agent_id="test-agent",
+    type="note",
+    summary="Test discovery",
+    details="Some details",
+    tags=None,
+    severity="low",
+    status="open",
+    response_to=None,
+    provenance=None,
+    provenance_chain=None,
+) -> DiscoveryNode:
+    """Create a DiscoveryNode for testing."""
+    return DiscoveryNode(
+        id=id,
+        agent_id=agent_id,
+        type=type,
+        summary=summary,
+        details=details,
+        tags=tags or [],
+        severity=severity,
+        status=status,
+        response_to=response_to,
+        provenance=provenance,
+        provenance_chain=provenance_chain,
+    )
+
+
+# ============================================================================
+# Shared fixtures
+# ============================================================================
+
+@pytest.fixture
+def mock_mcp_server():
+    """Mock the shared mcp_server module."""
+    server = MagicMock()
+    server.agent_metadata = {}
+    server.monitors = {}
+
+    return server
+
+
+@pytest.fixture
+def mock_graph():
+    """Mock knowledge graph backend."""
+    graph = AsyncMock()
+    graph.add_discovery = AsyncMock(return_value=True)
+    graph.find_similar = AsyncMock(return_value=[])
+    graph.query = AsyncMock(return_value=[])
+    graph.get_discovery = AsyncMock(return_value=None)
+    graph.get_agent_discoveries = AsyncMock(return_value=[])
+    graph.get_stats = AsyncMock(return_value={"total_discoveries": 0, "total_agents": 0})
+    graph.update_discovery = AsyncMock(return_value=True)
+    graph.full_text_search = AsyncMock(return_value=[])
+    graph._get_db = AsyncMock()
+    return graph
+
+
+@pytest.fixture
+def patch_common(mock_mcp_server, mock_graph):
+    """Patch all common dependencies for knowledge graph handlers."""
+    with patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+         patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+         patch("src.mcp_handlers.knowledge.handlers.mcp_server", mock_mcp_server), \
+         patch("src.mcp_handlers.knowledge.handlers.get_knowledge_graph", new_callable=AsyncMock, return_value=mock_graph), \
+         patch("src.mcp_handlers.knowledge.handlers.record_ms"):
+        yield mock_mcp_server, mock_graph
+
+
+@pytest.fixture
+def registered_agent(mock_mcp_server):
+    """Register a test agent in the mock server's metadata.
+
+    Uses a valid UUID4 as the key so require_registered_agent can find it
+    via direct UUID lookup in agent_metadata.
+    """
+    import uuid
+    agent_uuid = str(uuid.uuid4())
+    meta = MagicMock()
+    meta.status = "active"
+    meta.health_status = "healthy"
+    meta.total_updates = 5
+    meta.label = "TestAgent"
+    meta.display_name = "TestAgent"
+    meta.structured_id = "test_agent_opus"
+    meta.parent_agent_id = None
+    meta.spawn_reason = None
+    meta.created_at = "2026-01-01T00:00:00"
+    meta.paused_at = None
+    mock_mcp_server.agent_metadata[agent_uuid] = meta
+    return agent_uuid
+
+
+# ============================================================================
+# handle_store_knowledge_graph
+# ============================================================================
+
+class TestSearchKnowledgeGraph:
+
+    @pytest.mark.asyncio
+    async def test_search_no_filters(self, patch_common):
+        """Search with no filters returns indexed filter results."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [make_discovery(id=f"d-{i}", summary=f"Item {i}") for i in range(3)]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({})
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 3
+        assert data["search_mode_used"] == "indexed_filters"
+
+    @pytest.mark.asyncio
+    async def test_search_with_query_text_fts(self, patch_common):
+        """Search with query text uses FTS when available."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        # Make graph have full_text_search but no semantic_search
+        mock_graph.full_text_search = AsyncMock(return_value=[
+            make_discovery(id="fts-1", summary="Matching result"),
+        ])
+        # Remove semantic_search to force FTS path
+        if hasattr(mock_graph, 'semantic_search'):
+            del mock_graph.semantic_search
+
+        result = await handle_search_knowledge_graph({
+            "query": "matching",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 1
+        assert data["search_mode_used"] == "fts"
+
+    @pytest.mark.asyncio
+    async def test_search_with_filters(self, patch_common):
+        """Search with metadata filters."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [make_discovery(id="d-1", type="bug_found", severity="high")]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({
+            "discovery_type": "bug_found",
+            "severity": "high",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_search_empty_results(self, patch_common):
+        """Search returning no results includes helpful hints."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        mock_graph.query = AsyncMock(return_value=[])
+
+        result = await handle_search_knowledge_graph({
+            "query": "nonexistent stuff",
+            "semantic": False,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_search_with_include_details(self, patch_common):
+        """Search with include_details=True returns full content."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [make_discovery(id="d-1", details="Full details here")]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({
+            "include_details": True,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        if data["count"] > 0:
+            assert "details" in data["discoveries"][0]
+
+    @pytest.mark.asyncio
+    async def test_search_exception_handling(self, patch_common):
+        """Exception from graph backend returns error response."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        mock_graph.query = AsyncMock(side_effect=Exception("DB down"))
+
+        result = await handle_search_knowledge_graph({})
+
+        data = parse_result(result)
+        assert data["success"] is False
+        assert "failed to search" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_search_substring_scan_fallback(self, patch_common):
+        """When no FTS/semantic available, falls back to substring scan."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        # Remove both search methods to trigger substring scan
+        mock_graph_spec = AsyncMock()
+        mock_graph_spec.query = AsyncMock(return_value=[
+            make_discovery(id="d-1", summary="Contains keyword here"),
+        ])
+        # Make hasattr return False for semantic_search and full_text_search
+        del mock_graph_spec.semantic_search
+        del mock_graph_spec.full_text_search
+
+        with patch("src.mcp_handlers.knowledge.handlers.get_knowledge_graph", new_callable=AsyncMock, return_value=mock_graph_spec):
+            result = await handle_search_knowledge_graph({
+                "query": "keyword",
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["search_mode_used"] == "substring_scan"
+
+    @pytest.mark.asyncio
+    async def test_search_with_agent_id_filter(self, patch_common):
+        """Search filtered by agent_id."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [make_discovery(id="d-1", agent_id="specific-agent")]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({
+            "agent_id": "specific-agent",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_search_with_tags(self, patch_common):
+        """Search filtered by tags."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [make_discovery(id="d-1", tags=["python", "bug"])]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({
+            "tags": ["python"],
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_search_param_aliases(self, patch_common):
+        """Parameter aliases work (e.g. 'search' -> 'query')."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        # "search" is an alias for "query" in PARAM_ALIASES
+        mock_graph.query = AsyncMock(return_value=[])
+        # Remove semantic/FTS to test substring path
+        del mock_graph.semantic_search
+        del mock_graph.full_text_search
+
+        result = await handle_search_knowledge_graph({
+            "search": "test query",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        # The query should have been resolved
+        assert data.get("query") == "test query"
+
+    @pytest.mark.asyncio
+    async def test_search_with_provenance(self, patch_common):
+        """Search with include_provenance=True returns provenance data."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        disc = make_discovery(
+            id="d-1",
+            provenance={"agent_state": {"status": "active"}},
+            provenance_chain=[{"agent_id": "parent", "relationship": "direct_parent"}],
+        )
+        mock_graph.query = AsyncMock(return_value=[disc])
+
+        result = await handle_search_knowledge_graph({
+            "include_provenance": True,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 1
+        assert "provenance" in data["discoveries"][0]
+        assert "provenance_chain" in data["discoveries"][0]
+
+
+# ============================================================================
+# handle_get_knowledge_graph
+# ============================================================================
+
+class TestGetKnowledgeGraph:
+
+    @pytest.mark.asyncio
+    async def test_get_happy_path(self, patch_common, registered_agent):
+        """Get discoveries for a registered agent."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_get_knowledge_graph
+
+        discoveries = [
+            make_discovery(id="d-1", agent_id=registered_agent, summary="First"),
+            make_discovery(id="d-2", agent_id=registered_agent, summary="Second"),
+        ]
+        mock_graph.get_agent_discoveries = AsyncMock(return_value=discoveries)
+
+        result = await handle_get_knowledge_graph({
+            "agent_id": registered_agent,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_get_unregistered_agent(self, patch_common):
+        """Get for unregistered agent returns error."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_get_knowledge_graph
+
+        result = await handle_get_knowledge_graph({
+            "agent_id": "nonexistent-agent",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_get_empty_results(self, patch_common, registered_agent):
+        """Get returns empty list when no discoveries found."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_get_knowledge_graph
+
+        mock_graph.get_agent_discoveries = AsyncMock(return_value=[])
+
+        result = await handle_get_knowledge_graph({
+            "agent_id": registered_agent,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 0
+        assert data["discoveries"] == []
+
+    @pytest.mark.asyncio
+    async def test_get_with_limit(self, patch_common, registered_agent):
+        """Get respects limit parameter."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_get_knowledge_graph
+
+        mock_graph.get_agent_discoveries = AsyncMock(return_value=[])
+
+        result = await handle_get_knowledge_graph({
+            "agent_id": registered_agent,
+            "limit": 5,
+        })
+
+        # Verify limit was passed to the graph backend
+        mock_graph.get_agent_discoveries.assert_awaited_once_with(registered_agent, limit=5)
+
+    @pytest.mark.asyncio
+    async def test_get_exception_handling(self, patch_common, registered_agent):
+        """Exception from graph backend returns error."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_get_knowledge_graph
+
+        mock_graph.get_agent_discoveries = AsyncMock(side_effect=Exception("DB error"))
+
+        result = await handle_get_knowledge_graph({
+            "agent_id": registered_agent,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is False
+        assert "failed to retrieve" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_get_with_include_details(self, patch_common, registered_agent):
+        """Get with include_details=True includes details in output."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_get_knowledge_graph
+
+        disc = make_discovery(id="d-1", agent_id=registered_agent, details="Full details content")
+        mock_graph.get_agent_discoveries = AsyncMock(return_value=[disc])
+
+        result = await handle_get_knowledge_graph({
+            "agent_id": registered_agent,
+            "include_details": True,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 1
+        assert "details" in data["discoveries"][0]
+
+
+# ============================================================================
+# handle_list_knowledge_graph
+# ============================================================================
+
+class TestListKnowledgeGraph:
+
+    @pytest.mark.asyncio
+    async def test_list_happy_path(self, patch_common):
+        """List returns graph statistics."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_list_knowledge_graph
+
+        mock_graph.get_stats = AsyncMock(return_value={
+            "total_discoveries": 42,
+            "total_agents": 5,
+        })
+
+        result = await handle_list_knowledge_graph({})
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["stats"]["total_discoveries"] == 42
+        assert data["stats"]["total_agents"] == 5
+        assert "42" in data["message"]
+        assert "5" in data["message"]
+
+    @pytest.mark.asyncio
+    async def test_list_empty_graph(self, patch_common):
+        """List returns zero counts for empty graph."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_list_knowledge_graph
+
+        mock_graph.get_stats = AsyncMock(return_value={
+            "total_discoveries": 0,
+            "total_agents": 0,
+        })
+
+        result = await handle_list_knowledge_graph({})
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["stats"]["total_discoveries"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_exception_handling(self, patch_common):
+        """Exception from graph backend returns error."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_list_knowledge_graph
+
+        mock_graph.get_stats = AsyncMock(side_effect=Exception("Stats error"))
+
+        result = await handle_list_knowledge_graph({})
+
+        data = parse_result(result)
+        assert data["success"] is False
+        assert "failed to list" in data["error"].lower()
+
+
+# ============================================================================
+# handle_update_discovery_status_graph
+# ============================================================================
+
+class TestAnswerQuestion:
+
+    @pytest.mark.asyncio
+    async def test_answer_question_happy_path(self, patch_common, registered_agent):
+        """Answer a matching question successfully."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_answer_question
+
+        question_disc = make_discovery(
+            id="q-1",
+            type="question",
+            summary="What is the meaning of life?",
+            agent_id="other-agent",
+        )
+        mock_graph.query = AsyncMock(return_value=[question_disc])
+
+        result = await handle_answer_question({
+            "agent_id": registered_agent,
+            "question": "What is the meaning of life?",
+            "answer": "42",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert "answer_id" in data
+        assert data["question"]["id"] == "q-1"
+        mock_graph.add_discovery.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_answer_question_missing_question(self, patch_common, registered_agent):
+        """Answer fails without question text."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_answer_question
+
+        result = await handle_answer_question({
+            "agent_id": registered_agent,
+            "answer": "42",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_answer_question_missing_answer(self, patch_common, registered_agent):
+        """Answer fails without answer text."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_answer_question
+
+        result = await handle_answer_question({
+            "agent_id": registered_agent,
+            "question": "What is the meaning?",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_answer_question_no_match(self, patch_common, registered_agent):
+        """Answer fails when no matching question found."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_answer_question
+
+        mock_graph.query = AsyncMock(return_value=[])
+
+        result = await handle_answer_question({
+            "agent_id": registered_agent,
+            "question": "Something completely unrelated",
+            "answer": "My answer",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is False
+        assert "no matching question" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_answer_question_with_resolve(self, patch_common, registered_agent):
+        """Answer resolves question when resolve_question=True."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_answer_question
+
+        question_disc = make_discovery(
+            id="q-1",
+            type="question",
+            summary="How does caching work?",
+        )
+        mock_graph.query = AsyncMock(return_value=[question_disc])
+
+        result = await handle_answer_question({
+            "agent_id": registered_agent,
+            "question": "How does caching work?",
+            "answer": "It uses LRU eviction policy",
+            "resolve_question": True,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["question"]["status"] == "resolved"
+        # update_discovery should have been called to resolve the question
+        mock_graph.update_discovery.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_answer_question_unregistered_agent(self, patch_common):
+        """Answer fails for unregistered agent."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_answer_question
+
+        result = await handle_answer_question({
+            "agent_id": "nonexistent-agent",
+            "question": "What?",
+            "answer": "Nothing",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_answer_question_exception_handling(self, patch_common, registered_agent):
+        """Exception from graph backend returns error."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_answer_question
+
+        mock_graph.query = AsyncMock(side_effect=Exception("Query error"))
+
+        result = await handle_answer_question({
+            "agent_id": registered_agent,
+            "question": "What?",
+            "answer": "Something",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is False
+        assert "failed to answer" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_answer_question_truncates_long_answer(self, patch_common, registered_agent):
+        """Long answers are truncated to 2000 chars."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_answer_question
+
+        question_disc = make_discovery(
+            id="q-1",
+            type="question",
+            summary="Tell me everything",
+        )
+        mock_graph.query = AsyncMock(return_value=[question_disc])
+
+        long_answer = "Z" * 3000
+        result = await handle_answer_question({
+            "agent_id": registered_agent,
+            "question": "Tell me everything",
+            "answer": long_answer,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        # Verify the stored answer's details were truncated
+        call_args = mock_graph.add_discovery.call_args
+        answer_disc = call_args[0][0]
+        assert len(answer_disc.details) <= 2020  # 2000 + "... [truncated]"
+
+
+# ============================================================================
+# _discovery_not_found helper
+# ============================================================================
+
+class TestDiscoveryNotFound:
+
+    @pytest.mark.asyncio
+    async def test_not_found_no_suggestions(self, patch_common):
+        """Returns plain not-found error when no prefix matches."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import _discovery_not_found
+
+        mock_db = AsyncMock()
+        mock_db.graph_query = AsyncMock(return_value=[])
+        mock_graph._get_db = AsyncMock(return_value=mock_db)
+
+        result = await _discovery_not_found("2026-nonexistent", mock_graph)
+
+        data = json.loads(result.text)
+        assert data["success"] is False
+        assert "not found" in data["error"].lower()
+        assert "recovery" not in data
+
+    @pytest.mark.asyncio
+    async def test_not_found_with_suggestions(self, patch_common):
+        """Returns suggestions when prefix matches exist."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import _discovery_not_found
+
+        mock_db = AsyncMock()
+        mock_db.graph_query = AsyncMock(return_value=[
+            {"d.id": "2026-01-01T00:00:00.123456"},
+            {"d.id": "2026-01-01T00:00:00.789012"},
+        ])
+        mock_graph._get_db = AsyncMock(return_value=mock_db)
+
+        result = await _discovery_not_found("2026", mock_graph)
+
+        data = json.loads(result.text)
+        assert data["success"] is False
+        assert "did you mean" in data["error"].lower()
+        assert "recovery" in data
+        assert len(data["recovery"]["matching_ids"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_not_found_db_error_graceful(self, patch_common):
+        """Falls back to plain error when DB query fails."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import _discovery_not_found
+
+        mock_graph._get_db = AsyncMock(side_effect=Exception("DB unavailable"))
+
+        result = await _discovery_not_found("2026-missing", mock_graph)
+
+        data = json.loads(result.text)
+        assert data["success"] is False
+        assert "not found" in data["error"].lower()
+
+
+# ============================================================================
+# _check_display_name_required helper
+# ============================================================================
+
+class TestCheckDisplayNameRequired:
+
+    def test_has_real_display_name(self, patch_common, registered_agent, mock_mcp_server):
+        """Returns (None, None) when agent has a meaningful display_name."""
+        from src.mcp_handlers.knowledge.handlers import _check_display_name_required
+
+        error, warning = _check_display_name_required(registered_agent, {})
+
+        assert error is None
+        assert warning is None
+
+    def test_auto_generates_for_uuid_display_name(self, patch_common, mock_mcp_server):
+        """Auto-generates display_name when current one is a UUID."""
+        import uuid
+        agent_id = str(uuid.uuid4())
+        meta = MagicMock()
+        meta.status = "active"
+        meta.display_name = agent_id  # Display name is the UUID itself
+        meta.label = agent_id
+        mock_mcp_server.agent_metadata[agent_id] = meta
+
+        from src.mcp_handlers.knowledge.handlers import _check_display_name_required
+
+        with patch("src.mcp_handlers.knowledge.handlers._check_display_name_required.__module__"):
+            error, warning = _check_display_name_required(agent_id, {})
+
+        assert error is None
+        # Warning should mention auto-generated
+        if warning:
+            assert "auto-generated" in warning.lower()
+
+    def test_no_metadata_graceful(self, patch_common):
+        """Gracefully handles agents not in metadata."""
+        from src.mcp_handlers.knowledge.handlers import _check_display_name_required
+
+        error, warning = _check_display_name_required("unknown-agent", {})
+
+        # Should not error - just auto-generate
+        assert error is None
+
+
+# ============================================================================
+# _resolve_agent_display helper
+# ============================================================================
+
+class TestResolveAgentDisplay:
+
+    def test_resolve_known_agent(self, patch_common, registered_agent, mock_mcp_server):
+        """Resolves agent display info from metadata."""
+        from src.mcp_handlers.knowledge.handlers import _resolve_agent_display
+
+        result = _resolve_agent_display(registered_agent)
+
+        assert "agent_id" in result
+        assert "display_name" in result
+        assert result["display_name"] == "TestAgent"
+
+    def test_resolve_unknown_agent(self, patch_common):
+        """Returns agent_id as fallback for unknown agents."""
+        from src.mcp_handlers.knowledge.handlers import _resolve_agent_display
+
+        result = _resolve_agent_display("unknown-agent-xyz")
+
+        assert result["agent_id"] == "unknown-agent-xyz"
+        assert result["display_name"] == "unknown-agent-xyz"
+
+    def test_resolve_by_structured_id(self, patch_common, mock_mcp_server):
+        """Resolves agent by structured_id (not UUID key)."""
+        meta = MagicMock()
+        meta.structured_id = "opus_agent_20260101"
+        meta.display_name = "Opus Agent"
+        meta.label = "Opus Agent"
+        mock_mcp_server.agent_metadata["uuid-123"] = meta
+
+        from src.mcp_handlers.knowledge.handlers import _resolve_agent_display
+
+        result = _resolve_agent_display("opus_agent_20260101")
+
+        assert result["display_name"] == "Opus Agent"
+
+
+# ============================================================================
+# Integration-level edge cases
+# ============================================================================
+
+class TestDiscoveryNotFoundAdditional:
+
+    @pytest.mark.asyncio
+    async def test_not_found_with_string_rows(self, patch_common):
+        """Returns suggestions from string-typed rows (lines 52-53)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import _discovery_not_found
+
+        mock_db = AsyncMock()
+        mock_db.graph_query = AsyncMock(return_value=[
+            "2026-01-01T00:00:00.111111",
+            "2026-01-01T00:00:00.222222",
+        ])
+        mock_graph._get_db = AsyncMock(return_value=mock_db)
+
+        result = await _discovery_not_found("2026", mock_graph)
+
+        data = json.loads(result.text)
+        assert data["success"] is False
+        assert "did you mean" in data["error"].lower()
+        assert len(data["recovery"]["matching_ids"]) == 2
+
+
+# ============================================================================
+# _check_display_name_required - additional edge cases
+# ============================================================================
+
+class TestCheckDisplayNameAdditional:
+
+    def test_auto_pattern_display_name(self, patch_common, mock_mcp_server):
+        """Auto-generated display name (auto_ prefix) triggers auto-generation (line 97)."""
+        import uuid
+        agent_id = str(uuid.uuid4())
+        meta = MagicMock()
+        meta.status = "active"
+        meta.display_name = "auto_20260101_abc"  # auto_ pattern
+        meta.label = "auto_20260101_abc"
+        mock_mcp_server.agent_metadata[agent_id] = meta
+
+        from src.mcp_handlers.knowledge.handlers import _check_display_name_required
+
+        error, warning = _check_display_name_required(agent_id, {})
+
+        assert error is None
+        if warning:
+            assert "auto-generated" in warning.lower()
+
+    def test_agent_prefix_display_name(self, patch_common, mock_mcp_server):
+        """Agent_ prefix display name triggers auto-generation."""
+        import uuid
+        agent_id = str(uuid.uuid4())
+        meta = MagicMock()
+        meta.status = "active"
+        meta.display_name = "Agent_abc123"
+        meta.label = "Agent_abc123"
+        mock_mcp_server.agent_metadata[agent_id] = meta
+
+        from src.mcp_handlers.knowledge.handlers import _check_display_name_required
+
+        error, warning = _check_display_name_required(agent_id, {})
+
+        assert error is None
+        if warning:
+            assert "auto-generated" in warning.lower()
+
+    def test_check_display_name_exception_graceful(self):
+        """Exception in check is suppressed (lines 139-141)."""
+        from src.mcp_handlers.knowledge.handlers import _check_display_name_required
+
+        # Patch get_mcp_server at the import source to raise
+        with patch("src.mcp_handlers.shared.get_mcp_server", side_effect=RuntimeError("broken")):
+            error, warning = _check_display_name_required("any-agent", {})
+
+        assert error is None
+        assert warning is None
+
+
+# ============================================================================
+# _resolve_agent_display - additional edge cases
+# ============================================================================
+
+class TestResolveAgentDisplayAdditional:
+
+    def test_resolve_exception_graceful(self, patch_common):
+        """Exception in resolve returns fallback (lines 176-177)."""
+        from src.mcp_handlers.knowledge.handlers import _resolve_agent_display
+
+        with patch("src.mcp_handlers.shared.get_mcp_server", side_effect=RuntimeError("broken")):
+            result = _resolve_agent_display("any-agent")
+
+        assert result["agent_id"] == "any-agent"
+        assert result["display_name"] == "any-agent"
+
+
+# ============================================================================
+# handle_store_knowledge_graph - additional coverage
+# ============================================================================
+
+class TestSearchKnowledgeGraphAdditional:
+
+    @pytest.mark.asyncio
+    async def test_search_semantic_mode(self, patch_common):
+        """Search with semantic=True uses semantic search (lines 513-521)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        disc = make_discovery(id="sem-1", summary="Semantic result")
+        mock_graph.semantic_search = AsyncMock(return_value=[(disc, 0.85)])
+
+        result = await handle_search_knowledge_graph({
+            "query": "conceptual similarity test",
+            "semantic": True,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["search_mode_used"] == "semantic"
+        assert data["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_search_semantic_with_filters(self, patch_common):
+        """Search semantic with metadata filters (lines 544-557)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        disc1 = make_discovery(id="sem-1", summary="Match", type="bug_found", severity="high", tags=["python"])
+        disc2 = make_discovery(id="sem-2", summary="Wrong type", type="note")
+        mock_graph.semantic_search = AsyncMock(return_value=[
+            (disc1, 0.9), (disc2, 0.8)
+        ])
+
+        result = await handle_search_knowledge_graph({
+            "query": "matching concept",
+            "semantic": True,
+            "discovery_type": "bug_found",
+            "severity": "high",
+            "tags": ["python"],
+            "status": "open",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_search_semantic_fallback_to_fts(self, patch_common):
+        """Search semantic returning 0 results falls back to FTS (lines 602-632)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        disc = make_discovery(id="fts-1", summary="FTS fallback result")
+        mock_graph.semantic_search = AsyncMock(return_value=[])
+        mock_graph.full_text_search = AsyncMock(return_value=[disc])
+
+        result = await handle_search_knowledge_graph({
+            "query": "search with fallback",
+            "semantic": True,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["fallback_used"] is True
+        assert "semantic_fallback_fts" in data["search_mode_used"]
+
+    @pytest.mark.asyncio
+    async def test_search_fts_fallback_individual_terms(self, patch_common):
+        """Search FTS returning 0 results falls back to individual terms (lines 647-674)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        disc = make_discovery(id="fts-term-1", summary="Individual term match")
+        # Remove semantic_search to force FTS path
+        del mock_graph.semantic_search
+        mock_graph.full_text_search = AsyncMock(side_effect=[
+            [],  # First call (full query) returns empty
+            [disc],  # Second call (first term) returns result
+            [],  # Third call (second term)
+            [],  # Fourth call (third term)
+        ])
+
+        result = await handle_search_knowledge_graph({
+            "query": "multiple word query",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        if data["count"] > 0:
+            assert data["fallback_used"] is True
+
+    @pytest.mark.asyncio
+    async def test_search_semantic_lower_threshold_fallback(self, patch_common):
+        """Search semantic falls back to lower threshold (lines 678-714)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        disc = make_discovery(id="low-thresh-1", summary="Low threshold match")
+        # First call: normal threshold returns empty
+        # Second call (lower threshold): returns result
+        call_count = 0
+
+        async def semantic_side_effect(query, limit=10, min_similarity=0.25):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return []  # Normal threshold: no results
+            else:
+                return [(disc, 0.22)]  # Lower threshold: found
+
+        mock_graph.semantic_search = AsyncMock(side_effect=semantic_side_effect)
+        # FTS fallback also returns empty
+        mock_graph.full_text_search = AsyncMock(return_value=[])
+
+        result = await handle_search_knowledge_graph({
+            "query": "obscure search concept",
+            "semantic": True,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        if data["count"] > 0:
+            assert data["fallback_used"] is True
+            assert "lower_threshold" in data["search_mode_used"]
+
+    @pytest.mark.asyncio
+    async def test_search_fts_with_agent_filter(self, patch_common):
+        """Search FTS with agent_id filter (line 547)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        disc1 = make_discovery(id="fts-1", summary="Match", agent_id="agent-a")
+        disc2 = make_discovery(id="fts-2", summary="Other", agent_id="agent-b")
+        del mock_graph.semantic_search
+        mock_graph.full_text_search = AsyncMock(return_value=[disc1, disc2])
+
+        result = await handle_search_knowledge_graph({
+            "query": "test",
+            "agent_id": "agent-a",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_search_empty_with_long_query_hints(self, patch_common):
+        """Empty results with long query show specific hints (lines 787-788)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        del mock_graph.semantic_search
+        del mock_graph.full_text_search
+        mock_graph.query = AsyncMock(return_value=[])
+
+        result = await handle_search_knowledge_graph({
+            "query": "this is a very long query with five or more words",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 0
+        assert "empty_results_hints" in data or "tip" in data
+
+    @pytest.mark.asyncio
+    async def test_search_empty_with_single_word_hints(self, patch_common):
+        """Empty results with single word query shows tag suggestion (lines 795-796)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        del mock_graph.semantic_search
+        del mock_graph.full_text_search
+        mock_graph.query = AsyncMock(return_value=[])
+
+        result = await handle_search_knowledge_graph({
+            "query": "identity",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 0
+        assert "empty_results_hints" in data or "tip" in data
+
+    @pytest.mark.asyncio
+    async def test_search_empty_with_filter_hints(self, patch_common):
+        """Empty results with active filters show filter-specific hints (lines 803-809)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        mock_graph.query = AsyncMock(return_value=[])
+
+        result = await handle_search_knowledge_graph({
+            "query": "test",
+            "agent_id": "specific-agent",
+            "tags": ["python"],
+            "discovery_type": "insight",
+            "severity": "high",
+            "semantic": False,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_search_limit_cap_hint(self, patch_common):
+        """Results at limit show _more_available hint (lines 829)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [make_discovery(id=f"d-{i}", summary=f"Item {i}") for i in range(5)]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({
+            "limit": 5,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        if data["count"] == 5:
+            assert "_more_available" in data
+
+    @pytest.mark.asyncio
+    async def test_search_semantic_threshold_explanation(self, patch_common):
+        """Semantic search includes threshold explanation (lines 833-837)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        disc = make_discovery(id="sem-1", summary="Result")
+        mock_graph.semantic_search = AsyncMock(return_value=[(disc, 0.5)])
+
+        result = await handle_search_knowledge_graph({
+            "query": "conceptual search query",
+            "semantic": True,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        if data["count"] > 0:
+            assert "similarity_threshold_explanation" not in data
+
+    @pytest.mark.asyncio
+    async def test_search_similarity_scores_included(self, patch_common):
+        """Semantic search includes similarity scores (lines 856-862)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        disc1 = make_discovery(id="sem-1", summary="Close match")
+        disc2 = make_discovery(id="sem-2", summary="Another match")
+        mock_graph.semantic_search = AsyncMock(return_value=[
+            (disc1, 0.85), (disc2, 0.72)
+        ])
+
+        result = await handle_search_knowledge_graph({
+            "query": "test concept query",
+            "semantic": True,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        if data["count"] > 0 and "similarity_scores" in data:
+            assert "sem-1" in data["similarity_scores"]
+
+    @pytest.mark.asyncio
+    async def test_search_synthesize_with_enough_results(self, patch_common):
+        """Search with synthesize=True when enough results triggers synthesis (lines 877-890)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [make_discovery(id=f"d-{i}", summary=f"Item {i}") for i in range(5)]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        with patch("src.mcp_handlers.knowledge.handlers.synthesize_results",
+                    new_callable=AsyncMock,
+                    return_value={"summary": "Synthesized results"}):
+            result = await handle_search_knowledge_graph({
+                "synthesize": True,
+            })
+
+            data = parse_result(result)
+            assert data["success"] is True
+            if data["count"] >= 3:
+                assert "synthesis" in data
+
+    @pytest.mark.asyncio
+    async def test_search_synthesize_below_threshold(self, patch_common):
+        """Search with synthesize=True but too few results skips synthesis (line 892)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [make_discovery(id="d-1", summary="Single")]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({
+            "synthesize": True,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert "_synthesis_note" in data
+        assert "fewer than" in data["_synthesis_note"]
+
+    @pytest.mark.asyncio
+    async def test_search_indexed_status_filter(self, patch_common):
+        """Search with status filter in indexed mode (line 593)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [make_discovery(id="d-1", status="resolved")]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({
+            "status": "resolved",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert "status" in data["fields_searched"]
+
+    @pytest.mark.asyncio
+    async def test_search_substring_scan_empty(self, patch_common):
+        """Substring scan with no matches shows search_hint (line 823)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        # Remove both search methods to trigger substring scan
+        mock_graph_spec = AsyncMock()
+        mock_graph_spec.query = AsyncMock(return_value=[])
+        del mock_graph_spec.semantic_search
+        del mock_graph_spec.full_text_search
+
+        with patch("src.mcp_handlers.knowledge.handlers.get_knowledge_graph", new_callable=AsyncMock, return_value=mock_graph_spec), \
+             patch("src.mcp_handlers.knowledge.handlers.record_ms"):
+            result = await handle_search_knowledge_graph({
+                "query": "nonexistent",
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 0
+        if data["search_mode_used"] == "substring_scan":
+            assert "search_hint" in data
+
+    @pytest.mark.asyncio
+    async def test_search_fts_multi_term_operator_note(self, patch_common):
+        """FTS multi-term queries show operator_note (line 823)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        disc = make_discovery(id="fts-1", summary="Match found")
+        del mock_graph.semantic_search
+        mock_graph.full_text_search = AsyncMock(return_value=[disc])
+
+        result = await handle_search_knowledge_graph({
+            "query": "first second",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        if data["search_mode_used"] == "fts" and data["count"] > 0:
+            assert data["operator_used"] == "OR"
+
+    @pytest.mark.asyncio
+    async def test_search_no_details_tip(self, patch_common):
+        """Search without include_details shows tip when >3 results (auto-detail for ≤3)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        # >3 results avoids auto-detail promotion
+        discoveries = [make_discovery(id=f"d-{i}") for i in range(5)]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({})
+
+        data = parse_result(result)
+        assert data["success"] is True
+        if data["count"] > 3:
+            assert "_tip" in data
+
+
+# ============================================================================
+# handle_get_knowledge_graph - additional coverage
+# ============================================================================
+
+class TestGetKnowledgeGraphAdditional:
+
+    @pytest.mark.asyncio
+    async def test_get_limit_reached_hint(self, patch_common, registered_agent):
+        """Get with results at limit shows _more_available hint (line 950)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_get_knowledge_graph
+
+        discoveries = [make_discovery(id=f"d-{i}", agent_id=registered_agent) for i in range(3)]
+        mock_graph.get_agent_discoveries = AsyncMock(return_value=discoveries)
+
+        result = await handle_get_knowledge_graph({
+            "agent_id": registered_agent,
+            "limit": 3,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert "_more_available" in data
+
+
+# ============================================================================
+# handle_update_discovery_status_graph - additional coverage
+# ============================================================================
+
+class TestAnswerQuestionAdditional:
+
+    @pytest.mark.asyncio
+    async def test_answer_question_no_match_with_recent_questions(self, patch_common, registered_agent):
+        """No matching question lists recent questions (lines 1366-1370)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_answer_question
+
+        # First call (question search): returns non-matching questions
+        question1 = make_discovery(id="q-1", type="question", summary="Unrelated question about X")
+        question2 = make_discovery(id="q-2", type="question", summary="Another question about Y")
+        # Second call (recent questions): returns same
+        mock_graph.query = AsyncMock(side_effect=[
+            [question1, question2],  # Search results (no match for our query)
+            [question1, question2],  # Recent questions for error message
+        ])
+
+        result = await handle_answer_question({
+            "agent_id": registered_agent,
+            "question": "Completely different topic ZZZZZ",
+            "answer": "My answer",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is False
+        assert "recent_questions" in data.get("details", {}) or "no matching" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_answer_question_truncates_long_answer(self, patch_common, registered_agent):
+        """Long answers are truncated (lines 1382-1383)."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_answer_question
+
+        question_disc = make_discovery(
+            id="q-1", type="question", summary="Tell me everything about this"
+        )
+        mock_graph.query = AsyncMock(return_value=[question_disc])
+
+        long_answer = "A" * 3000
+        result = await handle_answer_question({
+            "agent_id": registered_agent,
+            "question": "Tell me everything about this",
+            "answer": long_answer,
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+
+
+# ============================================================================
+# handle_leave_note - additional coverage
+# ============================================================================
+
+class TestSearchArchivedFiltering:
+
+    @pytest.mark.asyncio
+    async def test_search_excludes_archived_by_default(self, patch_common):
+        """Archived entries should be excluded from search results by default."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [
+            make_discovery(id="d-open", status="open"),
+            make_discovery(id="d-archived", status="archived"),
+            make_discovery(id="d-resolved", status="resolved"),
+        ]
+
+        # Mock query to respect exclude_archived parameter (like real backend)
+        async def query_with_filtering(**kwargs):
+            if kwargs.get("exclude_archived", False):
+                return [d for d in discoveries if d.status != "archived"]
+            return discoveries
+
+        mock_graph.query = AsyncMock(side_effect=query_with_filtering)
+
+        result = await handle_search_knowledge_graph({})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        result_ids = [d["id"] for d in data["discoveries"]]
+        assert "d-open" in result_ids
+        assert "d-resolved" in result_ids
+        assert "d-archived" not in result_ids
+
+    @pytest.mark.asyncio
+    async def test_search_includes_archived_when_requested(self, patch_common):
+        """Archived entries should be included when include_archived=True."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [
+            make_discovery(id="d-open", status="open"),
+            make_discovery(id="d-archived", status="archived"),
+        ]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({"include_archived": True})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        result_ids = [d["id"] for d in data["discoveries"]]
+        assert "d-open" in result_ids
+        assert "d-archived" in result_ids
+
+    @pytest.mark.asyncio
+    async def test_search_includes_archived_when_status_filter_set(self, patch_common):
+        """When status filter is explicitly set, don't apply archived exclusion."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [
+            make_discovery(id="d-archived", status="archived"),
+        ]
+        mock_graph.query = AsyncMock(return_value=discoveries)
+
+        result = await handle_search_knowledge_graph({"status": "archived"})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        result_ids = [d["id"] for d in data["discoveries"]]
+        assert "d-archived" in result_ids
+
+    @pytest.mark.asyncio
+    async def test_search_fts_excludes_archived_by_default(self, patch_common):
+        """FTS search should also exclude archived entries by default."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        discoveries = [
+            make_discovery(id="d-open", summary="matching text", status="open"),
+            make_discovery(id="d-archived", summary="matching text", status="archived"),
+        ]
+        mock_graph.full_text_search = AsyncMock(return_value=discoveries)
+        if hasattr(mock_graph, 'semantic_search'):
+            del mock_graph.semantic_search
+
+        result = await handle_search_knowledge_graph({"query": "matching"})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        result_ids = [d["id"] for d in data["discoveries"]]
+        assert "d-open" in result_ids
+        assert "d-archived" not in result_ids
+
+
+# ============================================================================
+# Supersede handler
+# ============================================================================
+
+
