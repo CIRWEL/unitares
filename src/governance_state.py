@@ -34,7 +34,7 @@ class GovernanceState:
     ))
     
     # Derived metrics (computed from UNITARES state)
-    coherence: float = 1.0      # Computed from UNITARES coherence function
+    coherence: float = 0.5      # Computed from UNITARES coherence function (midpoint default)
     void_active: bool = False     # Whether E-I imbalance exceeds threshold (|V| > threshold)
     
     # History tracking

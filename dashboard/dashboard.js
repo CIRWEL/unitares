@@ -941,7 +941,7 @@ async function loadAgents() {
         if (fleetCoherenceEl && fleetDetailEl) {
             const agentsWithMetrics = allAgents.filter(a => {
                 const m = a.metrics || {};
-                return m.coherence !== undefined && m.coherence !== null;
+                return m.coherence !== undefined && m.coherence !== null && (a.total_updates || 0) > 0;
             });
             if (agentsWithMetrics.length > 0) {
                 const avgCoherence = agentsWithMetrics.reduce((sum, a) => sum + Number(a.metrics.coherence), 0) / agentsWithMetrics.length;
