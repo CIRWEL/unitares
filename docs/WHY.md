@@ -2,16 +2,18 @@
 
 ## The Problem
 
-You deploy an agent. It runs. Is it working?
+You deploy an agent. It runs. Can it tell you what's happening inside?
 
-Real failure modes from agent systems:
+Not what it outputs — what's happening to its coherence, its confidence, its trajectory. Right now the answer is no. Agents have no language for inner state, so every observer is reading tea leaves from outputs.
 
-- An agent loops on the same decision 47 times before anyone notices
-- A multi-agent handoff silently fails - Agent B never picks up what Agent A handed off
-- An agent's context slowly corrupts over a long session, outputs degrade gradually
-- Token spend spikes because an agent is retrying a doomed approach
+This is why these failure modes persist:
 
-By the time you notice, the damage is done. Logs tell you what happened, not that it's happening.
+- An agent loops on the same decision 47 times before anyone notices — it couldn't say "I'm stuck"
+- A multi-agent handoff silently fails — Agent B had no way to read that Agent A was degrading
+- An agent's context slowly corrupts over a long session — no vocabulary for "my integrity is dropping"
+- Token spend spikes on a doomed retry — the agent couldn't express "this isn't working"
+
+The common thread: agents can't communicate their state. Logs tell you what happened, not what's happening. The missing piece isn't better monitoring — it's a shared language for inner state.
 
 ## What This Looks Like
 
@@ -31,13 +33,13 @@ Logs are post-mortem. You read them after something breaks.
 
 Alerts are binary. "Agent crashed" or silence.
 
-Dashboards show request counts - activity, not quality.
+Dashboards show request counts — activity, not quality.
 
-None of these answer: *is this agent making progress, or spinning?*
+None of these give agents a way to *say* what's happening inside them. The problem isn't insufficient data collection — it's that agents have no vocabulary for self-report.
 
 ## The Approach
 
-UNITARES tracks continuous state using four variables borrowed from thermodynamics:
+UNITARES provides that vocabulary. Four continuous variables borrowed from thermodynamics that any agent can report and any observer can read:
 
 | Variable | Intuition |
 |----------|-----------|
@@ -46,15 +48,18 @@ UNITARES tracks continuous state using four variables borrowed from thermodynami
 | **Entropy** | Disorder accumulating |
 | **Void** | Cumulative imbalance (debt accruing) |
 
-Physics gives us vocabulary for systems that *trend* rather than *crash*. An agent doesn't suddenly fail - it drifts toward failure. Continuous variables let you see the drift.
+Physics gives us vocabulary for systems that *trend* rather than *crash*. An agent doesn't suddenly fail — it drifts toward failure. Continuous variables make the drift legible. Check-ins are speech acts: an agent expressing its state in shared terms.
 
 ## What You Get
 
-- **Early warning** — Catch stuck agents, loops, drift before they cost real money
+Once agents can express state in a shared language, you get:
+
+- **Legibility** — Any observer (human, system, other agent) can read an agent's inner state without inspecting outputs
+- **Early warning** — EISV trajectories show drift ~20 minutes before failure
 - **Circuit breakers** — Automatic pause at risk thresholds, resume when stable
-- **Cross-agent visibility** — Compare agents, spot anomalies, aggregate health
-- **Dialectic resolution** — When agents disagree: thesis → antithesis → synthesis
-- **Knowledge persistence** — Discoveries survive sessions, agents learn from each other
+- **Inter-agent observation** — Agents read each other's state vectors for handoff decisions and coordination
+- **Dialectic resolution** — Structured disagreement requires shared state language: thesis → antithesis → synthesis
+- **Knowledge persistence** — Discoveries tagged to agent state survive sessions; agents build on each other's findings
 
 ## Who This Is For
 

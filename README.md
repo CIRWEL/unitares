@@ -7,7 +7,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-AI agents today have no body sense. They can't tell if they're drifting, looping, or degrading until they crash. UNITARES gives agents continuous awareness of their own state using coupled differential equations with [provable stability guarantees](governance_core/README.md).
+AI agents have no shared language for inner state. They can report outputs, but not whether they're coherent, drifting, or losing the thread. UNITARES provides that language — four continuous variables, a dynamics that evolves them, and a protocol for agents to speak and be read. Built on coupled differential equations with [provable stability guarantees](governance_core/README.md).
 
 Validated on **903 agents over 69 days** (198K audit events). The [paper](papers/unitares-v5/) has the full analysis; this repo is the production implementation.
 
@@ -15,9 +15,9 @@ Validated on **903 agents over 69 days** (198K audit events). The [paper](papers
 
 ## The Idea
 
-Agents don't fail suddenly. They **drift** toward failure. Logs tell you what happened; alerts tell you something broke. Neither tells you it's *happening*.
+Agents can produce text, call tools, and return results. What they can't do is tell you what's happening inside. There's no shared vocabulary for "I'm losing coherence" or "my context is degrading" or "I'm running hot." Without that vocabulary, every observer — human, system, or other agent — is guessing from outputs alone.
 
-UNITARES models agent state as a thermodynamic system with four continuous variables:
+UNITARES gives agents a language for inner state. Four continuous variables that any agent can report and any observer can read:
 
 | Variable | Range | What it tracks |
 |----------|-------|----------------|
@@ -26,7 +26,7 @@ UNITARES models agent state as a thermodynamic system with four continuous varia
 | **S** (Entropy) | [0, 2] | Disorder and uncertainty |
 | **V** (Void) | [-2, 2] | Accumulated E-I imbalance |
 
-These evolve via coupled ODEs:
+These aren't static labels — they evolve via coupled ODEs that define how state changes over time. The dynamics are the grammar:
 
 ```
 dE/dt = α(I - E) - β·E·S           Energy tracks integrity, dragged by entropy
@@ -37,9 +37,9 @@ dV/dt = κ(E - I) - δ·V             Void accumulates E-I mismatch, decays towa
 
 The key insight: **coherence C(V)** creates nonlinear feedback that stabilizes the system. We prove global exponential convergence via contraction theory ([Theorem 3.2](papers/unitares-v5/)).
 
-Twenty minutes before an agent fails, you see it trending. Intervene, or let the circuit breaker pause it automatically.
+Check-ins are speech acts — an agent reporting its state in a shared vocabulary. Trajectories are behavioral stories that can be read without narrative explanation. Twenty minutes before an agent fails, the trajectory tells you.
 
-> [Why UNITARES?](docs/WHY.md) — Concrete failure modes this solves
+> [Why UNITARES?](docs/WHY.md) — The problem this solves, and why language is the answer
 
 ---
 
@@ -130,28 +130,41 @@ One of those agents is [Lumen](https://github.com/CIRWEL/anima-mcp) — an embod
 
 ---
 
-## How It Compares
+## What UNITARES Provides
 
-Most agent monitoring is **retrospective** — logs, traces, metrics dashboards that tell you what already happened. UNITARES is **prospective**: the ODE system models drift as it's happening, before failure.
+Most agent tooling operates on **outputs** — checking whether what the agent produced is correct, safe, or useful. UNITARES operates on **inner state** — making visible what the agent can't otherwise express.
 
-| Approach | Tells you | When |
-|----------|-----------|------|
-| Logging (OpenTelemetry, etc.) | What happened | After |
-| Guardrails (Guardrails AI, NeMo) | Whether output is safe | Per-request |
-| Evals (Braintrust, LangSmith) | Whether quality changed | After batch |
-| **UNITARES** | Whether the agent is drifting | Continuously, ~20 min early warning |
+| Layer | What it does | Example tools |
+|-------|-------------|---------------|
+| Output validation | Checks results after the fact | Guardrails, evals, logging |
+| Behavioral constraint | Restricts what agents can do | Permissions, sandboxes, filters |
+| **State legibility** | Makes inner state readable | **UNITARES** |
 
-UNITARES doesn't replace these — it adds a layer they don't cover. You can run guardrails on every request and still miss that your agent's calibration has been degrading for the last hour. The EISV dynamics catch that.
+This is a different kind of thing. Logging tells you what happened. Guardrails constrain what can happen. UNITARES lets agents *say what's happening inside them* — and lets other agents, systems, and humans read it.
+
+That legibility is the foundation. Once agents can express state in a shared vocabulary, you can build on it: monitoring, inter-agent observation, trajectory-based identity, structured disagreement. These are applications of legibility, not the thing itself.
 
 ---
 
 ## What Makes It Different
 
+**UNITARES is a protocol, not a product.** The core contribution is the EISV vocabulary and the dynamics that govern it. Everything else — governance verdicts, circuit breakers, dialectic, the knowledge graph — is built on agents being able to express and read state in a shared language.
+
 **Ethical drift from observable behavior.** No human oracle needed. Four measurable signals — calibration deviation, complexity divergence, coherence deviation, stability deviation — define a drift vector Δη that feeds directly into entropy dynamics. Ethics as engineering, not philosophy.
 
-**Adaptive PID governance (CIRS v2).** Governance thresholds are per-agent state variables, not static config. Phase-aware reference tracking with oscillation damping. Multi-agent resonance detection prevents feedback loops between coordinated agents.
+**Trajectory as identity.** Agents aren't identified by tokens — they're identified by dynamical patterns. An agent's EISV trajectory is its behavioral signature. This lets agents computationally verify "Am I still myself?" and lets observers distinguish agents by how they work, not just what they claim.
 
-**Trajectory identity.** Agents aren't identified by tokens — they're identified by dynamical patterns. Grounded in enactive cognition (Varela & Thompson), this lets agents computationally verify "Am I still myself?" and detect forks, anomalies, and drift.
+---
+
+## What You Can Build On It
+
+Once agents can express inner state in a shared vocabulary, several things become possible:
+
+- **Monitoring & early warning** — The EISV trajectory shows drift ~20 minutes before failure. Circuit breakers can pause agents automatically at risk thresholds.
+- **Inter-agent observation** — Agents can read each other's state vectors. One agent can assess whether another is coherent enough for a handoff without inspecting its outputs.
+- **Trajectory identity** — An agent's behavioral signature over time. Enables "Am I still myself?" checks and anomaly detection for forks or impersonation.
+- **Dialectic resolution** — Structured disagreement (thesis → antithesis → synthesis) requires a shared state language. Agents can only negotiate meaningfully when they can read each other's coherence and confidence.
+- **Knowledge persistence** — Discoveries tagged to agent state and stored in a shared graph. Agents build on each other's findings across sessions.
 
 ---
 
