@@ -714,6 +714,16 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             )
             if newly_persisted:
                 logger.info(f"[ONBOARD] Persisted fresh identity {agent_uuid[:8]}... to PostgreSQL")
+                # Sync parent_agent_id to in-memory metadata for EISV inheritance
+                if _parent_agent_id:
+                    try:
+                        from src.agent_metadata_model import agent_metadata as _agent_metadata
+                        from src.agent_metadata_persistence import get_or_create_metadata
+                        meta = get_or_create_metadata(agent_uuid)
+                        meta.parent_agent_id = _parent_agent_id
+                        meta.spawn_reason = _spawn_reason
+                    except Exception as e:
+                        logger.debug(f"[ONBOARD] Could not sync parent to metadata: {e}")
             else:
                 logger.debug(f"[ONBOARD] Fresh identity {agent_uuid[:8]}... was already persisted")
 
