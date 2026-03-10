@@ -236,16 +236,30 @@ def _isolate_identity_state():
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _cleanup_stale_ghost_files():
+    """Remove test agent files left over from previous test runs."""
+    from pathlib import Path
+    agents_dir = Path(__file__).parent.parent / "data" / "agents"
+    if agents_dir.exists():
+        for pattern in ["test_*_state.json", ".test_*_state.lock",
+                        "mcp_*test*_state.json", ".mcp_*test*_state.lock"]:
+            for f in agents_dir.glob(pattern):
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _cleanup_ghost_agent_state_files():
     """
-    Remove agent state files created during the test session.
+    Remove agent state files created during each test.
 
     Tests that call dispatch_tool("process_agent_update") or create
     UNITARESMonitor instances with load_state=True auto-save state to
-    data/agents/{agent_id}_state.json. These accumulate across runs.
-
-    This fixture snapshots existing files before the session, then
-    removes any new files created during tests.
+    data/agents/{agent_id}_state.json. Without per-test cleanup, these
+    accumulate and can cause cross-test contamination.
     """
     from pathlib import Path
     agents_dir = Path(__file__).parent.parent / "data" / "agents"
@@ -254,7 +268,7 @@ def _cleanup_ghost_agent_state_files():
 
     yield
 
-    # Remove files created during this test session
+    # Remove files created during this test
     for f in agents_dir.iterdir():
         if f not in pre_existing:
             try:
