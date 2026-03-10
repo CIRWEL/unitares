@@ -158,24 +158,18 @@ async def test_authentication_failures():
     assert "mismatch" in error_msg or "bound" in error_msg, f"Should mention session mismatch (got: {error_msg})"
     print("✅ Session binding prevents accessing other agents")
 
-    # Recover if agent was paused by governance thresholds
-    result = await dispatch_tool("self_recovery", {"action": "quick"})
-    recovered = False
-    if result:
-        recovery_data = json.loads(result[0].text)
-        if recovery_data.get("success"):
-            recovered = True
-            print("  (recovered agent from paused state via quick)")
-    # Fall back to review recovery if quick didn't work
-    if not recovered:
-        result = await dispatch_tool("self_recovery", {
-            "action": "review",
-            "reflection": "Test recovery after session mismatch triggered circuit breaker"
-        })
-        if result:
-            recovery_data = json.loads(result[0].text)
-            if recovery_data.get("success"):
-                print("  (recovered agent from paused state via review)")
+    # Direct reset if agent was paused by governance thresholds.
+    # This test validates session binding, not recovery mechanics — skip the
+    # recovery tool dance (which depends on EISV thresholds that vary by run).
+    from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
+    meta = mcp_server.agent_metadata.get(bound_agent)
+    if meta and meta.status == "paused":
+        meta.status = "active"
+        meta.paused_at = None
+        # Clear rapid-fire timestamps so loop detector doesn't re-pause immediately
+        meta.recent_update_timestamps = []
+        meta.recent_decisions = []
+        print("  (directly reset paused agent for session binding test)")
 
     # Test using the bound agent works
     result = await dispatch_tool("process_agent_update", {
