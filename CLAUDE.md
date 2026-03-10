@@ -14,7 +14,7 @@ UNITARES governance MCP server. Thermodynamic governance framework for AI agents
 
 ## Before Committing
 
-- **ALWAYS run `python3 -m pytest tests/ -q --tb=short -x --ignore=tests/test_admin_handlers.py` before committing**
+- **ALWAYS run `python3 -m pytest tests/ -q --tb=short -x` before committing**
 - Fix any test failures your changes introduce — do not commit broken tests
 - If you change a function's behavior or signature, update its tests in the same commit
 - If you do a mechanical refactor (renames, import changes), update affected test mocks before committing
@@ -40,10 +40,9 @@ UNITARES governance MCP server. Thermodynamic governance framework for AI agents
 - Do not run DROP/TRUNCATE/DELETE on the governance database without explicit user approval
 - Do not include Co-Authored-By lines in commit messages
 
-## Known Test Exclusions
+## Known Test Notes
 
-- `tests/test_admin_handlers.py` — pre-existing `TOOL_PARAM_SCHEMAS` reference to removed code
-- `tests/test_knowledge_graph_handlers.py` — some tests require live AGE connection (errors, not failures)
+- Knowledge graph AGE tests require a live AGE connection (errors, not failures, when unavailable)
 
 ## Service Management
 
