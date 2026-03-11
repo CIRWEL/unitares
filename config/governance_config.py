@@ -476,6 +476,7 @@ class GovernanceConfig:
         if void_active:
             return {
                 'action': 'pause',
+                'sub_action': 'void_pause',
                 'reason': 'Energy-integrity imbalance detected - time to recalibrate',
                 'guidance': 'System needs a moment to stabilize. Take a break or shift focus.',
                 'margin': 'critical',
@@ -489,6 +490,7 @@ class GovernanceConfig:
         if coherence < effective_coherence_threshold:
             return {
                 'action': 'pause',
+                'sub_action': 'coherence_pause',
                 'reason': f'Coherence needs attention ({coherence:.2f}) - moment to regroup',
                 'guidance': 'Things are getting fragmented. Simplify, refocus, or take a breather.',
                 'margin': 'critical',
@@ -508,6 +510,7 @@ class GovernanceConfig:
             margin_to_pause = effective_revise_threshold - risk_score
             return {
                 'action': 'proceed',
+                'sub_action': 'approve',
                 'reason': f'Low complexity ({risk_score:.1%}) - healthy operating range',
                 'guidance': f'{margin_to_pause:.0%} margin to PAUSE threshold ({effective_revise_threshold:.0%})',
                 'margin': margin_info['margin'],
@@ -527,6 +530,7 @@ class GovernanceConfig:
 
             return {
                 'action': 'proceed',
+                'sub_action': 'guide',
                 'reason': f'Moderate complexity ({risk_score:.1%}) - PAUSE threshold: {effective_revise_threshold:.0%}',
                 'guidance': guidance,
                 'margin': margin_info['margin'],
@@ -536,6 +540,7 @@ class GovernanceConfig:
         # High attention: pause
         return {
             'action': 'pause',
+            'sub_action': 'reject',
             'reason': f'Complexity threshold reached ({risk_score:.1%} ≥ {effective_revise_threshold:.0%})',
             'guidance': f'Pause suggested: simplify approach, break into smaller steps, or take a break. Coherence: {coherence:.2f} (critical: {effective_coherence_threshold:.2f})',
             'margin': margin_info['margin'],

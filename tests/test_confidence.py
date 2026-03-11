@@ -73,12 +73,12 @@ class TestDeriveConfidenceBasic:
     def test_none_state(self):
         confidence, metadata = derive_confidence(None)
         assert confidence == max(0.05, min(0.95, 0.5))  # default eisv_confidence
-        assert metadata["source"] == "eisv_only"
+        assert metadata["source"] == "eisv_with_variance"
 
-    def test_source_is_eisv_only(self):
+    def test_source_is_eisv_with_variance(self):
         state = _mock_state()
         _, metadata = derive_confidence(state)
-        assert metadata["source"] == "eisv_only"
+        assert metadata["source"] == "eisv_with_variance"
 
 
 # ============================================================================

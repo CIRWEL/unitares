@@ -937,7 +937,18 @@ class UNITARESMonitor:
         lambda1_skipped = False
         if self.state.update_count % 5 == 0:  # Update λ₁ every 5 cycles
             # Gate lambda1 updates based on confidence
-            if confidence >= config.CONTROLLER_CONFIDENCE_THRESHOLD:
+            # Relax threshold when coherence is declining — prevents feedback loop
+            # where low confidence blocks the controller that would fix declining coherence
+            effective_conf_threshold = config.CONTROLLER_CONFIDENCE_THRESHOLD
+            if (hasattr(self.state, 'coherence') and
+                    self.state.coherence < config.TARGET_COHERENCE and
+                    hasattr(self.state, 'coherence_history') and
+                    len(self.state.coherence_history) >= 3):
+                recent = list(self.state.coherence_history)[-3:]
+                if recent[-1] < recent[0]:  # declining trend
+                    effective_conf_threshold = 0.40
+
+            if confidence >= effective_conf_threshold:
                 self.update_lambda1()
             else:
                 # Skip lambda1 update due to low confidence
@@ -951,14 +962,14 @@ class UNITARESMonitor:
                 audit_logger.log_lambda1_skip(
                     agent_id=self.agent_id,
                     confidence=confidence,
-                    threshold=config.CONTROLLER_CONFIDENCE_THRESHOLD,
+                    threshold=effective_conf_threshold,
                     update_count=self.state.update_count,
-                    reason=f"confidence {confidence:.3f} < threshold {config.CONTROLLER_CONFIDENCE_THRESHOLD}"
+                    reason=f"confidence {confidence:.3f} < threshold {effective_conf_threshold}"
                 )
-                
+
                 logger.debug(
                     f"Skipping λ₁ update for {self.agent_id}: "
-                    f"confidence {confidence:.3f} < threshold {config.CONTROLLER_CONFIDENCE_THRESHOLD}"
+                    f"confidence {confidence:.3f} < threshold {effective_conf_threshold}"
                 )
         
         # Step 4: Estimate risk (also gets UNITARES verdict)
@@ -1202,7 +1213,7 @@ class UNITARESMonitor:
         # Backward compatibility: ensure decision_history exists (for instances created before this feature)
         if not hasattr(self.state, 'decision_history'):
             self.state.decision_history = []
-        self.state.decision_history.append(decision['action'])
+        self.state.decision_history.append(decision.get('sub_action', decision['action']))
         if len(self.state.decision_history) > config.HISTORY_WINDOW:
             self.state.decision_history = self.state.decision_history[-config.HISTORY_WINDOW:]
         

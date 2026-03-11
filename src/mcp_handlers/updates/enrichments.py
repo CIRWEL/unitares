@@ -17,6 +17,34 @@ from .context import UpdateContext
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
+# ─── Identity Reminder ─────────────────────────────────────────────────
+
+def enrich_identity_reminder(ctx: UpdateContext) -> None:
+    """Suggest agents set label/purpose during their first 3 updates."""
+    try:
+        meta = ctx.meta
+        if not meta:
+            return
+        update_count = getattr(meta, 'total_updates', 0) or 0
+        if update_count > 3:
+            return
+        has_label = bool(getattr(meta, 'label', None))
+        has_purpose = bool(getattr(meta, 'purpose', None))
+        if has_label and has_purpose:
+            return
+        missing = []
+        if not has_label:
+            missing.append("label (identity(name='YourName'))")
+        if not has_purpose:
+            missing.append("purpose (process_agent_update with purpose='...')")
+        ctx.response_data['identity_reminder'] = {
+            'message': f"Consider setting your {' and '.join(missing)} for better governance tracking.",
+            'missing': missing,
+            'update_count': update_count,
+        }
+    except Exception as e:
+        logger.debug(f"Could not enrich identity reminder: {e}")
+
 # ─── Interpretation & Feedback ──────────────────────────────────────────
 
 async def enrich_state_interpretation(ctx: UpdateContext) -> None:

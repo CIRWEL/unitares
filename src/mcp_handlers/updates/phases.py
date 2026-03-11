@@ -25,6 +25,30 @@ from ..utils import error_response
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
+# ─── Purpose Inference ─────────────────────────────────────────────────
+
+_PURPOSE_KEYWORDS = {
+    'debugging': ('debug', 'fix', 'bug', 'error', 'traceback', 'exception', 'crash'),
+    'implementation': ('implement', 'build', 'create', 'add', 'feature', 'develop'),
+    'testing': ('test', 'assert', 'coverage', 'pytest', 'unittest', 'spec'),
+    'review': ('review', 'audit', 'inspect', 'check', 'verify', 'validate'),
+    'deployment': ('deploy', 'release', 'ship', 'publish', 'launch', 'rollout'),
+    'exploration': ('explore', 'research', 'investigate', 'analyze', 'understand', 'learn'),
+}
+
+def _infer_purpose(response_text: str) -> Optional[str]:
+    """Infer agent purpose from response text via keyword matching."""
+    text_lower = response_text.lower()
+    best_purpose = None
+    best_count = 0
+    for purpose, keywords in _PURPOSE_KEYWORDS.items():
+        count = sum(1 for kw in keywords if kw in text_lower)
+        if count > best_count:
+            best_count = count
+            best_purpose = purpose
+    return best_purpose if best_count >= 1 else None
+
+
 # ─── Phase 1: Identity Resolution & Guards ─────────────────────────────
 
 async def resolve_identity_and_guards(ctx: UpdateContext) -> Optional[Sequence[TextContent]]:
@@ -631,6 +655,21 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
 
     # Cache monitor reference for Phase 5 and Phase 6 (guaranteed to exist post-ODE)
     ctx.monitor = mcp_server.monitors.get(ctx.agent_id)
+
+    # Auto-infer purpose from response_text if agent has none
+    try:
+        meta = ctx.meta
+        if meta and not getattr(meta, 'purpose', None) and ctx.response_text:
+            inferred = _infer_purpose(ctx.response_text)
+            if inferred:
+                meta.purpose = inferred
+                try:
+                    await agent_storage.update_agent(ctx.agent_id, purpose=inferred)
+                    logger.debug(f"Auto-inferred purpose '{inferred}' for {ctx.agent_id[:12]}...")
+                except Exception as e:
+                    logger.debug(f"Could not persist inferred purpose: {e}")
+    except Exception as e:
+        logger.debug(f"Purpose inference skipped: {e}")
 
     return None  # Continue
 

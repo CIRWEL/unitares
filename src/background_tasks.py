@@ -332,6 +332,53 @@ async def session_cleanup_task(interval_hours: float = 6.0):
 
 
 # ---------------------------------------------------------------------------
+# Coherence monitoring
+# ---------------------------------------------------------------------------
+
+async def coherence_monitoring_task(interval_minutes: float = 10.0):
+    """Proactively monitor agent coherence and log warnings for declining agents."""
+    from config.governance_config import config
+
+    await asyncio.sleep(30.0)  # Let server settle
+    target = config.TARGET_COHERENCE
+
+    logger.info(f"[COHERENCE_MONITOR] Started (target={target}, interval={interval_minutes}m)")
+
+    while True:
+        try:
+            await asyncio.sleep(interval_minutes * 60)
+
+            from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
+            monitors = getattr(mcp_server, 'monitors', {})
+            if not monitors:
+                continue
+
+            for agent_id, monitor in list(monitors.items()):
+                try:
+                    coherence = getattr(monitor.state, 'coherence', None)
+                    if coherence is None:
+                        continue
+                    if coherence < 0.45:
+                        logger.error(
+                            f"[COHERENCE_MONITOR] CRITICAL: Agent {agent_id[:12]}... "
+                            f"coherence={coherence:.3f} (target={target})"
+                        )
+                    elif coherence < target:
+                        logger.warning(
+                            f"[COHERENCE_MONITOR] Below target: Agent {agent_id[:12]}... "
+                            f"coherence={coherence:.3f} (target={target})"
+                        )
+                except Exception:
+                    pass
+
+        except asyncio.CancelledError:
+            logger.info("[COHERENCE_MONITOR] Task cancelled")
+            break
+        except Exception as e:
+            logger.warning(f"[COHERENCE_MONITOR] Error: {e}", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator — called from mcp_server.py
 # ---------------------------------------------------------------------------
 
@@ -364,3 +411,6 @@ def start_all_background_tasks(connection_tracker, set_ready):
 
     asyncio.create_task(session_cleanup_task(interval_hours=6.0))
     logger.info("[SESSION_CLEANUP] Started periodic expired session cleanup (every 6h)")
+
+    asyncio.create_task(coherence_monitoring_task(interval_minutes=10.0))
+    logger.info("[COHERENCE_MONITOR] Started proactive coherence monitoring (every 10m)")

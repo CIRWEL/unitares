@@ -54,6 +54,7 @@ def make_decision(
         flips = oscillation_state.flips if oscillation_state else 0
         return {
             'action': 'pause',
+            'sub_action': 'cirs_block',
             'reason': f'CIRS resonance detected (OI={oi:.2f}, flips={flips}) — decision oscillating',
             'guidance': 'Governance is flip-flopping. Reduce complexity or wait for state to settle.',
             'critical': False,
@@ -74,6 +75,7 @@ def make_decision(
         is_critical = risk_score >= effective_reject
         return {
             'action': 'pause',
+            'sub_action': 'risk_pause',
             'reason': f'UNITARES high-risk verdict (risk_score={risk_score:.2f}) - safety pause suggested',
             'guidance': 'This is a safety check, not a failure. The system detected high ethical risk and is protecting you from potential issues. Consider simplifying your approach.',
             'critical': is_critical,
@@ -85,6 +87,7 @@ def make_decision(
         if risk_score < config.RISK_APPROVE_THRESHOLD:
             return {
                 'action': 'proceed',
+                'sub_action': 'guide',
                 'reason': f'Proceeding mindfully (risk: {risk_score:.2f})',
                 'guidance': 'Navigating complexity. Worth a moment of reflection.',
                 'critical': False,

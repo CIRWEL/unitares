@@ -167,25 +167,41 @@ def derive_confidence(
             'deviation_penalty': float(deviation_penalty),
         }
     
-    # === COMBINE: EISV-only confidence for calibration consistency ===
+    # === COMBINE: EISV-based confidence with tool-gap deviation ===
     #
     # NOTE (Dec 2025): Previously blended tool_confidence with eisv_confidence.
     # This caused calibration inversion: high tool success → high confidence,
     # but trajectory_health (from phi/EISV) remained low → bins showed
     # high confidence with low health.
     #
-    # FIX: Use EISV-only confidence. Tool success is still tracked in metadata
-    # for observability but doesn't affect confidence used for calibration.
-    # This ensures confidence and trajectory_health are derived from the same
-    # source (EISV state) and should correlate properly.
+    # FIX: Use EISV-only confidence as base. Tool confidence is NOT blended in
+    # (preserving the calibration-inversion fix), but the GAP between tool and
+    # EISV confidence is used as a deviation signal: disagreement between
+    # tool outcomes and EISV state IS genuine uncertainty.
     #
     final_confidence = eisv_confidence
-    metadata['source'] = 'eisv_only'
+    metadata['source'] = 'eisv_with_variance'
 
-    # Tool stats still recorded for transparency but not used in confidence
+    # Tool-EISV gap penalty: disagreement = uncertainty
+    tool_eisv_gap = abs(tool_confidence - eisv_confidence)
+    gap_penalty = 0.0
+    if tool_eisv_gap > 0.1:
+        gap_penalty = min(0.08, (tool_eisv_gap - 0.1) * 0.2)
+        final_confidence -= gap_penalty
+    metadata['tool_eisv_gap'] = float(tool_eisv_gap)
+    metadata['gap_penalty'] = float(gap_penalty)
+
+    # Deterministic per-agent offset to break identical-EISV convergence
+    agent_offset = 0.0
+    if agent_id:
+        agent_offset = (hash(agent_id) % 1000 - 500) / 50000  # range ~[-0.01, +0.01]
+        final_confidence += agent_offset
+    metadata['agent_offset'] = float(agent_offset)
+
+    # Tool stats still recorded for transparency
     if metadata.get('tool_stats'):
         metadata['tool_confidence_excluded'] = tool_confidence
-        metadata['exclusion_reason'] = 'Tool success decoupled from trajectory health - using EISV-only for calibration consistency'
+        metadata['exclusion_reason'] = 'Tool confidence used only for gap penalty, not blended (calibration consistency)'
     
     # Bound confidence to avoid pathological extremes.
     # NOTE: We intentionally avoid 1.0 in derived mode; perfect certainty is not available here.

@@ -478,6 +478,7 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
         execute_post_update_effects,
     )
     from .updates.enrichments import (
+        enrich_identity_reminder,
         enrich_state_interpretation,
         enrich_actionable_feedback,
         enrich_llm_coaching,
@@ -548,6 +549,7 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             ctx.response_data["eisv_labels"] = UNITARESMonitor.get_eisv_labels()
 
             # Run enrichments (each is fail-safe internally)
+            enrich_identity_reminder(ctx)
             await enrich_state_interpretation(ctx)
             enrich_actionable_feedback(ctx)
             await enrich_llm_coaching(ctx)
