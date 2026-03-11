@@ -1,6 +1,6 @@
 # UNITARES Documentation
 
-**Last Updated:** 2026-02-27
+**Last Updated:** 2026-03-11
 
 ---
 
@@ -33,13 +33,13 @@
 
 ---
 
-## Tool Count: 30 Registered Tools
+## Tool Count: 31 Registered Tools
 
-30 registered tools + aliases (status, list_agents, observe_agent, checkin, etc.). See [SKILL.md](../skills/unitares-governance/SKILL.md) for the full tool reference.
+31 registered tools + aliases (status, list_agents, observe_agent, checkin, etc.). See [SKILL.md](../skills/unitares-governance/SKILL.md) for the full tool reference.
 
 ## Test Coverage
 
-5,400+ tests passing (as of Feb 2026).
+5,600+ tests passing (as of March 2026).
 
 ---
 
@@ -57,7 +57,7 @@ governance-mcp-v1/
 │   │   ├── decorators.py       # @mcp_tool, ToolDefinition, action_router()
 │   │   ├── middleware.py       # 8-step dispatch pipeline (identity, alias, rate limit, etc.)
 │   │   ├── consolidated.py     # 7 consolidated tools via action_router()
-│   │   ├── response_formatter.py # Response mode filtering (auto/minimal/compact/standard/full)
+│   │   ├── response_formatter.py # Response mode filtering (auto/minimal/compact/standard/full/mirror)
 │   │   ├── identity_v2.py      # Identity resolution (4-path: Redis→PG→Name→Create)
 │   │   ├── core.py             # process_agent_update, metrics
 │   │   ├── dialectic.py        # Dialectic peer review
@@ -78,7 +78,7 @@ governance-mcp-v1/
 ├── skills/                     # SKILL.md for agent onboarding
 ├── docs/                       # Documentation
 ├── data/                       # Runtime data (agents/, knowledge/)
-└── tests/                      # 5,400+ tests
+└── tests/                      # 5,600+ tests
 ```
 
 ---

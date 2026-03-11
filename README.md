@@ -9,7 +9,7 @@
 
 AI agents have no shared language for inner state. They can report outputs, but not whether they're coherent, drifting, or losing the thread. UNITARES provides that language — four continuous variables, a dynamics that evolves them, and a protocol for agents to speak and be read. Built on coupled differential equations with [provable stability guarantees](governance_core/README.md).
 
-Validated on **903 agents over 69 days** (198K audit events). The [paper](papers/unitares-v5/) has the full analysis; this repo is the production implementation.
+Validated on **903 agents over 69 days** (198K audit events). This repo is the production implementation.
 
 ---
 
@@ -35,7 +35,7 @@ dS/dt = -μ·S + λ₁·‖Δη‖² - λ₂·C   Entropy decays, rises with dri
 dV/dt = κ(E - I) - δ·V             Void accumulates E-I mismatch, decays toward zero
 ```
 
-The key insight: **coherence C(V)** creates nonlinear feedback that stabilizes the system. We prove global exponential convergence via contraction theory ([Theorem 3.2](papers/unitares-v5/)).
+The key insight: **coherence C(V)** creates nonlinear feedback that stabilizes the system. Global exponential convergence follows from contraction theory (Theorem 3.2).
 
 Check-ins are speech acts — an agent reporting its state in a shared vocabulary. Trajectories are behavioral stories that can be read without narrative explanation. Twenty minutes before an agent fails, the trajectory tells you.
 
@@ -107,7 +107,7 @@ Deployed since December 2025. Current numbers:
 | V operating range | 100% of agents within [-0.1, 0.1] |
 | Dialectic sessions | 66 |
 | Knowledge discoveries | 536 |
-| Test suite | 5,400+ tests, 78% coverage |
+| Test suite | 5,600+ tests, 78% coverage |
 
 One of those agents is [Lumen](https://github.com/CIRWEL/anima-mcp) — an embodied creature on a Raspberry Pi that uses the same EISV equations to drive an autonomous drawing system. Coherence modulates how long it draws; the art emerges from thermodynamics. For how physical sensors seed the EISV state vector, see the [anima-mcp docs](https://github.com/CIRWEL/anima-mcp#how-it-works).
 
@@ -117,15 +117,6 @@ One of those agents is [Lumen](https://github.com/CIRWEL/anima-mcp) — an embod
 
 <p align="center">
   <em>Web dashboard — fleet coherence, agent status, calibration, anomaly detection.</em>
-</p>
-
-<p align="center">
-  <img src="papers/unitares-v5/figures/fig1_ei_scatter.png" width="45%" alt="Energy-Integrity scatter showing basin structure"/>
-  <img src="papers/unitares-v5/figures/fig3_coherence_hist.png" width="45%" alt="Coherence distribution across agents"/>
-</p>
-
-<p align="center">
-  <em>Left: E-I scatter showing agent basin structure. Right: Coherence distribution across 903 agents. From the <a href="papers/unitares-v5/">paper</a>.</em>
 </p>
 
 ---
@@ -153,6 +144,8 @@ That legibility is the foundation. Once agents can express state in a shared voc
 **Ethical drift from observable behavior.** No human oracle needed. Four measurable signals — calibration deviation, complexity divergence, coherence deviation, stability deviation — define a drift vector Δη that feeds directly into entropy dynamics. Ethics as engineering, not philosophy.
 
 **Trajectory as identity.** Agents aren't identified by tokens — they're identified by dynamical patterns. An agent's EISV trajectory is its behavioral signature. This lets agents computationally verify "Am I still myself?" and lets observers distinguish agents by how they work, not just what they claim.
+
+**Mirror response mode.** Agents don't need to interpret raw EISV numbers. Mirror mode surfaces actionable self-awareness signals — confidence capping, complexity divergence, knowledge graph discoveries — so agents get practical guidance instead of state vectors.
 
 ---
 
@@ -194,8 +187,7 @@ graph LR
 governance_core/       Pure math — ODEs, coherence, scoring (no I/O)
 src/                   MCP server, agent state, knowledge graph, dialectic
 dashboard/             Web dashboard (vanilla JS + Chart.js)
-papers/                Academic paper with contraction proofs
-tests/                 5,400+ tests
+tests/                 5,600+ tests
 ```
 
 | Storage | Purpose | Required |
@@ -221,7 +213,6 @@ We believe in stating what works, what's promising, and what we don't know yet.
 
 | Guide | Purpose |
 |-------|---------|
-| [The Paper](papers/unitares-v5/) | Full mathematical framework with proofs |
 | [Math Foundation](governance_core/README.md) | EISV dynamics, coherence, ethical drift |
 | [Why UNITARES?](docs/WHY.md) | The problem this solves |
 | [Getting Started](docs/guides/GETTING_STARTED_SIMPLE.md) | 3-step quickstart |
