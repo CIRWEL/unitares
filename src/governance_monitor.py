@@ -1127,58 +1127,50 @@ class UNITARESMonitor:
             oscillation_state=oscillation_state
         )
         
-        # Record prediction for STRATEGIC calibration (trajectory health)
+        # Record prediction for STRATEGIC calibration
         #
-        # IMPORTANT: This system does not have direct access to "external correctness"
-        # (tests passing, user satisfaction, etc.). Strategic calibration therefore
-        # uses a dynamic *trajectory health proxy* in [0,1] derived from state.
-        #
-        # This enables auto-calibration without manual labeling, while staying honest
-        # about what is being measured (health/consensus proxy, not ground-truth success).
-        #
-        # FIXED: predicted_correct is based on confidence, not decision.
+        # Ground truth comes from tool success rates (external outcomes), not EISV.
+        # When tool data is available, use it. Otherwise fall back to trajectory health
+        # proxy (EISV-derived, less reliable but better than nothing).
         predicted_correct = confidence >= 0.5
-        
-        # Trajectory health proxy (0..1): higher when risk is lower.
-        # This is intentionally simple and monotonic to avoid overfitting.
-        trajectory_health = float(max(0.0, min(1.0, 1.0 - float(risk_score))))
 
-        # Record for STRATEGIC calibration (dynamic, no manual ground truth required)
+        # Try external ground truth first: tool success rate for this agent
+        actual_correct = None
+        try:
+            from src.tool_usage_tracker import get_tool_usage_tracker
+            tracker = get_tool_usage_tracker()
+            stats = tracker.get_usage_stats(window_hours=1, agent_id=self.agent_id)
+            total_calls = stats.get('total_calls', 0)
+            if total_calls >= 3:  # Need enough data for meaningful rate
+                tools = stats.get('tools', {})
+                total_success = sum(t.get('success_count', 0) for t in tools.values())
+                actual_correct = float(total_success) / float(total_calls)
+        except Exception:
+            pass
+
+        # Fallback: trajectory health proxy (EISV-derived, documented as approximate)
+        if actual_correct is None:
+            actual_correct = float(max(0.0, min(1.0, 1.0 - float(risk_score))))
+
         calibration_checker.record_prediction(
             confidence=confidence,
             predicted_correct=predicted_correct,
-            actual_correct=trajectory_health
+            actual_correct=actual_correct
         )
-        
-        # Record for TACTICAL calibration (per-decision, fixed at decision time)
+
+        # Record for TACTICAL calibration (per-decision)
         #
-        # NOTE (Dec 2025): Previous logic checked if decision matched state, which was
-        # tautological (decision IS based on state → always 100% "correct").
-        #
-        # NEW LOGIC: Tactical calibration measures if CONFIDENCE matched OUTCOME.
-        # - High confidence (>=0.6) should predict healthy state (low risk)
-        # - Low confidence (<0.4) should predict unhealthy state (high risk)
-        # - This gives real calibration signal: "When I was confident, was I right?"
-        #
+        # Measures whether confidence predicted the outcome correctly.
+        # Uses the same actual_correct signal (tool success or trajectory health).
         decision_action = decision['action']
+        outcome_was_good = actual_correct >= 0.6
 
-        # Outcome based on trajectory health (same signal as strategic calibration)
-        # Using risk_score < 0.4 as "healthy" threshold
-        state_was_healthy = risk_score < 0.4
-
-        # Tactical correctness: Did confidence predict the health outcome?
-        # - If confident (>=0.6) and state was healthy → correct
-        # - If confident (>=0.6) and state was NOT healthy → incorrect (overconfident)
-        # - If not confident (<0.6) and state was NOT healthy → correct
-        # - If not confident (<0.6) and state was healthy → incorrect (underconfident)
-        #
-        # This creates real variance in the calibration data.
         if confidence >= 0.6:
-            immediate_outcome = state_was_healthy
+            immediate_outcome = outcome_was_good
         else:
-            immediate_outcome = not state_was_healthy
+            immediate_outcome = not outcome_was_good
 
-        if decision_action in ('proceed', 'pause'):  # Only record known decision types
+        if decision_action in ('proceed', 'pause'):
             calibration_checker.record_tactical_decision(
                 confidence=confidence,
                 decision=decision_action,

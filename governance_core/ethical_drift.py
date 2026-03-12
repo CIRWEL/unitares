@@ -346,8 +346,8 @@ def compute_ethical_drift(
     # Warmup dampening: deviations from uninitialized baselines are meaningless.
     # For the first few updates, the baseline is just defaults (0.6, 0.5, 0.8 etc.)
     # so large "deviations" are artifacts, not real drift signals.
-    # Ramp from 0→1 over 2 updates (reduced from 5 to let dynamics activate sooner).
-    warmup_updates = 2
+    # Ramp from 0→1 over 5 updates (paper value — 2 was too few for meaningful baselines).
+    warmup_updates = 5
     if baseline.update_count < warmup_updates:
         warmup_factor = baseline.update_count / warmup_updates
         calibration_deviation *= warmup_factor

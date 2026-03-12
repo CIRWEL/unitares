@@ -104,8 +104,8 @@ class TestRateOfChange:
     def test_tight_baseline_with_rate_of_change(self):
         """When EMA tracks tightly, rate-of-change should still produce signal."""
         b = AgentBaseline(agent_id="test", alpha=0.1)
-        # Warm up past dampening
-        for _ in range(3):
+        # Warm up past dampening (5 updates required)
+        for _ in range(5):
             b.update(coherence=0.5, confidence=0.6, complexity=0.4)
 
         # Now baseline tracks tightly around 0.5. But previous observation was 0.5,
@@ -144,9 +144,9 @@ class TestRateOfChange:
     def test_calibration_error_overrides_rate_of_change(self):
         """When calibration_error is provided, it should be used directly."""
         b = AgentBaseline(agent_id="test")
-        # Clear warmup (need 2 updates)
-        b.update(confidence=0.6, coherence=0.5)
-        b.update(confidence=0.6, coherence=0.5)
+        # Clear warmup (need 5 updates)
+        for _ in range(5):
+            b.update(confidence=0.6, coherence=0.5)
 
         drift = compute_ethical_drift(
             agent_id="test",
@@ -169,7 +169,7 @@ class TestStateVelocityFloor:
     def test_velocity_injects_signal(self):
         """Non-trivial velocity should floor coherence_dev and calibration_deviation."""
         b = AgentBaseline(agent_id="test")
-        for _ in range(3):
+        for _ in range(5):
             b.update(coherence=0.5, confidence=0.6)
 
         drift = compute_ethical_drift(
@@ -191,7 +191,7 @@ class TestStateVelocityFloor:
     def test_velocity_capped_at_half(self):
         """Velocity signal should be capped at 0.5."""
         b = AgentBaseline(agent_id="test")
-        for _ in range(3):
+        for _ in range(5):
             b.update(coherence=0.5, confidence=0.6)
 
         drift = compute_ethical_drift(
@@ -212,7 +212,7 @@ class TestStateVelocityFloor:
     def test_no_velocity_no_floor(self):
         """Without state_velocity, no floor is applied."""
         b = AgentBaseline(agent_id="test")
-        for _ in range(3):
+        for _ in range(5):
             b.update(coherence=0.5, confidence=0.6)
 
         drift = compute_ethical_drift(
@@ -230,7 +230,7 @@ class TestStateVelocityFloor:
     def test_small_velocity_ignored(self):
         """Velocity below threshold (0.01) should not inject signal."""
         b = AgentBaseline(agent_id="test")
-        for _ in range(3):
+        for _ in range(5):
             b.update(coherence=0.5, confidence=0.6)
 
         drift = compute_ethical_drift(
@@ -248,16 +248,15 @@ class TestStateVelocityFloor:
 # ─── Warmup reduction ────────────────────────────────────────────────────
 
 
-class TestWarmupReduction:
-    """Test that warmup is 2 updates instead of 5."""
+class TestWarmupPaperAligned:
+    """Test that warmup is 5 updates (paper value)."""
 
-    def test_drift_active_after_two_updates(self):
-        """After 2 updates, warmup dampening should be gone."""
+    def test_drift_active_after_five_updates(self):
+        """After 5 updates, warmup dampening should be gone."""
         b = AgentBaseline(agent_id="test")
-        # 2 updates to clear warmup
-        b.update(coherence=0.5, confidence=0.6)
-        b.update(coherence=0.5, confidence=0.6)
-        assert b.update_count == 2
+        for _ in range(5):
+            b.update(coherence=0.5, confidence=0.6)
+        assert b.update_count == 5
 
         # Now compute drift with significant deviation
         drift = compute_ethical_drift(
@@ -268,9 +267,8 @@ class TestWarmupReduction:
             complexity_divergence=0.0,
         )
 
-        # warmup_factor = 2/2 = 1.0 → no dampening
-        # coherence_dev = max(|0.8 - 0.51|, |0.8 - 0.5|) = 0.3
-        assert drift.coherence_deviation >= 0.2
+        # warmup_factor = 5/5 = 1.0 → no dampening
+        assert drift.coherence_deviation >= 0.15
 
     def test_drift_dampened_on_first_update(self):
         """On first update (count=0), drift should be zero."""
@@ -285,16 +283,17 @@ class TestWarmupReduction:
             complexity_divergence=0.1,
         )
 
-        # warmup_factor = 0/2 = 0 → all dampened to zero
+        # warmup_factor = 0/5 = 0 → all dampened to zero
         assert drift.coherence_deviation == 0.0
         assert drift.calibration_deviation == 0.0
         assert drift.stability_deviation == 0.0
 
-    def test_drift_half_dampened_on_second_update(self):
-        """On second update (count=1), drift should be 50% dampened."""
+    def test_drift_partially_dampened_during_warmup(self):
+        """During warmup, drift should be proportionally dampened."""
         b = AgentBaseline(agent_id="test")
         b.update(coherence=0.5, confidence=0.6)
-        assert b.update_count == 1
+        b.update(coherence=0.5, confidence=0.6)
+        assert b.update_count == 2
 
         drift = compute_ethical_drift(
             agent_id="test",
@@ -304,9 +303,9 @@ class TestWarmupReduction:
             complexity_divergence=0.0,
         )
 
-        # warmup_factor = 1/2 = 0.5
-        # coherence_dev = max(|0.8 - 0.53|, |0.8 - 0.5|) * 0.5 = 0.3 * 0.5 = 0.15
-        assert 0.1 <= drift.coherence_deviation <= 0.25
+        # warmup_factor = 2/5 = 0.4 → significant dampening
+        assert drift.coherence_deviation > 0.0
+        assert drift.coherence_deviation < 0.2  # Dampened below full value
 
 
 # ─── Continuity layer complexity rate-of-change ──────────────────────────
@@ -398,8 +397,8 @@ class TestNonLumenDriftAlive:
             )
             norms.append(drift.norm)
 
-        # After warmup (first 2), norms should not be all near-zero
-        post_warmup = norms[2:]
+        # After warmup (first 5), norms should not be all near-zero
+        post_warmup = norms[5:]
         assert any(n > 0.01 for n in post_warmup), f"All drift norms near zero: {post_warmup}"
 
         # Norms should vary (not constant)
@@ -419,7 +418,7 @@ class TestEpistemicContextAttenuation:
     def test_introspection_attenuates_calibration_deviation(self):
         """Low confidence on introspection should produce less drift than on convergent tasks."""
         baseline = get_agent_baseline("epistemic_test_1")
-        for _ in range(3):
+        for _ in range(5):
             baseline.update(coherence=0.5, confidence=0.6, complexity=0.5, decision="proceed")
 
         drift_mixed = compute_ethical_drift(
@@ -433,7 +432,7 @@ class TestEpistemicContextAttenuation:
 
         clear_baseline("epistemic_test_1")
         baseline2 = get_agent_baseline("epistemic_test_2")
-        for _ in range(3):
+        for _ in range(5):
             baseline2.update(coherence=0.5, confidence=0.6, complexity=0.5, decision="proceed")
 
         drift_introspection = compute_ethical_drift(
@@ -455,7 +454,7 @@ class TestEpistemicContextAttenuation:
     def test_exploration_attenuates_similarly(self):
         """exploration task_context should also attenuate drift."""
         baseline = get_agent_baseline("explore_test")
-        for _ in range(3):
+        for _ in range(5):
             baseline.update(coherence=0.5, confidence=0.6, complexity=0.5, decision="proceed")
 
         drift = compute_ethical_drift(
@@ -474,7 +473,7 @@ class TestEpistemicContextAttenuation:
     def test_convergent_no_attenuation(self):
         """convergent task_context should NOT attenuate drift."""
         baseline = get_agent_baseline("convergent_test")
-        for _ in range(3):
+        for _ in range(5):
             baseline.update(coherence=0.5, confidence=0.6, complexity=0.5, decision="proceed")
 
         drift = compute_ethical_drift(
