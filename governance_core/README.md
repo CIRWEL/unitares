@@ -21,7 +21,7 @@ This module contains **only math** — no infrastructure, no I/O, no MCP. Pure f
 | **EISV Dynamics** | ✅ Implemented | `dynamics.py` — full differential equations |
 | **Coherence Function** | ✅ Implemented | `coherence.py` — C(V,Θ) with tanh |
 | **Φ Objective** | ✅ Implemented | `scoring.py` — weighted objective function |
-| **Verdict Logic** | ✅ Implemented | `scoring.py` — safe/caution/high-risk |
+| **Verdict Logic** | ✅ Implemented | `scoring.py` — two-tier (proceed/pause) per paper Remark 5.1 |
 | **Ethical Drift Vector** | ✅ Implemented | `ethical_drift.py` — computed from observable signals |
 | **Adaptive Governor** | ✅ Implemented | `adaptive_governor.py` — CIRS v2 PID controller |
 
@@ -143,7 +143,7 @@ from governance_core import phi_objective, verdict_from_phi, DEFAULT_WEIGHTS
 
 phi = phi_objective(state, delta_eta=[0.0, 0.0, 0.0], weights=DEFAULT_WEIGHTS)
 verdict = verdict_from_phi(phi)
-# verdict ∈ {"safe", "caution", "high-risk"}
+# verdict ∈ {"safe", "caution", "high-risk"} (effectively two-tier with current settings)
 ```
 
 ---

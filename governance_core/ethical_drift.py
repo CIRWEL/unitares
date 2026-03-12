@@ -267,7 +267,7 @@ class AgentBaseline:
         baseline.recent_decisions = data.get('recent_decisions', [])
         baseline.decision_consistency = data.get('decision_consistency', 0.8)
         baseline.update_count = data.get('update_count', 0)
-        baseline.alpha = data.get('alpha', 0.05)
+        baseline.alpha = data.get('alpha', 0.1)
         if data.get('last_updated'):
             baseline.last_updated = datetime.fromisoformat(data['last_updated'])
         return baseline

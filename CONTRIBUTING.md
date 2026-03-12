@@ -43,7 +43,7 @@ The test suite has 5,700+ tests covering ~80% of the codebase:
 
 ```bash
 # Full suite (recommended before PRs)
-python3 -m pytest tests/ -x -q --ignore=tests/test_admin_handlers.py
+python3 -m pytest tests/ -x -q
 
 # Specific test file
 python3 -m pytest tests/test_governance_monitor.py -v
@@ -54,9 +54,9 @@ python3 -m pytest tests/ --cov=src --cov=governance_core --cov-report=term-missi
 
 Tests use a separate `governance_test` database and mock external services. Most tests run without any live infrastructure — only a few integration tests in `test_knowledge_graph_handlers.py` require a running AGE instance.
 
-### Known Exclusions
+### Known Notes
 
-- `tests/test_admin_handlers.py` — references removed admin schemas, excluded from CI
+- Knowledge graph AGE tests require a live AGE connection (errors, not failures, when unavailable)
 
 ## Project Structure
 

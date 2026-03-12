@@ -5,7 +5,7 @@ Verifies that non-Lumen agents get alive EISV dynamics:
 - AgentBaseline tracks prev_* fields for rate-of-change
 - compute_ethical_drift uses rate-of-change when baselines track tightly
 - State velocity provides a floor for drift signals
-- Warmup reduced from 5 to 2 updates
+- Warmup set to 5 updates (paper value)
 - ContinuityLayer uses derived complexity rate-of-change when no self-report
 """
 

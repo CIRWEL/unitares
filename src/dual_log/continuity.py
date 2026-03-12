@@ -81,6 +81,10 @@ def derive_complexity(op: OperationalEntry) -> float:
     - Code blocks don't always mean complex (hello world isn't hard)
     - Missing signals: edit patterns, timing, error recovery, context reads
     - structure_factor maxes at 0.5, then scaled by 0.30 → max 0.15 contribution
+
+    NOTE: compute_continuity_metrics() applies a 0.4 floor for high-reasoning
+    task types (refactoring, debugging, review, design, research) after calling
+    this function.
     
     VALIDATION PATH:
     - Log both derived and reported

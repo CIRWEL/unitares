@@ -1,9 +1,11 @@
 """
-Confidence Derivation Module
+Confidence Derivation Module (fallback path)
+
+Used ONLY when agents report no confidence. When agents provide confidence,
+it passes through uncapped (see governance_monitor.py process_update).
 
 Derives confidence from observed tool outcomes and EISV state dynamics.
 Uses epistemic (uncertainty-aware) penalties, not punitive measures.
-Includes deviation-based signal to break constant-confidence convergence.
 """
 
 import math

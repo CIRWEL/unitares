@@ -38,7 +38,7 @@ process_agent_update(
 **What happens:**
 - Your work is logged
 - You get EISV metrics back
-- You get a verdict (PROCEED/PAUSE/CAUTION)
+- You get a verdict (PROCEED/PAUSE)
 
 **That's it.** You're now being tracked.
 
@@ -91,7 +91,7 @@ A: Call `onboard()` once per session. Call `process_agent_update()` when you wan
 A: That's fine. The system is opt-in. Use it when it helps.
 
 **Q: The metrics are confusing.**  
-A: Don't worry about them. Just use the verdict (PROCEED/PAUSE/CAUTION). Metrics are for power users.
+A: Don't worry about them. Just use the verdict (PROCEED/PAUSE). Metrics are for power users.
 
 **Q: When do I use other tools?**  
 A: When you need them. Start with these 3. Explore more when curious.
@@ -106,7 +106,7 @@ A: No. The system is opt-in. Use it when it helps.
 | Myth | Reality |
 |------|---------|
 | "Governance" means enforcement | It's just feedback — no blocking or restrictions |
-| You need to understand EISV | You don't. Just use the verdict (PROCEED/PAUSE/CAUTION) |
+| You need to understand EISV | You don't. Just use the verdict (PROCEED/PAUSE) |
 | 30 tools = complexity | You need 3 tools. The rest are for edge cases |
 | "Thermodynamic" means physics | It's a metaphor. Energy = engagement, Entropy = scatter |
 | Identity is complicated | You just have a name. The rest is internal plumbing |
