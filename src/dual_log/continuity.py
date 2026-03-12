@@ -144,7 +144,13 @@ def compute_continuity_metrics(
     
     # Derive complexity from operational features
     derived_complexity = derive_complexity(op)
-    
+
+    # Task types with high cognitive-to-output ratio: the thinking is the work,
+    # not the output. A 3-line refactor after reading 2000 lines is not "simple."
+    HIGH_REASONING_TASK_TYPES = {'refactoring', 'debugging', 'review', 'design', 'research'}
+    if refl.task_type in HIGH_REASONING_TASK_TYPES:
+        derived_complexity = max(derived_complexity, 0.4)
+
     # === Divergence ===
     if refl.self_complexity is not None:
         complexity_divergence = abs(derived_complexity - refl.self_complexity)
