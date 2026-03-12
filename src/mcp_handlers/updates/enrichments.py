@@ -652,6 +652,13 @@ async def enrich_trajectory_identity(ctx: UpdateContext) -> None:
 
                 cal_error = get_mean_calibration_error(ctx)
 
+                # Use lifetime update count (persisted in DB), not session count.
+                # Session count resets on service restart, which prevents trust
+                # tiers from ever graduating past "emerging".
+                lifetime_updates = monitor.state.update_count
+                if ctx.meta and hasattr(ctx.meta, 'total_updates'):
+                    lifetime_updates = max(lifetime_updates, ctx.meta.total_updates)
+
                 trajectory_signature = compute_behavioral_trajectory(
                     E_history=list(monitor.state.E_history),
                     I_history=list(monitor.state.I_history),
@@ -660,7 +667,7 @@ async def enrich_trajectory_identity(ctx: UpdateContext) -> None:
                     coherence_history=list(monitor.state.coherence_history),
                     decision_history=list(getattr(monitor.state, 'decision_history', [])),
                     regime_history=list(getattr(monitor.state, 'regime_history', [])),
-                    update_count=monitor.state.update_count,
+                    update_count=lifetime_updates,
                     task_type_counts=getattr(monitor, '_task_type_counts', None),
                     calibration_error=cal_error,
                 )
