@@ -10,6 +10,7 @@ Version History:
 - v2.0: Migrated to governance_core (single source of truth for dynamics)
 """
 
+import os
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Any
@@ -245,12 +246,35 @@ class UNITARESMonitor:
         state_file.parent.mkdir(parents=True, exist_ok=True)
         
         try:
+            import tempfile
             state_data = self.state.to_dict_with_history()
-            with open(state_file, 'w') as f:
-                json.dump(state_data, f, indent=2)
+            # Atomic write: write to temp file, then rename to prevent corruption
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=state_file.parent, suffix='.tmp')
+            try:
+                with os.fdopen(tmp_fd, 'w') as f:
+                    json.dump(state_data, f, indent=2)
+                os.replace(tmp_path, state_file)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except Exception as e:
             logger.warning(f"Could not save state for {self.agent_id}: {e}", exc_info=True)
     
+    def _trim_histories(self) -> None:
+        """Trim all history arrays to HISTORY_WINDOW."""
+        window = config.HISTORY_WINDOW
+        for attr in (
+            'E_history', 'I_history', 'S_history', 'V_history',
+            'coherence_history', 'timestamp_history', 'lambda1_history',
+            'regime_history', 'rho_history', 'CE_history', 'oi_history',
+        ):
+            history = getattr(self.state, attr, None)
+            if history is not None and len(history) > window:
+                setattr(self.state, attr, history[-window:])
+
     def coherence_function(self, V: float) -> float:
         """
         Bounded coherence function C(V) using governance_core coherence function.
@@ -477,21 +501,10 @@ class UNITARESMonitor:
         self.state.timestamp_history.append(datetime.now().isoformat())  # Track timestamp
         
         # Track current lambda1 value (even if not updated this cycle)
-        # Backward compatibility: ensure lambda1_history exists
-        if not hasattr(self.state, 'lambda1_history'):
-            self.state.lambda1_history = []
-        # Append current lambda1 (will be same value until update_lambda1() is called)
         current_lambda1 = self.state.lambda1
         self.state.lambda1_history.append(float(current_lambda1))
         
         # Detect and track regime (operational state)
-        # Defensive: ensure regime attributes exist (backward compatibility)
-        if not hasattr(self.state, 'regime'):
-            self.state.regime = 'divergence'
-        if not hasattr(self.state, 'regime_history'):
-            self.state.regime_history = []
-        if not hasattr(self.state, 'locked_persistence_count'):
-            self.state.locked_persistence_count = 0
         
         previous_regime = self.state.regime
         new_regime = self.detect_regime()
@@ -539,8 +552,6 @@ class UNITARESMonitor:
 
         # Store ρ(t) in state
         self.state.current_rho = rho
-        if not hasattr(self.state, 'rho_history'):
-            self.state.rho_history = []
         self.state.rho_history.append(rho)
 
         # Compute Continuity Energy CE from state history snapshots
@@ -561,34 +572,10 @@ class UNITARESMonitor:
                 pass
 
         CE = self.compute_continuity_energy(state_snapshots)
-        if not hasattr(self.state, 'CE_history'):
-            self.state.CE_history = []
         self.state.CE_history.append(CE)
 
-        # Trim history to window
-        if len(self.state.E_history) > config.HISTORY_WINDOW:
-            self.state.E_history = self.state.E_history[-config.HISTORY_WINDOW:]
-        if len(self.state.I_history) > config.HISTORY_WINDOW:
-            self.state.I_history = self.state.I_history[-config.HISTORY_WINDOW:]
-        if len(self.state.S_history) > config.HISTORY_WINDOW:
-            self.state.S_history = self.state.S_history[-config.HISTORY_WINDOW:]
-        if len(self.state.regime_history) > config.HISTORY_WINDOW:
-            self.state.regime_history = self.state.regime_history[-config.HISTORY_WINDOW:]
-        if len(self.state.V_history) > config.HISTORY_WINDOW:
-            self.state.V_history = self.state.V_history[-config.HISTORY_WINDOW:]
-        if len(self.state.coherence_history) > config.HISTORY_WINDOW:
-            self.state.coherence_history = self.state.coherence_history[-config.HISTORY_WINDOW:]
-        if len(self.state.timestamp_history) > config.HISTORY_WINDOW:
-            self.state.timestamp_history = self.state.timestamp_history[-config.HISTORY_WINDOW:]
-        if len(self.state.lambda1_history) > config.HISTORY_WINDOW:
-            self.state.lambda1_history = self.state.lambda1_history[-config.HISTORY_WINDOW:]
-        # HCK/CIRS history trimming
-        if hasattr(self.state, 'rho_history') and len(self.state.rho_history) > config.HISTORY_WINDOW:
-            self.state.rho_history = self.state.rho_history[-config.HISTORY_WINDOW:]
-        if hasattr(self.state, 'CE_history') and len(self.state.CE_history) > config.HISTORY_WINDOW:
-            self.state.CE_history = self.state.CE_history[-config.HISTORY_WINDOW:]
-        if hasattr(self.state, 'oi_history') and len(self.state.oi_history) > config.HISTORY_WINDOW:
-            self.state.oi_history = self.state.oi_history[-config.HISTORY_WINDOW:]
+        # Trim all history arrays to window
+        self._trim_histories()
 
         # Validate state after update (STRICT MODE - Issue #1 fix)
         is_valid, errors = self.state.validate()
@@ -939,9 +926,7 @@ class UNITARESMonitor:
             # below target — prevents feedback loop where low confidence blocks
             # the controller that would fix declining coherence
             effective_conf_threshold = config.CONTROLLER_CONFIDENCE_THRESHOLD
-            if (hasattr(self.state, 'coherence') and
-                    hasattr(self.state, 'coherence_history') and
-                    len(self.state.coherence_history) >= 3):
+            if len(self.state.coherence_history) >= 3:
                 coherence_deficit = config.TARGET_COHERENCE - self.state.coherence
                 if coherence_deficit > 0.05:  # Only relax for meaningful drops
                     # Scale relaxation: 0.05 deficit → small relax, 0.15+ → max relax
@@ -953,9 +938,6 @@ class UNITARESMonitor:
             else:
                 # Skip lambda1 update due to low confidence
                 lambda1_skipped = True
-                # Track skip count
-                if not hasattr(self.state, 'lambda1_update_skips'):
-                    self.state.lambda1_update_skips = 0
                 self.state.lambda1_update_skips += 1
                 
                 # Log skip via audit logger
@@ -1077,16 +1059,11 @@ class UNITARESMonitor:
             self._last_oscillation_state = oscillation_state
 
             # Track OI in history
-            if not hasattr(self.state, 'oi_history'):
-                self.state.oi_history = []
             self.state.oi_history.append(oscillation_state.oi)
 
             # Apply resonance damping if needed
             damping_result = None
             if oscillation_state.resonant:
-                # Increment resonance event counter
-                if not hasattr(self.state, 'resonance_events'):
-                    self.state.resonance_events = 0
                 self.state.resonance_events += 1
 
                 # Apply damping (threshold adjustment)

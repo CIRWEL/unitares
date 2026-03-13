@@ -222,7 +222,7 @@ mcp = FastMCP(
             "http://192.168.1.151:*", "http://192.168.1.164:*",
             "http://100.96.201.46:*",  # Tailscale
             "https://unitares.ngrok.io",
-            "null", "*",  # Allow file:// access (origin is opaque 'null') and wildcards
+            "null",  # Allow file:// access (origin is opaque 'null')
         ],
     ),
 )
@@ -986,21 +986,9 @@ async def main():
             app.routes.append(Mount("/mcp", app=streamable_mcp_asgi))
             logger.info("Registered /mcp endpoint for Streamable HTTP transport")
 
-        # Optional CORS for browser-based clients
-        if HTTP_CORS_ALLOW_ORIGIN:
-            try:
-                from starlette.middleware.cors import CORSMiddleware
-                app.add_middleware(
-                    CORSMiddleware,
-                    allow_origins=[HTTP_CORS_ALLOW_ORIGIN],
-                    allow_credentials=False,
-                    allow_methods=["GET", "POST", "OPTIONS"],
-                    allow_headers=["*"],
-                    max_age=600,
-                )
-                logger.info(f"Enabled CORS for HTTP endpoints allow_origin={HTTP_CORS_ALLOW_ORIGIN}")
-            except Exception as e:
-                logger.warning(f"Could not enable CORS middleware: {e}", exc_info=True)
+        # NOTE: CORS middleware is already registered above (line ~780).
+        # HTTP_CORS_ALLOW_ORIGIN is merged into the main CORS config there.
+        # Do not add a second CORSMiddleware — duplicate registration causes confusing behavior.
         
         # Run with uvicorn
         # SECURITY: Add connection limits and timeouts to prevent DoS

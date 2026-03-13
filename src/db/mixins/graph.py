@@ -84,10 +84,8 @@ class GraphMixin:
         elif isinstance(value, (int, float)):
             return str(value)
         elif isinstance(value, str):
-            if not re.match(r'^[\w\s\-._@/:,()#]+$', value, re.UNICODE):
-                escaped = value.replace("\\", "\\\\").replace("'", "\\'")
-                return f"'{escaped}'"
-            return f"'{value}'"
+            escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+            return f"'{escaped}'"
         elif isinstance(value, list):
             sanitized_elements = [self._sanitize_cypher_param(item) for item in value]
             return f"[{', '.join(sanitized_elements)}]"

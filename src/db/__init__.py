@@ -38,7 +38,11 @@ _db_instance: "DatabaseBackend | None" = None
 
 
 def get_db() -> "DatabaseBackend":
-    """Get the PostgreSQL database backend."""
+    """Get the PostgreSQL database backend.
+
+    Raises RuntimeError if init_db() hasn't been called yet,
+    unless this is the first call (lazy creation for backward compat).
+    """
     global _db_instance
 
     if _db_instance is not None:

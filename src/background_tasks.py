@@ -382,6 +382,29 @@ async def coherence_monitoring_task(interval_minutes: float = 10.0):
 # Orchestrator — called from mcp_server.py
 # ---------------------------------------------------------------------------
 
+_supervised_tasks: list = []
+
+
+def _on_background_task_done(task: asyncio.Task) -> None:
+    """Callback for background task completion — logs crashes."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc:
+        logger.error(
+            f"Background task '{task.get_name()}' crashed: {exc}",
+            exc_info=exc,
+        )
+
+
+def _supervised_create_task(coro, *, name: str | None = None) -> asyncio.Task:
+    """Create a background task with crash logging."""
+    task = asyncio.create_task(coro, name=name)
+    task.add_done_callback(_on_background_task_done)
+    _supervised_tasks.append(task)
+    return task
+
+
 def start_all_background_tasks(connection_tracker, set_ready):
     """
     Start all background tasks. Call once during server initialization.
@@ -390,27 +413,27 @@ def start_all_background_tasks(connection_tracker, set_ready):
         connection_tracker: The ConnectionTracker instance
         set_ready: Callable that sets SERVER_READY = True
     """
-    asyncio.create_task(connection_heartbeat_task(connection_tracker))
+    _supervised_create_task(connection_heartbeat_task(connection_tracker), name="heartbeat")
     logger.info("[HEARTBEAT] Connection health monitoring started")
 
-    asyncio.create_task(startup_auto_calibration())
-    asyncio.create_task(startup_kg_lifecycle())
-    asyncio.create_task(concept_extraction_background_task())
-    asyncio.create_task(periodic_partition_maintenance())
-    asyncio.create_task(background_metadata_load())
-    asyncio.create_task(periodic_orphan_cleanup())
-    asyncio.create_task(stuck_agent_recovery_task())
-    asyncio.create_task(server_warmup_task(set_ready))
+    _supervised_create_task(startup_auto_calibration(), name="auto_calibration")
+    _supervised_create_task(startup_kg_lifecycle(), name="kg_lifecycle")
+    _supervised_create_task(concept_extraction_background_task(), name="concept_extraction")
+    _supervised_create_task(periodic_partition_maintenance(), name="partition_maintenance")
+    _supervised_create_task(background_metadata_load(), name="metadata_load")
+    _supervised_create_task(periodic_orphan_cleanup(), name="orphan_cleanup")
+    _supervised_create_task(stuck_agent_recovery_task(), name="stuck_agent_recovery")
+    _supervised_create_task(server_warmup_task(set_ready), name="server_warmup")
 
     try:
         from src.mcp_handlers.observability.pi_orchestration import eisv_sync_task
-        asyncio.create_task(eisv_sync_task(interval_minutes=5.0))
+        _supervised_create_task(eisv_sync_task(interval_minutes=5.0), name="eisv_sync")
         logger.info("[EISV_SYNC] Started periodic Pi EISV sync")
     except Exception as e:
         logger.warning(f"[EISV_SYNC] Could not start: {e}")
 
-    asyncio.create_task(session_cleanup_task(interval_hours=6.0))
+    _supervised_create_task(session_cleanup_task(interval_hours=6.0), name="session_cleanup")
     logger.info("[SESSION_CLEANUP] Started periodic expired session cleanup (every 6h)")
 
-    asyncio.create_task(coherence_monitoring_task(interval_minutes=10.0))
+    _supervised_create_task(coherence_monitoring_task(interval_minutes=10.0), name="coherence_monitor")
     logger.info("[COHERENCE_MONITOR] Started proactive coherence monitoring (every 10m)")
