@@ -332,20 +332,20 @@ def query_cross_agent_knowledge_flow(
 ) -> tuple[str, Dict[str, Any]]:
     """
     Build Cypher query to find cross-agent knowledge flow.
-    
+
     Returns:
         (cypher_query, params_dict)
     """
-    params = {}
-    
+    safe_limit = max(1, int(limit))
+
     cypher = f"""
         MATCH (a1:Agent)-[:AUTHORED]->(d1:Discovery)-[:RELATED_TO]-(d2:Discovery)<-[:AUTHORED]-(a2:Agent)
         WHERE a1.id <> a2.id
         RETURN a1.id AS from_agent, a2.id AS to_agent, count(*) AS shared_insights
         ORDER BY shared_insights DESC
-        LIMIT {limit}
+        LIMIT {safe_limit}
     """
-    
+
     return cypher, {}
 
 
@@ -386,19 +386,20 @@ def query_unresolved_questions_with_entropy(
     Returns:
         (cypher_query, params_dict)
     """
+    safe_limit = max(1, int(limit))
     params = {
         "min_entropy": min_entropy,
     }
-    
+
     cypher = f"""
         MATCH (q:Discovery {{type: 'question', status: 'open'}})
         OPTIONAL MATCH (q)<-[:RESPONDS_TO]-(state:Discovery {{type: 'self_observation'}})
         WHERE state.eisv_s > ${{min_entropy}}
         RETURN q.summary, q.agent_id, state.eisv_s AS context_entropy
         ORDER BY context_entropy DESC
-        LIMIT {limit}
+        LIMIT {safe_limit}
     """
-    
+
     return cypher, params
 
 

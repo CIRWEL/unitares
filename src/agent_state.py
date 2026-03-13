@@ -124,44 +124,34 @@ from src.lock_cleanup import cleanup_stale_state_locks
 
 __all__ = [
     # Constants & config
-    "project_root", "_PROJECT_ROOT",
+    "project_root",
     "SERVER_VERSION", "SERVER_BUILD_DATE",
     "PID_FILE", "LOCK_FILE", "MAX_KEEP_PROCESSES", "CURRENT_PID",
     "AIOFILES_AVAILABLE", "PSUTIL_AVAILABLE",
     "METADATA_FILE", "UNITARES_METADATA_BACKEND", "UNITARES_METADATA_WRITE_JSON_SNAPSHOT",
-    "SERVER_START_TIME",
+    "SERVER_START_TIME", "EXPLORATION_CACHE_TTL",
     # Managers
     "lock_manager", "health_checker", "process_mgr",
     # Data model
     "AgentMetadata", "TextContent",
     # Shared state (mutable dicts)
     "agent_metadata", "monitors",
-    # Loading state
-    "_metadata_loading_lock", "_metadata_loading", "_metadata_loaded",
-    "_metadata_loaded_event", "_metadata_cache_state", "_metadata_batch_state",
-    "EXPLORATION_CACHE_TTL",
-    "_metadata_backend_resolved",
     # Functions
-    "_load_version", "_normalize_http_proxy_base",
-    "_resolve_metadata_backend", "_write_metadata_snapshot_json_sync",
-    "_load_metadata_from_postgres_async", "_parse_metadata_dict",
-    "_acquire_metadata_read_lock",
     "load_metadata_async", "ensure_metadata_loaded", "load_metadata",
     "get_or_create_metadata", "register_agent",
-    "get_state_file", "_write_state_file",
+    "get_state_file",
     "save_monitor_state_async", "save_monitor_state", "load_monitor_state",
-    "check_agent_status", "check_agent_id_default", "_detect_ci_status",
+    "check_agent_status", "check_agent_id_default",
     "validate_agent_id_format", "require_agent_id",
     "generate_api_key", "verify_agent_ownership", "require_agent_auth",
     "cleanup_stale_processes", "write_pid_file", "remove_pid_file",
-    "_shutdown_requested", "signal_handler", "init_server_process",
+    "signal_handler", "init_server_process",
     "get_or_create_monitor",
     "auto_archive_orphan_agents",
     "get_agent_or_error", "build_standardized_agent_info",
     "detect_loop_pattern",
     "process_update_authenticated", "update_agent_auth",
     "process_update_authenticated_async",
-    "_auto_initiate_dialectic_recovery",
     # Re-exported types
     "UNITARESMonitor", "HealthThresholds", "HealthStatus",
     "StateLockManager", "ProcessManager",

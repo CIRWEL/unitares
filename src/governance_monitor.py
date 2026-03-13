@@ -1076,8 +1076,6 @@ class UNITARESMonitor:
                 )
 
                 if damping_result.damping_applied:
-                    if not hasattr(self.state, 'damping_applied_count'):
-                        self.state.damping_applied_count = 0
                     self.state.damping_applied_count += 1
 
                     logger.info(
@@ -1177,9 +1175,6 @@ class UNITARESMonitor:
         )
         
         # Track decision history for governance auditing
-        # Backward compatibility: ensure decision_history exists (for instances created before this feature)
-        if not hasattr(self.state, 'decision_history'):
-            self.state.decision_history = []
         self.state.decision_history.append(decision.get('sub_action', decision['action']))
         if len(self.state.decision_history) > config.HISTORY_WINDOW:
             self.state.decision_history = self.state.decision_history[-config.HISTORY_WINDOW:]
@@ -1222,9 +1217,7 @@ class UNITARESMonitor:
             'lambda1_skipped': lambda1_skipped
         }
         
-        # Add lambda1_skips count if available
-        if hasattr(self.state, 'lambda1_update_skips'):
-            metrics['lambda1_update_skips'] = int(self.state.lambda1_update_skips)
+        metrics['lambda1_update_skips'] = int(self.state.lambda1_update_skips)
         
         result = {
             'status': status,
@@ -1310,7 +1303,7 @@ class UNITARESMonitor:
         # =================================================================
         result['hck'] = {
             'rho': float(getattr(self.state, 'current_rho', 0.0)),
-            'CE': float(self.state.CE_history[-1]) if hasattr(self.state, 'CE_history') and self.state.CE_history else 0.0,
+            'CE': float(self.state.CE_history[-1]) if self.state.CE_history else 0.0,
             'gains_modulated': getattr(self, '_gains_modulated', False)
         }
 

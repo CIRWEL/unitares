@@ -898,9 +898,9 @@ async def main():
                     if auth_header.startswith("Bearer "):
                         token = auth_header[7:]
                         try:
-                            token_data = _oauth_provider._access_tokens.get(token) if _oauth_provider else None
-                            if token_data and hasattr(token_data, "client_id"):
-                                oauth_client_id = f"oauth:{token_data.client_id}"
+                            client_id = _oauth_provider.get_token_client_id(token) if _oauth_provider else None
+                            if client_id:
+                                oauth_client_id = f"oauth:{client_id}"
                         except Exception:
                             pass
 

@@ -82,6 +82,11 @@ class GovernanceOAuthProvider(OAuthAuthorizationServerProvider):
         raw = secrets.token_hex(32)
         return f"{prefix}_{raw}"
 
+    def get_token_client_id(self, token: str) -> str | None:
+        """Get the client_id associated with a bearer token, or None."""
+        at = self._access_tokens.get(token)
+        return at.client_id if at and hasattr(at, "client_id") else None
+
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         return self._clients.get(client_id)
 
