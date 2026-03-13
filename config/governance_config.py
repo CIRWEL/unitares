@@ -588,6 +588,17 @@ class GovernanceConfig:
     # Audit log rotation
     AUDIT_LOG_MAX_AGE_DAYS = 30  # Archive entries older than this
 
+    # =================================================================
+    # Temporal Narrator Configuration
+    # =================================================================
+
+    TEMPORAL_LONG_SESSION_HOURS = 2       # Signal when session exceeds this
+    TEMPORAL_GAP_HOURS = 24               # Signal when gap since last session exceeds this
+    TEMPORAL_IDLE_MINUTES = 30            # Signal when idle within session exceeds this
+    TEMPORAL_CROSS_AGENT_MINUTES = 60     # Surface cross-agent activity within this window
+    TEMPORAL_HIGH_CHECKIN_COUNT = 10      # High density: this many check-ins...
+    TEMPORAL_HIGH_CHECKIN_WINDOW_MINUTES = 30  # ...within this window
+
 
 # Export singleton config
 config = GovernanceConfig()
