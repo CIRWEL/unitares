@@ -7,7 +7,7 @@ Provides storage for dialectic sessions with PostgreSQL.
 import json
 import asyncio
 from typing import Dict, List, Optional, Any
-from collections.abc import Mapping
+
 
 from src.logging_utils import get_logger
 from src.dialectic_protocol import DialecticPhase
@@ -127,10 +127,6 @@ class DialecticDB:
             """, session_id)
 
             if not row:
-                return None
-
-            if not isinstance(row, Mapping):
-                logger.debug("Unexpected session row type from dialectic DB: %s", type(row).__name__)
                 return None
 
             session = dict(row)

@@ -224,6 +224,22 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
             "recommendation": "No dialectic needed. Use process_agent_update() when new work starts."
         })
 
+    # Skip auto-triggered sessions for non-reasoning agents (embodied/anima).
+    # These agents can't submit theses — sessions would remain stuck at thesis phase forever.
+    reviewer_mode = arguments.get("reviewer_mode", "")
+    if reviewer_mode == "auto":
+        agent_tags = set(t.lower() for t in (getattr(meta, "tags", None) or []))
+        if agent_tags & {"autonomous", "embodied", "anima"}:
+            logger.info(f"[DIALECTIC] Skipping auto-recovery for non-reasoning agent {agent_uuid[:12]}...")
+            return success_response({
+                "success": True,
+                "skipped": True,
+                "reason": "Non-reasoning agent cannot participate in dialectic",
+                "agent_id": agent_uuid,
+                "agent_tags": list(agent_tags & {"autonomous", "embodied", "anima"}),
+                "recommendation": "Pause event logged. Recovery handled via agent lifecycle, not dialectic."
+            })
+
     # Prevent duplicate sessions
     if await is_agent_in_active_session(agent_uuid):
         return [error_response(
