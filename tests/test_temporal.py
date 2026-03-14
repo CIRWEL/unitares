@@ -97,7 +97,7 @@ async def test_temporal_silence_when_unremarkable(mock_db):
     mock_db.get_agent_state_history.return_value = []
     mock_db.kg_query.return_value = []
 
-    result = await build_temporal_context("test-uuid", mock_db)
+    result = await build_temporal_context("test-uuid", mock_db, now=now)
     assert result is None
 
 
@@ -118,7 +118,7 @@ async def test_temporal_long_session(mock_db):
     mock_db.get_agent_state_history.return_value = []
     mock_db.kg_query.return_value = []
 
-    result = await build_temporal_context("test-uuid", mock_db)
+    result = await build_temporal_context("test-uuid", mock_db, now=now)
     assert result is not None
     assert "3h" in result
 
@@ -142,7 +142,7 @@ async def test_temporal_long_gap(mock_db):
     mock_db.get_agent_state_history.return_value = []
     mock_db.kg_query.return_value = []
 
-    result = await build_temporal_context("test-uuid", mock_db)
+    result = await build_temporal_context("test-uuid", mock_db, now=now)
     assert result is not None
     assert "2 days" in result
 
@@ -164,7 +164,7 @@ async def test_temporal_idle(mock_db):
     mock_db.get_agent_state_history.return_value = []
     mock_db.kg_query.return_value = []
 
-    result = await build_temporal_context("test-uuid", mock_db)
+    result = await build_temporal_context("test-uuid", mock_db, now=now)
     assert result is not None
     assert "45min" in result
 
@@ -188,7 +188,7 @@ async def test_temporal_cross_agent(mock_db):
     mock_db.get_agent_state_history.return_value = []
     mock_db.kg_query.return_value = []
 
-    result = await build_temporal_context("test-uuid", mock_db, include_cross_agent=True)
+    result = await build_temporal_context("test-uuid", mock_db, include_cross_agent=True, now=now)
     assert result is not None
     assert "agent" in result.lower()
 
@@ -216,7 +216,7 @@ async def test_temporal_new_discoveries(mock_db):
         {"id": "d3", "summary": "insight noted"},
     ]
 
-    result = await build_temporal_context("test-uuid", mock_db)
+    result = await build_temporal_context("test-uuid", mock_db, now=now)
     assert result is not None
     assert "3" in result
     assert "discover" in result.lower() or "knowledge" in result.lower()
@@ -243,7 +243,7 @@ async def test_temporal_high_checkin_density(mock_db):
     mock_db.get_recent_cross_agent_activity.return_value = []
     mock_db.kg_query.return_value = []
 
-    result = await build_temporal_context("test-uuid", mock_db)
+    result = await build_temporal_context("test-uuid", mock_db, now=now)
     assert result is not None
     assert "14" in result or "high" in result.lower()
 
@@ -276,7 +276,7 @@ async def test_temporal_multiple_signals(mock_db):
     mock_db.get_recent_cross_agent_activity.return_value = []
     mock_db.kg_query.return_value = []
 
-    result = await build_temporal_context("test-uuid", mock_db)
+    result = await build_temporal_context("test-uuid", mock_db, now=now)
     assert result is not None
     assert "3h" in result
     assert "3 days" in result
@@ -301,7 +301,7 @@ async def test_temporal_partial_db_failure(mock_db):
     mock_db.get_recent_cross_agent_activity.return_value = []
     mock_db.kg_query.return_value = []
 
-    result = await build_temporal_context("test-uuid", mock_db)
+    result = await build_temporal_context("test-uuid", mock_db, now=now)
     assert result is not None
     assert "5 days" in result
 
@@ -313,14 +313,15 @@ async def test_temporal_context_injected_into_onboard_result():
     """Temporal context is added to onboard result dict when relevant."""
     from src.temporal import build_temporal_context
 
+    now = datetime.now(timezone.utc)
     mock_db = AsyncMock()
     mock_db.get_identity.return_value = MagicMock(identity_id=1)
     mock_db.get_active_sessions_for_identity.return_value = [
-        MagicMock(created_at=datetime.now(timezone.utc) - timedelta(hours=4))
+        MagicMock(created_at=now - timedelta(hours=4))
     ]
     mock_db.get_last_inactive_session.return_value = None
     mock_db.get_latest_agent_state.return_value = MagicMock(
-        recorded_at=datetime.now(timezone.utc) - timedelta(minutes=2)
+        recorded_at=now - timedelta(minutes=2)
     )
     mock_db.get_agent_state_history.return_value = []
     mock_db.get_recent_cross_agent_activity.return_value = []
@@ -328,7 +329,7 @@ async def test_temporal_context_injected_into_onboard_result():
 
     # Simulate what the onboard handler does
     result = {}
-    temporal = await build_temporal_context("test-uuid", mock_db)
+    temporal = await build_temporal_context("test-uuid", mock_db, now=now)
     if temporal:
         result["temporal_context"] = temporal
 

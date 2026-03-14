@@ -46,6 +46,8 @@ async def build_temporal_context(
     agent_id: str,
     db,
     include_cross_agent: bool = False,
+    *,
+    now: Optional[datetime] = None,
 ) -> Optional[str]:
     """
     Build temporal context string for an agent.
@@ -54,7 +56,7 @@ async def build_temporal_context(
     string when one or more temporal thresholds are crossed.
     """
     try:
-        now = datetime.now(timezone.utc)
+        now = now or datetime.now(timezone.utc)
         signals = []
 
         # Resolve identity
