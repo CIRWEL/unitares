@@ -64,6 +64,65 @@ from .resolution import (
 )
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 # =============================================================================
+# SYSTEM EVIDENCE HELPER (real data for onboard response)
+# =============================================================================
+
+def _get_system_evidence() -> dict:
+    """Compute system activity summary from real data.
+
+    Iterates in-memory agent_metadata and loaded monitors.
+    No DB calls — fast, read-only, graceful fallback.
+    """
+    try:
+        counts = {"active": 0, "paused": 0, "archived": 0, "other": 0}
+        total_checkins = 0
+        pauses_issued = 0
+
+        for _aid, meta in mcp_server.agent_metadata.items():
+            status = getattr(meta, "status", None)
+            if status in counts:
+                counts[status] += 1
+            else:
+                counts["other"] += 1
+            total_checkins += getattr(meta, "total_updates", 0) or 0
+
+            # Count pause lifecycle events
+            for evt in getattr(meta, "lifecycle_events", []) or []:
+                evt_type = evt.get("event") if isinstance(evt, dict) else None
+                if evt_type in ("paused", "pause"):
+                    pauses_issued += 1
+
+        # Aggregate verdict distribution from loaded monitors
+        verdicts: dict[str, int] = {}
+        for _mid, monitor in mcp_server.monitors.items():
+            for entry in getattr(monitor, "decision_history", []) or []:
+                action = entry.get("action") if isinstance(entry, dict) else None
+                if action:
+                    verdicts[action] = verdicts.get(action, 0) + 1
+
+        # Count dialectic sessions (if accessible)
+        dialectic_sessions = 0
+        try:
+            if hasattr(mcp_server, "dialectic_sessions"):
+                dialectic_sessions = len(mcp_server.dialectic_sessions)
+        except Exception:
+            pass
+
+        result = {
+            "agents": {k: v for k, v in counts.items() if v > 0},
+            "total_checkins": total_checkins,
+        }
+        if verdicts:
+            result["verdicts"] = verdicts
+        if pauses_issued:
+            result["pauses_issued"] = pauses_issued
+        if dialectic_sessions:
+            result["dialectic_sessions"] = dialectic_sessions
+        return result
+    except Exception:
+        return {}
+
+# =============================================================================
 # DATE CONTEXT HELPER (only used by onboard handler)
 # =============================================================================
 
@@ -1002,7 +1061,7 @@ def _build_onboard_response(
         welcome_message = thread_context["honest_message"]
     elif is_new:
         welcome = f"Welcome! Your session ID is `{stable_session_id}`. Pass this as `client_session_id` in all calls."
-        welcome_message = "This system monitors your work like a health monitor tracks your heart. It helps you stay on track, avoid getting stuck, and work more effectively. Your identity is created—use the templates below to get started."
+        welcome_message = "Your identity is created. Use the templates below to get started."
     elif _was_archived:
         welcome = f"Reactivated '{friendly_name}'. Session: `{stable_session_id}`."
         welcome_message = f"Your agent was archived and has been reactivated with the same identity. Pass `client_session_id: \"{stable_session_id}\"` in all tool calls for attribution."
@@ -1040,6 +1099,9 @@ def _build_onboard_response(
 
         # Date context (implicit - no separate tool needed)
         "date_context": _get_date_context(),
+
+        # Real system activity data (replaces editorializing)
+        "system_activity": _get_system_evidence(),
 
         # Skill document resource (eliminates 3-5 orientation tool calls)
         "skill_resource": {

@@ -141,6 +141,7 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                 agents.append({
                     "id": agent_id,
                     "label": getattr(meta, 'label', None),
+                    "status": meta.status,
                     "purpose": getattr(meta, 'purpose', None),  # Added for social awareness
                     "updates": meta.total_updates,
                     "last": meta.last_update[:10] if meta.last_update else None,
@@ -164,6 +165,7 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                     agents.append({
                         "id": caller_uuid,
                         "label": getattr(caller_meta, 'label', None),
+                        "status": caller_meta.status,
                         "purpose": getattr(caller_meta, 'purpose', None),
                         "updates": caller_meta.total_updates,
                         "last": caller_meta.last_update[:10] if caller_meta.last_update else None,
