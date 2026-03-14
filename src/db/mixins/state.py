@@ -96,6 +96,35 @@ class StateMixin:
             )
             return [self._row_to_agent_state(r) for r in rows]
 
+    async def get_recent_cross_agent_activity(
+        self,
+        exclude_identity_id: int,
+        minutes: int = 60,
+    ) -> list[dict]:
+        """Get recent activity from other agents, grouped by agent.
+
+        Returns list of dicts with agent_id, recorded_at (most recent), count.
+        """
+        from config.governance_config import GovernanceConfig
+        window = minutes or GovernanceConfig.TEMPORAL_CROSS_AGENT_MINUTES
+        async with self.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT i.agent_id,
+                       MAX(s.recorded_at) as recorded_at,
+                       COUNT(*) as count
+                FROM core.agent_state s
+                JOIN core.identities i ON i.identity_id = s.identity_id
+                WHERE s.identity_id != $1
+                  AND s.recorded_at > now() - ($2 * interval '1 minute')
+                GROUP BY i.agent_id
+                ORDER BY MAX(s.recorded_at) DESC
+                LIMIT 5
+                """,
+                exclude_identity_id, window,
+            )
+            return [dict(r) for r in rows]
+
     def _row_to_agent_state(self, row) -> AgentStateRecord:
         return AgentStateRecord(
             state_id=row["state_id"],

@@ -105,6 +105,28 @@ class SessionMixin:
             )
             return [self._row_to_session(r) for r in rows]
 
+    async def get_last_inactive_session(
+        self,
+        identity_id: int,
+    ) -> Optional[SessionRecord]:
+        """Get most recent inactive session for an identity."""
+        async with self.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT s.session_id, s.identity_id, i.agent_id, s.created_at, s.last_active,
+                       s.expires_at, s.is_active, s.client_type, s.client_info, s.metadata
+                FROM core.sessions s
+                JOIN core.identities i ON i.identity_id = s.identity_id
+                WHERE s.identity_id = $1 AND s.is_active = FALSE
+                ORDER BY s.last_active DESC
+                LIMIT 1
+                """,
+                identity_id,
+            )
+            if not row:
+                return None
+            return self._row_to_session(row)
+
     async def cleanup_expired_sessions(self) -> int:
         async with self.acquire() as conn:
             result = await conn.fetchval("SELECT core.cleanup_expired_sessions()")

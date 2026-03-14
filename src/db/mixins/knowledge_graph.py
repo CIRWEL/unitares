@@ -77,6 +77,7 @@ class KnowledgeGraphMixin:
         type: Optional[str] = None,
         severity: Optional[str] = None,
         status: Optional[str] = None,
+        created_after: Optional[str] = None,
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
         """Query discoveries with filters."""
@@ -105,6 +106,10 @@ class KnowledgeGraphMixin:
                 from src.knowledge_graph import normalize_tags
                 conditions.append(f"tags && ${param_idx}")
                 params.append(normalize_tags(tags))
+                param_idx += 1
+            if created_after:
+                conditions.append(f"created_at > ${param_idx}")
+                params.append(created_after)
                 param_idx += 1
 
             where_clause = " AND ".join(conditions) if conditions else "1=1"
