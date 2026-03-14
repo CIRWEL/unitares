@@ -203,6 +203,24 @@ class TestStoreKnowledgeGraph:
         assert discovery.type == "note"
 
     @pytest.mark.asyncio
+    async def test_store_accepts_bug_alias(self, patch_common, registered_agent):
+        """Shorthand discovery_type='bug' normalizes to bug_found."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+
+        result = await handle_store_knowledge_graph({
+            "agent_id": registered_agent,
+            "summary": "Found issue in auth middleware",
+            "discovery_type": "bug",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        call_args = mock_graph.add_discovery.call_args
+        discovery = call_args[0][0]
+        assert discovery.type == "bug_found"
+
+    @pytest.mark.asyncio
     async def test_store_truncates_long_summary(self, patch_common, registered_agent):
         """Long summaries are truncated to 1000 chars."""
         mock_mcp_server, mock_graph = patch_common

@@ -1464,6 +1464,22 @@ class TestSearchArchivedFiltering:
         assert "d-archived" in result_ids
 
     @pytest.mark.asyncio
+    async def test_search_status_active_alias_maps_to_open(self, patch_common):
+        """Legacy status='active' should behave as status='open'."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        open_discovery = make_discovery(id="d-open", status="open")
+        mock_graph.query = AsyncMock(return_value=[open_discovery])
+
+        result = await handle_search_knowledge_graph({"status": "active"})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        assert data["count"] == 1
+        assert data["discoveries"][0]["id"] == "d-open"
+
+    @pytest.mark.asyncio
     async def test_search_fts_excludes_archived_by_default(self, patch_common):
         """FTS search should also exclude archived entries by default."""
         mock_mcp_server, mock_graph = patch_common

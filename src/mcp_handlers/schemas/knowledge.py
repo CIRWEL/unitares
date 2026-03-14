@@ -69,7 +69,7 @@ class SearchKnowledgeGraphParams(AgentIdentityMixin):
     )
     status: Optional[str] = Field(
         default=None,
-        description="Filter by status (active, resolved, superseded)"
+        description="Filter by status (open, resolved, archived, superseded)"
     )
     severity: Optional[str] = Field(
         default=None,
@@ -91,6 +91,10 @@ class SearchKnowledgeGraphParams(AgentIdentityMixin):
         default=False,
         description="If true, includes provenance chain"
     )
+    include_details: Union[bool, str, None] = Field(
+        default=False,
+        description="If true, includes full details for each discovery"
+    )
 
     @model_validator(mode='after')
     def coerce_types(self):
@@ -103,6 +107,8 @@ class SearchKnowledgeGraphParams(AgentIdentityMixin):
             self.include_summary_only = self.include_summary_only.lower() in ('true', '1', 'yes')
         if isinstance(self.include_provenance, str):
             self.include_provenance = self.include_provenance.lower() in ('true', '1', 'yes')
+        if isinstance(self.include_details, str):
+            self.include_details = self.include_details.lower() in ('true', '1', 'yes')
         return self
 
 
@@ -242,10 +248,11 @@ class KnowledgeParams(AgentIdentityMixin):
     content: Optional[str] = Field(None, description="Extended content/details (for action=store or action=note)")
     details: Optional[str] = Field(None, description="Extended details for discovery (for action=store). Alias: content")
     summary: Optional[str] = Field(None, description="Discovery summary (for action=store)")
-    discovery_type: Optional[str] = Field(None, description="Type: bug, insight, pattern, question (for action=store)")
+    discovery_type: Optional[str] = Field(None, description="Type: bug_found, insight, pattern, question, note, etc. (for action=store)")
     discovery_id: Optional[str] = Field(None, description="Discovery ID (for action=details, update)")
-    status: Optional[str] = Field(None, description="New status (for action=update)")
+    status: Optional[str] = Field(None, description="Status filter/update value (open, resolved, archived, superseded)")
     agent_id: Optional[str] = Field(None, description="Filter by agent (for action=get, search)")
     limit: Optional[int] = Field(None, description="Max results")
+    include_details: Optional[bool] = Field(None, description="Include full details inline (for action=search/get)")
 
 

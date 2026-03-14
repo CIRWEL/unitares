@@ -689,6 +689,31 @@ class TestHandleSubmitAntithesis:
         assert data["success"] is False
 
     @pytest.mark.asyncio
+    async def test_antithesis_rejects_agent_id_override_when_session_bound(
+        self, mock_server, mock_pg_add_message, mock_pg_update_phase,
+        mock_save_session,
+    ):
+        """Bound session identity cannot spoof reviewer via agent_id override."""
+        from src.mcp_handlers.dialectic.handlers import handle_submit_antithesis, ACTIVE_SESSIONS
+
+        session = _make_session(phase=DialecticPhase.ANTITHESIS)
+        ACTIVE_SESSIONS[session.session_id] = session
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value="agent-paused"), \
+             mock_pg_add_message, mock_pg_update_phase, mock_save_session:
+            result = await handle_submit_antithesis({
+                "session_id": session.session_id,
+                "agent_id": "agent-reviewer",
+                "concerns": ["Trying override"],
+                "reasoning": "Attempting reviewer spoof from bound paused identity.",
+                "api_key": "key",
+            })
+
+        data = _parse(result)
+        assert data["success"] is False
+        assert "override" in data.get("error", "").lower() or "bound identity" in data.get("error", "").lower()
+
+    @pytest.mark.asyncio
     async def test_antithesis_wrong_phase(
         self, mock_server, mock_pg_add_message, mock_pg_update_phase,
         mock_save_session, mock_context_agent,

@@ -108,7 +108,7 @@ handle_knowledge = action_router(
         "note": {"content": "note"},
     },
     examples=[
-        "knowledge(action='store', summary='Found bug in auth', discovery_type='bug')",
+        "knowledge(action='store', summary='Found bug in auth', discovery_type='bug_found')",
         "knowledge(action='search', query='authentication issues')",
         "knowledge(action='note', content='Remember to check cache')",
     ],

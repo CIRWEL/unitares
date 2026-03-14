@@ -27,7 +27,11 @@ from src.dialectic_protocol import (
 from ..utils import success_response, error_response, require_registered_agent
 from ..decorators import mcp_tool
 
-async def _resolve_dialectic_agent_id(arguments: Dict[str, Any]) -> tuple:
+async def _resolve_dialectic_agent_id(
+    arguments: Dict[str, Any],
+    *,
+    enforce_session_ownership: bool = False,
+) -> tuple:
     """
     Resolve agent_id for dialectic submit tools — same UUID as onboard/identity.
 
@@ -35,6 +39,9 @@ async def _resolve_dialectic_agent_id(arguments: Dict[str, Any]) -> tuple:
     - agent_id provided (third-party synthesizer): validate registered, use it
     """
     provided = arguments.get("agent_id")
+    # Normalize possible UUID-like values from callers.
+    if isinstance(provided, str):
+        provided = provided.strip()
     if not provided:
         agent_id, error = require_registered_agent(arguments)
         if error:
@@ -43,21 +50,60 @@ async def _resolve_dialectic_agent_id(arguments: Dict[str, Any]) -> tuple:
 
     # Third-party case: validate provided agent_id is registered
     if provided in mcp_server.agent_metadata:
-        return provided, None
-    # Check PostgreSQL for agents created in other sessions
-    try:
-        from ..identity.handlers import _agent_exists_in_postgres
-        if await _agent_exists_in_postgres(provided):
-            return provided, None
-    except Exception:
         pass
-    return None, [error_response(
-        f"Agent '{provided[:8]}...' is not registered",
-        recovery={
-            "action": "Third-party synthesizers must be registered. Call onboard() or identity() first.",
-            "related_tools": ["onboard", "identity"],
-        },
-    )]
+    # Check PostgreSQL for agents created in other sessions
+    elif provided:
+        try:
+            from ..identity.handlers import _agent_exists_in_postgres
+            if not await _agent_exists_in_postgres(provided):
+                return None, [error_response(
+                    f"Agent '{provided[:8]}...' is not registered",
+                    recovery={
+                        "action": "Third-party synthesizers must be registered. Call onboard() or identity() first.",
+                        "related_tools": ["onboard", "identity"],
+                    },
+                )]
+        except Exception:
+            return None, [error_response(
+                f"Could not verify agent '{provided[:8]}...' registration",
+                recovery={
+                    "action": "Retry or call identity() to confirm your current binding.",
+                    "related_tools": ["identity", "onboard"],
+                },
+            )]
+
+    if enforce_session_ownership and provided:
+        try:
+            from ..context import get_context_agent_id
+            from ..utils import verify_agent_ownership
+
+            bound_uuid = get_context_agent_id()
+            # Enforce ownership only when there is an active bound identity.
+            # This blocks same-session role spoofing while keeping backwards-
+            # compatible behavior for test/migration paths with no bound context.
+            if bound_uuid and not verify_agent_ownership(provided, arguments, allow_operator=True):
+                return None, [error_response(
+                    "agent_id override is not allowed for this call. Use your bound identity.",
+                    error_code="AUTH_REQUIRED",
+                    error_category="auth_error",
+                    recovery={
+                        "action": "Remove agent_id and retry, or bind to the reviewer identity first.",
+                        "related_tools": ["identity", "bind_session"],
+                    },
+                )]
+        except Exception:
+            # Fail closed only when we explicitly requested ownership enforcement.
+            return None, [error_response(
+                "Could not verify session ownership for provided agent_id",
+                error_code="AUTH_REQUIRED",
+                error_category="auth_error",
+                recovery={
+                    "action": "Retry without agent_id override or re-bind session identity.",
+                    "related_tools": ["identity", "bind_session"],
+                },
+            )]
+
+    return provided, None
 from src.logging_utils import get_logger
 import sys
 import os
@@ -681,7 +727,9 @@ async def handle_submit_thesis(arguments: Dict[str, Any]) -> Sequence[TextConten
             )]
 
         # Use same identity pipeline as onboard/identity (consistent UUID)
-        agent_id, agent_error = await _resolve_dialectic_agent_id(arguments)
+        agent_id, agent_error = await _resolve_dialectic_agent_id(
+            arguments, enforce_session_ownership=True
+        )
         if agent_error:
             return agent_error
 
@@ -770,7 +818,9 @@ async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextCo
             )]
 
         # Use same identity pipeline as onboard/identity (consistent UUID)
-        agent_id, agent_error = await _resolve_dialectic_agent_id(arguments)
+        agent_id, agent_error = await _resolve_dialectic_agent_id(
+            arguments, enforce_session_ownership=True
+        )
         if agent_error:
             return agent_error
 
@@ -995,7 +1045,11 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
                 try:
                     execution_result = await execute_resolution(session, resolution)
                     result["execution"] = execution_result
-                    result["next_step"] = "Agent resumed successfully with agreed conditions"
+                    if execution_result.get("success"):
+                        result["next_step"] = "Agent resumed successfully with agreed conditions"
+                    else:
+                        warning = execution_result.get("warning", "No lifecycle transition was applied.")
+                        result["next_step"] = f"Resolution recorded, but no resume action applied: {warning}"
 
                     # Execution succeeded - mark resolved in PG
                     try:

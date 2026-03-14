@@ -250,11 +250,19 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
     # Single discovery mode (original behavior)
     # LITE-FIRST: discovery_type defaults to "note" (simplest form)
     discovery_type = arguments.get("discovery_type", "note")
+    if isinstance(discovery_type, str):
+        discovery_type = discovery_type.strip().lower()
+        # UX alias: many callers naturally use "bug"
+        if discovery_type == "bug":
+            discovery_type = "bug_found"
     
     # Validate discovery_type enum
     VALID_DISCOVERY_TYPES = {"architectural_decision", "learning", "pattern", "bug_fix", "refactoring", "documentation", "experiment", "question", "note", "rule", "insight", "bug_found", "improvement", "exploration", "observation"}
     if discovery_type not in VALID_DISCOVERY_TYPES:
-        return error_response(f"Invalid discovery_type '{discovery_type}'. Valid types: {sorted(VALID_DISCOVERY_TYPES)}")
+        return error_response(
+            f"Invalid discovery_type '{discovery_type}'. Valid types: {sorted(VALID_DISCOVERY_TYPES)}. "
+            "Tip: use 'bug_found' (or shorthand 'bug')."
+        )
 
     summary, error = require_argument(arguments, "summary",
                                     "summary is required - what did you discover/learn?")
@@ -531,6 +539,9 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         dtype = arguments.get("discovery_type")
         severity = arguments.get("severity")
         status = arguments.get("status")
+        # Back-compat alias: older schemas/docs used "active".
+        if isinstance(status, str) and status.lower() == "active":
+            status = "open"
         # Default: exclude archived entries unless explicitly requested
         include_archived = arguments.get("include_archived", False)
 
@@ -867,8 +878,8 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 # Contextual suggestions based on query characteristics
                 if query_words >= 5:
                     # Long, specific query - suggest semantic search prominently
-                    hints.append(f"Long query ({query_words} words) - try semantic search: search_knowledge_graph(query='{query_text}', semantic=true)")
-                    hints.append(f"Or broaden to key concepts: search_knowledge_graph(query='{', '.join(str(query_text).split()[:3])}')")
+                    hints.append(f"Long query ({query_words} words) - try semantic search: knowledge(action='search', query='{query_text}', semantic=true)")
+                    hints.append(f"Or broaden to key concepts: knowledge(action='search', query='{', '.join(str(query_text).split()[:3])}')")
                 elif query_words >= 2:
                     # Multi-word query - suggest semantic or broader terms
                     hints.append(f"Multi-word query - try semantic search (semantic=true) for conceptual matching")
@@ -876,10 +887,10 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 else:
                     # Single word - suggest broadening or tags
                     hints.append(f"Single term '{query_text}' - try broader search or use tags")
-                    hints.append(f"Try: search_knowledge_graph(tags=['{query_text}']) or broaden query")
+                    hints.append(f"Try: knowledge(action='search', tags=['{query_text}']) or broaden query")
                 
                 # Always suggest tag search as alternative
-                hints.append(f"Alternative: Search by tags instead (tags=['tag1', 'tag2'])")
+                hints.append("Alternative: Search by tags instead (knowledge(action='search', tags=['tag1', 'tag2']))")
             
             # Filter-specific suggestions
             if agent_id:
@@ -907,7 +918,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
 
         # Visibility hints about options (v2.5.0+)
         if not include_details:
-            response_data["_tip"] = "Add include_details=true to expand all results inline"
+            response_data["_tip"] = "Add include_details=true to expand all results inline (knowledge(action='search', include_details=true))"
         if len(results) == limit:
             response_data["_more_available"] = f"Results may be limited to {limit}. Use limit=N (max 100) to get more."
         
@@ -1261,6 +1272,10 @@ async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_i
                     continue
                 
                 discovery_type = disc_data.get("discovery_type")
+                if isinstance(discovery_type, str):
+                    discovery_type = discovery_type.strip().lower()
+                    if discovery_type == "bug":
+                        discovery_type = "bug_found"
                 if not discovery_type:
                     errors.append(f"Discovery {idx}: discovery_type is required")
                     continue

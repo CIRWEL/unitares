@@ -696,13 +696,14 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                 "new_agent": ["onboard()", "process_agent_update(complexity=0.5)", "agent(action='list') or list_agents()"],
                 "check_in": ["process_agent_update(response_text='...', complexity=0.5)"],
                 "save_insight": ["leave_note(summary='...')", "OR store_knowledge_graph(summary='...', tags=[...])"],
-                "find_info": ["search_knowledge_graph(query='...')", "OR search_knowledge_graph(tags=[...])"]
+                "find_info": ["knowledge(action='search', query='...')", "OR knowledge(action='search', tags=[...])"]
             },
             # Common signatures (type hints at a glance)
             "signatures": {
                 "process_agent_update": "(complexity:float, response_text?:str, confidence?:float, task_type?:str)",
                 "store_knowledge_graph": "(summary:str, tags?:list, severity?:str, details?:str)",
                 "search_knowledge_graph": "(query?:str, tags?:list, limit?:int, include_details?:bool)",
+                "knowledge_search": "(action='search', query?:str, tags?:list, limit?:int, include_details?:bool)",
                 "leave_note": "(summary:str, tags?:list)"
             },
             "more": "list_tools(lite=false) for all tools with full category details",
@@ -1042,9 +1043,9 @@ async def handle_describe_tool(arguments: Dict[str, Any]) -> Sequence[TextConten
                         "question": "store_knowledge_graph(summary=\"How does X work?\", discovery_type=\"question\")"
                     },
                     "search_knowledge_graph": {
-                        "by_tag": "search_knowledge_graph(tags=[\"bug\"], limit=10)",
-                        "by_type": "search_knowledge_graph(discovery_type=\"insight\", limit=5)",
-                        "full_text": "search_knowledge_graph(query=\"authentication\", limit=10)"
+                        "by_tag": "knowledge(action=\"search\", tags=[\"bug\"], limit=10)",
+                        "by_type": "knowledge(action=\"search\", discovery_type=\"insight\", limit=5)",
+                        "full_text": "knowledge(action=\"search\", query=\"authentication\", limit=10)"
                     },
                     "get_governance_metrics": {
                         "check_state": "get_governance_metrics()  # uses bound identity",
