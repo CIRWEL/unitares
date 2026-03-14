@@ -40,3 +40,267 @@ def test_kg_query_accepts_created_after():
     from src.db.mixins.knowledge_graph import KnowledgeGraphMixin
     sig = inspect.signature(KnowledgeGraphMixin.kg_query)
     assert 'created_after' in sig.parameters
+
+
+# ─── Duration formatter tests ─────────────────────────────────────
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime, timezone, timedelta
+from src.temporal import build_temporal_context, _format_duration
+
+
+def test_format_duration_seconds():
+    assert _format_duration(timedelta(seconds=30)) == "30s"
+
+def test_format_duration_minutes():
+    assert _format_duration(timedelta(minutes=15)) == "15min"
+
+def test_format_duration_hours():
+    assert _format_duration(timedelta(hours=3, minutes=12)) == "3h 12min"
+
+def test_format_duration_exact_hours():
+    assert _format_duration(timedelta(hours=2)) == "2h"
+
+def test_format_duration_one_day():
+    assert _format_duration(timedelta(days=1)) == "1 day"
+
+def test_format_duration_multiple_days():
+    assert _format_duration(timedelta(days=5)) == "5 days"
+
+def test_format_duration_zero():
+    assert _format_duration(timedelta(seconds=0)) == "0s"
+
+
+# ─── Core narrator tests ──────────────────────────────────────────
+
+@pytest.fixture
+def mock_db():
+    db = AsyncMock()
+    return db
+
+
+@pytest.mark.asyncio
+async def test_temporal_silence_when_unremarkable(mock_db):
+    """Returns None when nothing temporal is noteworthy."""
+    now = datetime.now(timezone.utc)
+
+    mock_db.get_identity.return_value = MagicMock(identity_id=1)
+    mock_db.get_active_sessions_for_identity.return_value = [
+        MagicMock(created_at=now - timedelta(minutes=30))
+    ]
+    mock_db.get_last_inactive_session.return_value = None
+    mock_db.get_latest_agent_state.return_value = MagicMock(
+        recorded_at=now - timedelta(minutes=2)
+    )
+    mock_db.get_recent_cross_agent_activity.return_value = []
+    mock_db.get_agent_state_history.return_value = []
+    mock_db.kg_query.return_value = []
+
+    result = await build_temporal_context("test-uuid", mock_db)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_temporal_long_session(mock_db):
+    """Signals when session exceeds threshold."""
+    now = datetime.now(timezone.utc)
+
+    mock_db.get_identity.return_value = MagicMock(identity_id=1)
+    mock_db.get_active_sessions_for_identity.return_value = [
+        MagicMock(created_at=now - timedelta(hours=3, minutes=12))
+    ]
+    mock_db.get_last_inactive_session.return_value = None
+    mock_db.get_latest_agent_state.return_value = MagicMock(
+        recorded_at=now - timedelta(minutes=2)
+    )
+    mock_db.get_recent_cross_agent_activity.return_value = []
+    mock_db.get_agent_state_history.return_value = []
+    mock_db.kg_query.return_value = []
+
+    result = await build_temporal_context("test-uuid", mock_db)
+    assert result is not None
+    assert "3h" in result
+
+
+@pytest.mark.asyncio
+async def test_temporal_long_gap(mock_db):
+    """Signals when gap since last session is large."""
+    now = datetime.now(timezone.utc)
+
+    mock_db.get_identity.return_value = MagicMock(identity_id=1)
+    mock_db.get_active_sessions_for_identity.return_value = [
+        MagicMock(created_at=now - timedelta(minutes=5))
+    ]
+    mock_db.get_last_inactive_session.return_value = MagicMock(
+        last_active=now - timedelta(days=2)
+    )
+    mock_db.get_latest_agent_state.return_value = MagicMock(
+        recorded_at=now - timedelta(minutes=2)
+    )
+    mock_db.get_recent_cross_agent_activity.return_value = []
+    mock_db.get_agent_state_history.return_value = []
+    mock_db.kg_query.return_value = []
+
+    result = await build_temporal_context("test-uuid", mock_db)
+    assert result is not None
+    assert "2 days" in result
+
+
+@pytest.mark.asyncio
+async def test_temporal_idle(mock_db):
+    """Signals when idle within session exceeds threshold."""
+    now = datetime.now(timezone.utc)
+
+    mock_db.get_identity.return_value = MagicMock(identity_id=1)
+    mock_db.get_active_sessions_for_identity.return_value = [
+        MagicMock(created_at=now - timedelta(hours=1))
+    ]
+    mock_db.get_last_inactive_session.return_value = None
+    mock_db.get_latest_agent_state.return_value = MagicMock(
+        recorded_at=now - timedelta(minutes=45)
+    )
+    mock_db.get_recent_cross_agent_activity.return_value = []
+    mock_db.get_agent_state_history.return_value = []
+    mock_db.kg_query.return_value = []
+
+    result = await build_temporal_context("test-uuid", mock_db)
+    assert result is not None
+    assert "45min" in result
+
+
+@pytest.mark.asyncio
+async def test_temporal_cross_agent(mock_db):
+    """Surfaces cross-agent activity."""
+    now = datetime.now(timezone.utc)
+
+    mock_db.get_identity.return_value = MagicMock(identity_id=1)
+    mock_db.get_active_sessions_for_identity.return_value = [
+        MagicMock(created_at=now - timedelta(minutes=10))
+    ]
+    mock_db.get_last_inactive_session.return_value = None
+    mock_db.get_latest_agent_state.return_value = MagicMock(
+        recorded_at=now - timedelta(minutes=2)
+    )
+    mock_db.get_recent_cross_agent_activity.return_value = [
+        {"agent_id": "other-agent", "recorded_at": now - timedelta(minutes=14), "count": 3}
+    ]
+    mock_db.get_agent_state_history.return_value = []
+    mock_db.kg_query.return_value = []
+
+    result = await build_temporal_context("test-uuid", mock_db)
+    assert result is not None
+    assert "agent" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_temporal_new_discoveries(mock_db):
+    """Surfaces discoveries added since last session."""
+    now = datetime.now(timezone.utc)
+
+    mock_db.get_identity.return_value = MagicMock(identity_id=1)
+    mock_db.get_active_sessions_for_identity.return_value = [
+        MagicMock(created_at=now - timedelta(minutes=5))
+    ]
+    mock_db.get_last_inactive_session.return_value = MagicMock(
+        last_active=now - timedelta(days=1, hours=2)
+    )
+    mock_db.get_latest_agent_state.return_value = MagicMock(
+        recorded_at=now - timedelta(minutes=2)
+    )
+    mock_db.get_recent_cross_agent_activity.return_value = []
+    mock_db.get_agent_state_history.return_value = []
+    mock_db.kg_query.return_value = [
+        {"id": "d1", "summary": "found a bug"},
+        {"id": "d2", "summary": "pattern discovered"},
+        {"id": "d3", "summary": "insight noted"},
+    ]
+
+    result = await build_temporal_context("test-uuid", mock_db)
+    assert result is not None
+    assert "3" in result
+    assert "discover" in result.lower() or "knowledge" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_temporal_high_checkin_density(mock_db):
+    """Signals when check-in density is high."""
+    now = datetime.now(timezone.utc)
+
+    mock_db.get_identity.return_value = MagicMock(identity_id=1)
+    mock_db.get_active_sessions_for_identity.return_value = [
+        MagicMock(created_at=now - timedelta(minutes=25))
+    ]
+    mock_db.get_last_inactive_session.return_value = None
+    mock_db.get_latest_agent_state.return_value = MagicMock(
+        recorded_at=now - timedelta(minutes=1)
+    )
+    # 14 check-ins in ~21 minutes — high density
+    mock_db.get_agent_state_history.return_value = [
+        MagicMock(recorded_at=now - timedelta(minutes=i * 1.5))
+        for i in range(14)
+    ]
+    mock_db.get_recent_cross_agent_activity.return_value = []
+    mock_db.kg_query.return_value = []
+
+    result = await build_temporal_context("test-uuid", mock_db)
+    assert result is not None
+    assert "14" in result or "high" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_temporal_identity_not_found(mock_db):
+    """Returns None gracefully when identity doesn't exist."""
+    mock_db.get_identity.return_value = None
+
+    result = await build_temporal_context("nonexistent-uuid", mock_db)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_temporal_multiple_signals(mock_db):
+    """Combines multiple temporal signals into one string."""
+    now = datetime.now(timezone.utc)
+
+    mock_db.get_identity.return_value = MagicMock(identity_id=1)
+    mock_db.get_active_sessions_for_identity.return_value = [
+        MagicMock(created_at=now - timedelta(hours=3))
+    ]
+    mock_db.get_last_inactive_session.return_value = MagicMock(
+        last_active=now - timedelta(days=3)
+    )
+    mock_db.get_latest_agent_state.return_value = MagicMock(
+        recorded_at=now - timedelta(minutes=2)
+    )
+    mock_db.get_agent_state_history.return_value = []
+    mock_db.get_recent_cross_agent_activity.return_value = []
+    mock_db.kg_query.return_value = []
+
+    result = await build_temporal_context("test-uuid", mock_db)
+    assert result is not None
+    assert "3h" in result
+    assert "3 days" in result
+
+
+@pytest.mark.asyncio
+async def test_temporal_partial_db_failure(mock_db):
+    """One query failing doesn't crash the whole function."""
+    now = datetime.now(timezone.utc)
+
+    mock_db.get_identity.return_value = MagicMock(identity_id=1)
+    # Session query raises
+    mock_db.get_active_sessions_for_identity.side_effect = Exception("db down")
+    # But gap query works and has signal
+    mock_db.get_last_inactive_session.return_value = MagicMock(
+        last_active=now - timedelta(days=5)
+    )
+    mock_db.get_latest_agent_state.return_value = MagicMock(
+        recorded_at=now - timedelta(minutes=2)
+    )
+    mock_db.get_agent_state_history.return_value = []
+    mock_db.get_recent_cross_agent_activity.return_value = []
+    mock_db.kg_query.return_value = []
+
+    result = await build_temporal_context("test-uuid", mock_db)
+    assert result is not None
+    assert "5 days" in result
