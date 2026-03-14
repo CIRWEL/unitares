@@ -959,6 +959,15 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         thread_context=thread_context,
     )
 
+    # Temporal narrator — contextual time awareness (silence by default)
+    try:
+        from src.temporal import build_temporal_context
+        temporal = await build_temporal_context(agent_uuid, get_db())
+        if temporal:
+            result["temporal_context"] = temporal
+    except Exception:
+        pass  # Temporal narrator is non-critical
+
     logger.info(f"[ONBOARD] Agent {agent_uuid[:8]}... onboarded (is_new={is_new}, label={agent_label})")
 
     # Fire-and-forget: auto-archive ephemeral agents (0 updates, older than 2 hours)

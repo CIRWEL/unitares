@@ -304,3 +304,69 @@ async def test_temporal_partial_db_failure(mock_db):
     result = await build_temporal_context("test-uuid", mock_db)
     assert result is not None
     assert "5 days" in result
+
+
+from unittest.mock import patch, AsyncMock
+
+@pytest.mark.asyncio
+async def test_temporal_context_injected_into_onboard_result():
+    """Temporal context is added to onboard result dict when relevant."""
+    from src.temporal import build_temporal_context
+
+    mock_db = AsyncMock()
+    mock_db.get_identity.return_value = MagicMock(identity_id=1)
+    mock_db.get_active_sessions_for_identity.return_value = [
+        MagicMock(created_at=datetime.now(timezone.utc) - timedelta(hours=4))
+    ]
+    mock_db.get_last_inactive_session.return_value = None
+    mock_db.get_latest_agent_state.return_value = MagicMock(
+        recorded_at=datetime.now(timezone.utc) - timedelta(minutes=2)
+    )
+    mock_db.get_agent_state_history.return_value = []
+    mock_db.get_recent_cross_agent_activity.return_value = []
+    mock_db.kg_query.return_value = []
+
+    # Simulate what the onboard handler does
+    result = {}
+    temporal = await build_temporal_context("test-uuid", mock_db)
+    if temporal:
+        result["temporal_context"] = temporal
+
+    assert "temporal_context" in result
+    assert "4h" in result["temporal_context"]
+
+
+@pytest.mark.asyncio
+async def test_temporal_enrichment():
+    """Temporal enrichment adds temporal_context to response_data."""
+    from src.mcp_handlers.updates.context import UpdateContext
+
+    ctx = UpdateContext()
+    ctx.agent_uuid = "test-uuid"
+    ctx.response_data = {}
+
+    with patch("src.mcp_handlers.updates.enrichments.build_temporal_context", new_callable=AsyncMock) as mock_btc:
+        mock_btc.return_value = "Session: 3h 12min."
+
+        from src.mcp_handlers.updates.enrichments import enrich_temporal_context
+        await enrich_temporal_context(ctx)
+
+        assert ctx.response_data.get("temporal_context") == "Session: 3h 12min."
+
+
+@pytest.mark.asyncio
+async def test_temporal_enrichment_silence():
+    """Temporal enrichment adds nothing when time is unremarkable."""
+    from src.mcp_handlers.updates.context import UpdateContext
+
+    ctx = UpdateContext()
+    ctx.agent_uuid = "test-uuid"
+    ctx.response_data = {}
+
+    with patch("src.mcp_handlers.updates.enrichments.build_temporal_context", new_callable=AsyncMock) as mock_btc:
+        mock_btc.return_value = None
+
+        from src.mcp_handlers.updates.enrichments import enrich_temporal_context
+        await enrich_temporal_context(ctx)
+
+        assert "temporal_context" not in ctx.response_data

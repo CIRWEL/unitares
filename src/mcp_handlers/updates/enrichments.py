@@ -1384,3 +1384,18 @@ def enrich_thread_identity(ctx: UpdateContext) -> None:
             }
     except Exception as e:
         logger.debug(f"Could not enrich thread identity: {e}")
+
+# ─── Temporal Context ──────────────────────────────────────────────────
+
+from src.temporal import build_temporal_context
+
+@enrichment(order=215)
+async def enrich_temporal_context(ctx: UpdateContext) -> None:
+    """Inject temporal awareness when time is telling the agent something."""
+    try:
+        from src.db import get_db
+        temporal = await build_temporal_context(ctx.agent_uuid, get_db())
+        if temporal:
+            ctx.response_data['temporal_context'] = temporal
+    except Exception as e:
+        logger.debug(f"Could not enrich temporal context: {e}")

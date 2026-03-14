@@ -18,7 +18,7 @@ from src.mcp_handlers.updates.pipeline import (
 
 class TestEnrichmentRegistration:
     def test_all_enrichments_registered(self):
-        assert get_enrichment_count() == 25
+        assert get_enrichment_count() == 26
 
     def test_enrichment_order_is_unique(self):
         orders = [e.order for e in _ENRICHMENTS]
