@@ -26,84 +26,30 @@ from src.dialectic_protocol import (
 )
 from ..utils import success_response, error_response, require_registered_agent
 from ..decorators import mcp_tool
+from .auth import resolve_dialectic_agent_id
+from .responses import (
+    default_cooldown_steps,
+    default_escalate_steps,
+    default_resume_steps,
+    missing_session_id_recovery,
+    next_step_execution_failed,
+    next_step_negotiate_synthesis,
+    next_step_no_consensus,
+    next_step_resume_not_applied,
+    next_step_resumed,
+    next_step_submit_antithesis,
+    session_not_found_recovery,
+)
 
 async def _resolve_dialectic_agent_id(
     arguments: Dict[str, Any],
     *,
     enforce_session_ownership: bool = False,
 ) -> tuple:
-    """
-    Resolve agent_id for dialectic submit tools — same UUID as onboard/identity.
-
-    - No agent_id: use require_registered_agent (session-bound UUID)
-    - agent_id provided (third-party synthesizer): validate registered, use it
-    """
-    provided = arguments.get("agent_id")
-    # Normalize possible UUID-like values from callers.
-    if isinstance(provided, str):
-        provided = provided.strip()
-    if not provided:
-        agent_id, error = require_registered_agent(arguments)
-        if error:
-            return None, [error]  # Wrap for handler return
-        return agent_id, None
-
-    # Third-party case: validate provided agent_id is registered
-    if provided in mcp_server.agent_metadata:
-        pass
-    # Check PostgreSQL for agents created in other sessions
-    elif provided:
-        try:
-            from ..identity.handlers import _agent_exists_in_postgres
-            if not await _agent_exists_in_postgres(provided):
-                return None, [error_response(
-                    f"Agent '{provided[:8]}...' is not registered",
-                    recovery={
-                        "action": "Third-party synthesizers must be registered. Call onboard() or identity() first.",
-                        "related_tools": ["onboard", "identity"],
-                    },
-                )]
-        except Exception:
-            return None, [error_response(
-                f"Could not verify agent '{provided[:8]}...' registration",
-                recovery={
-                    "action": "Retry or call identity() to confirm your current binding.",
-                    "related_tools": ["identity", "onboard"],
-                },
-            )]
-
-    if enforce_session_ownership and provided:
-        try:
-            from ..context import get_context_agent_id
-            from ..utils import verify_agent_ownership
-
-            bound_uuid = get_context_agent_id()
-            # Enforce ownership only when there is an active bound identity.
-            # This blocks same-session role spoofing while keeping backwards-
-            # compatible behavior for test/migration paths with no bound context.
-            if bound_uuid and not verify_agent_ownership(provided, arguments, allow_operator=True):
-                return None, [error_response(
-                    "agent_id override is not allowed for this call. Use your bound identity.",
-                    error_code="AUTH_REQUIRED",
-                    error_category="auth_error",
-                    recovery={
-                        "action": "Remove agent_id and retry, or bind to the reviewer identity first.",
-                        "related_tools": ["identity", "bind_session"],
-                    },
-                )]
-        except Exception:
-            # Fail closed only when we explicitly requested ownership enforcement.
-            return None, [error_response(
-                "Could not verify session ownership for provided agent_id",
-                error_code="AUTH_REQUIRED",
-                error_category="auth_error",
-                recovery={
-                    "action": "Retry without agent_id override or re-bind session identity.",
-                    "related_tools": ["identity", "bind_session"],
-                },
-            )]
-
-    return provided, None
+    """Backward-compatible wrapper around shared dialectic auth policy."""
+    return await resolve_dialectic_agent_id(
+        arguments, enforce_session_ownership=enforce_session_ownership
+    )
 from src.logging_utils import get_logger
 import sys
 import os
@@ -720,10 +666,7 @@ async def handle_submit_thesis(arguments: Dict[str, Any]) -> Sequence[TextConten
         if not session_id:
             return [error_response(
                 "session_id is required",
-                recovery={
-                    "action": "Provide session_id",
-                    "related_tools": ["get_dialectic_session", "identity"]
-                }
+                recovery=missing_session_id_recovery(),
             )]
 
         # Use same identity pipeline as onboard/identity (consistent UUID)
@@ -742,10 +685,7 @@ async def handle_submit_thesis(arguments: Dict[str, Any]) -> Sequence[TextConten
             else:
                 return [error_response(
                     f"Session '{session_id}' not found",
-                    recovery={
-                        "action": "Session may have expired or been resolved",
-                        "related_tools": ["get_dialectic_session", "request_dialectic_review"]
-                    }
+                    recovery=session_not_found_recovery(),
                 )]
 
         # Create thesis message
@@ -762,7 +702,7 @@ async def handle_submit_thesis(arguments: Dict[str, Any]) -> Sequence[TextConten
         result = session.submit_thesis(message, api_key)
 
         if result["success"]:
-            result["next_step"] = f"Reviewer '{session.reviewer_agent_id}' should submit antithesis"
+            result["next_step"] = next_step_submit_antithesis(session.reviewer_agent_id)
 
             # Persist to PostgreSQL
             try:
@@ -811,10 +751,7 @@ async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextCo
         if not session_id:
             return [error_response(
                 "session_id is required",
-                recovery={
-                    "action": "Provide session_id",
-                    "related_tools": ["get_dialectic_session", "identity"]
-                }
+                recovery=missing_session_id_recovery(),
             )]
 
         # Use same identity pipeline as onboard/identity (consistent UUID)
@@ -833,10 +770,7 @@ async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextCo
             else:
                 return [error_response(
                     f"Session '{session_id}' not found",
-                    recovery={
-                        "action": "Session may have expired or been resolved",
-                        "related_tools": ["get_dialectic_session", "request_dialectic_review"]
-                    }
+                    recovery=session_not_found_recovery(),
                 )]
 
         # First-responder eligibility: if no reviewer assigned, validate the
@@ -872,7 +806,7 @@ async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextCo
         result = session.submit_antithesis(message, api_key)
 
         if result["success"]:
-            result["next_step"] = "Both agents should negotiate via submit_synthesis() until convergence"
+            result["next_step"] = next_step_negotiate_synthesis()
 
             # If reviewer was auto-assigned (first-responder pattern), persist to PG
             if result.get("reviewer_auto_assigned") or session.reviewer_agent_id == agent_id:
@@ -931,10 +865,7 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
         if not session_id:
             return [error_response(
                 "session_id is required",
-                recovery={
-                    "action": "Provide session_id",
-                    "related_tools": ["get_dialectic_session", "identity"]
-                }
+                recovery=missing_session_id_recovery(),
             )]
 
         # Use same identity pipeline as onboard/identity (consistent UUID)
@@ -952,10 +883,7 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
             if not session:
                 return [error_response(
                     f"Session '{session_id}' not found",
-                    recovery={
-                        "action": "Session may have expired or been resolved",
-                        "related_tools": ["get_dialectic_session", "request_dialectic_review"]
-                    }
+                    recovery=session_not_found_recovery(),
                 )]
 
         # Coerce agrees to bool (MCP tools may send "true"/"false" strings)
@@ -1046,10 +974,11 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
                     execution_result = await execute_resolution(session, resolution)
                     result["execution"] = execution_result
                     if execution_result.get("success"):
-                        result["next_step"] = "Agent resumed successfully with agreed conditions"
+                        result["next_step"] = next_step_resumed()
                     else:
-                        warning = execution_result.get("warning", "No lifecycle transition was applied.")
-                        result["next_step"] = f"Resolution recorded, but no resume action applied: {warning}"
+                        result["next_step"] = next_step_resume_not_applied(
+                            execution_result.get("warning")
+                        )
 
                     # Execution succeeded - mark resolved in PG
                     try:
@@ -1061,7 +990,7 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
                     session.phase = DialecticPhase.FAILED
                     result["success"] = False
                     result["execution_error"] = str(e)
-                    result["next_step"] = f"Failed to execute resolution: {e}"
+                    result["next_step"] = next_step_execution_failed(e)
                     try:
                         await pg_resolve_session(session_id=session_id, resolution=resolution.to_dict(), status="failed")
                     except Exception as pg_e:
@@ -1087,7 +1016,7 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
             # Max rounds exceeded - conservative default
             result["autonomous_resolution"] = True
             result["resolution_type"] = "conservative_default"
-            result["next_step"] = "Peers could not reach consensus. Maintaining current state."
+            result["next_step"] = next_step_no_consensus()
             result["cooldown_until"] = (datetime.now() + timedelta(hours=1)).isoformat()
 
         return success_response(result)
@@ -1347,20 +1276,8 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
 def _get_dialectic_next_steps(recommendation: str) -> List[str]:
     """Get next steps based on dialectic recommendation."""
     if recommendation == "RESUME":
-        return [
-            "You can resume work with the agreed conditions",
-            "Call process_agent_update() to log your next action",
-            "Monitor your coherence with get_governance_metrics()"
-        ]
+        return default_resume_steps()
     elif recommendation == "COOLDOWN":
-        return [
-            "Take a brief pause before resuming",
-            "Review the synthesis reasoning",
-            "When ready, call process_agent_update() with lower complexity"
-        ]
+        return default_cooldown_steps()
     else:  # ESCALATE
-        return [
-            "The dialectic suggests human review may be needed",
-            "Consider simplifying your approach",
-            "Use request_dialectic_review() for peer review if available"
-        ]
+        return default_escalate_steps()
