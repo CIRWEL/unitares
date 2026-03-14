@@ -188,7 +188,7 @@ async def test_temporal_cross_agent(mock_db):
     mock_db.get_agent_state_history.return_value = []
     mock_db.kg_query.return_value = []
 
-    result = await build_temporal_context("test-uuid", mock_db)
+    result = await build_temporal_context("test-uuid", mock_db, include_cross_agent=True)
     assert result is not None
     assert "agent" in result.lower()
 

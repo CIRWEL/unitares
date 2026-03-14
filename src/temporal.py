@@ -45,7 +45,7 @@ def _ensure_utc(dt: datetime) -> datetime:
 async def build_temporal_context(
     agent_id: str,
     db,
-    include_cross_agent: bool = True,
+    include_cross_agent: bool = False,
 ) -> Optional[str]:
     """
     Build temporal context string for an agent.
