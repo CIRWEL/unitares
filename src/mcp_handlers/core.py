@@ -308,8 +308,17 @@ async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequenc
             lite_metrics['mode'] = standardized_metrics['state'].get('mode')
             lite_metrics['basin'] = standardized_metrics['state'].get('basin')
 
+        if is_uninitialized:
+            lite_metrics['verdict'] = 'uninitialized'
+            lite_metrics['guidance'] = 'Submit one check-in to activate governance.'
+            lite_metrics['next_action'] = {
+                'tool': 'process_agent_update',
+                'example': "process_agent_update(response_text='Starting work', complexity=0.3, confidence=0.7)",
+                'note': "get_governance_metrics is read-only; it does not initialize state."
+            }
+            lite_metrics['related_tools'] = ['process_agent_update', 'onboard', 'identity']
+
         lite_metrics['_note'] = "Use lite=false for full diagnostics"
-        lite_metrics['_debug_lite_received'] = lite  # Echo what was received
         return success_response(lite_metrics)
 
     return success_response(standardized_metrics)

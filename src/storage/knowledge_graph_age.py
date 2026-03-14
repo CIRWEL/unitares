@@ -672,12 +672,35 @@ class KnowledgeGraphAGE:
 
     async def health_check(self) -> Dict[str, Any]:
         """
-        Lightweight health check for the AGE knowledge graph backend.
-        Returns basic stats without heavy queries.
+        Lightweight health check — counts only, no breakdowns.
+        Use get_stats() for full by_agent/by_tag/by_type/by_status breakdowns.
         """
         try:
-            # Use get_stats but wrap in try/except for safety
-            return await self.get_stats()
+            db = await self._get_db()
+
+            cypher = "MATCH (d:Discovery) RETURN count(d)"
+            total = await db.graph_query(cypher, {})
+            total_count = int(total[0]) if total and isinstance(total[0], (int, float)) else 0
+
+            cypher = "MATCH (t:Tag) RETURN count(t)"
+            tags_result = await db.graph_query(cypher, {})
+            total_tags = 0
+            if tags_result:
+                first_result = tags_result[0]
+                if isinstance(first_result, (int, float)):
+                    total_tags = int(first_result)
+                elif isinstance(first_result, dict) and "error" not in first_result:
+                    total_tags = int(first_result.get("tag_count") or first_result.get("count") or 0)
+
+            cypher = "MATCH ()-[r]->() RETURN count(r)"
+            edges_result = await db.graph_query(cypher, {})
+            total_edges = int(edges_result[0]) if edges_result and isinstance(edges_result[0], (int, float)) else 0
+
+            return {
+                "total_discoveries": total_count,
+                "total_tags": total_tags,
+                "total_edges": total_edges,
+            }
         except Exception as e:
             logger.warning(f"Health check failed, returning minimal info: {e}")
             return {

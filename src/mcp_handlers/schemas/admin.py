@@ -86,7 +86,7 @@ class HealthCheckParams(AgentIdentityMixin):
     """
     Perform deep diagnostic check of the governance system.
     """
-    pass
+    lite: bool = Field(True, description="Lite mode (default: true). Returns only component statuses without nested info/stats blocks. Set to false for full diagnostic detail.")
 
 class GetTelemetryMetricsParams(AgentIdentityMixin):
     """Parameters for get_telemetry_metrics"""

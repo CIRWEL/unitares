@@ -119,7 +119,7 @@ def get_monitor_metrics(monitor: Any, include_state: bool = True) -> Dict:
         'risk_score': None if is_uninitialized else risk_score_value,
         'latest_risk_score': None if is_uninitialized else latest_risk_score,
         'phi': float(phi),
-        'verdict': verdict,
+        'verdict': 'uninitialized' if is_uninitialized else verdict,
         'void_active': bool(state.void_active),
         'void_frequency': float(np.mean([float(abs(v) > config.VOID_THRESHOLD_INITIAL)
                                         for v in state.V_history])) if state.V_history else 0.0,

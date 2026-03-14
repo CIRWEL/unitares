@@ -556,6 +556,26 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
         "error": sum(1 for s in statuses if s == "error"),
     }
 
+    # Lite mode: strip nested info/stats blocks, keep only component status
+    lite = arguments.get("lite", True)
+    if lite:
+        lite_checks = {}
+        for name, check in checks.items():
+            lite_checks[name] = {"status": check.get("status", "unknown")}
+            # Preserve warning messages — they're actionable
+            if "warning" in check:
+                lite_checks[name]["warning"] = check["warning"]
+            if "note" in check:
+                lite_checks[name]["note"] = check["note"]
+        return success_response({
+            "status": overall_status,
+            "version": getattr(mcp_server, "SERVER_VERSION", "unknown"),
+            "status_breakdown": status_breakdown,
+            "checks": lite_checks,
+            "timestamp": datetime.now().isoformat(),
+            "_note": "Use lite=false for full diagnostic detail",
+        })
+
     return success_response({
         "status": overall_status,
         "version": getattr(mcp_server, "SERVER_VERSION", "unknown"),

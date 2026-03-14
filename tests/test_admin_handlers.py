@@ -542,6 +542,14 @@ class TestDescribeTool:
 
 class TestHealthCheck:
 
+    @pytest.fixture(autouse=True)
+    def mock_pi_connectivity(self):
+        """Mock Pi connectivity to prevent real network calls (times out in CI)."""
+        with patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool",
+                   new_callable=AsyncMock,
+                   return_value={"error": "mocked - Pi unreachable"}):
+            yield
+
     @pytest.mark.asyncio
     async def test_health_check_calibration_error(self, mock_mcp_server, patch_context_agent_id):
         """Test that calibration errors are caught and reported."""
@@ -1768,6 +1776,14 @@ class TestGetServerInfoPsutil:
 
 class TestHealthCheckEdgeCases:
 
+    @pytest.fixture(autouse=True)
+    def mock_pi_connectivity(self):
+        """Mock Pi connectivity to prevent real network calls (times out in CI)."""
+        with patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool",
+                   new_callable=AsyncMock,
+                   return_value={"error": "mocked - Pi unreachable"}):
+            yield
+
     @pytest.mark.asyncio
     async def test_health_check_telemetry_error(self, mock_mcp_server, patch_context_agent_id):
         """Test telemetry error is caught (lines 330-331)."""
@@ -1842,7 +1858,7 @@ class TestHealthCheckEdgeCases:
             mock_kg.return_value = mock_kg_instance
 
             from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
+            result = await handle_health_check({"lite": False})
 
             data = parse_result(result)
             assert data["success"] is True

@@ -1093,20 +1093,25 @@ class TestGetStats:
 class TestHealthCheck:
 
     @pytest.mark.asyncio
-    async def test_delegates_to_get_stats(self):
-        """Should delegate to get_stats."""
-        kg, _ = make_kg_with_mock_db()
-        expected = {"total_discoveries": 10}
-        kg.get_stats = AsyncMock(return_value=expected)
+    async def test_returns_counts_only(self):
+        """Should return aggregate counts without breakdowns."""
+        kg, mock_db = make_kg_with_mock_db()
+        mock_db.graph_query = AsyncMock(side_effect=[
+            [42],   # total discoveries
+            [100],  # total tags
+            [200],  # total edges
+        ])
 
         result = await kg.health_check()
-        assert result == expected
+        assert result == {"total_discoveries": 42, "total_tags": 100, "total_edges": 200}
+        assert "by_agent" not in result
+        assert "by_tag" not in result
 
     @pytest.mark.asyncio
     async def test_returns_degraded_on_error(self):
         """Should return degraded status on exception."""
-        kg, _ = make_kg_with_mock_db()
-        kg.get_stats = AsyncMock(side_effect=Exception("DB down"))
+        kg, mock_db = make_kg_with_mock_db()
+        mock_db.graph_query = AsyncMock(side_effect=Exception("DB down"))
 
         result = await kg.health_check()
         assert result["status"] == "degraded"
