@@ -101,6 +101,9 @@ secrets/
 docs/INTERNAL_CONFIG.md
 *.local.md
 
+# Archived docs (session artifacts, deprecated specs — not project documentation)
+docs/archive/
+
 # macOS
 .DS_Store
 .AppleDouble
