@@ -101,8 +101,10 @@ secrets/
 docs/INTERNAL_CONFIG.md
 *.local.md
 
-# Archived docs (session artifacts, deprecated specs — not project documentation)
+# Archived docs and working plans (session artifacts, not project documentation)
 docs/archive/
+docs/plans/
+docs/superpowers/
 
 # macOS
 .DS_Store
