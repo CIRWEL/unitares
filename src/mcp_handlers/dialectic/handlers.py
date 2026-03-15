@@ -31,7 +31,17 @@ from .responses import (
     default_cooldown_steps,
     default_escalate_steps,
     default_resume_steps,
+    get_agent_not_found_recovery,
+    get_reviewer_stuck_recovery,
+    get_session_exception_recovery,
+    get_session_timeout_recovery,
+    llm_failed_recovery,
+    llm_incomplete_recovery,
+    llm_missing_root_cause_recovery,
+    llm_unavailable_recovery,
     missing_session_id_recovery,
+    missing_session_or_agent_recovery,
+    no_sessions_found_recovery,
     next_step_execution_failed,
     next_step_negotiate_synthesis,
     next_step_no_consensus,
@@ -423,17 +433,7 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                         "success": False,
                         "error": timeout_reason,
                         "session": session.to_dict(),
-                        "recovery": {
-                            "action": "Session timed out - automatic resolution",
-                            "what_happened": timeout_reason,
-                            "what_you_can_do": [
-                                "1. Check your state with get_governance_metrics",
-                                "2. Use self_recovery(action='quick') if you believe you can proceed safely",
-                                "3. Leave a note about what happened with leave_note"
-                            ],
-                            "related_tools": ["get_governance_metrics", "self_recovery", "leave_note"],
-                            "note": "Historical session - dialectic is now archived"
-                        }
+                        "recovery": get_session_timeout_recovery(timeout_reason),
                     })
 
                 # Check if reviewer is stuck
@@ -462,17 +462,7 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                         "success": False,
                         "error": "Reviewer stuck - session aborted",
                         "session": session.to_dict(),
-                        "recovery": {
-                            "action": "Session aborted because reviewer didn't respond within timeout",
-                            "what_happened": f"Reviewer '{session.reviewer_agent_id}' was assigned but didn't submit antithesis within 2 hours",
-                            "what_you_can_do": [
-                                "1. Check your state with get_governance_metrics",
-                                "2. Use self_recovery(action='quick') if you believe you can proceed safely",
-                                "3. Leave a note about what happened with leave_note"
-                            ],
-                            "related_tools": ["get_governance_metrics", "self_recovery", "leave_note"],
-                            "note": "Historical session - dialectic is now archived"
-                        }
+                        "recovery": get_reviewer_stuck_recovery(session.reviewer_agent_id),
                     })
 
             result = session.to_dict()
@@ -488,10 +478,7 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
             if agent_id not in mcp_server.agent_metadata:
                 return [error_response(
                     f"Agent '{agent_id}' not found",
-                    recovery={
-                        "action": "Agent must be registered first",
-                        "related_tools": ["get_agent_api_key", "list_agents"]
-                    }
+                    recovery=get_agent_not_found_recovery(),
                 )]
             
             # Find sessions where agent is paused or reviewer
@@ -535,11 +522,7 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
             if not matching_sessions:
                 return [error_response(
                     f"No dialectic sessions found for agent '{agent_id}'",
-                    recovery={
-                        "action": "No historical sessions. This tool views past dialectic sessions (now archived).",
-                        "related_tools": ["get_governance_metrics", "search_knowledge_graph"],
-                        "note": "For current state, use get_governance_metrics. For recovery, use self_recovery(action='quick')."
-                    }
+                    recovery=no_sessions_found_recovery(),
                 )]
             
             # If single session, return it directly
@@ -559,11 +542,7 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
         # Neither provided
         return [error_response(
             "Either session_id or agent_id is required",
-            recovery={
-                "action": "Provide session_id or agent_id to view historical dialectic sessions",
-                "related_tools": ["list_agents", "get_governance_metrics"],
-                "note": "This tool views archived dialectic sessions. For current state, use get_governance_metrics."
-            }
+            recovery=missing_session_or_agent_recovery(),
         )]
 
     except Exception as e:
@@ -572,10 +551,7 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
         logger.error(f"Error getting dialectic session: {e}", exc_info=True)
         return [error_response(
             f"Error getting session: {str(e)}",
-            recovery={
-                "action": "Check session_id or agent_id and try again",
-                "related_tools": ["list_agents", "get_governance_metrics"]
-            }
+            recovery=get_session_exception_recovery(),
         )]
 
 @mcp_tool("list_dialectic_sessions", timeout=15.0, rate_limit_exempt=True, register=False)
@@ -1062,15 +1038,7 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
             "Local LLM (Ollama) not available for dialectic review",
             error_code="LLM_UNAVAILABLE",
             error_category="system_error",
-            recovery={
-                "action": "Start Ollama: `ollama serve` or use request_dialectic_review for peer review",
-                "related_tools": ["request_dialectic_review", "health_check"],
-                "workflow": [
-                    "1. Check Ollama: curl http://localhost:11434/api/tags",
-                    "2. Start if needed: ollama serve",
-                    "3. Retry this tool"
-                ]
-            }
+            recovery=llm_unavailable_recovery(),
         )]
 
     # Get thesis components from arguments
@@ -1083,14 +1051,7 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
             "root_cause is required - explain what you think caused the issue",
             error_code="MISSING_ARGUMENT",
             error_category="validation_error",
-            recovery={
-                "action": "Provide root_cause: your understanding of what went wrong",
-                "example": {
-                    "root_cause": "High complexity task without sufficient planning",
-                    "proposed_conditions": ["Reduce task complexity", "Add progress checkpoints"],
-                    "reasoning": "The task scope exceeded my capacity to maintain coherence"
-                }
-            }
+            recovery=llm_missing_root_cause_recovery(),
         )]
 
     # Ensure proposed_conditions is a list
@@ -1135,10 +1096,7 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
             "Dialectic process failed - LLM did not respond",
             error_code="DIALECTIC_FAILED",
             error_category="system_error",
-            recovery={
-                "action": "Check Ollama status and retry",
-                "related_tools": ["health_check", "call_model"]
-            }
+            recovery=llm_failed_recovery(),
         )]
 
     if not result.get("success"):
@@ -1146,10 +1104,7 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
             f"Dialectic incomplete: {result.get('error', 'Unknown error')}",
             error_code="DIALECTIC_INCOMPLETE",
             error_category="system_error",
-            recovery={
-                "action": "Review partial result and retry with clearer thesis",
-                "partial_result": result
-            }
+            recovery=llm_incomplete_recovery(result),
         )]
 
     # Format successful response

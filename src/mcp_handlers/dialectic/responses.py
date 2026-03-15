@@ -25,6 +25,113 @@ def session_not_found_recovery() -> Dict[str, Any]:
     }
 
 
+def get_session_timeout_recovery(timeout_reason: str) -> Dict[str, Any]:
+    """Recovery payload for timed-out historical sessions."""
+    return {
+        "action": "Session timed out - automatic resolution",
+        "what_happened": timeout_reason,
+        "what_you_can_do": [
+            "1. Check your state with get_governance_metrics",
+            "2. Use self_recovery(action='quick') if you believe you can proceed safely",
+            "3. Leave a note about what happened with leave_note",
+        ],
+        "related_tools": ["get_governance_metrics", "self_recovery", "leave_note"],
+        "note": "Historical session - dialectic is now archived",
+    }
+
+
+def get_reviewer_stuck_recovery(reviewer_agent_id: str | None) -> Dict[str, Any]:
+    """Recovery payload when reviewer fails to respond in time."""
+    return {
+        "action": "Session aborted because reviewer didn't respond within timeout",
+        "what_happened": (
+            f"Reviewer '{reviewer_agent_id}' was assigned but didn't submit antithesis within 2 hours"
+        ),
+        "what_you_can_do": [
+            "1. Check your state with get_governance_metrics",
+            "2. Use self_recovery(action='quick') if you believe you can proceed safely",
+            "3. Leave a note about what happened with leave_note",
+        ],
+        "related_tools": ["get_governance_metrics", "self_recovery", "leave_note"],
+        "note": "Historical session - dialectic is now archived",
+    }
+
+
+def get_agent_not_found_recovery() -> Dict[str, Any]:
+    """Recovery payload when querying sessions for an unknown agent."""
+    return {
+        "action": "Agent must be registered first",
+        "related_tools": ["get_agent_api_key", "list_agents"],
+    }
+
+
+def no_sessions_found_recovery() -> Dict[str, Any]:
+    """Recovery payload when an agent has no historical sessions."""
+    return {
+        "action": "No historical sessions. This tool views past dialectic sessions (now archived).",
+        "related_tools": ["get_governance_metrics", "search_knowledge_graph"],
+        "note": "For current state, use get_governance_metrics. For recovery, use self_recovery(action='quick').",
+    }
+
+
+def missing_session_or_agent_recovery() -> Dict[str, Any]:
+    """Recovery payload when neither session_id nor agent_id is provided."""
+    return {
+        "action": "Provide session_id or agent_id to view historical dialectic sessions",
+        "related_tools": ["list_agents", "get_governance_metrics"],
+        "note": "This tool views archived dialectic sessions. For current state, use get_governance_metrics.",
+    }
+
+
+def get_session_exception_recovery() -> Dict[str, Any]:
+    """Recovery payload for unexpected get_dialectic_session errors."""
+    return {
+        "action": "Check session_id or agent_id and try again",
+        "related_tools": ["list_agents", "get_governance_metrics"],
+    }
+
+
+def llm_unavailable_recovery() -> Dict[str, Any]:
+    """Recovery payload when local Ollama is not available."""
+    return {
+        "action": "Start Ollama: `ollama serve` or use request_dialectic_review for peer review",
+        "related_tools": ["request_dialectic_review", "health_check"],
+        "workflow": [
+            "1. Check Ollama: curl http://localhost:11434/api/tags",
+            "2. Start if needed: ollama serve",
+            "3. Retry this tool",
+        ],
+    }
+
+
+def llm_missing_root_cause_recovery() -> Dict[str, Any]:
+    """Recovery payload when root_cause is missing for llm_assisted_dialectic."""
+    return {
+        "action": "Provide root_cause: your understanding of what went wrong",
+        "example": {
+            "root_cause": "High complexity task without sufficient planning",
+            "proposed_conditions": ["Reduce task complexity", "Add progress checkpoints"],
+            "reasoning": "The task scope exceeded my capacity to maintain coherence",
+        },
+    }
+
+
+def llm_failed_recovery() -> Dict[str, Any]:
+    """Recovery payload when dialectic LLM call returns no result."""
+    return {
+        "action": "Check Ollama status and retry",
+        "related_tools": ["health_check", "call_model"],
+    }
+
+
+def llm_incomplete_recovery(partial_result: Dict[str, Any]) -> Dict[str, Any]:
+    """Recovery payload when dialectic completes with an unsuccessful result."""
+    return {
+        "action": "Review partial result and retry with clearer thesis",
+        "partial_result": partial_result,
+    }
+
+
 def next_step_submit_antithesis(reviewer_agent_id: str | None) -> str:
     """Next-step guidance after successful thesis submission."""
     return f"Reviewer '{reviewer_agent_id}' should submit antithesis"
