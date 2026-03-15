@@ -144,6 +144,12 @@ def mock_pg_update_phase():
 
 
 @pytest.fixture
+def mock_pg_update_reviewer():
+    """Mock pg_update_reviewer."""
+    return patch(f"{DIALECTIC}.pg_update_reviewer", new_callable=AsyncMock)
+
+
+@pytest.fixture
 def mock_pg_resolve_session():
     """Mock pg_resolve_session."""
     return patch(f"{DIALECTIC}.pg_resolve_session", new_callable=AsyncMock)
@@ -169,6 +175,16 @@ def mock_save_session():
 def mock_load_session():
     """Mock load_session."""
     return patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock)
+
+
+@pytest.fixture
+def mock_select_reviewer():
+    """Mock select_reviewer used by auto reviewer mode."""
+    return patch(
+        f"{DIALECTIC}.select_reviewer",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
 
 
 @pytest.fixture
@@ -229,13 +245,13 @@ class TestHandleRequestDialecticReview:
     @pytest.mark.asyncio
     async def test_happy_path_auto_mode_no_reviewer(
         self, mock_server, mock_require_registered, mock_verify_ownership,
-        mock_pg_create, mock_is_in_session, mock_context_agent,
+        mock_pg_create, mock_is_in_session, mock_context_agent, mock_select_reviewer,
     ):
         """Auto mode creates session with no reviewer assigned (awaiting assignment)."""
         from src.mcp_handlers.dialectic.handlers import handle_request_dialectic_review
 
         with mock_require_registered("agent-paused"), mock_verify_ownership, \
-             mock_pg_create, mock_is_in_session, mock_context_agent:
+             mock_pg_create, mock_is_in_session, mock_context_agent, mock_select_reviewer:
             result = await handle_request_dialectic_review({
                 "agent_id": "agent-paused",
                 "_agent_uuid": "agent-paused",
@@ -612,7 +628,7 @@ class TestHandleSubmitAntithesis:
     @pytest.mark.asyncio
     async def test_happy_path(
         self, mock_server, mock_pg_add_message, mock_pg_update_phase,
-        mock_save_session, mock_context_agent,
+        mock_save_session, mock_context_agent, mock_pg_update_reviewer,
     ):
         """Successful antithesis submission advances phase to synthesis."""
         from src.mcp_handlers.dialectic.handlers import handle_submit_antithesis, ACTIVE_SESSIONS
@@ -621,7 +637,7 @@ class TestHandleSubmitAntithesis:
         ACTIVE_SESSIONS[session.session_id] = session
 
         with mock_pg_add_message, mock_pg_update_phase, mock_save_session, \
-             mock_context_agent:
+             mock_context_agent, mock_pg_update_reviewer:
             result = await handle_submit_antithesis({
                 "session_id": session.session_id,
                 "agent_id": "agent-reviewer",
@@ -740,7 +756,7 @@ class TestHandleSubmitAntithesis:
     @pytest.mark.asyncio
     async def test_antithesis_loads_from_disk(
         self, mock_server, mock_pg_add_message, mock_pg_update_phase,
-        mock_save_session, mock_context_agent,
+        mock_save_session, mock_context_agent, mock_pg_update_reviewer,
     ):
         """Session loaded from disk when not in memory."""
         from src.mcp_handlers.dialectic.handlers import handle_submit_antithesis, ACTIVE_SESSIONS
@@ -750,7 +766,7 @@ class TestHandleSubmitAntithesis:
         with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock,
                    return_value=session), \
              mock_pg_add_message, mock_pg_update_phase, mock_save_session, \
-             mock_context_agent:
+             mock_context_agent, mock_pg_update_reviewer:
             result = await handle_submit_antithesis({
                 "session_id": session.session_id,
                 "agent_id": "agent-reviewer",
