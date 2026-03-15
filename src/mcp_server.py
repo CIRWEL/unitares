@@ -696,6 +696,10 @@ async def main():
         print(f"\n❌ Database initialization failed: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Give audit logger a reference to the event loop for executor-thread writes
+    from src.audit_log import AuditLogger
+    AuditLogger._event_loop = asyncio.get_running_loop()
+
     # Register cleanup handlers
     def cleanup():
         # Close database connections

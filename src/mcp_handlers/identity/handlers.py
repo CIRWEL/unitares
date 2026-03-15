@@ -547,7 +547,17 @@ async def handle_bind_session(arguments: Dict[str, Any]) -> Sequence[TextContent
     startup hook context.
     """
     arguments = arguments or {}
+
+    def _coerce_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1", "yes", "on"}
+        return False
+
+    strict = _coerce_bool(arguments.get("strict"))
     client_session_id = arguments.get("client_session_id")
+    expected_agent_id = arguments.get("agent_id")
     if not client_session_id and arguments.get("continuity_token"):
         from ..context import get_session_signals
         token_signals = get_session_signals()
@@ -558,6 +568,14 @@ async def handle_bind_session(arguments: Dict[str, Any]) -> Sequence[TextContent
         )
     if not client_session_id:
         return error_response("client_session_id or continuity_token is required")
+    if strict and not expected_agent_id:
+        return error_response(
+            "strict bind_session requires agent_id",
+            recovery={
+                "action": "Provide agent_id (UUID or display agent_id) with strict=true.",
+                "example": "bind_session(client_session_id='agent-xxxx', agent_id='Claude_Code_20260315', strict=true)",
+            }
+        )
 
     # Get the current MCP session key (the one we want to rebind)
     from ..context import get_session_signals
@@ -575,6 +593,25 @@ async def handle_bind_session(arguments: Dict[str, Any]) -> Sequence[TextContent
     target_uuid = target_identity["agent_uuid"]
     target_label = target_identity.get("label")
     target_agent_id = target_identity.get("agent_id", target_uuid)
+
+    # Guard against accidental cross-binding by allowing callers to pin
+    # bind_session to a specific identity (UUID or display agent_id).
+    if expected_agent_id:
+        expected_agent_id = str(expected_agent_id).strip()
+        if expected_agent_id not in (target_uuid, target_agent_id):
+            return error_response(
+                "agent_id mismatch for requested session binding",
+                details={
+                    "expected_agent_id": expected_agent_id,
+                    "resolved_agent_id": target_agent_id,
+                    "resolved_agent_uuid": target_uuid,
+                    "client_session_id": client_session_id,
+                },
+                recovery={
+                    "action": "Verify client_session_id belongs to the intended agent, or pass the correct agent_id/UUID.",
+                    "hint": "Use identity() or get_governance_metrics() to confirm your active identity first.",
+                }
+            )
 
     # Rebind: cache the MCP session key → target agent UUID
     if mcp_session_key and mcp_session_key != client_session_id:

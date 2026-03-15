@@ -9,7 +9,7 @@
 
 AI agents have no shared language for inner state. They can report outputs, but not whether they're coherent, drifting, or losing the thread. UNITARES provides that language — four continuous variables, a dynamics that evolves them, and a protocol for agents to speak and be read. Built on coupled differential equations with [provable stability guarantees](governance_core/README.md).
 
-Validated on **903 agents over 69 days** (198K audit events). This repo is the production implementation.
+Validated on **903 agents over 69 days** (198K audit events). This repo powers a live deployment and is production-capable, but not "set-and-forget" for every environment.
 
 ---
 
@@ -97,6 +97,8 @@ python src/mcp_server_std.py
 ## Production Validation
 
 Deployed since December 2025. Current system: **1,100+ registered agents**, **1,700+ knowledge discoveries**, **38 dialectic sessions**, **5,600+ tests** at 78% coverage.
+
+Production readiness is context-dependent. The core platform is running in production, but teams adopting it should still do their own security review, load testing, observability setup, and rollback planning.
 
 Validation snapshot (first 69 days):
 

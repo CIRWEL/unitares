@@ -115,6 +115,10 @@ class ProcessAgentUpdateParams(AgentIdentityMixin):
         default=False,
         description="If true, automatically export governance history when thermodynamically significant events occur."
     )
+    require_strong_identity: Union[bool, str, None] = Field(
+        default=False,
+        description="If true, reject updates unless identity assurance tier is strong."
+    )
     task_type: Literal[
         "convergent", "divergent", "mixed", "refactoring", "bugfix", "testing",
         "documentation", "feature", "exploration", "research", "design", "debugging",
@@ -148,6 +152,8 @@ class ProcessAgentUpdateParams(AgentIdentityMixin):
             val = str(self.lite).lower() in ('true', '1', 'yes')
             if val and self.response_mode == "auto":
                 self.response_mode = "minimal"
+        if isinstance(self.require_strong_identity, str):
+            self.require_strong_identity = self.require_strong_identity.lower() in ('true', '1', 'yes')
         return self
 
 class OutcomeEventParams(AgentIdentityMixin):

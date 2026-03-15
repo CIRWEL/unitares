@@ -32,6 +32,7 @@ class AuditEntry:
 
 class AuditLogger:
     """Manages audit logging for governance system"""
+    _event_loop = None  # Set by server at startup for executor-thread writes
 
     def __init__(self, log_file: Optional[Path] = None):
         if log_file is None:
@@ -366,9 +367,8 @@ class AuditLogger:
 
     def _write_entry(self, entry: AuditEntry):
         """Write audit entry to JSONL log file with locking"""
+        entry_dict = asdict(entry)
         try:
-            entry_dict = asdict(entry)
-
             # Raw truth: JSONL append
             if self._jsonl_enabled:
                 with open(self.log_file, 'a') as f:
@@ -384,7 +384,30 @@ class AuditLogger:
         except Exception as e:
             # Don't crash on audit log failures
             logger.warning(f"Could not write audit log: {e}", exc_info=True)
-    
+
+        # Fire-and-forget Postgres write
+        try:
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                # In event loop thread — schedule directly
+                loop.create_task(self._write_to_postgres(entry_dict))
+            except RuntimeError:
+                # In executor thread — schedule back to main loop
+                loop = self.__class__._event_loop
+                if loop is not None and loop.is_running():
+                    loop.call_soon_threadsafe(loop.create_task, self._write_to_postgres(entry_dict))
+        except Exception:
+            pass  # No event loop at all (tests, CLI)
+
+    async def _write_to_postgres(self, entry_dict: dict):
+        """Fire-and-forget Postgres audit write."""
+        try:
+            from src.audit_db import append_audit_event_async
+            await append_audit_event_async(entry_dict)
+        except Exception as e:
+            logger.warning(f"Postgres audit write failed (non-fatal): {e}")
+
     def rotate_log(self, max_age_days: int = 30):
         """
         Rotate audit log: archive old entries, keep recent ones.

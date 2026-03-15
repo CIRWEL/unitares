@@ -29,6 +29,61 @@ from ..support.tool_hints import (
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
+_STRONG_IDENTITY_SOURCES = {
+    "continuity_token",
+    "explicit_client_session_id",
+    "explicit_client_session_id_scoped",
+    "mcp_session_id",
+    "x_session_id",
+    "oauth_client_id",
+}
+
+_MEDIUM_IDENTITY_SOURCES = {
+    "x_client_id",
+    "pinned_onboard_session",
+    "context_mcp_session_id",
+    "context_session_key",
+}
+
+
+def _compute_identity_assurance(
+    source: Optional[str],
+    trajectory_confidence: Optional[float],
+) -> dict:
+    """Compute identity assurance tier for write-path governance updates."""
+    source_key = (source or "unknown").strip().lower()
+    if source_key in _STRONG_IDENTITY_SOURCES:
+        tier = "strong"
+        score = 1.0
+        reason = "cryptographic or explicit stable session source"
+    elif source_key in _MEDIUM_IDENTITY_SOURCES:
+        tier = "medium"
+        score = 0.7
+        reason = "session continuity source with weaker explicit proof"
+    else:
+        tier = "weak"
+        score = 0.35
+        reason = "heuristic or unknown session source"
+
+    # Trajectory acts as continuity evidence, not primary auth.
+    if trajectory_confidence is not None:
+        try:
+            traj = max(0.0, min(1.0, float(trajectory_confidence)))
+            score = round(min(1.0, score + (0.2 * traj)), 3)
+            if tier == "weak" and traj >= 0.7:
+                tier = "medium"
+                reason = "weak session source, upgraded by high trajectory continuity"
+        except (TypeError, ValueError):
+            pass
+
+    return {
+        "tier": tier,
+        "score": score,
+        "session_source": source_key,
+        "trajectory_confidence": trajectory_confidence,
+        "reason": reason,
+    }
+
 # ─── Purpose Inference ─────────────────────────────────────────────────
 
 _PURPOSE_KEYWORDS = {
@@ -62,13 +117,38 @@ async def resolve_identity_and_guards(ctx: UpdateContext) -> Optional[Sequence[T
     """
     mcp_server = ctx.mcp_server
 
-    from ..context import get_context_agent_id, get_context_session_key
+    from ..context import (
+        get_context_agent_id,
+        get_context_session_key,
+        get_session_resolution_source,
+        get_trajectory_confidence,
+    )
     ctx.agent_uuid = get_context_agent_id()
     ctx.session_key = get_context_session_key()
+    ctx.session_resolution_source = get_session_resolution_source()
+    ctx.trajectory_confidence = get_trajectory_confidence()
+    ctx.identity_assurance = _compute_identity_assurance(
+        ctx.session_resolution_source,
+        ctx.trajectory_confidence,
+    )
 
     if not ctx.agent_uuid:
         logger.error("No agent_uuid in context - identity_v2 resolution failed at dispatch")
         return [error_response("Identity not resolved. Try calling identity() first.")]
+
+    if ctx.arguments.get("require_strong_identity"):
+        if ctx.identity_assurance.get("tier") != "strong":
+            return [error_response(
+                "process_agent_update requires strong identity assurance for this call",
+                details={
+                    "identity_assurance": ctx.identity_assurance,
+                    "hint": "Use bind_session(..., strict=true) or continuity_token for strong identity continuity.",
+                },
+                recovery={
+                    "action": "Re-bind with strict identity or pass continuity_token, then retry.",
+                    "related_tools": ["bind_session", "identity", "onboard"],
+                }
+            )]
 
     # Circuit breaker: paused / archived agents cannot update
     if ctx.agent_uuid in mcp_server.agent_metadata:
@@ -411,6 +491,16 @@ def transform_inputs(ctx: UpdateContext) -> Optional[Sequence[TextContent]]:
             ctx.confidence = corrected
         except Exception as e:
             logger.debug(f"Calibration correction skipped: {e}")
+
+    # Low-assurance identity should not drive high-confidence updates.
+    if ctx.identity_assurance.get("tier") == "weak" and ctx.confidence is not None:
+        original_confidence = ctx.confidence
+        ctx.confidence = min(ctx.confidence, 0.55)
+        if ctx.confidence != original_confidence:
+            ctx.warnings.append(
+                f"Identity assurance is weak ({ctx.identity_assurance.get('session_source')}); "
+                f"confidence dampened from {original_confidence:.2f} to {ctx.confidence:.2f}."
+            )
 
     # Ethical Drift
     ctx.ethical_drift = ctx.arguments.get("ethical_drift", [0.0, 0.0, 0.0])

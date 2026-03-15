@@ -538,6 +538,7 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
             # Phase 6: Build & enrich response
             ctx.response_data = ctx.result.copy()
             ctx.response_data["agent_id"] = ctx.agent_id
+            ctx.response_data["identity_assurance"] = ctx.identity_assurance
             from src.governance_monitor import UNITARESMonitor
             ctx.response_data["eisv_labels"] = UNITARESMonitor.get_eisv_labels()
 

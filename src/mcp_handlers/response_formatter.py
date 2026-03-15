@@ -150,6 +150,8 @@ def _format_standard(response_data: dict, task_type: str) -> dict:
     }
     if "thread_context" in response_data:
         result["thread_context"] = response_data["thread_context"]
+    if "identity_assurance" in response_data:
+        result["identity_assurance"] = response_data["identity_assurance"]
     identity_notifications = response_data.get("_identity_notifications")
     if identity_notifications:
         result["identity_notifications"] = identity_notifications
@@ -265,6 +267,8 @@ def _format_mirror(response_data: dict, saved_trust_tier: Optional[str]) -> dict
         result["trust_tier"] = saved_trust_tier
     if "thread_context" in response_data:
         result["thread_context"] = response_data["thread_context"]
+    if "identity_assurance" in response_data:
+        result["identity_assurance"] = response_data["identity_assurance"]
 
     # Include identity notifications if present
     identity_notifications = response_data.get("_identity_notifications")
@@ -302,6 +306,8 @@ def _format_minimal(response_data: dict, using_default_mode: bool, saved_trust_t
         result["trust_tier"] = saved_trust_tier
     if "thread_context" in response_data:
         result["thread_context"] = response_data["thread_context"]
+    if "identity_assurance" in response_data:
+        result["identity_assurance"] = response_data["identity_assurance"]
     identity_notifications = response_data.get("_identity_notifications")
     if identity_notifications:
         result["identity_notifications"] = identity_notifications
@@ -364,6 +370,8 @@ def _format_compact(response_data: dict, using_default_mode: bool, saved_trust_t
         result["_tip"] = "Verbosity options: response_mode='minimal'|'compact'|'full', or set permanently via update_agent_metadata(preferences={'verbosity':'minimal'})"
     if "thread_context" in response_data:
         result["thread_context"] = response_data["thread_context"]
+    if "identity_assurance" in response_data:
+        result["identity_assurance"] = response_data["identity_assurance"]
     identity_notifications = response_data.get("_identity_notifications")
     if identity_notifications:
         result["identity_notifications"] = identity_notifications

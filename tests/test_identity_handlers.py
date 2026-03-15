@@ -632,6 +632,83 @@ def _parse(result):
 
 
 # ============================================================================
+# handle_bind_session - explicit binding guardrails
+# ============================================================================
+
+class TestHandleBindSession:
+
+    @pytest.mark.asyncio
+    async def test_bind_session_accepts_matching_agent_id(self):
+        """bind_session succeeds when expected agent_id matches resolved identity."""
+        from src.mcp_handlers.identity.handlers import handle_bind_session
+
+        target_uuid = str(uuid.uuid4())
+        target_agent_id = "GPT_5_3_20260315"
+        resolved = {
+            "agent_uuid": target_uuid,
+            "agent_id": target_agent_id,
+            "label": "TestAgent",
+            "created": False,
+        }
+        mock_db = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="ident-1")
+        mock_db.create_session = AsyncMock()
+
+        with patch("src.mcp_handlers.identity.handlers.resolve_session_identity", new=AsyncMock(return_value=resolved)), \
+             patch("src.mcp_handlers.identity.handlers.derive_session_key", new=AsyncMock(return_value="mcp:test-session")), \
+             patch("src.mcp_handlers.identity.handlers._cache_session", new=AsyncMock()), \
+             patch("src.mcp_handlers.identity.handlers.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.context.get_session_signals", return_value=SimpleNamespace(user_agent="test")):
+            result = await handle_bind_session({
+                "client_session_id": "agent-abc123",
+                "agent_id": target_agent_id,
+            })
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["bound"] is True
+        assert data["agent_uuid"] == target_uuid
+
+    @pytest.mark.asyncio
+    async def test_bind_session_rejects_agent_id_mismatch(self):
+        """bind_session fails fast when expected agent_id doesn't match target."""
+        from src.mcp_handlers.identity.handlers import handle_bind_session
+
+        resolved = {
+            "agent_uuid": str(uuid.uuid4()),
+            "agent_id": "Claude_Code_20260315",
+            "label": "ExistingAgent",
+            "created": False,
+        }
+
+        with patch("src.mcp_handlers.identity.handlers.resolve_session_identity", new=AsyncMock(return_value=resolved)), \
+             patch("src.mcp_handlers.identity.handlers.derive_session_key", new=AsyncMock(return_value="mcp:test-session")), \
+             patch("src.mcp_handlers.context.get_session_signals", return_value=SimpleNamespace(user_agent="test")):
+            result = await handle_bind_session({
+                "client_session_id": "agent-abc123",
+                "agent_id": "GPT_Code_20260315",
+            })
+        data = _parse(result)
+
+        assert data["success"] is False
+        assert "mismatch" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_bind_session_strict_requires_agent_id(self):
+        """strict=true requires agent_id to prevent accidental cross-binding."""
+        from src.mcp_handlers.identity.handlers import handle_bind_session
+
+        result = await handle_bind_session({
+            "client_session_id": "agent-abc123",
+            "strict": True,
+        })
+        data = _parse(result)
+
+        assert data["success"] is False
+        assert "requires agent_id" in data["error"]
+
+
+# ============================================================================
 # handle_identity_adapter - full decorator-wrapped handler (lines 1208-1410)
 # ============================================================================
 

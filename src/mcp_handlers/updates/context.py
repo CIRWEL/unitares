@@ -23,6 +23,9 @@ class UpdateContext:
     label: Optional[str] = None
     is_new_agent: bool = False
     meta: Optional[Any] = None   # AgentMetadata instance
+    session_resolution_source: Optional[str] = None
+    trajectory_confidence: Optional[float] = None
+    identity_assurance: Dict[str, Any] = field(default_factory=dict)
 
     # ── Validated inputs (Phase 3) ─────────────────────────────────
     response_text: str = ""

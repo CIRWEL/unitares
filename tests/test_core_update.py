@@ -271,6 +271,46 @@ class TestProcessAgentUpdate:
             assert "error" in data or "Identity not resolved" in json.dumps(data)
 
     @pytest.mark.asyncio
+    async def test_require_strong_identity_rejects_weak_resolution(self, mock_server):
+        """require_strong_identity=true rejects weakly resolved identity sources."""
+        patches = self._common_patches(mock_server)
+        with self._apply_patches(patches), \
+             patch("src.mcp_handlers.context.get_session_resolution_source", return_value="ip_ua_fingerprint"), \
+             patch("src.mcp_handlers.context.get_trajectory_confidence", return_value=None):
+            from src.mcp_handlers.core import handle_process_agent_update
+            result = await handle_process_agent_update({
+                "response_text": "test strict assurance gate",
+                "require_strong_identity": True,
+                "response_mode": "full",
+            })
+
+            data = _parse(result)
+            assert data.get("success") is False
+            assert "strong identity" in data.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_weak_identity_downweights_confidence_and_reports_assurance(self, mock_server):
+        """Weak identity source dampens confidence and is reported in response."""
+        patches = self._common_patches(mock_server)
+        with self._apply_patches(patches), \
+             patch("src.mcp_handlers.context.get_session_resolution_source", return_value="ip_ua_fingerprint"), \
+             patch("src.mcp_handlers.context.get_trajectory_confidence", return_value=None):
+            from src.mcp_handlers.core import handle_process_agent_update
+            result = await handle_process_agent_update({
+                "response_text": "test weak assurance dampening",
+                "confidence": 0.95,
+                "response_mode": "full",
+            })
+
+            data = _parse(result)
+            assert data.get("success") is True
+            assert data.get("identity_assurance", {}).get("tier") == "weak"
+
+            called_confidence = mock_server.process_update_authenticated_async.await_args.kwargs.get("confidence")
+            assert called_confidence is not None
+            assert called_confidence <= 0.55
+
+    @pytest.mark.asyncio
     async def test_paused_agent_rejected(self, mock_server):
         """Paused agent cannot process updates."""
         agent_uuid = "test-uuid-paused"

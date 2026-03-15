@@ -115,5 +115,14 @@ class VerifyTrajectoryIdentityParams(AgentIdentityMixin):
 
 class BindSessionParams(AgentIdentityMixin):
     """Bind current MCP session to an existing agent identity via client_session_id."""
-    pass  # client_session_id is inherited from AgentIdentityMixin
+    strict: Union[bool, str, None] = Field(
+        default=False,
+        description="If true, require explicit agent_id and reject mismatched binding."
+    )
+
+    @model_validator(mode='after')
+    def coerce_booleans(self):
+        if isinstance(self.strict, str):
+            self.strict = self.strict.lower() in ('true', '1', 'yes')
+        return self
 
