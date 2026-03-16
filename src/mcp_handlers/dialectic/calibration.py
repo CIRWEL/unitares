@@ -102,7 +102,7 @@ async def update_calibration_from_dialectic(session: DialecticSession, resolutio
         calibration_checker.record_prediction(
             confidence=confidence,  # Original agent's confidence
             predicted_correct=predicted_correct,  # Agent's implicit prediction from confidence
-            actual_correct=actual_correct,  # Ground truth (from peer consensus)
+            actual_correct=actual_correct,  # Ground truth (from dialectic peer signal)
             complexity_discrepancy=complexity_discrepancy
         )
         

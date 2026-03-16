@@ -586,11 +586,10 @@ class CalibrationChecker:
         result["is_calibrated"] = is_calibrated
         result["issues"] = strategic_issues + tactical_issues
         
-        # HONESTY NOTE: Surface what calibration actually measures
         result["honesty_note"] = (
-            "Calibration uses two signal sources: (1) auto-collected ground truth from objective outcomes "
-            "(test pass/fail, command exit codes, lint results) and (2) peer consensus from dialectic agreement. "
-            "Objective outcomes are weighted higher. The 0.7 peer_weight applies only to the dialectic signal."
+            "Calibration ground truth comes from objective outcomes (test pass/fail, command exit codes, "
+            "lint results, file operations) as the primary signal. Dialectic peer agreement is a secondary "
+            "signal (0.7 peer_weight). Human feedback is optional, not required."
         )
         
         return is_calibrated, result

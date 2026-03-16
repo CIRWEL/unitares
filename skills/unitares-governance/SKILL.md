@@ -58,8 +58,9 @@ honestly and let it track naturally.
 ### Calibration
 
 The system tracks whether your stated confidence matches outcomes. Over time, this
-builds a calibration curve. Known issue: it measures peer consensus, not external
-ground truth. Epistemic humility tends to correlate with better trajectories.
+builds a calibration curve. Primary ground truth comes from objective signals — test
+pass/fail, command exit codes, lint results, file operations. Dialectic peer agreement
+is a secondary signal. Human feedback is available but not required for calibration.
 
 ## How to Work as an Agent
 
