@@ -502,7 +502,7 @@ class TestResolvePath1RedisHit:
         mock_db.get_identity.return_value = SimpleNamespace(identity_id="id-1", metadata={})
         mock_db.get_agent_label.return_value = "TestAgent"
 
-        result = await resolve_session_identity(session_key="redis-hit-session")
+        result = await resolve_session_identity(session_key="redis-hit-session", resume=True)
 
         assert result["source"] == "redis"
         assert result["created"] is False
@@ -523,7 +523,7 @@ class TestResolvePath1RedisHit:
             metadata={"agent_id": "Gemini_Pro_20260206"}
         )
 
-        result = await resolve_session_identity(session_key="redis-hit-no-display")
+        result = await resolve_session_identity(session_key="redis-hit-no-display", resume=True)
 
         assert result["source"] == "redis"
         assert result["agent_uuid"] == test_uuid
@@ -539,7 +539,7 @@ class TestResolvePath1RedisHit:
         # No metadata found
         mock_db.get_identity.return_value = None
 
-        result = await resolve_session_identity(session_key="redis-hit-no-meta")
+        result = await resolve_session_identity(session_key="redis-hit-no-meta", resume=True)
 
         assert result["source"] == "redis"
         assert result["agent_uuid"] == test_uuid
@@ -554,7 +554,7 @@ class TestResolvePath1RedisHit:
         mock_redis.get.return_value = {"agent_id": test_uuid, "display_agent_id": "Test_20260206"}
         mock_db.get_identity.return_value = SimpleNamespace(identity_id="id-1", metadata={})
 
-        await resolve_session_identity(session_key="ttl-refresh-test")
+        await resolve_session_identity(session_key="ttl-refresh-test", resume=True)
 
         # Should have called expire on the raw redis
         mock_raw_redis.expire.assert_called()
@@ -568,7 +568,7 @@ class TestResolvePath1RedisHit:
         mock_redis.get.return_value = {"agent_id": test_uuid, "display_agent_id": "Test_20260206"}
         mock_db.get_identity.return_value = None  # Not in PG
 
-        result = await resolve_session_identity(session_key="not-persisted-session")
+        result = await resolve_session_identity(session_key="not-persisted-session", resume=True)
 
         assert result["source"] == "redis"
         assert result["persisted"] is False
@@ -622,7 +622,7 @@ class TestResolvePath2PostgresHit:
         )
         mock_db.get_agent_label.return_value = "MyAgent"
 
-        result = await resolve_session_identity(session_key="pg-test-session")
+        result = await resolve_session_identity(session_key="pg-test-session", resume=True)
 
         assert result["source"] == "postgres"
         assert result["created"] is False
@@ -642,7 +642,7 @@ class TestResolvePath2PostgresHit:
             identity_id="ident-1", metadata={"agent_id": "Test_20260206"}
         )
 
-        await resolve_session_identity(session_key="activity-test")
+        await resolve_session_identity(session_key="activity-test", resume=True)
 
         mock_db.update_session_activity.assert_called_once_with("activity-test")
 
@@ -660,7 +660,7 @@ class TestResolvePath2PostgresHit:
             identity_id="ident-1", metadata={"agent_id": "Test_20260206"}
         )
 
-        result = await resolve_session_identity(session_key="warm-cache-test")
+        result = await resolve_session_identity(session_key="warm-cache-test", resume=True)
 
         assert result["source"] == "postgres"
         # Redis should have been written to (via _cache_session)
@@ -679,7 +679,7 @@ class TestResolvePath2PostgresHit:
             identity_id="ident-1", metadata={}
         )
 
-        result = await resolve_session_identity(session_key="no-meta-test")
+        result = await resolve_session_identity(session_key="no-meta-test", resume=True)
 
         assert result["source"] == "postgres"
         assert result["agent_uuid"] == test_uuid
@@ -970,7 +970,7 @@ class TestRedisTtlRefreshException:
              patch("src.mcp_handlers.identity.resolution.get_db", return_value=mock_db), \
              patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
              patch("src.cache.redis_client.get_redis", side_effect=Exception("Redis error")):
-            result = await resolve_session_identity(session_key="ttl-fail-test")
+            result = await resolve_session_identity(session_key="ttl-fail-test", resume=True)
 
         assert result["source"] == "redis"
         assert result["agent_uuid"] == test_uuid
@@ -996,7 +996,7 @@ class TestPgSessionActivityException:
         mock_db.get_agent_label.return_value = "MyAgent"
         mock_db.update_session_activity.side_effect = Exception("Activity update failed")
 
-        result = await resolve_session_identity(session_key="activity-fail-test")
+        result = await resolve_session_identity(session_key="activity-fail-test", resume=True)
 
         assert result["source"] == "postgres"
         assert result["agent_uuid"] == test_uuid

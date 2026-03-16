@@ -115,6 +115,10 @@ class VerifyTrajectoryIdentityParams(AgentIdentityMixin):
 
 class BindSessionParams(AgentIdentityMixin):
     """Bind current MCP session to an existing agent identity via client_session_id."""
+    resume: Union[bool, str, None] = Field(
+        default=False,
+        description="Must be true to explicitly reattach to a prior identity (unless strict mode is used)."
+    )
     strict: Union[bool, str, None] = Field(
         default=False,
         description="If true, require explicit agent_id and reject mismatched binding."
@@ -122,6 +126,8 @@ class BindSessionParams(AgentIdentityMixin):
 
     @model_validator(mode='after')
     def coerce_booleans(self):
+        if isinstance(self.resume, str):
+            self.resume = self.resume.lower() in ('true', '1', 'yes')
         if isinstance(self.strict, str):
             self.strict = self.strict.lower() in ('true', '1', 'yes')
         return self

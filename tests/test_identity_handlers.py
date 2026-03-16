@@ -394,7 +394,7 @@ class TestIdentityResolutionIntegration:
         }
         mock_db.get_identity.return_value = None  # Not persisted
 
-        second = await resolve_session_identity(session_key="consistency-test")
+        second = await resolve_session_identity(session_key="consistency-test", resume=True)
 
         assert second["agent_uuid"] == first_uuid
         assert second["source"] == "redis"
@@ -459,7 +459,7 @@ class TestEdgeCases:
             identity_id="i1", metadata={"agent_uuid": "legacy-uuid-1234"}
         )
 
-        result = await resolve_session_identity(session_key="legacy-redis-test")
+        result = await resolve_session_identity(session_key="legacy-redis-test", resume=True)
 
         assert result["source"] == "redis"
         assert result["agent_id"] == "Claude_Opus_20260205"
@@ -481,7 +481,7 @@ class TestEdgeCases:
         )
         mock_db.get_agent_label.return_value = "LegacyPGAgent"
 
-        result = await resolve_session_identity(session_key="legacy-pg-test")
+        result = await resolve_session_identity(session_key="legacy-pg-test", resume=True)
 
         assert result["source"] == "postgres"
         assert result["agent_id"] == "Gemini_Pro_20260101"
@@ -662,6 +662,7 @@ class TestHandleBindSession:
             result = await handle_bind_session({
                 "client_session_id": "agent-abc123",
                 "agent_id": target_agent_id,
+                "resume": True,
             })
         data = _parse(result)
 
@@ -687,6 +688,7 @@ class TestHandleBindSession:
             result = await handle_bind_session({
                 "client_session_id": "agent-abc123",
                 "agent_id": "GPT_Code_20260315",
+                "resume": True,
             })
         data = _parse(result)
 
@@ -706,6 +708,19 @@ class TestHandleBindSession:
 
         assert data["success"] is False
         assert "requires agent_id" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_bind_session_requires_explicit_resume(self):
+        """bind_session rejects silent reattach without resume=true or strict=true."""
+        from src.mcp_handlers.identity.handlers import handle_bind_session
+
+        result = await handle_bind_session({
+            "client_session_id": "agent-abc123",
+        })
+        data = _parse(result)
+
+        assert data["success"] is False
+        assert "resume=true" in data["error"]
 
 
 # ============================================================================
@@ -772,6 +787,7 @@ class TestHandleIdentityAdapter:
         result = await handle_identity_adapter({
             "client_session_id": "name-adapter-test",
             "name": "TestBot",
+            "resume": True,
         })
         data = _parse(result)
 
@@ -793,7 +809,7 @@ class TestHandleIdentityAdapter:
         mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
         mock_db.get_agent_label.return_value = "ExistingAgent"
 
-        result = await handle_identity_adapter({"client_session_id": "resume-test"})
+        result = await handle_identity_adapter({"client_session_id": "resume-test", "resume": True})
         data = _parse(result)
 
         assert data["success"] is True
@@ -963,6 +979,7 @@ class TestHandleIdentityAdapter:
         result = await handle_identity_adapter({
             "client_session_id": "model-key-resume",
             "model_type": "claude-opus-4",
+            "resume": True,
         })
         data = _parse(result)
 
@@ -986,6 +1003,7 @@ class TestHandleIdentityAdapter:
         result = await handle_identity_adapter({
             "client_session_id": "label-update-test",
             "name": "NewName",
+            "resume": True,
         })
         data = _parse(result)
 
@@ -1051,8 +1069,8 @@ class TestHandleOnboardV2:
         assert "what_this_does" not in data
 
     @pytest.mark.asyncio
-    async def test_onboard_creates_new_instance_for_existing_trajectory(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
-        """onboard() creates new UUID for existing trajectory, linking predecessor."""
+    async def test_onboard_creates_new_identity_by_default(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """onboard() creates a new identity by default (resume=False)."""
         from src.mcp_handlers.identity.handlers import handle_onboard_v2
 
         predecessor_uuid = str(uuid.uuid4())
@@ -1060,7 +1078,11 @@ class TestHandleOnboardV2:
             "agent_id": predecessor_uuid,
             "display_agent_id": "Claude_20260207",
         }
-        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={})
+        mock_db.get_identity.side_effect = [
+            SimpleNamespace(identity_id="i1", metadata={}),  # predecessor lookup
+            None,  # ensure_agent_persisted check
+            SimpleNamespace(identity_id="new-ident", metadata={}),  # after upsert
+        ]
         mock_db.get_agent_label.return_value = "PredecessorAgent"
 
         result = await handle_onboard_v2({"client_session_id": "onboard-resume"})
@@ -1068,8 +1090,34 @@ class TestHandleOnboardV2:
 
         assert data["success"] is True
         assert data["is_new"] is True
-        assert data["uuid"] != predecessor_uuid  # New UUID, not the old one
-        assert data.get("predecessor", {}).get("uuid") == predecessor_uuid
+        assert data["uuid"] != predecessor_uuid
+
+    @pytest.mark.asyncio
+    async def test_onboard_resume_false_creates_new_identity(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """onboard(resume=false) creates new identity with predecessor link."""
+        from src.mcp_handlers.identity.handlers import handle_onboard_v2
+
+        predecessor_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": predecessor_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.side_effect = [
+            SimpleNamespace(identity_id="i1", metadata={}),  # predecessor lookup
+            None,  # ensure_agent_persisted check
+            SimpleNamespace(identity_id="new-ident", metadata={}),  # after upsert
+        ]
+        mock_db.get_agent_label.return_value = "PredecessorAgent"
+
+        result = await handle_onboard_v2({
+            "client_session_id": "onboard-resume-false",
+            "resume": False,
+        })
+        data = _parse(result)
+
+        assert data["success"] is True
+        assert data["is_new"] is True
+        assert data["uuid"] != predecessor_uuid
 
     @pytest.mark.asyncio
     async def test_onboard_with_name_resolves_by_name_claim(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
@@ -1245,6 +1293,7 @@ class TestHandleOnboardV2:
 
             result = await handle_onboard_v2({
                 "client_session_id": "onboard-trajectory",
+                "resume": True,
                 "trajectory_signature": {
                     "preferences": {}, "beliefs": {},
                     "stability_score": 0.9, "identity_confidence": 0.8,
@@ -1274,6 +1323,7 @@ class TestHandleOnboardV2:
         with patch("src.trajectory_identity.TrajectorySignature", side_effect=Exception("Import fail")):
             result = await handle_onboard_v2({
                 "client_session_id": "onboard-traj-fail",
+                "resume": True,
                 "trajectory_signature": {"some": "data"},
             })
         data = _parse(result)
@@ -1339,7 +1389,7 @@ class TestHandleOnboardV2:
         with patch("src.tool_modes.TOOL_MODE", "lite"), \
              patch("src.tool_modes.get_tools_for_mode", return_value=["t1", "t2", "t3"]), \
              patch("src.tool_schemas.get_tool_definitions", return_value={"t1": {}, "t2": {}, "t3": {}, "t4": {}, "t5": {}}):
-            result = await handle_onboard_v2({"client_session_id": "tool-mode-test"})
+            result = await handle_onboard_v2({"client_session_id": "tool-mode-test", "resume": True})
         data = _parse(result)
 
         assert data["success"] is True
@@ -1362,7 +1412,7 @@ class TestHandleOnboardV2:
         mock_db.get_agent_label.return_value = None
 
         with patch("src.tool_modes.TOOL_MODE", side_effect=Exception("No module")):
-            result = await handle_onboard_v2({"client_session_id": "tool-mode-fail"})
+            result = await handle_onboard_v2({"client_session_id": "tool-mode-fail", "resume": True})
         data = _parse(result)
 
         assert data["success"] is True
@@ -1381,7 +1431,7 @@ class TestHandleOnboardV2:
         mock_db.get_agent_label.return_value = None
 
         with patch("src.mcp_handlers.context.get_context_client_hint", return_value="chatgpt"):
-            result = await handle_onboard_v2({"client_session_id": "chatgpt-tips"})
+            result = await handle_onboard_v2({"client_session_id": "chatgpt-tips", "resume": True})
         data = _parse(result)
 
         assert data["success"] is True
@@ -1461,7 +1511,7 @@ class TestHandleOnboardV2:
         mock_db.get_agent_label.return_value = "ArchivedAgent"
         mock_db.update_agent_fields.return_value = True
 
-        result = await handle_onboard_v2({"client_session_id": "onboard-archived"})
+        result = await handle_onboard_v2({"client_session_id": "onboard-archived", "resume": True})
         data = _parse(result)
 
         assert data["success"] is True
@@ -1995,6 +2045,7 @@ class TestContextUpdateExceptions:
             result = await handle_identity_adapter({
                 "client_session_id": "ctx-name-fail",
                 "name": "CtxFailAgent",
+                "resume": True,
             })
         data = _parse(result)
 

@@ -247,8 +247,8 @@ class TestResolveRedisHit:
         # Ensure get_session returns None so PATH 2 doesn't kick in
         mock_db.get_session.return_value = None
 
-        # Second call should hit Redis cache
-        second = await resolve_session_identity(session_key="cache-test-session")
+        # Second call should hit Redis cache (resume=True to reuse existing)
+        second = await resolve_session_identity(session_key="cache-test-session", resume=True)
 
         assert second["created"] is False
         assert second["source"] == "redis"

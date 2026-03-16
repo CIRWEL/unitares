@@ -193,6 +193,8 @@ async def resolve_session_identity(
 
     trajectory_signature: Optional[dict] = None,
 
+    resume: bool = False,
+
 ) -> Dict[str, Any]:
 
     """
@@ -222,6 +224,12 @@ async def resolve_session_identity(
                      agent_id generation.
 
         force_new: If True, ignore existing binding and create fresh identity.
+
+        resume: If True, reuse existing identity from cache/DB (PATH 1/2).
+
+                If False (default), skip to PATH 3 (create new) with predecessor
+
+                linking when a prior identity exists.
 
 
 
@@ -262,6 +270,9 @@ async def resolve_session_identity(
         original = session_key
         session_key = re.sub(r'[^\w\-.:@]', '_', session_key)
         logger.warning(f"[SECURITY] Session key sanitized: {original[:30]}... -> {session_key[:30]}...")
+
+    # Track predecessor UUID when resume=False finds an existing identity
+    _predecessor_uuid = None
 
     # If force_new is requested, skip lookup paths and go straight to creation
 
@@ -314,56 +325,64 @@ async def resolve_session_identity(
 
                         agent_id = cached_id
 
+                    # IDENTITY HONESTY: When resume=False, don't return cached identity.
+                    # Record it as predecessor and fall through to PATH 3 (create new).
+                    if not resume:
+                        _predecessor_uuid = agent_uuid
+                        logger.info(
+                            f"[IDENTITY] resume=False, skipping Redis hit for {agent_uuid[:8]}... "
+                            f"(will create new with predecessor link)"
+                        )
+                    else:
+
+                        # Check if persisted in PostgreSQL
+
+                        persisted = await _agent_exists_in_postgres(agent_uuid)
+
+                        # Fetch label
+
+                        label = await _get_agent_label(agent_uuid) if persisted else None
+
+                        # Check archived status (prevents silent binding to archived agents)
+                        agent_status = await _get_agent_status(agent_uuid) if persisted else None
+                        is_archived = agent_status == "archived"
+
+                        # SLIDING TTL: Refresh Redis expiry on every hit (v2.5.5)
+
+                        try:
+
+                            from src.cache.redis_client import get_redis
+
+                            raw_redis = await get_redis()
+
+                            if raw_redis:
+                                await raw_redis.expire(f"session:{session_key}", GovernanceConfig.SESSION_TTL_SECONDS)
+
+                        except Exception:
+
+                            pass
 
 
-                    # Check if persisted in PostgreSQL
 
-                    persisted = await _agent_exists_in_postgres(agent_uuid)
+                        return {
 
-                    # Fetch label
+                            "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
 
-                    label = await _get_agent_label(agent_uuid) if persisted else None
+                            "agent_uuid": agent_uuid,
 
-                    # Check archived status (prevents silent binding to archived agents)
-                    agent_status = await _get_agent_status(agent_uuid) if persisted else None
-                    is_archived = agent_status == "archived"
+                            "display_name": label,
 
-                    # SLIDING TTL: Refresh Redis expiry on every hit (v2.5.5)
+                            "label": label,  # backward compat
 
-                    try:
+                            "created": False,
 
-                        from src.cache.redis_client import get_redis
+                            "persisted": persisted,
 
-                        raw_redis = await get_redis()
+                            "archived": is_archived,
 
-                        if raw_redis:
-                            await raw_redis.expire(f"session:{session_key}", GovernanceConfig.SESSION_TTL_SECONDS)
+                            "source": "redis",
 
-                    except Exception:
-
-                        pass
-
-
-
-                    return {
-
-                        "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
-
-                        "agent_uuid": agent_uuid,
-
-                        "display_name": label,
-
-                        "label": label,  # backward compat
-
-                        "created": False,
-
-                        "persisted": persisted,
-
-                        "archived": is_archived,
-
-                        "source": "redis",
-
-                    }
+                        }
 
             except Exception as e:
                 # INFO level (v2.5.7): Redis lookup failures are recoverable but should be visible
@@ -375,93 +394,102 @@ async def resolve_session_identity(
 
         # NOTE: As of v2.5.2, sessions reference agents by UUID.
 
-        try:
+        if not _predecessor_uuid:  # Skip PG if Redis already found a predecessor
 
-            db = get_db()
+            try:
 
-            if hasattr(db, "init"):
+                db = get_db()
 
-                await db.init()
+                if hasattr(db, "init"):
 
-
-
-            session = await db.get_session(session_key)
-
-            if session and session.agent_id:
-
-                stored_id = session.agent_id
-
-                # Detect format: UUID (correct) vs model+date (legacy)
-
-                is_uuid = len(stored_id) == 36 and stored_id.count("-") == 4
-
-                if is_uuid:
-
-                    agent_uuid = stored_id
-
-                    # Fetch agent_id (model+date) from metadata
-
-                    agent_id = await _get_agent_id_from_metadata(agent_uuid) or agent_uuid
-
-                else:
-
-                    # Legacy format (pre-v2.5.2): treat as both agent_id and UUID fallback
-
-                    agent_uuid = stored_id
-
-                    agent_id = stored_id
+                    await db.init()
 
 
 
-                label = await _get_agent_label(agent_uuid)
+                session = await db.get_session(session_key)
 
-                # Check archived status
-                agent_status = await _get_agent_status(agent_uuid)
-                is_archived = agent_status == "archived"
+                if session and session.agent_id:
 
-                # Warm Redis cache for next time (cache UUID + display agent_id)
+                    stored_id = session.agent_id
 
-                # This also resets the TTL to 24h (sliding window)
+                    # Detect format: UUID (correct) vs model+date (legacy)
 
-                await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
+                    is_uuid = len(stored_id) == 36 and stored_id.count("-") == 4
+
+                    if is_uuid:
+
+                        agent_uuid = stored_id
+
+                        # Fetch agent_id (model+date) from metadata
+
+                        agent_id = await _get_agent_id_from_metadata(agent_uuid) or agent_uuid
+
+                    else:
+
+                        # Legacy format (pre-v2.5.2): treat as both agent_id and UUID fallback
+
+                        agent_uuid = stored_id
+
+                        agent_id = stored_id
+
+                    # IDENTITY HONESTY: When resume=False, don't return PG identity.
+                    if not resume:
+                        _predecessor_uuid = agent_uuid
+                        logger.info(
+                            f"[IDENTITY] resume=False, skipping PG hit for {agent_uuid[:8]}... "
+                            f"(will create new with predecessor link)"
+                        )
+                    else:
+
+                        label = await _get_agent_label(agent_uuid)
+
+                        # Check archived status
+                        agent_status = await _get_agent_status(agent_uuid)
+                        is_archived = agent_status == "archived"
+
+                        # Warm Redis cache for next time (cache UUID + display agent_id)
+
+                        # This also resets the TTL to 24h (sliding window)
+
+                        await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
 
 
 
-                # Update DB last_active (non-blocking best effort)
+                        # Update DB last_active (non-blocking best effort)
 
-                try:
+                        try:
 
-                    await db.update_session_activity(session_key)
+                            await db.update_session_activity(session_key)
 
-                except Exception:
+                        except Exception:
 
-                    pass
+                            pass
 
 
 
-                return {
+                        return {
 
-                    "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
+                            "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
 
-                    "agent_uuid": agent_uuid,
+                            "agent_uuid": agent_uuid,
 
-                    "display_name": label,
+                            "display_name": label,
 
-                    "label": label,  # backward compat
+                            "label": label,  # backward compat
 
-                    "created": False,
+                            "created": False,
 
-                    "persisted": True,  # Found in PostgreSQL = persisted
+                            "persisted": True,  # Found in PostgreSQL = persisted
 
-                    "archived": is_archived,
+                            "archived": is_archived,
 
-                    "source": "postgres",
+                            "source": "postgres",
 
-                }
+                        }
 
-        except Exception as e:
+            except Exception as e:
 
-            logger.debug(f"PostgreSQL session lookup failed: {e}")
+                logger.debug(f"PostgreSQL session lookup failed: {e}")
 
 
 
@@ -505,6 +533,11 @@ async def resolve_session_identity(
     agent_id = _generate_agent_id(model_type, client_hint)
     # Auto-assign label from client signals to prevent future ghosts
     label = _generate_auto_label(model_type, client_hint) if not agent_name else None
+
+    if _predecessor_uuid:
+        logger.info(
+            f"[IDENTITY] New agent {agent_uuid[:8]}... with predecessor {_predecessor_uuid[:8]}..."
+        )
 
     if persist:
         # Persist immediately to PostgreSQL
@@ -554,7 +587,7 @@ async def resolve_session_identity(
 
             logger.info(f"Created new agent: {agent_id} (uuid: {agent_uuid[:8]}...)")
 
-            return {
+            result = {
                 "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
                 "agent_uuid": agent_uuid,
                 "display_name": label,
@@ -563,6 +596,9 @@ async def resolve_session_identity(
                 "persisted": True,
                 "source": "created",
             }
+            if _predecessor_uuid:
+                result["predecessor_uuid"] = _predecessor_uuid
+            return result
 
         except Exception as e:
             logger.warning(f"Failed to persist new agent: {e}")
@@ -573,7 +609,7 @@ async def resolve_session_identity(
     await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
     logger.debug(f"Created new agent (lazy): {agent_id} (uuid: {agent_uuid[:8]}...)")
 
-    return {
+    result = {
         "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
         "agent_uuid": agent_uuid,
         "display_name": None,
@@ -582,6 +618,9 @@ async def resolve_session_identity(
         "persisted": False,
         "source": "memory_only",
     }
+    if _predecessor_uuid:
+        result["predecessor_uuid"] = _predecessor_uuid
+    return result
 
 
 async def resolve_by_name_claim(

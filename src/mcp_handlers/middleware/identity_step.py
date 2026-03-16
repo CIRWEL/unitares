@@ -49,10 +49,9 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
         except Exception:
             pass
 
-    # X-Agent-Name auto-resume (from SessionSignals, previously in ASGI wrapper)
-    if not agent_name_hint and signals and signals.x_agent_name:
-        agent_name_hint = signals.x_agent_name
-        logger.debug(f"[DISPATCH] Using X-Agent-Name from signals: {signals.x_agent_name}")
+    # X-Agent-Name auto-resume REMOVED (identity honesty refactor):
+    # Silent name claims from transport headers bypass consent.
+    # Agents must explicitly pass name= + resume=true in onboard/identity calls.
 
     # Use header as name-claim fallback only when no name hint from arguments
     if not agent_name_hint and x_agent_id_header:
@@ -65,10 +64,14 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
     bound_agent_id = None
     identity_result = None
     try:
+        # Middleware resolves the CURRENT session's binding (established by
+        # onboard/identity earlier). resume=True is correct here — we are NOT
+        # creating new identities, we are looking up the existing one.
         identity_result = await resolve_session_identity(
             session_key,
             agent_name=agent_name_hint,
             trajectory_signature=trajectory_sig,
+            resume=True,
         )
         bound_agent_id = identity_result.get("agent_uuid")
 

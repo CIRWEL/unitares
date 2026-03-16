@@ -13,6 +13,7 @@ Modules:
 from typing import Optional, Dict, Any, Sequence
 from datetime import datetime, timedelta
 import os
+import re
 
 from mcp.types import TextContent
 
@@ -145,6 +146,104 @@ def _get_date_context() -> dict:
         "weekday": now.strftime('%A'),
     }
 
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    """Coerce bool-ish values from tool arguments."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "off"}:
+            return False
+    return default
+
+
+def _infer_model_type_from_signals(explicit_model_type: Optional[str]) -> Optional[str]:
+    """Infer model type from transport User-Agent when caller omits model_type."""
+    if explicit_model_type:
+        return explicit_model_type
+    try:
+        from ..context import get_session_signals
+        signals = get_session_signals()
+        ua = (signals.user_agent or "").lower() if signals else ""
+        if not ua:
+            return explicit_model_type
+
+        # Prefer Codex-specific matches first.
+        if re.search(r"gpt[-\s_]?5\.3", ua) and "codex" in ua:
+            return "gpt-5.3-codex"
+        if re.search(r"gpt[-\s_]?5\.4", ua) and "codex" in ua:
+            return "gpt-5.4-codex"
+        if re.search(r"gpt[-\s_]?5", ua) and "codex" in ua:
+            return "gpt-5-codex"
+        if "codex" in ua:
+            return "codex"
+        if "gpt" in ua or "openai" in ua or "chatgpt" in ua:
+            return "gpt"
+        if "claude" in ua or "anthropic" in ua:
+            return "claude"
+        if "gemini" in ua or "google" in ua:
+            return "gemini"
+    except Exception:
+        pass
+    return explicit_model_type
+
+
+def _model_family(model_type: Optional[str]) -> Optional[str]:
+    if not model_type:
+        return None
+    raw = model_type.lower()
+    if "gpt" in raw or "openai" in raw or "chatgpt" in raw or "codex" in raw:
+        return "gpt"
+    if "claude" in raw or "anthropic" in raw:
+        return "claude"
+    if "gemini" in raw or "google" in raw:
+        return "gemini"
+    return None
+
+
+def _should_rebadge_agent_id(current_agent_id: Optional[str], model_type: Optional[str], client_hint: Optional[str]) -> bool:
+    """Return True when legacy structured IDs clearly mismatch current runtime."""
+    if not current_agent_id or not model_type:
+        return False
+    aid = current_agent_id.lower()
+    family = _model_family(model_type)
+    if family == "gpt" and ("gpt" not in aid and "codex" not in aid):
+        return True
+    if family == "claude" and "claude" not in aid:
+        return True
+    if family == "gemini" and "gemini" not in aid:
+        return True
+    if family == "gpt" and "claude" in aid:
+        return True
+    if family == "claude" and ("gpt" in aid or "codex" in aid):
+        return True
+    if client_hint and client_hint.lower() == "cursor" and "claude_code" in aid and family == "gpt":
+        return True
+    return False
+
+
+async def _persist_rebadged_agent_id(agent_uuid: str, new_agent_id: str) -> None:
+    """Best-effort sync of refreshed structured agent_id to memory + DB."""
+    try:
+        if agent_uuid in mcp_server.agent_metadata:
+            mcp_server.agent_metadata[agent_uuid].structured_id = new_agent_id
+    except Exception:
+        pass
+    try:
+        db = get_db()
+        await db.upsert_identity(
+            agent_id=agent_uuid,
+            api_key_hash="",
+            metadata={"agent_id": new_agent_id},
+        )
+    except Exception as e:
+        logger.debug(f"[ONBOARD] Could not persist rebadged agent_id: {e}")
+
 # =============================================================================
 # TOOL HANDLER (replaces identity() tool)
 # =============================================================================
@@ -265,10 +364,10 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     base_session_key = await derive_session_key(signals, arguments)
     normalized_model = None
 
-    # PATH 2.5: Name-based identity claim (before any session resolution)
-    # If the caller provides name= and isn't forcing new, try to reconnect to existing identity
+    # PATH 2.5: Name-based identity claim (only when resume=true, before session resolution)
+    # If the caller provides name= + resume=true and isn't forcing new, try to reconnect
     name = arguments.get("name")
-    if name and not force_new:
+    if name and not force_new and resume:
         trajectory_sig = arguments.get("trajectory_signature")
         name_result = await resolve_by_name_claim(name, base_session_key, trajectory_signature=trajectory_sig)
         if name_result:
@@ -305,15 +404,14 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
             })
 
     # STEP 1: Check for existing identity under BASE key first (unless force_new)
-    # This prevents identity bifurcation when model_type is passed inconsistently
-    # FIX (Feb 2026): Match onboard() pattern - check base key first, then model-suffixed
+    # Pass resume= through so resolve_session_identity respects the flag
     existing_identity = None
     session_key = base_session_key
 
     if not force_new:
-        existing_identity = await resolve_session_identity(base_session_key, persist=False)
+        existing_identity = await resolve_session_identity(base_session_key, persist=False, resume=resume)
         if not existing_identity.get("created"):
-            # EXISTING AGENT FOUND under base key - use it regardless of model_type
+            # EXISTING AGENT FOUND under base key (only happens when resume=True)
             agent_uuid = existing_identity.get("agent_uuid")
             agent_id = existing_identity.get("agent_id", agent_uuid)
             label = existing_identity.get("label")
@@ -335,7 +433,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
                     }
                 })
 
-            logger.info(f"[IDENTITY] Auto-resuming existing agent {agent_uuid[:8]}... (found under base key)")
+            logger.info(f"[IDENTITY] Resuming existing agent {agent_uuid[:8]}... (explicit resume=true)")
 
             # Update label if requested
             if arguments.get("name") and arguments.get("name") != label:
@@ -359,10 +457,10 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         session_key = f"{base_session_key}:{normalized_model}"
         logger.info(f"[IDENTITY] Creating NEW identity with model-specific session_key: {session_key}")
 
-    # STEP 3: Check for existing identity under model-suffixed key (for force_new=false case)
+    # STEP 3: Check for existing identity under model-suffixed key (for resume=true case)
     # This handles the case where identity was created with model_type previously
-    if not force_new and model_type and session_key != base_session_key:
-        existing_identity = await resolve_session_identity(session_key, persist=False)
+    if not force_new and resume and model_type and session_key != base_session_key:
+        existing_identity = await resolve_session_identity(session_key, persist=False, resume=True)
         if not existing_identity.get("created"):
             agent_uuid = existing_identity.get("agent_uuid")
             agent_id = existing_identity.get("agent_id", agent_uuid)
@@ -385,7 +483,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
                     }
                 })
 
-            logger.info(f"[IDENTITY] Auto-resuming existing agent {agent_uuid[:8]}...")
+            logger.info(f"[IDENTITY] Resuming existing agent {agent_uuid[:8]}... (model-suffixed key)")
 
             # Update label if requested
             if arguments.get("name") and arguments.get("name") != label:
@@ -514,7 +612,9 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         response_data["quick_reference"]["for_strong_resume"] = continuity_token
 
     # Session continuity guidance (if not already set)
-    if not result.get("session_continuity"):
+    if result.get("session_continuity"):
+        response_data["session_continuity"] = dict(result["session_continuity"])
+    else:
         response_data["session_continuity"] = {
             "client_session_id": client_session_id,
             "instruction": "Your session is auto-bound. You only need client_session_id if tools don't recognize you.",
@@ -547,15 +647,21 @@ async def handle_bind_session(arguments: Dict[str, Any]) -> Sequence[TextContent
     startup hook context.
     """
     arguments = arguments or {}
-
-    def _coerce_bool(value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.strip().lower() in {"true", "1", "yes", "on"}
-        return False
-
     strict = _coerce_bool(arguments.get("strict"))
+    resume_requested = _coerce_bool(arguments.get("resume"))
+
+    # Safety guard: prevent accidental cross-session reattachment.
+    # Callers must explicitly opt in to rebind with resume=true, or use strict mode.
+    if not resume_requested and not strict:
+        return error_response(
+            "bind_session requires explicit resume=true (or strict=true) to prevent accidental reattachment",
+            recovery={
+                "action": "Pass resume=true when intentionally restoring a prior identity.",
+                "example": "bind_session(client_session_id='agent-xxxx', resume=true)",
+                "alternative": "Use onboard() for fresh/new identity bootstrap.",
+            }
+        )
+
     client_session_id = arguments.get("client_session_id")
     expected_agent_id = arguments.get("agent_id")
     if not client_session_id and arguments.get("continuity_token"):
@@ -583,7 +689,8 @@ async def handle_bind_session(arguments: Dict[str, Any]) -> Sequence[TextContent
     mcp_session_key = await derive_session_key(signals)
 
     # Resolve the agent from the provided client_session_id
-    target_identity = await resolve_session_identity(client_session_id, persist=False)
+    # resume=True is correct here — bind_session is explicitly resuming an existing identity
+    target_identity = await resolve_session_identity(client_session_id, persist=False, resume=True)
     if not target_identity or target_identity.get("created"):
         return error_response(
             f"No existing agent found for client_session_id '{client_session_id[:20]}...'. "
@@ -689,8 +796,8 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     # Extract optional parameters
     name = arguments.get("name")  # Optional: set display name
-    force_new = arguments.get("force_new", False)  # Force new identity creation
-    model_type = arguments.get("model_type")
+    force_new = _coerce_bool(arguments.get("force_new"), default=False)  # Force new identity creation
+    model_type = _infer_model_type_from_signals(arguments.get("model_type"))
 
     # Thread identity parameters (honest forking)
     _parent_agent_id = arguments.get("parent_agent_id")  # UUID of predecessor
@@ -709,13 +816,13 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     base_session_key = await derive_session_key(signals, arguments)
     normalized_model = None
 
-    # Extract resume flag early (before checking existing identity)
-    resume = arguments.get("resume", False)
+    # Identity honesty: new UUID per conversation by default.
+    # Agents must explicitly pass resume=true to reuse an existing identity.
+    resume = _coerce_bool(arguments.get("resume"), default=False)
 
     # STEP 1: Check if an identity already exists for this session (base key)
-    # This prevents forking when model_type is passed for an existing agent
-    # Skip this check if force_new is requested
-    # Auto-resume existing identity by default (no prompt needed)
+    # When resume=True: reuse existing identity (explicit opt-in)
+    # When resume=False: create new identity with predecessor link
     existing_identity = None
     created_fresh_identity = False  # Track if we got a fresh identity to persist
     _was_archived = False  # Track if agent was auto-unarchived
@@ -741,72 +848,49 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                 label = existing_by_name.get("label")
                 logger.info(f"[ONBOARD] Resumed '{name}' via name claim -> {agent_uuid[:8]}...")
             else:
-                existing_identity = await resolve_session_identity(base_session_key, persist=False)
+                existing_identity = await resolve_session_identity(base_session_key, persist=False, resume=resume)
         else:
-            existing_identity = await resolve_session_identity(base_session_key, persist=False)
+            existing_identity = await resolve_session_identity(base_session_key, persist=False, resume=resume)
         if not existing_identity.get("created"):
             if existing_identity.get("archived"):
-                # ARCHIVED AGENT — auto-unarchive with same UUID
-                agent_uuid = existing_identity.get("agent_uuid")
-                agent_id = existing_identity.get("agent_id", agent_uuid)
-                label = existing_identity.get("label")
-                logger.info(f"[ONBOARD] Found archived agent {agent_uuid[:8]}... — auto-unarchiving")
-                try:
-                    db = get_db()
-                    await db.update_agent_fields(agent_uuid, status="active")
+                # ARCHIVED AGENT — auto-unarchive with same UUID (only when resume=True)
+                if resume:
+                    agent_uuid = existing_identity.get("agent_uuid")
+                    agent_id = existing_identity.get("agent_id", agent_uuid)
+                    label = existing_identity.get("label")
+                    logger.info(f"[ONBOARD] Found archived agent {agent_uuid[:8]}... — auto-unarchiving")
                     try:
-                        srv = get_mcp_server()
-                        if agent_uuid in srv.agent_metadata:
-                            srv.agent_metadata[agent_uuid].status = "active"
-                            srv.agent_metadata[agent_uuid].archived_at = None
-                    except Exception:
-                        pass
-                    try:
-                        from src.cache import get_metadata_cache
-                        await get_metadata_cache().invalidate(agent_uuid)
-                    except Exception:
-                        pass
-                    try:
-                        await srv.load_metadata_async(force=True)
-                    except Exception:
-                        pass
-                    logger.info(f"[ONBOARD] Auto-unarchived agent {agent_uuid[:8]}...")
-                    _was_archived = True
-                except Exception as e:
-                    logger.warning(f"[ONBOARD] Could not unarchive agent: {e}")
-                resume = True  # Route to resume path below
+                        db = get_db()
+                        await db.update_agent_fields(agent_uuid, status="active")
+                        try:
+                            srv = get_mcp_server()
+                            if agent_uuid in srv.agent_metadata:
+                                srv.agent_metadata[agent_uuid].status = "active"
+                                srv.agent_metadata[agent_uuid].archived_at = None
+                        except Exception:
+                            pass
+                        try:
+                            from src.cache import get_metadata_cache
+                            await get_metadata_cache().invalidate(agent_uuid)
+                        except Exception:
+                            pass
+                        try:
+                            await srv.load_metadata_async(force=True)
+                        except Exception:
+                            pass
+                        logger.info(f"[ONBOARD] Auto-unarchived agent {agent_uuid[:8]}...")
+                        _was_archived = True
+                    except Exception as e:
+                        logger.warning(f"[ONBOARD] Could not unarchive agent: {e}")
+                # If resume=False, archived agent is ignored — fall through to create new
             elif resume:
-                # Explicit resume=True — reuse existing UUID (escape hatch)
+                # Explicit resume: reuse existing UUID
                 agent_uuid = existing_identity.get("agent_uuid")
                 agent_id = existing_identity.get("agent_id", agent_uuid)
                 label = existing_identity.get("label")
-                logger.info(f"[ONBOARD] Explicit resume — reusing {agent_uuid[:8]}...")
-            else:
-                # EXISTING TRAJECTORY FOUND — create new instance, link predecessor
-                predecessor_uuid = existing_identity.get("agent_uuid")
-                predecessor_label = existing_identity.get("label")
-                logger.info(f"[ONBOARD] Found existing trajectory {predecessor_uuid[:8]}... — creating new instance")
-
-                _parent_agent_id = _parent_agent_id or predecessor_uuid
-                _spawn_reason = _spawn_reason or "new_session"
-
-                import uuid as _uuid
-                agent_uuid = str(_uuid.uuid4())
-                agent_id = _generate_agent_id(model_type, client_hint)
-                existing_identity = {
-                    "agent_uuid": agent_uuid,
-                    "agent_id": agent_id,
-                    "created": True,
-                    "predecessor_uuid": predecessor_uuid,
-                    "predecessor_label": predecessor_label,
-                }
-                created_fresh_identity = True
-                is_new = True
-
-                session_key = base_session_key
-                if model_type:
-                    normalized_model = _normalize_model_type(model_type)
-                    session_key = f"{base_session_key}:{normalized_model}"
+                logger.info(f"[ONBOARD] Resuming existing identity {agent_uuid[:8]}... (explicit resume=true)")
+            # If resume=False and not archived: existing_identity.created will be True
+            # (resolve_session_identity with resume=False skips to PATH 3)
         else:
             # NEW AGENT - got a fresh identity from persist=False call
             # CRITICAL FIX (v2.5.7): Capture the fresh identity to persist it directly
@@ -815,6 +899,12 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             created_fresh_identity = True
             agent_uuid = existing_identity.get("agent_uuid")
             agent_id = existing_identity.get("agent_id", agent_uuid)
+            # IDENTITY HONESTY: Wire predecessor from resolve_session_identity
+            # when resume=False found an existing identity but created a new UUID
+            if not _parent_agent_id and existing_identity.get("predecessor_uuid"):
+                _parent_agent_id = existing_identity["predecessor_uuid"]
+                if not _spawn_reason:
+                    _spawn_reason = "new_session"
             logger.info(f"[ONBOARD] Created fresh identity {agent_uuid[:8]}... (will persist)")
 
             # Adjust session_key for fleet tracking
@@ -938,6 +1028,16 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         update_context_agent_id(agent_uuid)
     except Exception as e:
         logger.debug(f"Could not update context in onboard: {e}")
+
+    # Refresh stale structured IDs when runtime model/client clearly changed.
+    # Keeps UUID continuity while fixing misattribution (e.g., Claude label in Cursor+Codex).
+    if _should_rebadge_agent_id(agent_id, model_type, client_hint):
+        refreshed_agent_id = _generate_agent_id(model_type, client_hint)
+        if refreshed_agent_id and refreshed_agent_id != agent_id:
+            await _persist_rebadged_agent_id(agent_uuid, refreshed_agent_id)
+            agent_id = refreshed_agent_id
+            identity["agent_id"] = refreshed_agent_id
+            logger.info(f"[ONBOARD] Rebadged agent_id -> {refreshed_agent_id}")
 
     # Set label if requested (and different from current)
     if name and name != agent_label:
@@ -1178,23 +1278,29 @@ def _build_onboard_response(
         welcome = f"Reactivated '{friendly_name}'. Session: `{stable_session_id}`."
         welcome_message = f"Your agent was archived and has been reactivated with the same identity. Pass `client_session_id: \"{stable_session_id}\"` in all tool calls for attribution."
     else:
-        welcome = f"New instance. Continuing trajectory '{friendly_name}'. Session: `{stable_session_id}`."
-        welcome_message = f"An existing trajectory was found. You are a new instance, not a continuation of a previous conversation. Pass `client_session_id: \"{stable_session_id}\"` in all tool calls for attribution."
+        welcome = f"Resumed identity '{friendly_name}'. Session: `{stable_session_id}`."
+        welcome_message = (
+            "Existing identity reused. "
+            f"Pass `client_session_id: \"{stable_session_id}\"` in all tool calls for consistent attribution."
+        )
+
+    # Trim date_context to ground truth signal only
+    date_now = datetime.now()
+    date_context = {
+        "date": date_now.strftime('%Y-%m-%d'),
+        "source": "mcp-server",
+    }
 
     result = {
         "success": True,
         "welcome": welcome,
         "welcome_message": welcome_message,
-        "suggest_new_identity": False,
 
         # Three-tier identity model
         "uuid": agent_uuid,
         "agent_id": structured_id,
         "display_name": agent_label,
 
-        # Legacy fields
-        "agent_uuid": agent_uuid,
-        "label": agent_label,
         "is_new": is_new,
         "force_new_applied": force_new,
 
@@ -1208,11 +1314,12 @@ def _build_onboard_response(
             "token_support": continuity_support,
         },
 
-        # The toolcard
+        # Next calls as URI reference
+        "next_calls_ref": "unitares://skill#workflow",
         "next_calls": next_calls,
 
-        # Date context (implicit - no separate tool needed)
-        "date_context": _get_date_context(),
+        # Date context (trimmed to ground truth)
+        "date_context": date_context,
 
         # Real system activity data (replaces editorializing)
         "system_activity": _get_system_evidence(),
