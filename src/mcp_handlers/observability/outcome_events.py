@@ -17,7 +17,8 @@ logger = get_logger(__name__)
 # Outcome types that are considered "bad" by default
 BAD_OUTCOME_TYPES = {"test_failed", "tool_rejected", "drawing_abandoned", "task_failed"}
 GOOD_OUTCOME_TYPES = {"test_passed", "drawing_completed", "task_completed"}
-VALID_OUTCOME_TYPES = BAD_OUTCOME_TYPES | GOOD_OUTCOME_TYPES
+NEUTRAL_OUTCOME_TYPES = {"trajectory_validated"}  # is_bad determined by score
+VALID_OUTCOME_TYPES = BAD_OUTCOME_TYPES | GOOD_OUTCOME_TYPES | NEUTRAL_OUTCOME_TYPES
 
 @mcp_tool("outcome_event", timeout=15.0)
 async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextContent]:

@@ -1029,3 +1029,35 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
                         logger.debug(f"Auto-emitted outcome event {ctx.outcome_event_id} for {agent_id}")
     except Exception as e:
         logger.debug(f"Outcome event auto-emit skipped: {e}")
+
+    # Auto-record trajectory self-validation outcome
+    try:
+        tv = ctx.result.get('trajectory_validation') if ctx.result else None
+        if tv is not None:
+            from src.db import get_db
+            _db = get_db()
+            if _db:
+                await _db.record_outcome_event(
+                    agent_id=agent_id,
+                    outcome_type='trajectory_validated',
+                    is_bad=(tv['quality'] < 0.4),
+                    outcome_score=tv['quality'],
+                    session_id=ctx.arguments.get('client_session_id'),
+                    eisv_e=ctx.metrics_dict.get('E'),
+                    eisv_i=ctx.metrics_dict.get('I'),
+                    eisv_s=ctx.metrics_dict.get('S'),
+                    eisv_v=ctx.metrics_dict.get('V'),
+                    eisv_phi=ctx.metrics_dict.get('phi'),
+                    eisv_verdict=ctx.metrics_dict.get('verdict'),
+                    eisv_coherence=ctx.metrics_dict.get('coherence'),
+                    eisv_regime=ctx.metrics_dict.get('regime'),
+                    detail={
+                        'source': 'trajectory_self_validation',
+                        'prev_verdict': tv['prev_verdict'],
+                        'prev_norm': tv['prev_norm'],
+                        'current_norm': tv['current_norm'],
+                        'norm_delta': tv['norm_delta'],
+                    },
+                )
+    except Exception as e:
+        logger.debug(f"Trajectory validation record skipped: {e}")

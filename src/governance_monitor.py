@@ -139,6 +139,11 @@ class UNITARESMonitor:
         self._prev_V: Optional[float] = None
         self._last_state_velocity: float = 0.0
 
+        # Continuous self-validation: track previous verdict for trajectory comparison
+        self._prev_verdict_action: Optional[str] = None   # 'proceed', 'pause', etc.
+        self._prev_drift_norm: Optional[float] = None
+        self._prev_confidence: Optional[float] = None
+
         # CIRS: Initialize oscillation detector / adaptive governor
         from config.governance_config import GovernanceConfig as GovConfig
         if GovConfig.ADAPTIVE_GOVERNOR_ENABLED:
@@ -671,6 +676,9 @@ class UNITARESMonitor:
         saved_state = self.state
         saved_prev_params = self.prev_parameters
         saved_last_update = self.last_update
+        saved_prev_verdict = self._prev_verdict_action
+        saved_prev_norm = self._prev_drift_norm
+        saved_prev_conf = self._prev_confidence
         
         try:
             # OPTIMIZED: Shallow copy + selective deep copy
@@ -712,6 +720,9 @@ class UNITARESMonitor:
             self.state = saved_state
             self.prev_parameters = saved_prev_params
             self.last_update = saved_last_update
+            self._prev_verdict_action = saved_prev_verdict
+            self._prev_drift_norm = saved_prev_norm
+            self._prev_confidence = saved_prev_conf
     
     def process_update(self, agent_state: Dict, confidence: Optional[float] = None, task_type: str = "mixed") -> Dict:
         """
@@ -1110,7 +1121,51 @@ class UNITARESMonitor:
             response_tier=response_tier,
             oscillation_state=oscillation_state
         )
-        
+
+        # =================================================================
+        # Step 5b: Continuous self-validation
+        # Compare previous verdict to current trajectory — did the
+        # intervention improve the drift norm? Record as calibration signal.
+        # =================================================================
+        current_norm = drift_vector.norm if self._last_drift_vector else 0.0
+        trajectory_validation = None
+
+        if self._prev_verdict_action is not None and self._prev_drift_norm is not None:
+            norm_delta = self._prev_drift_norm - current_norm  # positive = improved
+
+            # Convert to [0, 1] quality signal via sigmoid
+            # Scale: ±0.2 norm change saturates the response
+            import math
+            trajectory_quality = 1.0 / (1.0 + math.exp(-norm_delta * 10.0))
+
+            prev_predicted_correct = self._prev_confidence >= 0.5
+
+            calibration_checker.record_prediction(
+                confidence=self._prev_confidence,
+                predicted_correct=prev_predicted_correct,
+                actual_correct=trajectory_quality,
+            )
+
+            if self._prev_verdict_action in ('proceed', 'pause'):
+                calibration_checker.record_tactical_decision(
+                    confidence=self._prev_confidence,
+                    decision=self._prev_verdict_action,
+                    immediate_outcome=(trajectory_quality > 0.5),
+                )
+
+            trajectory_validation = {
+                'quality': trajectory_quality,
+                'prev_verdict': self._prev_verdict_action,
+                'prev_norm': self._prev_drift_norm,
+                'current_norm': current_norm,
+                'norm_delta': norm_delta,
+            }
+
+        # Store current verdict for next check-in's validation
+        self._prev_verdict_action = decision['action']
+        self._prev_drift_norm = current_norm
+        self._prev_confidence = confidence
+
         # Record prediction for STRATEGIC calibration
         #
         # Ground truth comes from tool success rates (external outcomes), not EISV.
@@ -1240,6 +1295,10 @@ class UNITARESMonitor:
         # Add task_type adjustment info if applied (transparency)
         if task_type_adjustment:
             result['task_type_adjustment'] = task_type_adjustment
+
+        # Add trajectory self-validation data (for outcome event recording)
+        if trajectory_validation is not None:
+            result['trajectory_validation'] = trajectory_validation
         
         # Add dual-log continuity metrics (grounded EISV inputs)
         if self._last_continuity_metrics:
