@@ -22,6 +22,7 @@ UNITARES governance MCP server. Thermodynamic governance framework for AI agents
 
 ## Architecture Patterns
 
+- **governance_core is an external compiled package** — there is NO `governance_core/` directory in this repo. The EISV dynamics engine (ODEs, coherence, scoring, ethical drift) is in a separate private repo (`unitares-core`) and installed as a compiled `.so` wheel. Code in `src/` imports it as `from governance_core import X` — these resolve to the installed package in site-packages, not a local directory. Do not try to create or recreate `governance_core/`. Do not try to read its source — it's compiled. To work with source: `ln -sf ~/projects/unitares-core/governance_core governance_core`
 - **LazyMCPServer**: All handler modules import `lazy_mcp_server as mcp_server` from `shared.py` (single definition, no per-file copies). Tests patch `{MODULE}.mcp_server` not `get_mcp_server`.
 - **Pydantic validation**: Parameter validation uses Pydantic schemas in `src/mcp_handlers/schemas/`. Legacy `validate_and_coerce_params` is removed.
 - **Handler modules**: Each in `src/mcp_handlers/`, decorated with `@mcp_tool`.
