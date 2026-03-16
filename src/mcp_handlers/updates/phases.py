@@ -688,13 +688,13 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
 
     # Preload agent baseline from PostgreSQL (if not already cached in-memory)
     try:
-        from governance_core.ethical_drift import _baseline_cache, AgentBaseline
-        if ctx.agent_id not in _baseline_cache:
+        from governance_core import get_baseline_or_none, set_agent_baseline, AgentBaseline
+        if get_baseline_or_none(ctx.agent_id) is None:
             from src.db import get_db
             db = get_db()
             baseline_data = await db.load_agent_baseline(ctx.agent_id)
             if baseline_data:
-                _baseline_cache[ctx.agent_id] = AgentBaseline.from_dict(baseline_data)
+                set_agent_baseline(ctx.agent_id, AgentBaseline.from_dict(baseline_data))
                 logger.debug(f"Loaded baseline from PostgreSQL for {ctx.agent_id[:12]}...")
     except Exception as e:
         logger.debug(f"Baseline preload skipped: {e}")
@@ -978,8 +978,8 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
 
     # PostgreSQL: Save agent baseline (fire-and-forget, matches record_agent_state pattern)
     try:
-        from governance_core.ethical_drift import _baseline_cache
-        baseline = _baseline_cache.get(agent_id)
+        from governance_core import get_baseline_or_none
+        baseline = get_baseline_or_none(agent_id)
         if baseline:
             from src.db import get_db
             db = get_db()

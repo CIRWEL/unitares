@@ -47,7 +47,6 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = [
     "--cov=src",
-    "--cov=governance_core",
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-fail-under=25",
@@ -60,7 +59,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["src", "governance_core"]
+source = ["src"]
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
