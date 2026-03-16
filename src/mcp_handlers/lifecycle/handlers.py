@@ -1157,10 +1157,9 @@ async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[Te
     Targets UUID-named agents without labels that have low/no updates.
     Much more aggressive than archive_old_test_agents.
 
-    Thresholds (configurable):
-    - zero_update_hours: Archive UUID agents with 0 updates after this (default: 1h)
-    - low_update_hours: Archive unlabeled agents with 0-1 updates after this (default: 3h)
-    - unlabeled_hours: Archive unlabeled UUID agents with 2+ updates after this (default: 6h)
+    Parameters:
+    - max_age_hours: Maximum inactivity before evaluation (default: 6h). Scales internal tiers.
+    - max_updates: Skip agents with more updates than this (default: 3).
 
     Preserves:
     - Agents with labels/display names
@@ -1170,10 +1169,14 @@ async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[Te
     import re
     UUID_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
 
-    zero_update_hours = float(arguments.get("zero_update_hours", 1.0))
-    low_update_hours = float(arguments.get("low_update_hours", 3.0))
-    unlabeled_hours = float(arguments.get("unlabeled_hours", 6.0))
+    max_age_hours = float(arguments.get("max_age_hours", 6))
+    max_updates = int(arguments.get("max_updates", 3))
     dry_run = arguments.get("dry_run", False)
+
+    # Derive tier thresholds from max_age_hours, capped to sensible minimums
+    zero_update_hours = min(max(max_age_hours / 6, 0.5), max_age_hours)   # ~1h at default 6
+    low_update_hours = min(max(max_age_hours / 2, 1.0), max_age_hours)    # ~3h at default 6
+    unlabeled_hours = max_age_hours                                        # 6h at default 6
 
     # Reload metadata from PostgreSQL (async)
     await mcp_server.load_metadata_async(force=True)
@@ -1208,6 +1211,11 @@ async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[Te
             continue
 
         updates = getattr(meta, 'total_updates', 0) or 0
+
+        # Skip agents with more updates than max_updates threshold
+        if updates > max_updates:
+            continue
+
         should_archive = False
         reason = ""
 
@@ -1221,7 +1229,7 @@ async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[Te
             should_archive = True
             reason = f"unlabeled, {updates} updates, {age_hours:.1f}h"
 
-        # Rule 3: UUID-named + unlabeled, 2+ updates but very old
+        # Rule 3: UUID-named + unlabeled, low updates but old
         elif is_uuid_named and not has_label and updates >= 2 and age_hours >= unlabeled_hours:
             should_archive = True
             reason = f"stale UUID, {updates} updates, {age_hours:.1f}h"
@@ -1253,6 +1261,8 @@ async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[Te
         "archived_agents": archived_agents[:30],  # Limit output
         "total_would_archive": len(archived_agents),
         "thresholds": {
+            "max_age_hours": max_age_hours,
+            "max_updates": max_updates,
             "zero_update_hours": zero_update_hours,
             "low_update_hours": low_update_hours,
             "unlabeled_hours": unlabeled_hours

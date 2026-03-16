@@ -1265,10 +1265,45 @@ class TestArchiveOrphanAgents:
              patch("src.mcp_handlers.lifecycle.handlers.agent_storage") as mock_storage:
             mock_storage.archive_agent = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_archive_orphan_agents
+            result = await handle_archive_orphan_agents({"max_updates": 10})
+            data = _parse(result)
+            # UUID-named, unlabeled, 5 updates, 30h old > unlabeled_hours threshold
+            assert data["archived_count"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_max_updates_skips_high_update_agents(self, server):
+        old = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
+        server.agent_metadata = {
+            "12345678-1234-1234-1234-123456789abc": make_agent_meta(
+                status="active", total_updates=5, last_update=old, label=None
+            ),
+        }
+        with patch("src.mcp_handlers.lifecycle.handlers.mcp_server", server), patch("src.mcp_handlers.lifecycle.stuck.mcp_server", server), patch("src.mcp_handlers.lifecycle.resume.mcp_server", server), \
+             patch("src.mcp_handlers.lifecycle.handlers.agent_storage") as mock_storage:
+            mock_storage.archive_agent = AsyncMock()
+            from src.mcp_handlers.lifecycle.handlers import handle_archive_orphan_agents
+            # Default max_updates=3, agent has 5 updates — should be skipped
             result = await handle_archive_orphan_agents({})
             data = _parse(result)
-            # UUID-named, unlabeled, 5 updates, 30h old > 24h threshold
+            assert data["archived_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_max_age_hours_scales_thresholds(self, server):
+        old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        server.agent_metadata = {
+            "12345678-1234-1234-1234-123456789abc": make_agent_meta(
+                status="active", total_updates=0, last_update=old, label=None
+            ),
+        }
+        with patch("src.mcp_handlers.lifecycle.handlers.mcp_server", server), patch("src.mcp_handlers.lifecycle.stuck.mcp_server", server), patch("src.mcp_handlers.lifecycle.resume.mcp_server", server), \
+             patch("src.mcp_handlers.lifecycle.handlers.agent_storage") as mock_storage:
+            mock_storage.archive_agent = AsyncMock()
+            from src.mcp_handlers.lifecycle.handlers import handle_archive_orphan_agents
+            # max_age_hours=1 → zero_update_hours=0.5, agent is 2h old → archived
+            result = await handle_archive_orphan_agents({"max_age_hours": 1})
+            data = _parse(result)
             assert data["archived_count"] >= 1
+            assert data["thresholds"]["max_age_hours"] == 1.0
 
     @pytest.mark.asyncio
     async def test_thresholds_in_response(self, server):
