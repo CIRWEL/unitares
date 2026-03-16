@@ -14,9 +14,13 @@ WORKDIR /app
 COPY requirements-docker.txt .
 RUN pip install --no-cache-dir -r requirements-docker.txt
 
+# Install compiled governance core
+ARG UNITARES_CORE_WHL=unitares_core-2.3.0-py3-none-any.whl
+COPY ${UNITARES_CORE_WHL} /tmp/
+RUN pip install --no-cache-dir /tmp/${UNITARES_CORE_WHL} && rm /tmp/${UNITARES_CORE_WHL}
+
 # Copy application code
 COPY src/ src/
-COPY governance_core/ governance_core/
 COPY config/ config/
 COPY dashboard/ dashboard/
 COPY skills/ skills/

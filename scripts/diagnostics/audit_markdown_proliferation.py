@@ -35,7 +35,6 @@ APPROVED_FILES = {
     'docs/guides/THRESHOLDS.md',
     'docs/reference/AI_ASSISTANT_GUIDE.md',
     # Module READMEs (auto-approved)
-    'governance_core/README.md',
     'scripts/README.md',
     'data/README.md',
     'demos/README.md',

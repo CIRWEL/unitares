@@ -49,7 +49,7 @@ python3 -m pytest tests/ -x -q
 python3 -m pytest tests/test_governance_monitor.py -v
 
 # With coverage report
-python3 -m pytest tests/ --cov=src --cov=governance_core --cov-report=term-missing
+python3 -m pytest tests/ --cov=src --cov-report=term-missing
 ```
 
 Tests use a separate `governance_test` database and mock external services. Most tests run without any live infrastructure — only a few integration tests in `test_knowledge_graph_handlers.py` require a running AGE instance.
@@ -62,7 +62,7 @@ Tests use a separate `governance_test` database and mock external services. Most
 
 | Directory | Purpose |
 |-----------|---------|
-| `governance_core/` | Pure mathematics — ODE solvers, coherence functions, risk scoring. No I/O, no database imports. This is the theoretical foundation. |
+| `governance_core` (external) | Pure mathematics — ODE solvers, coherence functions, risk scoring. Distributed as a compiled package ([unitares-core](https://github.com/CIRWEL/unitares-core)). |
 | `src/` | Production MCP server, handler modules, database backends, middleware |
 | `src/mcp_handlers/` | Individual tool handlers, each decorated with `@mcp_tool` |
 | `src/mcp_handlers/schemas/` | Pydantic v2 parameter schemas for validation |
@@ -76,7 +76,7 @@ Tests use a separate `governance_test` database and mock external services. Most
 - **Python 3.12+**, asyncio throughout the server and handler code
 - **Pydantic v2** for all parameter validation — schemas live in `src/mcp_handlers/schemas/`
 - **Handler pattern**: Each tool handler in `src/mcp_handlers/` uses the `@mcp_tool` decorator and `_LazyMCPServer` for deferred server access (avoids circular imports)
-- **Pure math stays pure**: `governance_core/` must never import I/O libraries, database modules, or server code
+- **Core engine is external**: `governance_core` is a compiled dependency — see [unitares-core](https://github.com/CIRWEL/unitares-core)
 - **Tests mirror source**: A handler in `src/mcp_handlers/foo.py` has tests in `tests/test_foo_handlers.py`
 - **No mock leakage**: Tests patch `{module}.mcp_server`, not `get_mcp_server` directly
 

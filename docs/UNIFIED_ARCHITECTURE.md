@@ -68,7 +68,7 @@ That's the honest picture. There are **two independent EISV instances**:
 
 ### 2. Governance EISV (Mac, telemetric)
 
-- **Location**: `governance-mcp-v1/governance_core/dynamics.py` lines 67-173
+- **Location**: `governance_core.dynamics` (compiled, in unitares-core package)
 - **Drives**: Agent margin assessment, stuck detection, dialectic triggers, risk scoring
 - **Inputs**: Mapped anima state (warmth→E, clarity→I, stability→S, presence→V)
 - **V is standard**: `dV = kappa(E - I)` so V accumulates when energy exceeds integrity
@@ -250,8 +250,8 @@ Homebrew PostgreSQL (port 5433) is a separate violin auction project - not UNITA
 ### Mac (governance-mcp-v1)
 | File | Role |
 |------|------|
-| `governance_core/dynamics.py` | EISV differential equations |
-| `governance_core/coherence.py` | C(V) = Cmax * 0.5 * (1 + tanh(C1*V)) |
+| `governance_core.dynamics` | EISV differential equations (compiled) |
+| `governance_core.coherence` | Coherence function C(V, Θ) (compiled) |
 | `config/governance_config.py` | Thresholds, margin computation |
 | `src/mcp_handlers/core.py` | process_agent_update handler |
 | `src/mcp_handlers/lifecycle.py` | Stuck detection, auto-recovery |
@@ -259,4 +259,4 @@ Homebrew PostgreSQL (port 5433) is a separate violin auction project - not UNITA
 | `src/calibration.py` | Confidence → correctness mapping |
 | `src/cirs.py` | Oscillation detection (legacy CIRS v0.1) |
 | `src/mcp_handlers/cirs_protocol.py` | CIRS v2 protocol (7 message types, auto-emit hooks) |
-| `governance_core/adaptive_governor.py` | PID controller — oscillation detection, neighbor pressure |
+| `governance_core.adaptive_governor` | PID controller — oscillation detection, neighbor pressure (compiled) |

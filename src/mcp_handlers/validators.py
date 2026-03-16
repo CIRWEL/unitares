@@ -54,7 +54,7 @@ def validate_file_path_policy(file_path: str) -> Tuple[Optional[str], Optional[T
             warning = f"⚠️ POLICY VIOLATION: Test script '{basename}' should be in 'tests/' directory.\nLocation: {file_path}\nPolicy: All test_*.py and demo_*.py files must be in tests/ to prevent proliferation.\nAction: Move this file to tests/ directory or rename it."
             return (warning, None)
     if basename.endswith('.md'):
-        APPROVED_FILES = {'README.md', 'CHANGELOG.md', 'START_HERE.md', 'docs/README.md', 'docs/guides/ONBOARDING.md', 'docs/guides/TROUBLESHOOTING.md', 'docs/guides/MCP_SETUP.md', 'docs/guides/THRESHOLDS.md', 'docs/reference/AI_ASSISTANT_GUIDE.md', 'governance_core/README.md', 'scripts/README.md', 'data/README.md', 'demos/README.md', 'tools/README.md'}
+        APPROVED_FILES = {'README.md', 'CHANGELOG.md', 'START_HERE.md', 'docs/README.md', 'docs/guides/ONBOARDING.md', 'docs/guides/TROUBLESHOOTING.md', 'docs/guides/MCP_SETUP.md', 'docs/guides/THRESHOLDS.md', 'docs/reference/AI_ASSISTANT_GUIDE.md', 'scripts/README.md', 'data/README.md', 'demos/README.md', 'tools/README.md'}
         MIGRATION_TARGET_DIRS = {'analysis', 'fixes', 'reflection', 'proposals'}
         if 'docs' in path_parts:
             docs_index = path_parts.index('docs')

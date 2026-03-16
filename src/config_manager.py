@@ -6,7 +6,7 @@ Documents which configs are runtime-changeable vs static.
 
 Configuration Sources:
 1. Static config: config/governance_config.py (GovernanceConfig class)
-2. Core parameters: governance_core/parameters.py (DynamicsParams, Theta)
+2. Core parameters: governance_core.parameters (DynamicsParams, Theta) — compiled in unitares-core
 3. Runtime overrides: src/runtime_config.py (threshold overrides)
 4. Server constants: src/mcp_server_std.py (MAX_KEEP_PROCESSES, etc.)
 """
@@ -95,7 +95,7 @@ class ConfigManager:
         """
         Get core dynamics parameters.
         
-        These are NOT runtime-changeable. Modify governance_core/parameters.py to change.
+        These are NOT runtime-changeable. Defined in governance_core.parameters (unitares-core).
         """
         return self._core_params
     
@@ -214,7 +214,7 @@ class ConfigManager:
                 ]
             },
             "core": {
-                "description": "Defined in governance_core/parameters.py - requires code change",
+                "description": "Defined in governance_core.parameters (unitares-core) - requires rebuild",
                 "configs": [
                     "DynamicsParams (alpha, mu, kappa, delta, etc.)",
                     "Theta (C1, eta1)",

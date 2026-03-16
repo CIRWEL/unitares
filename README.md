@@ -7,7 +7,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-AI agents have no shared language for inner state. They can report outputs, but not whether they're coherent, drifting, or losing the thread. UNITARES provides that language — four continuous variables, a dynamics that evolves them, and a protocol for agents to speak and be read. Built on coupled differential equations with [provable stability guarantees](governance_core/README.md).
+Twenty minutes before an agent fails, the trajectory tells you. UNITARES gives AI agents a shared language for inner state — four continuous variables, a dynamics that evolves them, and a protocol for agents to speak and be read. Built on coupled differential equations with provable stability guarantees.
 
 Validated on **844 agents over 106 days** (5.6M audit events). This repo powers a live deployment and is production-capable, but not "set-and-forget" for every environment.
 
@@ -96,7 +96,7 @@ python src/mcp_server_std.py
 
 ## Production Validation
 
-Deployed since December 2025. Current system: **844 registered agents**, **536 knowledge discoveries**, **41 dialectic sessions**, **5,699 tests** at 78% coverage.
+Deployed since December 2025. Current system: **844 registered agents**, **536 knowledge discoveries**, **41 dialectic sessions**, **5,536 tests** at 78% coverage.
 
 Production readiness is context-dependent. The core platform is running in production, but teams adopting it should still do their own security review, load testing, observability setup, and rollback planning.
 
@@ -184,11 +184,12 @@ graph LR
 ```
 
 ```
-governance_core/       Pure math — ODEs, coherence, scoring (no I/O)
 src/                   MCP server, agent state, knowledge graph, dialectic
 dashboard/             Web dashboard (vanilla JS + Chart.js)
-tests/                 5,699 tests
+tests/                 5,536 tests
 ```
+
+The mathematical engine (`governance_core`) — ODEs, coherence, scoring — is distributed as a compiled package ([unitares-core](https://github.com/CIRWEL/unitares-core)).
 
 | Storage | Purpose | Required |
 |---------|---------|----------|
@@ -213,9 +214,8 @@ We believe in stating what works, what's promising, and what we don't know yet.
 
 | Guide | Purpose |
 |-------|---------|
-| [Math Foundation](governance_core/README.md) | EISV dynamics, coherence, ethical drift |
 | [Getting Started](docs/guides/START_HERE.md) | Complete setup and onboarding guide |
-| [Architecture](docs/UNIFIED_ARCHITECTURE.md) | System architecture overview |
+| [Architecture](docs/UNIFIED_ARCHITECTURE.md) | EISV dynamics, system design |
 | [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Common issues |
 | [Dashboard](dashboard/README.md) | Web dashboard docs |
 | [Database Architecture](docs/database_architecture.md) | PostgreSQL + AGE |
@@ -232,4 +232,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and code 
 
 ---
 
-Built by [@CIRWEL](https://github.com/CIRWEL) | MIT License — see [LICENSE](LICENSE) | **v2.0.0**
+Built by [@CIRWEL](https://github.com/CIRWEL) | Server: MIT License — see [LICENSE](LICENSE) | Core engine: proprietary ([unitares-core](https://github.com/CIRWEL/unitares-core)) | **v2.8.0**
