@@ -19,6 +19,11 @@ from typing import Dict, List, Tuple
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# governance_core is now a compiled package (unitares-core).
+# Source validation (reading .py files) requires a local source checkout.
+GOVERNANCE_CORE_SOURCE = project_root / "governance_core"
+HAS_SOURCE = GOVERNANCE_CORE_SOURCE.is_dir() and (GOVERNANCE_CORE_SOURCE / "dynamics.py").exists()
+
 from governance_core.dynamics import compute_dynamics, State
 from governance_core.coherence import coherence, lambda1, lambda2
 from governance_core.parameters import DEFAULT_PARAMS, DEFAULT_THETA, Theta, DynamicsParams
@@ -349,8 +354,14 @@ def check_objective_function(result: ValidationResult):
 
 def main():
     """Run all validation checks"""
+    if not HAS_SOURCE:
+        print("governance_core source not available (compiled package installed).")
+        print("To run source validation, symlink unitares-core/governance_core:")
+        print("  ln -sf ~/projects/unitares-core/governance_core governance_core")
+        return 1
+
     result = ValidationResult()
-    
+
     check_equations_match(result)
     check_coherence_function(result)
     check_adaptive_control(result)

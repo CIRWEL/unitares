@@ -69,6 +69,8 @@ python src/mcp_server.py --port 8767
 python src/mcp_server_std.py
 ```
 
+> **Note:** The EISV dynamics engine (`unitares-core`) is a compiled dependency. It's installed automatically via `requirements-core.txt`. If you're contributing, see [CONTRIBUTING.md](CONTRIBUTING.md) for build details.
+
 ### MCP Configuration (Cursor / Claude Desktop)
 
 ```json
@@ -166,21 +168,15 @@ Once agents can express inner state in a shared vocabulary, several things becom
 ```mermaid
 graph LR
     A[AI Agent] -->|check-in| M[MCP Server :8767]
-    M -->|EISV evolution| ODE[ODE Solver]
-    ODE -->|state| M
+    M -->|EISV evolution| UC[unitares-core]
+    UC -->|state| M
     M -->|verdict + guidance| A
     M <-->|state, audit, calibration| PG[(PostgreSQL + AGE)]
     M <-->|knowledge graph| PG
     M -.->|session cache| R[(Redis)]
     M -->|web UI| D[Dashboard]
 
-    subgraph governance_core
-        ODE
-        C[Coherence C·V·]
-        DR[Ethical Drift Δη]
-        C --> ODE
-        DR --> ODE
-    end
+    style UC fill:#2d2d2d,stroke:#666,color:#fff
 ```
 
 ```
@@ -189,7 +185,7 @@ dashboard/             Web dashboard (vanilla JS + Chart.js)
 tests/                 5,536 tests
 ```
 
-The mathematical engine (`governance_core`) — ODEs, coherence, scoring — is distributed as a compiled package ([unitares-core](https://github.com/CIRWEL/unitares-core)).
+The mathematical engine (`governance_core`) — ODEs, coherence, scoring — is distributed as a compiled package (unitares-core).
 
 | Storage | Purpose | Required |
 |---------|---------|----------|
@@ -232,4 +228,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and code 
 
 ---
 
-Built by [@CIRWEL](https://github.com/CIRWEL) | Server: MIT License — see [LICENSE](LICENSE) | Core engine: proprietary ([unitares-core](https://github.com/CIRWEL/unitares-core)) | **v2.8.0**
+Built by [@CIRWEL](https://github.com/CIRWEL) | Server: MIT License — see [LICENSE](LICENSE) | Core engine: proprietary (unitares-core) | **v2.8.0**

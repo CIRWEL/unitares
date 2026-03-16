@@ -13,4 +13,7 @@ mcp>=1.26.0,<2.0.0
 # Governance system core math
 numpy>=1.24.0,<3.0.0
 
+# EISV dynamics engine (compiled, private repo)
+unitares-core>=2.3.0
+
 
