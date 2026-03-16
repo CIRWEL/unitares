@@ -975,6 +975,38 @@ async function loadAgents() {
             }
         }
 
+        // Trust tier distribution
+        const trustBarsEl = document.getElementById('trust-tier-bars');
+        const trustDetailEl = document.getElementById('trust-tier-detail');
+        if (trustBarsEl) {
+            const tierNameToNum = { unknown: 0, emerging: 1, established: 2, verified: 3 };
+            const tierCounts = [0, 0, 0, 0]; // T0-T3
+            allAgents.forEach(a => {
+                const raw = a.trust_tier;
+                const num = raw !== undefined && raw !== null
+                    ? (typeof raw === 'number' ? raw : (tierNameToNum[String(raw).toLowerCase()] || 0))
+                    : 0;
+                if (num >= 0 && num <= 3) tierCounts[num]++;
+            });
+            const maxCount = Math.max(...tierCounts, 1);
+            const tierLabels = ['T0', 'T1', 'T2', 'T3'];
+            const tierNames = ['Unknown', 'Emerging', 'Established', 'Verified'];
+            const tierColors = ['var(--text-secondary)', 'var(--accent-orange)', 'var(--green)', 'var(--accent-cyan, #06b6d4)'];
+            trustBarsEl.innerHTML = tierLabels.map((label, idx) => {
+                const pct = (tierCounts[idx] / maxCount) * 100;
+                return `<div class="trust-bar-row" title="${tierNames[idx]}: ${tierCounts[idx]} agents">
+                    <span class="trust-bar-label">${label}</span>
+                    <div class="trust-bar-track"><div class="trust-bar-fill" style="width:${pct}%;background:${tierColors[idx]}"></div></div>
+                    <span class="trust-bar-count">${tierCounts[idx]}</span>
+                </div>`;
+            }).join('');
+            if (trustDetailEl) {
+                const verified = tierCounts[3];
+                const total = allAgents.length;
+                trustDetailEl.textContent = total > 0 ? `${verified} verified of ${total}` : 'No agents';
+            }
+        }
+
         // Sort by last update (most recent first)
         allAgents.sort((a, b) => {
             const aTime = new Date(a.last_update || a.created_at || 0);
@@ -1308,6 +1340,29 @@ async function loadDiscoveries(searchQuery = '') {
             if (stats && stats.stats && stats.stats.total_discoveries !== undefined) {
                 totalDiscoveries = stats.stats.total_discoveries;
             }
+            // Render lifecycle bar
+            const lifecycleBar = document.getElementById('knowledge-lifecycle-bar');
+            if (lifecycleBar && stats?.stats?.by_status) {
+                const bs = stats.stats.by_status;
+                const bp = stats.stats.by_policy || {};
+                const total = stats.stats.total_discoveries || 1;
+                const segments = [
+                    { key: 'open', count: bs.open || 0, color: 'var(--green, #2ecc71)', label: 'Open' },
+                    { key: 'resolved', count: bs.resolved || 0, color: 'var(--accent-cyan, #06b6d4)', label: 'Resolved' },
+                    { key: 'archived', count: bs.archived || 0, color: 'var(--text-secondary)', label: 'Archived' },
+                    { key: 'cold', count: bs.cold || 0, color: 'var(--surface-2, #333)', label: 'Cold' },
+                ];
+                const barSegments = segments
+                    .filter(s => s.count > 0)
+                    .map(s => `<div class="lifecycle-segment" style="flex:${s.count};background:${s.color}" title="${s.label}: ${s.count}"></div>`)
+                    .join('');
+                const labels = segments
+                    .filter(s => s.count > 0)
+                    .map(s => `<span class="lifecycle-label"><span class="lifecycle-dot" style="background:${s.color}"></span>${s.label} ${s.count}</span>`)
+                    .join('');
+                const policyInfo = bp.permanent ? `${bp.permanent} permanent` : '';
+                lifecycleBar.innerHTML = `<div class="lifecycle-track">${barSegments}</div><div class="lifecycle-labels">${labels}${policyInfo ? '<span class="lifecycle-label lifecycle-label-dim">' + policyInfo + '</span>' : ''}</div>`;
+            }
         } catch (e) {
             console.debug('Could not fetch knowledge stats, using loaded count');
         }
@@ -1324,6 +1379,14 @@ async function loadDiscoveries(searchQuery = '') {
         previousStats.discoveries = totalDiscoveries;
 
         updateDiscoveryLegend(cachedDiscoveries);
+        // Seed activity timeline with recent discoveries (last 24h)
+        if (typeof TimelineModule !== 'undefined' && TimelineModule.addDiscoveryEvent) {
+            const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+            cachedDiscoveries
+                .filter(d => d._timestampMs && d._timestampMs > oneDayAgo)
+                .slice(0, 10)
+                .forEach(d => TimelineModule.addDiscoveryEvent(d));
+        }
         // Re-apply local filters (type/time) to the new search results
         applyDiscoveryFilters();
         return true;
@@ -1425,6 +1488,11 @@ async function loadDialecticSessions() {
             const dialecticChange = formatChange(sessions.length, previousStats.dialecticSessions);
             changeEl.innerHTML = (dialecticChange ? dialecticChange + ' ' : '') + `${resolved} resolved, ${active} active`;
             previousStats.dialecticSessions = sessions.length;
+        }
+
+        // Seed activity timeline with recent dialectic sessions
+        if (typeof TimelineModule !== 'undefined' && TimelineModule.addDialecticEvent) {
+            sessions.slice(0, 5).forEach(s => TimelineModule.addDialecticEvent(s));
         }
 
         // Apply current filter (respects user's active filter selection)

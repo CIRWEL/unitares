@@ -222,6 +222,22 @@
             var vColor = MetricColors.forValue(vValue, true, 'css');
             var cColor = MetricColors.forValue(cValue, false, 'css');
 
+            // Health status badge
+            var healthStatus = agent.health_status || '';
+            var healthBadgeHtml = '';
+            if (healthStatus && healthStatus !== 'unknown') {
+                healthBadgeHtml = '<span class="health-badge-mini ' + healthStatus + '">' + escapeHtml(healthStatus) + '</span>';
+            }
+
+            // Verdict badge
+            var verdict = metrics.verdict || '';
+            var verdictBadgeHtml = '';
+            if (verdict && verdict !== '-') {
+                var verdictClass = verdict === 'proceed' || verdict === 'approve' ? 'verdict-good' :
+                    verdict === 'caution' || verdict === 'guide' ? 'verdict-caution' : 'verdict-bad';
+                verdictBadgeHtml = '<span class="verdict-badge-mini ' + verdictClass + '">' + escapeHtml(verdict) + '</span>';
+            }
+
             // Anomaly indicator (from visualizations.js)
             var anomalyHtml = typeof getAnomalyIndicator === 'function' ? getAnomalyIndicator(metrics) : '';
 
@@ -239,6 +255,7 @@
                         statusIndicator +
                         '<span class="agent-name">' + nameHtml + '</span>' +
                         stuckBadgeHtml +
+                        healthBadgeHtml + verdictBadgeHtml +
                         trustTierHtml + anomalyHtml +
                         sparklineHtml +
                         actionsHtml +

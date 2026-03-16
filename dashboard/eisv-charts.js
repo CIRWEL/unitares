@@ -789,6 +789,10 @@
                     addEISVDataPoint(data);
                     updateAgentCardFromWS(data);
                     addActivityDataPoint(data);
+                    // Feed global activity timeline
+                    if (typeof TimelineModule !== 'undefined' && TimelineModule.onEISVUpdate) {
+                        TimelineModule.onEISVUpdate(data);
+                    }
                 }
             },
             function (status) {
