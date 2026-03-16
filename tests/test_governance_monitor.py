@@ -544,19 +544,19 @@ class TestDetectRegime:
     def monitor(self):
         return UNITARESMonitor("test-regime", load_state=False)
 
-    def test_early_updates_divergence(self, monitor):
-        """No history -> defaults to DIVERGENCE."""
+    def test_early_updates_exploration(self, monitor):
+        """No history -> defaults to EXPLORATION (insufficient data)."""
         monitor.state.S_history = []
         monitor.state.I_history = []
         regime = monitor.detect_regime()
-        assert regime == "DIVERGENCE"
+        assert regime == "EXPLORATION"
 
     def test_stable_requires_persistence(self, monitor):
-        """STABLE needs I>=0.999, S<=0.001 for 3 consecutive calls."""
-        monitor.state.unitaires_state.I = 1.0
-        monitor.state.unitaires_state.S = 0.0
-        monitor.state.S_history = [0.0, 0.0]
-        monitor.state.I_history = [1.0, 1.0]
+        """STABLE needs I>=0.85, S<=0.10 for 3 consecutive calls."""
+        monitor.state.unitaires_state.I = 0.90
+        monitor.state.unitaires_state.S = 0.05
+        monitor.state.S_history = [0.05, 0.05]
+        monitor.state.I_history = [0.90, 0.90]
         monitor.state.locked_persistence_count = 0
 
         r1 = monitor.detect_regime()
@@ -580,11 +580,11 @@ class TestDetectRegime:
         assert monitor.state.locked_persistence_count == 0
 
     def test_divergence_s_rising_v_elevated(self, monitor):
-        """S rising + V elevated -> DIVERGENCE."""
+        """S actively rising + V elevated -> DIVERGENCE."""
         monitor.state.unitaires_state.I = 0.5
         monitor.state.unitaires_state.S = 0.15
         monitor.state.unitaires_state.V = 0.2
-        monitor.state.S_history = [0.1, 0.1]
+        monitor.state.S_history = [0.1, 0.14]
         monitor.state.I_history = [0.5, 0.5]
         regime = monitor.detect_regime()
         assert regime == "DIVERGENCE"
@@ -609,22 +609,22 @@ class TestDetectRegime:
         regime = monitor.detect_regime()
         assert regime == "CONVERGENCE"
 
-    def test_fallback_divergence(self, monitor):
-        """When no specific condition matches -> DIVERGENCE."""
+    def test_fallback_exploration(self, monitor):
+        """When no specific condition matches -> EXPLORATION."""
         monitor.state.unitaires_state.I = 0.5
-        monitor.state.unitaires_state.S = 0.05
+        monitor.state.unitaires_state.S = 0.40
         monitor.state.unitaires_state.V = 0.01
-        monitor.state.S_history = [0.05, 0.05]
+        monitor.state.S_history = [0.40, 0.40]
         monitor.state.I_history = [0.5, 0.5]
         regime = monitor.detect_regime()
-        assert regime == "DIVERGENCE"
+        assert regime == "EXPLORATION"
 
     def test_single_history_item(self, monitor):
-        """Single history entry -> DIVERGENCE (insufficient data)."""
+        """Single history entry -> EXPLORATION (insufficient data)."""
         monitor.state.S_history = [0.1]
         monitor.state.I_history = [0.5]
         regime = monitor.detect_regime()
-        assert regime == "DIVERGENCE"
+        assert regime == "EXPLORATION"
 
     def test_regime_returns_string(self, monitor):
         """Regime should always be a string."""
@@ -632,7 +632,7 @@ class TestDetectRegime:
         monitor.state.I_history = [0.5, 0.5]
         regime = monitor.detect_regime()
         assert isinstance(regime, str)
-        assert regime in ("STABLE", "DIVERGENCE", "TRANSITION", "CONVERGENCE")
+        assert regime in ("STABLE", "DIVERGENCE", "TRANSITION", "CONVERGENCE", "EXPLORATION")
 
 
 # ============================================================================
@@ -962,7 +962,7 @@ class TestUpdateDynamics:
         """Regime should be updated after dynamics."""
         agent_state = {'complexity': 0.5}
         monitor.update_dynamics(agent_state)
-        assert monitor.state.regime in ("STABLE", "DIVERGENCE", "TRANSITION", "CONVERGENCE")
+        assert monitor.state.regime in ("STABLE", "DIVERGENCE", "TRANSITION", "CONVERGENCE", "EXPLORATION")
         assert len(monitor.state.regime_history) == 1
 
     def test_rho_tracked(self, monitor):

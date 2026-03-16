@@ -182,7 +182,7 @@ class TestRegimeDetection:
             })
 
         regime = monitor.detect_regime()
-        valid_regimes = ["STABLE", "DIVERGENCE", "TRANSITION", "CONVERGENCE"]
+        valid_regimes = ["STABLE", "DIVERGENCE", "TRANSITION", "CONVERGENCE", "EXPLORATION"]
         assert regime in valid_regimes, f"Unexpected regime: {regime}"
 
     def test_regime_in_metrics(self):
@@ -196,7 +196,7 @@ class TestRegimeDetection:
         })
 
         assert "regime" in result["metrics"], "regime should be in metrics"
-        valid_regimes = ["STABLE", "DIVERGENCE", "TRANSITION", "CONVERGENCE"]
+        valid_regimes = ["STABLE", "DIVERGENCE", "TRANSITION", "CONVERGENCE", "EXPLORATION"]
         assert result["metrics"]["regime"] in valid_regimes
 
 
@@ -708,12 +708,12 @@ class TestCoherenceFunction:
 class TestRegimeTransitions:
     """Additional tests for regime detection edge cases."""
 
-    def test_divergence_default_for_early_state(self):
-        """Early state without history should default to DIVERGENCE."""
+    def test_exploration_default_for_early_state(self):
+        """Early state without history should default to EXPLORATION."""
         monitor = UNITARESMonitor(agent_id="test_regime_early", load_state=False)
         # Don't process any updates - empty history
         regime = monitor.detect_regime()
-        assert regime == "DIVERGENCE", f"Early state should be DIVERGENCE, got {regime}"
+        assert regime == "EXPLORATION", f"Early state should be EXPLORATION, got {regime}"
 
     def test_convergence_detection(self):
         """Test CONVERGENCE regime detection."""
@@ -728,7 +728,7 @@ class TestRegimeTransitions:
             })
 
         regime = monitor.detect_regime()
-        valid_regimes = ["STABLE", "DIVERGENCE", "TRANSITION", "CONVERGENCE"]
+        valid_regimes = ["STABLE", "DIVERGENCE", "TRANSITION", "CONVERGENCE", "EXPLORATION"]
         assert regime in valid_regimes, f"Got unexpected regime: {regime}"
 
 

@@ -95,31 +95,20 @@ class StateMixin:
     async def get_all_latest_agent_states(self) -> list[AgentStateRecord]:
         from config.governance_config import GovernanceConfig
         async with self.acquire() as conn:
-            # Try materialized view first (pre-computed, fast)
-            try:
-                rows = await conn.fetch(
-                    """
-                    SELECT state_id, identity_id, agent_id, recorded_at,
-                           entropy, integrity, stability_index, volatility,
-                           regime, coherence, state_json
-                    FROM core.mv_latest_agent_states
-                    """
-                )
-            except Exception:
-                # Fallback: matview doesn't exist yet (pre-migration)
-                rows = await conn.fetch(
-                    """
-                    SELECT DISTINCT ON (s.identity_id)
-                           s.state_id, s.identity_id, i.agent_id, s.recorded_at,
-                           s.entropy, s.integrity, s.stability_index, s.volatility,
-                           s.regime, s.coherence, s.state_json
-                    FROM core.agent_state s
-                    JOIN core.identities i ON i.identity_id = s.identity_id
-                    WHERE s.epoch = $1
-                    ORDER BY s.identity_id, s.recorded_at DESC
-                    """,
-                    GovernanceConfig.CURRENT_EPOCH,
-                )
+            # Always use epoch-filtered query for correctness
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT ON (s.identity_id)
+                       s.state_id, s.identity_id, i.agent_id, s.recorded_at,
+                       s.entropy, s.integrity, s.stability_index, s.volatility,
+                       s.regime, s.coherence, s.state_json
+                FROM core.agent_state s
+                JOIN core.identities i ON i.identity_id = s.identity_id
+                WHERE s.epoch = $1
+                ORDER BY s.identity_id, s.recorded_at DESC
+                """,
+                GovernanceConfig.CURRENT_EPOCH,
+            )
             return [self._row_to_agent_state(r) for r in rows]
 
     async def get_recent_cross_agent_activity(

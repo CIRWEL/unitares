@@ -454,6 +454,25 @@ LEFT JOIN core.sessions s ON i.identity_id = s.identity_id
 GROUP BY i.identity_id, i.agent_id;
 
 -- =============================================================================
+-- MATERIALIZED VIEWS
+-- =============================================================================
+
+-- Latest agent state per identity (dashboard performance)
+CREATE MATERIALIZED VIEW core.mv_latest_agent_states AS
+SELECT DISTINCT ON (s.identity_id)
+       s.state_id, s.identity_id, i.agent_id, s.recorded_at,
+       s.entropy, s.integrity, s.stability_index, s.volatility,
+       s.regime, s.coherence, s.state_json
+FROM core.agent_state s
+JOIN core.identities i ON i.identity_id = s.identity_id
+ORDER BY s.identity_id, s.recorded_at DESC;
+
+CREATE UNIQUE INDEX idx_mv_latest_states_identity
+    ON core.mv_latest_agent_states (identity_id);
+CREATE INDEX idx_mv_latest_states_agent
+    ON core.mv_latest_agent_states (agent_id);
+
+-- =============================================================================
 -- GRANTS (adjust for your roles)
 -- =============================================================================
 

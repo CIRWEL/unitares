@@ -278,7 +278,7 @@ function getAnomalyIndicator(metrics) {
     if (metrics.coherence !== undefined && metrics.coherence < 0.3) {
         anomalies.push({ severity: 'warning', label: 'Low coherence' });
     }
-    if (metrics.S !== undefined && metrics.S > 0.1) {
+    if (metrics.S !== undefined && metrics.S > 0.3) {
         anomalies.push({ severity: 'warning', label: 'High entropy' });
     }
     if (metrics.risk_score !== undefined && metrics.risk_score > 0.6) {

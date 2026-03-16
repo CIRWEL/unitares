@@ -578,7 +578,7 @@
         var badges = {
             'safe': { text: 'A', cls: 'verdict-approve', title: 'Approve' },
             'approve': { text: 'A', cls: 'verdict-approve', title: 'Approve' },
-            'caution': { text: 'P', cls: 'verdict-proceed', title: 'Proceed' },
+            'caution': { text: 'C', cls: 'caution', title: 'Caution' },
             'proceed': { text: 'P', cls: 'verdict-proceed', title: 'Proceed' },
             'elevated': { text: 'P', cls: 'verdict-proceed', title: 'Proceed with caution' },
             'pause': { text: '!', cls: 'verdict-pause', title: 'Pause' },
