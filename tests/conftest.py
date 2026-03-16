@@ -2,6 +2,7 @@
 Pytest configuration and fixtures for governance-mcp-v1 tests.
 """
 import pytest
+import pytest_asyncio
 import warnings
 import sys
 from collections import defaultdict, deque
@@ -287,3 +288,44 @@ def temp_db(tmp_path):
     # Cleanup
     if db_path.exists():
         db_path.unlink()
+
+
+@pytest_asyncio.fixture
+async def live_postgres_backend():
+    """
+    Provide a real PostgresBackend connected to governance_test.
+
+    Use for integration tests that need live DB. Skips if governance_test
+    is unavailable. Schema is bootstrapped and tables truncated per test.
+    See tests.test_db_utils for primitives.
+    """
+    from tests.test_db_utils import (
+        TEST_DB_URL,
+        can_connect_to_test_db,
+        ensure_test_database_schema,
+        TRUNCATE_SQL,
+        CALIBRATION_RESET_SQL,
+    )
+
+    if not can_connect_to_test_db():
+        pytest.skip("governance_test database not available")
+
+    await ensure_test_database_schema()
+
+    import os
+    os.environ["DB_POSTGRES_URL"] = TEST_DB_URL
+    os.environ["DB_POSTGRES_MIN_CONN"] = "1"
+    os.environ["DB_POSTGRES_MAX_CONN"] = "3"
+    os.environ["DB_AGE_GRAPH"] = "governance_graph"
+
+    from src.db.postgres_backend import PostgresBackend
+
+    be = PostgresBackend()
+    await be.init()
+
+    async with be.acquire() as conn:
+        await conn.execute(TRUNCATE_SQL)
+        await conn.execute(CALIBRATION_RESET_SQL)
+
+    yield be
+    await be.close()

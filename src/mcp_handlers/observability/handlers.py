@@ -135,7 +135,7 @@ async def handle_compare_agents(arguments: Dict[str, Any]) -> Sequence[TextConte
             }
         )]
     
-    compare_metrics = arguments.get("compare_metrics", ["risk_score", "coherence", "E", "I", "S", "V"])  # Default metrics for comparison
+    compare_metrics = arguments.get("compare_metrics") or ["risk_score", "coherence", "E", "I", "S", "V"]
     
     # Get metrics for all agents
     agents_data = []

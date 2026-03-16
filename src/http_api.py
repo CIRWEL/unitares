@@ -296,8 +296,7 @@ async def http_call_tool(request):
         x_agent_id = request.headers.get("x-agent-id") or request.headers.get("X-Agent-Id")
 
         # AUTO-DETECT CLIENT TYPE and MODEL TYPE from User-Agent for better auto-naming
-        # This ensures agent_id becomes "cursor_20251226" instead of "mcp_20251226"
-        # Also detects model type to prevent identity collision between different models
+        # This ensures agent_id reflects actual runtime (e.g., Cursor + GPT/Codex)
         if isinstance(arguments, dict):
             ua = (request.headers.get("user-agent") or "").lower()
 
@@ -321,21 +320,30 @@ async def http_call_tool(request):
             # Detect model type to prevent identity collision
             if "model_type" not in arguments:
                 detected_model = None
-                # Check for model identifiers in User-Agent
-                if "composer" in ua or "cursor.*composer" in ua:
-                    detected_model = "composer"
-                elif "codex" in ua or "chatgpt" in ua or "openai" in ua or "gpt-5" in ua or "gpt-4" in ua or "gpt-3" in ua:
-                    detected_model = "chatgpt"
-                elif "claude" in ua:
-                    detected_model = "claude"
-                elif "gemini" in ua:
-                    detected_model = "gemini"
 
-                # Also check X-Model header if available
+                # Prefer explicit model header if available.
+                model_header = request.headers.get("x-model") or request.headers.get("X-Model")
+                if model_header:
+                    detected_model = model_header.strip().lower()
+
+                # Then infer from User-Agent.
                 if not detected_model:
-                    model_header = request.headers.get("x-model") or request.headers.get("X-Model")
-                    if model_header:
-                        detected_model = model_header.lower()
+                    if "gpt-5.3" in ua and "codex" in ua:
+                        detected_model = "gpt-5.3-codex"
+                    elif "gpt-5.4" in ua and "codex" in ua:
+                        detected_model = "gpt-5.4-codex"
+                    elif "gpt-5" in ua and "codex" in ua:
+                        detected_model = "gpt-5-codex"
+                    elif "composer" in ua:
+                        detected_model = "composer"
+                    elif "codex" in ua:
+                        detected_model = "codex"
+                    elif "chatgpt" in ua or "openai" in ua or "gpt-5" in ua or "gpt-4" in ua or "gpt-3" in ua:
+                        detected_model = "gpt"
+                    elif "claude" in ua and "codex" not in ua and "gpt" not in ua and "openai" not in ua:
+                        detected_model = "claude"
+                    elif "gemini" in ua:
+                        detected_model = "gemini"
 
                 if detected_model:
                     arguments["model_type"] = detected_model
