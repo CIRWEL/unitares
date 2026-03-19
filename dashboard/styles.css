@@ -1325,6 +1325,49 @@ body {
     }
 }
 
+/* Staleness badges — shown on agent cards based on last_update age */
+.stale-badge {
+    font-size: 0.6em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
+.stale-badge.stale-recent {
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.stale-badge.stale-warning {
+    color: var(--accent-orange);
+    background: rgba(249, 115, 22, 0.15);
+    border: 1px solid rgba(249, 115, 22, 0.3);
+}
+
+.stale-badge.stale-dead {
+    color: var(--accent-red, #ef4444);
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.55em;
+}
+
+/* Inactive badge — shown on agents with no check-in >1 hour */
+.inactive-badge {
+    font-size: 0.65em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
 /* Activity Timeline */
 .timeline-list {
     max-height: 400px;
@@ -2560,6 +2603,16 @@ body {
 .ws-dot.polling::after {
     background-color: var(--color-entropy);
     animation-duration: 3s;
+}
+
+.ws-dot.poll_error {
+    background-color: var(--accent-red, #ef4444);
+    box-shadow: 0 0 10px var(--accent-red, #ef4444);
+}
+
+.ws-dot.poll_error::after {
+    background-color: var(--accent-red, #ef4444);
+    animation-duration: 1.5s;
 }
 
 @keyframes ping {

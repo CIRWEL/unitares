@@ -52,9 +52,9 @@
         if (!dot || !label || !container) return;
 
         dot.className = 'ws-dot ' + status;
-        var labels = { connected: 'Live', polling: 'Polling', reconnecting: 'Reconnecting', disconnected: 'Offline' };
+        var labels = { connected: 'Live', polling: 'Polling', reconnecting: 'Reconnecting', disconnected: 'Offline', poll_error: 'Poll Failed' };
         label.textContent = labels[status] || 'Offline';
-        var titles = { connected: 'Connected via WebSocket', polling: 'Polling (WebSocket unavailable)', reconnecting: 'Reconnecting...', disconnected: 'Offline' };
+        var titles = { connected: 'Connected via WebSocket', polling: 'Polling (WebSocket unavailable)', reconnecting: 'Reconnecting...', disconnected: 'Offline', poll_error: 'Polling failed — data may be stale' };
         container.title = titles[status] || 'Offline';
     }
 

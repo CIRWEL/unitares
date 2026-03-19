@@ -663,6 +663,7 @@ class EISVWebSocket {
     _startPolling() {
         if (this._pollFallback) return;
         this._pollFallback = true;
+        this._pollFailures = 0;
         this.onStatusChange('polling');
         console.log('[WS] Polling /v1/eisv/latest every 30s');
         // Poll immediately, then every 30s
@@ -678,9 +679,22 @@ class EISVWebSocket {
                 if (data && data.type === 'eisv_update') {
                     this.onUpdate(data);
                 }
+                this._pollFailures = 0;
+                if (this._pollErrorReported) {
+                    this._pollErrorReported = false;
+                    this.onStatusChange('polling');
+                }
+            } else {
+                this._pollFailures = (this._pollFailures || 0) + 1;
+                console.warn('[WS] Poll returned status', resp.status, '(' + this._pollFailures + ' consecutive failures)');
             }
         } catch (e) {
-            // Silently ignore poll failures
+            this._pollFailures = (this._pollFailures || 0) + 1;
+            console.warn('[WS] Poll failed:', e.message, '(' + this._pollFailures + ' consecutive failures)');
+        }
+        if (this._pollFailures >= 3 && !this._pollErrorReported) {
+            this._pollErrorReported = true;
+            this.onStatusChange('poll_error');
         }
     }
 

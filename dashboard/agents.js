@@ -21,6 +21,42 @@
     // Agent utility functions
     // ========================================================================
 
+    function getAgentStaleness(agent) {
+        if (!agent.last_update) return { level: 'unknown', label: '', ageMs: Infinity };
+        var lastDt = new Date(agent.last_update);
+        if (isNaN(lastDt.getTime())) return { level: 'unknown', label: '', ageMs: Infinity };
+        var ageMs = Date.now() - lastDt.getTime();
+        var ageMins = ageMs / 60000;
+        var ageHours = ageMins / 60;
+        var ageDays = ageHours / 24;
+
+        if (ageMins < 10) return { level: 'fresh', label: '', ageMs: ageMs };
+        if (ageMins < 60) return { level: 'recent', label: Math.round(ageMins) + 'm ago', ageMs: ageMs };
+        if (ageHours < 24) return { level: 'stale', label: Math.round(ageHours) + 'h ago', ageMs: ageMs };
+        return { level: 'dead', label: Math.round(ageDays) + 'd ago', ageMs: ageMs };
+    }
+
+    function getStaleBadgeHtml(agent) {
+        var staleness = getAgentStaleness(agent);
+        if (staleness.level === 'fresh' || staleness.level === 'unknown') return '';
+        if (staleness.level === 'recent') {
+            return '<span class="stale-badge stale-recent" title="Last check-in ' + staleness.label + '">' + staleness.label + '</span>';
+        }
+        if (staleness.level === 'stale') {
+            return '<span class="stale-badge stale-warning" title="No check-in for ' + staleness.label + '">' + staleness.label + '</span>';
+        }
+        return '<span class="stale-badge stale-dead" title="Last check-in ' + staleness.label + '">Stale ' + staleness.label + '</span>';
+    }
+
+    function getInactiveBadgeHtml(agent) {
+        if (agent._stuck) return '';  // already has stuck badge
+        var staleness = getAgentStaleness(agent);
+        if (staleness.ageMs > 3600000) {  // >1 hour
+            return '<span class="inactive-badge" title="No check-in for over 1 hour">Inactive</span>';
+        }
+        return '';
+    }
+
     function getAgentStatus(agent) {
         return agent.lifecycle_status || agent.status || 'unknown';
     }
@@ -233,10 +269,14 @@
             var verdict = metrics.verdict || '';
             var verdictBadgeHtml = '';
             if (verdict && verdict !== '-') {
-                var verdictClass = verdict === 'proceed' || verdict === 'approve' ? 'verdict-good' :
+                var verdictClass = verdict === 'proceed' || verdict === 'approve' || verdict === 'safe' ? 'verdict-good' :
                     verdict === 'caution' || verdict === 'guide' ? 'verdict-caution' : 'verdict-bad';
                 verdictBadgeHtml = '<span class="verdict-badge-mini ' + verdictClass + '">' + escapeHtml(verdict) + '</span>';
             }
+
+            // Staleness & inactive badges
+            var staleBadgeHtml = getStaleBadgeHtml(agent);
+            var inactiveBadgeHtml = getInactiveBadgeHtml(agent);
 
             // Anomaly indicator (from visualizations.js)
             var anomalyHtml = typeof getAnomalyIndicator === 'function' ? getAnomalyIndicator(metrics) : '';
@@ -254,8 +294,8 @@
                     '<div class="agent-title">' +
                         statusIndicator +
                         '<span class="agent-name">' + nameHtml + '</span>' +
-                        stuckBadgeHtml +
-                        healthBadgeHtml + verdictBadgeHtml +
+                        stuckBadgeHtml + inactiveBadgeHtml +
+                        healthBadgeHtml + verdictBadgeHtml + staleBadgeHtml +
                         trustTierHtml + anomalyHtml +
                         sparklineHtml +
                         actionsHtml +
@@ -500,7 +540,10 @@
                     '</div>' +
                     '<div class="detail-box">' +
                         '<div class="detail-box-label">Verdict</div>' +
-                        '<div class="detail-box-value">' + escapeHtml(verdict) + '</div>' +
+                        '<div class="detail-box-value"><span class="verdict-badge-mini ' +
+                            (verdict === 'proceed' || verdict === 'approve' || verdict === 'safe' ? 'verdict-good' :
+                             verdict === 'caution' || verdict === 'guide' ? 'verdict-caution' : 'verdict-bad') +
+                        '">' + escapeHtml(verdict) + '</span></div>' +
                     '</div>' +
                     '<div class="detail-box">' +
                         '<div class="detail-box-label">Risk</div>' +

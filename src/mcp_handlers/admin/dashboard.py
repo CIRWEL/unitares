@@ -73,6 +73,7 @@ async def handle_dashboard(arguments: ToolArgumentsDict) -> Sequence[TextContent
                 "label": getattr(meta, "label", None),
                 "updates": meta.total_updates,
                 "pinned": is_pinned,
+                "last_update": getattr(meta, "last_update", None),
             }
             if eisv:
                 agent_entry["eisv"] = eisv

@@ -2182,6 +2182,7 @@ if (typeof EISVWebSocket !== 'undefined') {
             if (!wsEl) return;
             const currentClass = wsEl.className;
             if (currentClass.includes('connected')) updateWSStatusLabel('connected');
+            else if (currentClass.includes('poll_error')) updateWSStatusLabel('poll_error');
             else if (currentClass.includes('polling')) updateWSStatusLabel('polling');
             else if (currentClass.includes('reconnecting')) updateWSStatusLabel('reconnecting');
             else updateWSStatusLabel('disconnected');
