@@ -55,11 +55,11 @@ class TestConvergenceFromDefault:
         assert abs(final.V) < 0.05, f"|V| should stay below 0.05, got {abs(final.V):.4f}"
 
     def test_verdict_is_safe_or_caution(self, trajectory):
-        """At default complexity=0.5, verdict is 'caution' (not 'high-risk').
+        """At default complexity=0.5, verdict should be 'safe' or 'caution'.
 
-        With tightened phi_safe_threshold=0.22, the default equilibrium (phi~0.20)
-        is correctly classified as 'caution' rather than always 'safe'. Only low-
-        complexity work (complexity<0.3) produces a 'safe' verdict.
+        With phi_safe_threshold=0.13, the default equilibrium (phi~0.20)
+        is correctly classified as 'safe'. Typical healthy agents should
+        not perpetually show 'caution'.
         """
         final = trajectory[-1]
         phi = phi_objective(final, delta_eta=[0.0])
@@ -128,8 +128,8 @@ class TestRecoveryFromDegraded:
     def test_verdict_transitions_from_high_risk(self, trajectory):
         """Recovery should move verdict away from high-risk.
 
-        With tightened phi_safe_threshold=0.22, the recovered equilibrium at
-        default complexity=0.5 lands at 'caution' (phi~0.20). The key property
+        With phi_safe_threshold=0.13, the recovered equilibrium at
+        default complexity=0.5 lands at 'safe' (phi~0.20). The key property
         is that the system recovers from 'high-risk' to a non-critical state.
         """
         phi_start = phi_objective(trajectory[0], delta_eta=[0.0])

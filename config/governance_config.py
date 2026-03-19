@@ -59,9 +59,9 @@ class GovernanceConfig:
     # =================================================================
     
     # Phi-to-risk mapping thresholds (configurable)
-    # Recalibrated Dec 2025: 0.3 was too strict - typical healthy state (E=0.7, I=0.8, S=0.2)
-    # gives phi=0.15, which was always "caution". Lowered to match realistic expectations.
-    PHI_SAFE_THRESHOLD = 0.22     # phi >= 0.22: safe -> low risk (tightened for EISV sensitivity)
+    # Recalibrated Mar 2026: 0.22 still too strict — typical healthy state (E=0.7, I=0.8, S=0.2)
+    # gives phi≈0.15, which was always "caution". Lowered to 0.13 so healthy agents show "safe".
+    PHI_SAFE_THRESHOLD = 0.13     # phi >= 0.13: safe -> low risk
     PHI_CAUTION_THRESHOLD = 0.0   # phi >= 0.0: caution -> medium risk
     # phi < 0.0: high-risk -> high risk
     
