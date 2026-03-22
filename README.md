@@ -39,7 +39,7 @@ The key insight: **coherence C(V)** creates nonlinear feedback that stabilizes t
 
 Check-ins are speech acts — an agent reporting its state in a shared vocabulary. Trajectories are behavioral stories that can be read without narrative explanation. Twenty minutes before an agent fails, the trajectory tells you.
 
-> [Governance Architecture](docs/UNIFIED_ARCHITECTURE.md) — Bridge interface, EISV dynamics, database ownership
+> [Architecture Overview](docs/UNIFIED_ARCHITECTURE.md) — How the components fit together
 
 ---
 
@@ -211,7 +211,7 @@ We believe in stating what works, what's promising, and what we don't know yet.
 | Guide | Purpose |
 |-------|---------|
 | [Getting Started](docs/guides/START_HERE.md) | Complete setup and onboarding guide |
-| [Architecture](docs/UNIFIED_ARCHITECTURE.md) | Governance architecture, bridge interface |
+| [Architecture](docs/UNIFIED_ARCHITECTURE.md) | System topology, EISV dynamics, database ownership |
 | [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Common issues |
 | [Dashboard](dashboard/README.md) | Web dashboard docs |
 | [Database Architecture](docs/database_architecture.md) | PostgreSQL + AGE |

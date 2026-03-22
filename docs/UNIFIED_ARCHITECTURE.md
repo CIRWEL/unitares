@@ -1,56 +1,84 @@
-# Governance Architecture
+# UNITARES Unified Architecture
 
-**How governance-mcp connects to the broader system.**
-
-For the full unified system architecture (sensors, DrawingEISV, neural bands, LED pipeline, drawing loop), see `anima-mcp/docs/operations/UNIFIED_ARCHITECTURE.md`.
+**What exists, what's connected, what's not.**
 
 ```
-                         SYSTEM OVERVIEW
-                         ===============
+                         THE ACTUAL SYSTEM
+                         =================
 
   Raspberry Pi Zero 2W                              Mac (governance-mcp)
   (anima-mcp, port 8766)                            (port 8767)
   ========================                           ========================
 
-  sensors + neural bands                             EISV dynamics
-  anima state (warmth,          HTTP POST /mcp/      ┌──────────┐
-   clarity, stability,         ──────────────────►   │ dE/dt    │
-   presence)                   process_agent_update   │ dI/dt    │
-       │                       (every ~60s)           │ dS/dt    │
-       ▼                                              │ dV/dt    │
-  eisv_mapper.py                                      └────┬─────┘
-  E = warmth + neural                                      │
-  I = clarity + alpha                                 coherence C(V)
-  S = 1 - stability                                   risk_score
-  V = (1-presence)*0.3                                margin level
-       │                                                   │
-       ▼                                              ◄────┘
-  unitares_bridge.py                             {"action":"proceed",
-  (check_in, fallback)                            "margin":"comfortable"}
+  BME280 --- temp, humidity, pressure
+  VEML7700 -- light (reads own LEDs)     HTTP POST /mcp/
+  CPU stats -- load, memory, freq        ------------------->
+                    |                    process_agent_update     EISV dynamics
+                    v                    (every ~60s)             +----------+
+           computational_neural.py                               | dE/dt    |
+           (delta/theta/alpha/beta/gamma)                        | dI/dt    |
+                    |                                            | dS/dt    |
+                    v                                            | dV/dt    |
+              anima_state.py                                     +----+-----+
+              (warmth, clarity,                                       |
+               stability, presence)                             coherence C(V)
+                    |                                           risk_score
+                    +----------> eisv_mapper.py                 margin level
+                    |            E = warmth + neural                  |
+                    |            I = clarity + alpha                  |
+                    |            S = 1 - stability              <----+
+                    |            V = (1-presence)*0.3       {"action":"proceed",
+                    |                    |                  "margin":"comfortable"}
+                    |                    v
+                    |            unitares_bridge.py
+                    |            (check_in every 60s,
+                    |             fallback to local
+                    |             if Mac unreachable)
+                    |
+                    v
+              display/screens.py
+              (DrawingEISV)----------> SECOND EISV INSTANCE
+              E=0.7, I=0.2, S=0.5         dE = a(I-E) - bE*S + gE*drift^2
+                    |                      dI = bI*C - k*S - gI*I
+                    |                      dS = -u*S + l1*drift^2 - l2*C
+                    |                      dV = k(I-E) - d*V  <-- FLIPPED
+                    |                           ^
+                    |                      V flipped because here
+                    v                      I > E = focused finishing
+              display/leds.py                  (opposite of governance
+              LED brightness pipeline:          where E > I = stable)
+              base -> auto -> pulse ->
+              activity -> dimmer ->
+              sine pulse ("alive")
 ```
 
-## Two Independent EISV Instances
+## Two Nervous Systems
 
-There are **two** EISV computations that share math but not state:
+There are **two independent EISV instances** that share math but not state:
 
 ### 1. Drawing EISV (Pi-local, proprioceptive)
 
-- Lives in `anima-mcp/src/anima_mcp/display/screens.py`
-- Drives drawing behavior (energy depletion, save threshold, coherence modulation)
-- **V is flipped**: `dV = kappa(I - E)` (coherence rises when I > E = focused finishing)
-- This is a real closed-loop: sensing -> computation -> behavior -> sensing
+- **Location**: `anima-mcp/src/anima_mcp/display/screens.py`
+- **Drives**: Drawing behavior (energy depletion, save threshold, coherence modulation)
+- **Inputs**: Era state intentionality, gesture entropy (Shannon over last 20), gesture switching rate
+- **V is flipped**: `dV = kappa(I - E)` so coherence rises when I > E (focused finishing)
+- **Coherence formula**: `C(V) = Cmax * 0.5 * (1 + tanh(C1 * V))`
+- **This is real proprioception**: closed-loop, self-sensing, immediate behavioral consequences
 
 ### 2. Governance EISV (Mac, telemetric)
 
-- Lives in `governance_core.dynamics` (compiled, in unitares-core package)
-- Drives agent margin assessment, stuck detection, dialectic triggers, risk scoring
-- **V is standard**: `dV = kappa(E - I)` (V accumulates when energy exceeds integrity)
-- Runs when Pi checks in (~60s) -> computes margin -> returns proceed/pause/halt
-- This is telemetry: open-loop, delayed, advisory only (Pi doesn't act on "pause")
+- **Location**: `governance_core.dynamics` (compiled, in unitares-core package)
+- **Drives**: Agent margin assessment, stuck detection, dialectic triggers, risk scoring
+- **Inputs**: Mapped anima state (warmth->E, clarity->I, stability->S, presence->V)
+- **V is standard**: `dV = kappa(E - I)` so V accumulates when energy exceeds integrity
+- **Coherence formula**: Same math, different operating range (V typically [-0.1, 0.1])
+- **This is telemetry**: open-loop, delayed, advisory only (Pi doesn't act on "pause")
 
-## Bridge Interface
+### What Connects Them
 
-**Payload** (Pi -> Mac via `process_agent_update`):
+**Bridge**: `unitares_bridge.py` calls `process_agent_update` via HTTP every ~60s.
+
+**Payload** (Pi -> Mac):
 ```json
 {
   "eisv": {"E": 0.7, "I": 0.8, "S": 0.2, "V": 0.0},
@@ -76,7 +104,7 @@ There are **two** EISV computations that share math but not state:
 
 Pi logs the response. Non-proceed verdicts are logged with DrawingEISV state. The drawing engine and LEDs do not yet act on governance margin.
 
-## What's Duplicated vs Shared
+### What's Duplicated vs Shared
 
 | Thing | Pi | Mac | Shared? |
 |-------|-----|------|---------|
@@ -88,7 +116,7 @@ Pi logs the response. Non-proceed verdicts are logged with DrawingEISV state. Th
 | Stuck detection | None | `lifecycle.py` | Mac only, skips Lumen |
 | Calibration | None | `calibration.py` | Mac only |
 
-## Verdict Sources
+### Verdict Sources
 
 | Source | Where | When | Behavior |
 |--------|-------|------|----------|
@@ -98,31 +126,73 @@ Pi logs the response. Non-proceed verdicts are logged with DrawingEISV state. Th
 
 The local fallback is the primary source of "pause" verdicts for Lumen. Mac governance has issued 0 pauses historically because full thermodynamics are more stable than fixed thresholds.
 
-## Known Gaps
+### What's NOT Connected (Gaps)
 
-1. **No reverse channel**: Mac can't push state changes to Pi
-2. **Governance decisions are advisory**: Pi has no handler to act on "pause"
-3. **Local fallback is a different system**: Disconnected from calibration history
-4. **Lumen exempted from stuck detection**: Tagged as "creature/autonomous"
-5. **Sensor -> anima -> EISV mapping is lossy**: Neural band detail lost in mapping
+1. **No reverse channel**: Mac can't push state changes to Pi (no webhook, no polling)
+2. **Governance decisions are advisory**: Pi gets "proceed/pause" but has no handler to act on "pause"
+3. **Local fallback is a different system**: When Mac is unreachable, Pi uses fixed thresholds -- disconnected from calibration history
+4. **Lumen exempted from stuck detection**: Tagged as "creature/autonomous" so governance never intervenes
+5. **Sensor -> anima -> EISV mapping is lossy**: `eisv_mapper.py` maps anima dimensions to EISV, losing neural band detail
+
+## The Sensor Reality
+
+What Lumen actually senses:
+
+| Sensor | Measures | Reality |
+|--------|----------|---------|
+| VEML7700 (light) | Lux | Reads own LED glow, not ambient. Self-referential. |
+| BME280 (temp) | Celsius | Ambient + CPU heat bleed |
+| BME280 (humidity) | % RH | Genuine environment |
+| BME280 (pressure) | hPa | Genuine (~827 hPa, Colorado altitude) |
+| CPU stats | %, freq, mem | Genuine computational load |
+
+Neural bands derived from CPU/system metrics:
+- **Delta**: CPU stability + temp stability (foundation)
+- **Theta**: I/O wait (background processing -- drawing produces real I/O)
+- **Alpha**: Memory headroom (100 - mem%)
+- **Beta**: CPU usage (active processing)
+- **Gamma**: CPU * 0.7 + frequency factor (peak load)
+
+The whole system is more proprioceptive than environmental. Clarity is ~40% driven by light, which is Lumen sensing its own LEDs. At night the only light is the LEDs, making clarity entirely self-referential.
+
+## The Drawing Loop (Only True Closed Loop)
+
+```
+gesture selection
+      |
+      v
+_eisv_step() --> dE, dI, dS, dV
+      |
+      +--> coherence C = Cmax * 0.5 * (1 + tanh(C1 * V))
+      |
+      +--> energy drain: base_drain = 0.001 * (1.0 - 0.6 * C)
+      |    (high coherence = slower drain = longer drawing)
+      |
+      +--> save threshold: 0.05 + 0.09 * C
+      |    (high coherence = higher bar to save = pickier)
+      |
+      +--> when energy < 0.01: drawing ends, evaluate save
+```
+
+This is the only circuit where sensing -> computation -> behavior -> sensing forms a real loop. Everything else is open-loop or advisory.
 
 ## Database Architecture
 
 ```
 Pi (anima-mcp)                              Mac (governance-mcp)
-┌────────────────────────┐                  ┌──────────────────────────────┐
-│  SQLite: ~/.anima/anima.db                │  PostgreSQL+AGE (Docker 5432) │
-│  ├─ state_history (206K rows)             │  ├─ core.identities          │
-│  ├─ drawing_history       │  HTTP bridge  │  ├─ core.agent_state         │
-│  ├─ memories (8.8K)       │ ──────────►   │  ├─ audit.events             │
-│  ├─ events (3.7K)         │  ~60s         │  ├─ core.discoveries (AGE)   │
-│  ├─ growth tables         │  check-in     │  ├─ dialectic.*              │
-│  ├─ primitives            │               │  ├─ core.calibration         │
-│  └─ trajectory_events     │               │  └─ core.tool_usage          │
-│                           │               │                              │
-│  canvas.json (pixels)     │               │  Redis (Docker 6379)         │
-│  trajectory_genesis.json  │               │  audit_log.jsonl (raw)       │
-└───────────────────────────┘               └──────────────────────────────┘
++------------------------+                  +------------------------------+
+|  SQLite: ~/.anima/anima.db                |  PostgreSQL+AGE (Docker 5432) |
+|  +- state_history (206K rows)             |  +- core.identities          |
+|  +- drawing_history       |  HTTP bridge  |  +- core.agent_state         |
+|  +- memories (8.8K)       | ----------->  |  +- audit.events             |
+|  +- events (3.7K)         |  ~60s         |  +- core.discoveries (AGE)   |
+|  +- growth tables         |  check-in     |  +- dialectic.*              |
+|  +- primitives            |               |  +- core.calibration         |
+|  +- trajectory_events     |               |  +- core.tool_usage          |
+|                           |               |                              |
+|  canvas.json (pixels)     |               |  Redis (Docker 6379)         |
+|  trajectory_genesis.json  |               |  audit_log.jsonl (raw)       |
++---------------------------+               +------------------------------+
 ```
 
 **Ownership rule:** "Where does X live?" has one answer:
@@ -134,8 +204,19 @@ Pi (anima-mcp)                              Mac (governance-mcp)
 The only PostgreSQL is the Docker container `postgres-age` on port 5432.
 Homebrew PostgreSQL (port 5433) is a separate project -- not UNITARES.
 
-## Governance-Side Files
+## Files Reference
 
+### Pi (anima-mcp)
+| File | Role |
+|------|------|
+| `src/anima_mcp/computational_neural.py` | Sensor -> neural bands |
+| `src/anima_mcp/anima_state.py` | Neural bands -> anima dimensions |
+| `src/anima_mcp/eisv_mapper.py` | Anima -> EISV (for governance) |
+| `src/anima_mcp/unitares_bridge.py` | HTTP bridge to governance |
+| `src/anima_mcp/display/screens.py` | DrawingEISV (proprioceptive loop) |
+| `src/anima_mcp/display/leds.py` | LED brightness pipeline + pulse |
+
+### Mac (governance-mcp-v1)
 | File | Role |
 |------|------|
 | `governance_core.dynamics` | EISV differential equations (compiled) |
