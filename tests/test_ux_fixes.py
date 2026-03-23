@@ -308,31 +308,6 @@ class TestParameterCoercionReporting:
 class TestValidatorCoercionTracking:
     """Test that validators track coercions"""
 
-    @pytest.mark.skip(reason="Validation done by Pydantic")
-    def test_validate_and_coerce_returns_coercions(self):
-        """validate_and_coerce_params returns coercion list"""
-        from src.mcp_handlers.validators import validate_and_coerce_params
-
-        # Test with string that should be coerced to float
-        args = {"confidence": "0.9"}
-        coerced_args, error, coercions = validate_and_coerce_params("process_agent_update", args)
-
-        # Should have no error
-        assert error is None
-        # confidence should be coerced to float
-        assert isinstance(coerced_args.get("confidence"), float)
-
-    @pytest.mark.skip(reason="Validation done by Pydantic")
-    def test_no_coercion_for_correct_types(self):
-        """No coercions reported when types are already correct"""
-        from src.mcp_handlers.validators import validate_and_coerce_params
-
-        args = {"confidence": 0.9}  # Already float
-        coerced_args, error, coercions = validate_and_coerce_params("process_agent_update", args)
-
-        assert error is None
-        # No coercion needed - should not report confidence coercion
-        # (may still have other internal coercions)
 
 
 # ============================================================================
@@ -604,36 +579,6 @@ class TestErrorResponseRecovery:
 class TestValidatorEdgeCases:
     """Test validator edge cases"""
 
-    @pytest.mark.skip(reason="Validation done by Pydantic")
-    def test_validator_handles_empty_args(self):
-        """Validator handles empty arguments dict"""
-        from src.mcp_handlers.validators import validate_and_coerce_params
-
-        coerced, error, coercions = validate_and_coerce_params("process_agent_update", {})
-        # Should not error - empty args are valid for some tools
-        assert coerced is not None
-
-    @pytest.mark.skip(reason="Validation done by Pydantic")
-    def test_validator_handles_none_values(self):
-        """Validator handles None values"""
-        from src.mcp_handlers.validators import validate_and_coerce_params
-
-        args = {"confidence": None}
-        coerced, error, coercions = validate_and_coerce_params("process_agent_update", args)
-        # Should handle None gracefully
-        assert coerced is not None
-
-    @pytest.mark.skip(reason="Validation done by Pydantic")
-    def test_validator_coerces_bool_strings(self):
-        """Validator coerces boolean strings"""
-        from src.mcp_handlers.validators import validate_and_coerce_params
-
-        args = {"lite": "true"}
-        coerced, error, coercions = validate_and_coerce_params("process_agent_update", args)
-
-        # "true" should be coerced to True
-        if error is None:
-            assert coerced.get("lite") == True or coerced.get("lite") == "true"
 
 
 if __name__ == "__main__":

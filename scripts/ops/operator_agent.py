@@ -24,7 +24,7 @@ Usage:
 
 Environment Variables:
     GOVERNANCE_TOOL_MODE=operator_recovery  # Set automatically when --enable-recovery
-    MCP_SERVER_URL=http://127.0.0.1:8767/mcp  # Override default
+    MCP_SERVER_URL=http://127.0.0.1:8767/mcp/  # Override default
     OPERATOR_LABEL=Operator  # Override operator label
 """
 
@@ -72,7 +72,7 @@ class OperatorAgent:
 
     def __init__(
         self,
-        mcp_url: str = "http://127.0.0.1:8767/mcp",
+        mcp_url: str = "http://127.0.0.1:8767/mcp/",
         operator_label: str = "Operator",
         stuck_interval: int = 300,  # 5 minutes
         health_interval: int = 3600,  # 1 hour
@@ -572,8 +572,8 @@ async def main():
     
     parser.add_argument(
         "--url",
-        default=os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8767/mcp"),
-        help="MCP server URL (default: http://127.0.0.1:8767/mcp)"
+        default=os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8767/mcp/"),
+        help="MCP server URL (default: http://127.0.0.1:8767/mcp/)"
     )
     
     parser.add_argument(

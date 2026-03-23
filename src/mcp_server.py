@@ -13,7 +13,7 @@ Usage:
 Configuration (in claude_desktop_config.json or cursor mcp config):
     {
       "governance-monitor-v1": {
-        "url": "http://127.0.0.1:8765/mcp"
+        "url": "http://127.0.0.1:8767/mcp/"
       }
     }
 
@@ -509,74 +509,6 @@ _register_common_aliases()
 # Tools are now auto-registered from tool_schemas.py
 
 # ============================================================================
-# SPECIAL HANDLERS (tools with custom SSE-only logic)
-# ============================================================================
-# These tools have special logic that can't be auto-generated
-
-@tool_no_schema(description="Debug request context - shows transport, session binding, identity injection, and registry info")
-async def debug_request_context(ctx: Context = None) -> dict:
-    """Diagnostic tool to debug dispatch path and identity injection."""
-    import hashlib
-    from datetime import datetime
-
-    session_id = _session_id_from_ctx(ctx)
-
-    # Check session binding
-    bound_agent_id = None
-    session_bound = False
-    try:
-        from src.mcp_handlers.identity.shared import get_bound_agent_id
-        bound_agent_id = get_bound_agent_id(arguments={"client_session_id": session_id} if session_id else {})
-        session_bound = bool(bound_agent_id)
-    except Exception as e:
-        bound_agent_id = f"error: {e}"
-
-    # Get tool registry info
-    tool_count = len(_tool_wrappers_cache)
-    tool_names = sorted(_tool_wrappers_cache.keys())[:10]  # First 10 for brevity
-    registry_hash = hashlib.md5(",".join(sorted(_tool_wrappers_cache.keys())).encode()).hexdigest()[:8]
-
-    # Get validator info
-    validator_version = "unknown"
-    try:
-        from mcp_handlers.validators import VALIDATOR_VERSION
-        validator_version = VALIDATOR_VERSION
-    except ImportError:
-        validator_version = "1.0.0"  # Default if not defined
-
-    return {
-        "success": True,
-        "timestamp": datetime.now().isoformat(),
-        "transport": "sse",  # This tool only exists in SSE server
-        "session": {
-            "session_id_present": bool(session_id),
-            "session_id_preview": session_id[:16] + "..." if session_id and len(session_id) > 16 else session_id,
-            "bound": session_bound,
-            "bound_agent_id": bound_agent_id if session_bound else None,
-        },
-        "identity_injection": {
-            "enabled": True,
-            "injection_point": "dispatch_tool (before validation)",
-            "auto_create_enabled": True,
-        },
-        "tool_registry": {
-            "count": tool_count,
-            "sample_tools": tool_names,
-            "registry_hash": registry_hash,
-        },
-        "validator": {
-            "version": validator_version,
-        },
-        "server": {
-            "version": SERVER_VERSION,
-        },
-    }
-# NOTE: All tools are now auto-registered via auto_register_all_tools() above.
-# Only SSE-specific tools (that don't exist in tool_schemas.py) need manual registration below.
-
-
-    # SSE-specific tools (get_connected_clients, get_connection_diagnostics) removed Feb 2026.
-    # SSE transport deprecated by MCP — use Streamable HTTP (/mcp/) instead.
 
 
 
@@ -777,7 +709,6 @@ async def main():
         _cors_origins = [
             "http://localhost:8767",
             "http://127.0.0.1:8767",
-            "http://192.168.1.0/16",
         ]
         if _cors_allow_origin:
             _cors_origins.append(_cors_allow_origin)
@@ -1003,10 +934,9 @@ async def main():
             log_level="info",
             reload=args.reload,
             limit_concurrency=100,  # Max concurrent connections
-            limit_max_requests=1000,  # Max requests per worker before restart
             timeout_keep_alive=5,  # Keep-alive timeout (seconds)
             timeout_graceful_shutdown=10,  # Graceful shutdown timeout
-            forwarded_allow_ips="*",  # Trust proxy headers (ngrok, etc.) - fixes 421 errors
+            forwarded_allow_ips="127.0.0.1",  # Only trust proxy headers from localhost (ngrok agent)
             proxy_headers=True  # Process X-Forwarded-* headers
         )
         server = uvicorn.Server(config)

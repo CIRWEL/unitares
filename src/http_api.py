@@ -13,6 +13,7 @@ from __future__ import annotations
 import ipaddress as _ipaddress
 import json
 import os
+import secrets
 import time
 from datetime import datetime
 from pathlib import Path
@@ -92,7 +93,7 @@ def _check_http_auth(request, *, http_api_token: str | None) -> bool:
     if not auth.lower().startswith("bearer "):
         return False
     token = auth.split(" ", 1)[1].strip()
-    return token == http_api_token
+    return secrets.compare_digest(token, http_api_token)
 
 
 async def _extract_client_session_id(request) -> str:

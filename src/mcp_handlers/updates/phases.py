@@ -857,24 +857,9 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"CIRS resonance auto-emit skipped: {e}")
 
-    # CIRS: Auto-emit coherence reports for peers in resonance (feeds neighbor pressure)
-    try:
-        from .cirs.hooks import auto_emit_coherence_reports
-        auto_emit_coherence_reports(agent_id=agent_id)
-    except Exception as e:
-        logger.debug(f"CIRS auto-coherence emission skipped: {e}")
-
-    # CIRS: Neighbor pressure
-    try:
-        from .cirs.protocol import maybe_apply_neighbor_pressure
-        monitor = ctx.monitor
-        if monitor and hasattr(monitor, 'adaptive_governor'):
-            maybe_apply_neighbor_pressure(
-                agent_id=agent_id,
-                governor=monitor.adaptive_governor,
-            )
-    except Exception as e:
-        logger.debug(f"CIRS neighbor pressure skipped: {e}")
+    # CIRS: Neighbor pressure disabled — caused cross-agent EISV convergence,
+    # destroying individual diagnostic value by coupling all agents toward
+    # a shared equilibrium via governor threshold tightening.
 
     # CIRS: Persist resonance event to PostgreSQL
     try:

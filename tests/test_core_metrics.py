@@ -571,50 +571,6 @@ class TestSimulateUpdate:
             assert "note" not in data
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Validation done by Pydantic schema middleware")
-    async def test_invalid_complexity_returns_error(self, mock_server):
-        """Invalid complexity is rejected."""
-        with patch("src.mcp_handlers.core.mcp_server", mock_server), \
-             patch("src.mcp_handlers.core.require_agent_id", return_value=(None, None)):
-
-            mock_error = _make_error_text_content("bad complexity")
-            with patch("src.mcp_handlers.core.validate_complexity", return_value=(None, mock_error)):
-                from src.mcp_handlers.core import handle_simulate_update
-                result = await handle_simulate_update({"complexity": "bad"})
-                assert "bad complexity" in result[0].text
-
-    @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Validation done by Pydantic schema middleware")
-    async def test_invalid_confidence_returns_error(self, mock_server, mock_monitor):
-        """Invalid confidence is rejected."""
-        with patch("src.mcp_handlers.core.mcp_server", mock_server), \
-             patch("src.governance_monitor.UNITARESMonitor", return_value=mock_monitor), \
-             patch("src.mcp_handlers.core.require_agent_id", return_value=(None, None)):
-
-            mock_error = _make_error_text_content("bad confidence")
-            with patch("src.mcp_handlers.core.validate_confidence", return_value=(None, mock_error)):
-                from src.mcp_handlers.core import handle_simulate_update
-                result = await handle_simulate_update({"complexity": 0.5, "confidence": "bad"})
-                assert "bad confidence" in result[0].text
-
-    @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Validation done by Pydantic schema middleware")
-    async def test_invalid_ethical_drift_returns_error(self, mock_server, mock_monitor):
-        """Invalid ethical_drift is rejected."""
-        with patch("src.mcp_handlers.core.mcp_server", mock_server), \
-             patch("src.governance_monitor.UNITARESMonitor", return_value=mock_monitor), \
-             patch("src.mcp_handlers.core.require_agent_id", return_value=(None, None)):
-
-            mock_error = _make_error_text_content("bad ethical_drift")
-            with patch("src.mcp_handlers.core.validate_ethical_drift", return_value=(None, mock_error)):
-                from src.mcp_handlers.core import handle_simulate_update
-                result = await handle_simulate_update({
-                    "complexity": 0.5,
-                    "ethical_drift": "invalid"
-                })
-                assert "bad ethical_drift" in result[0].text
-
-    @pytest.mark.asyncio
     async def test_lite_mode(self, mock_server, mock_monitor):
         """Lite mode returns minimal simulation response."""
         with patch("src.mcp_handlers.core.mcp_server", mock_server), \
