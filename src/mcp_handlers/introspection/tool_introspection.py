@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from ..utils import success_response, error_response, require_agent_id, require_registered_agent
 from ..decorators import mcp_tool
+from ..support.coerce import coerce_bool
 from src.logging_utils import get_logger
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
@@ -34,22 +35,13 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     registered_tool_names = sorted(TOOL_HANDLERS.keys())
     
     # Parse filter parameters (handle string booleans from MCP transport)
-    def parse_bool(val, default):
-        if val is None:
-            return default
-        if isinstance(val, bool):
-            return val
-        if isinstance(val, str):
-            return val.lower() in ("true", "1", "yes")
-        return bool(val)
-
-    essential_only = parse_bool(arguments.get("essential_only"), False)
-    include_advanced = parse_bool(arguments.get("include_advanced"), True)
+    essential_only = coerce_bool(arguments.get("essential_only"), False)
+    include_advanced = coerce_bool(arguments.get("include_advanced"), True)
     tier_filter = arguments.get("tier", "all")
     # LITE-FIRST: Default to minimal response for local/smaller models
-    lite_mode = parse_bool(arguments.get("lite"), True)
+    lite_mode = coerce_bool(arguments.get("lite"), True)
     # Progressive disclosure: Order tools by usage frequency
-    progressive = parse_bool(arguments.get("progressive"), False)
+    progressive = coerce_bool(arguments.get("progressive"), False)
     
     # Import TOOL_TIERS from single source of truth
     from src.tool_modes import TOOL_TIERS

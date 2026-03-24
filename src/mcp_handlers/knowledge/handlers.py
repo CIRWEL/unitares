@@ -19,7 +19,7 @@ import time
 from ..utils import success_response, error_response, require_argument, require_agent_id, require_registered_agent
 from ..decorators import mcp_tool
 from ..validators import apply_param_aliases
-from src.knowledge_graph import get_knowledge_graph, DiscoveryNode, ResponseTo
+from src.knowledge_graph import get_knowledge_graph, DiscoveryNode, ResponseTo, normalize_tags
 from config.governance_config import config
 from src.logging_utils import get_logger
 from src.perf_monitor import record_ms
@@ -31,39 +31,7 @@ from ..support.tool_hints import (
 
 logger = get_logger(__name__)
 
-import re
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
-def normalize_tag(tag: str) -> str:
-    """Normalize a tag to canonical form: lowercase, strip, collapse separators to hyphens.
-
-    Examples:
-        "EISV" → "eisv"
-        "bug_fix" → "bug-fix"
-        "  Bug Fix  " → "bug-fix"
-        "eisv-dynamics" → "eisv-dynamics" (unchanged)
-        "eisv_dynamics" → "eisv-dynamics"
-    """
-    t = tag.strip().lower()
-    # Replace underscores and spaces with hyphens
-    t = re.sub(r'[\s_]+', '-', t)
-    # Collapse multiple hyphens
-    t = re.sub(r'-{2,}', '-', t)
-    # Strip leading/trailing hyphens
-    t = t.strip('-')
-    return t
-
-def normalize_tags(tags: list) -> list:
-    """Normalize and deduplicate a list of tags."""
-    seen = set()
-    result = []
-    for tag in tags:
-        if not isinstance(tag, str) or not tag.strip():
-            continue
-        normalized = normalize_tag(tag)
-        if normalized and normalized not in seen:
-            seen.add(normalized)
-            result.append(normalized)
-    return result
 
 async def _discovery_not_found(discovery_id: str, graph) -> TextContent:
     """Build a 'not found' error with prefix-match suggestions.

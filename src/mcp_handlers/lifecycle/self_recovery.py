@@ -40,12 +40,13 @@ from ..utils import (
     verify_agent_ownership
 )
 from ..decorators import mcp_tool
+from ..support.coerce import safe_float, resolve_agent_uuid
 from src.logging_utils import get_logger
 from config.governance_config import GovernanceConfig
-from src.mcp_handlers.shared import get_mcp_server
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 
 logger = get_logger(__name__)
-from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
+
 # Safety limits for recovery conditions
 FORBIDDEN_CONDITIONS = [
     "disable governance",
@@ -57,15 +58,6 @@ FORBIDDEN_CONDITIONS = [
 
 MAX_RISK_FOR_SELF_RECOVERY = 0.65  # Matches lifecycle.py review thresholds
 MIN_COHERENCE_FOR_SELF_RECOVERY = 0.35  # Matches lifecycle.py review thresholds
-
-def _safe_float(val, default: float = 0.5):
-    """Coerce to float, handling None for uninitialized metrics."""
-    if val is None:
-        return default
-    try:
-        return float(val)
-    except (TypeError, ValueError):
-        return default
 
 def clear_loop_detector_state(meta) -> None:
     """Clear loop detector state after successful recovery.
@@ -251,17 +243,17 @@ async def handle_check_recovery_options(arguments: Dict[str, Any]) -> Sequence[T
     if error:
         return [error]
     
-    agent_uuid = arguments.get("_agent_uuid") or agent_id
+    agent_uuid = resolve_agent_uuid(arguments, agent_id)
     
     # Get current metrics (use safe_float for uninitialized agents with None coherence/risk)
     try:
         monitor = mcp_server.get_or_create_monitor(agent_uuid)
         metrics = monitor.get_metrics()
         
-        coherence = _safe_float(monitor.state.coherence, 0.5)
-        risk_score = _safe_float(metrics.get("mean_risk"), 0.5)
+        coherence = safe_float(monitor.state.coherence, 0.5)
+        risk_score = safe_float(metrics.get("mean_risk"), 0.5)
         void_active = bool(monitor.state.void_active)
-        void_value = _safe_float(monitor.state.V, 0.0)
+        void_value = safe_float(monitor.state.V, 0.0)
         
     except Exception as e:
         return [error_response(f"Could not get metrics: {e}")]
@@ -357,7 +349,7 @@ async def handle_quick_resume(arguments: Dict[str, Any]) -> Sequence[TextContent
     if error:
         return [error]
     
-    agent_uuid = arguments.get("_agent_uuid") or agent_id
+    agent_uuid = resolve_agent_uuid(arguments, agent_id)
     
     # Verify ownership
     if not verify_agent_ownership(agent_uuid, arguments):
@@ -380,10 +372,10 @@ async def handle_quick_resume(arguments: Dict[str, Any]) -> Sequence[TextContent
         monitor = mcp_server.get_or_create_monitor(agent_uuid)
         metrics = monitor.get_metrics()
         
-        coherence = _safe_float(monitor.state.coherence, 0.5)
-        risk_score = _safe_float(metrics.get("mean_risk"), 0.5)
+        coherence = safe_float(monitor.state.coherence, 0.5)
+        risk_score = safe_float(metrics.get("mean_risk"), 0.5)
         void_active = bool(monitor.state.void_active)
-        void_value = _safe_float(monitor.state.V, 0.0)
+        void_value = safe_float(monitor.state.V, 0.0)
         
     except Exception as e:
         return [error_response(f"Could not assess state: {e}")]
@@ -523,7 +515,7 @@ async def handle_operator_resume_agent(arguments: Dict[str, Any]) -> Sequence[Te
     if error:
         return [error]
     
-    caller_uuid = arguments.get("_agent_uuid") or agent_id
+    caller_uuid = resolve_agent_uuid(arguments, agent_id)
     target_agent_id = arguments.get("target_agent_id")
     reason = arguments.get("reason", "Operator-assisted recovery")
     force = arguments.get("force", False)
@@ -569,10 +561,10 @@ async def handle_operator_resume_agent(arguments: Dict[str, Any]) -> Sequence[Te
         monitor = mcp_server.get_or_create_monitor(target_agent_id)
         metrics = monitor.get_metrics()
         
-        coherence = _safe_float(monitor.state.coherence, 0.5)
-        risk_score = _safe_float(metrics.get("mean_risk"), 0.5)
+        coherence = safe_float(monitor.state.coherence, 0.5)
+        risk_score = safe_float(metrics.get("mean_risk"), 0.5)
         void_active = bool(monitor.state.void_active)
-        void_value = _safe_float(monitor.state.V, 0.0)
+        void_value = safe_float(monitor.state.V, 0.0)
         
     except Exception as e:
         return [error_response(f"Could not get target metrics: {e}")]

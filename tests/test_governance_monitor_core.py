@@ -111,61 +111,6 @@ class TestContinuityEnergy:
         assert ce > 0, f"Expected positive CE for route changes, got {ce}"
 
 
-class TestParameterCoherence:
-    """Tests for compute_parameter_coherence method."""
-
-    def test_identical_params(self):
-        """Identical parameters should give coherence = 1.0."""
-        monitor = UNITARESMonitor(agent_id="test_param_coh")
-        params = np.array([0.5, 0.3, 0.7, 0.2])
-
-        coherence = monitor.compute_parameter_coherence(params, params)
-        assert coherence == 1.0, f"Expected 1.0 for identical params, got {coherence}"
-
-    def test_no_previous(self):
-        """No previous params should give coherence = 1.0."""
-        monitor = UNITARESMonitor(agent_id="test_param_coh2")
-        params = np.array([0.5, 0.3, 0.7])
-
-        coherence = monitor.compute_parameter_coherence(params, None)
-        assert coherence == 1.0, f"Expected 1.0 for no previous, got {coherence}"
-
-    def test_small_change(self):
-        """Small parameter change should give high coherence."""
-        monitor = UNITARESMonitor(agent_id="test_param_coh3")
-        prev = np.array([0.5, 0.3, 0.7])
-        current = np.array([0.51, 0.31, 0.71])  # Small changes
-
-        coherence = monitor.compute_parameter_coherence(current, prev)
-        assert 0.8 < coherence < 1.0, f"Expected high coherence for small change, got {coherence}"
-
-    def test_large_change(self):
-        """Large parameter change should give lower coherence."""
-        monitor = UNITARESMonitor(agent_id="test_param_coh4")
-        prev = np.array([0.1, 0.1, 0.1])
-        current = np.array([0.9, 0.9, 0.9])  # Large changes
-
-        coherence = monitor.compute_parameter_coherence(current, prev)
-        assert coherence < 0.5, f"Expected low coherence for large change, got {coherence}"
-
-    def test_nan_handling(self):
-        """NaN in parameters should return safe default."""
-        monitor = UNITARESMonitor(agent_id="test_param_nan")
-        prev = np.array([0.5, 0.3, np.nan])
-        current = np.array([0.5, 0.3, 0.7])
-
-        coherence = monitor.compute_parameter_coherence(current, prev)
-        assert coherence == 0.5, f"Expected 0.5 for NaN input, got {coherence}"
-
-    def test_empty_params(self):
-        """Empty parameter arrays should return 1.0."""
-        monitor = UNITARESMonitor(agent_id="test_param_empty")
-        empty = np.array([])
-
-        coherence = monitor.compute_parameter_coherence(empty, empty)
-        assert coherence == 1.0, f"Expected 1.0 for empty params, got {coherence}"
-
-
 class TestRegimeDetection:
     """Tests for detect_regime method."""
 

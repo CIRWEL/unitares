@@ -13,12 +13,10 @@ from ..utils import success_response, error_response, require_agent_id, require_
 from ..decorators import mcp_tool
 from ..validators import validate_file_path_policy
 from src.logging_utils import get_logger
-from src.mcp_handlers.shared import get_mcp_server
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 
 logger = get_logger(__name__)
 
-# Import from mcp_server_std module (using shared utility)
-from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 @mcp_tool("get_server_info", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_get_server_info(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Get MCP server version, process information, and health status"""

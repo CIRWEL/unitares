@@ -1,0 +1,643 @@
+"""
+Lifecycle query handlers — read-only agent listing and metadata retrieval.
+
+Extracted from handlers.py for maintainability.
+"""
+
+from typing import Dict, Any, Sequence
+from mcp.types import TextContent
+from datetime import datetime, timedelta, timezone
+
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
+from ..types import ToolArgumentsDict
+from ..utils import (
+    require_registered_agent,
+    success_response,
+    error_response,
+)
+from ..error_helpers import (
+    agent_not_found_error,
+    system_error as system_error_helper,
+)
+from ..decorators import mcp_tool
+from ..support.coerce import safe_float, resolve_agent_uuid
+from src.logging_utils import get_logger
+from src.cache import get_metadata_cache
+
+from .helpers import _is_test_agent
+
+logger = get_logger(__name__)
+
+
+@mcp_tool("list_agents", timeout=15.0, rate_limit_exempt=True, register=False)
+async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextContent]:
+    """List all agents currently being monitored with lifecycle metadata and health status
+
+    LITE MODE: Use lite=true for minimal response (~1KB vs ~15KB)
+    """
+    try:
+        # Reload metadata from DB so agents exploring get fresh agent list (not stale)
+        import time
+        try:
+            cache_age = time.time() - mcp_server._metadata_cache_state.get("last_load_time", 0)
+            exploration_ttl = mcp_server.EXPLORATION_CACHE_TTL
+            if cache_age > exploration_ttl:
+                await mcp_server.load_metadata_async(force=True)
+        except (AttributeError, TypeError):
+            pass  # Mock or missing cache state — skip reload
+
+        # LITE MODE: Minimal response for local/smaller models (DEFAULT)
+        lite_explicit = "lite" in arguments
+        lite_mode = arguments.get("lite", True)
+        # If caller is asking for non-lite behavior (metrics/pagination/filters), honor it
+        # even if they didn't explicitly set lite=false.
+        if not lite_explicit:
+            if arguments.get("include_metrics") is True:
+                lite_mode = False
+            elif arguments.get("limit") is not None or arguments.get("offset") is not None:
+                lite_mode = False
+            elif arguments.get("status_filter") not in (None, "active"):
+                lite_mode = False
+            elif arguments.get("include_test_agents") is True:
+                lite_mode = False
+            elif arguments.get("summary_only") is True or arguments.get("grouped") is False:
+                lite_mode = False
+        if lite_mode:
+            # Ultra-compact response - only real agents
+            limit = arguments.get("limit", 20)
+            status_filter = arguments.get("status_filter", "active")
+            include_test_agents = arguments.get("include_test_agents", False)
+            # Default: include zero-update agents so newly created agents are discoverable.
+            # Callers can still pass min_updates=1 to hide ghost agents.
+            min_updates = arguments.get("min_updates", 0)
+            # Smart default: show labeled agents first; if none, show active unlabeled ones
+            named_only = arguments.get("named_only")  # None = auto, True/False = explicit
+            # NEW: Filter by recency - default 7 days to reduce noise from stale agents
+            recent_days = arguments.get("recent_days", 7)
+
+            # Calculate cutoff time for recency filter
+            cutoff_time = None
+            if recent_days and recent_days > 0:
+                cutoff_time = datetime.now(timezone.utc) - timedelta(days=recent_days)
+
+            agents = []
+            total_all = 0  # Count all agents before filtering
+            for agent_id, meta in mcp_server.agent_metadata.items():
+                total_all += 1
+                if status_filter != "all" and meta.status != status_filter:
+                    continue
+                if min_updates and meta.total_updates < min_updates:
+                    continue
+                if not include_test_agents and _is_test_agent(agent_id):  # Filter test agents
+                    continue
+                if named_only is True and not getattr(meta, 'label', None):
+                    continue
+                if named_only is None:
+                    # Auto mode: skip unlabeled agents with 0 updates (ghosts)
+                    if not getattr(meta, 'label', None) and meta.total_updates < 1:
+                        continue
+
+                # Apply recency filter
+                if cutoff_time and meta.last_update:
+                    try:
+                        last_dt = datetime.fromisoformat(meta.last_update.replace('Z', '+00:00'))
+                        if last_dt.tzinfo is None:
+                            last_dt = last_dt.replace(tzinfo=timezone.utc)
+                        if last_dt < cutoff_time:
+                            continue  # Skip stale agents
+                    except Exception:
+                        pass  # Keep agents with unparseable dates
+
+                agents.append({
+                    "id": agent_id,
+                    "label": getattr(meta, 'label', None),
+                    "status": meta.status,
+                    "purpose": getattr(meta, 'purpose', None),  # Added for social awareness
+                    "updates": meta.total_updates,
+                    "last": meta.last_update[:10] if meta.last_update else None,
+                    "last_update": meta.last_update,
+                    "trust_tier": getattr(meta, 'trust_tier', None),
+                })
+            # Sort: labeled first, then by most recent activity
+            agents.sort(key=lambda x: (0 if x.get("label") else 1, -(x.get("updates") or 0), x.get("last_update", "") or ""), reverse=False)
+
+            # Always include the requesting agent even if filtered out
+            caller_uuid = None
+            try:
+                from ..context import get_context_agent_id
+                caller_uuid = get_context_agent_id()
+            except Exception:
+                pass
+            caller_in_list = caller_uuid and any(a["id"] == caller_uuid for a in agents)
+            if caller_uuid and not caller_in_list:
+                caller_meta = mcp_server.agent_metadata.get(caller_uuid)
+                if caller_meta:
+                    agents.append({
+                        "id": caller_uuid,
+                        "label": getattr(caller_meta, 'label', None),
+                        "status": caller_meta.status,
+                        "purpose": getattr(caller_meta, 'purpose', None),
+                        "updates": caller_meta.total_updates,
+                        "last": caller_meta.last_update[:10] if caller_meta.last_update else None,
+                        "last_update": caller_meta.last_update,
+                        "trust_tier": getattr(caller_meta, 'trust_tier', None),
+                        "you": True,
+                    })
+
+            for a in agents:
+                # Mark the requesting agent
+                if caller_uuid and a["id"] == caller_uuid and "you" not in a:
+                    a["you"] = True
+                a.pop("last_update", None)
+
+            result = {
+                "agents": agents[: max(0, int(limit))] if limit is not None else agents,
+                "shown": min(len(agents), int(limit)) if limit else len(agents),
+                "matching": len(agents),  # How many matched filters
+                "total_all": total_all,  # Total agents in system
+            }
+
+            # Add helpful hints
+            if len(agents) > int(limit):
+                result["more"] = f"Showing {limit} of {len(agents)} recent. Use limit=50 or recent_days=30 to see more."
+            if recent_days:
+                result["filter"] = f"Active in last {recent_days} days. Use recent_days=0 for all."
+
+            return success_response(result)
+
+        grouped = arguments.get("grouped", True)
+        include_metrics = arguments.get("include_metrics", True)
+        status_filter = arguments.get("status_filter", "active")  # Changed: default to active only
+        loaded_only = arguments.get("loaded_only", False)
+        summary_only = arguments.get("summary_only", False)
+        standardized = arguments.get("standardized", True)
+        include_test_agents = arguments.get("include_test_agents", False)  # Default: filter out test agents
+        # Default: include zero-update agents so newly created agents are discoverable.
+        # Callers can still pass min_updates=2 to hide one-shot / placeholder agents.
+        min_updates = arguments.get("min_updates", 0)
+        recent_days = arguments.get("recent_days")  # Optional recency filter
+
+        # Pagination support (optimization)
+        offset = arguments.get("offset", 0)
+        limit = arguments.get("limit")  # None = no limit (backward compatible)
+
+        # Calculate cutoff time for recency filter
+        cutoff_time = None
+        if recent_days and recent_days > 0:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(days=recent_days)
+
+        agents_list = []
+
+        # First pass: collect all matching agents (without loading monitors)
+        for agent_id, meta in mcp_server.agent_metadata.items():
+            # Filter by status if requested
+            if status_filter != "all" and meta.status != status_filter:
+                continue
+
+            # Filter out test agents by default (unless explicitly requested)
+            if not include_test_agents and _is_test_agent(agent_id):
+                continue
+
+            # Filter out low-activity agents (one-shot fragmentation cleanup)
+            if min_updates and meta.total_updates < min_updates:
+                continue
+
+            # Apply recency filter
+            if cutoff_time and meta.last_update:
+                try:
+                    last_dt = datetime.fromisoformat(meta.last_update.replace('Z', '+00:00'))
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    if last_dt < cutoff_time:
+                        continue
+                except Exception:
+                    pass
+
+            # Filter by loaded status if requested
+            if loaded_only:
+                if agent_id not in mcp_server.monitors:
+                    continue
+
+            # Infer status for agents with None/unrecognized status
+            inferred_status = meta.status
+            if inferred_status not in ["active", "waiting_input", "paused", "archived", "deleted"]:
+                # Infer status based on activity patterns
+                now = datetime.now(timezone.utc)
+
+                # Check if agent has any activity
+                has_updates = meta.total_updates > 0
+                is_recent = False
+                days_since_update = None
+
+                if meta.last_update:
+                    try:
+                        last_dt = datetime.fromisoformat(meta.last_update.replace('Z', '+00:00'))
+                        if last_dt.tzinfo is None:
+                            last_dt = last_dt.replace(tzinfo=timezone.utc)
+                        days_since_update = (now - last_dt).total_seconds() / 86400
+                        is_recent = days_since_update < 7  # Active within last week
+                    except Exception:
+                        pass
+
+                # Infer status:
+                # - No updates or no last_update = archived (inactive)
+                # - Recent activity (<7 days) = active
+                # - Old activity (>7 days) = archived
+                if not has_updates or meta.last_update is None:
+                    inferred_status = "archived"  # No activity = archived
+                elif is_recent:
+                    inferred_status = "active"  # Recent activity = active
+                else:
+                    inferred_status = "archived"  # Old activity = archived
+
+            agent_info = {
+                "agent_id": agent_id,
+                "label": getattr(meta, 'label', None),
+                "purpose": getattr(meta, 'purpose', None),
+                "lifecycle_status": inferred_status,
+                "created": meta.created_at,
+                "last_update": meta.last_update,
+                "total_updates": meta.total_updates,
+                "tags": meta.tags.copy() if meta.tags else [],
+                "notes": meta.notes if meta.notes else "",
+            }
+
+            # Lazy load metrics only if requested (optimization)
+            if include_metrics:
+                # Only load monitor if already in memory (fast path)
+                if agent_id in mcp_server.monitors:
+                    try:
+                        monitor = mcp_server.monitors[agent_id]
+                        metrics = monitor.get_metrics()
+
+                        # Calculate health_status consistently with process_agent_update
+                        # Use health_checker.get_health_status() instead of metrics.get("status")
+                        # to ensure consistency across all tools
+                        risk_score = metrics.get("risk_score") or metrics.get("current_risk")
+                        coherence = float(monitor.state.coherence) if monitor.state else None
+                        void_active = bool(monitor.state.void_active) if monitor.state else False
+
+                        health_status_obj, _ = mcp_server.health_checker.get_health_status(
+                            risk_score=risk_score,
+                            coherence=coherence,
+                            void_active=void_active
+                        )
+                        agent_info["health_status"] = health_status_obj.value
+                        agent_info["metrics"] = {
+                            "E": safe_float(monitor.state.E),
+                            "I": safe_float(monitor.state.I),
+                            "S": safe_float(monitor.state.S),
+                            "V": safe_float(monitor.state.V),
+                            "coherence": safe_float(monitor.state.coherence),
+                            "current_risk": metrics.get("current_risk"),  # Recent trend (last 10) - USED FOR HEALTH STATUS
+                            "risk_score": safe_float(metrics.get("risk_score") or metrics.get("current_risk") or metrics.get("mean_risk", 0.5)),  # Governance/operational risk
+                            "phi": metrics.get("phi"),  # Primary physics signal: Phi objective function
+                            "verdict": metrics.get("verdict"),  # Primary governance signal: safe/caution/high-risk
+                            "mean_risk": safe_float(metrics.get("mean_risk", 0.5)),  # Overall mean (all-time average) - for historical context
+                            "lambda1": safe_float(monitor.state.lambda1),
+                            "void_active": bool(monitor.state.void_active) if monitor.state.void_active is not None else False
+                        }
+                    except Exception as e:
+                        agent_info["health_status"] = "error"
+                        agent_info["metrics"] = None
+                        logger.warning(f"Error getting metrics for {agent_id}: {e}")
+                else:
+                    # Monitor not in memory - load it to get metrics
+                    cached_health = getattr(meta, 'health_status', None)
+                    try:
+                        monitor = mcp_server.get_or_create_monitor(agent_id)
+                        metrics_dict = monitor.get_metrics()
+
+                        # Get health status
+                        if cached_health and cached_health != "unknown":
+                            agent_info["health_status"] = cached_health
+                        else:
+                            risk_score = metrics_dict.get('risk_score', None)
+                            coherence = float(monitor.state.coherence) if monitor.state else metrics_dict.get('coherence', None)
+                            void_active = bool(monitor.state.void_active) if monitor.state else metrics_dict.get('void_active', False)
+
+                            health_status_obj, _ = mcp_server.health_checker.get_health_status(
+                                risk_score=risk_score,
+                                coherence=coherence,
+                                void_active=void_active
+                            )
+                            agent_info["health_status"] = health_status_obj.value
+
+                            # Cache for future use
+                            if meta:
+                                meta.health_status = health_status_obj.value
+
+                        # Populate metrics from monitor state
+                        if monitor.state:
+                            agent_info["metrics"] = {
+                                "E": safe_float(monitor.state.E),
+                                "I": safe_float(monitor.state.I),
+                                "S": safe_float(monitor.state.S),
+                                "V": safe_float(monitor.state.V),
+                                "coherence": safe_float(monitor.state.coherence),
+                                "current_risk": metrics_dict.get("current_risk"),
+                                "risk_score": safe_float(metrics_dict.get("risk_score") or metrics_dict.get("current_risk") or metrics_dict.get("mean_risk", 0.5)),
+                                "phi": metrics_dict.get("phi"),
+                                "verdict": metrics_dict.get("verdict"),
+                                "mean_risk": safe_float(metrics_dict.get("mean_risk", 0.5)),
+                                "lambda1": safe_float(monitor.state.lambda1),
+                                "void_active": bool(monitor.state.void_active) if monitor.state.void_active is not None else False
+                            }
+                        else:
+                            agent_info["metrics"] = None
+                    except Exception as e:
+                        logger.debug(f"Could not load metrics for agent '{agent_id}': {e}")
+                        agent_info["health_status"] = cached_health or "unknown"
+                        agent_info["metrics"] = None
+            else:
+                # No metrics requested - try cached health_status first, calculate if missing
+                cached_health = getattr(meta, 'health_status', None)
+                if cached_health and cached_health != "unknown":
+                    agent_info["health_status"] = cached_health
+                else:
+                    # No cached health status or it's "unknown" - calculate it
+                    try:
+                        monitor = mcp_server.get_or_create_monitor(agent_id)
+                        metrics_dict = monitor.get_metrics()
+                        attention_score = metrics_dict.get('attention_score') or metrics_dict.get('risk_score', None)
+                        coherence = metrics_dict.get('coherence', None)
+                        void_active = metrics_dict.get('void_active', False)
+
+                        health_status_obj, _ = mcp_server.health_checker.get_health_status(
+                            risk_score=attention_score,
+                            coherence=coherence,
+                            void_active=void_active
+                        )
+                        agent_info["health_status"] = health_status_obj.value
+
+                        # Cache for future use
+                        if meta:
+                            meta.health_status = health_status_obj.value
+                    except Exception as e:
+                        logger.debug(f"Could not calculate health status for agent '{agent_id}': {e}")
+                        agent_info["health_status"] = "unknown"
+                agent_info["metrics"] = None
+
+            # Add standardized fields if requested
+            if standardized:
+                agent_info.setdefault("health_status", "unknown")
+                agent_info.setdefault("metrics", None)
+
+            # Trust tier from cached trajectory data (DB fallback done in batch below)
+            cached_tier = getattr(meta, 'trust_tier', None)
+            agent_info["trust_tier"] = cached_tier
+
+            agents_list.append(agent_info)
+
+        # Batch-load trust tiers for agents missing cached values (avoids N+1 queries)
+        agents_needing_tiers = [a for a in agents_list if a["trust_tier"] is None]
+        if agents_needing_tiers:
+            try:
+                from src.trajectory_identity import compute_trust_tier
+                from src.db import get_db as _get_db
+                db = _get_db()
+                ids_to_fetch = [a["agent_id"] for a in agents_needing_tiers]
+                identities = await db.get_identities_batch(ids_to_fetch)
+                for agent_info in agents_needing_tiers:
+                    aid = agent_info["agent_id"]
+                    identity = identities.get(aid)
+                    if identity and identity.metadata:
+                        tier_info = compute_trust_tier(identity.metadata)
+                        agent_info["trust_tier"] = tier_info.get("name", "unknown")
+                        # Cache for next time
+                        meta_obj = mcp_server.agent_metadata.get(aid)
+                        if meta_obj:
+                            meta_obj.trust_tier = agent_info["trust_tier"]
+                            meta_obj.trust_tier_num = tier_info.get("tier", 0)
+            except Exception as e:
+                logger.debug(f"Batch trust tier lookup failed: {e}")
+
+        # Sort by last_update (most recent first)
+        agents_list.sort(key=lambda x: x.get("last_update", ""), reverse=True)
+
+        # Calculate status counts BEFORE pagination (for accurate totals)
+        total_count = len(agents_list)
+        status_counts = {
+            "active": sum(1 for a in agents_list if a.get("lifecycle_status") == "active"),
+            "waiting_input": sum(1 for a in agents_list if a.get("lifecycle_status") == "waiting_input"),
+            "paused": sum(1 for a in agents_list if a.get("lifecycle_status") == "paused"),
+            "archived": sum(1 for a in agents_list if a.get("lifecycle_status") == "archived"),
+            "deleted": sum(1 for a in agents_list if a.get("lifecycle_status") == "deleted"),
+            "unknown": sum(1 for a in agents_list if a.get("lifecycle_status") not in ["active", "waiting_input", "paused", "archived", "deleted"])
+        }
+
+        # Apply pagination (optimization)
+        if limit is not None:
+            agents_list = agents_list[offset:offset + limit]
+        elif offset > 0:
+            agents_list = agents_list[offset:]
+
+        # Group by status if requested (for returned agents only)
+        if grouped and not summary_only:
+            grouped_agents = {
+                "active": [a for a in agents_list if a.get("lifecycle_status") == "active"],
+                "waiting_input": [a for a in agents_list if a.get("lifecycle_status") == "waiting_input"],
+                "paused": [a for a in agents_list if a.get("lifecycle_status") == "paused"],
+                "archived": [a for a in agents_list if a.get("lifecycle_status") == "archived"],
+                "deleted": [a for a in agents_list if a.get("lifecycle_status") == "deleted"],
+                "unknown": [a for a in agents_list if a.get("lifecycle_status") not in ["active", "waiting_input", "paused", "archived", "deleted"]]
+            }
+
+            response_data = {
+                "success": True,
+                "agents": grouped_agents,
+                "summary": {
+                    "total": total_count,  # Use total_count (before pagination)
+                    "returned": len(agents_list),  # Number actually returned (after pagination)
+                    "offset": offset,
+                    "limit": limit,
+                    "by_status": status_counts  # Use counts from BEFORE pagination
+                }
+            }
+
+            # Add health breakdown if include_metrics
+            if include_metrics:
+                response_data["summary"]["by_health"] = {
+                    "healthy": sum(1 for a in agents_list if a.get("health_status") == "healthy"),
+                    "moderate": sum(1 for a in agents_list if a.get("health_status") == "moderate"),
+                    "critical": sum(1 for a in agents_list if a.get("health_status") == "critical"),
+                    "unknown": sum(1 for a in agents_list if a.get("health_status") == "unknown"),
+                    "error": sum(1 for a in agents_list if a.get("health_status") == "error")
+                }
+        else:
+            response_data = {
+                "success": True,
+                "agents": agents_list,
+                "summary": {
+                    "total": total_count,  # Use total_count (before pagination)
+                    "returned": len(agents_list),  # Number actually returned (after pagination)
+                    "offset": offset,
+                    "limit": limit,
+                    "by_status": status_counts  # Use counts from BEFORE pagination
+                }
+            }
+
+            if include_metrics:
+                health_statuses = {"healthy": 0, "moderate": 0, "critical": 0, "unknown": 0, "error": 0}
+                for agent in agents_list:
+                    status = agent.get("health_status", "unknown")
+                    health_statuses[status] = health_statuses.get(status, 0) + 1
+                response_data["summary"]["by_health"] = health_statuses
+
+        if summary_only:
+            return success_response(response_data["summary"])
+
+        # Add EISV labels for API documentation (only if metrics are included)
+        if include_metrics:
+            response_data["eisv_labels"] = __import__('src.governance_monitor', fromlist=['UNITARESMonitor']).UNITARESMonitor.get_eisv_labels()
+
+        return success_response(response_data)
+
+    except Exception as e:
+        return system_error_helper(
+            "list_agents",
+            e
+        )
+
+@mcp_tool("get_agent_metadata", timeout=10.0, register=False)
+async def handle_get_agent_metadata(arguments: Sequence[TextContent]) -> list:
+    """Get complete metadata for an agent including lifecycle events, current state, and computed fields.
+
+    Args:
+        target_agent: Optional UUID or label of agent to look up.
+                      If not provided, returns calling agent's metadata.
+    """
+    # Check for target_agent parameter (allows looking up other agents by UUID or label)
+    target_agent = arguments.get("target_agent") or arguments.get("agent_id")
+
+    if target_agent:
+        # FAST PATH: Check Redis cache first (by UUID)
+        try:
+            from src.cache import get_metadata_cache
+            metadata_cache = get_metadata_cache()
+            cached_meta = await metadata_cache.get(target_agent)
+            if cached_meta:
+                # Found in Redis cache - use it directly
+                logger.debug(f"Metadata cache hit: {target_agent[:8]}...")
+                agent_id = target_agent
+                # Convert cached dict back to AgentMetadata for consistency
+                from src.agent_state import AgentMetadata
+                meta = AgentMetadata(**cached_meta)
+                # Update in-memory cache for consistency
+                mcp_server.agent_metadata[agent_id] = meta
+                # Skip to response building (meta already loaded)
+                monitor = mcp_server.monitors.get(agent_id)
+                metadata_response = meta.to_dict()
+                # Add computed fields
+                if monitor:
+                    metadata_response["current_state"] = {
+                        "lambda1": float(monitor.state.lambda1),
+                        "coherence": float(monitor.state.coherence),
+                        "void_active": bool(monitor.state.void_active),
+                        "E": float(monitor.state.E),
+                        "I": float(monitor.state.I),
+                        "S": float(monitor.state.S),
+                        "V": float(monitor.state.V),
+                    }
+                else:
+                    metadata_response["current_state"] = None
+                # Add EISV labels (__import__('src.governance_monitor', fromlist=['UNITARESMonitor']).UNITARESMonitor imported at module level)
+                metadata_response["eisv_labels"] = __import__('src.governance_monitor', fromlist=['UNITARESMonitor']).UNITARESMonitor.get_eisv_labels()
+                return success_response(metadata_response)
+        except Exception as e:
+            logger.debug(f"Metadata cache check failed: {e}")
+
+        # Look up by UUID first (in-memory cache)
+        if target_agent in mcp_server.agent_metadata:
+            agent_id = target_agent
+        else:
+            # Try label lookup in cache
+            agent_id = None
+            for uuid_key, m in mcp_server.agent_metadata.items():
+                if getattr(m, 'label', None) == target_agent:
+                    agent_id = uuid_key
+                    break
+
+            # If not found in cache, reload metadata and try again (might be new agent)
+            if not agent_id:
+                try:
+                    # Reload metadata to get latest agents
+                    await mcp_server.load_metadata_async()
+                    # Try UUID lookup again after reload
+                    if target_agent in mcp_server.agent_metadata:
+                        agent_id = target_agent
+                    else:
+                        # Try label lookup again after reload
+                        for uuid_key, m in mcp_server.agent_metadata.items():
+                            if getattr(m, 'label', None) == target_agent:
+                                agent_id = uuid_key
+                                break
+                except Exception as e:
+                    logger.debug(f"Metadata reload failed: {e}")
+
+            if not agent_id:
+                # Provide helpful error message
+                return [error_response(
+                    f"Agent not found: '{target_agent}'. Use UUID or label.",
+                    recovery={
+                        "action": "Use list_agents() to find valid agent IDs",
+                        "tip": "Labels are case-sensitive. Use list_agents(named_only=true) to see agents with labels.",
+                        "note": "If you just set a label with identity(name='...'), it may take a moment to persist. Try again in a few seconds."
+                    },
+                    details={
+                        "searched_in": "in-memory cache and PostgreSQL",
+                        "suggestion": "Use UUID from list_agents() output, or wait a moment if you just set a label"
+                    }
+                )]
+    else:
+        # Default: get calling agent's metadata
+        agent_id, error = require_registered_agent(arguments)
+        if error:
+            return [error]  # Returns onboarding guidance if not registered
+
+    meta = mcp_server.agent_metadata[agent_id]
+    monitor = mcp_server.monitors.get(agent_id)
+
+    # Populate Redis cache for future lookups (best effort, non-blocking)
+    try:
+        from src.cache import get_metadata_cache
+        await get_metadata_cache().set(agent_id, meta.to_dict(), ttl=300)
+    except Exception as e:
+        logger.debug(f"Failed to cache metadata: {e}")
+
+    metadata_response = meta.to_dict()
+
+    # Add computed fields
+    if monitor:
+        metadata_response["current_state"] = {
+            "lambda1": float(monitor.state.lambda1),
+            "coherence": float(monitor.state.coherence),
+            "void_active": bool(monitor.state.void_active),
+            "E": float(monitor.state.E),
+            "I": float(monitor.state.I),
+            "S": float(monitor.state.S),
+            "V": float(monitor.state.V)
+        }
+
+    # Days since update
+    try:
+        if meta.last_update:
+            # Handle various datetime formats
+            last_update_str = meta.last_update.replace('Z', '+00:00')
+            last_update_dt = datetime.fromisoformat(last_update_str)
+            if last_update_dt.tzinfo is None:
+                last_update_dt = last_update_dt.replace(tzinfo=timezone.utc)
+            now_dt = datetime.now(timezone.utc)
+            days_since = (now_dt - last_update_dt).days
+            metadata_response["days_since_update"] = days_since
+        else:
+            metadata_response["days_since_update"] = None
+    except Exception as e:
+        logger.debug(f"Could not calculate days_since_update: {e}")
+        metadata_response["days_since_update"] = None
+
+    # Add EISV labels for API documentation (only if current_state exists)
+    if "current_state" in metadata_response:
+        metadata_response["eisv_labels"] = __import__('src.governance_monitor', fromlist=['UNITARESMonitor']).UNITARESMonitor.get_eisv_labels()
+
+    return success_response(metadata_response)

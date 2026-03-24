@@ -476,65 +476,6 @@ class TestComputeEthicalDrift:
 
 
 # ============================================================================
-# compute_parameter_coherence (instance but pure, DEPRECATED)
-# ============================================================================
-
-class TestComputeParameterCoherence:
-
-    @pytest.fixture
-    def monitor(self):
-        return UNITARESMonitor("test-agent", load_state=False)
-
-    def test_no_previous(self, monitor):
-        coh = monitor.compute_parameter_coherence(np.array([0.5]), None)
-        assert coh == 1.0
-
-    def test_identical_params(self, monitor):
-        params = np.array([0.5, 0.5])
-        coh = monitor.compute_parameter_coherence(params, params.copy())
-        assert coh == pytest.approx(1.0)
-
-    def test_different_params(self, monitor):
-        current = np.array([0.5, 0.5])
-        prev = np.array([0.3, 0.3])
-        coh = monitor.compute_parameter_coherence(current, prev)
-        assert 0.0 < coh < 1.0
-
-    def test_large_change_low_coherence(self, monitor):
-        current = np.array([1.0, 1.0])
-        prev = np.array([0.0, 0.0])
-        coh = monitor.compute_parameter_coherence(current, prev)
-        assert coh < 0.5
-
-    def test_mismatched_length(self, monitor):
-        coh = monitor.compute_parameter_coherence(np.array([0.5]), np.array([0.5, 0.5]))
-        assert coh == 1.0
-
-    def test_empty_params(self, monitor):
-        coh = monitor.compute_parameter_coherence(np.array([]), np.array([]))
-        assert coh == 1.0
-
-    def test_nan_input(self, monitor):
-        coh = monitor.compute_parameter_coherence(np.array([float('nan')]), np.array([0.5]))
-        assert coh == 0.5
-
-    def test_bounded_output(self, monitor):
-        for _ in range(20):
-            current = np.random.rand(5)
-            prev = np.random.rand(5)
-            coh = monitor.compute_parameter_coherence(current, prev)
-            assert 0.0 <= coh <= 1.0
-
-    def test_inf_in_current(self, monitor):
-        coh = monitor.compute_parameter_coherence(np.array([float('inf')]), np.array([0.5]))
-        assert coh == 0.5
-
-    def test_inf_in_prev(self, monitor):
-        coh = monitor.compute_parameter_coherence(np.array([0.5]), np.array([float('inf')]))
-        assert coh == 0.5
-
-
-# ============================================================================
 # detect_regime (instance, depends on state)
 # ============================================================================
 

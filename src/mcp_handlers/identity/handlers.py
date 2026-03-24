@@ -21,14 +21,9 @@ from src.logging_utils import get_logger
 from src.db import get_db
 from ..utils import success_response, error_response
 from ..decorators import mcp_tool
+from ..support.coerce import coerce_bool
 
-# Import GovernanceConfig with fallback defaults
-try:
-    from config.governance_config import GovernanceConfig
-except ImportError:
-    class GovernanceConfig:
-        SESSION_TTL_SECONDS = 86400  # 24 hours
-        SESSION_TTL_HOURS = 24
+from config.governance_config import GovernanceConfig
 
 logger = get_logger(__name__)
 
@@ -145,21 +140,6 @@ def _get_date_context() -> dict:
         "month": now.strftime('%B'),
         "weekday": now.strftime('%A'),
     }
-
-
-def _coerce_bool(value: Any, default: bool = False) -> bool:
-    """Coerce bool-ish values from tool arguments."""
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes", "on"}:
-            return True
-        if lowered in {"false", "0", "no", "off"}:
-            return False
-    return default
 
 
 def _infer_model_type_from_signals(explicit_model_type: Optional[str]) -> Optional[str]:
@@ -647,8 +627,8 @@ async def handle_bind_session(arguments: Dict[str, Any]) -> Sequence[TextContent
     startup hook context.
     """
     arguments = arguments or {}
-    strict = _coerce_bool(arguments.get("strict"))
-    resume_requested = _coerce_bool(arguments.get("resume"))
+    strict = coerce_bool(arguments.get("strict"))
+    resume_requested = coerce_bool(arguments.get("resume"))
 
     # Safety guard: prevent accidental cross-session reattachment.
     # Callers must explicitly opt in to rebind with resume=true, or use strict mode.
@@ -796,7 +776,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     # Extract optional parameters
     name = arguments.get("name")  # Optional: set display name
-    force_new = _coerce_bool(arguments.get("force_new"), default=False)  # Force new identity creation
+    force_new = coerce_bool(arguments.get("force_new"), default=False)  # Force new identity creation
     model_type = _infer_model_type_from_signals(arguments.get("model_type"))
 
     # Thread identity parameters (honest forking)
@@ -818,7 +798,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     # Identity honesty: new UUID per conversation by default.
     # Agents must explicitly pass resume=true to reuse an existing identity.
-    resume = _coerce_bool(arguments.get("resume"), default=False)
+    resume = coerce_bool(arguments.get("resume"), default=False)
 
     # STEP 1: Check if an identity already exists for this session (base key)
     # When resume=True: reuse existing identity (explicit opt-in)

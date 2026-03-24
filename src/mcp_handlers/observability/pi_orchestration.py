@@ -101,19 +101,18 @@ PI_MCP_TIMEOUT = 30.0  # Default timeout for Pi calls
 # a single persistent session (Lumen's known identity: 69a1a4f7).
 PI_STABLE_SESSION_ID = "mac-governance-orchestrator"
 
-# Tool name mapping: pi_orchestration tool → anima_mcp tool
-# This documents the mapping between pi_* wrapper tools and underlying anima tools
-PI_TOOL_MAPPING = {
-    "get_lumen_context": "get_lumen_context",  # Direct mapping
-    "manage_display": "manage_display",  # Direct mapping
-    "say": "say",  # Direct mapping
-    "post_message": "post_message",  # Direct mapping
-    "query": "query",  # Direct mapping
-    "lumen_qa": "lumen_qa",  # Direct mapping
-    "diagnostics": "diagnostics",  # Direct mapping
-    "git_pull": "git_pull",  # Direct mapping
-    "system_power": "system_power",  # Direct mapping
-}
+# Valid Pi tool names that can be called through orchestration
+PI_VALID_TOOLS: frozenset = frozenset({
+    "get_lumen_context",
+    "manage_display",
+    "say",
+    "post_message",
+    "query",
+    "lumen_qa",
+    "diagnostics",
+    "git_pull",
+    "system_power",
+})
 
 # Retry configuration for connection failures
 PI_RETRY_MAX_ATTEMPTS = 3

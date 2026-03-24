@@ -66,9 +66,8 @@ def mock_mcp_server():
 
 @pytest.fixture
 def patch_mcp_server(mock_mcp_server):
-    """Patch both mcp_server and get_mcp_server references."""
-    with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
-         patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server):
+    """Patch mcp_server reference."""
+    with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server):
         yield mock_mcp_server
 
 
@@ -160,8 +159,7 @@ class TestGetConnectionStatus:
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {"tool1": None}):
             from src.mcp_handlers.admin.handlers import handle_get_connection_status
             result = await handle_get_connection_status({})
@@ -180,8 +178,7 @@ class TestGetConnectionStatus:
         meta.label = "TestAgent"
         mock_server.agent_metadata = {"uuid-123": meta}
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {"tool1": None}), \
              patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-123"):
             from src.mcp_handlers.admin.handlers import handle_get_connection_status
@@ -199,8 +196,7 @@ class TestGetConnectionStatus:
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {}):
             from src.mcp_handlers.admin.handlers import handle_get_connection_status
             result = await handle_get_connection_status({})
@@ -1017,9 +1013,8 @@ class TestCheckContinuityHealth:
         })
         mock_graph.query = AsyncMock(return_value=[])
 
-        # Patch both the module-level and the shared.get_mcp_server (re-imported inside handler)
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+        # Patch module-level mcp_server
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.knowledge.handlers.get_knowledge_graph",
                    new_callable=AsyncMock, return_value=mock_graph):
             from src.mcp_handlers.admin.handlers import handle_check_continuity_health
@@ -1043,8 +1038,7 @@ class TestCheckContinuityHealth:
         })
         mock_graph.query = AsyncMock(return_value=[mock_discovery])
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.knowledge.handlers.get_knowledge_graph",
                    new_callable=AsyncMock, return_value=mock_graph):
             from src.mcp_handlers.admin.handlers import handle_check_continuity_health
@@ -1066,8 +1060,7 @@ class TestCheckContinuityHealth:
         })
         mock_graph.query = AsyncMock(return_value=[])
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.knowledge.handlers.get_knowledge_graph",
                    new_callable=AsyncMock, return_value=mock_graph), \
              patch("src.mcp_handlers.identity.shared._get_lineage", return_value=["agent-1"]):
@@ -1080,11 +1073,12 @@ class TestCheckContinuityHealth:
 
     @pytest.mark.asyncio
     async def test_continuity_health_error(self, mock_mcp_server, patch_context_agent_id):
-        # Patch shared.get_mcp_server too since it's re-imported inside the handler
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server",
-                    side_effect=RuntimeError("server down")), \
-             patch("src.mcp_handlers.shared.get_mcp_server",
-                    side_effect=RuntimeError("server down")):
+        # Make mcp_server attributes raise errors to simulate server down
+        broken_server = MagicMock()
+        broken_server._metadata_cache_state = MagicMock(side_effect=RuntimeError("server down"))
+        broken_server.agent_metadata = MagicMock(side_effect=RuntimeError("server down"))
+        type(broken_server).agent_metadata = PropertyMock(side_effect=RuntimeError("server down"))
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", broken_server):
             from src.mcp_handlers.admin.handlers import handle_check_continuity_health
             result = await handle_check_continuity_health({})
 
@@ -1101,8 +1095,7 @@ class TestCheckContinuityHealth:
         })
         mock_graph.query = AsyncMock(return_value=[])
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.knowledge.handlers.get_knowledge_graph",
                    new_callable=AsyncMock, return_value=mock_graph):
             from src.mcp_handlers.admin.handlers import handle_check_continuity_health
@@ -1220,9 +1213,7 @@ class TestListTools:
         """Test list_tools in lite mode (default)."""
         mock_mcp_server.SERVER_VERSION = "test-1.0.0"
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {
                  "onboard": None,
                  "process_agent_update": None,
@@ -1261,9 +1252,7 @@ class TestListTools:
         """Test list_tools in full mode (lite=False) covers lines 1595-1851."""
         mock_mcp_server.SERVER_VERSION = "test-1.0.0"
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {
                  "onboard": None,
                  "process_agent_update": None,
@@ -1317,9 +1306,7 @@ class TestListTools:
             }
         }
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {
                  "onboard": None,
                  "process_agent_update": None,
@@ -1369,9 +1356,7 @@ class TestListTools:
             }
         }
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {
                  "onboard": None,
                  "process_agent_update": None,
@@ -1405,9 +1390,7 @@ class TestListTools:
         """Test list_tools with essential_only=True covers lines 1388-1394."""
         mock_mcp_server.SERVER_VERSION = "test-1.0.0"
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {
                  "onboard": None,
                  "process_agent_update": None,
@@ -1442,9 +1425,7 @@ class TestListTools:
         """Test list_tools with include_advanced=False covers line 1392."""
         mock_mcp_server.SERVER_VERSION = "test-1.0.0"
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {
                  "onboard": None,
                  "health_check": None,
@@ -1475,9 +1456,7 @@ class TestListTools:
         """Test list_tools with tier filter covers line 1394."""
         mock_mcp_server.SERVER_VERSION = "test-1.0.0"
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {
                  "onboard": None,
                  "health_check": None,
@@ -1513,9 +1492,7 @@ class TestListTools:
         mock_tool_schema.name = "custom_tool"
         mock_tool_schema.description = "Schema description\nSecond line"
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {
                  "custom_tool": None,
                  "no_desc_tool": None,
@@ -1548,9 +1525,7 @@ class TestListTools:
         """Test deprecated tools are hidden covers line 1388."""
         mock_mcp_server.SERVER_VERSION = "test-1.0.0"
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {
                  "onboard": None,
                  "old_deprecated": None,
@@ -1579,9 +1554,7 @@ class TestListTools:
         """Test unknown category fallback covers lines 1432-1433."""
         mock_mcp_server.SERVER_VERSION = "test-1.0.0"
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {
                  "special_tool": None,
              }), \
@@ -1608,9 +1581,7 @@ class TestListTools:
         """Test new agent gets first_time hint covers lines 1522-1523."""
         mock_mcp_server.SERVER_VERSION = "test-1.0.0"
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {
                  "onboard": None,
                  "list_tools": None,
@@ -2354,8 +2325,7 @@ class TestGetConnectionStatusAdditional:
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_server), \
-             patch("src.mcp_handlers.admin.handlers.mcp_server", mock_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_server), \
              patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
              patch("src.mcp_handlers.TOOL_HANDLERS", {}):
             result = await handle_get_connection_status({})
@@ -2430,8 +2400,7 @@ class TestContinuityHealthAdditional:
         })
         mock_graph.query = AsyncMock(return_value=[mock_discovery])
 
-        with patch("src.mcp_handlers.admin.handlers.get_mcp_server", return_value=mock_mcp_server), \
-             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_mcp_server), \
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
              patch("src.mcp_handlers.knowledge.handlers.get_knowledge_graph",
                    new_callable=AsyncMock, return_value=mock_graph):
             from src.mcp_handlers.admin.handlers import handle_check_continuity_health

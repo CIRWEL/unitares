@@ -14,13 +14,7 @@ import json
 from src.logging_utils import get_logger
 from src.db import get_db
 
-# Import GovernanceConfig with fallback defaults
-try:
-    from config.governance_config import GovernanceConfig
-except ImportError:
-    class GovernanceConfig:
-        SESSION_TTL_SECONDS = 86400  # 24 hours
-        SESSION_TTL_HOURS = 24
+from config.governance_config import GovernanceConfig
 
 logger = get_logger(__name__)
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server

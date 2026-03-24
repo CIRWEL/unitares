@@ -321,63 +321,6 @@ class UNITARESMonitor:
 
         return float(drift_squared)
 
-    def compute_parameter_coherence(self,
-                                    current_params: np.ndarray,
-                                    prev_params: Optional[np.ndarray]) -> float:
-        """
-        Computes coherence from parameter stability.
-        
-        **DEPRECATED**: This function is no longer used in coherence calculation.
-        Coherence is now pure thermodynamic C(V) signal (removed param_coherence blend).
-        
-        Kept for potential future use if real parameter extraction is implemented.
-
-        Coherence = exp(-||Δθ|| / scale) where scale controls sensitivity.
-
-        Properties:
-        - Identical parameters (Δθ = 0) → coherence = 1.0
-        - Small changes → coherence ≈ 0.50-0.55 (governed agents)
-        - Large changes → coherence → 0.45 (physics floor)
-
-        Returns coherence ∈ [0, 1]
-        """
-        if prev_params is None or len(current_params) != len(prev_params):
-            return 1.0  # First call, no history, perfect coherence
-
-        # Guard against empty parameter arrays (division by zero)
-        if len(current_params) == 0:
-            return 1.0  # No parameters = perfect coherence (no change possible)
-
-        # Check for NaN or inf in inputs
-        if np.any(np.isnan(current_params)) or np.any(np.isinf(current_params)):
-            return 0.5  # Default to moderate coherence if inputs invalid
-        if np.any(np.isnan(prev_params)) or np.any(np.isinf(prev_params)):
-            return 0.5  # Default to moderate coherence if inputs invalid
-
-        # Compute parameter change magnitude
-        delta = np.asarray(current_params - prev_params, dtype=np.float64)
-        with np.errstate(over="ignore"):
-            distance = np.sqrt(np.sum(delta ** 2) / len(delta))
-
-        # Check for NaN/inf in distance
-        if np.isnan(distance) or np.isinf(distance):
-            return 0.5  # Default to moderate coherence
-
-        # Convert distance to coherence using exponential decay
-        # Scale factor of 0.1 gives good sensitivity:
-        # - distance = 0.0 → coherence = 1.0
-        # - distance = 0.01 → coherence ≈ 0.90
-        # - distance = 0.05 → coherence ≈ 0.61
-        # - distance = 0.10 → coherence ≈ 0.37
-        scale = 0.1
-        coherence = np.exp(-distance / scale)
-
-        # Final NaN/inf check
-        if np.isnan(coherence) or np.isinf(coherence):
-            return 0.5  # Default to moderate coherence
-
-        return float(coherence)
-    
     def detect_regime(self) -> str:
         """Detect current operational regime based on state and history."""
         return _detect_regime(self.state)
@@ -827,6 +770,188 @@ class UNITARESMonitor:
             )
 
         # === CONCRETE ETHICAL DRIFT (Patent: De-abstracted Δη) ===
+        drift_vector, agent_drift_norm = self._compute_drift_vector(
+            grounded_agent_state=grounded_agent_state,
+            agent_state=agent_state,
+            confidence=self_confidence,
+            task_type=task_type,
+            continuity_metrics=continuity_metrics,
+        )
+
+        # Step 1: Update thermodynamic state with GROUNDED inputs
+        self.update_dynamics(grounded_agent_state, dt=effective_dt)
+
+        # Step 1b: Confidence handling
+        # When agent reports confidence, use it as-is — capping created calibration
+        # circularity (derived from EISV, compared against EISV-derived health).
+        # When no confidence reported, derive from observed tool outcomes as fallback.
+        if confidence is None:
+            confidence, confidence_metadata = derive_confidence(
+                self.state,
+                agent_id=self.agent_id
+            )
+        else:
+            confidence = float(confidence)
+            confidence_metadata = {
+                'source': 'external',
+                'reliability': 'high',
+                'value': confidence,
+            }
+
+        # Store confidence and metadata for audit logging and transparency
+        self.current_confidence = confidence
+        self.confidence_metadata = confidence_metadata
+        
+        # Step 2: Check void state
+        void_active = self.check_void_state()
+        
+        # Step 3: Update λ₁ (every N updates) - WITH CONFIDENCE GATING
+        # Updated to every 5 cycles for faster adaptation (was 10)
+        lambda1_skipped = False
+        if self.state.update_count % 5 == 0:  # Update λ₁ every 5 cycles
+            # Gate lambda1 updates based on confidence
+            # Relax threshold proportionally when coherence drops significantly
+            # below target — prevents feedback loop where low confidence blocks
+            # the controller that would fix declining coherence
+            effective_conf_threshold = config.CONTROLLER_CONFIDENCE_THRESHOLD
+            if len(self.state.coherence_history) >= 3:
+                coherence_deficit = config.TARGET_COHERENCE - self.state.coherence
+                if coherence_deficit > 0.05:  # Only relax for meaningful drops
+                    # Scale relaxation: 0.05 deficit → small relax, 0.15+ → max relax
+                    relax_factor = min(1.0, (coherence_deficit - 0.05) / 0.10)
+                    effective_conf_threshold = config.CONTROLLER_CONFIDENCE_THRESHOLD - 0.15 * relax_factor
+
+            if confidence >= effective_conf_threshold:
+                self.update_lambda1()
+            else:
+                # Skip lambda1 update due to low confidence
+                lambda1_skipped = True
+                self.state.lambda1_update_skips += 1
+                
+                # Log skip via audit logger
+                audit_logger.log_lambda1_skip(
+                    agent_id=self.agent_id,
+                    confidence=confidence,
+                    threshold=effective_conf_threshold,
+                    update_count=self.state.update_count,
+                    reason=f"confidence {confidence:.3f} < threshold {effective_conf_threshold}"
+                )
+
+                logger.debug(
+                    f"Skipping λ₁ update for {self.agent_id}: "
+                    f"confidence {confidence:.3f} < threshold {effective_conf_threshold}"
+                )
+        
+        # Step 4: Estimate risk (also gets UNITARES verdict)
+        phi, unitares_verdict, risk_score, task_type_adjustment, original_risk_score = (
+            self._compute_phi_and_risk(grounded_agent_state, agent_state, task_type)
+        )
+
+        oscillation_state, response_tier, cirs_result, damping_result = self._run_cirs(
+            risk_score=risk_score,
+            unitares_verdict=unitares_verdict,
+        )
+
+        # Step 5: Make decision (using UNITARES verdict + CIRS oscillation state)
+        decision = self.make_decision(
+            risk_score,
+            unitares_verdict=unitares_verdict,
+            response_tier=response_tier,
+            oscillation_state=oscillation_state
+        )
+
+        trajectory_validation = self._run_calibration_recording(
+            confidence=confidence,
+            decision=decision,
+            drift_vector=drift_vector,
+        )
+        
+        # Log decision via audit logger (for accountability and transparency)
+        audit_logger.log_auto_attest(
+            agent_id=self.agent_id,
+            confidence=confidence,
+            ci_passed=False,  # CI status not available in governance_monitor
+            risk_score=risk_score,
+            decision=decision['action'],
+            details={
+                'reason': decision.get('reason', ''),
+                'coherence': float(self.state.coherence),
+                'void_active': void_active,
+                'unitares_verdict': unitares_verdict
+            }
+        )
+        
+        # Track decision history for governance auditing
+        self.state.decision_history.append(decision.get('sub_action', decision['action']))
+        if len(self.state.decision_history) > config.HISTORY_WINDOW:
+            self.state.decision_history = self.state.decision_history[-config.HISTORY_WINDOW:]
+        
+        # Step 6: Get sampling parameters for next generation
+        sampling_params = config.lambda_to_params(self.state.lambda1)
+        
+        # Determine overall status using health thresholds (aligned with health_checker)
+        # Use same thresholds as health_checker for consistency: risk_healthy_max=0.35, risk_moderate_max=0.60
+        from src.health_thresholds import HealthThresholds
+        health_checker = HealthThresholds()
+        
+        if void_active or self.state.coherence < config.COHERENCE_CRITICAL_THRESHOLD:
+            status = 'critical'
+        elif risk_score >= health_checker.risk_moderate_max:  # >= 0.60: critical
+            status = 'critical'
+        elif risk_score >= health_checker.risk_healthy_max:  # 0.35-0.60: moderate
+            status = 'moderate'
+        else:  # < 0.35: healthy
+            status = 'healthy'
+        
+        # Build metrics dict
+        # NOTE: risk_score measures governance/operational risk (likelihood of issues), not ethical risk
+        # The actual physics is Φ (phi) and verdict - these are the primary governance signals
+        metrics = {
+            'E': float(self.state.E),
+            'I': float(self.state.I),
+            'S': float(self.state.S),
+            'V': float(self.state.V),
+            'coherence': float(self.state.coherence),
+            'lambda1': float(self.state.lambda1),
+            'risk_score': float(risk_score),  # Governance/operational risk (70% phi-based + 30% traditional)
+            'phi': float(phi),  # Primary physics signal: Φ objective function
+            'verdict': unitares_verdict,  # Primary governance signal: safe/caution/high-risk
+            'void_active': bool(void_active),
+            'regime': str(getattr(self.state, 'regime', 'divergence')),  # Operational regime: DIVERGENCE | TRANSITION | CONVERGENCE | STABLE (with fallback)
+            'time': float(self.state.time),
+            'updates': int(self.state.update_count),
+            'confidence': float(confidence),
+            'lambda1_skipped': lambda1_skipped
+        }
+        
+        metrics['lambda1_update_skips'] = int(self.state.lambda1_update_skips)
+        
+        return self._build_result(
+            status=status,
+            decision=decision,
+            metrics=metrics,
+            sampling_params=sampling_params,
+            confidence=confidence,
+            confidence_metadata=confidence_metadata,
+            task_type_adjustment=task_type_adjustment,
+            trajectory_validation=trajectory_validation,
+            oscillation_state=oscillation_state,
+            response_tier=response_tier,
+            cirs_result=cirs_result,
+            damping_result=damping_result,
+        )
+    
+    def _compute_drift_vector(self, grounded_agent_state: Dict, agent_state: Dict,
+                              confidence, task_type: str, continuity_metrics):
+        """Compute concrete ethical drift vector from measurable signals.
+
+        Blends governance-computed drift with agent-reported drift. Mutates
+        grounded_agent_state['ethical_drift'] with the final drift list.
+
+        Sets self._last_drift_vector, self._consecutive_high_drift.
+
+        Returns (drift_vector, agent_drift_norm).
+        """
         # Compute Δη from MEASURABLE signals, not abstract concepts.
         # This makes ethical drift empirically verifiable.
         agent_baseline = get_agent_baseline(self.agent_id)
@@ -854,7 +979,7 @@ class UNITARESMonitor:
             agent_id=self.agent_id,
             baseline=agent_baseline,
             current_coherence=current_coherence,
-            current_confidence=self_confidence if self_confidence is not None else 0.6,
+            current_confidence=confidence if confidence is not None else 0.6,
             complexity_divergence=continuity_metrics.complexity_divergence,
             calibration_error=calibration_error,
             decision=None,  # Will be updated after decision is made
@@ -925,71 +1050,13 @@ class UNITARESMonitor:
                 f"{' (blended with agent signal)' if agent_drift_norm > 0.01 else ''}"
             )
 
-        # Step 1: Update thermodynamic state with GROUNDED inputs
-        self.update_dynamics(grounded_agent_state, dt=effective_dt)
+        return drift_vector, agent_drift_norm
 
-        # Step 1b: Confidence handling
-        # When agent reports confidence, use it as-is — capping created calibration
-        # circularity (derived from EISV, compared against EISV-derived health).
-        # When no confidence reported, derive from observed tool outcomes as fallback.
-        if confidence is None:
-            confidence, confidence_metadata = derive_confidence(
-                self.state,
-                agent_id=self.agent_id
-            )
-        else:
-            confidence = float(confidence)
-            confidence_metadata = {
-                'source': 'external',
-                'reliability': 'high',
-                'value': confidence,
-            }
+    def _compute_phi_and_risk(self, grounded_agent_state: Dict, agent_state: Dict, task_type: str):
+        """Compute phi objective, UNITARES verdict, risk score with task-type adjustments.
 
-        # Store confidence and metadata for audit logging and transparency
-        self.current_confidence = confidence
-        self.confidence_metadata = confidence_metadata
-        
-        # Step 2: Check void state
-        void_active = self.check_void_state()
-        
-        # Step 3: Update λ₁ (every N updates) - WITH CONFIDENCE GATING
-        # Updated to every 5 cycles for faster adaptation (was 10)
-        lambda1_skipped = False
-        if self.state.update_count % 5 == 0:  # Update λ₁ every 5 cycles
-            # Gate lambda1 updates based on confidence
-            # Relax threshold proportionally when coherence drops significantly
-            # below target — prevents feedback loop where low confidence blocks
-            # the controller that would fix declining coherence
-            effective_conf_threshold = config.CONTROLLER_CONFIDENCE_THRESHOLD
-            if len(self.state.coherence_history) >= 3:
-                coherence_deficit = config.TARGET_COHERENCE - self.state.coherence
-                if coherence_deficit > 0.05:  # Only relax for meaningful drops
-                    # Scale relaxation: 0.05 deficit → small relax, 0.15+ → max relax
-                    relax_factor = min(1.0, (coherence_deficit - 0.05) / 0.10)
-                    effective_conf_threshold = config.CONTROLLER_CONFIDENCE_THRESHOLD - 0.15 * relax_factor
-
-            if confidence >= effective_conf_threshold:
-                self.update_lambda1()
-            else:
-                # Skip lambda1 update due to low confidence
-                lambda1_skipped = True
-                self.state.lambda1_update_skips += 1
-                
-                # Log skip via audit logger
-                audit_logger.log_lambda1_skip(
-                    agent_id=self.agent_id,
-                    confidence=confidence,
-                    threshold=effective_conf_threshold,
-                    update_count=self.state.update_count,
-                    reason=f"confidence {confidence:.3f} < threshold {effective_conf_threshold}"
-                )
-
-                logger.debug(
-                    f"Skipping λ₁ update for {self.agent_id}: "
-                    f"confidence {confidence:.3f} < threshold {effective_conf_threshold}"
-                )
-        
-        # Step 4: Estimate risk (also gets UNITARES verdict)
+        Returns (phi, unitares_verdict, risk_score, task_type_adjustment, original_risk_score).
+        """
         # Use GROUNDED ethical drift (governance-computed + agent-blended, all 4 components)
         # Previously used agent_state (raw 3-element) and truncated to 3, dropping stability.
         delta_eta = grounded_agent_state.get('ethical_drift', [0.0, 0.0, 0.0, 0.0])
@@ -1005,10 +1072,10 @@ class UNITARESMonitor:
         )
         unitares_verdict = verdict_from_phi(phi)
         score_result = {'phi': phi, 'verdict': unitares_verdict}
-        
+
         # Estimate risk (uses score_result internally to avoid recomputation)
         risk_score = self.estimate_risk(agent_state, score_result=score_result)
-        
+
         # Adjust decision based on task_type context for S=0 interpretation
         # Convergent tasks (standardization): S=0 is healthy compliance
         # Divergent tasks (divergence): S=0 may indicate lack of creative risk-taking
@@ -1017,7 +1084,7 @@ class UNITARESMonitor:
             task_type = agent_state.get("task_type", "mixed")
         task_type_adjustment = None
         original_risk_score = risk_score
-        
+
         if task_type == "convergent" and self.state.S == 0.0:
             # S=0 in convergent work is healthy - don't penalize
             # Reduce risk score adjustment for low entropy in convergent tasks
@@ -1056,9 +1123,14 @@ class UNITARESMonitor:
                 "risk_adjusted_by": risk_adjustment,
             }
 
-        # =================================================================
-        # CIRS: Oscillation detection and resonance damping
-        # =================================================================
+        return phi, unitares_verdict, risk_score, task_type_adjustment, original_risk_score
+
+    def _run_cirs(self, risk_score: float, unitares_verdict: str):
+        """Run CIRS oscillation detection and resonance damping.
+
+        Returns (oscillation_state, response_tier, cirs_result_or_none, damping_result_or_none).
+        Mutates self._last_oscillation_state and various self.state history fields.
+        """
         from config.governance_config import GovernanceConfig as GovConfig
 
         if GovConfig.ADAPTIVE_GOVERNOR_ENABLED and self.adaptive_governor is not None:
@@ -1084,6 +1156,7 @@ class UNITARESMonitor:
             damping_result = None  # Damping is built into the PID cycle
         else:
             # Legacy v0.1 path (unchanged)
+            cirs_result = None
             oscillation_state = self.oscillation_detector.update(
                 coherence=float(self.state.coherence),
                 risk=float(risk_score),
@@ -1138,23 +1211,26 @@ class UNITARESMonitor:
                 oscillation_state=oscillation_state
             )
 
-        # Step 5: Make decision (using UNITARES verdict + CIRS oscillation state)
-        decision = self.make_decision(
-            risk_score,
-            unitares_verdict=unitares_verdict,
-            response_tier=response_tier,
-            oscillation_state=oscillation_state
-        )
+        return oscillation_state, response_tier, cirs_result, damping_result
 
-        # =================================================================
-        # Step 5b: Continuous self-validation
-        # Compare previous verdict to current trajectory — did the
-        # intervention improve the drift norm? Record as calibration signal.
-        # =================================================================
+    def _run_calibration_recording(self, confidence: float, decision: Dict, drift_vector) -> Optional[Dict]:
+        """Retrospective trajectory validation + strategic/tactical calibration.
+
+        Compares previous verdict to current drift norm to assess whether the
+        intervention improved the trajectory.  Records calibration signals for
+        both trajectory-based and tool-usage ground truth.
+
+        Mutates self._prev_verdict_action, self._prev_drift_norm,
+        self._prev_confidence, self._prev_checkin_time.
+
+        Returns trajectory_validation dict or None.
+        """
+        import math
+        import time as _time
+
         current_norm = drift_vector.norm if self._last_drift_vector else 0.0
         trajectory_validation = None
 
-        import time as _time
         now_mono = _time.monotonic()
         elapsed_since_prev = (now_mono - self._prev_checkin_time) if self._prev_checkin_time else float('inf')
 
@@ -1166,8 +1242,7 @@ class UNITARESMonitor:
             norm_delta = self._prev_drift_norm - current_norm  # positive = improved
 
             # Convert to [0, 1] quality signal via sigmoid
-            # Scale: ±0.2 norm change saturates the response
-            import math
+            # Scale: +/-0.2 norm change saturates the response
             trajectory_quality = 1.0 / (1.0 + math.exp(-norm_delta * 10.0))
 
             prev_predicted_correct = self._prev_confidence >= 0.5
@@ -1246,67 +1321,30 @@ class UNITARESMonitor:
                     decision=decision_action,
                     immediate_outcome=immediate_outcome
                 )
-        
-        # Log decision via audit logger (for accountability and transparency)
-        audit_logger.log_auto_attest(
-            agent_id=self.agent_id,
-            confidence=confidence,
-            ci_passed=False,  # CI status not available in governance_monitor
-            risk_score=risk_score,
-            decision=decision['action'],
-            details={
-                'reason': decision.get('reason', ''),
-                'coherence': float(self.state.coherence),
-                'void_active': void_active,
-                'unitares_verdict': unitares_verdict
-            }
-        )
-        
-        # Track decision history for governance auditing
-        self.state.decision_history.append(decision.get('sub_action', decision['action']))
-        if len(self.state.decision_history) > config.HISTORY_WINDOW:
-            self.state.decision_history = self.state.decision_history[-config.HISTORY_WINDOW:]
-        
-        # Step 6: Get sampling parameters for next generation
-        sampling_params = config.lambda_to_params(self.state.lambda1)
-        
-        # Determine overall status using health thresholds (aligned with health_checker)
-        # Use same thresholds as health_checker for consistency: risk_healthy_max=0.35, risk_moderate_max=0.60
-        from src.health_thresholds import HealthThresholds
-        health_checker = HealthThresholds()
-        
-        if void_active or self.state.coherence < config.COHERENCE_CRITICAL_THRESHOLD:
-            status = 'critical'
-        elif risk_score >= health_checker.risk_moderate_max:  # >= 0.60: critical
-            status = 'critical'
-        elif risk_score >= health_checker.risk_healthy_max:  # 0.35-0.60: moderate
-            status = 'moderate'
-        else:  # < 0.35: healthy
-            status = 'healthy'
-        
-        # Build metrics dict
-        # NOTE: risk_score measures governance/operational risk (likelihood of issues), not ethical risk
-        # The actual physics is Φ (phi) and verdict - these are the primary governance signals
-        metrics = {
-            'E': float(self.state.E),
-            'I': float(self.state.I),
-            'S': float(self.state.S),
-            'V': float(self.state.V),
-            'coherence': float(self.state.coherence),
-            'lambda1': float(self.state.lambda1),
-            'risk_score': float(risk_score),  # Governance/operational risk (70% phi-based + 30% traditional)
-            'phi': float(phi),  # Primary physics signal: Φ objective function
-            'verdict': unitares_verdict,  # Primary governance signal: safe/caution/high-risk
-            'void_active': bool(void_active),
-            'regime': str(getattr(self.state, 'regime', 'divergence')),  # Operational regime: DIVERGENCE | TRANSITION | CONVERGENCE | STABLE (with fallback)
-            'time': float(self.state.time),
-            'updates': int(self.state.update_count),
-            'confidence': float(confidence),
-            'lambda1_skipped': lambda1_skipped
-        }
-        
-        metrics['lambda1_update_skips'] = int(self.state.lambda1_update_skips)
-        
+
+        return trajectory_validation
+
+    def _build_result(
+        self,
+        status: str,
+        decision: Dict,
+        metrics: Dict,
+        sampling_params: Dict,
+        confidence: float,
+        confidence_metadata: Dict,
+        task_type_adjustment,
+        trajectory_validation,
+        oscillation_state,
+        response_tier: str,
+        cirs_result,
+        damping_result,
+    ) -> Dict:
+        """Assemble the final result dict returned by process_update().
+
+        Pure dict construction — no state mutations except drift telemetry recording.
+        """
+        from config.governance_config import GovernanceConfig as GovConfig
+
         result = {
             'status': status,
             'decision': decision,
@@ -1324,7 +1362,7 @@ class UNITARESMonitor:
                 'honesty_note': confidence_metadata.get('honesty_note', 'No metadata available')
             }
         }
-        
+
         # Add task_type adjustment info if applied (transparency)
         if task_type_adjustment:
             result['task_type_adjustment'] = task_type_adjustment
@@ -1332,7 +1370,7 @@ class UNITARESMonitor:
         # Add trajectory self-validation data (for outcome event recording)
         if trajectory_validation is not None:
             result['trajectory_validation'] = trajectory_validation
-        
+
         # Add dual-log continuity metrics (grounded EISV inputs)
         if self._last_continuity_metrics:
             cm = self._last_continuity_metrics
@@ -1347,7 +1385,7 @@ class UNITARESMonitor:
                 'S_input': cm.S_input,
                 'calibration_weight': cm.calibration_weight,
             }
-        
+
         # Add restorative balance status if needed
         if self._last_restorative_status and self._last_restorative_status.needs_restoration:
             rs = self._last_restorative_status
@@ -1420,7 +1458,7 @@ class UNITARESMonitor:
                 }
 
         return result
-    
+
     # Metrics and export: delegating to src/monitor_metrics.py
     def get_metrics(self, include_state: bool = True) -> Dict:
         """Returns current governance metrics."""

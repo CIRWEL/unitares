@@ -29,6 +29,7 @@ from src.dialectic_protocol import (
 )
 from ..utils import success_response, error_response, require_registered_agent
 from ..decorators import mcp_tool
+from ..support.coerce import resolve_agent_uuid
 from .auth import resolve_dialectic_agent_id
 from .responses import (
     default_cooldown_steps,
@@ -72,7 +73,6 @@ import os
 logger = get_logger(__name__)
 
 # Import from mcp_server_std module (using shared utility)
-from ..shared import get_mcp_server
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 # Import session persistence from new module
 from .session import (
@@ -190,7 +190,7 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
     if error:
         return [error]
 
-    agent_uuid = arguments.get("_agent_uuid") or agent_id
+    agent_uuid = resolve_agent_uuid(arguments, agent_id)
 
     # SECURITY: Verify ownership via session binding (UUID-based auth, Dec 2025)
     from ..utils import verify_agent_ownership
@@ -1139,7 +1139,7 @@ async def handle_submit_quorum_vote(arguments: Dict[str, Any]) -> Sequence[TextC
             return [error_response("No quorum reviewers assigned to this session")]
 
         # Verify agent is in the quorum
-        agent_uuid = arguments.get("_agent_uuid") or agent_id
+        agent_uuid = resolve_agent_uuid(arguments, agent_id)
         if agent_uuid not in quorum_reviewer_ids and agent_id not in quorum_reviewer_ids:
             return [error_response(
                 f"Agent '{agent_id}' is not in the quorum for this session"
@@ -1357,7 +1357,7 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
     if error:
         return [error]
 
-    agent_uuid = arguments.get("_agent_uuid") or agent_id
+    agent_uuid = resolve_agent_uuid(arguments, agent_id)
 
     # Check LLM availability
     if not await is_llm_available():

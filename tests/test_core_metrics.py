@@ -950,8 +950,8 @@ class TestMarkResponseComplete:
         """Without registered agent returns error."""
         error_tc = _make_error_text_content("not registered")
 
-        with patch("src.mcp_handlers.lifecycle.handlers.mcp_server", mock_server), \
-             patch("src.mcp_handlers.lifecycle.handlers.require_registered_agent", return_value=(None, error_tc)):
+        with patch("src.mcp_handlers.lifecycle.handlers.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.query.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.mutation.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.operations.mcp_server", mock_server), \
+             patch("src.mcp_handlers.lifecycle.handlers.require_registered_agent", return_value=(None, error_tc)), patch("src.mcp_handlers.lifecycle.mutation.require_registered_agent", return_value=(None, error_tc)), patch("src.mcp_handlers.lifecycle.operations.require_registered_agent", return_value=(None, error_tc)), patch("src.mcp_handlers.lifecycle.query.require_registered_agent", return_value=(None, error_tc)):
 
             from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
             result = await handle_mark_response_complete({})
@@ -964,8 +964,8 @@ class TestMarkResponseComplete:
         meta = _make_metadata()
         mock_server.agent_metadata = {"agent-1": meta}
 
-        with patch("src.mcp_handlers.lifecycle.handlers.mcp_server", mock_server), \
-             patch("src.mcp_handlers.lifecycle.handlers.require_registered_agent", return_value=("agent-1", None)), \
+        with patch("src.mcp_handlers.lifecycle.handlers.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.query.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.mutation.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.operations.mcp_server", mock_server), \
+             patch("src.mcp_handlers.lifecycle.handlers.require_registered_agent", return_value=("agent-1", None)), patch("src.mcp_handlers.lifecycle.mutation.require_registered_agent", return_value=("agent-1", None)), patch("src.mcp_handlers.lifecycle.operations.require_registered_agent", return_value=("agent-1", None)), patch("src.mcp_handlers.lifecycle.query.require_registered_agent", return_value=("agent-1", None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=False):
 
             from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
@@ -979,14 +979,16 @@ class TestMarkResponseComplete:
         meta = _make_metadata()
         mock_server.agent_metadata = {"agent-1": meta}
 
-        with patch("src.mcp_handlers.lifecycle.handlers.mcp_server", mock_server), \
-             patch("src.mcp_handlers.lifecycle.handlers.require_registered_agent", return_value=("agent-1", None)), \
+        with patch("src.mcp_handlers.lifecycle.handlers.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.query.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.mutation.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.operations.mcp_server", mock_server), \
+             patch("src.mcp_handlers.lifecycle.handlers.require_registered_agent", return_value=("agent-1", None)), patch("src.mcp_handlers.lifecycle.mutation.require_registered_agent", return_value=("agent-1", None)), patch("src.mcp_handlers.lifecycle.operations.require_registered_agent", return_value=("agent-1", None)), patch("src.mcp_handlers.lifecycle.query.require_registered_agent", return_value=("agent-1", None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
              patch("src.mcp_handlers.lifecycle.handlers.agent_storage", MagicMock(
                  update_agent=AsyncMock(),
              )):
 
             from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
+            import src.mcp_handlers.lifecycle.operations as _lo; _lo.agent_storage = __import__("sys").modules["src.mcp_handlers.lifecycle.handlers"].agent_storage
+            import src.mcp_handlers.lifecycle.mutation as _lm; _lm.agent_storage = __import__("sys").modules["src.mcp_handlers.lifecycle.handlers"].agent_storage
             result = await handle_mark_response_complete({})
             data = _parse(result)
             assert data.get("status") == "waiting_input"
@@ -999,14 +1001,16 @@ class TestMarkResponseComplete:
         meta = _make_metadata()
         mock_server.agent_metadata = {"agent-1": meta}
 
-        with patch("src.mcp_handlers.lifecycle.handlers.mcp_server", mock_server), \
-             patch("src.mcp_handlers.lifecycle.handlers.require_registered_agent", return_value=("agent-1", None)), \
+        with patch("src.mcp_handlers.lifecycle.handlers.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.query.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.mutation.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.operations.mcp_server", mock_server), \
+             patch("src.mcp_handlers.lifecycle.handlers.require_registered_agent", return_value=("agent-1", None)), patch("src.mcp_handlers.lifecycle.mutation.require_registered_agent", return_value=("agent-1", None)), patch("src.mcp_handlers.lifecycle.operations.require_registered_agent", return_value=("agent-1", None)), patch("src.mcp_handlers.lifecycle.query.require_registered_agent", return_value=("agent-1", None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
              patch("src.mcp_handlers.lifecycle.handlers.agent_storage", MagicMock(
                  update_agent=AsyncMock(),
              )):
 
             from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
+            import src.mcp_handlers.lifecycle.operations as _lo; _lo.agent_storage = __import__("sys").modules["src.mcp_handlers.lifecycle.handlers"].agent_storage
+            import src.mcp_handlers.lifecycle.mutation as _lm; _lm.agent_storage = __import__("sys").modules["src.mcp_handlers.lifecycle.handlers"].agent_storage
             result = await handle_mark_response_complete({"summary": "Done with tests"})
 
             meta.add_lifecycle_event.assert_called_once_with(
@@ -1022,12 +1026,14 @@ class TestMarkResponseComplete:
         failing_storage = MagicMock()
         failing_storage.update_agent = AsyncMock(side_effect=Exception("PG down"))
 
-        with patch("src.mcp_handlers.lifecycle.handlers.mcp_server", mock_server), \
-             patch("src.mcp_handlers.lifecycle.handlers.require_registered_agent", return_value=("agent-1", None)), \
+        with patch("src.mcp_handlers.lifecycle.handlers.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.query.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.mutation.mcp_server", mock_server), patch("src.mcp_handlers.lifecycle.operations.mcp_server", mock_server), \
+             patch("src.mcp_handlers.lifecycle.handlers.require_registered_agent", return_value=("agent-1", None)), patch("src.mcp_handlers.lifecycle.mutation.require_registered_agent", return_value=("agent-1", None)), patch("src.mcp_handlers.lifecycle.operations.require_registered_agent", return_value=("agent-1", None)), patch("src.mcp_handlers.lifecycle.query.require_registered_agent", return_value=("agent-1", None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
              patch("src.mcp_handlers.lifecycle.handlers.agent_storage", failing_storage):
 
             from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
+            import src.mcp_handlers.lifecycle.operations as _lo; _lo.agent_storage = __import__("sys").modules["src.mcp_handlers.lifecycle.handlers"].agent_storage
+            import src.mcp_handlers.lifecycle.mutation as _lm; _lm.agent_storage = __import__("sys").modules["src.mcp_handlers.lifecycle.handlers"].agent_storage
             result = await handle_mark_response_complete({})
             data = _parse(result)
             # Should still succeed (PG failure is non-blocking)

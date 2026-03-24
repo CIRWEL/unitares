@@ -12,10 +12,10 @@ from ..decorators import mcp_tool
 from ..utils import success_response, error_response
 from src.logging_utils import get_logger
 from config.governance_config import GovernanceConfig
-from src.mcp_handlers.shared import get_mcp_server
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 
 logger = get_logger(__name__)
-from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
+
 async def _should_add_stuck_note(agent_id: str, meta, note_cooldown_minutes: float) -> bool:
     """Check if we should add a stuck note (no existing open note + cooldown respected)."""
     try:

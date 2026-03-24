@@ -11,12 +11,13 @@ from mcp.types import TextContent
 from ..decorators import mcp_tool
 from ..utils import success_response, error_response, require_registered_agent
 from ..error_helpers import agent_not_found_error, system_error as system_error_helper
+from ..support.coerce import resolve_agent_uuid
 from src import agent_storage
 from src.logging_utils import get_logger
-from src.mcp_handlers.shared import get_mcp_server
+from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 
 logger = get_logger(__name__)
-from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
+
 @mcp_tool("direct_resume_if_safe", timeout=10.0, deprecated=True, superseded_by="quick_resume or self_recovery_review")
 async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """⚠️ DEPRECATED: Use quick_resume() or self_recovery_review() instead.
@@ -39,7 +40,7 @@ async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[Te
         return [error]
 
     # Use authoritative UUID for internal lookups
-    agent_uuid = arguments.get("_agent_uuid") or agent_id
+    agent_uuid = resolve_agent_uuid(arguments, agent_id)
 
     # Reload metadata from PostgreSQL (async)
     await mcp_server.load_metadata_async(force=True)
