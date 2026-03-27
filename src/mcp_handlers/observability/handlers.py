@@ -52,20 +52,30 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
         )]
     # Resolve label to UUID if needed
     agent_id = target
-    try:
-        if not (len(target) == 36 and target.count('-') == 4):
-            # Looks like a label, resolve to UUID
+    if not (len(target) == 36 and target.count('-') == 4):
+        # Looks like a label, resolve to UUID
+        resolved = None
+        try:
             from src.mcp_handlers.identity.handlers import _find_agent_by_label
             resolved = await _find_agent_by_label(target)
-            if resolved:
-                agent_id = resolved
-            else:
-                return [error_response(
-                    f"Agent '{target}' not found. Use list_agents to see available agents.",
-                    recovery={"related_tools": ["list_agents"]}
-                )]
-    except Exception:
-        pass  # Use target as-is
+        except Exception as e:
+            logger.debug(f"Label DB lookup failed for '{target}': {e}")
+
+        if not resolved:
+            # Fallback: search in-memory metadata by label
+            await mcp_server.load_metadata_async(force=True)
+            for uuid, meta in mcp_server.agent_metadata.items():
+                if getattr(meta, 'label', None) == target:
+                    resolved = uuid
+                    break
+
+        if resolved:
+            agent_id = resolved
+        else:
+            return [error_response(
+                f"Agent '{target}' not found. Use list_agents to see available agents.",
+                recovery={"related_tools": ["list_agents"]}
+            )]
     # Reload metadata from PostgreSQL (async) and verify agent exists
     await mcp_server.load_metadata_async(force=True)
     if agent_id not in mcp_server.agent_metadata:

@@ -316,8 +316,32 @@ class TestHandleObserveAgent:
         assert data["agent_id"] == uuid
 
     @pytest.mark.asyncio
+    async def test_label_resolution_metadata_fallback(self):
+        """When _find_agent_by_label returns None, fall back to metadata label search."""
+        uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        meta = _make_metadata(uuid, label="Lumen")
+        server = _build_mock_server(
+            monitors_dict={uuid: _make_monitor(uuid)},
+            metadata_dict={uuid: meta},
+        )
+
+        with patch(_PATCH_SERVER, server), \
+             patch(_PATCH_CTX, return_value="caller-uuid"), \
+             patch(
+                 "src.mcp_handlers.identity.handlers._find_agent_by_label",
+                 new_callable=AsyncMock,
+                 return_value=None,
+             ):
+            from src.mcp_handlers.observability.handlers import handle_observe_agent
+            result = await handle_observe_agent({"target_agent_id": "Lumen"})
+
+        data = _parse(result)
+        assert data["success"] is True
+        assert data["agent_id"] == uuid
+
+    @pytest.mark.asyncio
     async def test_label_not_found(self):
-        """Label lookup returns None -> error."""
+        """Label lookup returns None and no metadata match -> error."""
         server = _build_mock_server()
 
         with patch(_PATCH_SERVER, server), \

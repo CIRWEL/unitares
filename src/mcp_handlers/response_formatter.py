@@ -92,7 +92,7 @@ def format_response(
 
     # MIRROR MODE: Actionable self-awareness signals
     if response_mode == "mirror":
-        response_data = _format_mirror(response_data, saved_trust_tier)
+        response_data = _format_mirror(response_data, saved_trust_tier, meta=meta)
 
     # STANDARD MODE: Human-readable interpretation
     elif response_mode in ("standard", "interpreted"):
@@ -157,7 +157,7 @@ def _format_standard(response_data: dict, task_type: str) -> dict:
         result["identity_notifications"] = identity_notifications
     return result
 
-def _format_mirror(response_data: dict, saved_trust_tier: Optional[str]) -> dict:
+def _format_mirror(response_data: dict, saved_trust_tier: Optional[str], meta: Any = None) -> dict:
     """Build mirror response: a lens on the full data, not a filter that hides it."""
     decision = response_data.get("decision", {}) if isinstance(response_data.get("decision"), dict) else {}
     metrics = response_data.get("metrics", {}) if isinstance(response_data.get("metrics"), dict) else {}
@@ -191,28 +191,32 @@ def _format_mirror(response_data: dict, saved_trust_tier: Optional[str]) -> dict
                     f"low-conf: {cal.get('low_confidence_accuracy', '?')})"
                 )
 
-    # 3. Complexity divergence — check continuity (primary) and calibration_feedback (fallback)
-    continuity = response_data.get("continuity", {})
-    if isinstance(continuity, dict) and continuity.get("complexity_divergence", 0) > 0.15:
-        reported = continuity.get("self_reported_complexity", 0)
-        derived = continuity.get("derived_complexity", 0)
-        divergence = continuity.get("complexity_divergence", 0)
-        mirror_signals.append(
-            f"You reported complexity={reported:.2f} but system derives {derived:.2f} "
-            f"(divergence={divergence:.2f}) — what's driving your sense of difficulty?"
-        )
+    # 3. Complexity divergence — suppress on first few check-ins (no baseline)
+    update_count = getattr(meta, 'total_updates', 999) if meta else 999
+    if update_count <= 3:
+        pass  # Not enough history for meaningful complexity comparison
     else:
-        # Fallback to calibration_feedback if continuity not present
-        cal_feedback = response_data.get("calibration_feedback", {})
-        if isinstance(cal_feedback, dict):
-            complexity_info = cal_feedback.get("complexity", {})
-            if isinstance(complexity_info, dict) and complexity_info.get("discrepancy", 0) > 0.3:
-                reported = complexity_info.get("reported", 0)
-                derived = complexity_info.get("derived", 0)
-                mirror_signals.append(
-                    f"You reported complexity={reported:.2f} but system estimates {derived:.2f} "
-                    f"— what's driving your sense of difficulty?"
-                )
+        continuity = response_data.get("continuity", {})
+        if isinstance(continuity, dict) and continuity.get("complexity_divergence", 0) > 0.15:
+            reported = continuity.get("self_reported_complexity", 0)
+            derived = continuity.get("derived_complexity", 0)
+            divergence = continuity.get("complexity_divergence", 0)
+            mirror_signals.append(
+                f"You reported complexity={reported:.2f} but system derives {derived:.2f} "
+                f"(divergence={divergence:.2f}) — what's driving your sense of difficulty?"
+            )
+        else:
+            # Fallback to calibration_feedback if continuity not present
+            cal_feedback = response_data.get("calibration_feedback", {})
+            if isinstance(cal_feedback, dict):
+                complexity_info = cal_feedback.get("complexity", {})
+                if isinstance(complexity_info, dict) and complexity_info.get("discrepancy", 0) > 0.3:
+                    reported = complexity_info.get("reported", 0)
+                    derived = complexity_info.get("derived", 0)
+                    mirror_signals.append(
+                        f"You reported complexity={reported:.2f} but system estimates {derived:.2f} "
+                        f"— what's driving your sense of difficulty?"
+                    )
 
     # 4. Restorative action — surface if system is cooling down
     restorative = response_data.get("restorative", {})

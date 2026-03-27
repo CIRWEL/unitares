@@ -650,6 +650,37 @@ class TestFormatMirror:
         result = _format_mirror(data, saved_trust_tier=None)
         assert any("complexity=0.80" in s for s in result["mirror"])
 
+    def test_complexity_divergence_suppressed_early(self):
+        """With meta.total_updates <= 3, complexity divergence is suppressed."""
+        data = _sample_response()
+        data["continuity"] = {
+            "self_reported_complexity": 0.7,
+            "derived_complexity": 0.22,
+            "complexity_divergence": 0.48,
+        }
+        data["calibration_feedback"] = {
+            "complexity": {"reported": 0.8, "derived": 0.28, "discrepancy": 0.52}
+        }
+        meta = MagicMock()
+        meta.total_updates = 1
+        result = _format_mirror(data, saved_trust_tier=None, meta=meta)
+        # No complexity divergence signals should appear
+        for s in result["mirror"]:
+            assert "complexity=" not in s, f"Unexpected complexity signal on early check-in: {s}"
+
+    def test_complexity_divergence_shown_after_baseline(self):
+        """With meta.total_updates > 3, complexity divergence appears normally."""
+        data = _sample_response()
+        data["continuity"] = {
+            "self_reported_complexity": 0.7,
+            "derived_complexity": 0.22,
+            "complexity_divergence": 0.48,
+        }
+        meta = MagicMock()
+        meta.total_updates = 10
+        result = _format_mirror(data, saved_trust_tier=None, meta=meta)
+        assert any("complexity=0.70" in s for s in result["mirror"])
+
 
 class TestFormatResponseMirror:
 
