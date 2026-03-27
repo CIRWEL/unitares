@@ -115,6 +115,27 @@ def numerical_jacobian(
     return J
 
 
+def _barrier_derivative(x: float, lo: float, hi: float, strength: float, margin: float) -> float:
+    """
+    Derivative of barrier(x) w.r.t. x.
+
+    barrier = +strength * t_lo³  (near lo)  -  strength * t_hi³  (near hi)
+    where t = 1 - dist/margin.
+
+    d(barrier)/dx = -3*strength*t²/margin  for each active bound.
+    """
+    deriv = 0.0
+    dist_lo = x - lo
+    if dist_lo < margin:
+        t = 1.0 - dist_lo / margin
+        deriv += -3.0 * strength * t * t / margin
+    dist_hi = hi - x
+    if dist_hi < margin:
+        t = 1.0 - dist_hi / margin
+        deriv += -3.0 * strength * t * t / margin
+    return deriv
+
+
 def analytical_jacobian(
     state: State,
     params: DynamicsParams,
@@ -122,13 +143,10 @@ def analytical_jacobian(
     complexity: float = 0.5,
 ) -> np.ndarray:
     """
-    Compute analytical Jacobian from the ODE equations.
+    Compute analytical Jacobian from the ODE equations, including soft barriers.
 
-    Linear I-dynamics mode:
-        J = [[-alpha - beta_E*S,  alpha,      -beta_E*E,    0           ],
-             [0,                  -gamma_I,    -k,           beta_I*dCdV ],
-             [0,                   0,          -mu,          -lam2*dCdV  ],
-             [kappa,              -kappa,       0,           -delta      ]]
+    Diagonal entries include barrier derivative contributions when the state
+    is within barrier_margin of a bound.
 
     where dC/dV = Cmax * 0.5 * C1 * sech^2(C1 * V)
     """
@@ -140,35 +158,45 @@ def analytical_jacobian(
 
     lam2_val = lambda2(theta, params)
 
+    # Barrier margins (must match dynamics.py _derivatives)
+    m = params.barrier_margin
+    s = params.barrier_strength
+    S_range = params.S_max - params.S_min
+    V_range = params.V_max - params.V_min
+
     J = np.zeros((4, 4))
 
-    # dE/dt = alpha*(I - E) - beta_E*E*S + gamma_E*drift_sq
+    # dE/dt = alpha*(I - E) - beta_E*E*S + gamma_E*drift_sq + barrier(E)
     J[0, 0] = -params.alpha - params.beta_E * S     # d(dE/dt)/dE
+    J[0, 0] += _barrier_derivative(E, params.E_min, params.E_max, s, m)
     J[0, 1] = params.alpha                           # d(dE/dt)/dI
     J[0, 2] = -params.beta_E * E                     # d(dE/dt)/dS
     J[0, 3] = 0.0                                    # d(dE/dt)/dV
 
-    # dI/dt = beta_I*C(V) - k*S - gamma_I*I  (linear mode)
+    # dI/dt = beta_I*C(V) - k*S - gamma_I*I + barrier(I)
     i_mode = get_i_dynamics_mode()
     J[1, 0] = 0.0                                    # d(dI/dt)/dE
     if i_mode == "linear":
         J[1, 1] = -params.gamma_I                    # d(dI/dt)/dI
     else:
         J[1, 1] = -params.gamma_I * (1.0 - 2.0 * I) # logistic
+    J[1, 1] += _barrier_derivative(I, params.I_min, params.I_max, s, m)
     J[1, 2] = -params.k                              # d(dI/dt)/dS
     J[1, 3] = params.beta_I * dCdV                   # d(dI/dt)/dV
 
-    # dS/dt = -mu*S + lam1*drift_sq - lam2*C(V) + beta_c*complexity
+    # dS/dt = -mu*S + lam1*drift_sq - lam2*C(V) + beta_c*complexity + barrier(S)
     J[2, 0] = 0.0                                    # d(dS/dt)/dE
     J[2, 1] = 0.0                                    # d(dS/dt)/dI
     J[2, 2] = -params.mu                             # d(dS/dt)/dS
+    J[2, 2] += _barrier_derivative(S, params.S_min, params.S_max, s, m * S_range)
     J[2, 3] = -lam2_val * dCdV                       # d(dS/dt)/dV
 
-    # dV/dt = kappa*(E - I) - delta*V
+    # dV/dt = kappa*(E - I) - delta*V + barrier(V)
     J[3, 0] = params.kappa                            # d(dV/dt)/dE
     J[3, 1] = -params.kappa                           # d(dV/dt)/dI
     J[3, 2] = 0.0                                     # d(dV/dt)/dS
     J[3, 3] = -params.delta                           # d(dV/dt)/dV
+    J[3, 3] += _barrier_derivative(V, params.V_min, params.V_max, s, m * V_range)
 
     return J
 
