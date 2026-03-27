@@ -118,13 +118,24 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
         observation["summary"] = observation.get("summary", {})
         observation["summary"]["total_updates"] = meta.total_updates
 
+    # Agent profile — differentiated metrics outside the ODE
+    profile_data = None
+    try:
+        from src.agent_profile import get_agent_profile, get_all_profiles
+        if agent_id in get_all_profiles():
+            profile_data = get_agent_profile(agent_id).to_summary()
+    except Exception:
+        pass
+
     # Add EISV labels for API documentation
     response_data = {
         "agent_id": agent_id,
         "observation": observation,
         "eisv_labels": UNITARESMonitor.get_eisv_labels()
     }
-    
+    if profile_data:
+        response_data["profile"] = profile_data
+
     return success_response(response_data)
 
 @mcp_tool("compare_agents", timeout=15.0, register=False)

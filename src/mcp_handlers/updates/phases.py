@@ -882,6 +882,19 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"Baseline recording skipped for {agent_id}: {e}")
 
+    # Agent profile — differentiated per-agent metrics (outside ODE)
+    try:
+        from src.agent_profile import get_agent_profile
+        profile = get_agent_profile(agent_id)
+        profile.record_checkin(
+            complexity=ctx.complexity,
+            confidence=ctx.confidence,
+            ethical_drift=ctx.ethical_drift,
+            verdict=ctx.metrics_dict.get('verdict'),
+        )
+    except Exception as e:
+        logger.debug(f"Agent profile update skipped for {agent_id}: {e}")
+
     # Post-ODE: Enforce risk_target and coherence_target from dialectic conditions
     try:
         if ctx.meta and getattr(ctx.meta, 'dialectic_conditions', None):

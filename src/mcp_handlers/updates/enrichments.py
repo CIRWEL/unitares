@@ -1462,3 +1462,15 @@ async def enrich_temporal_context(ctx: UpdateContext) -> None:
             ctx.response_data['temporal_context'] = temporal
     except Exception as e:
         logger.debug(f"Could not enrich temporal context: {e}")
+
+
+@enrichment(order=260)
+async def enrich_agent_profile(ctx: UpdateContext) -> None:
+    """Add differentiated agent profile metrics to the response."""
+    try:
+        from src.agent_profile import get_agent_profile, get_all_profiles
+        if ctx.agent_id in get_all_profiles():
+            profile = get_agent_profile(ctx.agent_id)
+            ctx.response_data['agent_profile'] = profile.to_summary()
+    except Exception as e:
+        logger.debug(f"Agent profile enrichment skipped: {e}")
