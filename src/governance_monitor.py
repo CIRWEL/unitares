@@ -1387,19 +1387,27 @@ class UNITARESMonitor:
             }
 
         # Add restorative balance status if needed
+        # Suppress for first few check-ins — not enough data for meaningful guidance
         if self._last_restorative_status and self._last_restorative_status.needs_restoration:
             rs = self._last_restorative_status
-            result['restorative'] = {
-                'needs_restoration': rs.needs_restoration,
-                'reason': rs.reason,
-                'suggested_cooldown_seconds': rs.suggested_cooldown_seconds,
-                'activity_rate': rs.activity_rate,
-                'cumulative_divergence': rs.cumulative_divergence,
-            }
-            result['guidance'] = (
-                f"Consider slowing down: {rs.reason}. "
-                f"Suggested cooldown: {rs.suggested_cooldown_seconds}s"
-            )
+            if self.state.update_count <= 3:
+                result['restorative'] = {
+                    'needs_restoration': False,
+                    'suppressed': True,
+                    'note': 'Restorative guidance suppressed — not enough check-ins for reliable assessment.',
+                }
+            else:
+                result['restorative'] = {
+                    'needs_restoration': rs.needs_restoration,
+                    'reason': rs.reason,
+                    'suggested_cooldown_seconds': rs.suggested_cooldown_seconds,
+                    'activity_rate': rs.activity_rate,
+                    'cumulative_divergence': rs.cumulative_divergence,
+                }
+                result['guidance'] = (
+                    f"Consider slowing down: {rs.reason}. "
+                    f"Suggested cooldown: {rs.suggested_cooldown_seconds}s"
+                )
 
         # =================================================================
         # Concrete Ethical Drift (Patent: De-abstracted Δη)

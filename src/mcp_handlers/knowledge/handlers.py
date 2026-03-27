@@ -33,6 +33,40 @@ logger = get_logger(__name__)
 
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 
+
+def _compute_staleness_warning(discovery, current_server_version: str) -> Optional[str]:
+    """Flag open entries that are likely stale (>60 days old or 2+ minor versions behind)."""
+    warning_parts = []
+
+    # Age-based check: >60 days old
+    try:
+        created = datetime.fromisoformat(discovery.timestamp) if isinstance(discovery.timestamp, str) else discovery.timestamp
+        age_days = (datetime.now() - created).days
+        if age_days > 60:
+            warning_parts.append(f"This entry is {age_days} days old and still open.")
+    except (ValueError, TypeError):
+        pass
+
+    # Version-based check: 2+ minor versions behind current
+    entry_version = None
+    if discovery.provenance and isinstance(discovery.provenance, dict):
+        entry_version = discovery.provenance.get("system_version")
+    if entry_version and current_server_version and current_server_version != "unknown":
+        try:
+            ev = [int(x) for x in str(entry_version).split(".")]
+            cv = [int(x) for x in str(current_server_version).split(".")]
+            if len(ev) >= 2 and len(cv) >= 2:
+                minor_distance = (cv[0] - ev[0]) * 100 + (cv[1] - ev[1])
+                if minor_distance >= 2:
+                    warning_parts.append(f"Written against v{entry_version} (current: v{current_server_version}).")
+        except (ValueError, IndexError):
+            pass
+
+    if warning_parts:
+        return " ".join(warning_parts) + " It may be outdated — verify before acting on it."
+    return None
+
+
 async def _discovery_not_found(discovery_id: str, graph) -> TextContent:
     """Build a 'not found' error with prefix-match suggestions.
 
@@ -314,6 +348,9 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
             if severity not in VALID_SEVERITIES:
                 return error_response(f"Invalid severity '{severity}'. Valid: {sorted(VALID_SEVERITIES)}")
 
+        # Auto-populate system_version at write time (Task 1: KG version coupling)
+        system_version = getattr(mcp_server, "SERVER_VERSION", "unknown")
+
         # ENHANCED PROVENANCE: Capture agent state at creation time
         # Answers: "What was the agent's context when they made this discovery?"
         provenance = None
@@ -339,6 +376,7 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
 
                 # CAPTURE BASIC PROVENANCE
                 provenance = {
+                    "system_version": system_version,
                     "agent_state": {
                         "status": meta.status,
                         "health": meta.health_status,
@@ -382,7 +420,13 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
                     # Non-critical - continue without chain
         except Exception as e:
             logger.debug(f"Could not capture provenance: {e}")  # Non-critical
-        
+
+        # Ensure system_version is always in provenance, even if agent metadata was unavailable
+        if provenance is None:
+            provenance = {"system_version": system_version, "captured_at": datetime.now().isoformat()}
+        elif "system_version" not in provenance:
+            provenance["system_version"] = system_version
+
         discovery = DiscoveryNode(
             id=discovery_id,
             agent_id=agent_id,
@@ -780,6 +824,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         # Build discovery list with optional provenance
         # UX FIX (Dec 2025): Display name FIRST for human readability
         # Format: {"by": "DisplayName", "summary": "...", ...}
+        current_server_version = getattr(mcp_server, "SERVER_VERSION", "unknown")
         discovery_list = []
         for d in results:
             agent_display = _resolve_agent_display(d.agent_id)
@@ -805,6 +850,18 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
 
             # Keep agent_id for internal reference (de-emphasized)
             d_dict["_agent_id"] = d.agent_id
+
+            # Surface system_version from provenance (Task 1: KG version coupling)
+            if d.provenance and isinstance(d.provenance, dict):
+                d_dict["system_version"] = d.provenance.get("system_version")
+            else:
+                d_dict["system_version"] = None  # Pre-v2.8.0 discovery
+
+            # Staleness warning (Task 3: stale entry detection)
+            if d.status == "open":
+                _staleness = _compute_staleness_warning(d, current_server_version)
+                if _staleness:
+                    d_dict["staleness_warning"] = _staleness
 
             if include_provenance:
                 d_dict["provenance"] = d.provenance

@@ -508,6 +508,20 @@ async def enrich_convergence_guidance(ctx: UpdateContext) -> None:
         mcp_server = ctx.mcp_server
         meta = mcp_server.agent_metadata.get(ctx.agent_id)
         if meta and meta.total_updates < 20:
+            # Suppress detailed EISV guidance on first few check-ins (Task 2).
+            # Values are still near initialization defaults — guidance based on
+            # them is misleading and erodes trust on first interaction.
+            if meta.total_updates <= 3:
+                ctx.response_data["convergence_guidance"] = {
+                    "message": "Not enough data yet to provide meaningful guidance.",
+                    "note": f"EISV metrics need several check-ins to diverge from defaults. "
+                            f"Current update count: {meta.total_updates}. "
+                            f"Detailed guidance will appear after a few more check-ins.",
+                    "suppressed": True,
+                    "updates_until_guidance": 4 - meta.total_updates,
+                }
+                return
+
             metrics_dict = ctx.response_data.get("metrics", {})
             E = metrics_dict.get("E", 0.7)
             I = metrics_dict.get("I", 0.8)
