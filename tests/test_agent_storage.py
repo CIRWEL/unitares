@@ -764,7 +764,7 @@ class TestRecordAgentState:
         assert call_kwargs["identity_id"] == 42
         assert call_kwargs["entropy"] == 0.15
         assert call_kwargs["integrity"] == 0.8
-        assert call_kwargs["stability_index"] == pytest.approx(0.85)
+        assert call_kwargs["stability_index"] == 0.0  # Dead field, no longer computed
         assert call_kwargs["void"] == -0.01
         assert call_kwargs["regime"] == "EXPLORATION"
         assert call_kwargs["coherence"] == 0.5
@@ -855,8 +855,8 @@ class TestRecordAgentState:
         assert "verdict" not in state_json
 
     @pytest.mark.asyncio
-    async def test_stability_index_with_zero_entropy(self):
-        """When S=0 (falsy), stability_index should be 1.0."""
+    async def test_stability_index_always_zero(self):
+        """stability_index is a dead field — always 0.0 regardless of S."""
         identity = _make_identity()
         db = _mock_db(get_identity=identity, record_agent_state=1)
         with patch("src.agent_storage.get_db", return_value=db):
@@ -868,7 +868,7 @@ class TestRecordAgentState:
             )
 
         call_kwargs = db.record_agent_state.call_args.kwargs
-        assert call_kwargs["stability_index"] == 1.0
+        assert call_kwargs["stability_index"] == 0.0
 
 
 # ---------------------------------------------------------------------------

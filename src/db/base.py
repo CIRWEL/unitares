@@ -45,11 +45,21 @@ class SessionRecord:
 
 @dataclass
 class AgentStateRecord:
-    """Agent state snapshot (EISV metrics)."""
+    """Agent state snapshot (EISV metrics).
+
+    Column → EISV mapping:
+        DB column       Python field    EISV dimension
+        ─────────────   ────────────    ──────────────
+        (state_json.E)  energy          E  (Energy)
+        integrity       integrity       I  (Information Integrity)
+        entropy         entropy         S  (Entropy)
+        volatility      void            V  (Void)
+    """
     state_id: int
     identity_id: int
     agent_id: str
     recorded_at: datetime
+    energy: float = 0.5
     entropy: float = 0.5
     integrity: float = 0.5
     stability_index: float = 0.5

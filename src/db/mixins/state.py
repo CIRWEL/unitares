@@ -87,22 +87,34 @@ class StateMixin:
             return [self._row_to_agent_state(r) for r in rows]
 
     async def get_all_latest_agent_states(self) -> list[AgentStateRecord]:
-        from config.governance_config import GovernanceConfig
+        """Get latest state per identity, using matview with base-table fallback."""
         async with self.acquire() as conn:
-            # Always use epoch-filtered query for correctness
-            rows = await conn.fetch(
-                """
-                SELECT DISTINCT ON (s.identity_id)
-                       s.state_id, s.identity_id, i.agent_id, s.recorded_at,
-                       s.entropy, s.integrity, s.stability_index, s.volatility,
-                       s.regime, s.coherence, s.state_json
-                FROM core.agent_state s
-                JOIN core.identities i ON i.identity_id = s.identity_id
-                WHERE s.epoch = $1
-                ORDER BY s.identity_id, s.recorded_at DESC
-                """,
-                GovernanceConfig.CURRENT_EPOCH,
-            )
+            try:
+                rows = await conn.fetch(
+                    """
+                    SELECT state_id, identity_id, agent_id, recorded_at,
+                           entropy, integrity, stability_index, volatility,
+                           regime, coherence, state_json
+                    FROM core.mv_latest_agent_states
+                    """,
+                )
+            except Exception:
+                # Matview may not exist yet — fall back to base table
+                from config.governance_config import GovernanceConfig
+                logger.debug("Matview unavailable, falling back to base table")
+                rows = await conn.fetch(
+                    """
+                    SELECT DISTINCT ON (s.identity_id)
+                           s.state_id, s.identity_id, i.agent_id, s.recorded_at,
+                           s.entropy, s.integrity, s.stability_index, s.volatility,
+                           s.regime, s.coherence, s.state_json
+                    FROM core.agent_state s
+                    JOIN core.identities i ON i.identity_id = s.identity_id
+                    WHERE s.epoch = $1
+                    ORDER BY s.identity_id, s.recorded_at DESC
+                    """,
+                    GovernanceConfig.CURRENT_EPOCH,
+                )
             return [self._row_to_agent_state(r) for r in rows]
 
     async def get_recent_cross_agent_activity(
@@ -136,16 +148,18 @@ class StateMixin:
             return [dict(r) for r in rows]
 
     def _row_to_agent_state(self, row) -> AgentStateRecord:
+        sj = json.loads(row["state_json"]) if isinstance(row["state_json"], str) else (row["state_json"] or {})
         return AgentStateRecord(
             state_id=row["state_id"],
             identity_id=row["identity_id"],
             agent_id=row["agent_id"],
             recorded_at=row["recorded_at"],
+            energy=sj.get("E", 0.5),
             entropy=row["entropy"],
             integrity=row["integrity"],
             stability_index=row["stability_index"],
             void=row["volatility"],  # Map database column 'volatility' to 'void' field
             regime=row["regime"],
             coherence=row["coherence"],
-            state_json=json.loads(row["state_json"]) if isinstance(row["state_json"], str) else row["state_json"],
+            state_json=sj,
         )

@@ -82,7 +82,7 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
 
             agents = []
             total_all = 0  # Count all agents before filtering
-            for agent_id, meta in mcp_server.agent_metadata.items():
+            for agent_id, meta in list(mcp_server.agent_metadata.items()):
                 total_all += 1
                 if status_filter != "all" and meta.status != status_filter:
                     continue
@@ -189,7 +189,7 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
         agents_list = []
 
         # First pass: collect all matching agents (without loading monitors)
-        for agent_id, meta in mcp_server.agent_metadata.items():
+        for agent_id, meta in list(mcp_server.agent_metadata.items()):
             # Filter by status if requested
             if status_filter != "all" and meta.status != status_filter:
                 continue
@@ -553,7 +553,7 @@ async def handle_get_agent_metadata(arguments: Sequence[TextContent]) -> list:
         else:
             # Try label lookup in cache
             agent_id = None
-            for uuid_key, m in mcp_server.agent_metadata.items():
+            for uuid_key, m in list(mcp_server.agent_metadata.items()):
                 if getattr(m, 'label', None) == target_agent:
                     agent_id = uuid_key
                     break
@@ -568,7 +568,7 @@ async def handle_get_agent_metadata(arguments: Sequence[TextContent]) -> list:
                         agent_id = target_agent
                     else:
                         # Try label lookup again after reload
-                        for uuid_key, m in mcp_server.agent_metadata.items():
+                        for uuid_key, m in list(mcp_server.agent_metadata.items()):
                             if getattr(m, 'label', None) == target_agent:
                                 agent_id = uuid_key
                                 break

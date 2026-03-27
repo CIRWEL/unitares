@@ -23,15 +23,14 @@ async def handle_dashboard(arguments: ToolArgumentsDict) -> Sequence[TextContent
         db = get_db()
         states = await db.get_all_latest_agent_states()
 
-        # Index states by agent_id (E lives in state_json, not a direct column)
+        # Index states by agent_id — E now comes from s.energy (extracted in _row_to_agent_state)
         state_by_agent: Dict[str, Any] = {}
         for s in states:
             sj = s.state_json or {}
-            E = sj.get("E", 0.5)
             risk = sj.get("risk_score", 0)
             verdict = sj.get("verdict", "proceed")
             state_by_agent[s.agent_id] = {
-                "E": round(E, 4) if E is not None else None,
+                "E": round(s.energy, 4) if s.energy is not None else None,
                 "I": round(s.integrity, 4) if s.integrity is not None else None,
                 "S": round(s.entropy, 4) if s.entropy is not None else None,
                 "V": round(s.void, 4) if s.void is not None else None,
@@ -43,11 +42,17 @@ async def handle_dashboard(arguments: ToolArgumentsDict) -> Sequence[TextContent
 
         # Filter: recent_days=1 by default (show today's agents + Lumen)
         recent_days = int(arguments.get("recent_days", 1))
-        min_updates = int(arguments.get("min_updates", 3))
+        min_updates = int(arguments.get("min_updates", 1))
+        limit = int(arguments.get("limit", 15))
+        offset = int(arguments.get("offset", 0))
+        basin_filter = arguments.get("basin_filter", None)
+        risk_threshold = arguments.get("risk_threshold", None)
+        if risk_threshold is not None:
+            risk_threshold = float(risk_threshold)
         cutoff = datetime.now(timezone.utc) - timedelta(days=recent_days) if recent_days > 0 else None
 
         agents = []
-        for agent_id, meta in mcp_server.agent_metadata.items():
+        for agent_id, meta in list(mcp_server.agent_metadata.items()):
             if meta.status != "active":
                 continue
             if meta.total_updates < min_updates:
@@ -65,7 +70,9 @@ async def handle_dashboard(arguments: ToolArgumentsDict) -> Sequence[TextContent
                     if last_dt < cutoff:
                         continue
                 except Exception:
-                    pass
+                    # Unparseable timestamp — exclude agent (fail closed)
+                    logger.warning(f"Dashboard: unparseable last_update for {agent_id}: {meta.last_update!r}")
+                    continue
 
             eisv = state_by_agent.get(agent_id, None)
             agent_entry: Dict[str, Any] = {
@@ -82,15 +89,22 @@ async def handle_dashboard(arguments: ToolArgumentsDict) -> Sequence[TextContent
         # Sort: pinned agents first, then by update count
         agents.sort(key=lambda a: (0 if a.get("pinned") else 1, -(a.get("updates") or 0)))
 
-        # Apply limit
-        limit = int(arguments.get("limit", 15))
+        # Apply basin_filter and risk_threshold AFTER sorting
+        if basin_filter is not None:
+            agents = [a for a in agents if a.get("eisv", {}).get("basin") == basin_filter]
+        if risk_threshold is not None:
+            agents = [a for a in agents if (a.get("eisv", {}).get("risk") or 0) >= risk_threshold]
+
+        # Apply offset + limit
         total = len(agents)
-        agents = agents[:limit]
+        agents = agents[offset:offset + limit]
 
         return success_response({
             "agents": agents,
             "total": total,
             "showing": len(agents),
+            "offset": offset,
+            "has_more": (offset + len(agents)) < total,
         })
 
     except Exception as e:
