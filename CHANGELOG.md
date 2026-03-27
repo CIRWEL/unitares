@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Normalized spring coupling** by dimension range width for consistent cross-dimension influence.
 - Hardened sensor EISV: clip to physical bounds, removed dead code.
 
+### Changed — Soft Barrier Dynamics (governance-core)
+
+- **Soft barrier replaces hard clamping** in EISV ODE — cubic barrier potential in `_derivatives()` smoothly repels state away from bounds (C² continuous, zero in interior). Hard `clip()` in integrators demoted to safety net. Preserves Jacobian continuity for contraction/Lyapunov analysis.
+- **Barrier parameters** added to `DynamicsParams`: `barrier_strength=2.0`, `barrier_margin=0.05`. Margins scaled proportionally for S (×2.0) and V (×4.0) ranges.
+- **Analytical Jacobian** updated with barrier diagonal terms in `stability.py`.
+- **Removed redundant V bounds clip** in `governance_monitor.py` post-ODE block — barrier handles it; S floor and coherence recalc retained.
+
 ### Added — EISV Dynamics & Governance
 
 - **State velocity feedback** — rate-of-change of EISV dimensions feeds back into dynamics, enabling faster response to rapid drift.
