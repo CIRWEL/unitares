@@ -251,16 +251,22 @@ class PostgresBackend(
                 return ctx_self.conn
 
             async def __aexit__(ctx_self, exc_type, exc_val, exc_tb):
+                commit_error = None
                 try:
                     if exc_type is not None:
                         await ctx_self._txn.rollback()
                     else:
                         await ctx_self._txn.commit()
                 except Exception as e:
-                    logger.warning(f"Transaction cleanup error: {e}")
+                    logger.error(f"Transaction {'rollback' if exc_type else 'commit'} failed: {e}")
+                    if exc_type is None:
+                        # Commit failed — surface this so callers know the write was lost
+                        commit_error = e
                 finally:
                     # Release connection back to pool
                     await ctx_self._acquire_ctx.__aexit__(exc_type, exc_val, exc_tb)
+                if commit_error is not None:
+                    raise commit_error
                 return False
 
         return _TransactionContext(self, timeout)

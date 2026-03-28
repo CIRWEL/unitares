@@ -133,10 +133,11 @@ def create_authored_edge(
         props["at"] = at.isoformat()
     
     if props:
-        props_str = " {" + ", ".join(f"{k}: ${k}" for k in props.keys()) + "}"
+        props_items = ", ".join(f"{k}: ${{{k}}}" for k in props.keys())
+        props_str = f" {{{props_items}}}"
     else:
         props_str = ""
-    
+
     params = {"agent_id": agent_id, "discovery_id": discovery_id, **props}
     
     cypher = f"""
