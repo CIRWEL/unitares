@@ -84,6 +84,9 @@ from src.monitor_metrics import (
     get_eisv_labels as _get_eisv_labels,
     export_monitor_history as _export_monitor_history,
 )
+from src.behavioral_state import BehavioralEISV
+from src.behavioral_assessment import assess_behavioral_state
+from src.behavioral_sensor import compute_behavioral_sensor_eisv
 
 
 class UNITARESMonitor:
@@ -138,6 +141,9 @@ class UNITARESMonitor:
         self._prev_S: Optional[float] = None
         self._prev_V: Optional[float] = None
         self._last_state_velocity: float = 0.0
+
+        # Behavioral EISV: observation-first state (no ODE, no attractor)
+        self._behavioral_state = BehavioralEISV()
 
         # Continuous self-validation: track previous verdict for trajectory comparison
         self._prev_verdict_action: Optional[str] = None   # 'proceed', 'pause', etc.
@@ -238,6 +244,10 @@ class UNITARESMonitor:
         try:
             with open(state_file, 'r') as f:
                 data = json.load(f)
+                # Restore behavioral EISV if present (backward compatible)
+                beh_data = data.pop('behavioral_eisv', None)
+                if beh_data:
+                    self._behavioral_state = BehavioralEISV.from_dict(beh_data)
                 return GovernanceState.from_dict(data)
         except Exception as e:
             logger.warning(f"Could not load persisted state for {self.agent_id}: {e}", exc_info=True)
@@ -254,6 +264,8 @@ class UNITARESMonitor:
         try:
             import tempfile
             state_data = self.state.to_dict_with_history()
+            # Include behavioral EISV state for persistence
+            state_data['behavioral_eisv'] = self._behavioral_state.to_dict_with_history()
             # Atomic write: write to temp file, then rename to prevent corruption
             tmp_fd, tmp_path = tempfile.mkstemp(dir=state_file.parent, suffix='.tmp')
             try:
@@ -777,6 +789,52 @@ class UNITARESMonitor:
             continuity_metrics=continuity_metrics,
         )
 
+        # === BEHAVIORAL EISV (observation-first, no ODE) ===
+        # Extract observations from existing signals for behavioral state
+        sensor_eisv = agent_state.get('sensor_eisv')
+        if sensor_eisv:
+            # Lumen: use physical sensor EISV directly
+            beh_E_obs = float(sensor_eisv.get('E', 0.5))
+            beh_I_obs = float(sensor_eisv.get('I', 0.5))
+            beh_S_obs = float(sensor_eisv.get('S', 0.2))
+        else:
+            # Non-embodied agents: compute from behavioral_sensor
+            beh_sensor = compute_behavioral_sensor_eisv(
+                decision_history=self.state.decision_history,
+                coherence_history=self.state.coherence_history,
+                regime_history=self.state.regime_history,
+                E_history=self.state.E_history,
+                I_history=self.state.I_history,
+                S_history=self.state.S_history,
+                V_history=self.state.V_history,
+                calibration_error=getattr(drift_vector, 'calibration_deviation', None),
+                drift_norm=getattr(drift_vector, 'norm', None),
+                complexity_divergence=continuity_metrics.complexity_divergence,
+                continuity_E_input=continuity_metrics.E_input,
+                continuity_I_input=continuity_metrics.I_input,
+                continuity_S_input=continuity_metrics.S_input,
+                tool_error_rate=tu_stats.get('error_rate') if tu_stats else None,
+            )
+            if beh_sensor:
+                beh_E_obs = beh_sensor['E']
+                beh_I_obs = beh_sensor['I']
+                beh_S_obs = beh_sensor['S']
+            else:
+                # Insufficient history — use continuity layer inputs as fallback
+                beh_E_obs = continuity_metrics.E_input if continuity_metrics.E_input is not None else 0.5
+                beh_I_obs = continuity_metrics.I_input if continuity_metrics.I_input is not None else 0.5
+                beh_S_obs = continuity_metrics.S_input if continuity_metrics.S_input is not None else 0.2
+
+        self._behavioral_state.update(beh_E_obs, beh_I_obs, beh_S_obs)
+
+        # Assess behavioral state with auxiliary signals
+        behavioral_assessment = assess_behavioral_state(
+            state=self._behavioral_state,
+            rho=getattr(self.state, 'current_rho', 0.0),
+            continuity_energy=self.state.CE_history[-1] if self.state.CE_history else 0.0,
+            agent_context={'task_type': task_type},
+        )
+
         # Step 1: Update thermodynamic state with GROUNDED inputs
         self.update_dynamics(grounded_agent_state, dt=effective_dt)
 
@@ -845,6 +903,15 @@ class UNITARESMonitor:
         phi, unitares_verdict, risk_score, task_type_adjustment, original_risk_score = (
             self._compute_phi_and_risk(grounded_agent_state, agent_state, task_type)
         )
+
+        # Phase 2: Behavioral verdict switchover (config-gated)
+        from config.governance_config import GovernanceConfig as GovConfig
+        if GovConfig.BEHAVIORAL_VERDICT_ENABLED and self._behavioral_state.confidence >= 0.3:
+            # Behavioral assessment becomes primary verdict source
+            # Map behavioral verdict to ODE verdict format
+            beh_verdict_map = {"safe": "safe", "caution": "caution", "high-risk": "high-risk"}
+            unitares_verdict = beh_verdict_map.get(behavioral_assessment.verdict, unitares_verdict)
+            risk_score = behavioral_assessment.risk
 
         oscillation_state, response_tier, cirs_result, damping_result = self._run_cirs(
             risk_score=risk_score,
@@ -938,6 +1005,7 @@ class UNITARESMonitor:
             response_tier=response_tier,
             cirs_result=cirs_result,
             damping_result=damping_result,
+            behavioral_assessment=behavioral_assessment,
         )
     
     def _compute_drift_vector(self, grounded_agent_state: Dict, agent_state: Dict,
@@ -1337,6 +1405,7 @@ class UNITARESMonitor:
         response_tier: str,
         cirs_result,
         damping_result,
+        behavioral_assessment=None,
     ) -> Dict:
         """Assemble the final result dict returned by process_update().
 
@@ -1463,6 +1532,22 @@ class UNITARESMonitor:
                     'd_tau': damping_result.adjustments.get('d_tau', 0),
                     'd_beta': damping_result.adjustments.get('d_beta', 0)
                 }
+
+        # =================================================================
+        # Behavioral EISV: observation-first state (parallel to ODE)
+        # =================================================================
+        if behavioral_assessment is not None:
+            result['behavioral'] = {
+                'state': self._behavioral_state.to_dict(),
+                'assessment': {
+                    'health': behavioral_assessment.health,
+                    'verdict': behavioral_assessment.verdict,
+                    'risk': behavioral_assessment.risk,
+                    'coherence': behavioral_assessment.coherence,
+                    'components': behavioral_assessment.components,
+                    'guidance': behavioral_assessment.guidance,
+                },
+            }
 
         return result
 

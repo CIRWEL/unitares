@@ -8,7 +8,8 @@ from config.governance_config import config
 from governance_core import phi_objective, verdict_from_phi, DEFAULT_WEIGHTS
 
 
-def estimate_risk(state, agent_state: Dict, score_result: Optional[Dict] = None) -> float:
+def estimate_risk(state, agent_state: Dict, score_result: Optional[Dict] = None,
+                   behavioral_risk: Optional[float] = None) -> float:
     """
     Estimate risk score using governance_core phi_objective and verdict_from_phi.
 
@@ -16,14 +17,36 @@ def estimate_risk(state, agent_state: Dict, score_result: Optional[Dict] = None)
     - 70% UNITARES phi-based risk (includes ethical drift, E, I, S, V state)
     - 30% Traditional safety risk (length, complexity, coherence, keywords)
 
+    When behavioral_risk is provided and BEHAVIORAL_VERDICT_ENABLED, uses that
+    as primary risk signal instead of phi-based.
+
     Args:
         state: GovernanceState instance.
         agent_state: Agent state dictionary.
         score_result: Optional pre-computed score_result to avoid recomputation.
+        behavioral_risk: Optional behavioral assessment risk [0, 1].
 
     Returns:
         Risk score in [0, 1].
     """
+    from config.governance_config import GovernanceConfig as GovConfig
+    if GovConfig.BEHAVIORAL_VERDICT_ENABLED and behavioral_risk is not None:
+        # Behavioral risk is primary, but still add velocity component
+        risk = behavioral_risk
+        velocity_risk = 0.0
+        if len(state.E_history) >= 3:
+            diffs = [
+                abs(h[-1] - h[-2])
+                for h in [state.E_history, state.I_history, state.S_history, state.V_history]
+                if len(h) >= 2
+            ]
+            velocity_magnitude = sum(diffs)
+            velocity_risk = min(0.15, velocity_magnitude * 2.0)
+        risk += velocity_risk
+        state.risk_history.append(risk)
+        if len(state.risk_history) > config.HISTORY_WINDOW:
+            state.risk_history = state.risk_history[-config.HISTORY_WINDOW:]
+        return float(np.clip(risk, 0.0, 1.0))
     if score_result is None:
         ethical_signals = np.array(agent_state.get('ethical_drift', [0.0, 0.0, 0.0, 0.0]))
         if len(ethical_signals) == 0:

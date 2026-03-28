@@ -30,9 +30,18 @@ def update_lambda1(state) -> float:
     Returns:
         Updated lambda1 value.
     """
+    from config.governance_config import GovernanceConfig as GovConfig
+
     void_freq_current = calculate_void_frequency(state)
-    coherence_current = state.coherence
     lambda1_current = state.lambda1
+
+    # When behavioral verdict is active, use rho-derived coherence as PI target
+    # rho ∈ [-1,1] → coherence ∈ [0,1]
+    if GovConfig.BEHAVIORAL_VERDICT_ENABLED:
+        rho_val = getattr(state, 'current_rho', 0.0)
+        coherence_current = (rho_val + 1.0) / 2.0
+    else:
+        coherence_current = state.coherence
 
     if not hasattr(state, 'pi_integral'):
         state.pi_integral = 0.0
