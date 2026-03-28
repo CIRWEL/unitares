@@ -1231,13 +1231,12 @@ class TestGraphOperations:
         assert len(results) >= 1
 
     @pytest.mark.asyncio
-    async def test_graph_query_error_returns_error_dict(self, backend):
+    async def test_graph_query_error_raises(self, backend):
         if not await backend.graph_available():
             pytest.skip("Apache AGE extension is not available in governance_test")
-        # Invalid Cypher should return error dict, not crash
-        results = await backend.graph_query("INVALID CYPHER !!!")
-        assert len(results) == 1
-        assert "error" in results[0]
+        # Invalid Cypher should raise, not silently return error dicts
+        with pytest.raises(Exception):
+            await backend.graph_query("INVALID CYPHER !!!")
 
 
 # ============================================================================
