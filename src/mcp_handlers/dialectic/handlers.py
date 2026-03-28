@@ -412,6 +412,83 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
             
             # Check for timeouts if requested
             if check_timeout:
+                # Check if reviewer is stuck FIRST — try re-assignment before failing
+                if await check_reviewer_stuck(session):
+                    from .responses import get_reviewer_reassigned_recovery, get_awaiting_facilitation_recovery
+                    old_reviewer = session.reviewer_agent_id
+
+                    # Attempt auto re-assignment
+                    exclude = [session.paused_agent_id]
+                    if old_reviewer:
+                        exclude.append(old_reviewer)
+                    try:
+                        new_reviewer = await select_reviewer(
+                            paused_agent_id=session.paused_agent_id,
+                            metadata=mcp_server.agent_metadata,
+                            exclude_agent_ids=exclude,
+                        )
+                    except Exception:
+                        new_reviewer = None
+
+                    if new_reviewer:
+                        # Reassign and continue
+                        session.reviewer_agent_id = new_reviewer
+                        session.awaiting_facilitation = False
+                        reassign_msg = DialecticMessage(
+                            phase=session.phase.value,
+                            agent_id="system",
+                            timestamp=datetime.now(timezone.utc).isoformat(),
+                            reasoning=f"Reviewer auto-reassigned: {old_reviewer} -> {new_reviewer} (previous reviewer stuck)",
+                        )
+                        session.transcript.append(reassign_msg)
+                        try:
+                            await pg_update_reviewer(session_id, new_reviewer)
+                            await pg_add_message(
+                                session_id=session_id,
+                                agent_id="system",
+                                message_type="system",
+                                reasoning=f"Reviewer auto-reassigned: {old_reviewer} -> {new_reviewer} (previous reviewer stuck)",
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to persist reviewer reassignment: {e}")
+                        logger.info(f"[DIALECTIC] Auto-reassigned reviewer for {session_id[:16]}: {old_reviewer} -> {new_reviewer}")
+                        result = session.to_dict()
+                        result["success"] = True
+                        result["reviewer_reassigned"] = True
+                        result["old_reviewer_id"] = old_reviewer
+                        result["recovery"] = get_reviewer_reassigned_recovery(old_reviewer, new_reviewer)
+                        return success_response(result)
+
+                    # No replacement found — mark awaiting facilitation (not FAILED yet)
+                    if not getattr(session, 'awaiting_facilitation', False):
+                        session.awaiting_facilitation = True
+                        facilitation_msg = DialecticMessage(
+                            phase=session.phase.value,
+                            agent_id="system",
+                            timestamp=datetime.now(timezone.utc).isoformat(),
+                            reasoning=f"Reviewer '{old_reviewer}' stuck. No auto-replacement available. Awaiting human facilitation.",
+                        )
+                        session.transcript.append(facilitation_msg)
+                        try:
+                            await pg_add_message(
+                                session_id=session_id,
+                                agent_id="system",
+                                message_type="system",
+                                reasoning=f"Reviewer '{old_reviewer}' stuck. Awaiting human facilitation.",
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to persist facilitation status: {e}")
+                        logger.info(f"[DIALECTIC] Session {session_id[:16]} awaiting human facilitation (reviewer {old_reviewer} stuck)")
+
+                    return success_response({
+                        "success": False,
+                        "error": "Reviewer stuck - awaiting human facilitation",
+                        "awaiting_facilitation": True,
+                        "session": session.to_dict(),
+                        "recovery": get_awaiting_facilitation_recovery(session_id),
+                    })
+
+                # General timeout check (non-reviewer timeouts: synthesis, total time)
                 timeout_reason = session.check_timeout()
                 if timeout_reason:
                     session.phase = DialecticPhase.FAILED
@@ -422,7 +499,6 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                         reasoning=f"Session auto-failed: {timeout_reason}"
                     )
                     session.transcript.append(timeout_msg)
-                    # Persist to PostgreSQL
                     try:
                         await pg_add_message(
                             session_id=session_id,
@@ -433,41 +509,11 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                         await pg_update_phase(session_id, "failed")
                     except Exception as e:
                         logger.error(f"Failed to persist timeout to PostgreSQL: {e}")
-                    # QUICK WIN B: Improved error message with actionable guidance
                     return success_response({
                         "success": False,
                         "error": timeout_reason,
                         "session": session.to_dict(),
                         "recovery": get_session_timeout_recovery(timeout_reason),
-                    })
-
-                # Check if reviewer is stuck
-                if await check_reviewer_stuck(session):
-                    session.phase = DialecticPhase.FAILED
-                    stuck_msg = DialecticMessage(
-                        phase="failed",
-                        agent_id="system",
-                        timestamp=datetime.now(timezone.utc).isoformat(),
-                        reasoning="Reviewer stuck - session aborted"
-                    )
-                    session.transcript.append(stuck_msg)
-                    # Persist to PostgreSQL
-                    try:
-                        await pg_add_message(
-                            session_id=session_id,
-                            agent_id="system",
-                            message_type="failed",
-                            reasoning="Reviewer stuck - session aborted",
-                        )
-                        await pg_update_phase(session_id, "failed")
-                    except Exception as e:
-                        logger.error(f"Failed to persist reviewer stuck to PostgreSQL: {e}")
-                    # QUICK WIN B: Improved error message with actionable guidance
-                    return success_response({
-                        "success": False,
-                        "error": "Reviewer stuck - session aborted",
-                        "session": session.to_dict(),
-                        "recovery": get_reviewer_stuck_recovery(session.reviewer_agent_id),
                     })
 
             result = session.to_dict()
@@ -1013,6 +1059,151 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
 
     except Exception as e:
         return [error_response(f"Error submitting synthesis: {str(e)}")]
+
+
+@mcp_tool("reassign_reviewer", timeout=15.0, register=True)
+async def handle_reassign_reviewer(arguments: Dict[str, Any]) -> Sequence[TextContent]:
+    """
+    Reassign the reviewer for an active dialectic session.
+
+    Use when the current reviewer is unresponsive (ephemeral session ended)
+    or you need to manually assign a specific reviewer.
+
+    Args:
+        session_id: Dialectic session ID
+        new_reviewer_id: Agent ID to assign as new reviewer (optional — auto-selects if omitted)
+        reason: Why the reviewer is being reassigned (optional)
+
+    Returns:
+        Updated session state with new reviewer info
+    """
+    from .responses import get_reviewer_reassigned_recovery, get_awaiting_facilitation_recovery
+
+    session_id = arguments.get("session_id")
+    new_reviewer_id = arguments.get("new_reviewer_id")
+    reason = arguments.get("reason", "Reviewer unresponsive")
+
+    if not session_id:
+        return [error_response(
+            "session_id is required",
+            error_code="MISSING_PARAM",
+            error_category="validation_error",
+            recovery=missing_session_id_recovery(),
+            arguments=arguments,
+        )]
+
+    # Load session
+    session = ACTIVE_SESSIONS.get(session_id)
+    if not session:
+        session = await load_session(session_id)
+        if session:
+            ACTIVE_SESSIONS[session_id] = session
+
+    if not session:
+        return [error_response(
+            f"Session '{session_id}' not found",
+            recovery=session_not_found_recovery(),
+        )]
+
+    # Validate phase — only reassign during THESIS or ANTITHESIS
+    if session.phase not in (DialecticPhase.THESIS, DialecticPhase.ANTITHESIS):
+        return [error_response(
+            f"Cannot reassign reviewer in phase '{session.phase.value}'. Only THESIS or ANTITHESIS phases allow reassignment.",
+            error_code="INVALID_PHASE",
+            error_category="validation_error",
+        )]
+
+    old_reviewer_id = session.reviewer_agent_id
+
+    if new_reviewer_id:
+        # Validate the new reviewer exists and is eligible
+        await mcp_server.load_metadata_async(force=True)
+        new_meta = mcp_server.agent_metadata.get(new_reviewer_id)
+        if not new_meta:
+            return [error_response(
+                f"Agent '{new_reviewer_id}' not found in metadata",
+                recovery=get_agent_not_found_recovery(),
+            )]
+
+        status = getattr(new_meta, 'status', None) or (new_meta.get('status') if isinstance(new_meta, dict) else None)
+        if status == "paused":
+            return [error_response(
+                f"Agent '{new_reviewer_id}' is paused and cannot review",
+                error_code="REVIEWER_PAUSED",
+                error_category="validation_error",
+            )]
+
+        if new_reviewer_id == session.paused_agent_id:
+            return [error_response(
+                "Cannot assign paused agent as its own reviewer (use reviewer_mode='self' for self-review)",
+                error_code="SELF_REVIEW",
+                error_category="validation_error",
+            )]
+    else:
+        # Auto-select a replacement
+        await mcp_server.load_metadata_async(force=True)
+        exclude = [session.paused_agent_id]
+        if old_reviewer_id:
+            exclude.append(old_reviewer_id)
+        try:
+            new_reviewer_id = await select_reviewer(
+                paused_agent_id=session.paused_agent_id,
+                metadata=mcp_server.agent_metadata,
+                exclude_agent_ids=exclude,
+            )
+        except Exception as e:
+            logger.warning(f"Auto reviewer re-selection failed: {e}")
+            new_reviewer_id = None
+
+        if not new_reviewer_id:
+            return [error_response(
+                "No eligible reviewer found for auto-assignment. Provide new_reviewer_id manually.",
+                error_code="NO_REVIEWER",
+                error_category="no_candidates",
+                recovery=get_awaiting_facilitation_recovery(session_id),
+            )]
+
+    # Perform reassignment
+    session.reviewer_agent_id = new_reviewer_id
+    session.awaiting_facilitation = False
+
+    # Add transcript message
+    reassign_msg = DialecticMessage(
+        phase=session.phase.value,
+        agent_id="system",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        reasoning=f"Reviewer reassigned: {old_reviewer_id} -> {new_reviewer_id}. Reason: {reason}",
+    )
+    session.transcript.append(reassign_msg)
+
+    # Persist to PostgreSQL
+    try:
+        await pg_update_reviewer(session_id, new_reviewer_id)
+        await pg_add_message(
+            session_id=session_id,
+            agent_id="system",
+            message_type="system",
+            reasoning=f"Reviewer reassigned: {old_reviewer_id} -> {new_reviewer_id}. Reason: {reason}",
+        )
+    except Exception as e:
+        logger.error(f"Failed to persist reviewer reassignment: {e}")
+        return [error_response(f"Reassignment failed during persistence: {e}")]
+
+    logger.info(
+        f"[DIALECTIC] Reviewer reassigned for session {session_id[:16]}: "
+        f"{old_reviewer_id} -> {new_reviewer_id} (reason: {reason})"
+    )
+
+    return success_response({
+        "success": True,
+        "message": "Reviewer reassigned",
+        "session_id": session_id,
+        "old_reviewer_id": old_reviewer_id,
+        "new_reviewer_id": new_reviewer_id,
+        "phase": session.phase.value,
+        "reason": reason,
+        "recovery": get_reviewer_reassigned_recovery(old_reviewer_id, new_reviewer_id),
+    })
 
 
 async def _initiate_quorum(session: DialecticSession) -> Optional[Dict[str, Any]]:

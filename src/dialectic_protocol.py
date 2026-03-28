@@ -499,6 +499,7 @@ class DialecticSession:
         self.phase = DialecticPhase.THESIS
         self.synthesis_round = 0
         self.resolution: Optional[Resolution] = None
+        self.awaiting_facilitation = False  # True when reviewer is stuck and no auto-replacement found
 
         self.created_at = datetime.now(timezone.utc)
         self.session_id = self._generate_session_id()
@@ -1057,7 +1058,8 @@ class DialecticSession:
             "dispute_type": self.dispute_type,  # Optional: Type of dispute
             "session_type": getattr(self, 'session_type', 'recovery'),  # New: session type
             "topic": getattr(self, 'topic', None),  # New: exploration topic
-            "paused_agent_state": self.paused_agent_state  # Include state for reconstruction
+            "paused_agent_state": self.paused_agent_state,  # Include state for reconstruction
+            "awaiting_facilitation": getattr(self, 'awaiting_facilitation', False),
         }
 
 

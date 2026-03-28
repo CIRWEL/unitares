@@ -1,9 +1,9 @@
 """
 Auto-Resolve Stuck Dialectic Sessions
 
-Quick Win A: Automatically resolve sessions that are stuck/inactive for >2 hours.
-This removes artificial barriers and prevents session conflicts while giving
-agents sufficient time to engage in thoughtful dialectic (matching DialecticProtocol timeouts).
+Automatically handles sessions that are stuck/inactive for >2 hours.
+First attempts reviewer re-assignment, then marks awaiting facilitation,
+and only fails sessions after extended inactivity (4+ hours total).
 """
 
 from datetime import datetime, timedelta, timezone
@@ -15,97 +15,171 @@ from src.dialectic_db import (
     get_dialectic_db,
     get_active_sessions_async,
     update_session_status_async,
+    update_session_reviewer_async,
     add_message_async,
 )
 
 logger = get_logger(__name__)
 
 # Stuck session threshold: 2 hours of inactivity
-# Increased from 5 min → 30 min → 2 hours
 # Rationale: DialecticProtocol.MAX_ANTITHESIS_WAIT is 2 hours - agents need time to think
-# 30 min was still too aggressive for real dialectic interactions (see session 5551079c40546c65)
 STUCK_SESSION_THRESHOLD = timedelta(hours=2)
+
+# Extended threshold before marking FAILED (gives human time to facilitate)
+FACILITATION_TIMEOUT = timedelta(hours=4)
+
+
+def _parse_timestamp(value) -> datetime | None:
+    """Parse a timestamp value into a timezone-aware datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+    if isinstance(value, str):
+        try:
+            if 'T' in value:
+                dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            else:
+                dt = datetime.strptime(value, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except Exception:
+            return None
+    return None
+
 
 async def auto_resolve_stuck_sessions() -> Dict[str, Any]:
     """
-    Automatically resolve sessions that are stuck/inactive for >2 hours.
+    Handle sessions that are stuck/inactive.
 
-    A session is considered "stuck" if:
-    1. Status is 'active' but no activity for >2 hours
-    2. Phase is AWAITING_THESIS and created >2 hours ago
-    3. Phase is ANTITHESIS and thesis submitted >2 hours ago with no antithesis
-    4. Phase is SYNTHESIS and last update >2 hours ago
+    For each stuck session:
+    1. If reviewer is gone and phase is ANTITHESIS: try auto re-assignment
+    2. If no replacement available: mark awaiting_facilitation (not FAILED)
+    3. Only mark FAILED after extended inactivity (4+ hours)
 
     Returns:
-        Dict with counts of resolved sessions and details
+        Dict with counts of resolved/reassigned sessions and details
     """
     try:
-        # Use UTC for consistent comparison with PostgreSQL timestamps
         now = datetime.now(timezone.utc)
         threshold_time = now - STUCK_SESSION_THRESHOLD
+        fail_time = now - FACILITATION_TIMEOUT
 
-        # Get active sessions using the async backend (PostgreSQL)
         active_sessions = await get_active_sessions_async(limit=100)
 
         if not active_sessions:
             return {
                 "resolved_count": 0,
+                "reassigned_count": 0,
                 "message": "No active sessions found"
             }
 
         # Filter to stuck sessions (inactive for >2 hours)
         stuck_sessions = []
         for session in active_sessions:
-            # Get updated_at or created_at
-            updated_at = session.get("updated_at")
-            created_at = session.get("created_at")
-
-            # Parse timestamp if it's a string
-            check_time = updated_at or created_at
-            if isinstance(check_time, str):
-                try:
-                    if 'T' in check_time:
-                        check_time = datetime.fromisoformat(check_time.replace('Z', '+00:00'))
-                    else:
-                        # Assume naive strings are UTC
-                        check_time = datetime.strptime(check_time, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
-                except Exception:
-                    continue
-
-            # Ensure timezone-aware for comparison
-            if check_time is not None:
-                if check_time.tzinfo is None:
-                    # Assume naive datetimes are UTC (PostgreSQL default)
-                    check_time = check_time.replace(tzinfo=timezone.utc)
-
+            check_time = _parse_timestamp(session.get("updated_at") or session.get("created_at"))
             if check_time and check_time < threshold_time:
                 stuck_sessions.append(session)
 
         if not stuck_sessions:
             return {
                 "resolved_count": 0,
+                "reassigned_count": 0,
                 "message": "No stuck sessions found"
             }
 
-        # Resolve each stuck session
         resolved_count = 0
-        resolved_details = []
-        db = await get_dialectic_db()
+        reassigned_count = 0
+        facilitation_count = 0
+        details = []
 
         for session in stuck_sessions:
             session_id = session.get("session_id")
             paused_agent_id = session.get("paused_agent_id")
+            reviewer_agent_id = session.get("reviewer_agent_id")
             phase = session.get("phase")
 
             if not session_id:
                 continue
 
-            # Check if synthesis was reached with agreement
-            # For now, just mark as failed (can enhance later to check for agreement)
+            check_time = _parse_timestamp(session.get("updated_at") or session.get("created_at"))
+
+            # For ANTITHESIS phase: try reviewer re-assignment
+            if phase in ("antithesis", "ANTITHESIS") and reviewer_agent_id:
+                await mcp_server.load_metadata_async(force=True)
+                reviewer_meta = mcp_server.agent_metadata.get(reviewer_agent_id)
+                reviewer_gone = not reviewer_meta or getattr(reviewer_meta, 'status', None) == "paused"
+
+                if reviewer_gone:
+                    # Try auto re-assignment
+                    from .reviewer import select_reviewer
+                    try:
+                        new_reviewer = await select_reviewer(
+                            paused_agent_id=paused_agent_id,
+                            metadata=mcp_server.agent_metadata,
+                            exclude_agent_ids=[paused_agent_id, reviewer_agent_id],
+                        )
+                    except Exception as e:
+                        logger.warning(f"Auto re-selection failed for {session_id[:16]}: {e}")
+                        new_reviewer = None
+
+                    if new_reviewer:
+                        try:
+                            await update_session_reviewer_async(session_id, new_reviewer)
+                            await add_message_async(
+                                session_id=session_id,
+                                agent_id="system",
+                                message_type="system",
+                                reasoning=f"Reviewer auto-reassigned: {reviewer_agent_id} -> {new_reviewer} (previous reviewer unresponsive)",
+                            )
+                            reassigned_count += 1
+                            details.append({
+                                "session_id": session_id,
+                                "paused_agent_id": paused_agent_id,
+                                "phase": phase,
+                                "action": "reviewer_reassigned",
+                                "old_reviewer": reviewer_agent_id,
+                                "new_reviewer": new_reviewer,
+                            })
+                            logger.info(
+                                f"Auto-reassigned reviewer for {session_id[:16]}: "
+                                f"{reviewer_agent_id} -> {new_reviewer}"
+                            )
+                            continue  # Session saved, move to next
+                        except Exception as e:
+                            logger.warning(f"Could not persist reviewer reassignment for {session_id[:16]}: {e}")
+
+                    # No replacement found — mark awaiting facilitation if not too old
+                    if check_time and check_time > fail_time:
+                        try:
+                            await add_message_async(
+                                session_id=session_id,
+                                agent_id="system",
+                                message_type="system",
+                                reasoning=f"Reviewer '{reviewer_agent_id}' unresponsive. Awaiting human facilitation.",
+                            )
+                            facilitation_count += 1
+                            details.append({
+                                "session_id": session_id,
+                                "paused_agent_id": paused_agent_id,
+                                "phase": phase,
+                                "action": "awaiting_facilitation",
+                                "stuck_reviewer": reviewer_agent_id,
+                            })
+                            logger.info(
+                                f"Session {session_id[:16]} awaiting human facilitation "
+                                f"(reviewer {reviewer_agent_id} unresponsive)"
+                            )
+                            continue  # Don't fail yet — give human time
+                        except Exception as e:
+                            logger.warning(f"Could not add facilitation message for {session_id[:16]}: {e}")
+
+            # Fall through: mark as FAILED (session too old or non-reassignable phase)
             try:
                 await update_session_status_async(session_id, "failed")
-
-                # Add failure message
                 failure_reason = f"Session auto-resolved: inactive for >{STUCK_SESSION_THRESHOLD.total_seconds()/60:.0f} minutes"
                 try:
                     await add_message_async(
@@ -118,31 +192,39 @@ async def auto_resolve_stuck_sessions() -> Dict[str, Any]:
                     logger.warning(f"Could not add failure message: {msg_error}")
 
                 resolved_count += 1
-                resolved_details.append({
+                details.append({
                     "session_id": session_id,
                     "paused_agent_id": paused_agent_id,
                     "phase": phase,
-                    "reason": "inactive_too_long"
+                    "action": "failed",
+                    "reason": "inactive_too_long",
                 })
-
-                logger.info(f"Auto-resolved stuck session {session_id[:16]}... as FAILED (paused_agent: {paused_agent_id}, phase: {phase})")
+                logger.info(f"Auto-resolved stuck session {session_id[:16]} as FAILED (paused_agent: {paused_agent_id}, phase: {phase})")
 
             except Exception as e:
                 logger.warning(f"Could not resolve session {session_id}: {e}")
 
         return {
             "resolved_count": resolved_count,
-            "resolved_sessions": resolved_details,
-            "message": f"Auto-resolved {resolved_count} stuck session(s)"
+            "reassigned_count": reassigned_count,
+            "facilitation_count": facilitation_count,
+            "details": details,
+            "message": (
+                f"Processed {len(stuck_sessions)} stuck session(s): "
+                f"{reassigned_count} reassigned, {facilitation_count} awaiting facilitation, "
+                f"{resolved_count} failed"
+            ),
         }
 
     except Exception as e:
         logger.error(f"Error auto-resolving stuck sessions: {e}", exc_info=True)
         return {
             "resolved_count": 0,
+            "reassigned_count": 0,
             "error": str(e),
             "message": "Failed to auto-resolve stuck sessions"
         }
+
 
 async def check_and_resolve_stuck_sessions() -> Dict[str, Any]:
     """
@@ -156,4 +238,4 @@ async def check_and_resolve_stuck_sessions() -> Dict[str, Any]:
         return await auto_resolve_stuck_sessions()
     except Exception as e:
         logger.warning(f"Could not auto-resolve stuck sessions: {e}")
-        return {"resolved_count": 0, "error": str(e)}
+        return {"resolved_count": 0, "reassigned_count": 0, "error": str(e)}

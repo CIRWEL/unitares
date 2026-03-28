@@ -57,6 +57,39 @@ def get_reviewer_stuck_recovery(reviewer_agent_id: str | None) -> Dict[str, Any]
     }
 
 
+def get_reviewer_reassigned_recovery(old_reviewer_id: str | None, new_reviewer_id: str) -> Dict[str, Any]:
+    """Recovery payload after successful reviewer reassignment."""
+    return {
+        "action": "Reviewer reassigned - session continues",
+        "what_happened": (
+            f"Previous reviewer '{old_reviewer_id}' was unresponsive. "
+            f"New reviewer '{new_reviewer_id}' assigned."
+        ),
+        "next_steps": [
+            f"New reviewer '{new_reviewer_id}' should submit antithesis",
+            "Session phase and transcript are preserved",
+        ],
+        "related_tools": ["get_dialectic_session", "submit_antithesis"],
+    }
+
+
+def get_awaiting_facilitation_recovery(session_id: str) -> Dict[str, Any]:
+    """Recovery payload when no auto-reviewer is available and human facilitation is needed."""
+    return {
+        "action": "Human facilitation required - no eligible reviewer found",
+        "what_happened": (
+            "Reviewer went stale and no eligible replacement agent is available for auto-assignment."
+        ),
+        "what_you_can_do": [
+            f"1. Use dialectic(action='reassign_reviewer', session_id='{session_id}', new_reviewer_id='<agent_id>') to assign a reviewer manually",
+            "2. Use list_agents to find available agents",
+            "3. Or start a new Claude Code session and have it claim via submit_antithesis",
+        ],
+        "related_tools": ["dialectic", "list_agents", "get_dialectic_session"],
+        "note": "Session is paused, not failed. It will auto-fail after 4 hours total if no reviewer is assigned.",
+    }
+
+
 def get_agent_not_found_recovery() -> Dict[str, Any]:
     """Recovery payload when querying sessions for an unknown agent."""
     return {

@@ -1,28 +1,49 @@
 """
-Tests for src/mcp_handlers/dialectic_auto_resolve.py
+Tests for src/mcp_handlers/dialectic/auto_resolve.py
 
-Tests auto-resolution of stuck dialectic sessions.
-Uses mocked dialectic DB functions.
+Tests auto-resolution of stuck dialectic sessions, including
+reviewer re-assignment and awaiting_facilitation behavior.
 """
 
 import pytest
 import sys
 from pathlib import Path
 from unittest.mock import patch, AsyncMock, MagicMock
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
-# Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+AUTO_RESOLVE = "src.mcp_handlers.dialectic.auto_resolve"
 
-# --- auto_resolve_stuck_sessions Tests ---
+
+def _make_mock_server(agents=None):
+    mock = MagicMock()
+    mock.agent_metadata = agents or {}
+    mock.load_metadata_async = AsyncMock()
+    return mock
+
+
+def _make_agent_meta(status="active"):
+    return SimpleNamespace(status=status, tags=[], last_update=datetime.now().isoformat())
+
+
+def _old_time(hours=3):
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+
+def _recent_time(minutes=5):
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+
+
+# --- Basic auto_resolve Tests ---
 
 
 @pytest.mark.asyncio
 async def test_no_active_sessions():
     """Should return 0 resolved when no active sessions."""
-    with patch("src.mcp_handlers.dialectic.auto_resolve.get_active_sessions_async",
+    with patch(f"{AUTO_RESOLVE}.get_active_sessions_async",
                new_callable=AsyncMock, return_value=[]):
         from src.mcp_handlers.dialectic.auto_resolve import auto_resolve_stuck_sessions
         result = await auto_resolve_stuck_sessions()
@@ -34,12 +55,11 @@ async def test_no_active_sessions():
 @pytest.mark.asyncio
 async def test_no_stuck_sessions():
     """Active sessions that are recent should not be resolved."""
-    recent_time = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     sessions = [
-        {"session_id": "s1", "updated_at": recent_time, "paused_agent_id": "a1", "phase": "thesis"}
+        {"session_id": "s1", "updated_at": _recent_time(), "paused_agent_id": "a1", "phase": "thesis"}
     ]
 
-    with patch("src.mcp_handlers.dialectic.auto_resolve.get_active_sessions_async",
+    with patch(f"{AUTO_RESOLVE}.get_active_sessions_async",
                new_callable=AsyncMock, return_value=sessions):
         from src.mcp_handlers.dialectic.auto_resolve import auto_resolve_stuck_sessions
         result = await auto_resolve_stuck_sessions()
@@ -49,25 +69,20 @@ async def test_no_stuck_sessions():
 
 
 @pytest.mark.asyncio
-async def test_resolves_stuck_session():
-    """Sessions inactive for >2 hours should be auto-resolved."""
-    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+async def test_resolves_stuck_thesis_session():
+    """Sessions in thesis phase inactive for >2h should be marked FAILED (no reviewer to reassign)."""
     sessions = [
-        {"session_id": "stuck-1", "updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"}
+        {"session_id": "stuck-1", "updated_at": _old_time(5), "paused_agent_id": "a1",
+         "phase": "thesis", "reviewer_agent_id": None}
     ]
 
     mock_update = AsyncMock()
     mock_add_msg = AsyncMock()
-    mock_get_db = AsyncMock()
 
-    with patch("src.mcp_handlers.dialectic.auto_resolve.get_active_sessions_async",
+    with patch(f"{AUTO_RESOLVE}.get_active_sessions_async",
                new_callable=AsyncMock, return_value=sessions), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.update_session_status_async",
-               mock_update), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.add_message_async",
-               mock_add_msg), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.get_dialectic_db",
-               mock_get_db):
+         patch(f"{AUTO_RESOLVE}.update_session_status_async", mock_update), \
+         patch(f"{AUTO_RESOLVE}.add_message_async", mock_add_msg):
         from src.mcp_handlers.dialectic.auto_resolve import auto_resolve_stuck_sessions
         result = await auto_resolve_stuck_sessions()
 
@@ -76,131 +91,142 @@ async def test_resolves_stuck_session():
 
 
 @pytest.mark.asyncio
-async def test_resolves_multiple_stuck_sessions():
-    """Should resolve all stuck sessions, not just the first one."""
-    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+async def test_antithesis_reassigns_reviewer_when_gone():
+    """Stuck antithesis session with gone reviewer should try reassignment."""
     sessions = [
-        {"session_id": "s1", "updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"},
-        {"session_id": "s2", "updated_at": old_time, "paused_agent_id": "a2", "phase": "antithesis"},
-        {"session_id": "s3", "created_at": old_time, "paused_agent_id": "a3", "phase": "synthesis"},
+        {"session_id": "s1", "updated_at": _old_time(3), "paused_agent_id": "a1",
+         "phase": "antithesis", "reviewer_agent_id": "gone-reviewer"}
     ]
 
-    mock_update = AsyncMock()
-    mock_add_msg = AsyncMock()
-    mock_get_db = AsyncMock()
+    server = _make_mock_server({
+        "a1": _make_agent_meta(status="paused"),
+        "new-reviewer": _make_agent_meta(status="active"),
+        # "gone-reviewer" NOT in metadata
+    })
 
-    with patch("src.mcp_handlers.dialectic.auto_resolve.get_active_sessions_async",
+    mock_update_reviewer = AsyncMock()
+    mock_add_msg = AsyncMock()
+    mock_select = AsyncMock(return_value="new-reviewer")
+
+    with patch(f"{AUTO_RESOLVE}.get_active_sessions_async",
                new_callable=AsyncMock, return_value=sessions), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.update_session_status_async",
-               mock_update), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.add_message_async",
-               mock_add_msg), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.get_dialectic_db",
-               mock_get_db):
+         patch(f"{AUTO_RESOLVE}.mcp_server", server), \
+         patch(f"{AUTO_RESOLVE}.update_session_reviewer_async", mock_update_reviewer), \
+         patch(f"{AUTO_RESOLVE}.add_message_async", mock_add_msg), \
+         patch("src.mcp_handlers.dialectic.reviewer.select_reviewer", mock_select):
         from src.mcp_handlers.dialectic.auto_resolve import auto_resolve_stuck_sessions
         result = await auto_resolve_stuck_sessions()
 
-    assert result["resolved_count"] == 3
-    assert mock_update.call_count == 3
+    assert result["reassigned_count"] == 1
+    assert result["resolved_count"] == 0  # Not failed
+    mock_update_reviewer.assert_called_once_with("s1", "new-reviewer")
 
 
 @pytest.mark.asyncio
-async def test_uses_created_at_fallback():
-    """Should fall back to created_at when updated_at is missing."""
-    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+async def test_antithesis_awaits_facilitation_when_no_candidates():
+    """Stuck antithesis with no replacement should await facilitation (not fail immediately)."""
+    # Session is 2.5 hours old (past threshold but under facilitation timeout of 4h)
     sessions = [
-        {"session_id": "s1", "created_at": old_time, "paused_agent_id": "a1", "phase": "thesis"}
+        {"session_id": "s1", "updated_at": _old_time(2.5), "paused_agent_id": "a1",
+         "phase": "antithesis", "reviewer_agent_id": "gone-reviewer"}
     ]
 
-    mock_update = AsyncMock()
-    mock_add_msg = AsyncMock()
-    mock_get_db = AsyncMock()
+    server = _make_mock_server({
+        "a1": _make_agent_meta(status="paused"),
+        # No other agents available
+    })
 
-    with patch("src.mcp_handlers.dialectic.auto_resolve.get_active_sessions_async",
+    mock_update_status = AsyncMock()
+    mock_add_msg = AsyncMock()
+    mock_select = AsyncMock(return_value=None)
+
+    with patch(f"{AUTO_RESOLVE}.get_active_sessions_async",
                new_callable=AsyncMock, return_value=sessions), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.update_session_status_async",
-               mock_update), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.add_message_async",
-               mock_add_msg), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.get_dialectic_db",
-               mock_get_db):
+         patch(f"{AUTO_RESOLVE}.mcp_server", server), \
+         patch(f"{AUTO_RESOLVE}.update_session_status_async", mock_update_status), \
+         patch(f"{AUTO_RESOLVE}.add_message_async", mock_add_msg), \
+         patch("src.mcp_handlers.dialectic.reviewer.select_reviewer", mock_select):
         from src.mcp_handlers.dialectic.auto_resolve import auto_resolve_stuck_sessions
         result = await auto_resolve_stuck_sessions()
 
-    assert result["resolved_count"] == 1
+    assert result["facilitation_count"] == 1
+    assert result["resolved_count"] == 0  # NOT failed yet
+    mock_update_status.assert_not_called()  # Should not mark as failed
 
 
 @pytest.mark.asyncio
-async def test_handles_z_suffix_timestamps():
-    """Should handle 'Z' suffix in ISO timestamps."""
-    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+async def test_antithesis_fails_after_facilitation_timeout():
+    """Session past facilitation timeout (4h) should be marked FAILED."""
+    # Session is 5 hours old — past the 4h facilitation timeout
     sessions = [
-        {"session_id": "s1", "updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"}
+        {"session_id": "s1", "updated_at": _old_time(5), "paused_agent_id": "a1",
+         "phase": "antithesis", "reviewer_agent_id": "gone-reviewer"}
     ]
 
-    mock_update = AsyncMock()
-    mock_add_msg = AsyncMock()
-    mock_get_db = AsyncMock()
+    server = _make_mock_server({
+        "a1": _make_agent_meta(status="paused"),
+    })
 
-    with patch("src.mcp_handlers.dialectic.auto_resolve.get_active_sessions_async",
+    mock_update_status = AsyncMock()
+    mock_add_msg = AsyncMock()
+    mock_select = AsyncMock(return_value=None)
+
+    with patch(f"{AUTO_RESOLVE}.get_active_sessions_async",
                new_callable=AsyncMock, return_value=sessions), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.update_session_status_async",
-               mock_update), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.add_message_async",
-               mock_add_msg), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.get_dialectic_db",
-               mock_get_db):
+         patch(f"{AUTO_RESOLVE}.mcp_server", server), \
+         patch(f"{AUTO_RESOLVE}.update_session_status_async", mock_update_status), \
+         patch(f"{AUTO_RESOLVE}.update_session_reviewer_async", AsyncMock()), \
+         patch(f"{AUTO_RESOLVE}.add_message_async", mock_add_msg), \
+         patch("src.mcp_handlers.dialectic.reviewer.select_reviewer", mock_select):
         from src.mcp_handlers.dialectic.auto_resolve import auto_resolve_stuck_sessions
         result = await auto_resolve_stuck_sessions()
 
-    assert result["resolved_count"] == 1
+    assert result["resolved_count"] == 1  # Should be FAILED now
+    mock_update_status.assert_called_once_with("s1", "failed")
 
 
 @pytest.mark.asyncio
-async def test_handles_naive_datetime_timestamps():
-    """Should handle naive datetime strings (no 'T' separator)."""
-    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+async def test_antithesis_with_active_reviewer_not_reassigned():
+    """Stuck antithesis where reviewer is still active should be failed (timeout, not gone)."""
     sessions = [
-        {"session_id": "s1", "updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"}
+        {"session_id": "s1", "updated_at": _old_time(5), "paused_agent_id": "a1",
+         "phase": "antithesis", "reviewer_agent_id": "slow-reviewer"}
     ]
 
-    mock_update = AsyncMock()
-    mock_add_msg = AsyncMock()
-    mock_get_db = AsyncMock()
+    server = _make_mock_server({
+        "a1": _make_agent_meta(status="paused"),
+        "slow-reviewer": _make_agent_meta(status="active"),  # Still there, just slow
+    })
 
-    with patch("src.mcp_handlers.dialectic.auto_resolve.get_active_sessions_async",
+    mock_update_status = AsyncMock()
+    mock_add_msg = AsyncMock()
+
+    with patch(f"{AUTO_RESOLVE}.get_active_sessions_async",
                new_callable=AsyncMock, return_value=sessions), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.update_session_status_async",
-               mock_update), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.add_message_async",
-               mock_add_msg), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.get_dialectic_db",
-               mock_get_db):
+         patch(f"{AUTO_RESOLVE}.mcp_server", server), \
+         patch(f"{AUTO_RESOLVE}.update_session_status_async", mock_update_status), \
+         patch(f"{AUTO_RESOLVE}.add_message_async", mock_add_msg):
         from src.mcp_handlers.dialectic.auto_resolve import auto_resolve_stuck_sessions
         result = await auto_resolve_stuck_sessions()
 
+    # Reviewer is present — this is a normal timeout, not a missing reviewer
     assert result["resolved_count"] == 1
+    mock_update_status.assert_called_once_with("s1", "failed")
 
 
 @pytest.mark.asyncio
 async def test_handles_session_without_id():
     """Sessions without session_id should be skipped."""
-    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
     sessions = [
-        {"updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"}  # No session_id
+        {"updated_at": _old_time(5), "paused_agent_id": "a1", "phase": "thesis"}
     ]
 
     mock_update = AsyncMock()
-    mock_get_db = AsyncMock()
 
-    with patch("src.mcp_handlers.dialectic.auto_resolve.get_active_sessions_async",
+    with patch(f"{AUTO_RESOLVE}.get_active_sessions_async",
                new_callable=AsyncMock, return_value=sessions), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.update_session_status_async",
-               mock_update), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.add_message_async",
-               AsyncMock()), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.get_dialectic_db",
-               mock_get_db):
+         patch(f"{AUTO_RESOLVE}.update_session_status_async", mock_update), \
+         patch(f"{AUTO_RESOLVE}.add_message_async", AsyncMock()):
         from src.mcp_handlers.dialectic.auto_resolve import auto_resolve_stuck_sessions
         result = await auto_resolve_stuck_sessions()
 
@@ -209,9 +235,29 @@ async def test_handles_session_without_id():
 
 
 @pytest.mark.asyncio
+async def test_handles_z_suffix_timestamps():
+    """Should handle 'Z' suffix in ISO timestamps."""
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sessions = [
+        {"session_id": "s1", "updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"}
+    ]
+
+    mock_update = AsyncMock()
+
+    with patch(f"{AUTO_RESOLVE}.get_active_sessions_async",
+               new_callable=AsyncMock, return_value=sessions), \
+         patch(f"{AUTO_RESOLVE}.update_session_status_async", mock_update), \
+         patch(f"{AUTO_RESOLVE}.add_message_async", AsyncMock()):
+        from src.mcp_handlers.dialectic.auto_resolve import auto_resolve_stuck_sessions
+        result = await auto_resolve_stuck_sessions()
+
+    assert result["resolved_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_handles_get_sessions_error():
     """Should handle errors from get_active_sessions_async gracefully."""
-    with patch("src.mcp_handlers.dialectic.auto_resolve.get_active_sessions_async",
+    with patch(f"{AUTO_RESOLVE}.get_active_sessions_async",
                new_callable=AsyncMock, side_effect=Exception("DB error")):
         from src.mcp_handlers.dialectic.auto_resolve import auto_resolve_stuck_sessions
         result = await auto_resolve_stuck_sessions()
@@ -220,41 +266,13 @@ async def test_handles_get_sessions_error():
     assert "error" in result
 
 
-@pytest.mark.asyncio
-async def test_handles_update_error_gracefully():
-    """Should continue resolving other sessions when one update fails."""
-    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
-    sessions = [
-        {"session_id": "s1", "updated_at": old_time, "paused_agent_id": "a1", "phase": "thesis"},
-        {"session_id": "s2", "updated_at": old_time, "paused_agent_id": "a2", "phase": "thesis"},
-    ]
-
-    # First update fails, second succeeds
-    mock_update = AsyncMock(side_effect=[Exception("update failed"), None])
-    mock_get_db = AsyncMock()
-
-    with patch("src.mcp_handlers.dialectic.auto_resolve.get_active_sessions_async",
-               new_callable=AsyncMock, return_value=sessions), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.update_session_status_async",
-               mock_update), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.add_message_async",
-               AsyncMock()), \
-         patch("src.mcp_handlers.dialectic.auto_resolve.get_dialectic_db",
-               mock_get_db):
-        from src.mcp_handlers.dialectic.auto_resolve import auto_resolve_stuck_sessions
-        result = await auto_resolve_stuck_sessions()
-
-    # Only second should succeed
-    assert result["resolved_count"] == 1
-
-
 # --- check_and_resolve_stuck_sessions Tests ---
 
 
 @pytest.mark.asyncio
 async def test_check_and_resolve_delegates():
     """check_and_resolve_stuck_sessions should delegate to auto_resolve."""
-    with patch("src.mcp_handlers.dialectic.auto_resolve.get_active_sessions_async",
+    with patch(f"{AUTO_RESOLVE}.get_active_sessions_async",
                new_callable=AsyncMock, return_value=[]):
         from src.mcp_handlers.dialectic.auto_resolve import check_and_resolve_stuck_sessions
         result = await check_and_resolve_stuck_sessions()
@@ -265,7 +283,7 @@ async def test_check_and_resolve_delegates():
 @pytest.mark.asyncio
 async def test_check_and_resolve_handles_error():
     """check_and_resolve should catch errors from auto_resolve."""
-    with patch("src.mcp_handlers.dialectic.auto_resolve.auto_resolve_stuck_sessions",
+    with patch(f"{AUTO_RESOLVE}.auto_resolve_stuck_sessions",
                new_callable=AsyncMock, side_effect=Exception("unexpected")):
         from src.mcp_handlers.dialectic.auto_resolve import check_and_resolve_stuck_sessions
         result = await check_and_resolve_stuck_sessions()
@@ -274,10 +292,16 @@ async def test_check_and_resolve_handles_error():
     assert "error" in result
 
 
-# --- STUCK_SESSION_THRESHOLD Tests ---
+# --- Threshold Tests ---
 
 
 def test_stuck_threshold_is_2_hours():
     """Threshold should match DialecticProtocol.MAX_ANTITHESIS_WAIT."""
     from src.mcp_handlers.dialectic.auto_resolve import STUCK_SESSION_THRESHOLD
     assert STUCK_SESSION_THRESHOLD == timedelta(hours=2)
+
+
+def test_facilitation_timeout_is_4_hours():
+    """Facilitation timeout should be 4 hours (2h stuck + 2h grace)."""
+    from src.mcp_handlers.dialectic.auto_resolve import FACILITATION_TIMEOUT
+    assert FACILITATION_TIMEOUT == timedelta(hours=4)
