@@ -186,9 +186,6 @@ class TestGetConnectionStatus:
 
             data = parse_result(result)
             assert data["session_bound"] is True
-            # success_response adds caller_agent_id (calling session's bound UUID)
-            # The handler's resolved_agent_id (display name) is now preserved separately
-            assert data["caller_agent_id"] == "uuid-123"
             assert data["resolved_uuid"] == "uuid-123..."
 
     @pytest.mark.asyncio
@@ -2357,9 +2354,7 @@ class TestGetConnectionStatusAdditional:
             assert data["session_bound"] is True
             # resolved_uuid is the truncated UUID from the handler
             assert data["resolved_uuid"] == "uuid-xyz..."
-            # caller_agent_id is the calling session's bound UUID (from success_response envelope)
-            assert data["caller_agent_id"] == "uuid-xyz"
-            # resolved_agent_id is now the display name from the handler (no longer overwritten)
+            # resolved_agent_id is the display name from the handler
             assert data["resolved_agent_id"] == "Claude_Opus_20260101"
 
 

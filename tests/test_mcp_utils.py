@@ -297,22 +297,20 @@ class TestErrorResponse:
 
 class TestSuccessResponse:
     @patch("src.mcp_handlers.support.agent_auth.compute_agent_signature", return_value={"uuid": "u1"})
-    @patch("src.mcp_handlers.context.get_context_agent_id", return_value="u1")
-    def test_basic(self, mc, ms):
+    def test_basic(self, ms):
         r = success_response({"msg": "hi"})
         d = _parse_tc(r[0])
         assert d["success"] is True and d["msg"] == "hi"
-        assert d["caller_agent_id"] == "u1"
+        assert d["agent_signature"]["uuid"] == "u1"
+        assert "caller_agent_id" not in d
 
     @patch("src.mcp_handlers.support.agent_auth.compute_agent_signature", return_value={"uuid": "u1"})
-    @patch("src.mcp_handlers.context.get_context_agent_id", return_value="u1")
-    def test_lite_omits_sig(self, mc, ms):
+    def test_lite_omits_sig(self, ms):
         d = _parse_tc(success_response({"x": 1}, arguments={"lite_response": True})[0])
         assert "agent_signature" not in d
 
     @patch("src.mcp_handlers.support.agent_auth.compute_agent_signature", return_value={"uuid": None})
-    @patch("src.mcp_handlers.context.get_context_agent_id", return_value=None)
-    def test_no_resolved_when_unbound(self, mc, ms):
+    def test_no_sig_when_unbound(self, ms):
         d = _parse_tc(success_response({"x": 1})[0])
         assert "caller_agent_id" not in d
 

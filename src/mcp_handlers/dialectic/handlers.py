@@ -302,11 +302,11 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
         paused_agent_state = {}
 
     # Reviewer selection
+    auto_self_review = False
     if reviewer_mode == "self":
         reviewer_agent_id = agent_uuid
     elif reviewer_mode == "auto":
         # Auto-select a reviewer from eligible agents
-        # Falls back to None if no eligible agents (first responder can claim via submit_antithesis)
         await mcp_server.load_metadata_async(force=True)
         try:
             reviewer_agent_id = await select_reviewer(
@@ -314,8 +314,13 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
                 metadata=mcp_server.agent_metadata,
             )
         except Exception as e:
-            logger.warning(f"Auto reviewer selection failed, session will await manual assignment: {e}")
+            logger.warning(f"Auto reviewer selection failed: {e}")
             reviewer_agent_id = None
+        # Fall back to self-review if no eligible reviewer found
+        if reviewer_agent_id is None:
+            logger.info(f"[DIALECTIC] No eligible reviewer for {agent_uuid[:12]}... — falling back to self-review")
+            reviewer_agent_id = agent_uuid
+            auto_self_review = True
     else:
         # Manual mode or unknown - no reviewer assigned
         # First responder can claim via submit_antithesis
@@ -365,8 +370,10 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
     # Cache in-memory for quick access
     ACTIVE_SESSIONS[session.session_id] = session
 
-    # Build response based on whether reviewer is assigned
-    if session.reviewer_agent_id:
+    # Build response based on reviewer assignment
+    if auto_self_review:
+        note = "No eligible reviewer available — configured for self-review. Use submit_thesis, then submit_antithesis for your counter-perspective."
+    elif session.reviewer_agent_id:
         note = "Session created with self-review. Use submit_thesis to add your thesis."
     else:
         note = "Session created. Awaiting reviewer assignment. Operator should assign a reviewer, then paused agent submits thesis."

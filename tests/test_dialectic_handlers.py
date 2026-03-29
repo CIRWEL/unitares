@@ -243,11 +243,11 @@ class TestHandleRequestDialecticReview:
         pg_create.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_happy_path_auto_mode_no_reviewer(
+    async def test_happy_path_auto_mode_no_reviewer_falls_back_to_self(
         self, mock_server, mock_require_registered, mock_verify_ownership,
         mock_pg_create, mock_is_in_session, mock_context_agent, mock_select_reviewer,
     ):
-        """Auto mode creates session with no reviewer assigned (awaiting assignment)."""
+        """Auto mode falls back to self-review when no eligible reviewer found."""
         from src.mcp_handlers.dialectic.handlers import handle_request_dialectic_review
 
         with mock_require_registered("agent-paused"), mock_verify_ownership, \
@@ -261,8 +261,10 @@ class TestHandleRequestDialecticReview:
 
         data = _parse(result)
         assert data["success"] is True
-        assert data["reviewer_agent_id"] is None
-        assert data["awaiting_reviewer"] is True
+        # Falls back to self-review instead of leaving session orphaned
+        assert data["reviewer_agent_id"] == "agent-paused"
+        assert data["awaiting_reviewer"] is False
+        assert "self-review" in data["note"]
 
     @pytest.mark.asyncio
     async def test_agent_not_registered(self, mock_server, mock_context_agent):

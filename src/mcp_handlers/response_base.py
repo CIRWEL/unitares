@@ -99,12 +99,6 @@ def success_response(data: Dict[str, Any], agent_id: str = None, arguments: Dict
         **data
     }
 
-    from .context import get_context_agent_id
-    current_bound_id = get_context_agent_id()
-
-    if current_bound_id:
-        response["caller_agent_id"] = current_bound_id
-
     lite_response = (arguments or {}).get("lite_response", False)
 
     if lite_response:

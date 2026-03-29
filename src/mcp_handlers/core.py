@@ -104,20 +104,48 @@ def _assess_thermodynamic_significance(
         'timestamp': datetime.now().isoformat(),
     }
 
+
+def _generate_contextual_reflection(metrics: dict, interpreted: dict) -> str | None:
+    """Generate a reflection prompt only when state warrants attention. Returns None for healthy states."""
+    is_uninit = metrics.get('initialized') is False or metrics.get('status') == 'uninitialized'
+    if is_uninit:
+        return "First check-in — submit a process_agent_update to activate governance."
+
+    verdict = metrics.get('verdict', 'proceed')
+    if verdict in ('guide', 'pause', 'reject'):
+        return f"Your state triggered a {verdict} verdict. What changed?"
+
+    state = interpreted.get('state', {})
+    borderline = state.get('borderline')
+    if borderline:
+        return "You're near a basin boundary. Proceed carefully."
+
+    S = metrics.get('S')
+    if S is not None and S > 0.3:
+        return f"Entropy is elevated ({S:.2f}). What's contributing to disorder?"
+
+    return None
+
+
 @mcp_tool("get_governance_metrics", timeout=10.0)
 async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequence[TextContent]:
     """Get current governance state and metrics for an agent without updating state.
 
     Args:
-        lite: If true (default), returns minimal essential metrics only.
-              Set lite=false for full diagnostic data.
+        verbosity: 'minimal' (default), 'standard', or 'full'. Replaces lite param.
+        lite: Backward compat — lite=true maps to verbosity=minimal, lite=false to full.
     """
     agent_id, error = require_agent_id(arguments)
     if error:
         return [error]  # Wrap in list for Sequence[TextContent]
 
-    # LITE-FIRST: Minimal response by default for smaller models
-    lite = arguments.get("lite", True)
+    # Verbosity resolution (backward compat with lite param)
+    verbosity = arguments.get("verbosity")
+    if verbosity and verbosity in ("minimal", "standard", "full"):
+        lite = verbosity == "minimal"
+    else:
+        lite = arguments.get("lite", True)
+        verbosity = "minimal" if lite else "full"
 
     # UX FIX (Dec 2025): Auto-register agent if not found
     # This reduces friction - agents can query metrics immediately after identity() call
@@ -233,8 +261,33 @@ async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequenc
     except Exception as e:
         logger.debug(f"Could not compute saturation diagnostics: {e}")
 
-    # Add gentle reflection prompt (mirror, not prescription)
-    standardized_metrics['reflection'] = "What do you notice about your state?"
+    # Conditional reflection — only when state warrants attention
+    reflection = _generate_contextual_reflection(metrics, standardized_metrics)
+    if reflection:
+        standardized_metrics['reflection'] = reflection
+
+    # STANDARD VERBOSITY: middle tier — key metrics without diagnostics
+    if verbosity == "standard":
+        state = standardized_metrics.get('state', {})
+        standard_metrics = {
+            'agent_id': agent_id,
+            'display_name': getattr(meta, 'label', None) if meta else None,
+            'E': metrics.get('E'),
+            'I': metrics.get('I'),
+            'S': metrics.get('S'),
+            'V': metrics.get('V'),
+            'coherence': metrics.get('coherence'),
+            'verdict': metrics.get('verdict', 'uninitialized'),
+            'risk_score': metrics.get('risk_score'),
+            'basin': state.get('basin'),
+            'mode': state.get('mode'),
+            'summary': standardized_metrics.get('summary'),
+            'guidance': state.get('guidance'),
+        }
+        if reflection:
+            standard_metrics['reflection'] = reflection
+        standard_metrics['_note'] = "Use verbosity='full' for diagnostics, 'minimal' for quick check"
+        return success_response(standard_metrics)
 
     # LITE MODE: Return minimal essential metrics WITH contextual interpretation
     # Debug: include what lite value was received so agents can troubleshoot

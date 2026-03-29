@@ -538,11 +538,86 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         response_data["session_continuity"]["resolution_source"] = continuity_source
         response_data["session_continuity"]["token_support"] = continuity_support
 
+    # Auto-bind: automatically perform session binding so agents don't need a separate bind_session call
+    auto_bind = coerce_bool(arguments.get("auto_bind", True))
+    if auto_bind and not (existing_identity and existing_identity.get("archived")):
+        try:
+            from ..context import get_session_signals as _abs_signals
+            mcp_signals = _abs_signals()
+            mcp_key = await derive_session_key(mcp_signals)
+            if mcp_key and mcp_key != base_session_key:
+                await _perform_session_bind(
+                    agent_uuid=agent_uuid,
+                    session_key=mcp_key,
+                    display_agent_id=final_agent_id,
+                    source="identity_auto_bind",
+                )
+                response_data["auto_bound"] = True
+        except Exception as e:
+            logger.debug(f"[IDENTITY] Auto-bind failed (non-fatal): {e}")
+
     # Use lite_response to skip redundant agent_signature (identity already contains all that info)
     if arguments is None:
         arguments = {}
     arguments["lite_response"] = True
     return success_response(response_data, agent_id=final_agent_id, arguments=arguments)
+
+
+async def _perform_session_bind(
+    agent_uuid: str,
+    session_key: str,
+    display_agent_id: str = None,
+    source: str = "auto_bind",
+) -> dict:
+    """Bind a session key to an agent UUID (Redis + PostgreSQL + sticky transport).
+
+    Shared helper used by both identity() auto-bind and bind_session().
+    All steps are best-effort — failures are logged but don't prevent binding.
+    """
+    bound_info = {"bound": False, "session_key": session_key[:20] + "..." if session_key else None}
+
+    # 1. Redis cache
+    try:
+        await _cache_session(session_key, agent_uuid, display_agent_id=display_agent_id)
+        bound_info["redis"] = True
+    except Exception as e:
+        logger.debug(f"[{source}] Redis cache failed (non-fatal): {e}")
+        bound_info["redis"] = False
+
+    # 2. PostgreSQL session
+    try:
+        db = get_db()
+        if hasattr(db, "init"):
+            await db.init()
+        identity_record = await db.get_identity(agent_uuid)
+        if identity_record:
+            await db.create_session(
+                session_id=session_key,
+                identity_id=identity_record.identity_id,
+                expires_at=datetime.now() + timedelta(hours=GovernanceConfig.SESSION_TTL_HOURS),
+                client_type="mcp",
+                client_info={"agent_uuid": agent_uuid, "bound_via": source}
+            )
+            bound_info["postgres"] = True
+    except Exception as e:
+        logger.debug(f"[{source}] PostgreSQL session binding failed (non-fatal): {e}")
+        bound_info["postgres"] = False
+
+    # 3. Sticky transport
+    try:
+        from ..context import get_session_signals as _get_signals
+        from ..middleware.identity_step import _transport_cache_key, update_transport_binding
+        _signals = _get_signals()
+        _tkey = _transport_cache_key(_signals)
+        if _tkey:
+            update_transport_binding(_tkey, agent_uuid, session_key, source)
+            bound_info["transport"] = True
+    except Exception:
+        bound_info["transport"] = False
+
+    bound_info["bound"] = True
+    logger.info(f"[{source}] Bound session {session_key[:20]}... -> agent {agent_uuid[:8]}...")
+    return bound_info
 
 
 @mcp_tool("bind_session", timeout=5.0)
@@ -632,45 +707,12 @@ async def handle_bind_session(arguments: Dict[str, Any]) -> Sequence[TextContent
 
     # Rebind: cache the MCP session key → target agent UUID
     if mcp_session_key and mcp_session_key != client_session_id:
-        await _cache_session(mcp_session_key, target_uuid, display_agent_id=target_agent_id)
-
-        # Also create a PostgreSQL session binding for the MCP key
-        try:
-            db = get_db()
-            if hasattr(db, "init"):
-                await db.init()
-            identity_record = await db.get_identity(target_uuid)
-            if identity_record:
-                await db.create_session(
-                    session_id=mcp_session_key,
-                    identity_id=identity_record.identity_id,
-                    expires_at=datetime.now() + timedelta(hours=GovernanceConfig.SESSION_TTL_HOURS),
-                    client_type="mcp",
-                    client_info={"agent_uuid": target_uuid, "bound_via": "bind_session"}
-                )
-        except Exception as e:
-            logger.debug(f"[BIND_SESSION] PostgreSQL session binding failed (non-fatal): {e}")
-
-        logger.info(
-            f"[BIND_SESSION] Bound MCP session {mcp_session_key[:20]}... -> "
-            f"agent {target_label or target_agent_id} ({target_uuid[:8]}...)"
-        )
+        await _perform_session_bind(target_uuid, mcp_session_key, display_agent_id=target_agent_id, source="bind_session")
 
     # Update request context so subsequent calls in this request use the correct agent
     try:
         from ..context import update_context_agent_id
         update_context_agent_id(target_uuid)
-    except Exception:
-        pass
-
-    # Update sticky transport binding so subsequent tool calls use this identity
-    try:
-        from ..context import get_session_signals as _get_signals
-        from ..middleware.identity_step import _transport_cache_key, update_transport_binding
-        _signals = _get_signals()
-        _tkey = _transport_cache_key(_signals)
-        if _tkey:
-            update_transport_binding(_tkey, target_uuid, mcp_session_key or "", "bind_session")
     except Exception:
         pass
 

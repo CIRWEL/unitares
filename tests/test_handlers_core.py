@@ -323,9 +323,8 @@ class TestGetGovernanceMetrics:
             result = await handle_get_governance_metrics({"lite": False})
 
             data = json.loads(result[0].text)
-            # Full mode should have summary and reflection
+            # Full mode should have summary; reflection is now conditional
             assert "summary" in data
-            assert "reflection" in data
 
     @pytest.mark.asyncio
     async def test_get_metrics_uninitialized_agent(self, mock_mcp_server):

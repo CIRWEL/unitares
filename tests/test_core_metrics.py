@@ -420,7 +420,8 @@ class TestGetGovernanceMetrics:
 
             data = _parse(result)
             assert "summary" in data
-            assert "reflection" in data
+            # reflection is now conditional — omitted for healthy states
+            # (S=0.2, no bad verdict → no reflection)
 
     @pytest.mark.asyncio
     async def test_uninitialized_agent_shows_pending(self, mock_server):
@@ -520,8 +521,8 @@ class TestGetGovernanceMetrics:
             # Full mode to trigger interpret_state
             result = await handle_get_governance_metrics({"lite": False})
             data = _parse(result)
-            # Should still succeed without crashing
-            assert "reflection" in data
+            # Should still succeed without crashing (reflection conditional now)
+            assert data["success"] is True
 
 
 # ============================================================================
@@ -1082,7 +1083,7 @@ class TestEdgeCases:
             result = await handle_get_governance_metrics({"lite": False})
             data = _parse(result)
             # Should still return valid data without saturation_diagnostics key
-            assert "reflection" in data
+            assert data["success"] is True
             assert "saturation_diagnostics" not in data
 
     @pytest.mark.asyncio
@@ -1367,6 +1368,130 @@ class TestEdgeCases:
             # {"health": "healthy", "mode": "convergent", "basin": "stable"}
             assert data.get("mode") == "convergent"
             assert data.get("basin") == "stable"
+
+
+# ============================================================================
+# Conditional Reflection
+# ============================================================================
+
+class TestGenerateContextualReflection:
+    """Tests for _generate_contextual_reflection()."""
+
+    def test_uninitialized_returns_first_checkin_message(self):
+        from src.mcp_handlers.core import _generate_contextual_reflection
+        result = _generate_contextual_reflection(
+            {"initialized": False, "status": "uninitialized"},
+            {}
+        )
+        assert result is not None
+        assert "First check-in" in result
+
+    def test_guide_verdict_returns_reflection(self):
+        from src.mcp_handlers.core import _generate_contextual_reflection
+        result = _generate_contextual_reflection(
+            {"initialized": True, "verdict": "guide", "S": 0.1},
+            {"state": {}}
+        )
+        assert result is not None
+        assert "guide" in result
+
+    def test_pause_verdict_returns_reflection(self):
+        from src.mcp_handlers.core import _generate_contextual_reflection
+        result = _generate_contextual_reflection(
+            {"initialized": True, "verdict": "pause", "S": 0.1},
+            {"state": {}}
+        )
+        assert "pause" in result
+
+    def test_basin_boundary_returns_reflection(self):
+        from src.mcp_handlers.core import _generate_contextual_reflection
+        result = _generate_contextual_reflection(
+            {"initialized": True, "verdict": "proceed", "S": 0.1},
+            {"state": {"borderline": {"S": {"value": 0.28}}}}
+        )
+        assert result is not None
+        assert "basin boundary" in result
+
+    def test_high_entropy_returns_reflection(self):
+        from src.mcp_handlers.core import _generate_contextual_reflection
+        result = _generate_contextual_reflection(
+            {"initialized": True, "verdict": "proceed", "S": 0.45},
+            {"state": {}}
+        )
+        assert result is not None
+        assert "Entropy" in result
+        assert "0.45" in result
+
+    def test_healthy_state_returns_none(self):
+        from src.mcp_handlers.core import _generate_contextual_reflection
+        result = _generate_contextual_reflection(
+            {"initialized": True, "verdict": "proceed", "S": 0.15},
+            {"state": {}}
+        )
+        assert result is None
+
+
+# ============================================================================
+# Verbosity Tiers
+# ============================================================================
+
+class TestVerbosityTiers:
+    """Tests for the verbosity parameter on get_governance_metrics."""
+
+    @pytest.fixture
+    def mock_server(self):
+        server = MagicMock()
+        server.agent_metadata = {"agent-1": _make_metadata()}
+        server.get_or_create_monitor.return_value = _make_monitor()
+        return server
+
+    @pytest.mark.asyncio
+    async def test_standard_verbosity_returns_key_fields(self, mock_server):
+        with patch("src.mcp_handlers.core.mcp_server", mock_server), \
+             patch("src.mcp_handlers.core.require_agent_id", return_value=("agent-1", None)), \
+             patch("src.governance_monitor.UNITARESMonitor") as MockClass:
+            MockClass.get_eisv_labels.return_value = {}
+            from src.mcp_handlers.core import handle_get_governance_metrics
+            result = await handle_get_governance_metrics({"verbosity": "standard"})
+            data = _parse(result)
+
+        assert data["success"] is True
+        # Key fields present
+        for key in ("E", "I", "S", "V", "coherence", "verdict", "risk_score", "basin", "summary"):
+            assert key in data, f"Missing key: {key}"
+        # Diagnostic fields absent
+        for key in ("saturation_diagnostics", "stability", "calibration_feedback", "thresholds", "eisv_labels"):
+            assert key not in data, f"Unexpected key: {key}"
+        assert data.get("_note") is not None
+
+    @pytest.mark.asyncio
+    async def test_lite_backward_compat(self, mock_server):
+        """lite=true still works and maps to minimal verbosity."""
+        with patch("src.mcp_handlers.core.mcp_server", mock_server), \
+             patch("src.mcp_handlers.core.require_agent_id", return_value=("agent-1", None)), \
+             patch("src.governance_monitor.UNITARESMonitor") as MockClass:
+            MockClass.get_eisv_labels.return_value = {}
+            from src.mcp_handlers.core import handle_get_governance_metrics
+            result = await handle_get_governance_metrics({"lite": True})
+            data = _parse(result)
+
+        # Minimal mode has structured EISV (dicts with value/range)
+        assert isinstance(data.get("E"), dict)
+
+    @pytest.mark.asyncio
+    async def test_verbosity_full(self, mock_server):
+        """verbosity=full returns diagnostic fields."""
+        with patch("src.mcp_handlers.core.mcp_server", mock_server), \
+             patch("src.mcp_handlers.core.require_agent_id", return_value=("agent-1", None)), \
+             patch("src.governance_monitor.UNITARESMonitor") as MockClass:
+            MockClass.get_eisv_labels.return_value = {}
+            from src.mcp_handlers.core import handle_get_governance_metrics
+            result = await handle_get_governance_metrics({"verbosity": "full"})
+            data = _parse(result)
+
+        # Full mode has raw EISV values (not dicts)
+        assert isinstance(data.get("E"), (int, float))
+        assert "summary" in data
 
 
 # ============================================================================
