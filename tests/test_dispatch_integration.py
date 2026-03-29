@@ -713,6 +713,17 @@ class TestInjectIdentity:
                 )
         assert not _is_short_circuit(result)
 
+    @pytest.mark.asyncio
+    async def test_bind_session_skips_injection(self):
+        """bind_session handles its own identity — no auto-injection."""
+        from src.mcp_handlers.middleware import inject_identity
+        ctx = _make_ctx(bound_agent_id="auto-created-uuid")
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value="auto-created-uuid"):
+            result = await inject_identity("bind_session", {}, ctx)
+        assert not _is_short_circuit(result)
+        _, args, _ = result
+        assert "agent_id" not in args, "bind_session should not get auto-injected agent_id"
+
 
 # ============================================================================
 # 10. track_patterns middleware

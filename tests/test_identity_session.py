@@ -420,6 +420,47 @@ class TestUnifiedDeriveSessionKey:
         result = await derive_session_key(None, {"client_session_id": "sync-test"})
         assert result == "sync-test"
 
+    @pytest.mark.asyncio
+    async def test_agent_prefix_skips_model_scoping(self):
+        """agent-{uuid} IDs are globally unique — no model suffix appended."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+
+        # Even with a Claude user agent that would normally produce ":claude" suffix
+        signals = SessionSignals(user_agent="Claude-Code/1.0")
+        result = await derive_session_key(
+            signals,
+            {"client_session_id": "agent-047202aa-56e"},
+        )
+        assert result == "agent-047202aa-56e"
+        # No ":claude" suffix
+
+    @pytest.mark.asyncio
+    async def test_agent_prefix_skips_model_scoping_with_explicit_model_type(self):
+        """agent-* IDs skip model scoping even when model_type is explicit."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+
+        signals = SessionSignals(user_agent="Codex/CLI")
+        result = await derive_session_key(
+            signals,
+            {"client_session_id": "agent-abc123-def", "model_type": "gpt-5-codex"},
+        )
+        assert result == "agent-abc123-def"
+
+    @pytest.mark.asyncio
+    async def test_non_agent_prefix_still_scoped(self):
+        """Non-agent-* client_session_ids still get model scoping."""
+        from src.mcp_handlers.identity.handlers import derive_session_key
+        from src.mcp_handlers.context import SessionSignals
+
+        signals = SessionSignals(user_agent="Codex/CLI")
+        result = await derive_session_key(
+            signals,
+            {"client_session_id": "custom-session-123", "model_type": "gpt-5"},
+        )
+        assert result == "custom-session-123:gpt"
+
 
 # ============================================================================
 # _normalize_model_type

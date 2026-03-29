@@ -124,10 +124,10 @@ class TestLoadVersion:
     def test_strips_whitespace(self, tmp_path):
         from src.agent_state import _load_version
         version_file = tmp_path / "VERSION"
-        version_file.write_text("  2.8.0  \n")
+        version_file.write_text("  2.9.0  \n")
         with patch("src.agent_metadata_model.project_root", tmp_path):
             result = _load_version()
-        assert result == "2.8.0"
+        assert result == "2.9.0"
 
 
 # ============================================================================

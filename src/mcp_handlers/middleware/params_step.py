@@ -78,7 +78,10 @@ async def inject_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
                     f"is_knowledge_browsable={is_knowledge_browsable}, "
                     f"bound_id={bound_id[:8] if bound_id else None}..."
                 )
-                if name not in browsable_data_tools and not is_knowledge_browsable:
+                # bind_session handles its own identity resolution — injecting
+                # the middleware-resolved agent_id overwrites its validation.
+                identity_internal_tools = {"bind_session"}
+                if name not in browsable_data_tools and not is_knowledge_browsable and name not in identity_internal_tools:
                     arguments["agent_id"] = bound_id
                     logger.debug(f"Injected session-bound agent_id: {bound_id}")
             elif provided_id != bound_id:

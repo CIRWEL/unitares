@@ -248,6 +248,13 @@ async def derive_session_key(
     # 2. Explicit from arguments
     if arguments.get("client_session_id"):
         explicit = str(arguments["client_session_id"])
+        # agent-{uuid} IDs are globally unique by construction — skip model-
+        # family scoping.  Appending ":claude" creates a key mismatch between
+        # REST-onboarded sessions (curl UA → no suffix) and MCP lookups
+        # (Claude UA → ":claude" suffix), breaking bind_session.
+        if explicit.startswith("agent-"):
+            _mark("explicit_client_session_id")
+            return explicit
         explicit_model = _normalize_pin_model_type(
             arguments.get("model_type"),
             signals.user_agent if signals else None,

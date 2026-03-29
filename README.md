@@ -239,4 +239,4 @@ The MCP server, dashboard, tooling, and all code in this repo are **MIT licensed
 
 ---
 
-Built by [@CIRWEL](https://github.com/CIRWEL) | **v2.8.0**
+Built by [@CIRWEL](https://github.com/CIRWEL) | **v2.9.0**

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [2.9.0] - 2026-03-29
+
+### Breaking — Epoch Bump (1 → 2)
+
+- **DB epoch bumped to 2** — Behavioral EISV replaces ODE dynamics. Existing state data computed under the old model is incompatible. Old data (epoch 1) remains in the database but is excluded from active queries. All agents start fresh in epoch 2 on next check-in.
+
 ### Added — Identity & Session Management
 
 - **`bind_session` tool** — bridges the identity gap between REST hooks (which onboard via curl) and MCP Streamable HTTP (which uses a different session key). One call at session start syncs both namespaces to the same agent.
