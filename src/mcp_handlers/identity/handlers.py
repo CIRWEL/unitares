@@ -663,6 +663,17 @@ async def handle_bind_session(arguments: Dict[str, Any]) -> Sequence[TextContent
     except Exception:
         pass
 
+    # Update sticky transport binding so subsequent tool calls use this identity
+    try:
+        from ..context import get_session_signals as _get_signals
+        from ..middleware.identity_step import _transport_cache_key, update_transport_binding
+        _signals = _get_signals()
+        _tkey = _transport_cache_key(_signals)
+        if _tkey:
+            update_transport_binding(_tkey, target_uuid, mcp_session_key or "", "bind_session")
+    except Exception:
+        pass
+
     return success_response({
         "bound": True,
         "agent_uuid": target_uuid,

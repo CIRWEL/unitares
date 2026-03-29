@@ -235,6 +235,22 @@ async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Seque
             elif hasattr(result, 'text'):
                 if "Handler not yet extracted" in result.text:
                     return None
+
+        # Post-handler: update sticky cache if handler changed identity
+        # (e.g. onboard, identity(force_new), bind_session)
+        if ctx._transport_key:
+            try:
+                from .context import get_context_agent_id
+                current_agent = get_context_agent_id()
+                if current_agent and current_agent != ctx.bound_agent_id:
+                    from .middleware.identity_step import update_transport_binding
+                    update_transport_binding(
+                        ctx._transport_key, current_agent,
+                        ctx.session_key or "", f"post_handler:{name}"
+                    )
+            except Exception:
+                pass
+
         return result
     finally:
         reset_session_context(ctx.context_token)

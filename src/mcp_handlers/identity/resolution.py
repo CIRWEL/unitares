@@ -396,9 +396,11 @@ async def resolve_session_identity(
 
                         persisted = await _agent_exists_in_postgres(agent_uuid)
 
-                        # Fetch label
+                        # Fetch label (DB first, then Redis cache fallback)
 
                         label = await _get_agent_label(agent_uuid) if persisted else None
+                        if not label:
+                            label = cached.get("label")
 
                         # Check archived status (prevents silent binding to archived agents)
                         agent_status = await _get_agent_status(agent_uuid) if persisted else None
@@ -679,15 +681,15 @@ async def resolve_session_identity(
             # Fall through to memory-only path
 
     # Lazy creation: just cache in Redis, don't write to PostgreSQL
-    # Cache UUID + display agent_id for retrieval on next call
-    await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
-    logger.debug(f"Created new agent (lazy): {agent_id} (uuid: {agent_uuid[:8]}...)")
+    # Cache UUID + display agent_id + auto-label for retrieval on next call
+    await _cache_session(session_key, agent_uuid, display_agent_id=agent_id, label=label)
+    logger.debug(f"Created new agent (lazy): {agent_id} (uuid: {agent_uuid[:8]}...) label={label}")
 
     result = {
         "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
         "agent_uuid": agent_uuid,
-        "display_name": None,
-        "label": None,  # backward compat
+        "display_name": label,
+        "label": label,
         "created": True,
         "persisted": False,
         "source": "memory_only",

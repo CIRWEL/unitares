@@ -719,8 +719,9 @@ class TestResolvePath3CreateNew:
         assert result["persisted"] is False
         assert result["source"] == "memory_only"
         assert result["agent_id"].startswith("Claude_Opus_4_")
-        assert result["display_name"] is None
-        assert result["label"] is None
+        # Lazy-created agents now get auto-labels from model_type/client_hint
+        assert result["display_name"] == "opus"
+        assert result["label"] == "opus"
         # UUID should be valid
         assert len(result["agent_uuid"]) == 36
         assert result["agent_uuid"].count("-") == 4

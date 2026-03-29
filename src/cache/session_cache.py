@@ -72,7 +72,8 @@ class SessionCache:
                         data["bind_count"] = existing_data.get("bind_count", 0) + 1
                     except (json.JSONDecodeError, TypeError):
                         pass
-                await redis.set(key, json.dumps(data))
+                from config.governance_config import GovernanceConfig
+                await redis.setex(key, GovernanceConfig.SESSION_TTL_SECONDS, json.dumps(data))
                 # Also update in-memory cache to prevent stale data
                 _fallback_cache[session_id] = data
                 logger.debug(f"Session bound in Redis: {session_id} -> {agent_id[:8]}...")

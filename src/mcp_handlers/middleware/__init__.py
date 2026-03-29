@@ -36,6 +36,7 @@ class DispatchContext:
     original_name: Optional[str] = None
     client_hint: Optional[str] = None
     identity_result: Optional[dict] = None
+    _transport_key: Optional[str] = None  # Sticky transport binding cache key
 
 
 # Steps that must succeed (short-circuit on error)

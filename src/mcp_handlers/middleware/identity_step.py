@@ -1,11 +1,85 @@
 """Step 1: Resolve Session Identity."""
 
 import asyncio
-from typing import Any, Dict
+import time as _time
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
 
 from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
+
+# =============================================================================
+# STICKY TRANSPORT BINDING CACHE
+# =============================================================================
+# Once identity resolves on the first tool call from a transport fingerprint,
+# reuse it for all subsequent calls. This prevents identity fragmentation
+# caused by derive_session_key() producing different keys for different tools
+# when using the IP:UA fingerprint path.
+
+_TRANSPORT_CACHE_TTL = 7200  # 2 hours
+_TRANSPORT_CACHE_MAX = 10_000
+
+
+@dataclass
+class TransportBinding:
+    """Cached identity binding for a transport fingerprint."""
+    agent_uuid: str
+    session_key: str
+    bound_at: float  # monotonic timestamp
+    source: str  # e.g. "redis", "postgres", "created"
+
+
+_transport_identity_cache: Dict[str, TransportBinding] = {}
+
+
+def _transport_cache_key(signals) -> Optional[str]:
+    """Compute sticky cache key from transport signals.
+
+    Returns None for already-stable paths (mcp_session_id, x_session_id, etc.)
+    so the cache is only used for the fingerprint fallback path where
+    derive_session_key() can produce inconsistent results across tool calls.
+    """
+    if not signals:
+        return None
+    # Already-stable paths — no caching needed
+    if signals.mcp_session_id or signals.x_session_id or signals.x_client_id or signals.oauth_client_id:
+        return None
+    # Only cache for IP:UA fingerprint path
+    if signals.ip_ua_fingerprint:
+        return f"sticky:{signals.ip_ua_fingerprint}"
+    return None
+
+
+def update_transport_binding(key: str, agent_uuid: str, session_key: str, source: str) -> None:
+    """Set or update a sticky transport binding."""
+    _transport_identity_cache[key] = TransportBinding(
+        agent_uuid=agent_uuid,
+        session_key=session_key,
+        bound_at=_time.monotonic(),
+        source=source,
+    )
+    _evict_stale_entries()
+
+
+def invalidate_transport_binding(key: str) -> None:
+    """Remove a sticky transport binding (e.g. on force_new)."""
+    _transport_identity_cache.pop(key, None)
+
+
+def _evict_stale_entries() -> None:
+    """Lazy TTL eviction + max size enforcement."""
+    now = _time.monotonic()
+    # TTL eviction
+    stale = [k for k, v in _transport_identity_cache.items()
+             if (now - v.bound_at) > _TRANSPORT_CACHE_TTL]
+    for k in stale:
+        del _transport_identity_cache[k]
+    # Max size eviction (oldest first)
+    if len(_transport_identity_cache) > _TRANSPORT_CACHE_MAX:
+        sorted_keys = sorted(_transport_identity_cache, key=lambda k: _transport_identity_cache[k].bound_at)
+        for k in sorted_keys[:len(_transport_identity_cache) - _TRANSPORT_CACHE_MAX]:
+            del _transport_identity_cache[k]
 
 
 async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
@@ -15,8 +89,46 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
     from ..identity.handlers import derive_session_key
 
     signals = get_session_signals()
-    session_key = await derive_session_key(signals, arguments)
     client_session_id = arguments.get("client_session_id")
+    force_new = arguments.get("force_new", False)
+    continuity_token = arguments.get("continuity_token")
+
+    # --- Sticky transport binding: early return if cached ---
+    transport_key = _transport_cache_key(signals)
+    ctx._transport_key = transport_key
+
+    if (transport_key
+        and not force_new
+        and not client_session_id
+        and not continuity_token):
+        cached = _transport_identity_cache.get(transport_key)
+        if cached and (_time.monotonic() - cached.bound_at) < _TRANSPORT_CACHE_TTL:
+            logger.debug(
+                f"[STICKY] Cache hit for {transport_key}: agent={cached.agent_uuid[:8]}... "
+                f"session_key={cached.session_key[:30]}..."
+            )
+            # Reuse cached binding — set context and return early
+            from ..context import set_session_context
+            client_hint = arguments.get("client_hint") if arguments else None
+            context_token = set_session_context(
+                session_key=cached.session_key,
+                client_session_id=client_session_id,
+                agent_id=cached.agent_uuid,
+                client_hint=client_hint,
+            )
+            ctx.session_key = cached.session_key
+            ctx.client_session_id = client_session_id
+            ctx.bound_agent_id = cached.agent_uuid
+            ctx.context_token = context_token
+            ctx.client_hint = client_hint
+            ctx.identity_result = {"agent_uuid": cached.agent_uuid, "source": "sticky_cache"}
+            return name, arguments, ctx
+
+    # Invalidate cache on force_new
+    if force_new and transport_key:
+        invalidate_transport_binding(transport_key)
+
+    session_key = await derive_session_key(signals, arguments)
 
     logger.debug(
         f"[SESSION] dispatch entry: tool={name} session_key={session_key[:30] if session_key else 'None'}... "
@@ -142,4 +254,10 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
     ctx.context_token = context_token
     ctx.client_hint = client_hint
     ctx.identity_result = identity_result
+
+    # --- Populate sticky cache after successful resolution ---
+    if transport_key and bound_agent_id:
+        source = identity_result.get("source", "unknown") if identity_result else "unknown"
+        update_transport_binding(transport_key, bound_agent_id, session_key, source)
+
     return name, arguments, ctx

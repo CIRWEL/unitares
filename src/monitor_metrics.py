@@ -48,12 +48,8 @@ def get_monitor_metrics(monitor: Any, include_state: bool = True) -> Dict:
     decision_history = getattr(state, 'decision_history', [])
     if decision_history:
         counts = Counter(decision_history)
-        decision_counts = {
-            'approve': counts.get('approve', 0),
-            'revise': counts.get('revise', 0),
-            'reject': counts.get('reject', 0),
-            'total': len(decision_history)
-        }
+        decision_counts = dict(counts)
+        decision_counts['total'] = len(decision_history)
 
     # Check stability (Lyapunov eigenvalue analysis, cached 5 min per agent)
     now = _time.monotonic()
@@ -156,7 +152,6 @@ def get_monitor_metrics(monitor: Any, include_state: bool = True) -> Dict:
     profile = get_params_profile_name()
 
     I = float(state.I)
-    basin = "unknown"
     basin_warning = None
     if profile == "v41":
         if I < 0.45:
@@ -167,6 +162,9 @@ def get_monitor_metrics(monitor: Any, include_state: bool = True) -> Dict:
             basin_warning = "Near basin boundary (~I=0.5): small shocks can flip equilibrium"
         else:
             basin = "high"
+    else:
+        # Use GovernanceState's basin interpretation for consistency with state.interpret_state()
+        basin = state._interpret_basin(float(state.E), I) if hasattr(state, '_interpret_basin') else "unknown"
 
     S = float(state.S)
     if profile == "v41":
@@ -260,7 +258,7 @@ def get_eisv_labels() -> Dict:
             'label': 'Entropy',
             'description': 'Entropy (disorder/uncertainty)',
             'user_friendly': 'How scattered or fragmented things are',
-            'range': '[0.0, 1.0]'
+            'range': '[0.0, 2.0]'
         },
         'V': {
             'label': 'Void Integral',

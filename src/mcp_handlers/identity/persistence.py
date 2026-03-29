@@ -45,6 +45,7 @@ async def _cache_session(
     agent_uuid: str,
     display_agent_id: str = None,
     trajectory_required: bool = False,
+    label: str = None,
 ) -> None:
     """Cache session->UUID mapping in Redis, with optional display agent_id.
 
@@ -52,6 +53,7 @@ async def _cache_session(
         trajectory_required: If True, indicates this identity has a stored
             trajectory genesis. Lets PATH 1 skip the get_trajectory_status()
             call on subsequent hits (optimization hint).
+        label: Auto-generated or user-set label to store alongside the binding.
     """
     session_cache = _get_redis()
     if session_cache:
@@ -69,6 +71,8 @@ async def _cache_session(
                         "bound_at": datetime.now(timezone.utc).isoformat(),
                         "trajectory_required": trajectory_required,
                     }
+                    if label:
+                        data["label"] = label
                     key = f"session:{session_key}"
                     await redis.setex(key, GovernanceConfig.SESSION_TTL_SECONDS, json.dumps(data))
                 else:
