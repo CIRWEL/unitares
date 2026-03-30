@@ -1,23 +1,27 @@
 """
 Automated Ground Truth Collection for Calibration
 
-DEPRECATED (2026-03-30): This pipeline is superseded by the outcome_event system.
-Outcome events now wire directly to calibration via Phase 5 auto-emit in
-phases.py and the outcome_event MCP tool. This module is retained as reference
-for the has_exogenous_signals() logic but is no longer actively called.
-
-Original design (2025-12-13):
+SELF-GOVERNANCE PRINCIPLE (2025-12-13):
 The system should not assume humans are the ground truth oracle. Instead:
 - Observable outcomes (tests pass, files created, commands succeed) are primary signals
 - Peer consensus is a secondary signal
 - Human feedback is optional enhancement, not required
 
-This module automatically evaluated decisions based on OBJECTIVE signals:
+This module automatically evaluates decisions based on OBJECTIVE signals:
 1. Agent trajectory health (did they get stuck/paused?)
 2. Test results (did pytest pass after code changes?)
 3. Linter status (did code lint cleanly?)
 4. Command outcomes (did terminal commands succeed?)
 5. File operations (were expected files created?)
+
+This is NOT redundant with Phase 5 auto-emit (phases.py). Phase 5 detects
+outcomes from response text keywords ("completed", "fixed") — self-report.
+This module evaluates exogenous signals (exit codes, file existence) on a
+background timer. has_exogenous_signals() gates calibration recording to
+prevent self-referential feedback loops.
+
+Human calibration via update_calibration_ground_truth is still available
+but should be the exception, not the rule.
 """
 
 import json
