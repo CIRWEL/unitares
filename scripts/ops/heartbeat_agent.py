@@ -29,6 +29,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +60,46 @@ ANIMA_HEALTH_URLS = [
 
 # Test timeout
 TEST_TIMEOUT = 180  # 3 minutes per suite
+
+# MCP retry on transient failures
+MCP_RETRY_DELAY = 3  # seconds
+
+
+def _atomic_write(path: Path, data: str):
+    """Write data to file atomically via temp file + rename."""
+    fd = None
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+        os.write(fd, data.encode())
+        os.close(fd)
+        fd = None
+        os.replace(tmp, str(path))
+        tmp = None  # successfully replaced, no cleanup needed
+    except Exception:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    finally:
+        if tmp and os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def notify(title: str, message: str):
+    """Send a macOS notification. Best-effort, never raises."""
+    try:
+        subprocess.Popen(
+            ["osascript", "-e",
+             f'display notification "{message}" with title "{title}"'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
 
 
 def _mcp_connect(url: str):
@@ -98,12 +139,12 @@ def load_session() -> Dict[str, Optional[str]]:
 
 
 def save_session(client_session_id: str, continuity_token: Optional[str] = None):
-    """Save session data for cross-invocation resume."""
+    """Save session data for cross-invocation resume (atomic write)."""
     try:
         data = {"client_session_id": client_session_id}
         if continuity_token:
             data["continuity_token"] = continuity_token
-        SESSION_FILE.write_text(json.dumps(data))
+        _atomic_write(SESSION_FILE, json.dumps(data))
     except Exception:
         pass
 
@@ -147,9 +188,9 @@ def load_state() -> Dict[str, Any]:
 
 
 def save_state(state: Dict[str, Any]):
-    """Save Vigil's cross-cycle state."""
+    """Save Vigil's cross-cycle state (atomic write)."""
     try:
-        STATE_FILE.write_text(json.dumps(state, default=str))
+        _atomic_write(STATE_FILE, json.dumps(state, default=str))
     except Exception:
         pass
 
@@ -235,6 +276,15 @@ def check_http_health(url: str, timeout: float = 5.0) -> Tuple[bool, str]:
         return False, str(e)
 
 
+def _get_anima_urls(prev_state: Dict[str, Any]) -> List[str]:
+    """Return anima health URLs, trying last-successful URL first."""
+    last_ok = prev_state.get("lumen_last_ok_url")
+    if last_ok and last_ok in ANIMA_HEALTH_URLS:
+        # Put the last-successful URL first, then the rest
+        return [last_ok] + [u for u in ANIMA_HEALTH_URLS if u != last_ok]
+    return list(ANIMA_HEALTH_URLS)
+
+
 def run_pytest(project_dir: Path, label: str) -> Tuple[bool, int, int, str]:
     """Run pytest on a project. Returns (passed, n_passed, n_failed, summary)."""
     try:
@@ -299,38 +349,47 @@ class HeartbeatAgent:
         return arguments
 
     async def call_tool(self, session: ClientSession, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Call an MCP tool and parse JSON response."""
-        try:
-            result = await session.call_tool(tool_name, self._inject_session(tool_name, arguments))
-            final_result: Dict[str, Any] = {}
-            json_parsed = False
-            raw_texts: List[str] = []
+        """Call an MCP tool and parse JSON response. Retries once on transient failure."""
+        last_error = None
+        for attempt in range(2):
+            try:
+                result = await session.call_tool(tool_name, self._inject_session(tool_name, arguments))
+                final_result: Dict[str, Any] = {}
+                json_parsed = False
+                raw_texts: List[str] = []
 
-            for content in result.content:
-                if hasattr(content, "text"):
-                    text = content.text
-                    raw_texts.append(text)
-                    try:
-                        data = json.loads(text)
-                        if isinstance(data, dict):
-                            final_result.update(data)
-                            json_parsed = True
-                            # Capture session ID, preserve existing continuity token
-                            if "client_session_id" in data:
-                                self.client_session_id = data["client_session_id"]
-                                existing = load_session()
-                                token = data.get("continuity_token") or existing.get("continuity_token")
-                                save_session(data["client_session_id"], token)
-                    except json.JSONDecodeError:
-                        continue
+                for content in result.content:
+                    if hasattr(content, "text"):
+                        text = content.text
+                        raw_texts.append(text)
+                        try:
+                            data = json.loads(text)
+                            if isinstance(data, dict):
+                                final_result.update(data)
+                                json_parsed = True
+                                # Capture session ID, preserve existing continuity token
+                                if "client_session_id" in data:
+                                    self.client_session_id = data["client_session_id"]
+                                    existing = load_session()
+                                    token = data.get("continuity_token") or existing.get("continuity_token")
+                                    save_session(data["client_session_id"], token)
+                        except json.JSONDecodeError:
+                            continue
 
-            if json_parsed:
-                return final_result
-            if raw_texts:
-                return {"text": "\n".join(raw_texts), "raw": True}
-            return {"success": False, "error": "No content in response"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+                if json_parsed:
+                    return final_result
+                if raw_texts:
+                    return {"text": "\n".join(raw_texts), "raw": True}
+                return {"success": False, "error": "No content in response"}
+            except (httpx.ConnectError, httpx.TimeoutException, ConnectionError, OSError) as e:
+                last_error = e
+                if attempt == 0:
+                    log(f"MCP transient error on {tool_name}, retrying in {MCP_RETRY_DELAY}s: {e}")
+                    await asyncio.sleep(MCP_RETRY_DELAY)
+                    continue
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"retry exhausted: {last_error}"}
 
     def _extract_session_id(self, result: Dict[str, Any]) -> Optional[str]:
         """Extract client_session_id from various response shapes."""
@@ -502,12 +561,14 @@ class HeartbeatAgent:
             findings.append(f"Governance: UNHEALTHY ({gov_detail})")
             issues += 1
 
-        # --- 2. Lumen/Anima health ---
+        # --- 2. Lumen/Anima health (smart URL ordering) ---
         anima_healthy = False
         anima_detail = "unreachable"
-        for url in ANIMA_HEALTH_URLS:
+        anima_ok_url = None
+        for url in _get_anima_urls(prev_state):
             anima_healthy, anima_detail = check_http_health(url, timeout=10.0)
             if anima_healthy:
+                anima_ok_url = url
                 break
         if anima_healthy:
             findings.append(f"Lumen: {anima_detail}")
@@ -519,7 +580,12 @@ class HeartbeatAgent:
         lumen_down_streak = 0
         if not anima_healthy:
             lumen_down_streak = prev_state.get("lumen_down_streak", 0) + 1
-        # else: reset to 0
+
+        # --- macOS notifications for critical events ---
+        if not gov_healthy and prev_state.get("governance_healthy", True):
+            notify("Vigil", f"Governance is down: {gov_detail}")
+        if lumen_down_streak == 3:
+            notify("Vigil", "Lumen unreachable for 3 consecutive cycles (1.5h)")
 
         # --- 3. Run tests (optional, ~15 min) ---
         total_passed = 0
@@ -614,6 +680,11 @@ class HeartbeatAgent:
                     coherence = metrics.get("coherence")
                     verdict = result.get("decision", {}).get("action")
 
+                    # --- Uptime tracking ---
+                    total_cycles = prev_state.get("total_cycles", 0) + 1
+                    gov_up_cycles = prev_state.get("gov_up_cycles", 0) + (1 if gov_healthy else 0)
+                    lumen_up_cycles = prev_state.get("lumen_up_cycles", 0) + (1 if anima_healthy else 0)
+
                     # Build current state for change detection
                     current_state: Dict[str, Any] = {
                         "governance_healthy": gov_healthy,
@@ -621,11 +692,15 @@ class HeartbeatAgent:
                         "lumen_healthy": anima_healthy,
                         "lumen_detail": anima_detail,
                         "lumen_down_streak": lumen_down_streak,
+                        "lumen_last_ok_url": anima_ok_url,
                         "coherence": coherence,
                         "verdict": verdict,
                         "cycle_time": datetime.now(timezone.utc).isoformat(),
                         "groundskeeper_stale": groundskeeper_summary.get("stale_found", 0),
                         "groundskeeper_archived": groundskeeper_summary.get("archived", 0),
+                        "total_cycles": total_cycles,
+                        "gov_up_cycles": gov_up_cycles,
+                        "lumen_up_cycles": lumen_up_cycles,
                     }
 
                     # Detect changes and leave notes
@@ -654,7 +729,8 @@ class HeartbeatAgent:
                         except (KeyError, TypeError, ValueError):
                             eisv = "EISV=?"
                         decision = verdict or "?"
-                        one_line = f"{decision} | {eisv} | {summary}"
+                        uptime_pct = f" | uptime: gov={gov_up_cycles/total_cycles:.0%} lumen={lumen_up_cycles/total_cycles:.0%}" if total_cycles > 0 else ""
+                        one_line = f"{decision} | {eisv} | {summary}{uptime_pct}"
                         log(one_line)
                         return one_line
                     else:
