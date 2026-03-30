@@ -3,9 +3,9 @@
 EMA-smoothed observations of agent behavior. No universal attractor, no
 contraction — each agent's state reflects its actual observables.
 
-After a genotyping phase (~30 updates), per-agent DNA baselines are established
-using Welford's algorithm. Assessment then uses z-score deviation from the
-agent's own characteristic operating point instead of fixed thresholds.
+After a warmup phase (~30 updates), per-agent behavioral baselines are
+established using Welford's algorithm. Assessment then uses z-score deviation
+from the agent's own characteristic operating point instead of fixed thresholds.
 """
 
 from __future__ import annotations
