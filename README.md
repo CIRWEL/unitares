@@ -6,7 +6,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-UNITARES gives AI agents a shared language for inner state — four continuous variables, a dynamics that evolves them, and a protocol for agents to speak and be read. Built on coupled differential equations with provable stability guarantees.
+UNITARES gives AI agents a shared language for inner state — four continuous variables tracked from observable behavior, and a protocol for agents to speak and be read. State is computed from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do.
 
 Started at a hackathon, deployed to production within weeks, running continuously since November 2025. 5,800+ tests, 100,000+ check-ins processed, one agent ([Lumen](https://github.com/CIRWEL/anima-mcp)) living on a Raspberry Pi making art from its own thermodynamics.
 
@@ -25,7 +25,11 @@ UNITARES gives agents a language for inner state. Four continuous variables that
 | **S** (Entropy) | [0, 2] | Disorder and uncertainty |
 | **V** (Void) | [-2, 2] | Accumulated E-I imbalance |
 
-These aren't static labels — they evolve via coupled ODEs that define how state changes over time. The dynamics are the grammar:
+These aren't static labels. The primary system tracks them via **behavioral EISV** — exponentially weighted moving averages of agent observations, with no ODE and no universal attractor. Each agent's state reflects its actual behavior, not a dynamical model's prediction.
+
+After ~30 check-ins, per-agent **behavioral baselines** (Welford mean/std) enable self-relative assessment — the system scores deviation from *your* characteristic operating point, not universal thresholds. Absolute safety floors still apply regardless of baseline.
+
+A parallel system evolves the same four variables via coupled ODEs with provable stability guarantees (contraction theory). The ODE provides a secondary stability reference:
 
 ```
 dE/dt = α(I - E) - β·E·S           Energy tracks integrity, dragged by entropy
@@ -34,7 +38,7 @@ dS/dt = -μ·S + λ₁·‖Δη‖² - λ₂·C   Entropy decays, rises with dri
 dV/dt = κ(E - I) - δ·V             Void accumulates E-I mismatch, decays toward zero
 ```
 
-The key property: **coherence C(V)** creates nonlinear feedback that stabilizes the system. Global exponential convergence follows from contraction theory (Theorem 3.2).
+Behavioral EISV drives verdicts. The ODE runs in parallel for agents that benefit from its convergence properties.
 
 > [Architecture Overview](docs/UNIFIED_ARCHITECTURE.md) — How the components fit together
 
@@ -52,6 +56,8 @@ Most agent tooling operates on **outputs** — checking whether what the agent p
 
 Logging tells you what happened. Guardrails constrain what can happen. UNITARES lets agents *say what's happening inside them* — and lets other agents, systems, and humans read it. Everything else the system does — governance verdicts, circuit breakers, dialectic, the knowledge graph — is built on that legibility.
 
+**Self-relative assessment.** After a warmup period, each agent is scored against its own behavioral baseline — z-score deviation from its characteristic operating point. An agent that normally runs at S≈0.4 isn't penalized the same way as one that normally runs at S≈0.1. Universal thresholds are a fallback, not the primary mechanism.
+
 **Ethical drift from observable behavior.** No human oracle needed. Four measurable signals — calibration deviation, complexity divergence, coherence deviation, stability deviation — define a drift vector Δη that feeds directly into entropy dynamics.
 
 **Trajectory as identity.** Agents aren't identified by tokens — they're identified by dynamical patterns. An agent's EISV trajectory is its behavioral signature, letting agents computationally verify "Am I still myself?" and letting observers distinguish agents by how they work.
@@ -62,14 +68,14 @@ Logging tells you what happened. Guardrails constrain what can happen. UNITARES 
 
 ## Production Data
 
-Live numbers as of March 28, 2026:
+Live numbers as of March 30, 2026:
 
 | Metric | Value |
 |--------|-------|
 | Agents created / active (7-day) | 1,300+ / ~60 |
 | Check-ins processed | 100,000+ |
 | Knowledge graph entries | 1,700+ |
-| EISV typical range (Lumen, 95k check-ins) | E≈0.72, I≈0.75, S≈0.20, V≈-0.04 |
+| EISV (Lumen, ODE) | E≈0.72, I≈0.75, S≈0.20, V≈-0.04 |
 | V operating range | All active agents within [-0.1, 0.1] |
 | Test suite | 5,800+ tests |
 
@@ -133,28 +139,42 @@ python src/mcp_server_std.py
 
 > **Note:** The EISV dynamics engine (`unitares-core`) is a compiled dependency installed automatically via `requirements-core.txt`. See [CONTRIBUTING.md](CONTRIBUTING.md) for build details.
 
-### MCP Configuration (Cursor / Claude Desktop)
+### MCP Configuration
+
+**Cursor / Claude Code** (supports `type: http` natively):
 
 ```json
 {
   "mcpServers": {
     "unitares": {
       "type": "http",
-      "url": "http://localhost:8767/mcp/",
-      "headers": { "X-Agent-Name": "MyAgent" }
+      "url": "http://localhost:8767/mcp/"
     }
   }
 }
 ```
 
+**Claude Desktop** (requires `mcp-remote` bridge):
+
+```json
+{
+  "mcpServers": {
+    "unitares": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:8767/mcp/"]
+    }
+  }
+}
+```
+
+Agents self-identify through the `onboard()` flow — no hardcoded agent name header needed.
+
 | Endpoint | Transport | Use Case |
 |----------|-----------|----------|
-| `/mcp/` | Streamable HTTP | MCP clients (Cursor, Claude Desktop) |
+| `/mcp/` | Streamable HTTP | MCP clients (Cursor, Claude Code, Claude Desktop) |
 | `/v1/tools/call` | REST POST | CLI, scripts, non-MCP clients |
 | `/dashboard` | HTTP | Web dashboard |
 | `/health` | HTTP | Health checks |
-
-> See [Ngrok Deployment](docs/guides/NGROK_DEPLOYMENT.md) for remote access and advanced configuration.
 
 ---
 
@@ -173,14 +193,17 @@ python src/mcp_server_std.py
 ```mermaid
 graph LR
     A[AI Agent] -->|check-in| M[MCP Server :8767]
-    M -->|EISV evolution| UC[unitares-core]
-    UC -->|state| M
+    M -->|observations| BS[Behavioral EISV]
+    BS -->|verdict + guidance| M
+    M -->|parallel| UC[unitares-core ODE]
+    UC -.->|secondary state| M
     M -->|verdict + guidance| A
     M <-->|state, audit, calibration| PG[(PostgreSQL + AGE)]
     M <-->|knowledge graph| PG
     M -.->|session cache| R[(Redis)]
     M -->|web UI| D[Dashboard]
 
+    style BS fill:#1a5c1a,stroke:#666,color:#fff
     style UC fill:#2d2d2d,stroke:#666,color:#fff
 ```
 
@@ -190,7 +213,7 @@ dashboard/             Web dashboard (vanilla JS + Chart.js)
 tests/                 5,800+ tests
 ```
 
-The mathematical engine (`governance_core`) — ODEs, coherence, scoring — is distributed as a compiled package (unitares-core).
+Behavioral EISV (`src/behavioral_state.py`, `src/behavioral_assessment.py`) runs observation-first state tracking. The ODE engine (`governance_core`) — coupled dynamics, coherence, scoring — is a compiled package (unitares-core) providing parallel stability analysis.
 
 | Storage | Purpose | Required |
 |---------|---------|----------|
@@ -204,7 +227,7 @@ The mathematical engine (`governance_core`) — ODEs, coherence, scoring — is 
 These are unsolved problems. The system is honest about what it doesn't yet do well.
 
 - **Outcome correlation** — Does EISV instability predict bad task outcomes? The system's confidence calibration is currently around 50% accuracy — not yet reliably predictive. Whether state-space instability maps to real-world failure is the central empirical question. Validation is ongoing.
-- **Agent differentiation** — The ODE has strong convergence guarantees, which is good for stability but means agents with similar workloads converge to similar EISV steady states. The state vector alone doesn't yet distinguish agents as well as it should. A parallel system — behavioral EISV using EMA-smoothed observations without ODE contraction — is in development to address this.
+- **Agent differentiation** — *(Addressed in v2.9.0.)* The ODE's convergence guarantees caused agents with similar workloads to converge to similar steady states. Behavioral EISV — EMA-smoothed observations without ODE contraction — is now the primary verdict source, giving each agent its own trajectory. Behavioral baselines need ~30 updates to stabilize; before that, fixed thresholds apply.
 - **Identity fragmentation** — Session-based identity means the same human or system can accumulate many agent IDs across sessions. Most of the 1,300+ total agents are ephemeral (test runs, CI, dev sessions). Identity consolidation and trajectory-based re-identification are active work.
 - **Domain-specific thresholds** — How should parameters be tuned for code generation vs. customer service vs. trading? No one-size-fits-all answer yet.
 - **Horizontal scaling** — Current system handles hundreds of agents on a single node. What about thousands?
