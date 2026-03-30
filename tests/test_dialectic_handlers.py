@@ -1284,21 +1284,18 @@ class TestHandleGetDialecticSession:
 
     @pytest.mark.asyncio
     async def test_by_agent_id_found(self, mock_server, mock_context_agent):
-        """Find sessions by agent_id."""
+        """Find sessions by agent_id via PG query."""
         from src.mcp_handlers.dialectic.handlers import handle_get_dialectic_session, ACTIVE_SESSIONS
 
         session = _make_session(
             paused_id="agent-active", reviewer_id="agent-reviewer",
             phase=DialecticPhase.RESOLVED,
         )
-        ACTIVE_SESSIONS[session.session_id] = session
 
-        # Mock disk session listing to return empty (only test in-memory)
+        # Mock PG returning the session
         with mock_context_agent, \
-             patch(f"{DIALECTIC}.SESSION_STORAGE_DIR") as mock_dir:
-            mock_dir.mkdir = MagicMock()
-            mock_dir.exists.return_value = True
-            mock_dir.glob.return_value = []  # No disk sessions
+             patch(f"{DIALECTIC}.pg_get_all_sessions_by_agent", new_callable=AsyncMock,
+                   return_value=[session.to_dict()]):
             result = await handle_get_dialectic_session({
                 "agent_id": "agent-active",
             })
@@ -1308,29 +1305,30 @@ class TestHandleGetDialecticSession:
 
     @pytest.mark.asyncio
     async def test_by_agent_id_not_registered(self, mock_server, mock_context_agent):
-        """Returns error if agent_id is not in metadata."""
+        """Returns error if no sessions found for agent_id."""
         from src.mcp_handlers.dialectic.handlers import handle_get_dialectic_session
 
-        with mock_context_agent:
+        # PG returns empty list for unknown agent
+        with mock_context_agent, \
+             patch(f"{DIALECTIC}.pg_get_all_sessions_by_agent", new_callable=AsyncMock,
+                   return_value=[]):
             result = await handle_get_dialectic_session({
                 "agent_id": "nonexistent-agent",
             })
 
         data = _parse(result)
         assert data["success"] is False
-        assert "not found" in data["error"].lower()
+        assert "no dialectic sessions" in data["error"].lower()
 
     @pytest.mark.asyncio
     async def test_by_agent_id_no_sessions(self, mock_server, mock_context_agent):
         """Returns error when agent exists but has no sessions."""
         from src.mcp_handlers.dialectic.handlers import handle_get_dialectic_session
 
-        # Mock disk session listing to return empty
+        # PG returns empty list
         with mock_context_agent, \
-             patch(f"{DIALECTIC}.SESSION_STORAGE_DIR") as mock_dir:
-            mock_dir.mkdir = MagicMock()
-            mock_dir.exists.return_value = True
-            mock_dir.glob.return_value = []  # No disk sessions
+             patch(f"{DIALECTIC}.pg_get_all_sessions_by_agent", new_callable=AsyncMock,
+                   return_value=[]):
             result = await handle_get_dialectic_session({
                 "agent_id": "agent-active",
             })

@@ -1,7 +1,7 @@
 """
 Tests for pure/near-pure functions in dialectic session handling.
 
-Tests _reconstruct_session_from_dict, _resolve_dialectic_backend,
+Tests _reconstruct_session_from_dict
 and DialecticMessage/Resolution/DialecticSession from dialectic_protocol.
 """
 

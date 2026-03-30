@@ -117,6 +117,7 @@ from src.dialectic_db import (
     resolve_session_async as pg_resolve_session,
     get_session_async as pg_get_session,
     get_session_by_agent_async as pg_get_session_by_agent,
+    get_all_sessions_by_agent_async as pg_get_all_sessions_by_agent,
 )
 
 # Import database abstraction for dual-write (Phase 4 migration)
@@ -422,14 +423,12 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                     fast_result["success"] = True
                     return success_response(fast_result)
 
-            # Try in-memory first
-            session = ACTIVE_SESSIONS.get(session_id)
-            if not session:
-                # Try loading from disk
-                session = await load_session(session_id)
-                if session:
-                    # Restore to in-memory
-                    ACTIVE_SESSIONS[session_id] = session
+            # PG-first, fallback to in-memory cache
+            session = await load_session(session_id)
+            if session:
+                ACTIVE_SESSIONS[session_id] = session
+            else:
+                session = ACTIVE_SESSIONS.get(session_id)
             
             if not session:
                 return [error_response(f"Session '{session_id}' not found")]
@@ -546,66 +545,34 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
         
         # If agent_id provided, find all sessions for this agent
         if agent_id:
-            # Reload metadata from PostgreSQL (async)
-            await mcp_server.load_metadata_async(force=True)
-            
-            # Check if agent exists
-            if agent_id not in mcp_server.agent_metadata:
-                return [error_response(
-                    f"Agent '{agent_id}' not found",
-                    recovery=get_agent_not_found_recovery(),
-                )]
-            
-            # Find sessions where agent is paused or reviewer
             matching_sessions = []
-            
-            # Check in-memory sessions
+
+            # Query PostgreSQL for all sessions involving this agent
+            try:
+                pg_sessions = await pg_get_all_sessions_by_agent(agent_id)
+                for s in pg_sessions:
+                    matching_sessions.append(s)
+            except Exception as e:
+                logger.warning(f"PG query for agent sessions failed: {e}")
+
+            # Also check in-memory cache for sessions not yet persisted
             for sid, session in ACTIVE_SESSIONS.items():
                 if session.paused_agent_id == agent_id or session.reviewer_agent_id == agent_id:
-                    matching_sessions.append(session.to_dict())
-            
-            # Also check disk for persisted sessions (run in executor to avoid blocking)
-            loop = asyncio.get_running_loop()
-            
-            def _list_disk_sessions_sync():
-                """Synchronous directory check and file listing - runs in executor"""
-                SESSION_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-                if not SESSION_STORAGE_DIR.exists():
-                    return []
-                return list(SESSION_STORAGE_DIR.glob("*.json"))
-            
-            disk_session_files = await loop.run_in_executor(None, _list_disk_sessions_sync)
-            
-            for session_file in disk_session_files:
-                    try:
-                        loaded_session = await load_session(session_file.stem)
-                        if loaded_session:
-                            # Check if matches agent_id
-                            if loaded_session.paused_agent_id == agent_id or loaded_session.reviewer_agent_id == agent_id:
-                                # Avoid duplicates
-                                if not any(s.get('session_id') == loaded_session.session_id for s in matching_sessions):
-                                    matching_sessions.append(loaded_session.to_dict())
-                                    # Restore to in-memory
-                                    ACTIVE_SESSIONS[loaded_session.session_id] = loaded_session
-                    except (ValueError, AttributeError, TypeError) as e:
-                        logger.debug(f"Could not parse timestamp in session file: {e}")
-                        continue
-                    except Exception as e:
-                        logger.debug(f"Unexpected error parsing session timestamp: {e}")
-                        continue
-            
+                    if not any(s.get('session_id') == sid for s in matching_sessions):
+                        matching_sessions.append(session.to_dict())
+
             if not matching_sessions:
                 return [error_response(
                     f"No dialectic sessions found for agent '{agent_id}'",
                     recovery=no_sessions_found_recovery(),
                 )]
-            
+
             # If single session, return it directly
             if len(matching_sessions) == 1:
                 result = matching_sessions[0]
                 result["success"] = True
                 return success_response(result)
-            
+
             # Multiple sessions - return list
             return success_response({
                 "success": True,
@@ -727,13 +694,13 @@ async def handle_submit_thesis(arguments: Dict[str, Any]) -> Sequence[TextConten
         if agent_error:
             return agent_error
 
-        # Get session - reload from disk if not in memory
-        session = ACTIVE_SESSIONS.get(session_id)
-        if not session:
-            session = await load_session(session_id)
-            if session:
-                ACTIVE_SESSIONS[session_id] = session
-            else:
+        # Get session - PG-first, fallback to in-memory cache
+        session = await load_session(session_id)
+        if session:
+            ACTIVE_SESSIONS[session_id] = session
+        else:
+            session = ACTIVE_SESSIONS.get(session_id)
+            if not session:
                 return [error_response(
                     f"Session '{session_id}' not found",
                     recovery=session_not_found_recovery(),
@@ -812,13 +779,13 @@ async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextCo
         if agent_error:
             return agent_error
 
-        # Get session
-        session = ACTIVE_SESSIONS.get(session_id)
-        if not session:
-            session = await load_session(session_id)
-            if session:
-                ACTIVE_SESSIONS[session_id] = session
-            else:
+        # Get session - PG-first, fallback to in-memory cache
+        session = await load_session(session_id)
+        if session:
+            ACTIVE_SESSIONS[session_id] = session
+        else:
+            session = ACTIVE_SESSIONS.get(session_id)
+            if not session:
                 return [error_response(
                     f"Session '{session_id}' not found",
                     recovery=session_not_found_recovery(),
@@ -1253,6 +1220,8 @@ async def _initiate_quorum(session: DialecticSession) -> Optional[Dict[str, Any]
     deadline = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
 
     session.phase = DialecticPhase.QUORUM_VOTING
+    session.quorum_reviewer_ids = reviewer_ids
+    session.quorum_deadline = deadline
 
     # Persist to PostgreSQL
     try:
@@ -1335,20 +1304,24 @@ async def handle_submit_quorum_vote(arguments: Dict[str, Any]) -> Sequence[TextC
                 f"Session is in phase '{session.phase.value}', not 'quorum_voting'"
             )]
 
-        # Load quorum reviewer IDs from PostgreSQL
-        quorum_reviewer_ids = []
-        try:
-            from src.db import get_db
-            db = await get_db()
-            row = await db.fetchrow(
-                "SELECT quorum_reviewer_ids FROM core.dialectic_sessions WHERE session_id = $1",
-                session_id,
-            )
-            if row and row["quorum_reviewer_ids"]:
-                qr = row["quorum_reviewer_ids"]
-                quorum_reviewer_ids = json.loads(qr) if isinstance(qr, str) else qr
-        except Exception as e:
-            logger.warning(f"Could not load quorum_reviewer_ids from PG: {e}")
+        # Read quorum reviewer IDs from session (set by _initiate_quorum)
+        quorum_reviewer_ids = getattr(session, 'quorum_reviewer_ids', []) or []
+
+        # PG fallback for sessions reconstructed before quorum_reviewer_ids was added
+        if not quorum_reviewer_ids:
+            try:
+                from src.db import get_db
+                db = await get_db()
+                row = await db.fetchrow(
+                    "SELECT quorum_reviewer_ids FROM core.dialectic_sessions WHERE session_id = $1",
+                    session_id,
+                )
+                if row and row["quorum_reviewer_ids"]:
+                    qr = row["quorum_reviewer_ids"]
+                    quorum_reviewer_ids = json.loads(qr) if isinstance(qr, str) else qr
+                    session.quorum_reviewer_ids = quorum_reviewer_ids  # Cache on session
+            except Exception as e:
+                logger.warning(f"Could not load quorum_reviewer_ids from PG: {e}")
 
         if not quorum_reviewer_ids:
             return [error_response("No quorum reviewers assigned to this session")]
@@ -1654,16 +1627,17 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
     synthesis = result.get("synthesis", {})
     antithesis_data = result.get("antithesis", {})
 
-    # Persist as a proper dialectic session so it shows on the dashboard
+    # Persist as a proper dialectic session via the DialecticSession protocol
     session_id = None
     try:
-        from src.dialectic_protocol import DialecticSession
+        from src.dialectic_protocol import DialecticSession, DialecticMessage as DMsg, Resolution
         session = DialecticSession(
             paused_agent_id=agent_uuid,
             reviewer_agent_id="llm-synthetic-reviewer",
             session_type=arguments.get("session_type", "recovery"),
             topic=root_cause[:200],
             max_synthesis_rounds=2,
+            reason=root_cause,
         )
         session_id = session.session_id
 
@@ -1675,10 +1649,21 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
             session_type=arguments.get("session_type", "recovery"),
             topic=root_cause[:200],
             max_synthesis_rounds=2,
-            synthesis_round=1,
+            synthesis_round=0,
         )
 
-        # Add thesis message
+        now = datetime.now(timezone.utc).isoformat()
+
+        # 1. Submit thesis through protocol
+        thesis_msg = DMsg(
+            phase="thesis",
+            agent_id=agent_uuid,
+            timestamp=now,
+            root_cause=root_cause,
+            proposed_conditions=proposed_conditions,
+            reasoning=reasoning,
+        )
+        session.submit_thesis(thesis_msg)
         await pg_add_message(
             session_id=session_id,
             agent_id=agent_uuid,
@@ -1687,39 +1672,66 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
             proposed_conditions=proposed_conditions,
             reasoning=reasoning,
         )
+        await pg_update_phase(session_id, session.phase.value)
 
-        # Add antithesis message
+        # 2. Submit antithesis through protocol
+        anti_reasoning = antithesis_data.get("counter_reasoning", antithesis_data.get("raw_response", "")[:500])
+        anti_concerns = [antithesis_data.get("concerns", "")] if antithesis_data.get("concerns") else []
+        anti_msg = DMsg(
+            phase="antithesis",
+            agent_id="llm-synthetic-reviewer",
+            timestamp=now,
+            reasoning=anti_reasoning,
+            concerns=anti_concerns,
+        )
+        session.submit_antithesis(anti_msg)
         await pg_add_message(
             session_id=session_id,
             agent_id="llm-synthetic-reviewer",
             message_type="antithesis",
-            reasoning=antithesis_data.get("counter_reasoning", antithesis_data.get("raw_response", "")[:500]),
-            concerns=[antithesis_data.get("concerns", "")] if antithesis_data.get("concerns") else None,
+            reasoning=anti_reasoning,
+            concerns=anti_concerns or None,
         )
+        await pg_update_phase(session_id, session.phase.value)
 
-        # Add synthesis message
+        # 3. Submit synthesis with agrees=True through protocol
+        synth_conditions = [synthesis.get("merged_conditions", "")] if synthesis.get("merged_conditions") else []
+        synth_msg = DMsg(
+            phase="synthesis",
+            agent_id="llm-synthetic-reviewer",
+            timestamp=now,
+            root_cause=synthesis.get("agreed_root_cause", ""),
+            proposed_conditions=synth_conditions,
+            reasoning=synthesis.get("reasoning", ""),
+            agrees=True,
+        )
+        session.submit_synthesis(synth_msg)
         await pg_add_message(
             session_id=session_id,
             agent_id="llm-synthetic-reviewer",
             message_type="synthesis",
             root_cause=synthesis.get("agreed_root_cause", ""),
-            proposed_conditions=[synthesis.get("merged_conditions", "")] if synthesis.get("merged_conditions") else None,
+            proposed_conditions=synth_conditions or None,
             reasoning=synthesis.get("reasoning", ""),
             agrees=True,
         )
 
-        # Resolve the session
+        # 4. Finalize resolution through protocol (canonical schema)
+        resolution_obj = session.finalize_resolution(
+            signature_a=f"llm-{agent_uuid[:8]}",
+            signature_b="llm-synthetic-reviewer",
+        )
+        session.resolution = resolution_obj
         await pg_resolve_session(
             session_id=session_id,
-            resolution={
-                "action": recommendation.lower(),
-                "source": "llm-assisted-dialectic",
-                "agreed_root_cause": synthesis.get("agreed_root_cause", ""),
-                "merged_conditions": synthesis.get("merged_conditions", ""),
-            },
+            resolution=resolution_obj.to_dict(),
             status="resolved",
         )
-        logger.info(f"LLM dialectic session {session_id} persisted to database")
+
+        # Store in ACTIVE_SESSIONS
+        ACTIVE_SESSIONS[session_id] = session
+
+        logger.info(f"LLM dialectic session {session_id} persisted via protocol")
     except Exception as e:
         logger.warning(f"Could not persist LLM dialectic session: {e}")
 

@@ -119,9 +119,10 @@ async def test_module_source_verification():
 
 @pytest.mark.asyncio
 async def test_session_persistence():
-    """Test that session persistence works correctly"""
+    """Test that session persistence works correctly (PG-only, no JSON fallback)."""
     print("Testing session persistence...")
     
+    from unittest.mock import AsyncMock, patch
     from src.mcp_handlers.dialectic.session import save_session, load_session
     from src.dialectic_protocol import DialecticSession
     
@@ -132,11 +133,14 @@ async def test_session_persistence():
         dispute_type="verification"
     )
     
-    # Save session
+    # Save session (writes to mocked PG + JSON snapshot)
     await save_session(session)
     
-    # Load session by session_id
-    loaded = await load_session(session.session_id)
+    # Mock pg_get_session to return the saved session data
+    session_dict = session.to_dict()
+    session_dict["session_id"] = session.session_id
+    with patch("src.mcp_handlers.dialectic.session.pg_get_session", new_callable=AsyncMock, return_value=session_dict):
+        loaded = await load_session(session.session_id)
     
     assert loaded is not None, "Session should be loaded"
     assert loaded.session_id == session.session_id, "Session ID should match"

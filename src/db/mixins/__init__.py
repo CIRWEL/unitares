@@ -8,7 +8,6 @@ from .audit import AuditMixin
 from .calibration import CalibrationMixin
 from .graph import GraphMixin
 from .tool_usage import ToolUsageMixin
-from .dialectic import DialecticMixin
 from .knowledge_graph import KnowledgeGraphMixin
 from .baseline import BaselineMixin
 from .thread import ThreadMixin
@@ -22,7 +21,6 @@ __all__ = [
     "CalibrationMixin",
     "GraphMixin",
     "ToolUsageMixin",
-    "DialecticMixin",
     "KnowledgeGraphMixin",
     "BaselineMixin",
     "ThreadMixin",

@@ -504,6 +504,8 @@ class DialecticSession:
         self.synthesis_round = 0
         self.resolution: Optional[Resolution] = None
         self.awaiting_facilitation = False  # True when reviewer is stuck and no auto-replacement found
+        self.quorum_reviewer_ids: List[str] = []  # Reviewer IDs selected for quorum voting
+        self.quorum_deadline: Optional[str] = None  # ISO deadline for quorum voting
 
         self.created_at = datetime.now(timezone.utc)
         self.session_id = self._generate_session_id()
@@ -1066,6 +1068,8 @@ class DialecticSession:
             "awaiting_facilitation": getattr(self, 'awaiting_facilitation', False),
             "reason": getattr(self, 'reason', None),
             "trigger_source": getattr(self, 'trigger_source', None),
+            "quorum_reviewer_ids": getattr(self, 'quorum_reviewer_ids', []),
+            "quorum_deadline": getattr(self, 'quorum_deadline', None),
         }
 
 

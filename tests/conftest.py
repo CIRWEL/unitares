@@ -77,17 +77,6 @@ def _isolate_db_backend(monkeypatch):
     # Graph
     mock_backend.graph_query.return_value = []
     mock_backend.graph_available.return_value = False
-    # Dialectic
-    mock_backend.create_dialectic_session.return_value = {"session_id": "test", "created": True}
-    mock_backend.get_dialectic_session.return_value = None
-    mock_backend.get_dialectic_session_by_agent.return_value = None
-    mock_backend.get_all_active_dialectic_sessions_for_agent.return_value = []
-    mock_backend.update_dialectic_session_phase.return_value = True
-    mock_backend.update_dialectic_session_reviewer.return_value = True
-    mock_backend.add_dialectic_message.return_value = 1
-    mock_backend.resolve_dialectic_session.return_value = True
-    mock_backend.is_agent_in_active_dialectic_session.return_value = False
-    mock_backend.get_pending_dialectic_sessions.return_value = []
     # Health
     mock_backend.init.return_value = None
     mock_backend.close.return_value = None

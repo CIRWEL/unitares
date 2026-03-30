@@ -35,25 +35,11 @@ ACTIVE_SESSIONS: Dict[str, DialecticSession] = {}
 _SESSION_METADATA_CACHE: Dict[str, Dict] = {}
 _CACHE_TTL = 60.0  # Cache TTL in seconds (1 minute)
 
-UNITARES_DIALECTIC_BACKEND = os.getenv("UNITARES_DIALECTIC_BACKEND", "auto").strip().lower()  # json|postgres|auto
 UNITARES_DIALECTIC_WRITE_JSON_SNAPSHOT = os.getenv("UNITARES_DIALECTIC_WRITE_JSON_SNAPSHOT", "1").strip().lower() not in (
     "0",
     "false",
     "no",
 )
-
-def _resolve_dialectic_backend() -> str:
-    """
-    Resolve dialectic backend.
-
-    - postgres: use PostgreSQL (primary, recommended)
-    - json: read/write JSON files only
-    - auto: prefer postgres.
-    """
-    if UNITARES_DIALECTIC_BACKEND in ("json", "postgres"):
-        return UNITARES_DIALECTIC_BACKEND
-    # auto: prefer postgres
-    return "postgres"
 
 def _reconstruct_session_from_dict(session_id: str, session_data: Dict) -> Optional[DialecticSession]:
     """Reconstruct DialecticSession from a dict (from JSON file or PostgreSQL)."""
@@ -138,6 +124,10 @@ def _reconstruct_session_from_dict(session_id: str, session_data: Dict) -> Optio
             session._max_synthesis_wait = session.MAX_SYNTHESIS_WAIT
             session._max_total_time = session.MAX_TOTAL_TIME
 
+        # Restore quorum fields
+        session.quorum_reviewer_ids = session_data.get("quorum_reviewer_ids", []) or []
+        session.quorum_deadline = session_data.get("quorum_deadline")
+
         return session
     except Exception as e:
         logger.error(f"Error reconstructing session {session_id}: {e}", exc_info=True)
@@ -193,153 +183,50 @@ async def save_session(session: DialecticSession) -> None:
 
 async def load_all_sessions() -> int:
     """
-    Load all active dialectic sessions from disk into ACTIVE_SESSIONS.
+    Load all active dialectic sessions from PostgreSQL into ACTIVE_SESSIONS.
     Called on server startup to restore sessions after restart.
-    
-    OPTIMIZED: Loads sessions in parallel to prevent blocking startup.
-    This prevents Claude Desktop from freezing during initialization.
-    
+
     Returns:
         Number of sessions loaded
     """
     loaded_count = 0
     try:
-        backend = _resolve_dialectic_backend()
-        if backend == "postgres":
-            # Load active sessions from PostgreSQL (cross-process visibility).
-            # We still keep ACTIVE_SESSIONS as a process-local cache for speed.
-            sessions = await pg_get_active_sessions(limit=500)
-            for s in sessions:
-                session_id = s.get("session_id")
-                if not session_id:
-                    continue
-                if session_id in ACTIVE_SESSIONS:
-                    continue
-                # Prefer fully reconstructed session with messages
-                full = await pg_get_session(session_id)
-                if not full:
-                    continue
-                session = _reconstruct_session_from_dict(session_id, full)
-                if session and session.phase not in [DialecticPhase.RESOLVED, DialecticPhase.FAILED, DialecticPhase.ESCALATED]:
-                    ACTIVE_SESSIONS[session_id] = session
-                    loaded_count += 1
-            if loaded_count > 0:
-                logger.info(f"Loaded {loaded_count} active dialectic session(s) from PostgreSQL")
-            return loaded_count
-
-        loop = asyncio.get_running_loop()
-        
-        # Check directory existence and list files in executor to avoid blocking
-        def _list_sessions_sync():
-            """Synchronous directory check and file listing - runs in executor"""
-            SESSION_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-            if not SESSION_STORAGE_DIR.exists():
-                return []
-            return list(SESSION_STORAGE_DIR.glob("*.json"))
-        
-        session_files = await loop.run_in_executor(None, _list_sessions_sync)
-        
-        if not session_files:
-            return 0
-        
-        # OPTIMIZATION: Load sessions in parallel instead of sequentially
-        # This prevents blocking startup when there are many sessions
-        async def load_and_restore(session_file: Path) -> Optional[str]:
-            """Load a single session and restore if active"""
-            try:
-                session_id = session_file.stem
-                # Skip if already in memory
-                if session_id in ACTIVE_SESSIONS:
-                    return None
-                
-                # Load session (already async, uses executor)
-                session = await load_session(session_id)
-                if session:
-                    # Check for timeout BEFORE storing in ACTIVE_SESSIONS
-                    if session.phase in (DialecticPhase.THESIS, DialecticPhase.ANTITHESIS):
-                        max_total = getattr(session, '_max_total_time', DialecticSession.MAX_TOTAL_TIME)
-                        created = session.created_at
-                        if created.tzinfo is None:
-                            created = created.replace(tzinfo=timezone.utc)
-                        if datetime.now(timezone.utc) - created > max_total:
-                            session.phase = DialecticPhase.FAILED
-                            await save_session(session)
-                            return None
-                    if session.phase not in (DialecticPhase.RESOLVED, DialecticPhase.FAILED, DialecticPhase.ESCALATED):
-                        ACTIVE_SESSIONS[session_id] = session
-                        return session_id
-                return None
-            except (IOError, json.JSONDecodeError, KeyError, ValueError) as e:
-                logger.warning(f"Could not load session {session_file.stem}: {e}")
-                return None
-            except Exception as e:
-                logger.error(f"Unexpected error loading session {session_file.stem}: {e}", exc_info=True)
-                return None
-        
-        # Load all sessions in parallel (much faster than sequential)
-        if session_files:
-            results = await asyncio.gather(*[load_and_restore(f) for f in session_files], return_exceptions=True)
-            loaded_count = sum(1 for r in results if r is not None and not isinstance(r, Exception))
-        
+        sessions = await pg_get_active_sessions(limit=500)
+        for s in sessions:
+            session_id = s.get("session_id")
+            if not session_id:
+                continue
+            if session_id in ACTIVE_SESSIONS:
+                continue
+            full = await pg_get_session(session_id)
+            if not full:
+                continue
+            session = _reconstruct_session_from_dict(session_id, full)
+            if session and session.phase not in [DialecticPhase.RESOLVED, DialecticPhase.FAILED, DialecticPhase.ESCALATED]:
+                ACTIVE_SESSIONS[session_id] = session
+                loaded_count += 1
         if loaded_count > 0:
-            logger.info(f"Loaded {loaded_count} active dialectic session(s) from disk")
-        
+            logger.info(f"Loaded {loaded_count} active dialectic session(s) from PostgreSQL")
         return loaded_count
-    except (IOError, OSError) as e:
-        logger.warning(f"Could not load sessions from disk: {e}")
-        return 0
     except Exception as e:
-        logger.error(f"Unexpected error loading sessions from disk: {e}", exc_info=True)
+        logger.error(f"Failed to load sessions from PostgreSQL: {e}", exc_info=True)
         return 0
 
 async def load_session(session_id: str) -> Optional[DialecticSession]:
-    """Load dialectic session from disk - ASYNC to prevent blocking"""
+    """Load dialectic session from PostgreSQL."""
     try:
-        backend = _resolve_dialectic_backend()
-        if backend == "postgres":
-            try:
-                session_data = await pg_get_session(session_id)
-                if session_data:
-                    # Normalize keys to match reconstruction function expectations
-                    if "messages" in session_data and "transcript" not in session_data:
-                        session_data["transcript"] = session_data["messages"]
-                    # If schema didn't store these yet, keep safe defaults
-                    session_data.setdefault("session_type", session_data.get("session_type") or "recovery")
-                    session_data.setdefault("max_synthesis_rounds", session_data.get("max_synthesis_rounds") or 5)
-                    session_data.setdefault("synthesis_round", session_data.get("synthesis_round") or 0)
-                    session = _reconstruct_session_from_dict(session_id, session_data)
-                    if session:
-                        return session
-            except Exception as e:
-                logger.warning(f"PostgreSQL load failed for session {session_id}, falling back to JSON: {e}")
-
-        session_file = SESSION_STORAGE_DIR / f"{session_id}.json"
-        
-        # Use executor for file I/O to avoid blocking event loop (prevents Claude Desktop freezing)
-        loop = asyncio.get_running_loop()
-        
-        def _load_session_sync():
-            """Synchronous file read - runs in executor"""
-            # Ensure directory exists (inside executor to avoid blocking)
-            SESSION_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-            
-            if not session_file.exists():
-                return None
-            
-            with open(session_file, 'r') as f:
-                return json.load(f)
-        
-        session_data = await loop.run_in_executor(None, _load_session_sync)
-        
-        if session_data is None:
+        session_data = await pg_get_session(session_id)
+        if not session_data:
             return None
-        
+        # Normalize keys to match reconstruction function expectations
+        if "messages" in session_data and "transcript" not in session_data:
+            session_data["transcript"] = session_data["messages"]
+        session_data.setdefault("session_type", session_data.get("session_type") or "recovery")
+        session_data.setdefault("max_synthesis_rounds", session_data.get("max_synthesis_rounds") or 5)
+        session_data.setdefault("synthesis_round", session_data.get("synthesis_round") or 0)
         return _reconstruct_session_from_dict(session_id, session_data)
-    except (IOError, json.JSONDecodeError) as e:
-        logger.warning(f"Could not read session file {session_id}: {e}")
-        return None
     except Exception as e:
-        logger.error(f"Unexpected error loading session {session_id}: {e}", exc_info=True)
+        logger.error(f"Failed to load session {session_id} from PostgreSQL: {e}", exc_info=True)
         return None
 
 async def load_session_as_dict(session_id: str) -> Optional[Dict[str, Any]]:
@@ -349,9 +236,6 @@ async def load_session_as_dict(session_id: str) -> Optional[Dict[str, Any]]:
     DialecticSession objects — avoids the reconstruct→to_dict() round-trip.
     Returns None if DB unavailable so caller can fall back to full load_session().
     """
-    backend = _resolve_dialectic_backend()
-    if backend != "postgres":
-        return None
     try:
         from src.dialectic_db import get_dialectic_db
         db = await get_dialectic_db()
@@ -445,8 +329,7 @@ async def list_all_sessions(
     """
     List all dialectic sessions with optional filtering.
 
-    Primary backend is PostgreSQL (core.dialectic_sessions).
-    Falls back to JSON files if PostgreSQL fails.
+    Backend is PostgreSQL (core.dialectic_sessions).
 
     Args:
         agent_id: Filter by agent (requestor or reviewer)
@@ -599,66 +482,4 @@ async def list_all_sessions(
         return result
     except Exception as e:
         logger.warning(f"PostgreSQL list_sessions failed: {e}")
-
-    # Fallback: JSON files
-    loop = asyncio.get_running_loop()
-    SESSION_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-
-    def _list_sessions_json():
-        """Fallback to JSON files"""
-        result = []
-        session_files = sorted(
-            SESSION_STORAGE_DIR.glob("*.json"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True
-        )
-
-        for session_file in session_files[:limit * 2]:
-            if len(result) >= limit:
-                break
-            try:
-                with open(session_file, 'r') as f:
-                    data = json.load(f)
-
-                session_id = session_file.stem
-
-                if agent_id:
-                    paused = data.get("paused_agent_id", "")
-                    reviewer = data.get("reviewer_agent_id", "")
-                    if agent_id not in [paused, reviewer]:
-                        continue
-
-                if status:
-                    phase = data.get("phase", "")
-                    if status.lower() not in phase.lower():
-                        continue
-
-                # Skip test/demo agent sessions
-                paused_id = data.get("paused_agent_id", "").lower()
-                if "test" in paused_id or "demo" in paused_id:
-                    continue
-
-                summary = {
-                    "session_id": session_id,
-                    "phase": data.get("phase", "unknown"),
-                    "session_type": data.get("session_type", "unknown"),
-                    "paused_agent": data.get("paused_agent_id", "unknown"),
-                    "reviewer": data.get("reviewer_agent_id"),
-                    "topic": data.get("topic", ""),
-                    "created": data.get("created_at", ""),
-                    "message_count": len(data.get("transcript", data.get("messages", []))),
-                }
-
-                if include_transcript:
-                    summary["transcript"] = data.get("transcript", data.get("messages", []))
-
-                result.append(summary)
-
-            except Exception as e:
-                logger.warning(f"Could not read session {session_file}: {e}")
-                continue
-
-        return result
-
-    sessions = await loop.run_in_executor(None, _list_sessions_json)
-    return sessions
+        return []

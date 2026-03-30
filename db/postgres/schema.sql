@@ -197,28 +197,49 @@ VALUES (TRUE, '{"lambda1_threshold": 0.3, "lambda2_threshold": 0.7}'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 
 -- -----------------------------------------------------------------------------
--- Dialectic Sessions (matches ticket requirements)
+-- Dialectic Sessions
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS core.dialectic_sessions (
-    id                  TEXT PRIMARY KEY,
-    session_type        TEXT,                           -- review, exploration
-    status              TEXT,                           -- pending, thesis, antithesis, negotiation, resolved, timeout
-    paused_agent_id     TEXT NOT NULL REFERENCES core.agents(id),
-    reviewer_agent_id   TEXT NULL REFERENCES core.agents(id),
-    created_at          TIMESTAMPTZ DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ DEFAULT NOW(),
-    resolved_at         TIMESTAMPTZ,
-    resolution          JSONB,
+    session_id              TEXT PRIMARY KEY,
+    paused_agent_id         TEXT NOT NULL,
+    reviewer_agent_id       TEXT,
+    phase                   TEXT NOT NULL DEFAULT 'awaiting_thesis',
+    status                  TEXT NOT NULL DEFAULT 'active',
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Session metadata
+    reason                  TEXT,                       -- why the session was created
+    discovery_id            TEXT,                       -- link to disputed discovery
+    dispute_type            TEXT,                       -- dispute, correction, verification
+    session_type            TEXT,                       -- recovery, dispute, exploration, design_review
+    topic                   TEXT,                       -- exploration topic / root cause summary
+    max_synthesis_rounds    INTEGER,
+    synthesis_round         INTEGER DEFAULT 0,
+    paused_agent_state_json JSONB,                      -- state snapshot at session creation
+    trigger_source          TEXT,                       -- circuit_breaker, manual, loop_detection, etc.
+
+    -- Resolution
+    resolution_json         JSONB,                      -- canonical Resolution.to_dict()
+
+    -- Quorum voting
+    quorum_reviewer_ids     JSONB,                      -- JSON array of reviewer agent IDs
+    quorum_deadline         TIMESTAMPTZ,
+    quorum_result           JSONB,                      -- voting results
 
     -- Constraints
-    CHECK (status IN ('pending', 'thesis', 'antithesis', 'negotiation', 'resolved', 'timeout')),
-    CHECK (session_type IN ('review', 'exploration'))
+    CHECK (phase IN ('awaiting_thesis', 'thesis', 'antithesis', 'synthesis',
+                     'resolved', 'escalated', 'failed', 'quorum_voting')),
+    CHECK (status IN ('active', 'resolved', 'escalated', 'failed', 'quorum_voting'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_dialectic_sessions_paused_agent ON core.dialectic_sessions(paused_agent_id);
 CREATE INDEX IF NOT EXISTS idx_dialectic_sessions_reviewer ON core.dialectic_sessions(reviewer_agent_id);
 CREATE INDEX IF NOT EXISTS idx_dialectic_sessions_status ON core.dialectic_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_dialectic_sessions_phase ON core.dialectic_sessions(phase);
 CREATE INDEX IF NOT EXISTS idx_dialectic_sessions_created_at ON core.dialectic_sessions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dialectic_paused ON core.dialectic_sessions(paused_agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_dialectic_reviewer ON core.dialectic_sessions(reviewer_agent_id, status);
 
 -- Trigger to update updated_at
 CREATE TRIGGER trg_dialectic_sessions_updated_at
@@ -226,23 +247,23 @@ CREATE TRIGGER trg_dialectic_sessions_updated_at
     FOR EACH ROW EXECUTE FUNCTION core.update_timestamp();
 
 -- -----------------------------------------------------------------------------
--- Dialectic Messages (migrated from dialectic_messages SQLite table)
+-- Dialectic Messages
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS core.dialectic_messages (
     message_id            BIGSERIAL PRIMARY KEY,
-    session_id            TEXT NOT NULL REFERENCES core.dialectic_sessions(id) ON DELETE CASCADE,
+    session_id            TEXT NOT NULL REFERENCES core.dialectic_sessions(session_id) ON DELETE CASCADE,
     agent_id              TEXT NOT NULL,
-    message_type          TEXT NOT NULL,          -- 'thesis', 'antithesis', 'synthesis'
+    message_type          TEXT NOT NULL,          -- thesis, antithesis, synthesis, system, quorum_vote, failed
     timestamp             TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     -- Message content
-    root_cause            TEXT NULL,
-    proposed_conditions   JSONB NULL,            -- JSON array
-    reasoning             TEXT NULL,
-    observed_metrics      JSONB NULL,             -- JSON object (for antithesis)
-    concerns              JSONB NULL,             -- JSON array (for antithesis)
-    agrees                BOOLEAN NULL,           -- Boolean for synthesis
-    signature             TEXT NULL
+    root_cause            TEXT,
+    proposed_conditions   JSONB,                 -- JSON array
+    reasoning             TEXT,
+    observed_metrics      JSONB,                  -- JSON object (for antithesis)
+    concerns              JSONB,                  -- JSON array (for antithesis)
+    agrees                BOOLEAN,                -- for synthesis convergence
+    signature             TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_dialectic_messages_session ON core.dialectic_messages(session_id);
