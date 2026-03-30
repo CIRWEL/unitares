@@ -108,6 +108,36 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
         outcome_type, is_bad, outcome_score, agent_id, eisv_verdict,
     )
 
+    # Record calibration from outcome event
+    _confidence = arguments.get('confidence')
+    if _confidence is not None:
+        _confidence = float(_confidence)
+    else:
+        try:
+            monitor = mcp_server.monitors.get(agent_id)
+            if monitor and monitor._prev_confidence is not None:
+                _confidence = float(monitor._prev_confidence)
+        except Exception:
+            pass
+
+    if _confidence is not None:
+        try:
+            from src.calibration import calibration_checker
+            calibration_checker.record_prediction(
+                confidence=_confidence,
+                predicted_correct=(_confidence >= 0.5),
+                actual_correct=float(outcome_score),
+            )
+            # Test outcomes are strong exogenous signals — record tactical too
+            if outcome_type in ('test_passed', 'test_failed'):
+                calibration_checker.record_tactical_decision(
+                    confidence=_confidence,
+                    decision='proceed',
+                    immediate_outcome=not is_bad,
+                )
+        except Exception as e_cal:
+            logger.debug(f"Calibration from outcome_event skipped: {e_cal}")
+
     return success_response({
         "outcome_id": outcome_id,
         "outcome_type": outcome_type,

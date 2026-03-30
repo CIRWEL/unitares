@@ -1127,6 +1127,66 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
                     )
                     if ctx.outcome_event_id:
                         logger.debug(f"Auto-emitted outcome event {ctx.outcome_event_id} for {agent_id}")
+                        # Record calibration from auto-emitted positive outcome
+                        _conf = ctx.arguments.get('confidence')
+                        if _conf is not None:
+                            try:
+                                from src.calibration import calibration_checker
+                                _outcome_score = min(1.0, ctx.metrics_dict.get('coherence', 0.5) * 1.5)
+                                calibration_checker.record_prediction(
+                                    confidence=float(_conf),
+                                    predicted_correct=(float(_conf) >= 0.5),
+                                    actual_correct=_outcome_score,
+                                )
+                            except Exception as _ce:
+                                logger.debug(f"Calibration from positive outcome skipped: {_ce}")
+            # Auto-emit negative outcome event for failure signals
+            if not ctx.outcome_event_id:
+                _failure_signals = (
+                    'failed', 'error', 'broken', 'reverted', 'blocked',
+                    'stuck', 'crash', 'regression',
+                )
+                if any(sig in _rt_lower for sig in _failure_signals):
+                    from src.db import get_db
+                    _db = get_db()
+                    if _db:
+                        _summary = ctx.response_text[:500] if len(ctx.response_text) > 500 else ctx.response_text
+                        _bad_score = max(0.0, 1.0 - ctx.metrics_dict.get('coherence', 0.5) * 1.5)
+                        _bad_oid = await _db.record_outcome_event(
+                            agent_id=agent_id,
+                            outcome_type='task_failed',
+                            is_bad=True,
+                            outcome_score=_bad_score,
+                            session_id=ctx.arguments.get('client_session_id'),
+                            eisv_e=ctx.metrics_dict.get('E'),
+                            eisv_i=ctx.metrics_dict.get('I'),
+                            eisv_s=ctx.metrics_dict.get('S'),
+                            eisv_v=ctx.metrics_dict.get('V'),
+                            eisv_phi=ctx.metrics_dict.get('phi'),
+                            eisv_verdict=ctx.metrics_dict.get('verdict'),
+                            eisv_coherence=ctx.metrics_dict.get('coherence'),
+                            eisv_regime=ctx.metrics_dict.get('regime'),
+                            detail={
+                                'source': 'auto_checkin',
+                                'complexity': ctx.complexity,
+                                'confidence': ctx.arguments.get('confidence'),
+                                'summary': _summary,
+                                'is_negative': True,
+                            },
+                        )
+                        if _bad_oid:
+                            logger.debug(f"Auto-emitted negative outcome event {_bad_oid} for {agent_id}")
+                            _conf = ctx.arguments.get('confidence')
+                            if _conf is not None:
+                                try:
+                                    from src.calibration import calibration_checker
+                                    calibration_checker.record_prediction(
+                                        confidence=float(_conf),
+                                        predicted_correct=(float(_conf) >= 0.5),
+                                        actual_correct=_bad_score,
+                                    )
+                                except Exception as _ce:
+                                    logger.debug(f"Calibration from negative outcome skipped: {_ce}")
     except Exception as e:
         logger.debug(f"Outcome event auto-emit skipped: {e}")
 
