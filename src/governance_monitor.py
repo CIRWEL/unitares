@@ -815,6 +815,7 @@ class UNITARESMonitor:
                 continuity_E_input=continuity_metrics.E_input,
                 continuity_I_input=continuity_metrics.I_input,
                 continuity_S_input=continuity_metrics.S_input,
+                outcome_history=self._cached_outcome_history,
                 tool_error_rate=tu_stats.get('error_rate') if tu_stats else None,
             )
             if beh_sensor:
@@ -946,7 +947,18 @@ class UNITARESMonitor:
                 'reason': decision.get('reason', ''),
                 'coherence': float(self.state.coherence),
                 'void_active': void_active,
-                'unitares_verdict': unitares_verdict
+                'unitares_verdict': unitares_verdict,
+                'beh_obs': [round(beh_E_obs, 4), round(beh_I_obs, 4), round(beh_S_obs, 4)],
+                'continuity': {
+                    'derived_cx': round(continuity_metrics.derived_complexity, 4),
+                    'self_cx': round(continuity_metrics.self_complexity, 4) if continuity_metrics.self_complexity is not None else None,
+                    'divergence': round(continuity_metrics.complexity_divergence, 4),
+                    'E_input': round(continuity_metrics.E_input, 4),
+                    'I_input': round(continuity_metrics.I_input, 4),
+                    'S_input': round(continuity_metrics.S_input, 4),
+                    'overconf': continuity_metrics.overconfidence_signal,
+                    'underconf': continuity_metrics.underconfidence_signal,
+                },
             }
         )
         
@@ -954,9 +966,6 @@ class UNITARESMonitor:
         self.state.decision_history.append(decision.get('sub_action', decision['action']))
         if len(self.state.decision_history) > config.HISTORY_WINDOW:
             self.state.decision_history = self.state.decision_history[-config.HISTORY_WINDOW:]
-        
-        # Step 6: Get sampling parameters for next generation
-        sampling_params = config.lambda_to_params(self.state.lambda1)
         
         # Determine overall status using health thresholds (aligned with health_checker)
         # Use same thresholds as health_checker for consistency: risk_healthy_max=0.35, risk_moderate_max=0.60
@@ -999,7 +1008,6 @@ class UNITARESMonitor:
             status=status,
             decision=decision,
             metrics=metrics,
-            sampling_params=sampling_params,
             confidence=confidence,
             confidence_metadata=confidence_metadata,
             task_type_adjustment=task_type_adjustment,
@@ -1393,7 +1401,6 @@ class UNITARESMonitor:
         status: str,
         decision: Dict,
         metrics: Dict,
-        sampling_params: Dict,
         confidence: float,
         confidence_metadata: Dict,
         task_type_adjustment,
@@ -1414,7 +1421,6 @@ class UNITARESMonitor:
             'status': status,
             'decision': decision,
             'metrics': metrics,
-            'sampling_params': sampling_params,
             'timestamp': datetime.now().isoformat(),
             # TRANSPARENCY: Surface confidence reliability info (was computed but hidden)
             'confidence_reliability': {

@@ -594,6 +594,10 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
                 except Exception:
                     pass  # Fail-safe: sensor works without outcomes
 
+                # Cache outcome history on monitor for use in sync process_update
+                if outcome_hist is not None:
+                    monitor._cached_outcome_history = outcome_hist
+
                 behavioral_eisv = compute_behavioral_sensor_eisv(
                     decision_history=list(monitor.state.decision_history),
                     coherence_history=list(monitor.state.coherence_history),
@@ -1134,7 +1138,7 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
                     if ctx.outcome_event_id:
                         logger.debug(f"Auto-emitted outcome event {ctx.outcome_event_id} for {agent_id}")
                         # Record calibration from auto-emitted positive outcome
-                        _conf = ctx.arguments.get('confidence')
+                        _conf = ctx.confidence
                         if _conf is not None:
                             try:
                                 from src.calibration import calibration_checker
@@ -1182,7 +1186,7 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
                         )
                         if _bad_oid:
                             logger.debug(f"Auto-emitted negative outcome event {_bad_oid} for {agent_id}")
-                            _conf = ctx.arguments.get('confidence')
+                            _conf = ctx.confidence
                             if _conf is not None:
                                 try:
                                     from src.calibration import calibration_checker

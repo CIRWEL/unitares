@@ -42,6 +42,7 @@ class TestPhase5CalibrationWiring:
         ctx = SimpleNamespace(
             response_text="Completed the feature implementation",
             complexity=0.5,
+            confidence=0.8,
             arguments={'confidence': 0.8, 'client_session_id': 'sess-1'},
             metrics_dict={
                 'E': 0.72, 'I': 0.75, 'S': 0.15, 'V': -0.03,
@@ -96,7 +97,7 @@ class TestPhase5CalibrationWiring:
                     },
                 )
                 if ctx.outcome_event_id:
-                    _conf = ctx.arguments.get('confidence')
+                    _conf = ctx.confidence
                     if _conf is not None:
                         _outcome_score = min(1.0, ctx.metrics_dict.get('coherence', 0.5) * 1.5)
                         mock_checker.record_prediction(
@@ -116,6 +117,7 @@ class TestPhase5CalibrationWiring:
     async def test_no_calibration_when_confidence_missing(self, phase5_ctx):
         """No calibration recorded when confidence is None."""
         phase5_ctx.arguments = {'client_session_id': 'sess-1'}  # No confidence
+        phase5_ctx.confidence = None
 
         mock_db = MagicMock()
         mock_db.record_outcome_event = AsyncMock(return_value='outcome-456')
@@ -134,7 +136,7 @@ class TestPhase5CalibrationWiring:
                     eisv_coherence=None, eisv_regime=None, detail={},
                 )
                 if ctx.outcome_event_id:
-                    _conf = ctx.arguments.get('confidence')
+                    _conf = ctx.confidence
                     if _conf is not None:
                         mock_checker.record_prediction(
                             confidence=float(_conf),
@@ -199,7 +201,7 @@ class TestPhase5CalibrationWiring:
                         },
                     )
                     if _bad_oid:
-                        _conf = ctx.arguments.get('confidence')
+                        _conf = ctx.confidence
                         if _conf is not None:
                             mock_checker.record_prediction(
                                 confidence=float(_conf),
