@@ -145,6 +145,7 @@ class UNITARESMonitor:
         # Behavioral EISV: observation-first state (no ODE, no attractor)
         self._behavioral_state = BehavioralEISV()
         self._last_behavioral_verdict: Optional[str] = None  # safe/caution/high-risk
+        self._cached_outcome_history: Optional[list] = None  # Populated by Phase 5, used by process_update
 
         # Continuous self-validation: track previous verdict for trajectory comparison
         self._prev_verdict_action: Optional[str] = None   # 'proceed', 'pause', etc.
@@ -1314,15 +1315,13 @@ class UNITARESMonitor:
             # Scale: +/-0.2 norm change saturates the response
             trajectory_quality = 1.0 / (1.0 + math.exp(-norm_delta * 10.0))
 
-            prev_predicted_correct = self._prev_confidence >= 0.5
+            # NOTE: Trajectory quality is NOT recorded to strategic calibration.
+            # It centers at ~0.5 for typical small norm changes, polluting bins.
+            # Strategic calibration is fed only by exogenous signals (tool-usage,
+            # outcome events).
 
-            calibration_checker.record_prediction(
-                confidence=self._prev_confidence,
-                predicted_correct=prev_predicted_correct,
-                actual_correct=trajectory_quality,
-            )
-
-            if self._prev_verdict_action in ('proceed', 'pause'):
+            if (self._prev_verdict_action in ('proceed', 'pause')
+                    and abs(norm_delta) > 0.03):
                 calibration_checker.record_tactical_decision(
                     confidence=self._prev_confidence,
                     decision=self._prev_verdict_action,
@@ -1360,11 +1359,7 @@ class UNITARESMonitor:
                 tools = stats.get('tools', {})
                 total_success = sum(t.get('success_count', 0) for t in tools.values())
                 tool_accuracy = float(total_success) / float(total_calls)
-                # Blend with trajectory quality when both are available
-                if trajectory_validation:
-                    actual_correct = 0.4 * trajectory_validation['quality'] + 0.6 * tool_accuracy
-                else:
-                    actual_correct = tool_accuracy
+                actual_correct = tool_accuracy
         except Exception:
             pass
 
@@ -1550,8 +1545,8 @@ class UNITARESMonitor:
                     'guidance': behavioral_assessment.guidance,
                 },
             }
-            # Include DNA deviation when genotyped and unhealthy
-            if self._behavioral_state.is_genotyped and behavioral_assessment.health != "healthy":
+            # Include baseline deviation when baselined and unhealthy
+            if self._behavioral_state.is_baselined and behavioral_assessment.health != "healthy":
                 result['behavioral']['deviation'] = {
                     'E': round(self._behavioral_state.deviation("E"), 2),
                     'I': round(self._behavioral_state.deviation("I"), 2),

@@ -38,10 +38,10 @@ MAX_HISTORY = 100
 # Number of updates before full confidence in behavioral state
 BOOTSTRAP_UPDATES = 10
 
-# Number of updates before DNA profile is considered stable
+# Number of updates before behavioral baseline is considered stable
 # (~15 min at 30s cadence). Welford needs >=5 for z_score, but
 # 30 gives stable mean/std estimates.
-GENOTYPING_UPDATES = 30
+BASELINE_WARMUP_UPDATES = 30
 
 
 @dataclass
@@ -51,9 +51,9 @@ class BehavioralEISV:
     No ODE. No attractor. Just observations smoothed over time.
     V is derived from current E-I gap, not accumulated.
 
-    After GENOTYPING_UPDATES, DNA baselines (Welford mean/std per dimension)
-    enable self-relative assessment — deviation from YOUR pattern, not universal
-    thresholds.
+    After BASELINE_WARMUP_UPDATES, behavioral baselines (Welford mean/std per
+    dimension) enable self-relative assessment — deviation from YOUR pattern,
+    not universal thresholds.
     """
 
     E: float = BOOTSTRAP_E
@@ -73,11 +73,11 @@ class BehavioralEISV:
     S_history: List[float] = field(default_factory=list)
     V_history: List[float] = field(default_factory=list)
 
-    # DNA: per-dimension running statistics (Welford's algorithm)
-    _dna_E: WelfordStats = field(default_factory=WelfordStats)
-    _dna_I: WelfordStats = field(default_factory=WelfordStats)
-    _dna_S: WelfordStats = field(default_factory=WelfordStats)
-    _dna_V: WelfordStats = field(default_factory=WelfordStats)
+    # Per-dimension running statistics for behavioral baseline (Welford's algorithm)
+    _baseline_E: WelfordStats = field(default_factory=WelfordStats)
+    _baseline_I: WelfordStats = field(default_factory=WelfordStats)
+    _baseline_S: WelfordStats = field(default_factory=WelfordStats)
+    _baseline_V: WelfordStats = field(default_factory=WelfordStats)
 
     def update(
         self,
@@ -136,11 +136,11 @@ class BehavioralEISV:
             self.S_history = self.S_history[-MAX_HISTORY:]
             self.V_history = self.V_history[-MAX_HISTORY:]
 
-        # Feed smoothed values to DNA stats
-        self._dna_E.update(self.E)
-        self._dna_I.update(self.I)
-        self._dna_S.update(self.S)
-        self._dna_V.update(self.V)
+        # Feed smoothed values to baseline stats
+        self._baseline_E.update(self.E)
+        self._baseline_I.update(self.I)
+        self._baseline_S.update(self.S)
+        self._baseline_V.update(self.V)
 
         self.update_count += 1
         self.last_update_time = time.monotonic()
@@ -153,45 +153,45 @@ class BehavioralEISV:
         return self.update_count / BOOTSTRAP_UPDATES
 
     @property
-    def genotyping_confidence(self) -> float:
-        """How stable is the DNA profile. 0 = no data, 1 = fully characterized."""
-        if self.update_count >= GENOTYPING_UPDATES:
+    def baseline_confidence(self) -> float:
+        """How stable is the behavioral baseline. 0 = no data, 1 = fully characterized."""
+        if self.update_count >= BASELINE_WARMUP_UPDATES:
             return 1.0
         if self.update_count < 5:
             return 0.0
-        return (self.update_count - 5) / (GENOTYPING_UPDATES - 5)
+        return (self.update_count - 5) / (BASELINE_WARMUP_UPDATES - 5)
 
     @property
-    def is_genotyped(self) -> bool:
-        """True when DNA profile is stable enough for self-relative scoring."""
-        return self.genotyping_confidence >= 0.8
+    def is_baselined(self) -> bool:
+        """True when behavioral baseline is stable enough for self-relative scoring."""
+        return self.baseline_confidence >= 0.8
 
     @property
-    def dna(self) -> Dict[str, Dict]:
-        """The agent's characteristic EISV profile (DNA).
+    def baseline_profile(self) -> Dict[str, Dict]:
+        """The agent's characteristic EISV operating point.
 
-        Returns mean/std/count per dimension. Empty dict if not yet genotyped.
+        Returns mean/std/count per dimension. Empty dict if not yet baselined.
         """
-        if not self.is_genotyped:
+        if not self.is_baselined:
             return {}
         return {
-            "E": {"mean": round(self._dna_E.mean, 4), "std": round(self._dna_E.std, 4), "count": self._dna_E.count},
-            "I": {"mean": round(self._dna_I.mean, 4), "std": round(self._dna_I.std, 4), "count": self._dna_I.count},
-            "S": {"mean": round(self._dna_S.mean, 4), "std": round(self._dna_S.std, 4), "count": self._dna_S.count},
-            "V": {"mean": round(self._dna_V.mean, 4), "std": round(self._dna_V.std, 4), "count": self._dna_V.count},
+            "E": {"mean": round(self._baseline_E.mean, 4), "std": round(self._baseline_E.std, 4), "count": self._baseline_E.count},
+            "I": {"mean": round(self._baseline_I.mean, 4), "std": round(self._baseline_I.std, 4), "count": self._baseline_I.count},
+            "S": {"mean": round(self._baseline_S.mean, 4), "std": round(self._baseline_S.std, 4), "count": self._baseline_S.count},
+            "V": {"mean": round(self._baseline_V.mean, 4), "std": round(self._baseline_V.std, 4), "count": self._baseline_V.count},
         }
 
     def deviation(self, dimension: str) -> float:
-        """Z-score of current value from agent's own DNA baseline.
+        """Z-score of current value from agent's own behavioral baseline.
 
-        Returns 0.0 if genotyping is incomplete or std is too small.
+        Returns 0.0 if warmup is incomplete or std is too small.
         Positive = above baseline, negative = below baseline.
         """
-        dna_stats = getattr(self, f"_dna_{dimension}", None)
-        if dna_stats is None or not self.is_genotyped:
+        stats = getattr(self, f"_baseline_{dimension}", None)
+        if stats is None or not self.is_baselined:
             return 0.0
         current = getattr(self, dimension, 0.5)
-        return dna_stats.z_score(current)
+        return stats.z_score(current)
 
     def trend(self, dimension: str, window: int = 5) -> float:
         """Simple slope of recent history for a dimension.
@@ -223,9 +223,9 @@ class BehavioralEISV:
             "confidence": round(self.confidence, 2),
             "updates": self.update_count,
         }
-        if self.is_genotyped:
-            d["dna"] = self.dna
-            d["genotyping_confidence"] = round(self.genotyping_confidence, 2)
+        if self.is_baselined:
+            d["baseline_profile"] = self.baseline_profile
+            d["baseline_confidence"] = round(self.baseline_confidence, 2)
         return d
 
     def to_dict_with_history(self) -> Dict:
@@ -236,12 +236,12 @@ class BehavioralEISV:
         d["S_history"] = [round(v, 4) for v in self.S_history[-MAX_HISTORY:]]
         d["V_history"] = [round(v, 4) for v in self.V_history[-MAX_HISTORY:]]
         d["alphas"] = dict(self.alphas)
-        # Persist DNA statistics for cross-restart continuity
-        d["dna_stats"] = {
-            "E": self._dna_E.to_dict(),
-            "I": self._dna_I.to_dict(),
-            "S": self._dna_S.to_dict(),
-            "V": self._dna_V.to_dict(),
+        # Persist baseline statistics for cross-restart continuity
+        d["baseline_stats"] = {
+            "E": self._baseline_E.to_dict(),
+            "I": self._baseline_I.to_dict(),
+            "S": self._baseline_S.to_dict(),
+            "V": self._baseline_V.to_dict(),
         }
         return d
 
@@ -260,14 +260,15 @@ class BehavioralEISV:
         state.V_history = [float(v) for v in data.get("V_history", [])]
         if "alphas" in data:
             state.alphas = {k: float(v) for k, v in data["alphas"].items()}
-        # Restore DNA statistics (backward compat: missing = fresh WelfordStats)
-        dna_stats = data.get("dna_stats", {})
-        if "E" in dna_stats:
-            state._dna_E = WelfordStats.from_dict(dna_stats["E"])
-        if "I" in dna_stats:
-            state._dna_I = WelfordStats.from_dict(dna_stats["I"])
-        if "S" in dna_stats:
-            state._dna_S = WelfordStats.from_dict(dna_stats["S"])
-        if "V" in dna_stats:
-            state._dna_V = WelfordStats.from_dict(dna_stats["V"])
+        # Restore baseline statistics (backward compat: missing = fresh WelfordStats)
+        # Also accept legacy "dna_stats" key for data persisted before rename
+        baseline_data = data.get("baseline_stats", data.get("dna_stats", {}))
+        if "E" in baseline_data:
+            state._baseline_E = WelfordStats.from_dict(baseline_data["E"])
+        if "I" in baseline_data:
+            state._baseline_I = WelfordStats.from_dict(baseline_data["I"])
+        if "S" in baseline_data:
+            state._baseline_S = WelfordStats.from_dict(baseline_data["S"])
+        if "V" in baseline_data:
+            state._baseline_V = WelfordStats.from_dict(baseline_data["V"])
         return state

@@ -3,9 +3,9 @@
 No sigmoid/phi black box. Each risk component has a clear source and weight.
 Assessment is auditable — you can trace exactly why a verdict was issued.
 
-After genotyping, scoring switches from fixed universal thresholds to
-self-relative z-score deviations from the agent's own DNA baseline.
-Absolute safety floors always apply regardless of DNA.
+After warmup, scoring switches from fixed universal thresholds to
+self-relative z-score deviations from the agent's own behavioral baseline.
+Absolute safety floors always apply regardless of baseline.
 """
 
 from __future__ import annotations
@@ -39,11 +39,11 @@ class AssessmentResult:
 RISK_SAFE_THRESHOLD = 0.35
 RISK_CAUTION_THRESHOLD = 0.60
 
-# Absolute safety floors — always active, override DNA.
+# Absolute safety floors — always active, override baseline.
 # These catch states that are genuinely dangerous regardless of an agent's
 # characteristic operating point. Set between "extreme" and the fixed-
 # threshold triggers (0.4 for E/I, 0.5 for S) to provide meaningful
-# backstop for agents whose DNA normalizes persistently bad states.
+# backstop for agents whose baseline normalizes persistently bad states.
 ABSOLUTE_E_FLOOR = 0.30
 ABSOLUTE_I_FLOOR = 0.30
 ABSOLUTE_S_CEILING = 0.70
@@ -63,7 +63,7 @@ def assess_behavioral_state(
 ) -> AssessmentResult:
     """Assess agent health from behavioral EISV + auxiliary signals.
 
-    Uses self-relative DNA scoring after genotyping, fixed thresholds before.
+    Uses self-relative scoring after warmup, fixed thresholds before.
     Absolute safety floors always apply.
 
     Args:
@@ -77,9 +77,9 @@ def assess_behavioral_state(
     """
     ctx = agent_context or {}
 
-    # Score components based on genotyping status
-    if state.is_genotyped:
-        components = _score_dna_relative(state, rho, continuity_energy, ctx)
+    # Score components based on baseline status
+    if state.is_baselined:
+        components = _score_self_relative(state, rho, continuity_energy, ctx)
     else:
         components = _score_fixed_threshold(state, rho, continuity_energy, ctx)
 
@@ -143,7 +143,7 @@ def _score_fixed_threshold(
     continuity_energy: float,
     ctx: Dict,
 ) -> Dict[str, float]:
-    """Fixed-threshold assessment — used during genotyping phase.
+    """Fixed-threshold assessment — used during warmup phase.
 
     Identical to the original assessment logic.
     """
@@ -193,13 +193,13 @@ def _score_fixed_threshold(
     return components
 
 
-def _score_dna_relative(
+def _score_self_relative(
     state: BehavioralEISV,
     rho: float,
     continuity_energy: float,
     ctx: Dict,
 ) -> Dict[str, float]:
-    """Self-relative assessment — deviation from agent's own DNA baseline.
+    """Self-relative assessment — deviation from agent's own behavioral baseline.
 
     Same components and weights as fixed-threshold mode, but triggers are based
     on sigma-deviations from the agent's characteristic operating point.
@@ -242,13 +242,13 @@ def _score_dna_relative(
     else:
         components["high_V"] = 0.0
 
-    # --- Component 5: Adversarial rho (weight: 0.15) --- (not DNA-based)
+    # --- Component 5: Adversarial rho (weight: 0.15) --- (not baseline-relative)
     if rho < -0.2:
         components["adversarial_rho"] = 0.15 * min(1.0, (-0.2 - rho) / 0.8)
     else:
         components["adversarial_rho"] = 0.0
 
-    # --- Component 6: High continuity energy (weight: 0.10) --- (not DNA-based)
+    # --- Component 6: High continuity energy (weight: 0.10) --- (not baseline-relative)
     if continuity_energy > 0.5:
         components["high_CE"] = 0.10 * min(1.0, (continuity_energy - 0.5) / 1.5)
     else:
@@ -258,9 +258,9 @@ def _score_dna_relative(
 
 
 def _score_absolute_floors(state: BehavioralEISV) -> Dict[str, float]:
-    """Absolute safety floors — always active, override DNA.
+    """Absolute safety floors — always active, override baseline.
 
-    These catch genuinely dangerous states that no amount of DNA
+    These catch genuinely dangerous states that no amount of baseline
     normalization should mask.
     """
     components: Dict[str, float] = {}
@@ -297,22 +297,22 @@ def _generate_guidance(
     if top_value < 0.01:
         return None
 
-    if state.is_genotyped:
+    if state.is_baselined:
         guidance_map = {
             "low_E": (
-                f"Energy below your baseline (E={state.E:.2f}, typical={state._dna_E.mean:.2f}). "
+                f"Energy below your baseline (E={state.E:.2f}, typical={state._baseline_E.mean:.2f}). "
                 f"Something may be reducing your capacity."
             ),
             "low_I": (
-                f"Integrity below your baseline (I={state.I:.2f}, typical={state._dna_I.mean:.2f}). "
+                f"Integrity below your baseline (I={state.I:.2f}, typical={state._baseline_I.mean:.2f}). "
                 f"Check calibration and recent outcomes."
             ),
             "high_S": (
-                f"Entropy above your baseline (S={state.S:.2f}, typical={state._dna_S.mean:.2f}). "
+                f"Entropy above your baseline (S={state.S:.2f}, typical={state._baseline_S.mean:.2f}). "
                 f"You may be in an unstable regime."
             ),
             "high_V": (
-                f"E-I imbalance beyond your norm (V={state.V:.2f}, typical={state._dna_V.mean:.2f}). "
+                f"E-I imbalance beyond your norm (V={state.V:.2f}, typical={state._baseline_V.mean:.2f}). "
                 f"{'Slow down.' if state.V > 0 else 'Try more exploration.'}"
             ),
             "adversarial_rho": "Updates are incoherent. E and I moving in opposite directions.",
