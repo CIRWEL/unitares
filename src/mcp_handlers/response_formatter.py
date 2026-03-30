@@ -144,7 +144,6 @@ def _format_standard(response_data: dict, task_type: str) -> dict:
             "E": E, "I": I, "S": S, "V": V,
             "coherence": coherence, "risk_score": risk_score,
         },
-        "sampling_params": response_data.get("sampling_params"),
         "_mode": "standard",
         "_raw_available": "Use response_mode='full' to see complete metrics",
     }
@@ -363,7 +362,6 @@ def _format_compact(response_data: dict, using_default_mode: bool, saved_trust_t
         "health_message": response_data.get("health_message"),
         "decision": compact_decision,
         "metrics": compact_metrics,
-        "sampling_params": response_data.get("sampling_params"),
         "summary": summary,
         "_mode": "compact",
     }
@@ -386,8 +384,6 @@ def _strip_context(response_data: dict, is_new_agent: bool, key_was_generated: b
     """Strip optional context fields for minimal/compact/mirror modes (in-place)."""
     # Unconditional strips (always noise in filtered modes)
     response_data.pop("eisv_labels", None)
-    response_data.pop("sampling_params_note", None)
-
     # Internal mirror signals (consumed during _format_mirror, not needed after)
     response_data.pop("_mirror_signals", None)
     response_data.pop("_mirror_kg_results", None)

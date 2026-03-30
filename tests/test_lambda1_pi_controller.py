@@ -6,7 +6,6 @@ Verifies that:
 1. Lambda1 adapts via PI controller
 2. Void frequency calculation works
 3. Theta.eta1 mapping is correct
-4. Sampling parameters change with lambda1
 """
 
 import sys
@@ -151,49 +150,18 @@ def test_lambda1_adaptation():
         return True  # Not necessarily a failure
 
 
-def test_sampling_parameters():
-    """Test that sampling parameters change with lambda1"""
-    print("\n5. Testing Sampling Parameters Adaptation...")
-    
-    test_lambda1_values = [0.05, 0.125, 0.20]
-    
-    print("   Lambda1 → Sampling Parameters:")
-    for l1 in test_lambda1_values:
-        params = config.lambda_to_params(l1)
-        print(f"   λ₁={l1:.3f}: temp={params['temperature']:.3f}, "
-              f"top_p={params['top_p']:.3f}, max_tokens={params['max_tokens']}")
-    
-    # Verify range
-    min_params = config.lambda_to_params(config.LAMBDA1_MIN)
-    max_params = config.lambda_to_params(config.LAMBDA1_MAX)
-    
-    temp_range = max_params['temperature'] - min_params['temperature']
-    top_p_range = max_params['top_p'] - min_params['top_p']
-    tokens_range = max_params['max_tokens'] - min_params['max_tokens']
-    
-    print(f"   Range: temp={temp_range:.3f}, top_p={top_p_range:.3f}, tokens={tokens_range}")
-    
-    if temp_range > 0 and top_p_range > 0 and tokens_range > 0:
-        print(f"   ✅ Sampling parameters vary with lambda1")
-        return True
-    else:
-        print(f"   ❌ Sampling parameters don't vary!")
-        return False
-
-
 def main():
     """Run all tests"""
     print("=" * 70)
     print("Lambda1 PI Controller Implementation Tests")
     print("=" * 70)
-    
+
     results = []
-    
+
     results.append(("Lambda1 Theta Mapping", test_lambda1_theta_mapping()))
     results.append(("PI Controller", test_pi_controller()))
     results.append(("Void Frequency Calculation", test_void_frequency_calculation()))
     results.append(("Lambda1 Adaptation", test_lambda1_adaptation()))
-    results.append(("Sampling Parameters", test_sampling_parameters()))
     
     print("\n" + "=" * 70)
     print("Test Results Summary")

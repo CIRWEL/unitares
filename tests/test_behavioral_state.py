@@ -32,14 +32,43 @@ class TestBehavioralEISVBasics:
         assert state.I != BOOTSTRAP_I  # should have moved toward 0.7
         assert len(state.E_history) == 1
 
-    def test_v_derived_from_e_i_gap(self):
-        """V should be E - I, not accumulated."""
+    def test_v_ema_converges_toward_gap(self):
+        """V should converge toward E-I gap after many constant updates."""
         state = BehavioralEISV()
-        # Force E high, I low
-        for _ in range(20):
+        for _ in range(200):
             state.update(0.9, 0.3, 0.2)
         assert state.V > 0  # E > I → positive V
-        assert abs(state.V - (state.E - state.I)) < 1e-6
+        # After many updates, V should be close to (E - I) but not exactly equal
+        assert abs(state.V - (state.E - state.I)) < 0.05
+
+    def test_v_ema_lag_on_reversal(self):
+        """V should lag behind sudden E-I reversals (EMA smoothing)."""
+        state = BehavioralEISV()
+        # Settle with E > I
+        for _ in range(50):
+            state.update(0.9, 0.3, 0.2)
+        v_before = state.V
+        assert v_before > 0
+        # Reverse: I > E
+        state.update(0.3, 0.9, 0.2)
+        # V should still be positive (lag), not instantly flip
+        assert state.V > 0
+        # But slightly smaller than before
+        assert state.V < v_before
+
+    def test_alpha_v_affects_convergence(self):
+        """Different alpha_V should produce different convergence rates."""
+        fast = BehavioralEISV()
+        fast.alphas["V"] = 0.50
+        slow = BehavioralEISV()
+        slow.alphas["V"] = 0.05
+        for _ in range(20):
+            fast.update(0.9, 0.3, 0.2)
+            slow.update(0.9, 0.3, 0.2)
+        # Fast should be closer to the E-I gap
+        fast_gap = abs(fast.V - (fast.E - fast.I))
+        slow_gap = abs(slow.V - (slow.E - slow.I))
+        assert fast_gap < slow_gap
 
 
 class TestEMAConvergence:

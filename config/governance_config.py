@@ -20,40 +20,13 @@ class GovernanceConfig:
     """Complete configuration for UNITARES v1.0"""
     
     # =================================================================
-    # DECISION POINT 1: λ₁ → Sampling Params Transfer Function
+    # DECISION POINT 1: λ₁ (Internal Metric for Regime Detection)
     # =================================================================
-    # Linear mapping with empirically validated ranges
-    
-    @staticmethod
-    def lambda_to_params(lambda1: float) -> Dict[str, float]:
-        """
-        Maps ethical coupling parameter λ₁ to model sampling parameters.
-        
-        λ₁ ∈ [0, 1]:
-        - Low λ₁ (0.0-0.3): Conservative, low temperature, high precision
-        - Mid λ₁ (0.3-0.7): Balanced exploration-exploitation
-        - High λ₁ (0.7-1.0): Exploratory, higher temperature, creative
-        
-        Returns:
-            temperature: [0.5, 1.2] - sampling randomness
-            top_p: [0.85, 0.95] - nucleus sampling threshold
-            max_tokens: [100, 500] - response length limit
-        """
-        # Clamp λ₁ to valid range
-        lambda1 = np.clip(lambda1, 0.0, 1.0)
-        
-        # Linear transfer functions (validated empirically)
-        temperature = 0.5 + 0.7 * lambda1      # [0.5, 1.2]
-        top_p = 0.85 + 0.10 * lambda1          # [0.85, 0.95]
-        max_tokens = int(100 + 400 * lambda1)  # [100, 500]
-        
-        return {
-            'temperature': temperature,
-            'top_p': top_p,
-            'max_tokens': max_tokens,
-            'lambda1': lambda1
-        }
-    
+    # Lambda1 is adapted by the PI controller and used for regime detection.
+    # The previous lambda_to_params() mapping to sampling parameters
+    # (temperature, top_p, max_tokens) was removed in v3.0 because no
+    # downstream consumer ever read those values — it was an open loop.
+
     # =================================================================
     # DECISION POINT 2: Risk Estimator (Concrete Formula)
     # =================================================================

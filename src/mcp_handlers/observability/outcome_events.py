@@ -65,7 +65,7 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
 
     detail = arguments.get("detail") or {}
 
-    # Fetch latest EISV snapshot for this agent
+    # Fetch latest EISV snapshot for this agent (ODE state from DB)
     db = get_db()
     eisv = await db.get_latest_eisv_by_agent_id(agent_id)
 
@@ -77,6 +77,22 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
     eisv_verdict = eisv["verdict"] if eisv else None
     eisv_coherence = eisv["coherence"] if eisv else None
     eisv_regime = eisv["regime"] if eisv else None
+
+    # Embed behavioral EISV (observation-first, per-agent) alongside ODE snapshot
+    try:
+        monitor = mcp_server.monitors.get(agent_id) if hasattr(mcp_server, 'monitors') else None
+        if monitor:
+            bstate = getattr(monitor, '_behavioral_state', None)
+            if bstate and bstate.confidence > 0:
+                detail['behavioral_eisv'] = {
+                    'E': round(bstate.E, 4),
+                    'I': round(bstate.I, 4),
+                    'S': round(bstate.S, 4),
+                    'V': round(bstate.V, 4),
+                    'confidence': round(bstate.confidence, 4),
+                }
+    except Exception:
+        pass  # Fail-safe: ODE snapshot still recorded
 
     # Insert
     outcome_id = await db.record_outcome_event(

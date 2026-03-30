@@ -643,7 +643,6 @@ class TestProcessUpdate:
         assert 'status' in result
         assert 'decision' in result
         assert 'metrics' in result
-        assert 'sampling_params' in result
         assert 'timestamp' in result
         assert 'confidence_reliability' in result
 
@@ -1266,10 +1265,6 @@ class TestGetMetrics:
         """include_state=False should exclude nested state dict."""
         metrics = monitor.get_metrics(include_state=False)
         assert 'state' not in metrics
-
-    def test_sampling_params_present(self, monitor):
-        metrics = monitor.get_metrics()
-        assert 'sampling_params' in metrics
 
     def test_decision_statistics(self, monitor):
         """Decision statistics should reflect actual decisions."""

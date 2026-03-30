@@ -128,7 +128,6 @@ def get_monitor_metrics(monitor: Any, include_state: bool = True) -> Dict:
         'regime': str(regime),
         'status': 'uninitialized' if is_uninitialized else status,
         'initialized': not is_uninitialized,
-        'sampling_params': config.lambda_to_params(state.lambda1),
         'history_size': len(state.V_history),
         'current_risk': None if is_uninitialized else current_risk,
         'mean_risk': None if is_uninitialized else mean_risk,

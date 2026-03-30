@@ -49,7 +49,7 @@ class BehavioralEISV:
     """EMA-smoothed behavioral EISV state.
 
     No ODE. No attractor. Just observations smoothed over time.
-    V is derived from current E-I gap, not accumulated.
+    V is EMA-smoothed E-I imbalance, accumulated over time.
 
     After BASELINE_WARMUP_UPDATES, behavioral baselines (Welford mean/std per
     dimension) enable self-relative assessment — deviation from YOUR pattern,
@@ -72,6 +72,9 @@ class BehavioralEISV:
     I_history: List[float] = field(default_factory=list)
     S_history: List[float] = field(default_factory=list)
     V_history: List[float] = field(default_factory=list)
+
+    # Raw observation history (pre-EMA) for dimensionality analysis
+    obs_history: List[List[float]] = field(default_factory=list)
 
     # Per-dimension running statistics for behavioral baseline (Welford's algorithm)
     _baseline_E: WelfordStats = field(default_factory=WelfordStats)
@@ -97,6 +100,11 @@ class BehavioralEISV:
         I_obs = max(0.0, min(1.0, I_obs))
         S_obs = max(0.0, min(1.0, S_obs))
 
+        # Record raw observations before EMA smoothing
+        self.obs_history.append([E_obs, I_obs, S_obs])
+        if len(self.obs_history) > MAX_HISTORY:
+            self.obs_history = self.obs_history[-MAX_HISTORY:]
+
         # During bootstrap, ramp alpha from 0.5 (fast catch-up) down to configured value
         if self.update_count < BOOTSTRAP_UPDATES:
             ramp = 1.0 - (self.update_count / BOOTSTRAP_UPDATES)
@@ -104,18 +112,21 @@ class BehavioralEISV:
             alpha_E = self.alphas["E"] + bootstrap_boost * ramp
             alpha_I = self.alphas["I"] + bootstrap_boost * ramp
             alpha_S = self.alphas["S"] + bootstrap_boost * ramp
+            alpha_V = self.alphas["V"] + bootstrap_boost * ramp
         else:
             alpha_E = self.alphas["E"]
             alpha_I = self.alphas["I"]
             alpha_S = self.alphas["S"]
+            alpha_V = self.alphas["V"]
 
         # EMA update: new = (1 - alpha) * old + alpha * observation
         self.E = (1.0 - alpha_E) * self.E + alpha_E * E_obs
         self.I = (1.0 - alpha_I) * self.I + alpha_I * I_obs
         self.S = (1.0 - alpha_S) * self.S + alpha_S * S_obs
 
-        # V derived from current E-I gap (not accumulated)
-        self.V = self.E - self.I
+        # V: EMA-smoothed E-I imbalance (accumulated, not instantaneous)
+        raw_v = self.E - self.I
+        self.V = (1.0 - alpha_V) * self.V + alpha_V * raw_v
 
         # Clamp to valid ranges
         self.E = max(0.0, min(1.0, self.E))
@@ -235,6 +246,7 @@ class BehavioralEISV:
         d["I_history"] = [round(v, 4) for v in self.I_history[-MAX_HISTORY:]]
         d["S_history"] = [round(v, 4) for v in self.S_history[-MAX_HISTORY:]]
         d["V_history"] = [round(v, 4) for v in self.V_history[-MAX_HISTORY:]]
+        d["obs_history"] = [[round(v, 4) for v in row] for row in self.obs_history[-MAX_HISTORY:]]
         d["alphas"] = dict(self.alphas)
         # Persist baseline statistics for cross-restart continuity
         d["baseline_stats"] = {
@@ -258,6 +270,7 @@ class BehavioralEISV:
         state.I_history = [float(v) for v in data.get("I_history", [])]
         state.S_history = [float(v) for v in data.get("S_history", [])]
         state.V_history = [float(v) for v in data.get("V_history", [])]
+        state.obs_history = [[float(v) for v in row] for row in data.get("obs_history", [])]
         if "alphas" in data:
             state.alphas = {k: float(v) for k, v in data["alphas"].items()}
         # Restore baseline statistics (backward compat: missing = fresh WelfordStats)

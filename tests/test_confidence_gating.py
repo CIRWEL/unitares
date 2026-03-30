@@ -190,10 +190,8 @@ class TestConfidenceGating:
         assert "status" in result_low
         assert "decision" in result_low
         assert "metrics" in result_low
-        assert "sampling_params" in result_low
-        
+
         assert "status" in result_high
         assert "decision" in result_high
         assert "metrics" in result_high
-        assert "sampling_params" in result_high
 

@@ -640,7 +640,6 @@ async def handle_process_agent_update(arguments: ToolArgumentsDict) -> Sequence[
                             "coherence": float(metrics.get("coherence", 0)),
                             "risk_score": float(metrics.get("risk_score", 0))
                         },
-                        "sampling_params": ctx.result.get("sampling_params", {}),
                         "_warning": "Response serialization had issues - some fields may be missing"
                     })
                 )]
