@@ -62,4 +62,18 @@ class ObserveParams(AgentIdentityMixin):
     compare_metrics: Optional[List[Any]] = Field(None, description="Metrics to compare (for action=compare). Default: risk_score, coherence, E, I, S, V")
     limit: Optional[int] = Field(None, description="Max results to return (for action=similar, anomalies)")
 
+class OutcomeCorrelationParams(AgentIdentityMixin):
+    """Run outcome correlation study: does EISV instability predict bad outcomes?"""
+    since_hours: Union[float, str, None] = Field(
+        default=168,
+        description="Lookback window in hours (default: 168 = 1 week)"
+    )
 
+    @model_validator(mode='after')
+    def coerce_types(self):
+        if isinstance(self.since_hours, str):
+            try:
+                self.since_hours = float(self.since_hours)
+            except ValueError:
+                self.since_hours = 168
+        return self

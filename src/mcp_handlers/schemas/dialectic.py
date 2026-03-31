@@ -115,4 +115,14 @@ class DialecticParams(AgentIdentityMixin):
     limit: Optional[int] = Field(None, description="Max sessions to return (for action=list, default 50)")
     include_transcript: Optional[bool] = Field(None, description="Include full transcript (for action=list, default false)")
 
-
+class ReassignReviewerParams(AgentIdentityMixin):
+    """Reassign the reviewer for an active dialectic session."""
+    session_id: str = Field(..., description="Dialectic session ID")
+    new_reviewer_id: Optional[str] = Field(
+        default=None,
+        description="Agent ID to assign as new reviewer (auto-selected if omitted)"
+    )
+    reason: Optional[str] = Field(
+        default="Reviewer unresponsive",
+        description="Reason for reassignment"
+    )
