@@ -137,6 +137,9 @@ tests/additional_security_report.json
 .env.local
 secrets/
 
+# LaunchAgent plists (contain secrets — installed copy lives in ~/Library/LaunchAgents/)
+scripts/ops/*.plist
+
 # Documentation — only docs/*.md and docs/guides/ tracked; everything else local
 docs/INTERNAL_CONFIG.md
 docs/archive/

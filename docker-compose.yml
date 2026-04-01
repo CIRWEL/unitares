@@ -15,7 +15,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-governance}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-age-data:/var/lib/postgresql/data
       - ./db/postgres/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -31,7 +31,7 @@ services:
     image: redis:7-alpine
     container_name: governance-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes
