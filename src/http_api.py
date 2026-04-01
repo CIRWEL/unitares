@@ -249,9 +249,9 @@ async def http_call_tool(request):
                 "max_arguments": 100
             }, status_code=400)
 
-        tool_name = body.get("name") or "unknown"
+        tool_name = body.get("name") or body.get("tool_name") or "unknown"
         if not tool_name or tool_name == "unknown":
-            return JSONResponse({"success": False, "error": "Missing 'name' field", "name": None}, status_code=400)
+            return JSONResponse({"success": False, "error": "Missing 'name' field — pass the tool name as 'name', e.g. {\"name\": \"onboard\", \"arguments\": {...}}"}, status_code=400)
 
         # SECURITY: Validate tool name format (prevent injection)
         if not isinstance(tool_name, str) or len(tool_name) > 100:

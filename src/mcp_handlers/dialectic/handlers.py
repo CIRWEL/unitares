@@ -265,7 +265,7 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
     session_type = arguments.get("session_type", "review")
     discovery_id = arguments.get("discovery_id")
     dispute_type = arguments.get("dispute_type")
-    topic = arguments.get("topic")
+    topic = arguments.get("topic") or reason
     reviewer_mode = arguments.get("reviewer_mode", "auto")  # auto|self|llm
     max_synthesis_rounds = arguments.get("max_synthesis_rounds", 5)
     # Determine trigger source: explicit param > inferred from reason > "manual"

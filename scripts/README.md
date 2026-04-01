@@ -12,7 +12,8 @@ Utility scripts that live directly in `scripts/`:
 
 | Script | Description |
 |--------|-------------|
-| `backup_governance.sh` | Backup governance database |
+| `backup_governance.sh` | Backup governance database (auto-starts container, retries, status JSON, optional macOS alert on failure) |
+| `check_governance_backup_health.sh` | Exit non-zero if backups are older than `MAX_AGE_SEC` (default 26h); for cron/monitoring |
 | `bump_epoch.py` | Bump governance epoch |
 | `check_ci_python_version_sync.py` | Verify CI Python version matches project |
 | `count_tools.py` | Count registered MCP tools |
@@ -37,8 +38,9 @@ The bulk of operational scripts live in `scripts/ops/`.
 
 ### Server Lifecycle
 
-| Script | Description |
-|--------|-------------|
+| Script / file | Description |
+|----------------|-------------|
+| `ops/com.unitares.governance-backup.plist` | LaunchAgent template: daily DB backup at 03:00 (copy to `~/Library/LaunchAgents/`, adjust paths) |
 | `start_unitares.sh` | Start the governance MCP server |
 | `stop_unitares.sh` | Stop the governance MCP server |
 | `start_server.sh` | Alternative server start |

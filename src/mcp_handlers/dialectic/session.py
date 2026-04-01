@@ -86,7 +86,7 @@ def _reconstruct_session_from_dict(session_id: str, session_data: Dict) -> Optio
             phase = DialecticPhase.THESIS
 
         paused_agent_state = session_data.get("paused_agent_state", {}) or {}
-        session_type = session_data.get("session_type", "recovery") or "recovery"
+        session_type = session_data.get("session_type", "review") or "review"
         topic = session_data.get("topic")
         max_synthesis_rounds = session_data.get("max_synthesis_rounds", 5) or 5
 
@@ -221,7 +221,7 @@ async def load_session(session_id: str) -> Optional[DialecticSession]:
         # Normalize keys to match reconstruction function expectations
         if "messages" in session_data and "transcript" not in session_data:
             session_data["transcript"] = session_data["messages"]
-        session_data.setdefault("session_type", session_data.get("session_type") or "recovery")
+        session_data.setdefault("session_type", session_data.get("session_type") or "review")
         session_data.setdefault("max_synthesis_rounds", session_data.get("max_synthesis_rounds") or 5)
         session_data.setdefault("synthesis_round", session_data.get("synthesis_round") or 0)
         return _reconstruct_session_from_dict(session_id, session_data)

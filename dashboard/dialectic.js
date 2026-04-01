@@ -101,7 +101,7 @@
                 '<div class="dialectic-empty-icon">🔄</div>' +
                 '<div>No active dialectic sessions</div>' +
                 '<div class="text-secondary-xs">' +
-                    'Sessions appear when agents request recovery reviews' +
+                    'Sessions appear when agents request dialectic reviews' +
                 '</div>' +
             '</div>';
             return;

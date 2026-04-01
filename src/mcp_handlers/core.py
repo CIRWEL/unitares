@@ -348,10 +348,10 @@ async def handle_get_governance_metrics(arguments: ToolArgumentsDict) -> Sequenc
             'purpose': getattr(meta, 'purpose', None),  # Added for social awareness
             'summary': standardized_metrics.get('summary', 'unknown'),
             # EISV with contextual bounds
-            'E': {'value': metrics.get('E'), 'range': '0-1', 'note': 'Energy capacity'},
-            'I': {'value': metrics.get('I'), 'range': '0-1', 'note': 'Information integrity'},
-            'S': {'value': metrics.get('S'), 'range': '0-1', 'ideal': '<0.2', 'note': 'Entropy (lower=better)'},
-            'V': {'value': void_display, 'range': '0-1', 'ideal': '<0.1', 'note': 'Void (lower=better)'},
+            'E': {'value': metrics.get('E'), 'range': '[0, 1]', 'note': 'Energy capacity'},
+            'I': {'value': metrics.get('I'), 'range': '[0, 1]', 'note': 'Information integrity'},
+            'S': {'value': metrics.get('S'), 'range': '[0, 1]', 'ideal': '<0.2', 'note': 'Entropy (lower=better)'},
+            'V': {'value': void_display, 'range': '[-1, 1]', 'ideal': 'near 0', 'note': 'Void (E-I imbalance, settles toward 0)'},
             # Key metrics with thresholds
             'coherence': {
                 'value': coherence,
