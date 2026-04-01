@@ -337,7 +337,7 @@ class UNITARESMonitor:
 
     def detect_regime(self) -> str:
         """Detect current operational regime based on state and history."""
-        return _detect_regime(self.state)
+        return _detect_regime(self.state, behavioral=self._behavioral_state)
     
     def update_dynamics(self,
                        agent_state: Dict,
@@ -985,13 +985,14 @@ class UNITARESMonitor:
             status = 'healthy'
         
         # Build metrics dict
-        # NOTE: risk_score measures governance/operational risk (likelihood of issues), not ethical risk
-        # The actual physics is Φ (phi) and verdict - these are the primary governance signals
+        # Primary EISV: behavioral (per-agent EMA observations) when confident,
+        # ODE fallback for new agents. ODE values preserved in 'ode' sub-field.
+        pE, pI, pS, pV = self.get_primary_eisv()
         metrics = {
-            'E': float(self.state.E),
-            'I': float(self.state.I),
-            'S': float(self.state.S),
-            'V': float(self.state.V),
+            'E': pE,
+            'I': pI,
+            'S': pS,
+            'V': pV,
             'coherence': float(self.state.coherence),
             'lambda1': float(self.state.lambda1),
             'risk_score': float(risk_score),  # Governance/operational risk (70% phi-based + 30% traditional)
@@ -1006,7 +1007,13 @@ class UNITARESMonitor:
         }
         
         metrics['lambda1_update_skips'] = int(self.state.lambda1_update_skips)
-        
+        metrics['ode'] = {
+            'E': float(self.state.E),
+            'I': float(self.state.I),
+            'S': float(self.state.S),
+            'V': float(self.state.V),
+        }
+
         return self._build_result(
             status=status,
             decision=decision,
@@ -1564,6 +1571,18 @@ class UNITARESMonitor:
                 }
 
         return result
+
+    def get_primary_eisv(self) -> tuple:
+        """Primary EISV: behavioral when confident, ODE fallback.
+
+        Returns (E, I, S, V) from the behavioral state if its confidence
+        is >= 0.3, otherwise from the ODE state. This centralizes the
+        behavioral-first policy so all consumers use the same source.
+        """
+        if self._behavioral_state.confidence >= 0.3:
+            b = self._behavioral_state
+            return float(b.E), float(b.I), float(b.S), float(b.V)
+        return float(self.state.E), float(self.state.I), float(self.state.S), float(self.state.V)
 
     # Metrics and export: delegating to src/monitor_metrics.py
     def get_metrics(self, include_state: bool = True) -> Dict:

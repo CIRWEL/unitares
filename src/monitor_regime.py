@@ -7,9 +7,13 @@ Thresholds calibrated against observed agent distributions (2026-03-16):
 """
 
 
-def detect_regime(state) -> str:
+def detect_regime(state, behavioral=None) -> str:
     """
     Detect current operational regime based on EISV state and history.
+
+    Prefers behavioral EISV values when available and confident (>= 0.3),
+    falls back to ODE state otherwise. Persistence counter stays on
+    the GovernanceState object (metadata, not EISV).
 
     Regimes:
     - STABLE: I high, S low (requires 3 consecutive steps)
@@ -20,18 +24,30 @@ def detect_regime(state) -> str:
 
     Args:
         state: GovernanceState instance with I, S, V, *_history attrs.
+        behavioral: Optional BehavioralEISV instance. Used when confident.
 
     Returns:
         Regime string.
     """
-    I = state.I
-    S = state.S
-    V = abs(state.V)
+    # Behavioral-first: use per-agent EMA observations when confident
+    if behavioral is not None and behavioral.confidence >= 0.3:
+        I = behavioral.I
+        S = behavioral.S
+        V = abs(behavioral.V)
+        s_hist = behavioral.S_history
+        i_hist = behavioral.I_history
+    else:
+        I = state.I
+        S = state.S
+        V = abs(state.V)
+        s_hist = getattr(state, 'S_history', [])
+        i_hist = getattr(state, 'I_history', [])
 
     eps_S = 0.002
     eps_I = 0.002
 
     # STABLE (requires persistence) — achievable by healthy agents
+    # locked_persistence_count lives on state (persistence metadata)
     if I >= 0.85 and S <= 0.10:
         state.locked_persistence_count += 1
         if state.locked_persistence_count >= 3:
@@ -40,13 +56,12 @@ def detect_regime(state) -> str:
         state.locked_persistence_count = 0
 
     # Need at least 2 history points for delta-based detection
-    if (not hasattr(state, 'S_history') or not hasattr(state, 'I_history')
-            or len(state.S_history) < 2 or len(state.I_history) < 2):
+    if len(s_hist) < 2 or len(i_hist) < 2:
         return "EXPLORATION"
 
     try:
-        dS = S - state.S_history[-2]
-        dI = I - state.I_history[-2]
+        dS = S - s_hist[-2]
+        dI = I - i_hist[-2]
     except (IndexError, AttributeError):
         return "EXPLORATION"
 

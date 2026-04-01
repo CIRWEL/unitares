@@ -96,12 +96,16 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
     else:
         # Just return current state without analysis
         metrics = monitor.get_metrics()
+        try:
+            pE, pI, pS, pV = monitor.get_primary_eisv()
+        except (AttributeError, TypeError, ValueError):
+            pE, pI, pS, pV = float(monitor.state.E), float(monitor.state.I), float(monitor.state.S), float(monitor.state.V)
         observation = {
             "current_state": {
-                "E": float(monitor.state.E),
-                "I": float(monitor.state.I),
-                "S": float(monitor.state.S),
-                "V": float(monitor.state.V),
+                "E": pE,
+                "I": pI,
+                "S": pS,
+                "V": pV,
                 "coherence": float(monitor.state.coherence),
                 "risk_score": float(metrics.get("risk_score") or metrics.get("current_risk") or 0.0),  # Governance/operational risk
                 "phi": metrics.get("phi"),  # Primary physics signal

@@ -117,12 +117,19 @@ def get_monitor_metrics(monitor: Any, include_state: bool = True) -> Dict:
     # Honest initialization: return None for computed metrics when no updates yet
     is_uninitialized = state.update_count == 0
 
+    # Primary EISV: behavioral when confident, ODE fallback
+    beh = getattr(monitor, '_behavioral_state', None)
+    if beh is not None and beh.confidence >= 0.3:
+        pE, pI, pS, pV = float(beh.E), float(beh.I), float(beh.S), float(beh.V)
+    else:
+        pE, pI, pS, pV = float(state.E), float(state.I), float(state.S), float(state.V)
+
     result = {
         'agent_id': monitor.agent_id,
-        'E': float(state.E),
-        'I': float(state.I),
-        'S': float(state.S),
-        'V': float(state.V),
+        'E': pE,
+        'I': pI,
+        'S': pS,
+        'V': pV,
         'coherence': None if is_uninitialized else float(state.coherence),
         'lambda1': float(state.lambda1),
         'regime': str(regime),
@@ -144,13 +151,19 @@ def get_monitor_metrics(monitor: Any, include_state: bool = True) -> Dict:
             'alpha_estimate': stability_result['alpha_estimate'],
             'violations': stability_result['violations'],
             'notes': stability_result['notes']
+        },
+        'ode': {
+            'E': float(state.E),
+            'I': float(state.I),
+            'S': float(state.S),
+            'V': float(state.V),
         }
     }
 
     # UNITARES v4.1 basin + convergence tracking
     profile = get_params_profile_name()
 
-    I = float(state.I)
+    I = pI  # Use behavioral-preferred I for basin analysis
     basin_warning = None
     if profile == "v41":
         if I < 0.45:
@@ -163,9 +176,9 @@ def get_monitor_metrics(monitor: Any, include_state: bool = True) -> Dict:
             basin = "high"
     else:
         # Use GovernanceState's basin interpretation for consistency with state.interpret_state()
-        basin = state._interpret_basin(float(state.E), I) if hasattr(state, '_interpret_basin') else "unknown"
+        basin = state._interpret_basin(pE, I) if hasattr(state, '_interpret_basin') else "unknown"
 
-    S = float(state.S)
+    S = pS  # Use behavioral-preferred S for convergence tracking
     if profile == "v41":
         I_target = 0.91
         S_target = 0.001

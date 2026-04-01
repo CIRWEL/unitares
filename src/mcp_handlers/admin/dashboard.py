@@ -85,11 +85,19 @@ async def handle_dashboard(arguments: ToolArgumentsDict) -> Sequence[TextContent
             if eisv:
                 agent_entry["eisv"] = eisv
 
-            # Overlay behavioral EISV from in-memory monitors when available
+            # ODE diagnostic overlay from in-memory monitors (primary EISV
+            # is now behavioral, stored in DB via process_update metrics)
             try:
                 monitors = getattr(mcp_server, 'monitors', None)
                 if isinstance(monitors, dict):
                     monitor = monitors.get(agent_id)
+                    if monitor and hasattr(monitor, 'state'):
+                        agent_entry["ode"] = {
+                            "E": round(float(monitor.state.E), 4),
+                            "I": round(float(monitor.state.I), 4),
+                            "S": round(float(monitor.state.S), 4),
+                            "V": round(float(monitor.state.V), 4),
+                        }
                     if monitor and hasattr(monitor, '_behavioral_state'):
                         beh = monitor._behavioral_state
                         if getattr(beh, 'confidence', 0) >= 0.3:
@@ -103,7 +111,7 @@ async def handle_dashboard(arguments: ToolArgumentsDict) -> Sequence[TextContent
                         if beh_verdict:
                             agent_entry.setdefault("eisv", {})["behavioral_verdict"] = beh_verdict
             except Exception:
-                pass  # Behavioral overlay is best-effort
+                pass  # Overlay is best-effort
 
             agents.append(agent_entry)
 

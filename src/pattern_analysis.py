@@ -117,14 +117,18 @@ def analyze_agent_patterns(
     Returns structured analysis optimized for AI consumption.
     """
     state = monitor.state
-    
-    # Current state
+
+    # Current state — behavioral-first EISV
+    try:
+        pE, pI, pS, pV = monitor.get_primary_eisv()
+    except (AttributeError, TypeError, ValueError):
+        pE, pI, pS, pV = float(state.E), float(state.I), float(state.S), float(state.V)
     risk_score = float(state.risk_history[-1]) if state.risk_history else 0.0
     current_state = {
-        "E": float(state.E),
-        "I": float(state.I),
-        "S": float(state.S),
-        "V": float(state.V),
+        "E": pE,
+        "I": pI,
+        "S": pS,
+        "V": pV,
         "coherence": float(state.coherence),
         "risk_score": risk_score,  # Governance/operational risk
         "lambda1": float(state.lambda1),
