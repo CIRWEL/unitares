@@ -34,6 +34,25 @@ from typing import List, Dict, Any, Optional, Set
 
 logger = logging.getLogger(__name__)
 
+# Best-effort in-process lifecycle health tracking for operator diagnostics.
+_KG_LIFECYCLE_STATUS: Dict[str, Any] = {
+    "status": "unknown",
+    "last_run": None,
+    "last_error": None,
+}
+
+
+def _record_kg_lifecycle_status(*, status: str, last_error: Optional[str] = None) -> None:
+    """Record the most recent KG lifecycle outcome for health reporting."""
+    _KG_LIFECYCLE_STATUS["status"] = status
+    _KG_LIFECYCLE_STATUS["last_run"] = datetime.now().isoformat()
+    _KG_LIFECYCLE_STATUS["last_error"] = last_error
+
+
+def get_kg_lifecycle_health() -> Dict[str, Any]:
+    """Return the latest KG lifecycle status for operator-facing health checks."""
+    return dict(_KG_LIFECYCLE_STATUS)
+
 
 # Lifecycle policy definitions
 PERMANENT_TYPES: Set[str] = {
@@ -342,7 +361,13 @@ class KnowledgeGraphLifecycle:
 async def run_kg_lifecycle_cleanup(dry_run: bool = False) -> Dict[str, Any]:
     """Run knowledge graph lifecycle cleanup."""
     lifecycle = KnowledgeGraphLifecycle()
-    return await lifecycle.run_cleanup(dry_run=dry_run)
+    result = await lifecycle.run_cleanup(dry_run=dry_run)
+    errors = result.get("errors") or []
+    if errors:
+        _record_kg_lifecycle_status(status="error", last_error=str(errors[0]))
+    else:
+        _record_kg_lifecycle_status(status="healthy")
+    return result
 
 
 async def get_kg_lifecycle_stats() -> Dict[str, Any]:
@@ -539,5 +564,6 @@ async def kg_lifecycle_background_task(interval_hours: float = 24.0):
             break
         except Exception as e:
             logger.error(f"KG lifecycle error: {e}", exc_info=True)
+            _record_kg_lifecycle_status(status="error", last_error=str(e))
             # Don't crash the background task on errors
             await asyncio.sleep(60)

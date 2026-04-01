@@ -186,7 +186,7 @@ Agents self-identify through the `onboard()` flow — no hardcoded agent name he
 
 **Security:** The server binds to `127.0.0.1` by default. For LAN/remote access, set `UNITARES_BIND_ALL_INTERFACES=1` and configure `UNITARES_MCP_ALLOWED_HOSTS` / `UNITARES_MCP_ALLOWED_ORIGINS` (comma-separated). See the [launchd plist](scripts/ops/) for a working example.
 
-> **For AI agents:** Start with `onboard()`, then `process_agent_update()` with `response_mode: "mirror"` for actionable self-awareness signals. Use `bind_session()` if you operate across both MCP and REST transports. The `CLAUDE.md` in this repo has full operational details.
+> **For AI agents:** Start with `onboard()`, keep `client_session_id` from the response, then call `process_agent_update()` with `response_mode: "mirror"`, then `get_governance_metrics()`. If `continuity_token_supported=true`, prefer `continuity_token` for resume. Use `bind_session()` only when you intentionally bridge MCP and REST transports. See [docs/guides/START_HERE.md](docs/guides/START_HERE.md) and [docs/operations/OPERATOR_RUNBOOK.md](docs/operations/OPERATOR_RUNBOOK.md).
 
 ---
 

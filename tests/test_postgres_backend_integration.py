@@ -1061,6 +1061,11 @@ class TestCypherSanitization:
         result = self._backend()._sanitize_cypher_param("it's a test")
         assert "\\'" in result or "it" in result
 
+    def test_sanitize_string_with_control_chars(self):
+        result = self._backend()._sanitize_cypher_param("line1\nline2\tvalue")
+        assert "\\n" in result
+        assert "\\t" in result
+
     def test_sanitize_list(self):
         result = self._backend()._sanitize_cypher_param([1, "a", True])
         assert result.startswith("[")

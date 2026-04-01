@@ -5,7 +5,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cd "$PROJECT_ROOT"
 
@@ -31,7 +31,7 @@ fi
 # Activate virtual environment
 source .venv/bin/activate
 
-# Clean up stale locks and PID files
+# Clean up stale locks and PID files in the real project data directory
 echo "🧹 Cleaning up stale lock files..."
 rm -f data/.mcp_server.* 2>/dev/null || true
 

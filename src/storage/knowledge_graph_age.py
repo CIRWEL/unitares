@@ -793,11 +793,146 @@ class KnowledgeGraphAGE:
 
     async def load(self) -> None:
         """
-        Load graph (no-op for AGE backend - data is always in PostgreSQL).
-        Exists for compatibility with other backends.
+        Initialize AGE backend and rehydrate the graph from PostgreSQL if needed.
         """
-        # AGE backend is always persistent, no loading needed
-        pass
+        db = await self._get_db()
+        if not await db.graph_available():
+            logger.warning("AGE graph not available during KnowledgeGraphAGE.load()")
+            return
+
+        try:
+            pg_count = await self._count_postgres_discoveries()
+            if pg_count == 0:
+                return
+
+            graph_count = await self._count_age_discoveries()
+            if graph_count > 0:
+                return
+
+            logger.warning(
+                f"AGE graph '{self.graph_name}' is empty while PostgreSQL has {pg_count} discoveries; rehydrating"
+            )
+            restored = await self._rehydrate_from_postgres()
+            logger.warning(
+                f"Rehydrated AGE graph '{self.graph_name}' from PostgreSQL: "
+                f"{restored['discoveries']} discoveries, {restored['related_edges']} related edges"
+            )
+        except Exception as e:
+            logger.error(f"AGE graph rehydration check failed: {e}")
+
+    async def _count_postgres_discoveries(self) -> int:
+        """Count durable discovery rows in PostgreSQL."""
+        db = await self._get_db()
+        async with db.acquire() as conn:
+            count = await conn.fetchval("SELECT COUNT(*) FROM knowledge.discoveries")
+        return int(count or 0)
+
+    async def _count_age_discoveries(self) -> int:
+        """Count discovery vertices currently present in AGE."""
+        db = await self._get_db()
+        result = await db.graph_query("MATCH (d:Discovery) RETURN count(d)", {})
+        if result and isinstance(result[0], (int, float)):
+            return int(result[0])
+        return 0
+
+    async def _rehydrate_from_postgres(self) -> Dict[str, int]:
+        """Restore AGE vertices and edges from durable PostgreSQL knowledge tables."""
+        db = await self._get_db()
+
+        async with db.acquire() as conn:
+            discovery_rows = await conn.fetch(
+                """
+                SELECT *
+                FROM knowledge.discoveries
+                ORDER BY created_at ASC, id ASC
+                """
+            )
+            related_rows = await conn.fetch(
+                """
+                SELECT src_id, dst_id, weight, metadata
+                FROM knowledge.discovery_edges
+                WHERE edge_type = 'related'
+                ORDER BY created_at ASC, src_id ASC, dst_id ASC
+                """
+            )
+
+        async with db.transaction() as conn:
+            for row in discovery_rows:
+                await self._import_discovery_row(conn, row)
+            for row in related_rows:
+                cypher, params = create_related_to_edge(
+                    from_discovery_id=row["src_id"],
+                    to_discovery_id=row["dst_id"],
+                    strength=row["weight"],
+                    reason=(row["metadata"] or {}).get("reason") if isinstance(row["metadata"], dict) else None,
+                )
+                await db.graph_query(cypher, params, conn=conn)
+
+        return {
+            "discoveries": len(discovery_rows),
+            "related_edges": len(related_rows),
+        }
+
+    async def _import_discovery_row(self, conn, row) -> None:
+        """Import one durable PostgreSQL discovery row into AGE without rate limiting."""
+        db = await self._get_db()
+
+        timestamp = row.get("created_at")
+        resolved_at = row.get("resolved_at")
+        metadata: Dict[str, Any] = {}
+        if row.get("related_to"):
+            metadata["related_to"] = row["related_to"]
+        if row.get("references_files"):
+            metadata["references_files"] = row["references_files"]
+        if row.get("confidence") is not None:
+            metadata["confidence"] = row["confidence"]
+        if row.get("provenance"):
+            metadata["provenance"] = row["provenance"]
+        if row.get("provenance_chain"):
+            metadata["provenance_chain"] = row["provenance_chain"]
+
+        cypher, params = create_discovery_node(
+            discovery_id=row["id"],
+            agent_id=row["agent_id"],
+            discovery_type=row["type"],
+            summary=row["summary"],
+            details=row.get("details"),
+            severity=row.get("severity"),
+            status=row.get("status") or "open",
+            timestamp=timestamp,
+            resolved_at=resolved_at,
+            tags=row.get("tags") or [],
+            metadata=metadata or None,
+        )
+        await db.graph_query(cypher, params, conn=conn)
+
+        agent_cypher, agent_params = create_agent_node(
+            agent_id=row["agent_id"],
+            created_at=timestamp,
+            updated_at=row.get("updated_at") or timestamp,
+        )
+        await db.graph_query(agent_cypher, agent_params, conn=conn)
+
+        authored_cypher, authored_params = create_authored_edge(
+            agent_id=row["agent_id"],
+            discovery_id=row["id"],
+            at=timestamp,
+        )
+        await db.graph_query(authored_cypher, authored_params, conn=conn)
+
+        if row.get("response_to_id"):
+            responds_cypher, responds_params = create_responds_to_edge(
+                from_discovery_id=row["id"],
+                to_discovery_id=row["response_to_id"],
+            )
+            await db.graph_query(responds_cypher, responds_params, conn=conn)
+
+        for tag in row.get("tags") or []:
+            tagged_cypher, tagged_params = create_tagged_edge(
+                discovery_id=row["id"],
+                tag_name=tag,
+            )
+            await db.graph_query(tagged_cypher, tagged_params, conn=conn)
 
     async def find_similar(
         self,
@@ -1746,4 +1881,3 @@ class KnowledgeGraphAGE:
             result["message"] = "No discoveries matched cleanup criteria"
 
         return result
-

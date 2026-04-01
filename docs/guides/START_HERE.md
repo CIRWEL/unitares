@@ -1,24 +1,39 @@
 # Start Here - Agent Onboarding
 
-**Flexible onboarding - start however feels natural. Most agents jump right in.**
+## Default Workflow
 
-## For All Agents (MCP Clients: Cursor, Claude Desktop, Claude Code, etc.)
+Use this unless you have a specific reason not to.
 
-**Step 0: Call `onboard()` first!**
+1. Call `onboard()`
+2. Save `client_session_id`
+3. Call `process_agent_update()`
+4. Call `get_governance_metrics()`
 
 ```python
-# THE recommended first call - returns your identity + ready-to-use templates
-result = onboard()
-# Returns: client_session_id, next_calls[], workflow guidance
-# ⚠️ SAVE client_session_id and include it in ALL future calls!
+session = onboard()
+
+process_agent_update(
+    client_session_id=session["client_session_id"],
+    response_text="What you did",
+    complexity=0.5,
+)
+
+get_governance_metrics(
+    client_session_id=session["client_session_id"],
+)
 ```
 
-**Or pick your own path:**
-- **Explore first:** `list_tools` → `list_agents` → `health_check`
-- **Jump right in:** `process_agent_update` (identity auto-created)
-- **Name yourself:** `identity(name="your_name")` (optional but recommended)
+### Continuity Rule
 
-**Then read the guide when ready.**
+- If the response shows `continuity_token_supported=true`, prefer `continuity_token` for resume.
+- Otherwise pass `client_session_id` in every call.
+- If `session_resolution_source="ip_ua_fingerprint"`, continuity is weak. Pass `client_session_id` or `continuity_token` explicitly.
+
+### Only Use Another Path If You Mean It
+
+- `identity(name="...")` if you want to rename yourself
+- `process_agent_update(...)` first if you intentionally want implicit identity creation
+- `list_tools()` first only if you are exploring the surface area
 
 ---
 
@@ -36,23 +51,19 @@ The server defaults to **lite mode** (~17 consolidated tools). Most agents never
 
 ---
 
-## What Agents Actually Do (Real Patterns)
+## Other Valid Paths
 
-**Based on actual usage, agents typically:**
+These work, but they are not the default:
 
-1. **Start exploring immediately** - Many call `process_agent_update` first (API key auto-created if new)
-2. **Check system health** - Some call `get_workspace_health` or `health_check` to verify setup
-3. **Discover tools** - Some call `list_tools` to see what's available
-4. **See other agents** - Some call `list_agents` to understand the system
-5. **Then read docs** - After initial exploration, they read guides for deeper understanding
-
-**All of these patterns work!** The system is designed to be flexible.
+1. `process_agent_update(...)` first
+2. `identity(name="...")` first
+3. `list_tools()` / `health_check()` first
 
 ---
 
-## Step 1: Get Started (Choose Your Path)
+## Step 1: Get Started
 
-### Path A: Use onboard() (RECOMMENDED)
+### Path A: Use onboard() (Recommended)
 
 **Call `onboard()` first - it gives you everything you need:**
 
@@ -89,8 +100,8 @@ result = process_agent_update(
     response_text="Initial exploration",
     complexity=0.5
 )
-# agent_signature contains your UUID (bound automatically)
-# ⚠️ For ChatGPT: save client_session_id from identity() for future calls
+# identity is auto-created if needed
+# if continuity looks weak, call onboard() next and keep its continuity values
 ```
 
 ### Path C: Name Yourself First
@@ -105,7 +116,7 @@ result = identity(name="your_descriptive_name")
 # ⚠️ Save client_session_id from response for future calls
 ```
 
-### Path D: Explore First (Discovery Mode)
+### Path D: Explore First
 
 **Check system health and discover tools:**
 
@@ -120,13 +131,7 @@ tools = list_tools()
 agents = list_agents()
 ```
 
-**Choose a meaningful agent_id:**
-- Good: `composer_cursor_feature_work_20251201` (platform_model_purpose_date)
-- Good: `gpt4_vscode_debugging_20251201` (model_platform_purpose_date)
-- Good: `gemini_jetbrains_refactoring_20251201` (model_platform_purpose_date)
-- Good: `claude_desktop_analysis_20251201` (model_platform_purpose_date)
-- Good: `Clint_Mansell_Composer_20251128` (creative names welcome - composers, artists, characters, etc.)
-- Bad: `agent1`, `test`, `foo` (too generic, causes collisions)
+If you want a human-friendly identity, set `display_name` later with `identity(name="...")`.
 
 ---
 
@@ -144,49 +149,46 @@ Key sections below:
 
 ---
 
-## Step 3: Log Activity (Ongoing)
+## Step 3: Log Activity
 
-**Log your work as you go - this is how the system tracks your state:**
+Use one stable continuity value and keep reusing it.
 
-### If you have MCP support:
+### MCP Clients
 ```python
-# Step 1: Call identity() first - it returns your client_session_id
-result = identity(name="your_descriptive_name")  # Optional: set a name
-# result.client_session_id = "agent-abc123..." ← SAVE THIS!
-# result.session_continuity.instruction = "Include client_session_id in ALL future tool calls"
+# Recommended: onboard() first
+result = onboard()
 
-# Step 2: Include client_session_id in ALL subsequent calls
 process_agent_update(
-    client_session_id="agent-abc123...",  # ← Echo this back!
+    client_session_id=result["client_session_id"],
     response_text="Summary of operations performed",
     complexity=0.5
 )
 
-# All future calls: Same pattern
+# All future calls: same continuity value
 process_agent_update(
-    client_session_id="agent-abc123...",
+    client_session_id=result["client_session_id"],
     response_text="More work completed",
     complexity=0.6
 )
 ```
 
-**⚠️ Session Continuity (Important for ChatGPT and some MCP clients):**
+### Session Continuity
 
-Some clients (notably ChatGPT's MCP integration) don't maintain stable sessions between tool calls. Without `client_session_id`, you may get a different identity on each call.
+Some clients do not keep a stable transport session. If that happens, the server may fall back to weaker continuity signals.
 
-**The fix:** Always include `client_session_id` from your `identity()` response in all future tool calls. This ensures your identity persists across calls.
+Use this rule:
 
-```python
-# identity() returns session_continuity with explicit instructions:
-{
-  "client_session_id": "agent-abc123...",
-  "session_continuity": {
-    "client_session_id": "agent-abc123...",
-    "instruction": "Include client_session_id in ALL future tool calls to maintain identity",
-    "example": '{"name": "process_agent_update", "arguments": {"client_session_id": "agent-abc123...", ...}}'
-  }
-}
-```
+- best: `continuity_token`
+- good: `client_session_id`
+- weak: transport-only continuity
+
+The response tells you which path was used:
+
+- `session_resolution_source="continuity_token"`
+- `session_resolution_source="explicit_client_session_id"`
+- `session_resolution_source="mcp_session_id"`
+- `session_resolution_source="pinned_onboard_session"`
+- `session_resolution_source="ip_ua_fingerprint"`
 
 ### If you're CLI-only (no MCP):
 
@@ -222,12 +224,14 @@ print(f'Decision: {r[\"decision\"][\"action\"]}')
 
 ## Summary
 
-**Three steps:**
-1. Start working → identity auto-creates on first tool call
-2. (Optional) Name yourself → `identity(name="...")`
-3. Log activity → receive governance feedback
+Use the simple path:
 
-**Everything else is optional.**
+1. `onboard()`
+2. keep `client_session_id` or `continuity_token`
+3. `process_agent_update()`
+4. `get_governance_metrics()`
+
+Everything else is secondary.
 
 ---
 
@@ -297,7 +301,7 @@ list_tools(include_advanced=False)  # Hide Tier 3 (advanced) tools
 
 | I want to... | Use this... |
 |-------------|-------------|
-| **Get started** | `onboard()` - THE portal tool, call FIRST |
+| **Get started** | `onboard()` |
 | Read the guide | This file (START_HERE.md) |
 | Share my work | `process_agent_update` (MCP) or `UNITARESMonitor` (Python) |
 | Check my identity | `identity()` (MCP) |

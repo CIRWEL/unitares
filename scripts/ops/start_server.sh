@@ -14,7 +14,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cd "$PROJECT_ROOT"
 
@@ -55,5 +55,5 @@ if ! "$PYTHON" -c "import mcp, uvicorn, starlette" 2>/dev/null; then
     exit 1
 fi
 
-echo "Starting Governance MCP Server..."
+echo "Starting Governance MCP Server from $PROJECT_ROOT..."
 exec "$PYTHON" src/mcp_server.py "$@"

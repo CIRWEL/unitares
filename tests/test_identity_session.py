@@ -910,6 +910,36 @@ class TestCacheSession:
         assert stored_data["display_agent_id"] == "Claude_20260206"
 
     @pytest.mark.asyncio
+    async def test_cache_with_display_agent_id_updates_fallback_cache(self, mock_raw_redis):
+        """Rich session writes should update SessionCache fallback state too."""
+        from src.mcp_handlers.identity.handlers import _cache_session
+        from src.cache.session_cache import _fallback_cache
+
+        mock_cache = AsyncMock()
+
+        async def _get_raw():
+            return mock_raw_redis
+
+        _fallback_cache.clear()
+        try:
+            with patch("src.mcp_handlers.identity.persistence._redis_cache", None), \
+                 patch("src.cache.get_session_cache", return_value=mock_cache), \
+                 patch("src.cache.redis_client.get_redis", new=_get_raw):
+                await _cache_session(
+                    "sess-rich",
+                    "uuid-rich",
+                    display_agent_id="Claude_20260206",
+                    label="RichLabel",
+                )
+
+            assert "sess-rich" in _fallback_cache
+            assert _fallback_cache["sess-rich"]["agent_id"] == "uuid-rich"
+            assert _fallback_cache["sess-rich"]["display_agent_id"] == "Claude_20260206"
+            assert _fallback_cache["sess-rich"]["label"] == "RichLabel"
+        finally:
+            _fallback_cache.clear()
+
+    @pytest.mark.asyncio
     async def test_cache_without_display_id_uses_bind(self):
         """Without display_agent_id, uses SessionCache.bind()."""
         from src.mcp_handlers.identity.handlers import _cache_session
@@ -1388,4 +1418,3 @@ class TestSoftTrajectoryVerification:
 # ============================================================================
 # lookup_onboard_pin / set_onboard_pin exception paths (lines 1138-1175)
 # ============================================================================
-

@@ -315,13 +315,11 @@ class PostgresBackend(
             identity_count = row["identity_count"]
             session_count = row["active_session_count"]
 
-            # AGE status
-            age_available = False
+            # AGE status: require the configured graph to be usable, not just the extension to load.
             try:
-                await conn.execute("LOAD 'age'")
-                age_available = True
+                age_available = await self.graph_available()
             except Exception:
-                pass
+                age_available = False
 
             return {
                 "status": "healthy",

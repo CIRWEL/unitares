@@ -18,10 +18,56 @@ class GraphMixin:
         """Check if AGE graph queries are available."""
         async with self.acquire() as conn:
             try:
-                await conn.execute("LOAD 'age'")
+                await self._prepare_age_connection(conn)
+                await self._ensure_age_graph_exists(conn)
+                await self._probe_age_graph(conn)
                 return True
             except Exception:
                 return False
+
+    async def _prepare_age_connection(self, conn) -> None:
+        """Load AGE and configure the required search path on a connection."""
+        await conn.execute("LOAD 'age'")
+        await conn.execute("SET search_path = ag_catalog, core, audit, public")
+
+    async def _ensure_age_graph_exists(self, conn) -> None:
+        """Ensure the configured AGE graph exists, creating it when absent."""
+        graph_exists = await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM ag_catalog.ag_graph WHERE name = $1)",
+            self._age_graph,
+        )
+        if not graph_exists:
+            logger.warning(f"AGE graph '{self._age_graph}' missing, creating it")
+            await conn.execute("SELECT * FROM ag_catalog.create_graph($1)", self._age_graph)
+
+    async def _probe_age_graph(self, conn) -> None:
+        """Verify the configured AGE graph can execute a trivial Cypher query."""
+        await conn.fetch(
+            f"SELECT * FROM cypher('{self._age_graph}', $$ RETURN 1 $$) as (result agtype)"
+        )
+
+    @staticmethod
+    def _is_stale_age_graph_error(error: Exception) -> bool:
+        """Detect AGE catalog drift where the named graph points at a dead OID."""
+        message = str(error).lower()
+        return "graph with oid" in message and "does not exist" in message
+
+    async def _repair_stale_age_graph(self, conn, error: Exception) -> bool:
+        """
+        Repair a stale AGE catalog entry by recreating the configured graph.
+
+        This handles cases where ag_catalog.ag_graph still references an old OID
+        for a schema that has since been recreated.
+        """
+        if not self._is_stale_age_graph_error(error):
+            return False
+
+        logger.warning(
+            f"Repairing stale AGE graph '{self._age_graph}' after error: {error}"
+        )
+        await conn.execute("SELECT * FROM ag_catalog.drop_graph($1, true)", self._age_graph)
+        await conn.execute("SELECT * FROM ag_catalog.create_graph($1)", self._age_graph)
+        return True
 
     async def graph_query(
         self,
@@ -61,20 +107,26 @@ class GraphMixin:
         conn,
         cypher: str,
         params: Optional[Dict[str, Any]],
+        *,
+        _allow_repair: bool = True,
     ) -> List[Dict[str, Any]]:
         """Execute a Cypher query on a specific connection."""
         try:
             # Always LOAD + SET before every query. asyncpg's pool runs
             # RESET ALL on connection release, which clears search_path.
             # The 2 extra round-trips per query are worth correctness.
-            await conn.execute("LOAD 'age'")
-            await conn.execute("SET search_path = ag_catalog, core, audit, public")
+            await self._prepare_age_connection(conn)
+            await self._ensure_age_graph_exists(conn)
 
             safe_cypher = cypher
             if params:
                 for k, v in params.items():
                     safe_value = self._sanitize_cypher_param(v)
-                    safe_cypher = re.sub(rf'\$\{{{re.escape(k)}\}}', safe_value, safe_cypher)
+                    safe_cypher = re.sub(
+                        rf'\$\{{{re.escape(k)}\}}',
+                        lambda _match, replacement=safe_value: replacement,
+                        safe_cypher,
+                    )
 
             rows = await conn.fetch(
                 f"SELECT * FROM cypher('{self._age_graph}', $$ {safe_cypher} $$) as (result agtype)"
@@ -100,6 +152,15 @@ class GraphMixin:
             return results
 
         except Exception as e:
+            if _allow_repair and self._is_stale_age_graph_error(e):
+                repaired = await self._repair_stale_age_graph(conn, e)
+                if repaired:
+                    return await self._run_cypher_on_conn(
+                        conn,
+                        cypher,
+                        params,
+                        _allow_repair=False,
+                    )
             logger.error(f"Cypher query failed: {e}")
             raise
 
@@ -137,6 +198,9 @@ class GraphMixin:
             escaped = (
                 value
                 .replace("\\", "\\\\")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t")
                 .replace("'", "\\'")
                 .replace('"', '\\"')
             )

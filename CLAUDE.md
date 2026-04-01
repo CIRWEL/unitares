@@ -63,3 +63,18 @@ launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
 tail -f data/logs/mcp_server.log
 tail -f data/logs/mcp_server_error.log
 ```
+
+## Minimal Agent Workflow
+
+Default happy path:
+
+1. `onboard()`
+2. Save `client_session_id`
+3. `process_agent_update(response_text=..., complexity=..., client_session_id=...)`
+4. `get_governance_metrics(client_session_id=...)`
+
+Continuity rule:
+
+- If `continuity_token_supported=true`, prefer `continuity_token` for resume
+- Otherwise pass `client_session_id` in every call
+- If `session_resolution_source="ip_ua_fingerprint"`, continuity is weak and explicit continuity values should be passed on every call

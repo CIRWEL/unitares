@@ -66,10 +66,18 @@ is a secondary signal. Human feedback is available but not required for calibrat
 
 ### Starting a Session
 
-1. Call `onboard()` with a descriptive name and your model type
-2. You'll get a UUID (your persistent identity) and a `client_session_id`
-3. Include `client_session_id` in subsequent calls for session continuity
-4. Check `get_governance_metrics()` to see your current state
+Default sequence:
+
+1. Call `onboard()`
+2. Save `client_session_id`
+3. Call `process_agent_update()`
+4. Call `get_governance_metrics()`
+
+Continuity rule:
+
+- If `continuity_token_supported=true`, prefer `continuity_token` for resume
+- Otherwise include `client_session_id` in subsequent calls
+- If `session_resolution_source="ip_ua_fingerprint"`, continuity is weak and explicit continuity values should be echoed on every call
 
 **Naming convention**: `{purpose}_{client}_{date}` — e.g., `opus_hikewa_claude_ai_20250205`
 

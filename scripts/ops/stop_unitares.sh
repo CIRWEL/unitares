@@ -4,6 +4,10 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$PROJECT_ROOT"
+
 # Colors for output
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -16,7 +20,7 @@ echo "🛑 Stopping UNITARES Governance MCP Server..."
 if pgrep -f "mcp_server.py" > /dev/null; then
     echo "📡 Stopping MCP server..."
     pkill -f "mcp_server.py" || true
-    sleep 1
+    sleep 2
 
     # Force kill if still running
     if pgrep -f "mcp_server.py" > /dev/null; then
@@ -44,11 +48,7 @@ else
     echo "ℹ️  Ngrok not running"
 fi
 
-# Clean up lock files
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$PROJECT_ROOT"
-
+# Clean up lock and PID files in the real project data directory
 echo "🧹 Cleaning up lock files..."
 rm -f data/.mcp_server.* 2>/dev/null || true
 

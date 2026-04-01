@@ -757,6 +757,11 @@ class TestHandleIdentityAdapter:
         assert "uuid" in data
         assert "agent_id" in data
         assert "client_session_id" in data
+        assert "session_resolution_source" in data
+        assert "continuity_token_supported" in data
+        assert data["identity_status"] == "created"
+        assert data["bound_identity"]["uuid"] == data["uuid"]
+        assert data["bound_identity"]["agent_id"] == data["agent_id"]
         # identity_summary, quick_reference, session_continuity moved behind verbose=true
         assert "identity_summary" not in data
         assert "quick_reference" not in data
@@ -786,6 +791,7 @@ class TestHandleIdentityAdapter:
 
         assert data["success"] is True
         assert data["uuid"] == test_uuid
+        assert data["identity_status"] == "resumed"
         assert data.get("resumed") is True
         assert data.get("resumed_by_name") is True
 
@@ -1055,6 +1061,8 @@ class TestHandleOnboardV2:
         assert data["is_new"] is True
         assert "uuid" in data
         assert "client_session_id" in data
+        assert "session_resolution_source" in data
+        assert "continuity_token_supported" in data
         assert "date_context" in data
         assert "next_step" in data
         # next_calls, session_continuity, workflow moved behind verbose=true
@@ -1086,6 +1094,59 @@ class TestHandleOnboardV2:
         assert data["success"] is True
         assert data["is_new"] is False
         assert data["uuid"] == existing_uuid
+
+    @pytest.mark.asyncio
+    async def test_onboard_then_identity_with_stable_session_id_keeps_same_uuid(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """Stable client_session_id returned by onboard() should resolve to the same UUID in identity()."""
+        from src.mcp_handlers.identity.handlers import handle_onboard_v2, handle_identity_adapter
+
+        existing_uuid = str(uuid.uuid4())
+        display_agent_id = "Gpt_5_Codex_20260401"
+        stored = {}
+
+        async def raw_setex(key, ttl, value):
+            stored[key] = value
+
+        async def cache_get(session_id):
+            if session_id in {"resume-base", "resume-base:gpt"}:
+                return {
+                    "agent_id": existing_uuid,
+                    "display_agent_id": display_agent_id,
+                    "label": "Codex Dogfood",
+                }
+            raw = stored.get(f"session:{session_id}")
+            if raw:
+                return json.loads(raw)
+            return None
+
+        mock_raw_redis.setex.side_effect = raw_setex
+        mock_redis.get.side_effect = cache_get
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1",
+            metadata={"agent_id": display_agent_id},
+        )
+        mock_db.get_agent_label.return_value = "Codex Dogfood"
+        mock_db.get_agent_status = AsyncMock(return_value="active")
+        mock_db.create_session = AsyncMock()
+
+        onboard_result = await handle_onboard_v2({
+            "client_session_id": "resume-base",
+            "resume": True,
+            "model_type": "gpt-5-codex",
+        })
+        onboard_data = parse_result(onboard_result)
+        stable_session_id = onboard_data["client_session_id"]
+
+        identity_result = await handle_identity_adapter({
+            "client_session_id": stable_session_id,
+            "resume": True,
+            "model_type": "gpt-5-codex",
+        })
+        identity_data = parse_result(identity_result)
+
+        assert onboard_data["uuid"] == existing_uuid
+        assert identity_data["uuid"] == existing_uuid
+        assert identity_data["client_session_id"] == stable_session_id
 
     @pytest.mark.asyncio
     async def test_onboard_resume_false_creates_new_identity(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):

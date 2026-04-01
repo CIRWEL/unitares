@@ -571,6 +571,8 @@ class TestHealthCheck:
             assert data["success"] is True
             assert "checks" in data
             assert data["checks"]["calibration"]["status"] == "error"
+            assert "operator_summary" in data
+            assert "calibration" in data["operator_summary"]["failing_checks"]
 
     @pytest.mark.asyncio
     async def test_health_check_overall_status_logic(self, mock_mcp_server, patch_context_agent_id):
@@ -611,7 +613,51 @@ class TestHealthCheck:
             data = parse_result(result)
             assert "status" in data
             assert "status_breakdown" in data
+            assert "operator_summary" in data
             assert data["version"] == "test-1.0.0"
+
+    @pytest.mark.asyncio
+    async def test_health_check_knowledge_graph_lifecycle_warning(self, mock_mcp_server, patch_context_agent_id):
+        """KG health should degrade to warning when lifecycle cleanup recently failed."""
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        mock_db = AsyncMock()
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+        mock_db.init = AsyncMock()
+
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=False), \
+             patch("src.knowledge_graph_lifecycle.get_kg_lifecycle_health",
+                   return_value={"status": "error", "last_error": "graph with oid 17401 does not exist", "last_run": "2026-04-01T15:00:00"}), \
+             patch("src.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock) as mock_kg:
+
+            mock_kg_instance = AsyncMock()
+            mock_kg_instance.health_check = AsyncMock(return_value={"total_discoveries": 1, "total_tags": 1, "total_edges": 1})
+            mock_kg.return_value = mock_kg_instance
+
+            from src.mcp_handlers.admin.handlers import handle_health_check
+            result = await handle_health_check({})
+
+            data = parse_result(result)
+            assert data["success"] is True
+            assert data["checks"]["knowledge_graph"]["status"] == "warning"
+            assert "lifecycle cleanup is failing" in data["checks"]["knowledge_graph"]["warning"]
 
 
 # ============================================================================

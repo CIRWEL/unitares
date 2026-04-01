@@ -470,6 +470,18 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
         if not embeddings_ok:
             kg_check["warning"] = "Semantic search unavailable — embeddings service not loaded. KG search will fall back to text search."
 
+        try:
+            from src.knowledge_graph_lifecycle import get_kg_lifecycle_health
+            lifecycle_health = get_kg_lifecycle_health()
+            kg_check["lifecycle"] = lifecycle_health
+            if lifecycle_health.get("status") == "error":
+                kg_check["status"] = "warning" if kg_check["status"] == "healthy" else kg_check["status"]
+                kg_check["warning"] = (
+                    f"KG lifecycle cleanup is failing: {lifecycle_health.get('last_error')}"
+                )
+        except Exception as e:
+            kg_check["lifecycle_error"] = str(e)
+
         checks["knowledge_graph"] = kg_check
     except Exception as e:
         checks["knowledge_graph"] = {
@@ -554,6 +566,35 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
         "error": sum(1 for s in statuses if s == "error"),
     }
 
+    failing_checks = sorted(
+        name for name, check in checks.items() if check.get("status") == "error"
+    )
+    degraded_checks = sorted(
+        name for name, check in checks.items()
+        if check.get("status") in {"warning", "deprecated", "unavailable"}
+    )
+
+    first_action = "No action needed."
+    if "primary_db" in failing_checks:
+        first_action = "Check PostgreSQL availability and database initialization first."
+    elif "redis_cache" in failing_checks:
+        first_action = "Check Redis connectivity or continue in fallback mode if Redis is optional."
+    elif "knowledge_graph" in failing_checks:
+        first_action = "Check knowledge graph backend and embeddings availability."
+    elif "pi_connectivity" in degraded_checks or "pi_connectivity" in failing_checks:
+        first_action = "Check Pi/anima connectivity only if Pi orchestration is required."
+    elif failing_checks:
+        first_action = f"Inspect the first failing component: {failing_checks[0]}."
+    elif degraded_checks:
+        first_action = f"Review the first degraded component: {degraded_checks[0]}."
+
+    operator_summary = {
+        "overall_status": overall_status,
+        "failing_checks": failing_checks,
+        "degraded_checks": degraded_checks,
+        "first_action": first_action,
+    }
+
     # Lite mode: strip nested info/stats blocks, keep only component status
     lite = arguments.get("lite", True)
     if lite:
@@ -569,6 +610,7 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
             "status": overall_status,
             "version": getattr(mcp_server, "SERVER_VERSION", "unknown"),
             "status_breakdown": status_breakdown,
+            "operator_summary": operator_summary,
             "checks": lite_checks,
             "timestamp": datetime.now().isoformat(),
             "_note": "Use lite=false for full diagnostic detail",
@@ -578,6 +620,7 @@ async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent
         "status": overall_status,
         "version": getattr(mcp_server, "SERVER_VERSION", "unknown"),
         "status_breakdown": status_breakdown,
+        "operator_summary": operator_summary,
         "checks": checks,
         "timestamp": datetime.now().isoformat()
     })

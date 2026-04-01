@@ -75,6 +75,14 @@ async def _cache_session(
                         data["label"] = label
                     key = f"session:{session_key}"
                     await redis.setex(key, GovernanceConfig.SESSION_TTL_SECONDS, json.dumps(data))
+                    # Keep SessionCache's in-memory fallback coherent with the richer
+                    # raw Redis payload so subsequent lookups see the same binding
+                    # even if they fall back from Redis during this process lifetime.
+                    try:
+                        from src.cache import session_cache as _session_cache_mod
+                        _session_cache_mod._fallback_cache[session_key] = data
+                    except Exception:
+                        pass
                 else:
                     # Fallback to normal bind without display_agent_id
                     await session_cache.bind(session_key, agent_uuid)

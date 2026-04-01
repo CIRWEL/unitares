@@ -345,6 +345,44 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     base_session_key = await derive_session_key(signals, arguments)
     normalized_model = None
 
+    def _identity_diag_payload(
+        *,
+        agent_uuid: str,
+        agent_id: str,
+        label: Optional[str],
+        session_key: str,
+        status: str,
+    ) -> Dict[str, Any]:
+        try:
+            from ..context import get_session_resolution_source
+            continuity_source = get_session_resolution_source()
+        except Exception:
+            continuity_source = None
+        continuity_support = continuity_token_support_status()
+        payload = {
+            "uuid": agent_uuid,
+            "agent_id": agent_id,
+            "display_name": label,
+            "client_session_id": session_key,
+            "session_resolution_source": continuity_source,
+            "continuity_token_supported": continuity_support.get("enabled", False),
+            "identity_status": status,
+            "bound_identity": {
+                "uuid": agent_uuid,
+                "agent_id": agent_id,
+                "display_name": label,
+            },
+        }
+        continuity_token = create_continuity_token(
+            agent_uuid,
+            session_key,
+            model_type=model_type,
+            client_hint=arguments.get("client_hint"),
+        )
+        if continuity_token:
+            payload["continuity_token"] = continuity_token
+        return payload
+
     # PATH 2.5: Name-based identity claim (only when resume=true, before session resolution)
     # If the caller provides name= + resume=true and isn't forcing new, try to reconnect
     name = arguments.get("name")
@@ -374,15 +412,20 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
             except Exception:
                 pass
 
-            return success_response({
-                "uuid": agent_uuid,
-                "agent_id": agent_id,
-                "display_name": label,
+            payload = _identity_diag_payload(
+                agent_uuid=agent_uuid,
+                agent_id=agent_id,
+                label=label,
+                session_key=base_session_key,
+                status="resumed",
+            )
+            payload.update({
                 "resumed": True,
                 "resumed_by_name": True,
                 "message": f"Welcome back! Resumed identity '{label or agent_id}'",
                 "hint": "Use force_new=true to create a new identity instead"
             })
+            return success_response(payload)
 
     # STEP 1: Check for existing identity under BASE key first (unless force_new)
     # Pass resume= through so resolve_session_identity respects the flag
@@ -400,10 +443,14 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
             # FIX: Don't silently resume archived agents — warn the caller
             if existing_identity.get("archived"):
                 logger.info(f"[IDENTITY] Found archived agent {agent_uuid[:8]}... — returning warning instead of silent resume")
-                return success_response({
-                    "uuid": agent_uuid,
-                    "agent_id": agent_id,
-                    "display_name": label,
+                payload = _identity_diag_payload(
+                    agent_uuid=agent_uuid,
+                    agent_id=agent_id,
+                    label=label,
+                    session_key=session_key,
+                    status="archived",
+                )
+                payload.update({
                     "archived": True,
                     "resumed": False,
                     "message": f"Session maps to archived agent '{label or agent_id}'. Use onboard() to reactivate or force_new=true for a fresh identity.",
@@ -413,6 +460,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
                         "fresh": "Call identity(force_new=true) or onboard(force_new=true) for a new identity"
                     }
                 })
+                return success_response(payload)
 
             logger.info(f"[IDENTITY] Resuming existing agent {agent_uuid[:8]}... (explicit resume=true)")
 
@@ -422,14 +470,19 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
                 if success:
                     label = arguments.get("name")
 
-            return success_response({
-                "uuid": agent_uuid,
-                "agent_id": agent_id,
-                "display_name": label,
+            payload = _identity_diag_payload(
+                agent_uuid=agent_uuid,
+                agent_id=agent_id,
+                label=label,
+                session_key=session_key,
+                status="resumed",
+            )
+            payload.update({
                 "resumed": True,
                 "message": f"Welcome back! Resumed identity '{label or agent_id}'",
                 "hint": "Use force_new=true to create a new identity instead"
             })
+            return success_response(payload)
 
     # model_type is passed through for agent_id generation, but does NOT fork session keys.
     # All identities for a session use the base session key to prevent fragmentation.
@@ -494,12 +547,21 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     continuity_support = continuity_token_support_status()
 
     verbose = coerce_bool(arguments.get("verbose"), default=False) if arguments else False
+    identity_status = "created" if result.get("created") else "resumed"
 
     response_data = {
         "uuid": agent_uuid,
         "agent_id": final_agent_id,
         "display_name": user_name,
         "client_session_id": client_session_id,
+        "session_resolution_source": continuity_source,
+        "continuity_token_supported": continuity_support.get("enabled", False),
+        "identity_status": identity_status,
+        "bound_identity": {
+            "uuid": agent_uuid,
+            "agent_id": final_agent_id,
+            "display_name": user_name,
+        },
     }
     if model_type:
         response_data["model_type"] = model_type
@@ -1262,6 +1324,8 @@ def _build_onboard_response(
 
         # Session continuity
         "client_session_id": stable_session_id,
+        "session_resolution_source": continuity_source,
+        "continuity_token_supported": continuity_support.get("enabled", False),
 
         # Date context (trimmed to ground truth)
         "date_context": date_context,
