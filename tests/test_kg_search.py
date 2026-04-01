@@ -1494,6 +1494,65 @@ class TestSearchArchivedFiltering:
 
 
 # ============================================================================
+# _or_default_query helper
+# ============================================================================
+
+class TestOrDefaultQuery:
+    """Tests for the FTS OR-default query preprocessor."""
+
+    def test_single_term_unchanged(self):
+        """Single terms pass through unchanged."""
+        from src.db.mixins.knowledge_graph import _or_default_query
+        assert _or_default_query("bug") == "bug"
+
+    def test_multi_term_inserts_or(self):
+        """Multiple terms get OR inserted between them."""
+        from src.db.mixins.knowledge_graph import _or_default_query
+        assert _or_default_query("bug database") == "bug OR database"
+
+    def test_three_terms(self):
+        """Three terms all get OR-joined."""
+        from src.db.mixins.knowledge_graph import _or_default_query
+        assert _or_default_query("bug database search") == "bug OR database OR search"
+
+    def test_existing_or_preserved(self):
+        """Explicit OR in query leaves it unchanged."""
+        from src.db.mixins.knowledge_graph import _or_default_query
+        assert _or_default_query("bug OR database") == "bug OR database"
+
+    def test_existing_and_preserved(self):
+        """Explicit AND in query leaves it unchanged."""
+        from src.db.mixins.knowledge_graph import _or_default_query
+        assert _or_default_query("bug AND database") == "bug AND database"
+
+    def test_quoted_phrase_single_token(self):
+        """Quoted phrase is kept as a single token."""
+        from src.db.mixins.knowledge_graph import _or_default_query
+        assert _or_default_query('"exact phrase"') == '"exact phrase"'
+
+    def test_quoted_phrase_with_unquoted(self):
+        """Mixed quoted + unquoted terms get OR between them."""
+        from src.db.mixins.knowledge_graph import _or_default_query
+        assert _or_default_query('"exact phrase" bug') == '"exact phrase" OR bug'
+
+    def test_negation_preserved(self):
+        """Negation prefix is preserved."""
+        from src.db.mixins.knowledge_graph import _or_default_query
+        assert _or_default_query("-bug database") == "-bug OR database"
+
+    def test_empty_string(self):
+        """Empty string returns empty string."""
+        from src.db.mixins.knowledge_graph import _or_default_query
+        assert _or_default_query("") == ""
+
+    def test_whitespace_only(self):
+        """Whitespace-only input returns empty."""
+        from src.db.mixins.knowledge_graph import _or_default_query
+        result = _or_default_query("   ")
+        assert result == "   "  # No tokens found, returned as-is
+
+
+# ============================================================================
 # Supersede handler
 # ============================================================================
 

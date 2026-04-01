@@ -36,7 +36,7 @@ async def handle_dashboard(arguments: ToolArgumentsDict) -> Sequence[TextContent
                 "V": round(s.void, 4) if s.void is not None else None,
                 "coherence": round(s.coherence, 4) if s.coherence is not None else None,
                 "basin": s.regime,
-                "risk": round(risk, 4) if risk else 0,
+                "risk": round(risk, 4) if risk is not None else 0,
                 "verdict": verdict,
             }
 
@@ -92,12 +92,22 @@ async def handle_dashboard(arguments: ToolArgumentsDict) -> Sequence[TextContent
                 if isinstance(monitors, dict):
                     monitor = monitors.get(agent_id)
                     if monitor and hasattr(monitor, 'state'):
-                        agent_entry["ode"] = {
-                            "E": round(float(monitor.state.E), 4),
-                            "I": round(float(monitor.state.I), 4),
-                            "S": round(float(monitor.state.S), 4),
-                            "V": round(float(monitor.state.V), 4),
+                        ode_state = monitor.state
+                        ode_risk = float(ode_state.risk_history[-1]) if ode_state.risk_history else None
+                        ode_entry = {
+                            "E": round(float(ode_state.E), 4),
+                            "I": round(float(ode_state.I), 4),
+                            "S": round(float(ode_state.S), 4),
+                            "V": round(float(ode_state.V), 4),
                         }
+                        if ode_risk is not None:
+                            ode_entry["risk"] = round(ode_risk, 4)
+                        agent_entry["ode"] = ode_entry
+
+                        # Use live ODE risk as primary when DB value is missing/zero
+                        if ode_risk is not None and not agent_entry.get("eisv", {}).get("risk"):
+                            agent_entry.setdefault("eisv", {})["risk"] = round(ode_risk, 4)
+
                     if monitor and hasattr(monitor, '_behavioral_state'):
                         beh = monitor._behavioral_state
                         if getattr(beh, 'confidence', 0) >= 0.3:

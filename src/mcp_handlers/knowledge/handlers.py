@@ -613,9 +613,10 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 candidates = await graph.full_text_search(str(query_text), limit=candidate_limit)
                 search_mode = "fts"
             elif not use_semantic:
-                # JSON backend fallback: bounded scan of most recent entries (kept small to prevent context bloat).
-                # Reduced from 500 to 50 to prevent context bloat
-                candidates = await graph.query(limit=50)
+                # JSON backend fallback: bounded scan of most recent entries.
+                # 200 balances coverage vs context size (post-hoc substring filter
+                # reduces this to at most `limit` results).
+                candidates = await graph.query(limit=200)
                 search_mode = "substring_scan"
 
             # For FTS/semantic: trust the search engine's ranking, only apply metadata filters
@@ -712,7 +713,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                             continue
                         if tags:
                             d_tags = set(d.tags or [])
-                            if not all(t in d_tags for t in tags):
+                            if not any(t in d_tags for t in tags):
                                 continue
                         results.append(d)
                         if len(results) >= limit:
@@ -756,7 +757,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                                     continue
                                 if tags:
                                     d_tags = set(d.tags or [])
-                                    if not all(t in d_tags for t in tags):
+                                    if not any(t in d_tags for t in tags):
                                         continue
                                 results.append(d)
                                 seen_ids.add(d.id)
@@ -796,7 +797,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                             continue
                         if tags:
                             d_tags = set(d.tags or [])
-                            if not all(t in d_tags for t in tags):
+                            if not any(t in d_tags for t in tags):
                                 continue
                         results.append(d)
                         semantic_scores_dict[d.id] = score

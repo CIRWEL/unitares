@@ -3,11 +3,28 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
+
+
+def _or_default_query(query: str) -> str:
+    """Convert multi-term query to OR-default for websearch_to_tsquery.
+
+    Preserves quoted phrases, existing operators (OR, AND), and negations (-).
+    Single-term queries are returned unchanged.
+    """
+    # If query already contains explicit operators, leave as-is
+    if re.search(r'\b(OR|AND)\b', query):
+        return query
+    # Split into tokens, preserving quoted phrases
+    tokens = [m.group() for m in re.finditer(r'"[^"]*"|\S+', query)]
+    if len(tokens) <= 1:
+        return query
+    return ' OR '.join(tokens)
 
 
 class KnowledgeGraphMixin:
@@ -147,7 +164,15 @@ class KnowledgeGraphMixin:
         query: str,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
-        """Full-text search using PostgreSQL tsvector."""
+        """Full-text search using PostgreSQL tsvector.
+
+        Multi-term queries default to OR (any term matches).
+        Use explicit "AND" between terms for all-must-match behavior.
+        Quoted phrases are preserved as-is.
+        """
+        # Default to OR for multi-term queries so "bug database" finds
+        # documents matching either term, not just both.
+        or_query = _or_default_query(query)
         async with self.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT *, ts_rank(search_vector, websearch_to_tsquery('english', $1)) as rank
@@ -155,7 +180,7 @@ class KnowledgeGraphMixin:
                 WHERE search_vector @@ websearch_to_tsquery('english', $1)
                 ORDER BY rank DESC, created_at DESC
                 LIMIT $2
-            """, query, limit)
+            """, or_query, limit)
 
             return [self._row_to_discovery_dict(row) for row in rows]
 
