@@ -246,6 +246,7 @@ async def select_reviewer(paused_agent_id: str,
     - Not already in another active session
     - Not recently reviewed this agent (prevent collusion)
     - Status is 'active'
+    - Active within last 24 hours (prevents assigning stale agents)
 
     Ranking: authority_score (health 40%, track record 30%, domain 20%, freshness 10%)
     with weighted random selection from top candidates.
@@ -257,6 +258,7 @@ async def select_reviewer(paused_agent_id: str,
         return None
 
     candidates = []
+    recency_cutoff = datetime.now() - timedelta(hours=24)
 
     for agent_id, agent_meta in metadata.items():
         if not isinstance(agent_id, str):
@@ -268,17 +270,32 @@ async def select_reviewer(paused_agent_id: str,
         if exclude_agent_ids and agent_id in exclude_agent_ids:
             continue
 
-        if await is_agent_in_active_session(agent_id):
-            continue
-
-        if await _has_recently_reviewed(agent_id, paused_agent_id, hours=24):
-            continue
-
         if isinstance(agent_meta, str) or agent_meta is None:
             continue
 
         status = agent_meta.get('status') if isinstance(agent_meta, dict) else getattr(agent_meta, 'status', None)
         if status and status != 'active':
+            continue
+
+        # Skip stale agents — must have checked in within 24h to be a viable reviewer
+        last_update = agent_meta.get('last_update') if isinstance(agent_meta, dict) else getattr(agent_meta, 'last_update', None)
+        if last_update:
+            try:
+                last_dt = datetime.fromisoformat(str(last_update).replace('Z', '+00:00'))
+                if last_dt.tzinfo:
+                    from datetime import timezone
+                    recency_cutoff_tz = recency_cutoff.replace(tzinfo=timezone.utc)
+                    if last_dt < recency_cutoff_tz:
+                        continue
+                elif last_dt < recency_cutoff:
+                    continue
+            except (ValueError, TypeError):
+                pass  # Unparseable timestamp — allow but deprioritize via authority score
+
+        if await is_agent_in_active_session(agent_id):
+            continue
+
+        if await _has_recently_reviewed(agent_id, paused_agent_id, hours=24):
             continue
 
         # Calculate authority score for ranking

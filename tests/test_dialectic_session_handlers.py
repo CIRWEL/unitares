@@ -143,7 +143,7 @@ class TestReconstructSessionFromDict:
         assert session.reviewer_agent_id == "agent_b"
         assert session.phase == DialecticPhase.THESIS
         assert session.synthesis_round == 0
-        assert session.session_type == "recovery"
+        assert session.session_type == "recovery"  # explicitly set in _make_session_dict
 
     def test_reconstruction_with_transcript(self):
         from src.mcp_handlers.dialectic.session import _reconstruct_session_from_dict
@@ -303,7 +303,7 @@ class TestReconstructSessionFromDict:
 
         assert session is not None
         assert session.paused_agent_state == {}
-        assert session.session_type == "recovery"
+        assert session.session_type == "review"
         assert session.max_synthesis_rounds == 5
         assert session.synthesis_round == 0
 
@@ -511,7 +511,7 @@ class TestLoadSession:
             loaded = await load_session("pg_defaults_1")
 
         assert loaded is not None
-        assert loaded.session_type == "recovery"
+        assert loaded.session_type == "review"
         assert loaded.max_synthesis_rounds == 5
         assert loaded.synthesis_round == 0
 

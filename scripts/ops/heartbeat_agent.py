@@ -257,21 +257,24 @@ def detect_changes(prev: Dict[str, Any], current: Dict[str, Any]) -> List[Dict[s
 
 
 def check_http_health(url: str, timeout: float = 5.0) -> Tuple[bool, str]:
-    """Check an HTTP health endpoint. Returns (healthy, detail)."""
+    """Check an HTTP health endpoint. Returns (healthy, detail_with_latency)."""
+    import time
+    start = time.monotonic()
     try:
         resp = httpx.get(url, timeout=timeout)
+        latency_ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:
             try:
                 data = resp.json()
                 status = data.get("status", "ok")
-                return True, status
+                return True, f"{status} ({latency_ms}ms)"
             except Exception:
-                return True, "ok"
-        return False, f"HTTP {resp.status_code}"
+                return True, f"ok ({latency_ms}ms)"
+        return False, f"HTTP {resp.status_code} ({latency_ms}ms)"
     except httpx.ConnectError:
         return False, "unreachable"
     except httpx.TimeoutException:
-        return False, "timeout"
+        return False, f"timeout (>{int(timeout*1000)}ms)"
     except Exception as e:
         return False, str(e)
 
@@ -607,16 +610,31 @@ class HeartbeatAgent:
             if not anima_passed:
                 issues += 1
 
-        # --- 4. Compute complexity/confidence ---
-        if issues == 0:
-            complexity = 0.1
-            confidence = 0.95
-        elif issues <= 2:
-            complexity = 0.4
-            confidence = 0.7
-        else:
-            complexity = 0.7
-            confidence = 0.5
+        # --- 4. Compute complexity/confidence from actual signals ---
+        # Complexity: how much work this cycle involved
+        # - Base: health checks only = 0.15
+        # - Tests add 0.3 (significant computation)
+        # - Groundskeeper adds 0.15
+        # - Issues add 0.1 each (diagnosing problems is harder)
+        complexity = 0.15
+        if self.with_tests:
+            complexity += 0.3
+        if self.with_audit:
+            complexity += 0.15
+        complexity += min(0.3, issues * 0.1)
+        complexity = min(1.0, complexity)
+
+        # Confidence: how certain are we about what we found
+        # - Start high (health checks are deterministic)
+        # - Reduce for each issue (something unexpected)
+        # - Reduce for flaky signals (Lumen down streak = intermittent)
+        confidence = 0.90
+        confidence -= issues * 0.12
+        if lumen_down_streak == 1:
+            confidence -= 0.05  # First miss could be transient
+        if total_failed > 0:
+            confidence -= 0.10  # Test failures are concerning
+        confidence = max(0.3, min(0.95, confidence))
 
         summary = " | ".join(findings)
 

@@ -261,8 +261,8 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
             arguments=arguments
         )]
 
-    reason = arguments.get("reason", "Dialectic recovery requested")
-    session_type = arguments.get("session_type", "recovery")
+    reason = arguments.get("reason", "Dialectic review requested")
+    session_type = arguments.get("session_type", "review")
     discovery_id = arguments.get("discovery_id")
     dispute_type = arguments.get("dispute_type")
     topic = arguments.get("topic")
@@ -374,6 +374,8 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
     # Build response based on reviewer assignment
     if auto_self_review:
         note = "No eligible reviewer available — configured for self-review. Use submit_thesis, then submit_antithesis for your counter-perspective."
+    elif session.reviewer_agent_id and session.reviewer_agent_id != agent_uuid:
+        note = f"Reviewer assigned: {session.reviewer_agent_id[:12]}... Use submit_thesis to add your thesis."
     elif session.reviewer_agent_id:
         note = "Session created with self-review. Use submit_thesis to add your thesis."
     else:
@@ -1634,7 +1636,7 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
         session = DialecticSession(
             paused_agent_id=agent_uuid,
             reviewer_agent_id="llm-synthetic-reviewer",
-            session_type=arguments.get("session_type", "recovery"),
+            session_type=arguments.get("session_type", "review"),
             topic=root_cause[:200],
             max_synthesis_rounds=2,
             reason=root_cause,
@@ -1646,7 +1648,7 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
             paused_agent_id=agent_uuid,
             reviewer_agent_id="llm-synthetic-reviewer",
             reason=root_cause,
-            session_type=arguments.get("session_type", "recovery"),
+            session_type=arguments.get("session_type", "review"),
             topic=root_cause[:200],
             max_synthesis_rounds=2,
             synthesis_round=0,

@@ -482,7 +482,7 @@ class DialecticSession:
                  paused_agent_state: Optional[Dict[str, Any]] = None,
                  discovery_id: Optional[str] = None,
                  dispute_type: Optional[str] = None,
-                 session_type: str = "recovery",
+                 session_type: str = "review",
                  topic: Optional[str] = None,
                  max_synthesis_rounds: int = 5,  # Default 5 rounds: allows negotiation while preventing infinite loops
                  reason: Optional[str] = None,
@@ -492,7 +492,7 @@ class DialecticSession:
         self.paused_agent_state = paused_agent_state or {}  # Optional for exploration sessions
         self.discovery_id = discovery_id  # Optional: Link to discovery being disputed/corrected
         self.dispute_type = dispute_type  # Optional: "dispute", "correction", "verification", None (recovery)
-        self.session_type = session_type  # "recovery", "dispute", or "exploration"
+        self.session_type = session_type  # "review", "recovery", "dispute", or "exploration"
         self.topic = topic  # Optional topic/theme for exploration sessions
         self.reason = reason  # Why the session was created (human-readable)
         self.trigger_source = trigger_source  # "circuit_breaker", "manual", "loop_detection", etc.
@@ -964,9 +964,9 @@ class DialecticSession:
         if not resolution.conditions:
             return False, "Resolution must include at least one condition"
 
-        # For recovery sessions only: strict checks on vagueness and root cause
+        # For recovery/review sessions: strict checks on vagueness and root cause
         # Exploration and design_review sessions have different semantics
-        is_recovery = self.session_type in ("recovery", "dispute")
+        is_recovery = self.session_type in ("recovery", "review", "dispute")
 
         if is_recovery:
             # Check for conditions that are too vague

@@ -210,7 +210,7 @@ class TestDialecticSessionBasic:
         session = DialecticSession(
             paused_agent_id="a", reviewer_agent_id="b", paused_agent_state={}
         )
-        assert session.session_type == "recovery"
+        assert session.session_type == "review"
 
     def test_exploration_session_type(self):
         session = DialecticSession(
@@ -228,7 +228,7 @@ class TestDialecticSessionBasic:
         d = session.to_dict()
         assert d["paused_agent_id"] == "agent-a"
         assert d["reviewer_agent_id"] == "agent-b"
-        assert d["session_type"] == "recovery"
+        assert d["session_type"] == "review"
         assert d["phase"] in [p.value for p in DialecticPhase]
 
 
@@ -628,7 +628,7 @@ class TestDialecticProtocolFlow:
         d = session.to_dict()
         assert d["paused_agent_id"] == "agent-a"
         assert d["reviewer_agent_id"] == "agent-b"
-        assert d["session_type"] == "recovery"
+        assert d["session_type"] == "review"
         assert d["session_id"] is not None
 
 

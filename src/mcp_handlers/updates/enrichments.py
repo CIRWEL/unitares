@@ -503,12 +503,12 @@ def enrich_onboarding_info(ctx: UpdateContext) -> None:
 
 @enrichment(order=140)
 async def enrich_convergence_guidance(ctx: UpdateContext) -> None:
-    """Provide equilibrium-based convergence acceleration for new agents."""
+    """Behavioral EISV guidance for new agents based on safety thresholds."""
     try:
         mcp_server = ctx.mcp_server
         meta = mcp_server.agent_metadata.get(ctx.agent_id)
         if meta and meta.total_updates < 20:
-            # Suppress detailed EISV guidance on first few check-ins (Task 2).
+            # Suppress detailed EISV guidance on first few check-ins.
             # Values are still near initialization defaults — guidance based on
             # them is misleading and erodes trust on first interaction.
             if meta.total_updates <= 3:
@@ -528,77 +528,48 @@ async def enrich_convergence_guidance(ctx: UpdateContext) -> None:
             S = metrics_dict.get("S", 0.2)
             V = metrics_dict.get("V", 0.0)
 
-            from governance_core.parameters import get_i_dynamics_mode
-            dynamics_mode = get_i_dynamics_mode()
+            # Behavioral EISV: no equilibrium targets. Guidance is based on
+            # safety floors and healthy operating ranges, not ODE attractors.
+            guidance_items = []
 
-            if dynamics_mode == "linear":
-                from governance_core.parameters import get_active_params, DEFAULT_THETA
-                from governance_core.coherence import coherence
-                from governance_core.dynamics import State
-                params = get_active_params()
-                state = State(E=E, I=I, S=S, V=V)
-                C = coherence(V, DEFAULT_THETA, params)
-                A = params.beta_I * C - params.k * S
-                I_target = min(1.0, max(0.0, A / params.gamma_I)) if params.gamma_I > 0 else 1.0
-            else:
-                I_target = 1.0
-
-            equilibrium_distance = ((I_target - I) ** 2 + S ** 2) ** 0.5
-
-            convergence_guidance = []
-
-            if S > 0.1:
-                convergence_guidance.append({
+            if S > 0.3:
+                guidance_items.append({
                     "metric": "S (Entropy)",
                     "current": f"{S:.3f}",
-                    "target": "0.0",
-                    "guidance": "High entropy detected. Focus on coherent, consistent work to reduce S. "
-                               "Reduce uncertainty by maintaining clear, structured approaches.",
-                    "priority": "high" if S > 0.2 else "medium"
+                    "guidance": "High entropy. Focus on coherent, consistent work to reduce uncertainty.",
+                    "priority": "high" if S > 0.5 else "medium"
                 })
 
-            if I < I_target - 0.1:
-                convergence_guidance.append({
+            if I < 0.4:
+                guidance_items.append({
                     "metric": "I (Information Integrity)",
                     "current": f"{I:.3f}",
-                    "target": f"{I_target:.2f}",
-                    "guidance": "Integrity below equilibrium. Focus on consistent, well-structured work.",
-                    "priority": "high" if I < I_target - 0.2 else "medium"
+                    "guidance": "Low integrity. Focus on consistent, well-structured work with accurate confidence.",
+                    "priority": "high" if I < 0.3 else "medium"
                 })
 
-            if E < 0.7:
-                convergence_guidance.append({
+            if E < 0.4:
+                guidance_items.append({
                     "metric": "E (Energy)",
                     "current": f"{E:.3f}",
-                    "target": "0.7-1.0",
-                    "guidance": "Low energy. Increase exploration and productive capacity. "
-                               "Engage more actively with your work.",
-                    "priority": "medium"
+                    "guidance": "Low energy. Increase productive engagement.",
+                    "priority": "high" if E < 0.3 else "medium"
                 })
 
-            if abs(V) > 0.1:
-                convergence_guidance.append({
+            if abs(V) > 0.2:
+                guidance_items.append({
                     "metric": "V (Void Integral)",
                     "current": f"{V:.3f}",
-                    "target": "0.0",
-                    "guidance": "Energy-integrity imbalance detected. Balance exploration (E) "
-                               "with consistency (I) to reduce void accumulation.",
-                    "priority": "medium" if abs(V) > 0.2 else "low"
+                    "guidance": "Energy-integrity imbalance. Balance exploration (E) with consistency (I).",
+                    "priority": "medium" if abs(V) > 0.3 else "low"
                 })
 
-            if convergence_guidance:
-                if dynamics_mode == "linear":
-                    eq_note = f"Linear dynamics: agents converge to stable equilibrium at I~{I_target:.2f}."
-                else:
-                    eq_note = "Logistic dynamics: agents converge toward I=1.0 (boundary attractor)."
-
+            if guidance_items:
                 ctx.response_data["convergence_guidance"] = {
-                    "message": f"Equilibrium guidance (distance: {equilibrium_distance:.3f})",
-                    "equilibrium_target": {"I": I_target, "S": 0.0},
+                    "message": "Behavioral guidance (safety thresholds)",
                     "current_state": {"E": E, "I": I, "S": S, "V": V},
-                    "guidance": convergence_guidance,
-                    "dynamics_mode": dynamics_mode,
-                    "note": eq_note
+                    "guidance": guidance_items,
+                    "note": "Guidance based on safety thresholds. Each agent develops its own operating point over time."
                 }
     except Exception as e:
         logger.debug(f"Could not generate convergence guidance: {e}", exc_info=True)

@@ -234,7 +234,7 @@ class TestHandleRequestDialecticReview:
         assert data["paused_agent_id"] == "agent-paused"
         assert data["reviewer_agent_id"] == "agent-paused"
         assert data["phase"] == "thesis"
-        assert data["session_type"] == "recovery"
+        assert data["session_type"] == "review"
         assert "session_id" in data
         pg_create.assert_awaited_once()
 

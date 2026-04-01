@@ -168,10 +168,10 @@ def get_monitor_metrics(monitor: Any, include_state: bool = True) -> Dict:
     if profile == "v41":
         if I < 0.45:
             basin = "low"
-            basin_warning = "LOW basin: high risk of collapse equilibrium (I well below ~0.5 boundary)"
+            basin_warning = "LOW basin: I well below ~0.5 boundary, elevated risk"
         elif I < 0.55:
             basin = "boundary"
-            basin_warning = "Near basin boundary (~I=0.5): small shocks can flip equilibrium"
+            basin_warning = "Near basin boundary (~I=0.5): small shocks can shift operating regime"
         else:
             basin = "high"
     else:
