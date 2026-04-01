@@ -857,6 +857,8 @@ class TestHandleSubmitSynthesis:
 
         with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock,
                    return_value=session), \
+             patch(f"{DIALECTIC}._initiate_quorum", new_callable=AsyncMock,
+                   return_value=None), \
              mock_pg_add_message, mock_pg_update_phase, mock_save_session, \
              mock_context_agent:
             result = await handle_submit_synthesis({
@@ -909,6 +911,8 @@ class TestHandleSubmitSynthesis:
 
         with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock,
                    return_value=session), \
+             patch(f"{DIALECTIC}._initiate_quorum", new_callable=AsyncMock,
+                   return_value=None), \
              mock_pg_add_message, mock_pg_update_phase, mock_save_session, \
              mock_context_agent:
             result = await handle_submit_synthesis({
@@ -1144,8 +1148,11 @@ class TestHandleGetDialecticSession:
         session.created_at = datetime.now()
         ACTIVE_SESSIONS[session.session_id] = session
 
-        # Mock check_reviewer_stuck to return False
-        with patch(f"{DIALECTIC}.check_reviewer_stuck", new_callable=AsyncMock,
+        # Mock load_session_as_dict (fast path) and check_reviewer_stuck
+        with patch(f"{DIALECTIC}.load_session_as_dict", new_callable=AsyncMock,
+                   return_value={"session_id": session.session_id, "phase": "resolved",
+                                 "paused_agent_id": "agent-paused"}), \
+             patch(f"{DIALECTIC}.check_reviewer_stuck", new_callable=AsyncMock,
                    return_value=False), \
              mock_context_agent:
             result = await handle_get_dialectic_session({
@@ -1173,7 +1180,9 @@ class TestHandleGetDialecticSession:
         """Returns error when session_id not found."""
         from src.mcp_handlers.dialectic.handlers import handle_get_dialectic_session
 
-        with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock,
+        with patch(f"{DIALECTIC}.load_session_as_dict", new_callable=AsyncMock,
+                   return_value=None), \
+             patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock,
                    return_value=None), \
              mock_context_agent:
             result = await handle_get_dialectic_session({
@@ -1244,9 +1253,13 @@ class TestHandleGetDialecticSession:
         ACTIVE_SESSIONS[session.session_id] = session
 
         # check_timeout returns None (not timed out), but reviewer is stuck
-        with patch.object(session, "check_timeout", return_value=None), \
+        with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock,
+                   return_value=session), \
+             patch.object(session, "check_timeout", return_value=None), \
              patch(f"{DIALECTIC}.check_reviewer_stuck", new_callable=AsyncMock,
                    return_value=True), \
+             patch(f"{DIALECTIC}.select_reviewer", new_callable=AsyncMock,
+                   return_value=None), \
              mock_pg_add_message, mock_pg_update_phase, mock_context_agent:
             result = await handle_get_dialectic_session({
                 "session_id": session.session_id,
@@ -1265,10 +1278,11 @@ class TestHandleGetDialecticSession:
         session = _make_session(phase=DialecticPhase.RESOLVED)
         session.created_at = datetime.now()
 
-        with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock,
+        # Fast path returns None → falls through to load_session slow path
+        with patch(f"{DIALECTIC}.load_session_as_dict", new_callable=AsyncMock,
+                   return_value=None), \
+             patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock,
                    return_value=session), \
-             patch(f"{DIALECTIC}.check_reviewer_stuck", new_callable=AsyncMock,
-                   return_value=False), \
              mock_context_agent:
             result = await handle_get_dialectic_session({
                 "session_id": session.session_id,
@@ -1338,8 +1352,8 @@ class TestHandleGetDialecticSession:
         """General exceptions are caught and returned as errors."""
         from src.mcp_handlers.dialectic.handlers import handle_get_dialectic_session
 
-        with patch(f"{DIALECTIC}.ACTIVE_SESSIONS",
-                   new_callable=lambda: MagicMock(get=MagicMock(side_effect=RuntimeError("boom")))), \
+        with patch(f"{DIALECTIC}.load_session_as_dict", new_callable=AsyncMock,
+                   side_effect=RuntimeError("boom")), \
              mock_context_agent:
             result = await handle_get_dialectic_session({
                 "session_id": "any",

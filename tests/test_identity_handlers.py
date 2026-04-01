@@ -60,6 +60,8 @@ def mock_db():
     db.update_session_activity = AsyncMock()
     db.find_agent_by_label = AsyncMock(return_value=None)
     db.update_agent_fields = AsyncMock(return_value=True)
+    db.get_agent_thread_info = AsyncMock(return_value=None)
+    db.get_thread_nodes = AsyncMock(return_value=[])
     return db
 
 

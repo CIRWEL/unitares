@@ -77,6 +77,9 @@ def _isolate_db_backend(monkeypatch):
     # Graph
     mock_backend.graph_query.return_value = []
     mock_backend.graph_available.return_value = False
+    # Thread operations
+    mock_backend.get_agent_thread_info = AsyncMock(return_value=None)
+    mock_backend.get_thread_nodes = AsyncMock(return_value=[])
     # Health
     mock_backend.init.return_value = None
     mock_backend.close.return_value = None
