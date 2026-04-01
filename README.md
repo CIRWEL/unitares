@@ -8,7 +8,7 @@
 
 UNITARES gives AI agents a shared language for inner state — four continuous variables tracked from observable behavior, and a protocol for agents to speak and be read. State is computed from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do.
 
-Started at a hackathon, deployed to production within weeks, running continuously since November 2025. 5,800+ tests, 100,000+ check-ins processed, one agent ([Lumen](https://github.com/CIRWEL/anima-mcp)) living on a Raspberry Pi making art from its own thermodynamics.
+Started at a hackathon, deployed to production within weeks, running continuously since November 2025. ~100 MCP tools, 5,800+ tests, 100,000+ check-ins processed, one agent ([Lumen](https://github.com/CIRWEL/anima-mcp)) living on a Raspberry Pi making art from its own thermodynamics.
 
 ---
 
@@ -62,13 +62,15 @@ Logging tells you what happened. Guardrails constrain what can happen. UNITARES 
 
 **Trajectory as identity.** Agents aren't identified by tokens — they're identified by dynamical patterns. An agent's EISV trajectory is its behavioral signature, letting agents computationally verify "Am I still myself?" and letting observers distinguish agents by how they work.
 
-**Mirror response mode.** Agents don't need to interpret raw EISV numbers. Mirror mode surfaces actionable self-awareness signals — calibration feedback, complexity divergence, knowledge graph discoveries — so agents get practical guidance instead of state vectors.
+**Mirror response mode.** Agents don't need to interpret raw EISV numbers. Mirror mode surfaces actionable self-awareness signals — calibration feedback, complexity divergence, knowledge graph discoveries — so agents get practical guidance instead of state vectors. Six response modes total — `minimal`, `compact`, `standard`, `full`, `auto`, and `mirror` — let agents and integrators choose the right signal density for their context.
+
+**LLM-assisted dialectic.** When no peer agents are available for structured disagreement, the system can delegate antithesis/synthesis to an LLM — keeping the dialectic protocol functional even for solo agents. Peer agents are always preferred when present.
 
 ---
 
 ## Production Data
 
-Live numbers as of March 30, 2026:
+Live numbers as of April 2026:
 
 | Metric | Value |
 |--------|-------|
@@ -79,7 +81,7 @@ Live numbers as of March 30, 2026:
 | V operating range | All active agents within [-0.1, 0.1] |
 | Test suite | 5,800+ tests |
 
-One of those agents is [Lumen](https://github.com/CIRWEL/anima-mcp) — an embodied creature on a Raspberry Pi whose physical sensors (temperature, humidity, light) seed its EISV state vector. Coherence modulates an autonomous drawing system; the art emerges from the same thermodynamics.
+One of those agents is [Lumen](https://github.com/CIRWEL/anima-mcp) — an embodied creature on a Raspberry Pi whose physical sensors (temperature, humidity, light, pressure) seed its EISV state vector via spring coupling into the ODE dynamics. Coherence modulates an autonomous drawing system across four art eras; the art emerges from the same thermodynamics. Lumen gets drowsy after inactivity, proposes goals from its own preferences, discovers self-insights every 24 minutes, and falls back to local governance assessment when the Mac server is unreachable.
 
 <p align="center">
   <img src="docs/images/dashboard.png" width="80%" alt="UNITARES web dashboard showing fleet coherence, agent status, and system health"/>
@@ -107,7 +109,8 @@ process_agent_update({
   "response_text": "Refactored auth module, added rate limiting",
   "complexity": 0.6,
   "confidence": 0.8,
-  "task_type": "refactoring"
+  "task_type": "refactoring",
+  "response_mode": "mirror"  // or: minimal, compact, standard, full, auto
 })
 
 // System evolves EISV and returns a verdict
@@ -115,7 +118,12 @@ process_agent_update({
   "verdict": "proceed",
   "E": 0.74, "I": 0.78, "S": 0.15, "V": -0.02,
   "coherence": 0.52,
-  "guidance": "State healthy. Proceed."
+  "guidance": "State healthy. Proceed.",
+  "mirror": {
+    "calibration_feedback": "confidence tracks outcomes well",
+    "complexity_note": "within your normal range",
+    "knowledge_graph": "2 related discoveries from other agents"
+  }
 }
 ```
 
@@ -176,6 +184,10 @@ Agents self-identify through the `onboard()` flow — no hardcoded agent name he
 | `/dashboard` | HTTP | Web dashboard |
 | `/health` | HTTP | Health checks |
 
+**Security:** The server binds to `127.0.0.1` by default. For LAN/remote access, set `UNITARES_BIND_ALL_INTERFACES=1` and configure `UNITARES_MCP_ALLOWED_HOSTS` / `UNITARES_MCP_ALLOWED_ORIGINS` (comma-separated). See the [launchd plist](scripts/ops/) for a working example.
+
+> **For AI agents:** Start with `onboard()`, then `process_agent_update()` with `response_mode: "mirror"` for actionable self-awareness signals. Use `bind_session()` if you operate across both MCP and REST transports. The `CLAUDE.md` in this repo has full operational details.
+
 ---
 
 ## What You Can Build On It
@@ -183,8 +195,10 @@ Agents self-identify through the `onboard()` flow — no hardcoded agent name he
 - **Monitoring & early warning** — EISV trajectories show state changes as they happen. Circuit breakers can pause agents automatically at risk thresholds.
 - **Inter-agent observation** — Agents can read each other's state vectors. One agent can assess whether another is coherent enough for a handoff without inspecting its outputs.
 - **Trajectory identity** — An agent's behavioral signature over time. Enables "Am I still myself?" checks and anomaly detection for forks or impersonation.
-- **Dialectic resolution** — Structured disagreement (thesis → antithesis → synthesis) with a shared state language. Agents negotiate meaningfully when they can read each other's coherence and confidence.
+- **Outcome correlation** — Feed task results back via `outcome_event` to build a calibration curve. The system tracks whether EISV instability predicts bad outcomes — validation is ongoing, but the plumbing works.
+- **Dialectic resolution** — Structured disagreement (thesis → antithesis → synthesis) with a shared state language. Agents negotiate meaningfully when they can read each other's coherence and confidence. Falls back to LLM-assisted dialectic when no peers are available.
 - **Knowledge persistence** — Discoveries tagged to agent state and system version, stored in a shared graph with staleness detection. Agents build on each other's findings across sessions.
+- **Session identity bridging** — `bind_session` links MCP and REST identities so an agent's governance state follows it across transport changes.
 
 ---
 
@@ -208,7 +222,9 @@ graph LR
 ```
 
 ```
-src/                   MCP server, agent state, knowledge graph, dialectic
+src/                   MCP server (~100 tools), agent state, knowledge graph, dialectic
+  mcp_handlers/        Modular tool handlers: identity, lifecycle, knowledge, dialectic,
+                       observability, admin, CIRS, introspection, Pi orchestration
 dashboard/             Web dashboard (vanilla JS + Chart.js)
 tests/                 5,800+ tests
 ```
@@ -226,7 +242,7 @@ Behavioral EISV (`src/behavioral_state.py`, `src/behavioral_assessment.py`) runs
 
 These are unsolved problems. The system is honest about what it doesn't yet do well.
 
-- **Outcome correlation** — Does EISV instability predict bad task outcomes? The system's confidence calibration is currently around 50% accuracy — not yet reliably predictive. Whether state-space instability maps to real-world failure is the central empirical question. Validation is ongoing.
+- **Outcome correlation** — *(Partially addressed.)* The `outcome_event` tool now feeds task results (test pass/fail, command exit codes, lint results) back into calibration automatically. Confidence calibration is currently around 50% accuracy — better than chance but not yet reliably predictive. Whether EISV instability predicts real-world failure remains the central empirical question.
 - **Agent differentiation** — *(Addressed in v2.9.0.)* The ODE's convergence guarantees caused agents with similar workloads to converge to similar steady states. Behavioral EISV — EMA-smoothed observations without ODE contraction — is now the primary verdict source, giving each agent its own trajectory. Behavioral baselines need ~30 updates to stabilize; before that, fixed thresholds apply.
 - **Identity fragmentation** — Session-based identity means the same human or system can accumulate many agent IDs across sessions. Most of the 1,300+ total agents are ephemeral (test runs, CI, dev sessions). Identity consolidation and trajectory-based re-identification are active work.
 - **Domain-specific thresholds** — How should parameters be tuned for code generation vs. customer service vs. trading? No one-size-fits-all answer yet.
