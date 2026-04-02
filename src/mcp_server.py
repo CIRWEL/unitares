@@ -562,6 +562,7 @@ from src.process_management import (
     is_process_alive, cleanup_existing_server_processes,
     write_server_pid_file, remove_server_pid_file,
     acquire_server_lock, release_server_lock,
+    ensure_server_pid_file, ensure_server_lock,
     SERVER_PID_FILE, SERVER_LOCK_FILE, CURRENT_PID,
 )
 
@@ -619,6 +620,18 @@ async def main():
     
     # Write PID file
     write_server_pid_file()
+
+    async def _maintain_process_markers():
+        nonlocal lock_fd
+        while True:
+            try:
+                ensure_server_pid_file()
+                lock_fd = ensure_server_lock(lock_fd)
+            except Exception as e:
+                logger.debug(f"Process marker maintenance skipped: {e}")
+            await asyncio.sleep(15)
+
+    marker_task = asyncio.create_task(_maintain_process_markers())
 
     # Clean up stale agent locks from crashed processes
     try:
@@ -955,6 +968,13 @@ async def main():
         logger.error(f"Server error: {e}", exc_info=True)
         sys.exit(1)
     finally:
+        try:
+            marker_task.cancel()
+            await marker_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"Error stopping process marker maintenance: {e}")
         try:
             await close_db()
         except Exception as e:

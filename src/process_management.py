@@ -74,6 +74,18 @@ def write_server_pid_file():
         logger.warning(f"Could not write server PID file: {e}", exc_info=True)
 
 
+def ensure_server_pid_file() -> None:
+    """Rewrite PID file when missing or stale for the current process."""
+    try:
+        current_text = None
+        if SERVER_PID_FILE.exists():
+            current_text = SERVER_PID_FILE.read_text().strip()
+        if current_text != str(CURRENT_PID):
+            write_server_pid_file()
+    except Exception as e:
+        logger.warning(f"Could not ensure server PID file: {e}", exc_info=True)
+
+
 def remove_server_pid_file():
     """Remove PID file on shutdown."""
     try:
@@ -157,3 +169,43 @@ def release_server_lock(lock_fd):
             logger.debug(f"Released server lock file: {SERVER_LOCK_FILE}")
         except Exception as e:
             logger.warning(f"Could not release server lock: {e}", exc_info=True)
+
+
+def ensure_server_lock(lock_fd):
+    """Ensure a visible lock file exists for the running server process.
+
+    If the lock file path was removed while the process kept running, reacquire
+    a fresh visible lock file and return the new fd.
+    """
+    if lock_fd is None and SERVER_LOCK_FILE.exists():
+        return lock_fd
+
+    try:
+        needs_reacquire = lock_fd is None or not SERVER_LOCK_FILE.exists()
+        if not needs_reacquire:
+            return lock_fd
+
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+            except Exception:
+                pass
+
+        SERVER_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        new_fd = os.open(str(SERVER_LOCK_FILE), os.O_CREAT | os.O_RDWR)
+        fcntl.flock(new_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        lock_info = {
+            "pid": CURRENT_PID,
+            "timestamp": time.time(),
+            "started_at": datetime.now().isoformat(),
+        }
+        os.ftruncate(new_fd, 0)
+        os.write(new_fd, json.dumps(lock_info).encode())
+        os.fsync(new_fd)
+        logger.info(f"Re-established server lock file: {SERVER_LOCK_FILE} (PID: {CURRENT_PID})")
+        return new_fd
+    except Exception as e:
+        logger.warning(f"Could not ensure server lock file: {e}", exc_info=True)
+        return lock_fd
