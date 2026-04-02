@@ -458,7 +458,7 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         "search_knowledge_graph": "🔎 Search knowledge graph by tags, type, agent (indexed queries)",
         "get_knowledge_graph": "📚 Get all knowledge for an agent (fast index lookup)",
         "list_knowledge_graph": "📊 List knowledge graph statistics (full transparency)",
-        "update_discovery_status_graph": "🔄 Update discovery status (open/resolved/archived)",
+        "update_discovery_status_graph": "🔄 Update discovery status or content/metadata on an existing discovery",
         "leave_note": "📝 Leave a quick note in the knowledge graph (minimal friction)",
         "list_tools": "📚 Discover all available tools. Your guide to what's possible",
         "describe_tool": "📖 Get full details for a specific tool. Deep dive into any tool",
@@ -1198,4 +1198,3 @@ async def handle_describe_tool(arguments: Dict[str, Any]) -> Sequence[TextConten
         })
     except Exception as e:
         return [error_response(f"Error describing tool: {str(e)}")]
-
