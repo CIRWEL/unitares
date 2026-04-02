@@ -2045,6 +2045,44 @@ class TestSemanticSearch:
 
         assert result == []
 
+    @pytest.mark.asyncio
+    async def test_in_memory_skips_none_candidate_embeddings(self):
+        """Poisoned candidate embeddings should be skipped instead of crashing."""
+        kg, mock_db = make_kg_with_mock_db()
+
+        mock_embeddings = AsyncMock()
+        mock_embeddings.embed = AsyncMock(return_value=[0.1, 0.2])
+        mock_embeddings.embed_batch = AsyncMock(return_value=[None, [0.1, 0.2]])
+        mock_embeddings.rank_by_similarity = AsyncMock(return_value=[("d2", 0.8)])
+        mock_module = MagicMock()
+        mock_module.embeddings_available = MagicMock(return_value=True)
+        mock_module.get_embeddings_service = AsyncMock(return_value=mock_embeddings)
+
+        kg._pgvector_available = AsyncMock(return_value=False)
+
+        d1 = make_discovery(discovery_id="d1")
+        d2 = make_discovery(discovery_id="d2")
+        kg.query = AsyncMock(return_value=[d1, d2])
+        kg._blend_with_connectivity = AsyncMock(return_value=[(d2, 0.75)])
+
+        with patch.dict("sys.modules", {"src.embeddings": mock_module}):
+            result = await kg.semantic_search("test query")
+
+        assert result == [(d2, 0.75)]
+
+    @pytest.mark.asyncio
+    async def test_update_discovery_refreshes_embedding_after_details_change(self):
+        """Changing summary/details should trigger embedding refresh."""
+        kg, mock_db = make_kg_with_mock_db()
+        mock_db.graph_query = AsyncMock(return_value=[{"d.id": "disc-1"}])
+        kg._pgvector_available = AsyncMock(return_value=True)
+        kg._refresh_embedding = AsyncMock()
+
+        ok = await kg.update_discovery("disc-1", {"details": "new details"})
+
+        assert ok is True
+        kg._refresh_embedding.assert_awaited_once_with("disc-1")
+
 
 # ============================================================================
 # link_discoveries

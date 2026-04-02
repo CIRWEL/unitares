@@ -113,6 +113,7 @@ handle_knowledge = action_router(
     param_maps={
         "search": {"query": "search_query"},
         "store": {"content": "details"},  # Allow 'content' as alias for 'details'
+        "update": {"content": "details"},  # Allow 'content' as alias for 'details'
         "note": {"content": "note"},
     },
     examples=[

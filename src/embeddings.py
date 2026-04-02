@@ -181,7 +181,11 @@ class EmbeddingsService:
             
             scores = []
             for doc_id, emb in candidate_embeddings:
+                if emb is None:
+                    continue
                 candidate = np.array(emb)
+                if candidate.ndim == 0:
+                    continue
                 # Dot product of normalized vectors = cosine similarity
                 score = float(np.dot(query, candidate))
                 scores.append((doc_id, score))

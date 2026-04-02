@@ -262,8 +262,10 @@ def action_router(
 
         # Apply parameter mappings for this action
         for src_key, dst_key in _param_maps.get(action, {}).items():
-            if src_key in arguments and dst_key not in arguments:
-                arguments[dst_key] = arguments[src_key]
+            if src_key in arguments and arguments.get(src_key) is not None:
+                # Fill dst when absent or None; preserve explicit falsy values.
+                if dst_key not in arguments or arguments.get(dst_key) is None:
+                    arguments[dst_key] = arguments[src_key]
 
         return await handler(arguments)
 

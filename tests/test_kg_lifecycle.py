@@ -998,3 +998,47 @@ class TestSupersedeHandler:
         })
         data = parse_result(result)
         assert data["success"] is False
+
+
+class TestUpdateDiscoveryExtended:
+
+    @pytest.mark.asyncio
+    async def test_update_accepts_details_without_status(self, patch_common, registered_agent):
+        """Details-only updates should be allowed for amending discoveries."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_update_discovery_status_graph
+
+        discovery = make_discovery(id="disc-1", severity="low", details="old")
+        mock_graph.get_discovery = AsyncMock(side_effect=[discovery, discovery])
+
+        result = await handle_update_discovery_status_graph({
+            "agent_id": registered_agent,
+            "discovery_id": "disc-1",
+            "details": "new details",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        updates = mock_graph.update_discovery.call_args[0][1]
+        assert updates["details"] == "new details"
+        assert "status" not in updates
+
+    @pytest.mark.asyncio
+    async def test_update_uses_content_alias_for_details(self, patch_common, registered_agent):
+        """content should behave as an alias for details during update."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_update_discovery_status_graph
+
+        discovery = make_discovery(id="disc-1", severity="low", details="old")
+        mock_graph.get_discovery = AsyncMock(side_effect=[discovery, discovery])
+
+        result = await handle_update_discovery_status_graph({
+            "agent_id": registered_agent,
+            "discovery_id": "disc-1",
+            "content": "aliased details",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        updates = mock_graph.update_discovery.call_args[0][1]
+        assert updates["details"] == "aliased details"

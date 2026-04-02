@@ -547,7 +547,8 @@ class KnowledgeGraphAGE:
     async def update_discovery(self, discovery_id: str, updates: Dict[str, Any]) -> bool:
         """Update discovery fields in AGE graph.
 
-        Supports updating: status, resolved_at, updated_at, tags, severity, type.
+        Supports updating: status, resolved_at, updated_at, tags, severity, type,
+        summary, details, and last_referenced.
         """
         db = await self._get_db()
 
@@ -560,7 +561,7 @@ class KnowledgeGraphAGE:
         params = {"discovery_id": discovery_id}
 
         for key, value in updates.items():
-            if key in ("status", "resolved_at", "updated_at", "severity", "type", "last_referenced"):
+            if key in ("status", "resolved_at", "updated_at", "severity", "type", "last_referenced", "summary", "details"):
                 param_name = f"val_{key}"
                 set_parts.append(f"d.{key} = ${{{param_name}}}")
                 params[param_name] = value
@@ -582,6 +583,8 @@ class KnowledgeGraphAGE:
         try:
             result = await db.graph_query(cypher, params)
             if result and not (isinstance(result[0], dict) and "error" in result[0]):
+                if "summary" in updates or "details" in updates:
+                    await self._refresh_embedding(discovery_id)
                 return True
             return False
         except Exception as e:
@@ -1099,7 +1102,8 @@ class KnowledgeGraphAGE:
                 rows = await conn.fetch("""
                     SELECT de.discovery_id, (1 - (de.embedding <=> $1::vector)) AS similarity
                     FROM core.discovery_embeddings de
-                    WHERE (1 - (de.embedding <=> $1::vector)) >= $2
+                    WHERE de.embedding IS NOT NULL
+                      AND (1 - (de.embedding <=> $1::vector)) >= $2
                     ORDER BY de.embedding <=> $1::vector
                     LIMIT $3
                 """, embedding_str, min_similarity, limit * 3)
@@ -1107,7 +1111,8 @@ class KnowledgeGraphAGE:
                 rows = await conn.fetch("""
                     SELECT discovery_id, (1 - (embedding <=> $1::vector)) AS similarity
                     FROM core.discovery_embeddings
-                    WHERE (1 - (embedding <=> $1::vector)) >= $2
+                    WHERE embedding IS NOT NULL
+                      AND (1 - (embedding <=> $1::vector)) >= $2
                     ORDER BY embedding <=> $1::vector
                     LIMIT $3
                 """, embedding_str, min_similarity, limit)
@@ -1132,6 +1137,27 @@ class KnowledgeGraphAGE:
                 """, discovery_id, embedding_str)
         except Exception as e:
             logger.debug(f"Failed to store embedding for {discovery_id}: {e}")
+
+    async def _refresh_embedding(self, discovery_id: str) -> None:
+        """Regenerate the stored embedding after summary/details edits."""
+        if not await self._pgvector_available():
+            return
+
+        try:
+            from src.embeddings import get_embeddings_service, embeddings_available
+            if not embeddings_available():
+                return
+            discovery = await self.get_discovery(discovery_id)
+            if not discovery:
+                return
+            embeddings = await get_embeddings_service()
+            text = f"{discovery.summary}\n{discovery.details[:500] if discovery.details else ''}"
+            emb = await embeddings.embed(text)
+            if emb is None:
+                return
+            await self._store_embedding(discovery_id, emb)
+        except Exception as e:
+            logger.debug(f"Failed to refresh embedding for {discovery_id}: {e}")
 
     async def get_connectivity_score(self, discovery_id: str) -> float:
         """
@@ -1445,25 +1471,33 @@ class KnowledgeGraphAGE:
         ]
         
         candidate_embeddings = await embeddings.embed_batch(candidate_texts)
-        
+
+        valid_candidates = [
+            (discovery, emb)
+            for discovery, emb in zip(candidates, candidate_embeddings)
+            if emb is not None
+        ]
+        if not valid_candidates:
+            return []
+
         # Store embeddings for future pgvector use (async, best-effort)
         if use_pgvector:
-            for discovery, emb in zip(candidates, candidate_embeddings):
+            for discovery, emb in valid_candidates:
                 task = asyncio.create_task(self._store_embedding(discovery.id, emb))
                 task.add_done_callback(lambda t: logger.debug(f"_store_embedding failed: {t.exception()}") if t.exception() else None)
-        
+
         # Rank by similarity
         scored = await embeddings.rank_by_similarity(
             query_embedding=query_embedding,
             candidate_embeddings=list(zip(
-                [d.id for d in candidates],
-                candidate_embeddings
+                [d.id for d, _emb in valid_candidates],
+                [emb for _d, emb in valid_candidates]
             )),
             top_k=limit * 2,
         )
-        
+
         # Build raw results
-        id_to_discovery = {d.id: d for d in candidates}
+        id_to_discovery = {d.id: d for d, _emb in valid_candidates}
         raw_results = []
 
         for discovery_id, similarity in scored:

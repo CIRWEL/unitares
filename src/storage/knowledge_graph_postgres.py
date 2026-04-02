@@ -105,7 +105,8 @@ class KnowledgeGraphPostgres:
     async def update_discovery(self, discovery_id: str, updates: Dict[str, Any]) -> bool:
         """Update discovery fields.
 
-        Supports updating: status, resolved_at, updated_at, tags, severity, type.
+        Supports updating: status, resolved_at, updated_at, tags, severity, type,
+        summary, and details.
         """
         from src.knowledge_graph import normalize_tags
         db = await self._get_db()
@@ -116,7 +117,7 @@ class KnowledgeGraphPostgres:
         param_idx = 2
 
         for key, value in updates.items():
-            if key in ("status", "resolved_at", "updated_at", "severity", "type"):
+            if key in ("status", "resolved_at", "updated_at", "severity", "type", "summary", "details"):
                 set_clauses.append(f"{key} = ${param_idx}")
                 params.append(value)
                 param_idx += 1

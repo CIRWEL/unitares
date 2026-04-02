@@ -172,6 +172,23 @@ async def test_rank_by_similarity_empty_candidates():
 
 
 @pytest.mark.asyncio
+async def test_rank_by_similarity_skips_none_embeddings():
+    """None candidate embeddings should be ignored instead of crashing."""
+    from src.embeddings import EmbeddingsService
+
+    service = EmbeddingsService()
+
+    query = [1.0, 0.0]
+    candidates = [
+        ("bad", None),
+        ("good", [1.0, 0.0]),
+    ]
+
+    result = await service.rank_by_similarity(query, candidates, top_k=5)
+    assert result == [("good", 1.0)]
+
+
+@pytest.mark.asyncio
 async def test_rank_by_similarity_top_k():
     """rank_by_similarity() should respect top_k limit."""
     from src.embeddings import EmbeddingsService

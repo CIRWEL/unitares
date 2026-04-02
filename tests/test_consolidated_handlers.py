@@ -667,6 +667,15 @@ class TestKnowledgeParamMaps:
             assert args_passed["note"] == "remember this"
 
     @pytest.mark.asyncio
+    async def test_update_maps_content_to_details(self):
+        from src.mcp_handlers.consolidated import handle_knowledge
+        mock_update = AsyncMock(return_value=_ok_response({"updated": True}))
+        with _patch_router_action(handle_knowledge, "update", mock_update):
+            await handle_knowledge({"action": "update", "discovery_id": "disc-1", "content": "remember this"})
+            args_passed = mock_update.call_args[0][0]
+            assert args_passed["details"] == "remember this"
+
+    @pytest.mark.asyncio
     async def test_search_does_not_overwrite_existing_search_query(self):
         from src.mcp_handlers.consolidated import handle_knowledge
         mock_search = AsyncMock(return_value=_ok_response({"results": []}))

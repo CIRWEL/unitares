@@ -539,7 +539,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
     try:
         graph = await get_knowledge_graph()
 
-        limit = arguments.get("limit", config.KNOWLEDGE_QUERY_DEFAULT_LIMIT)
+        limit = arguments.get("limit") or config.KNOWLEDGE_QUERY_DEFAULT_LIMIT
         include_details = arguments.get("include_details", False)
         include_provenance = arguments.get("include_provenance", False)  # Merged from query_provenance
 
@@ -1048,7 +1048,7 @@ async def handle_list_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Tex
 
 @mcp_tool("update_discovery_status_graph", timeout=10.0, register=False)
 async def handle_update_discovery_status_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    """Update discovery status - fast graph update
+    """Update discovery fields - status, details, and selected metadata.
     
     SECURITY: Requires authentication for high-severity discoveries.
     Low/medium severity discoveries can be updated by any registered agent (collaborative).
@@ -1065,12 +1065,19 @@ async def handle_update_discovery_status_graph(arguments: Dict[str, Any]) -> Seq
     
     # Validate discovery_id format
     
-    status, error = require_argument(arguments, "status",
-                                   "status is required (open, resolved, archived, disputed)")
-    if error:
-        return [error]
-    
-    # Validate status enum
+    status = arguments.get("status")
+    raw_details = arguments.get("details")
+    if raw_details is None:
+        raw_details = arguments.get("content")
+    summary = arguments.get("summary")
+    severity = arguments.get("severity")
+    discovery_type = arguments.get("discovery_type")
+    tags = arguments.get("tags")
+
+    if not any(value is not None for value in (status, raw_details, summary, severity, discovery_type, tags)):
+        return [error_response(
+            "At least one updatable field is required. Provide status, details/content, summary, severity, discovery_type, or tags."
+        )]
     
     try:
         graph = await get_knowledge_graph()
@@ -1106,9 +1113,43 @@ async def handle_update_discovery_status_graph(arguments: Dict[str, Any]) -> Seq
                     }
                 )]
         
-        updates = {"status": status}
-        if status == "resolved":
-            updates["resolved_at"] = datetime.now().isoformat()
+        updates = {"updated_at": datetime.now().isoformat()}
+
+        if status is not None:
+            VALID_STATUSES = {"open", "resolved", "archived", "disputed", "closed", "wont_fix", "superseded"}
+            status = str(status).lower()
+            if status not in VALID_STATUSES:
+                return [error_response(f"Invalid status '{status}'. Valid: {sorted(VALID_STATUSES)}")]
+            updates["status"] = status
+            if status == "resolved":
+                updates["resolved_at"] = datetime.now().isoformat()
+
+        if summary is not None:
+            updates["summary"] = str(summary)
+
+        if raw_details is not None:
+            updates["details"] = str(raw_details)
+
+        if severity is not None:
+            VALID_SEVERITIES = {"low", "medium", "high", "critical"}
+            severity = str(severity).lower()
+            if severity not in VALID_SEVERITIES:
+                return [error_response(f"Invalid severity '{severity}'. Valid: {sorted(VALID_SEVERITIES)}")]
+            updates["severity"] = severity
+
+        if discovery_type is not None:
+            VALID_DISCOVERY_TYPES = {"architectural_decision", "learning", "pattern", "bug_fix", "refactoring", "documentation", "experiment", "question", "note", "rule", "insight", "bug_found", "improvement", "exploration", "observation"}
+            discovery_type = str(discovery_type).strip().lower()
+            if discovery_type == "bug":
+                discovery_type = "bug_found"
+            if discovery_type not in VALID_DISCOVERY_TYPES:
+                return [error_response(
+                    f"Invalid discovery_type '{discovery_type}'. Valid types: {sorted(VALID_DISCOVERY_TYPES)}."
+                )]
+            updates["type"] = discovery_type
+
+        if tags is not None:
+            updates["tags"] = tags
         
         success = await graph.update_discovery(discovery_id, updates)
         
@@ -1117,8 +1158,12 @@ async def handle_update_discovery_status_graph(arguments: Dict[str, Any]) -> Seq
         
         discovery = await graph.get_discovery(discovery_id)
         
+        message = f"Discovery '{discovery_id}' updated"
+        if status is not None:
+            message = f"Discovery '{discovery_id}' status updated to '{status}'"
+
         return success_response({
-            "message": f"Discovery '{discovery_id}' status updated to '{status}'",
+            "message": message,
             "discovery": discovery.to_dict(include_details=False) if discovery else None
         }, arguments=arguments)
         
@@ -1768,4 +1813,3 @@ async def handle_audit_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
         }, arguments=arguments)
     except Exception as e:
         return [error_response(f"Failed to run KG audit: {str(e)}")]
-
