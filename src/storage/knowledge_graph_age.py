@@ -50,6 +50,237 @@ class KnowledgeGraphAGE:
         self._indexes_created = False
         self.rate_limit_stores_per_hour = 20  # Max stores per agent per hour
 
+    @staticmethod
+    def _parse_optional_datetime(value: Any) -> Optional[datetime]:
+        """Parse ISO-like timestamps from discovery payloads."""
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace('Z', '+00:00'))
+            except Exception:
+                return None
+        return None
+
+    @staticmethod
+    def _build_discovery_metadata(discovery: DiscoveryNode) -> Optional[Dict[str, Any]]:
+        """Build metadata payload stored on the AGE discovery node."""
+        metadata: Dict[str, Any] = {}
+
+        if discovery.related_to:
+            metadata["related_to"] = discovery.related_to
+        if discovery.references_files:
+            metadata["references_files"] = discovery.references_files
+        if discovery.confidence is not None:
+            metadata["confidence"] = discovery.confidence
+        if discovery.provenance:
+            metadata["provenance"] = discovery.provenance
+        if discovery.provenance_chain:
+            metadata["provenance_chain"] = discovery.provenance_chain
+        if discovery.response_to:
+            metadata["response_to"] = {
+                "discovery_id": discovery.response_to.discovery_id,
+                "response_type": discovery.response_to.response_type,
+            }
+
+        return metadata or None
+
+    async def _persist_discovery_row(
+        self,
+        conn,
+        discovery: DiscoveryNode,
+        *,
+        created_at: datetime,
+        resolved_at: Optional[datetime],
+    ) -> None:
+        """Persist discovery into durable PostgreSQL knowledge tables."""
+        from config.governance_config import GovernanceConfig
+
+        updated_at = self._parse_optional_datetime(discovery.updated_at)
+        response_to_id = None
+        response_type = None
+        if discovery.response_to:
+            response_to_id = discovery.response_to.discovery_id
+            response_type = discovery.response_to.response_type
+
+        await conn.execute(
+            """
+            INSERT INTO knowledge.discoveries (
+                id, agent_id, type, severity, status,
+                created_at, updated_at, resolved_at,
+                summary, details, tags, references_files, related_to,
+                response_to_id, response_type, provenance, epoch
+            ) VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, $8,
+                $9, $10, $11, $12, $13,
+                $14, $15, $16, $17
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                agent_id = EXCLUDED.agent_id,
+                type = EXCLUDED.type,
+                severity = EXCLUDED.severity,
+                status = EXCLUDED.status,
+                created_at = EXCLUDED.created_at,
+                updated_at = EXCLUDED.updated_at,
+                resolved_at = EXCLUDED.resolved_at,
+                summary = EXCLUDED.summary,
+                details = EXCLUDED.details,
+                tags = EXCLUDED.tags,
+                references_files = EXCLUDED.references_files,
+                related_to = EXCLUDED.related_to,
+                response_to_id = EXCLUDED.response_to_id,
+                response_type = EXCLUDED.response_type,
+                provenance = EXCLUDED.provenance,
+                epoch = EXCLUDED.epoch
+            """,
+            discovery.id,
+            discovery.agent_id,
+            discovery.type,
+            discovery.severity or "low",
+            discovery.status or "open",
+            created_at,
+            updated_at,
+            resolved_at,
+            discovery.summary,
+            discovery.details or "",
+            discovery.tags or [],
+            discovery.references_files or [],
+            discovery.related_to or [],
+            response_to_id,
+            response_type,
+            json.dumps(discovery.provenance) if discovery.provenance else None,
+            GovernanceConfig.CURRENT_EPOCH,
+        )
+
+        await self._sync_discovery_tags(conn, discovery.id, discovery.tags or [])
+        await self._sync_discovery_edges(conn, discovery, created_at)
+
+    async def _sync_discovery_tags(self, conn, discovery_id: str, tags: List[str]) -> None:
+        """Sync normalized tag rows for one discovery."""
+        await conn.execute(
+            "DELETE FROM knowledge.discovery_tags WHERE discovery_id = $1",
+            discovery_id,
+        )
+        if tags:
+            await conn.executemany(
+                """
+                INSERT INTO knowledge.discovery_tags (discovery_id, tag)
+                VALUES ($1, $2)
+                ON CONFLICT (discovery_id, tag) DO NOTHING
+                """,
+                [(discovery_id, tag) for tag in tags],
+            )
+
+    async def _sync_discovery_edges(
+        self,
+        conn,
+        discovery: DiscoveryNode,
+        created_at: datetime,
+    ) -> None:
+        """Sync durable edge rows sourced from a discovery payload."""
+        await conn.execute(
+            """
+            DELETE FROM knowledge.discovery_edges
+            WHERE src_id = $1 AND edge_type IN ('related', 'responds_to')
+            """,
+            discovery.id,
+        )
+
+        edge_rows = []
+        if discovery.response_to:
+            edge_rows.append(
+                (
+                    discovery.id,
+                    discovery.response_to.discovery_id,
+                    "responds_to",
+                    discovery.response_to.response_type,
+                    1.0,
+                    created_at,
+                    discovery.agent_id,
+                    None,
+                )
+            )
+
+        for related_id in discovery.related_to:
+            edge_rows.append(
+                (
+                    discovery.id,
+                    related_id,
+                    "related",
+                    None,
+                    1.0,
+                    created_at,
+                    discovery.agent_id,
+                    None,
+                )
+            )
+
+        if edge_rows:
+            await conn.executemany(
+                """
+                INSERT INTO knowledge.discovery_edges (
+                    src_id, dst_id, edge_type, response_type, weight,
+                    created_at, created_by, metadata
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (src_id, dst_id, edge_type) DO UPDATE SET
+                    response_type = EXCLUDED.response_type,
+                    weight = EXCLUDED.weight,
+                    created_at = EXCLUDED.created_at,
+                    created_by = EXCLUDED.created_by,
+                    metadata = EXCLUDED.metadata
+                """,
+                edge_rows,
+            )
+
+    async def _sync_updated_discovery_row(
+        self,
+        conn,
+        discovery_id: str,
+        updates: Dict[str, Any],
+    ) -> None:
+        """Sync AGE discovery updates into durable PostgreSQL tables."""
+        set_parts = []
+        params: List[Any] = []
+
+        field_map = {
+            "status": "status",
+            "severity": "severity",
+            "type": "type",
+            "summary": "summary",
+            "details": "details",
+        }
+
+        for key, column in field_map.items():
+            if key in updates:
+                params.append(updates[key])
+                set_parts.append(f"{column} = ${len(params)}")
+
+        for key in ("resolved_at", "updated_at"):
+            if key in updates:
+                params.append(self._parse_optional_datetime(updates[key]))
+                set_parts.append(f"{key} = ${len(params)}")
+
+        if "tags" in updates:
+            params.append(updates["tags"])
+            set_parts.append(f"tags = ${len(params)}")
+
+        if set_parts:
+            params.append(discovery_id)
+            await conn.execute(
+                f"""
+                UPDATE knowledge.discoveries
+                SET {', '.join(set_parts)}
+                WHERE id = ${len(params)}
+                """,
+                *params,
+            )
+
+        if "tags" in updates:
+            await self._sync_discovery_tags(conn, discovery_id, updates["tags"] or [])
+
     async def _get_db(self):
         """Get database backend (lazy initialization)."""
         if self._db is None:
@@ -155,21 +386,10 @@ class KnowledgeGraphAGE:
             coherence = prov.get("coherence")
 
         # Parse timestamp
-        timestamp = None
-        if discovery.timestamp:
-            try:
-                timestamp = datetime.fromisoformat(discovery.timestamp.replace('Z', '+00:00'))
-            except Exception:
-                timestamp = datetime.now()
-        else:
-            timestamp = datetime.now()
+        timestamp = self._parse_optional_datetime(discovery.timestamp) or datetime.now()
+        resolved_at = self._parse_optional_datetime(discovery.resolved_at)
 
-        resolved_at = None
-        if discovery.resolved_at:
-            try:
-                resolved_at = datetime.fromisoformat(discovery.resolved_at.replace('Z', '+00:00'))
-            except Exception:
-                pass
+        metadata = self._build_discovery_metadata(discovery)
 
         # Create discovery node
         cypher, params = create_discovery_node(
@@ -189,20 +409,19 @@ class KnowledgeGraphAGE:
             regime=regime,
             coherence=coherence,
             tags=discovery.tags,
-            metadata={
-                "related_to": discovery.related_to,
-                "references_files": discovery.references_files,
-                "confidence": discovery.confidence,
-                "provenance": discovery.provenance,
-                "provenance_chain": discovery.provenance_chain,
-            } if any([discovery.related_to, discovery.references_files,
-                     discovery.confidence, discovery.provenance, discovery.provenance_chain]) else None,
+            metadata=metadata,
         )
 
         # Execute rate limit + all graph operations in a single transaction
         async with db.transaction() as conn:
             # Rate limiting inside transaction — if limit exceeded, entire txn rolls back
             await self._check_rate_limit(discovery.agent_id, conn=conn)
+            await self._persist_discovery_row(
+                conn,
+                discovery,
+                created_at=timestamp,
+                resolved_at=resolved_at,
+            )
             await db.graph_query(cypher, params, conn=conn)
 
             # Create/update agent node
@@ -560,6 +779,11 @@ class KnowledgeGraphAGE:
         set_parts = []
         params = {"discovery_id": discovery_id}
 
+        if "tags" in updates:
+            from src.knowledge_graph import normalize_tags
+            updates = dict(updates)
+            updates["tags"] = normalize_tags(updates["tags"])
+
         for key, value in updates.items():
             if key in ("status", "resolved_at", "updated_at", "severity", "type", "last_referenced", "summary", "details"):
                 param_name = f"val_{key}"
@@ -581,12 +805,14 @@ class KnowledgeGraphAGE:
         """
 
         try:
-            result = await db.graph_query(cypher, params)
-            if result and not (isinstance(result[0], dict) and "error" in result[0]):
-                if "summary" in updates or "details" in updates:
-                    await self._refresh_embedding(discovery_id)
-                return True
-            return False
+            async with db.transaction() as conn:
+                result = await db.graph_query(cypher, params, conn=conn)
+                if not result or (isinstance(result[0], dict) and "error" in result[0]):
+                    return False
+                await self._sync_updated_discovery_row(conn, discovery_id, updates)
+            if "summary" in updates or "details" in updates:
+                await self._refresh_embedding(discovery_id)
+            return True
         except Exception as e:
             logger.error(f"Failed to update discovery {discovery_id}: {e}")
             return False
@@ -896,6 +1122,11 @@ class KnowledgeGraphAGE:
             metadata["provenance"] = row["provenance"]
         if row.get("provenance_chain"):
             metadata["provenance_chain"] = row["provenance_chain"]
+        if row.get("response_to_id"):
+            metadata["response_to"] = {
+                "discovery_id": row["response_to_id"],
+                "response_type": row.get("response_type") or "extend",
+            }
 
         cypher, params = create_discovery_node(
             discovery_id=row["id"],
