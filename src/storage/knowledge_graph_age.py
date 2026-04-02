@@ -253,8 +253,11 @@ class KnowledgeGraphAGE:
                     embeddings = await get_embeddings_service()
                     text = f"{discovery.summary}\n{discovery.details[:500] if discovery.details else ''}"
                     emb = await embeddings.embed(text)
-                    task = asyncio.create_task(self._store_embedding(discovery.id, emb))
-                    task.add_done_callback(lambda t: logger.debug(f"_store_embedding failed: {t.exception()}") if t.exception() else None)
+                    if emb is not None:
+                        task = asyncio.create_task(self._store_embedding(discovery.id, emb))
+                        task.add_done_callback(lambda t: logger.debug(f"_store_embedding failed: {t.exception()}") if t.exception() else None)
+                    else:
+                        logger.debug(f"Embedding returned None for {discovery.id}, skipping storage")
             except Exception as e:
                 logger.debug(f"Failed to create embedding for {discovery.id}: {e}")
 
@@ -1380,7 +1383,11 @@ class KnowledgeGraphAGE:
         except Exception as e:
             logger.warning(f"Embedding service failed — semantic search degraded: {e}")
             return ([], {"error": "embeddings_failed", "message": f"Embedding service error: {e}"})
-        
+
+        if query_embedding is None:
+            logger.warning("Embedding service returned None — semantic search unavailable")
+            return ([], {"error": "embeddings_failed", "message": "Embedding returned None"})
+
         # Try pgvector first (fast, indexed)
         use_pgvector = await self._pgvector_available()
         
