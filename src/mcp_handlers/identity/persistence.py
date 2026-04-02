@@ -181,38 +181,40 @@ async def ensure_agent_persisted(
         # Note: db.init() is called once at startup (mcp_server.py:1306).
         # Do NOT call it here — it was creating a new connection pool on every request.
 
-        # Check if already persisted
         identity = await db.get_identity(agent_uuid)
-        if identity:
-            return False  # Already persisted
+        agent_record = await db.get_agent(agent_uuid)
 
-        # Persist now
-        await db.upsert_agent(
-            agent_id=agent_uuid,
-            api_key="",
-            status="active",
-            parent_agent_id=parent_agent_id,
-            spawn_reason=spawn_reason,
-            thread_id=thread_id,
-            thread_position=thread_position,
-        )
+        if identity and agent_record:
+            return False  # Already fully persisted
 
-        await db.upsert_identity(
-            agent_id=agent_uuid,
-            api_key_hash="",
-            parent_agent_id=parent_agent_id,
-            metadata={
-                "source": "lazy_creation",
-                "created_at": datetime.now().isoformat(),
-                "total_updates": 0,  # Initialize counter for persistence
-                "thread_id": thread_id,
-                "thread_position": thread_position,
-                "node_index": thread_position,  # AgentMetadata uses node_index
-            }
-        )
+        if not agent_record:
+            await db.upsert_agent(
+                agent_id=agent_uuid,
+                api_key="",
+                status="active",
+                parent_agent_id=parent_agent_id,
+                spawn_reason=spawn_reason,
+                thread_id=thread_id,
+                thread_position=thread_position,
+            )
 
-        # Create session binding
-        identity = await db.get_identity(agent_uuid)
+        if not identity:
+            await db.upsert_identity(
+                agent_id=agent_uuid,
+                api_key_hash="",
+                parent_agent_id=parent_agent_id,
+                metadata={
+                    "source": "lazy_creation",
+                    "created_at": datetime.now().isoformat(),
+                    "total_updates": 0,  # Initialize counter for persistence
+                    "thread_id": thread_id,
+                    "thread_position": thread_position,
+                    "node_index": thread_position,  # AgentMetadata uses node_index
+                }
+            )
+            identity = await db.get_identity(agent_uuid)
+
+        # Create session binding once we have a durable identity row.
         if identity:
             await db.create_session(
                 session_id=session_key,

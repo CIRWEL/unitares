@@ -136,6 +136,7 @@ class TestEnsureAgentPersisted:
 
         mock_db = AsyncMock()
         mock_db.init = AsyncMock()
+        mock_db.get_agent.return_value = None
         # First call: not persisted. After upsert: return identity for session creation.
         mock_db.get_identity.side_effect = [
             None,  # First check: not persisted
@@ -160,6 +161,7 @@ class TestEnsureAgentPersisted:
 
         mock_db = AsyncMock()
         mock_db.init = AsyncMock()
+        mock_db.get_agent.return_value = {"id": "uuid-existing"}
         mock_db.get_identity.return_value = SimpleNamespace(
             identity_id="existing-ident", metadata={}
         )
@@ -169,6 +171,29 @@ class TestEnsureAgentPersisted:
 
         assert result is False
         mock_db.upsert_agent.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_repairs_missing_agent_row_when_identity_exists(self):
+        """Identity-only persistence should recreate the missing core.agents row."""
+        from src.mcp_handlers.identity.handlers import ensure_agent_persisted
+
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_agent.return_value = None
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="existing-ident", metadata={}
+        )
+        mock_db.upsert_agent = AsyncMock()
+        mock_db.upsert_identity = AsyncMock()
+        mock_db.create_session = AsyncMock()
+
+        with patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db):
+            result = await ensure_agent_persisted("uuid-missing-agent", "session-missing-agent")
+
+        assert result is True
+        mock_db.upsert_agent.assert_called_once()
+        mock_db.upsert_identity.assert_not_called()
+        mock_db.create_session.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_returns_false_on_exception(self):
