@@ -94,23 +94,12 @@ The repo no longer has a single monolithic `migrate_to_postgres_age.py` entrypoi
 Current maintenance utilities are targeted scripts under `scripts/migration/` and
 `scripts/age/`.
 
-Common examples:
+Example:
 
 ```bash
 # Backfill missing pgvector embeddings
 python scripts/migration/backfill_embeddings.py --dry-run
-
-# Regenerate embeddings for a selected agent's discoveries
-python scripts/migration/regenerate_embeddings.py --dry-run --agent system_migration
-
-# Export legacy SQLite knowledge to an AGE-compatible SQL import
-python scripts/age/export_knowledge_sqlite_to_age.py \
-  --sqlite data/governance.db \
-  --out /tmp/age_import.sql
 ```
-
-Before running any targeted backfill, make sure the base schema, extensions, and graph
-already exist in the destination database.
 
 ## Schema Overview
 

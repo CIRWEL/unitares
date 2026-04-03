@@ -94,7 +94,7 @@ Analysis and reporting scripts.
 Diagnostic scripts for debugging server and agent issues.
 
 ### `migration/`
-Database migration scripts (SQLite to PostgreSQL, schema updates).
+Database maintenance scripts (embeddings backfill, ghost agent cleanup, knowledge graph maintenance).
 
 ### `git-hooks/`
 Git hook scripts (pre-commit, pre-push).

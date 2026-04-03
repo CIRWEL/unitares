@@ -1,10 +1,9 @@
 # Database Architecture
 
-**Last Updated**: 2026-04-02
-**Status**: PostgreSQL-only (SQLite backend removed Feb 2026)
+**Last Updated**: 2026-04-03
 
 > **Rule**: The canonical UNITARES database is whatever instance `DB_POSTGRES_URL` points to.
-> Do not assume Docker, Homebrew, or a specific port. Query the configured instance directly.
+> Query the configured instance directly.
 
 ## Overview
 
@@ -104,8 +103,7 @@ export DB_AGE_GRAPH="governance_graph"
 
 **Code Location**: `src/db/__init__.py` — the shared database accessor always returns `PostgresBackend`.
 
-> **Note**: The SQLite backend was removed in Feb 2026 (v2.7.0). PostgreSQL is the sole
-> database backend. If PostgreSQL is unavailable, the server exits honestly rather than
+> **Note**: If PostgreSQL is unavailable, the server exits honestly rather than
 > silently degrading.
 
 ---
@@ -123,44 +121,6 @@ export DB_AGE_GRAPH="governance_graph"
 - **Persistence**: Sessions survive server restarts/deployments
 - **Standard pattern**: Widely used for session management
 - **Automatic TTL**: Sessions expire without manual cleanup
-
----
-
-## Migration Status
-
-All migrations complete (Dec 2025 - Feb 2026):
-- Agent metadata, state, audit log → PostgreSQL
-- Knowledge graph → PostgreSQL AGE (current graph size varies; query live metrics instead of relying on this document)
-- Dialectic sessions → PostgreSQL (72 sessions migrated Feb 2026)
-- Session cache → Redis (~1,760 sessions)
-- Schema version: 2
-
----
-
-## Race Condition Fix (2025-12-25)
-
-**Issue**: PostgreSQL metadata loading failed when called from async contexts
-**Error**: `"cannot perform operation: another operation is in progress"`
-**Root Cause**: `asyncio.run()` creating new event loop conflicting with existing connection pool
-
-**Fix Applied** (`src/mcp_server_std.py`):
-```python
-# New async function for async contexts
-async def load_metadata_async():
-    result = await _load_metadata_from_postgres_async()
-    agent_metadata = result
-
-# Fixed sync wrapper using run_coroutine_threadsafe
-def _load_metadata_from_postgres_sync():
-    loop = asyncio.get_running_loop()
-    future = asyncio.run_coroutine_threadsafe(
-        _load_metadata_from_postgres_async(),
-        loop
-    )
-    result = future.result(timeout=30)
-```
-
-**Impact**: PostgreSQL loading now works reliably from all contexts
 
 ---
 
@@ -279,5 +239,4 @@ SELECT MAX(version) FROM core.schema_migrations;
 ## Related Documentation
 
 - PostgreSQL Schema: `db/postgres/README.md`
-- Migration Scripts: `scripts/migrate_*.py`
 - Knowledge Graph: See AGE graph schema in `db/postgres/graph_schema.cypher`

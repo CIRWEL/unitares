@@ -10,7 +10,7 @@
 --
 -- Prerequisites:
 --   - PostgreSQL with AGE extension running
---   - Data imported via export_knowledge_sqlite_to_age.py
+--   - Knowledge graph populated
 
 LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
