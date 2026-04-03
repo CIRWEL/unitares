@@ -22,6 +22,155 @@ from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
+# Paper Definition 2.2: Viability Envelope (EISV bounds)
+VIABILITY_BOUNDS = {
+    "E": (0.1, 0.9),
+    "I": (0.3, 1.0),
+    "S": (0.0, 0.6),
+    "V": (-0.2, 0.15),
+}
+
+
+def bhattacharyya_similarity(
+    mu1: List[float], cov1: List[List[float]],
+    mu2: List[float], cov2: List[List[float]],
+) -> float:
+    """Bhattacharyya coefficient between two Gaussian distributions.
+
+    Paper Section 4.2:
+    D_B = (1/8)(mu1-mu2)^T Sigma_avg^{-1} (mu1-mu2)
+        + (1/2) ln(|Sigma_avg| / sqrt(|Sigma1| * |Sigma2|))
+    sim = exp(-D_B)
+
+    Falls back to center-only distance if matrices are singular.
+    """
+    n = len(mu1)
+    eps = 1e-6
+
+    # Average covariance with epsilon regularization
+    s_avg = [[(cov1[i][j] + cov2[i][j]) / 2.0 + (eps if i == j else 0.0)
+              for j in range(n)] for i in range(n)]
+    s1_reg = [[cov1[i][j] + (eps if i == j else 0.0) for j in range(n)] for i in range(n)]
+    s2_reg = [[cov2[i][j] + (eps if i == j else 0.0) for j in range(n)] for i in range(n)]
+
+    det_avg = _det(s_avg)
+    det1 = _det(s1_reg)
+    det2 = _det(s2_reg)
+
+    if det_avg <= 0 or det1 <= 0 or det2 <= 0:
+        dist = sum((a - b)**2 for a, b in zip(mu1, mu2)) ** 0.5
+        return math.exp(-dist * 2)
+
+    inv_avg = _inv(s_avg)
+    if inv_avg is None:
+        dist = sum((a - b)**2 for a, b in zip(mu1, mu2)) ** 0.5
+        return math.exp(-dist * 2)
+
+    diff = [a - b for a, b in zip(mu1, mu2)]
+    mahal = sum(diff[i] * inv_avg[i][j] * diff[j] for i in range(n) for j in range(n)) / 8.0
+    det_term = 0.5 * math.log(det_avg / math.sqrt(det1 * det2))
+    d_b = mahal + det_term
+    return max(0.0, min(1.0, math.exp(-d_b)))
+
+
+def _det(m: List[List[float]]) -> float:
+    """Determinant via LU elimination."""
+    n = len(m)
+    mat = [row[:] for row in m]
+    det = 1.0
+    for i in range(n):
+        if abs(mat[i][i]) < 1e-12:
+            for j in range(i + 1, n):
+                if abs(mat[j][i]) > 1e-12:
+                    mat[i], mat[j] = mat[j], mat[i]
+                    det *= -1
+                    break
+            else:
+                return 0.0
+        det *= mat[i][i]
+        for j in range(i + 1, n):
+            factor = mat[j][i] / mat[i][i]
+            for k in range(i, n):
+                mat[j][k] -= factor * mat[i][k]
+    return det
+
+
+def _inv(m: List[List[float]]) -> Optional[List[List[float]]]:
+    """Inverse via Gauss-Jordan elimination."""
+    n = len(m)
+    aug = [m[i][:] + [1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+    for col in range(n):
+        max_row = max(range(col, n), key=lambda r: abs(aug[r][col]))
+        if max_row != col:
+            aug[col], aug[max_row] = aug[max_row], aug[col]
+        pivot = aug[col][col]
+        if abs(pivot) < 1e-12:
+            return None
+        for j in range(2 * n):
+            aug[col][j] /= pivot
+        for row in range(n):
+            if row != col:
+                factor = aug[row][col]
+                for j in range(2 * n):
+                    aug[row][j] -= factor * aug[col][j]
+    return [[aug[i][j + n] for j in range(n)] for i in range(n)]
+
+
+def homeostatic_similarity(eta1: Dict[str, Any], eta2: Dict[str, Any]) -> float:
+    """Compute Eta (Homeostatic Identity) similarity (paper Section 3.6).
+
+    Combines set-point proximity, recovery dynamics, and viability margin.
+    """
+    scores = []
+    weights = []
+
+    sp1 = eta1.get("set_point")
+    sp2 = eta2.get("set_point")
+    if sp1 and sp2 and len(sp1) == len(sp2):
+        bs1 = eta1.get("basin_shape")
+        bs2 = eta2.get("basin_shape")
+        if bs1 and bs2:
+            scores.append(bhattacharyya_similarity(sp1, bs1, sp2, bs2))
+        else:
+            dist = sum((a - b)**2 for a, b in zip(sp1, sp2)) ** 0.5
+            scores.append(math.exp(-dist * 2))
+        weights.append(0.4)
+
+    tau1 = eta1.get("recovery_tau")
+    tau2 = eta2.get("recovery_tau")
+    if tau1 and tau2 and tau1 > 0 and tau2 > 0:
+        scores.append(math.exp(-abs(math.log(tau1 / tau2))))
+        weights.append(0.3)
+
+    bounds1 = eta1.get("viability_bounds", VIABILITY_BOUNDS)
+    bounds2 = eta2.get("viability_bounds", VIABILITY_BOUNDS)
+    if sp1 and sp2:
+        m1 = _viability_margin(sp1, bounds1)
+        m2 = _viability_margin(sp2, bounds2)
+        if m1 is not None and m2 is not None:
+            scores.append(1.0 - abs(m1 - m2))
+            weights.append(0.3)
+
+    if not scores:
+        return 0.5
+    total = sum(weights)
+    return sum(s * w for s, w in zip(scores, weights)) / total
+
+
+def _viability_margin(set_point: List[float], bounds: Dict[str, Any]) -> Optional[float]:
+    """How safely centered is the set-point within viability bounds."""
+    dim_keys = list(bounds.keys())
+    if len(set_point) != len(dim_keys):
+        return None
+    margins = []
+    for i, key in enumerate(dim_keys):
+        lo, hi = bounds[key]
+        span = hi - lo
+        if span <= 0:
+            continue
+        margins.append(max(0.0, min(set_point[i] - lo, hi - set_point[i]) / span))
+    return sum(margins) / len(margins) if margins else None
+
 
 def _dtw_distance(s1: List[float], s2: List[float]) -> float:
     """Dynamic Time Warping distance between two 1D time series.
@@ -99,6 +248,7 @@ class TrajectorySignature:
     attractor: Optional[Dict[str, Any]] = None                  # A
     recovery: Dict[str, Any] = field(default_factory=dict)      # R
     relational: Dict[str, Any] = field(default_factory=dict)    # Δ
+    homeostatic: Optional[Dict[str, Any]] = None                # Η
 
     # Metadata
     computed_at: Optional[str] = None
@@ -115,6 +265,7 @@ class TrajectorySignature:
             attractor=data.get("attractor"),
             recovery=data.get("recovery", {}),
             relational=data.get("relational", {}),
+            homeostatic=data.get("homeostatic"),
             computed_at=data.get("computed_at"),
             observation_count=data.get("observation_count", 0),
             stability_score=data.get("stability_score", 0.0),
@@ -129,6 +280,7 @@ class TrajectorySignature:
             "attractor": self.attractor,
             "recovery": self.recovery,
             "relational": self.relational,
+            "homeostatic": self.homeostatic,
             "computed_at": self.computed_at,
             "observation_count": self.observation_count,
             "stability_score": self.stability_score,
@@ -137,56 +289,77 @@ class TrajectorySignature:
 
     def similarity(self, other: "TrajectorySignature") -> float:
         """
-        Compute similarity to another signature.
+        Compute similarity using the paper's six-component model.
 
-        Simplified version - full computation is in anima-mcp.
-        Returns weighted average of component similarities.
+        Weights: Pi=0.15, Beta=0.15, Alpha=0.25, Rho=0.20, Delta=0.10, Eta=0.15
+        Components are skipped when data is unavailable; weights renormalize.
         """
         scores = []
         weights = []
 
-        # Attractor center similarity (most important)
-        if self.attractor and other.attractor:
-            c1 = self.attractor.get("center", [])
-            c2 = other.attractor.get("center", [])
-            if c1 and c2 and len(c1) == len(c2):
-                dist = sum((a - b)**2 for a, b in zip(c1, c2)) ** 0.5
-                scores.append(2.71828 ** (-dist * 2))
-                weights.append(0.4)
+        # Pi: Preference similarity (cosine)
+        pv1 = self.preferences.get("vector")
+        pv2 = other.preferences.get("vector")
+        if pv1 and pv2 and len(pv1) == len(pv2):
+            sim = self._cosine_similarity(pv1, pv2)
+            if sim is not None:
+                scores.append((sim + 1) / 2)
+                weights.append(0.15)
 
-        # Belief values similarity
+        # Beta: Belief similarity (cosine)
         if self.beliefs.get("values") and other.beliefs.get("values"):
             v1, v2 = self.beliefs["values"], other.beliefs["values"]
             if len(v1) == len(v2) and len(v1) > 0:
                 sim = self._cosine_similarity(v1, v2)
                 if sim is not None:
                     scores.append((sim + 1) / 2)
-                    weights.append(0.3)
+                    weights.append(0.15)
 
-        # Recovery tau similarity
+        # Alpha: Attractor similarity (Bhattacharyya when covariance available)
+        if self.attractor and other.attractor:
+            c1 = self.attractor.get("center", [])
+            c2 = other.attractor.get("center", [])
+            if c1 and c2 and len(c1) == len(c2):
+                cov1 = self.attractor.get("covariance")
+                cov2 = other.attractor.get("covariance")
+                if cov1 and cov2 and len(cov1) == len(c1) and len(cov2) == len(c2):
+                    scores.append(bhattacharyya_similarity(c1, cov1, c2, cov2))
+                else:
+                    dist = sum((a - b)**2 for a, b in zip(c1, c2)) ** 0.5
+                    scores.append(math.exp(-dist * 2))
+                weights.append(0.25)
+
+        # Rho: Recovery tau similarity (log-ratio)
         t1 = self.recovery.get("tau_estimate")
         t2 = other.recovery.get("tau_estimate")
         if t1 and t2 and t1 > 0 and t2 > 0:
-            log_ratio = abs(math.log(t1 / t2))
-            scores.append(math.exp(-log_ratio))
-            weights.append(0.2)
+            scores.append(math.exp(-abs(math.log(t1 / t2))))
+            weights.append(0.20)
 
-        # Stability score similarity (simple difference)
-        if self.stability_score > 0 and other.stability_score > 0:
-            scores.append(1 - abs(self.stability_score - other.stability_score))
-            weights.append(0.1)
+        # Delta: Relational similarity (valence L1)
+        rv1 = self.relational.get("valence_tendency")
+        rv2 = other.relational.get("valence_tendency")
+        if rv1 is not None and rv2 is not None:
+            scores.append(1 - abs(rv1 - rv2) / 2)
+            weights.append(0.10)
 
-        # Trajectory shape similarity via DTW (when trajectory data available)
-        dtw_sim = _eisv_trajectory_similarity(self, other)
-        if dtw_sim is not None:
-            scores.append(dtw_sim)
-            weights.append(0.25)
+        # Eta: Homeostatic similarity
+        if self.homeostatic and other.homeostatic:
+            scores.append(homeostatic_similarity(self.homeostatic, other.homeostatic))
+            weights.append(0.15)
 
         if not scores:
-            return 0.5  # No data to compare
+            return 0.5
 
         total_weight = sum(weights)
         return sum(s * w for s, w in zip(scores, weights)) / total_weight
+
+    def trajectory_shape_similarity(self, other: "TrajectorySignature") -> Optional[float]:
+        """DTW-based trajectory shape comparison (governance extension, not in paper).
+
+        Supplemental discrimination signal. Not part of the six-component model.
+        """
+        return _eisv_trajectory_similarity(self, other)
 
     def _cosine_similarity(self, v1: List[float], v2: List[float]) -> Optional[float]:
         """Cosine similarity between vectors."""

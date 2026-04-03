@@ -722,8 +722,8 @@ class TestDTWSimilarity:
         assert _dtw_similarity([], [1, 2, 3]) == 0.0
         assert _dtw_similarity([1, 2, 3], []) == 0.0
 
-    def test_dtw_in_similarity_method(self):
-        """DTW should increase discrimination when trajectory data is present."""
+    def test_dtw_via_trajectory_shape_similarity(self):
+        """DTW is available via trajectory_shape_similarity() (not in main similarity)."""
         from src.trajectory_identity import TrajectorySignature
         import math
 
@@ -739,7 +739,6 @@ class TestDTWSimilarity:
                 "V_trajectory": traj_a,
             },
             beliefs={"values": [0.8, 0.6]},
-            stability_score=0.8,
         )
         sig_same = TrajectorySignature(
             attractor={
@@ -750,7 +749,6 @@ class TestDTWSimilarity:
                 "V_trajectory": traj_a,
             },
             beliefs={"values": [0.8, 0.6]},
-            stability_score=0.8,
         )
         sig_diff = TrajectorySignature(
             attractor={
@@ -761,13 +759,19 @@ class TestDTWSimilarity:
                 "V_trajectory": traj_b,
             },
             beliefs={"values": [0.8, 0.6]},
-            stability_score=0.8,
         )
 
+        # DTW discriminates via the supplemental method
+        dtw_same = sig1.trajectory_shape_similarity(sig_same)
+        dtw_diff = sig1.trajectory_shape_similarity(sig_diff)
+        assert dtw_same is not None
+        assert dtw_diff is not None
+        assert dtw_same > dtw_diff
+
+        # Main similarity does NOT use DTW (same center+beliefs = same score)
         sim_same = sig1.similarity(sig_same)
         sim_diff = sig1.similarity(sig_diff)
-        # Same trajectory shapes should score higher
-        assert sim_same > sim_diff
+        assert sim_same == sim_diff  # Without DTW, these are equal
 
     def test_graceful_degradation_no_trajectory(self):
         """Without trajectory data, similarity should still work (existing behavior)."""

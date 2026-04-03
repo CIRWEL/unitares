@@ -11,6 +11,7 @@ from src.behavioral_trajectory import (
     _compute_attractor,
     _compute_recovery,
     _compute_stability,
+    _compute_relational,
 )
 from src.trajectory_identity import TrajectorySignature
 
@@ -355,3 +356,137 @@ class TestProjectEISVTrajectory:
             else:
                 sys.modules.pop("governance_core", None)
             importlib.reload(bt)
+
+
+# ══════════════════════════════════════════════════
+#  Tests: Covariance in attractor
+# ══════════════════════════════════════════════════
+
+class TestAttractorCovariance:
+    def test_attractor_has_covariance_matrix(self):
+        """Attractor should include 4x4 covariance matrix when n >= 5."""
+        h = make_histories(n=20)
+        result = _compute_attractor(h["E_history"], h["I_history"],
+                                     h["S_history"], h["V_history"])
+        assert "covariance" in result
+        assert result["covariance"] is not None
+        assert len(result["covariance"]) == 4
+        assert len(result["covariance"][0]) == 4
+
+    def test_attractor_covariance_none_for_small_n(self):
+        """Covariance should be None when history too short for covariance."""
+        # _compute_attractor gets last 20 entries; we need min 5 for covariance
+        h = make_histories(n=10)  # Only 4 history entries after -20 window
+        # Override with exactly 4 entries
+        result = _compute_attractor([0.5]*4, [0.6]*4, [0.3]*4, [0.1]*4)
+        assert result["covariance"] is None
+
+    def test_covariance_diagonal_matches_variance(self):
+        """Diagonal of covariance should reflect per-dimension variance."""
+        import random
+        random.seed(42)
+        e = [0.5 + random.gauss(0, 0.1) for _ in range(20)]
+        i = [0.7 + random.gauss(0, 0.05) for _ in range(20)]
+        s = [0.1] * 20  # Zero variance
+        v = [0.0] * 20  # Zero variance
+        result = _compute_attractor(e, i, s, v)
+        cov = result["covariance"]
+        # E dimension should have more variance than S
+        assert cov[0][0] > cov[2][2]
+
+    def test_covariance_keeps_radius(self):
+        """Adding covariance should not break the existing radius field."""
+        h = make_histories(n=20)
+        result = _compute_attractor(h["E_history"], h["I_history"],
+                                     h["S_history"], h["V_history"])
+        assert "radius" in result
+        assert "center" in result
+
+
+# ══════════════════════════════════════════════════
+#  Tests: Relational (Delta) for non-embodied agents
+# ══════════════════════════════════════════════════
+
+class TestRelational:
+    def test_relational_has_valence_tendency(self):
+        """Relational should have real valence_tendency, not just a stub."""
+        result = _compute_relational(
+            ["proceed"] * 20, {"code": 10, "debug": 5}, ["STABLE"] * 20
+        )
+        assert "valence_tendency" in result
+        assert isinstance(result["valence_tendency"], float)
+
+    def test_proceed_gives_positive_valence(self):
+        """All-proceed decisions should give positive valence."""
+        result = _compute_relational(["proceed"] * 20, None, [])
+        assert result["valence_tendency"] > 0.5
+
+    def test_pause_gives_negative_valence(self):
+        """All-pause decisions should give negative valence."""
+        result = _compute_relational(["pause"] * 20, None, [])
+        assert result["valence_tendency"] < 0.0
+
+    def test_topic_entropy_from_diverse_tasks(self):
+        """Diverse task types should give higher entropy than single type."""
+        diverse = _compute_relational([], {"code": 5, "debug": 5, "review": 5}, [])
+        single = _compute_relational([], {"code": 15}, [])
+        assert diverse["topic_entropy"] > single["topic_entropy"]
+
+    def test_bonding_from_stable_regime(self):
+        """Stable regime history should give high bonding tendency."""
+        result = _compute_relational([], None, ["STABLE"] * 20)
+        assert result["bonding_tendency"] > 0.8
+
+    def test_bonding_from_divergent_regime(self):
+        """Divergent regime should give low bonding tendency."""
+        result = _compute_relational([], None, ["DIVERGENCE"] * 20)
+        assert result["bonding_tendency"] < 0.2
+
+    def test_still_has_agent_type(self):
+        """Should still include agent_type marker."""
+        result = _compute_relational([], None, [])
+        assert result["agent_type"] == "non_embodied"
+
+    def test_empty_inputs_dont_crash(self):
+        """Empty inputs should produce sensible defaults."""
+        result = _compute_relational([], None, [])
+        assert result["valence_tendency"] == 0.0
+        assert result["topic_entropy"] == 0.0
+        assert result["bonding_tendency"] == 0.5
+
+
+# ══════════════════════════════════════════════════
+#  Tests: Homeostatic (Eta) in behavioral trajectory
+# ══════════════════════════════════════════════════
+
+class TestHomeostaticBehavioral:
+    def test_homeostatic_present_in_output(self):
+        """Behavioral trajectory should include homeostatic field."""
+        h = make_histories(n=20)
+        result = compute_behavioral_trajectory(**h)
+        assert "homeostatic" in result
+        assert result["homeostatic"] is not None
+
+    def test_homeostatic_has_required_keys(self):
+        """Homeostatic should have set_point, basin_shape, recovery_tau, viability_bounds."""
+        h = make_histories(n=20)
+        result = compute_behavioral_trajectory(**h)
+        eta = result["homeostatic"]
+        assert "set_point" in eta
+        assert "basin_shape" in eta
+        assert "recovery_tau" in eta
+        assert "viability_bounds" in eta
+
+    def test_homeostatic_set_point_matches_attractor(self):
+        """Eta set_point should be the same as attractor center."""
+        h = make_histories(n=20)
+        result = compute_behavioral_trajectory(**h)
+        assert result["homeostatic"]["set_point"] == result["attractor"]["center"]
+
+    def test_homeostatic_deserializes_with_trajectory_signature(self):
+        """Homeostatic should survive TrajectorySignature.from_dict()."""
+        h = make_histories(n=20)
+        result = compute_behavioral_trajectory(**h)
+        sig = TrajectorySignature.from_dict(result)
+        assert sig.homeostatic is not None
+        assert sig.homeostatic["set_point"] == result["attractor"]["center"]
