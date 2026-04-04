@@ -37,15 +37,17 @@ def compute_agent_signature(
         agent_uuid = bound_id
 
         display_label = None
+        public_agent_id = None
         structured_id = None
         if bound_id in mcp_server.agent_metadata:
             meta = mcp_server.agent_metadata[bound_id]
             display_label = getattr(meta, 'label', None)
+            public_agent_id = getattr(meta, 'public_agent_id', None)
             structured_id = getattr(meta, 'structured_id', None)
 
         signature = {"uuid": agent_uuid}
-        if structured_id:
-            signature["agent_id"] = structured_id
+        if public_agent_id or structured_id:
+            signature["agent_id"] = public_agent_id or structured_id
         if display_label:
             signature["display_name"] = display_label
         return signature
@@ -153,7 +155,8 @@ def require_agent_id(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextConte
                         meta = mcp_server.agent_metadata[bound_uuid]
                         label = getattr(meta, 'label', None)
                         structured_id = getattr(meta, 'structured_id', None)
-                        if explicit_agent_id in (label, structured_id):
+                        public_agent_id = getattr(meta, 'public_agent_id', None)
+                        if explicit_agent_id in (label, public_agent_id, structured_id):
                             logger.debug(f"Explicit agent_id '{explicit_agent_id}' matches label/structured_id, using UUID '{bound_uuid[:8]}...'")
                             agent_id = bound_uuid
                             arguments["agent_id"] = agent_id
@@ -225,6 +228,7 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
 
         agent_found = False
         actual_uuid = None
+        public_agent_id = None
         structured_id = None
         display_name = None
         label = None
@@ -234,14 +238,20 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
                 agent_found = True
                 actual_uuid = agent_id
                 meta = mcp_server.agent_metadata[agent_id]
+                public_agent_id = getattr(meta, 'public_agent_id', None)
                 structured_id = getattr(meta, 'structured_id', None)
                 display_name = getattr(meta, 'display_name', None) or getattr(meta, 'label', None)
                 label = getattr(meta, 'label', None)
         else:
             for uuid_key, meta in mcp_server.agent_metadata.items():
-                if getattr(meta, 'label', None) == agent_id:
+                if agent_id in (
+                    getattr(meta, 'label', None),
+                    getattr(meta, 'public_agent_id', None),
+                    getattr(meta, 'structured_id', None),
+                ):
                     agent_found = True
                     actual_uuid = uuid_key
+                    public_agent_id = getattr(meta, 'public_agent_id', None)
                     structured_id = getattr(meta, 'structured_id', None)
                     display_name = getattr(meta, 'display_name', None) or getattr(meta, 'label', None)
                     label = getattr(meta, 'label', None)
@@ -253,6 +263,7 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
                 agent_found = True
                 actual_uuid = bound_uuid
                 meta = mcp_server.agent_metadata[bound_uuid]
+                public_agent_id = getattr(meta, 'public_agent_id', None)
                 structured_id = getattr(meta, 'structured_id', None)
                 display_name = getattr(meta, 'display_name', None) or getattr(meta, 'label', None)
                 label = getattr(meta, 'label', None)
@@ -296,11 +307,11 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
                 }
             )
 
-        public_agent_id = structured_id or label or f"Agent_{actual_uuid[:8]}"
-        arguments["agent_id"] = public_agent_id
+        resolved_public_id = public_agent_id or structured_id or label or f"Agent_{actual_uuid[:8]}"
+        arguments["agent_id"] = resolved_public_id
         arguments["_agent_display"] = {
-            "agent_id": public_agent_id,
-            "display_name": display_name or label or public_agent_id,
+            "agent_id": resolved_public_id,
+            "display_name": display_name or label or resolved_public_id,
             "label": label,
         }
         arguments["_agent_uuid"] = actual_uuid

@@ -216,7 +216,7 @@ async def _persist_rebadged_agent_id(agent_uuid: str, new_agent_id: str) -> None
     """Best-effort sync of refreshed structured agent_id to memory + DB."""
     try:
         if agent_uuid in mcp_server.agent_metadata:
-            mcp_server.agent_metadata[agent_uuid].structured_id = new_agent_id
+            mcp_server.agent_metadata[agent_uuid].public_agent_id = new_agent_id
     except Exception:
         pass
     try:
@@ -224,10 +224,58 @@ async def _persist_rebadged_agent_id(agent_uuid: str, new_agent_id: str) -> None
         await db.upsert_identity(
             agent_id=agent_uuid,
             api_key_hash="",
-            metadata={"agent_id": new_agent_id},
+            metadata={"public_agent_id": new_agent_id, "agent_id": new_agent_id},
         )
     except Exception as e:
         logger.debug(f"[ONBOARD] Could not persist rebadged agent_id: {e}")
+
+
+async def _collect_identity_aliases(
+    agent_uuid: str,
+    *,
+    primary_agent_id: Optional[str] = None,
+    label: Optional[str] = None,
+) -> set[str]:
+    """Collect acceptable aliases for one canonical UUID."""
+    aliases = {str(agent_uuid)}
+    for value in (primary_agent_id, label):
+        if value:
+            aliases.add(str(value))
+
+    try:
+        meta = mcp_server.agent_metadata.get(agent_uuid)
+        if meta:
+            for attr in ("public_agent_id", "structured_id", "label"):
+                value = getattr(meta, attr, None)
+                if value:
+                    aliases.add(str(value))
+    except Exception:
+        pass
+
+    try:
+        from .shared import _session_identities
+
+        for binding in _session_identities.values():
+            if binding.get("bound_agent_id") == agent_uuid or binding.get("agent_uuid") == agent_uuid:
+                for key in ("display_agent_id", "public_agent_id", "agent_label", "label"):
+                    value = binding.get(key)
+                    if value:
+                        aliases.add(str(value))
+    except Exception:
+        pass
+
+    try:
+        db = get_db()
+        identity = await db.get_identity(agent_uuid)
+        metadata = getattr(identity, "metadata", None) or {}
+        for key in ("public_agent_id", "agent_id", "structured_id", "label"):
+            value = metadata.get(key)
+            if value:
+                aliases.add(str(value))
+    except Exception:
+        pass
+
+    return aliases
 
 # =============================================================================
 # TOOL HANDLER (replaces identity() tool)
@@ -356,9 +404,11 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         agent_uuid: str,
         agent_id: str,
         label: Optional[str],
-        session_key: str,
         status: str,
     ) -> Dict[str, Any]:
+        from .shared import make_client_session_id
+
+        stable_session_id = make_client_session_id(agent_uuid)
         try:
             from ..context import get_session_resolution_source
             continuity_source = get_session_resolution_source()
@@ -367,7 +417,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         continuity_support = continuity_token_support_status()
         continuity_token = create_continuity_token(
             agent_uuid,
-            session_key,
+            stable_session_id,
             model_type=model_type,
             client_hint=arguments.get("client_hint"),
         )
@@ -375,7 +425,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
             agent_uuid=agent_uuid,
             agent_id=agent_id,
             display_name=label,
-            client_session_id=session_key,
+            client_session_id=stable_session_id,
             continuity_source=continuity_source,
             continuity_support=continuity_support,
             continuity_token=continuity_token,
@@ -415,7 +465,6 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
                 agent_uuid=agent_uuid,
                 agent_id=agent_id,
                 label=label,
-                session_key=base_session_key,
                 status="resumed",
             )
             payload.update({
@@ -446,7 +495,6 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
                     agent_uuid=agent_uuid,
                     agent_id=agent_id,
                     label=label,
-                    session_key=session_key,
                     status="archived",
                 )
                 payload.update({
@@ -473,7 +521,6 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
                 agent_uuid=agent_uuid,
                 agent_id=agent_id,
                 label=label,
-                session_key=session_key,
                 status="resumed",
             )
             payload.update({
@@ -498,11 +545,13 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     except Exception as e:
         logger.debug(f"Could not update context in identity: {e}")
 
-    # Get structured_id from metadata (three-tier identity model v2.5.0+)
+    # Get public/structured identity handles from runtime metadata.
+    public_agent_id = result.get("public_agent_id") or agent_id
     structured_id = None
     try:
         if agent_uuid in mcp_server.agent_metadata:
             meta = mcp_server.agent_metadata[agent_uuid]
+            public_agent_id = getattr(meta, "public_agent_id", None) or public_agent_id
             structured_id = getattr(meta, 'structured_id', None)
 
             # If model_type provided and structured_id doesn't include it, regenerate
@@ -527,11 +576,12 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         logger.debug(f"Could not get/update structured_id: {e}")
 
     # Format response - four-tier identity (v2.5.2)
-    final_agent_id = agent_id or structured_id or agent_uuid
+    final_agent_id = public_agent_id or structured_id or agent_uuid
     user_name = result.get("label")
 
     # Derive client_session_id for session continuity
-    client_session_id = base_session_key
+    from .shared import make_client_session_id
+    client_session_id = make_client_session_id(agent_uuid)
     continuity_token = create_continuity_token(
         agent_uuid,
         client_session_id,
@@ -715,13 +765,19 @@ async def handle_bind_session(arguments: Dict[str, Any]) -> Sequence[TextContent
     # bind_session to a specific identity (UUID or display agent_id).
     if expected_agent_id:
         expected_agent_id = str(expected_agent_id).strip()
-        if expected_agent_id not in (target_uuid, target_agent_id):
+        accepted_aliases = await _collect_identity_aliases(
+            target_uuid,
+            primary_agent_id=target_agent_id,
+            label=target_label,
+        )
+        if expected_agent_id not in accepted_aliases:
             return error_response(
                 "agent_id mismatch for requested session binding",
                 details={
                     "expected_agent_id": expected_agent_id,
                     "resolved_agent_id": target_agent_id,
                     "resolved_agent_uuid": target_uuid,
+                    "accepted_aliases": sorted(accepted_aliases),
                     "client_session_id": client_session_id,
                 },
                 recovery={
@@ -1132,16 +1188,16 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         client_hint=client_hint,
     )
 
-    structured_id = agent_id if agent_id and agent_id != agent_uuid else None
-    if not structured_id:
-        try:
-            if agent_uuid in mcp_server.agent_metadata:
-                meta = mcp_server.agent_metadata[agent_uuid]
-                structured_id = getattr(meta, 'structured_id', None)
-        except Exception:
-            pass
-    if not structured_id:
-        structured_id = f"agent_{agent_uuid[:8]}"
+    public_agent_id = agent_id if agent_id and agent_id != agent_uuid else None
+    structured_id = None
+    try:
+        if agent_uuid in mcp_server.agent_metadata:
+            meta = mcp_server.agent_metadata[agent_uuid]
+            public_agent_id = getattr(meta, "public_agent_id", None) or public_agent_id
+            structured_id = getattr(meta, 'structured_id', None)
+    except Exception:
+        pass
+    response_agent_id = public_agent_id or structured_id or f"agent_{agent_uuid[:8]}"
 
     tool_mode_info = None
     if verbose:
@@ -1162,7 +1218,7 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     result = build_onboard_response_data(
         agent_uuid=agent_uuid,
-        structured_agent_id=structured_id,
+        structured_agent_id=response_agent_id,
         agent_label=agent_label,
         stable_session_id=stable_session_id,
         is_new=is_new,

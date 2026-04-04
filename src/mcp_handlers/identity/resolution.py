@@ -429,6 +429,7 @@ async def resolve_session_identity(
                         return {
 
                             "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
+                            "public_agent_id": agent_id,
 
                             "agent_uuid": agent_uuid,
 
@@ -542,6 +543,7 @@ async def resolve_session_identity(
                         return {
 
                             "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
+                            "public_agent_id": agent_id,
 
                             "agent_uuid": agent_uuid,
 
@@ -635,6 +637,7 @@ async def resolve_session_identity(
             identity_metadata = {
                 "source": "identity_v2",
                 "created_at": datetime.now().isoformat(),
+                "public_agent_id": agent_id,
                 "agent_id": agent_id,  # Human-readable label (model+date)
                 "model_type": model_type,
                 "total_updates": 0,  # Initialize counter for persistence
@@ -665,6 +668,7 @@ async def resolve_session_identity(
 
             result = {
                 "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
+                "public_agent_id": agent_id,
                 "agent_uuid": agent_uuid,
                 "display_name": label,
                 "label": label,
@@ -687,6 +691,7 @@ async def resolve_session_identity(
 
     result = {
         "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
+        "public_agent_id": agent_id,
         "agent_uuid": agent_uuid,
         "display_name": label,
         "label": label,

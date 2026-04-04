@@ -5,6 +5,34 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 
+async def probe_identity_continuity_status() -> Dict[str, Any]:
+    """Probe actual Redis operability before announcing continuity mode."""
+    redis_configured = False
+    redis_operational = False
+    try:
+        from src.cache import get_redis, is_redis_available
+
+        redis_configured = bool(is_redis_available())
+        redis_operational = bool(await get_redis())
+    except Exception:
+        redis_operational = False
+
+    status = get_identity_continuity_status(
+        redis_present=redis_operational,
+        redis_operational=redis_operational,
+    )
+    if redis_configured and not redis_operational:
+        status["configured_but_unavailable"] = True
+        status["note"] = (
+            "Redis is configured but unavailable; identity continuity is running in degraded-local "
+            "mode with process-local session bindings and PostgreSQL persistence."
+        )
+        status["warning"] = (
+            "Redis connectivity failed during startup; degraded-local continuity is active."
+        )
+    return status
+
+
 def get_identity_continuity_status(
     *,
     redis_present: Optional[bool] = None,

@@ -714,6 +714,29 @@ class TestInjectIdentity:
         assert not _is_short_circuit(result)
 
     @pytest.mark.asyncio
+    async def test_public_or_structured_alias_match_allows_different_id(self):
+        """Public/structured aliases should be accepted for the bound UUID."""
+        from src.mcp_handlers.middleware import inject_identity
+
+        ctx = _make_ctx(bound_agent_id="bound-uuid-1234")
+        mock_server = MagicMock()
+        mock_meta = MagicMock()
+        mock_meta.label = "my-friendly-name"
+        mock_meta.public_agent_id = "Gpt_5_Codex_20260404"
+        mock_meta.structured_id = "mcp_20260404_5"
+        mock_server.agent_metadata = {"bound-uuid-1234": mock_meta}
+
+        with patch("src.mcp_handlers.context.get_context_agent_id", return_value="bound-uuid-1234"), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server):
+            for alias in ("Gpt_5_Codex_20260404", "mcp_20260404_5"):
+                result = await inject_identity(
+                    "process_agent_update",
+                    {"agent_id": alias},
+                    ctx,
+                )
+                assert not _is_short_circuit(result)
+
+    @pytest.mark.asyncio
     async def test_bind_session_skips_injection(self):
         """bind_session handles its own identity — no auto-injection."""
         from src.mcp_handlers.middleware import inject_identity

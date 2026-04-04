@@ -10,6 +10,35 @@ from ..shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
 
+def _bound_identity_aliases(bound_id: str) -> set[str]:
+    """Collect accepted aliases for a bound UUID from runtime/session caches."""
+    aliases = {str(bound_id)}
+
+    try:
+        meta = mcp_server.agent_metadata.get(bound_id)
+        if meta:
+            for attr in ("label", "public_agent_id", "structured_id"):
+                value = getattr(meta, attr, None)
+                if value:
+                    aliases.add(str(value))
+    except Exception:
+        pass
+
+    try:
+        from ..identity.shared import _session_identities
+
+        for binding in _session_identities.values():
+            if binding.get("bound_agent_id") == bound_id or binding.get("agent_uuid") == bound_id:
+                for key in ("display_agent_id", "public_agent_id", "agent_label", "label"):
+                    value = binding.get(key)
+                    if value:
+                        aliases.add(str(value))
+    except Exception:
+        pass
+
+    return aliases
+
+
 async def unwrap_kwargs(name: str, arguments: Dict[str, Any], ctx) -> Any:
     """Handle MCP clients that wrap arguments in kwargs."""
     if "kwargs" in arguments:
@@ -92,16 +121,10 @@ async def inject_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
                     "request_dialectic_review"
                 }
 
-                # Check label match
-                is_label_match = False
-                try:
-                    if bound_id in mcp_server.agent_metadata:
-                        meta = mcp_server.agent_metadata[bound_id]
-                        if getattr(meta, 'label', None) == provided_id:
-                            is_label_match = True
-                            logger.debug(f"Label match allowed: {provided_id} -> {bound_id}")
-                except Exception:
-                    pass
+                accepted_aliases = _bound_identity_aliases(bound_id)
+                is_alias_match = str(provided_id) in accepted_aliases
+                if is_alias_match:
+                    logger.debug(f"Identity alias match allowed: {provided_id} -> {bound_id}")
 
                 # Operator tools that act on OTHER agents (dashboard resume/archive/observe)
                 operator_tools = {
@@ -111,13 +134,14 @@ async def inject_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
                     "ping_agent",
                     "dashboard",
                 }
-                if name not in identity_tools and name not in dialectic_tools and name not in operator_tools and not is_label_match:
+                if name not in identity_tools and name not in dialectic_tools and name not in operator_tools and not is_alias_match:
                     return [error_response(
                         f"Session mismatch: you are bound as '{bound_id}' but requested '{provided_id}'",
                         details={
                             "error_type": "identity_mismatch",
                             "bound_agent_id": bound_id,
                             "requested_agent_id": provided_id,
+                            "accepted_aliases": sorted(accepted_aliases),
                         },
                         recovery={
                             "action": "Remove agent_id parameter (session binding handles identity)",

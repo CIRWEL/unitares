@@ -47,6 +47,7 @@ from src.logging_utils import get_logger
 from src.services.identity_continuity import (
     format_identity_continuity_startup_message,
     get_identity_continuity_status,
+    probe_identity_continuity_status,
 )
 logger = get_logger(__name__)
 
@@ -480,7 +481,7 @@ async def main():
     if STDIO_PROXY_URL or STDIO_PROXY_HTTP_URL:
         logger.info("Identity continuity mode: proxied (delegated to upstream HTTP server)")
     else:
-        continuity_status = get_identity_continuity_status()
+        continuity_status = await probe_identity_continuity_status()
         continuity_message = format_identity_continuity_startup_message(continuity_status)
         if continuity_status.get("mode") == "redis":
             logger.info(continuity_message)

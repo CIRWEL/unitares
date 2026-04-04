@@ -63,6 +63,7 @@ from src.logging_utils import get_logger
 from src.services.identity_continuity import (
     format_identity_continuity_startup_message,
     get_identity_continuity_status,
+    probe_identity_continuity_status,
 )
 from src.versioning import load_version_from_file
 logger = get_logger(__name__)
@@ -662,7 +663,7 @@ async def main():
         remove_server_pid_file()
         sys.exit(1)
 
-    continuity_status = get_identity_continuity_status()
+    continuity_status = await probe_identity_continuity_status()
     continuity_message = format_identity_continuity_startup_message(continuity_status)
     if continuity_status.get("mode") == "redis":
         logger.info(continuity_message)

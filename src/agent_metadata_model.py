@@ -101,6 +101,7 @@ class AgentMetadata:
     node_index: int = 1
     purpose: str = None
     agent_uuid: str = None
+    public_agent_id: str = None
     structured_id: str = None
     label: str = None
     preferences: dict = None

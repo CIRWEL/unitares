@@ -845,6 +845,45 @@ class TestHandleBindSession:
         assert data["agent_uuid"] == target_uuid
 
     @pytest.mark.asyncio
+    async def test_bind_session_accepts_structured_alias(self):
+        """bind_session strict mode should accept structured/public aliases for the target UUID."""
+        from src.mcp_handlers.identity.handlers import handle_bind_session
+
+        target_uuid = str(uuid.uuid4())
+        resolved = {
+            "agent_uuid": target_uuid,
+            "agent_id": "Gpt_5_Codex_20260404",
+            "label": "DogfoodIdentity",
+            "created": False,
+        }
+        mock_db = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="ident-1",
+            metadata={
+                "public_agent_id": "Gpt_5_Codex_20260404",
+                "structured_id": "mcp_20260404_5",
+                "label": "DogfoodIdentity",
+            },
+        )
+        mock_db.create_session = AsyncMock()
+
+        with patch("src.mcp_handlers.identity.handlers.resolve_session_identity", new=AsyncMock(return_value=resolved)), \
+             patch("src.mcp_handlers.identity.handlers.derive_session_key", new=AsyncMock(return_value="mcp:test-session")), \
+             patch("src.mcp_handlers.identity.handlers._cache_session", new=AsyncMock()), \
+             patch("src.mcp_handlers.identity.handlers.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.context.get_session_signals", return_value=SimpleNamespace(user_agent="test")):
+            result = await handle_bind_session({
+                "client_session_id": "agent-abc123",
+                "agent_id": "mcp_20260404_5",
+                "strict": True,
+            })
+        data = parse_result(result)
+
+        assert data["success"] is True
+        assert data["bound"] is True
+        assert data["agent_uuid"] == target_uuid
+
+    @pytest.mark.asyncio
     async def test_bind_session_rejects_agent_id_mismatch(self):
         """bind_session fails fast when expected agent_id doesn't match target."""
         from src.mcp_handlers.identity.handlers import handle_bind_session
@@ -949,6 +988,65 @@ class TestHandleIdentityAdapter:
         assert "identity_summary" not in data
         assert "quick_reference" not in data
         assert "session_continuity" not in data
+
+    @pytest.mark.asyncio
+    async def test_identity_returns_stable_client_session_id_for_existing_identity(self, patch_identity_deps, mock_db, mock_redis):
+        """identity() should always return the stable agent-... session handle, not the transport key."""
+        from src.mcp_handlers.identity.handlers import handle_identity_adapter
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Gpt_5_Codex_20260404",
+            "label": "DogfoodIdentity",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1",
+            metadata={"public_agent_id": "Gpt_5_Codex_20260404"},
+        )
+        mock_db.get_agent_label.return_value = "DogfoodIdentity"
+        mock_db.get_agent_status = AsyncMock(return_value="active")
+
+        result = await handle_identity_adapter({"client_session_id": "transport-derived-key", "resume": True})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        assert data["uuid"] == test_uuid
+        assert data["client_session_id"] == f"agent-{test_uuid[:12]}"
+        assert data["client_session_id"] != "transport-derived-key"
+
+    @pytest.mark.asyncio
+    async def test_identity_preserves_public_agent_id_over_structured_id(self, patch_identity_deps, mock_db, mock_redis):
+        """identity() should surface canonical public_agent_id even when structured_id also exists."""
+        from src.mcp_handlers.identity.handlers import handle_identity_adapter
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Gpt_5_Codex_20260404",
+            "label": "DogfoodIdentity",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1",
+            metadata={
+                "public_agent_id": "Gpt_5_Codex_20260404",
+                "agent_id": "Gpt_5_Codex_20260404",
+                "structured_id": "mcp_20260404_5",
+            },
+        )
+        mock_db.get_agent_label.return_value = "DogfoodIdentity"
+        mock_db.get_agent_status = AsyncMock(return_value="active")
+        patch_identity_deps.agent_metadata[test_uuid] = SimpleNamespace(
+            public_agent_id="Gpt_5_Codex_20260404",
+            structured_id="mcp_20260404_5",
+            label="DogfoodIdentity",
+        )
+
+        result = await handle_identity_adapter({"client_session_id": "transport-derived-key", "resume": True})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        assert data["agent_id"] == "Gpt_5_Codex_20260404"
 
     @pytest.mark.asyncio
     async def test_identity_name_claim_resolves_existing(self, patch_identity_deps, mock_db, mock_redis, mock_raw_redis):
