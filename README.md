@@ -233,7 +233,7 @@ graph LR
 ```
 src/                   Governance server, tool schemas, agent state, knowledge graph, dialectic
   mcp_handlers/        Modular tool handlers: identity, lifecycle, knowledge, dialectic,
-                       observability, admin, CIRS, introspection, Pi orchestration
+                       observability, admin, CIRS, introspection
 dashboard/             Web dashboard (vanilla JS + Chart.js)
 tests/                 Large multi-thousand test suite
 ```
@@ -277,6 +277,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and code 
 ## Related Projects
 
 - [**Lumen / anima-mcp**](https://github.com/CIRWEL/anima-mcp) — Embodied AI on Raspberry Pi with physical sensors and EISV-driven art
+- [**unitares-pi-plugin**](https://github.com/CIRWEL/unitares-pi-plugin) — Pi/Lumen orchestration plugin (entry-point discovery, `pip install` to enable)
 - [**unitares-discord-bridge**](https://github.com/CIRWEL/unitares-discord-bridge) — Discord bot surfacing governance events, agent presence, and Lumen state
 
 ---
