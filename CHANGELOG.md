@@ -9,13 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+*Nothing yet.*
+
+---
+
+## [2.10.0] - 2026-04-04
+
+### Breaking
+
+- **Docker removed** — Docker Compose and `postgres-age` container retired. All services now run via Homebrew PostgreSQL@17 on port 5432 with AGE 1.7.0. Migration scripts and Docker-era docs cleaned up.
+
 ### Added
 
 - **Process marker self-healing** — the HTTP server now recreates missing `data/.mcp_server.pid` and `.mcp_server.lock` markers while running, reducing false-negative local health checks after interrupted stop/start sequences.
 - **Direct HTTP identity resolution** — the HTTP request layer now resolves bound identity from `client_session_id` or `continuity_token` before direct tools run, so request-scoped tools can reuse the same session continuity path as MCP callers.
+- **Pydantic schemas** for `outcome_correlation` and `reassign_reviewer` tools.
+- **Doc health checker** added to pre-push pipeline.
+- **Grounded outcome study utilities** — added exogenous-vs-endogenous outcome classification, data-quality reporting, grouped regression helpers, and an analysis script for outcome-correlation validation.
 
 ### Changed
 
+- **Behavioral EISV promoted to primary** — ODE dynamics demoted to diagnostic. Pattern analysis now uses behavioral EISV histories for trend detection.
+- **Operator-facing state views** — dashboard, metrics, and persisted state now expose explicit `primary_eisv`, `behavioral_eisv`, `ode_eisv`, `ode_diagnostics`, and shared state semantics instead of overloading one flat EISV view.
 - **Self-relative behavioral baselines** — per-agent Welford mean/std after ~30 updates; assessment uses z-score deviation from agent's own operating point instead of fixed thresholds. Absolute safety floors (E<0.30, I<0.30, S>0.70, |V|>0.50) always apply regardless of baseline.
 - **Behavioral coherence for outcomes** — outcome events now feed behavioral EISV directly, closing the loop between governance verdicts and observable results.
 - Renamed internal "DNA/genotyping" terminology to standard ML terms (behavioral baseline, warmup, self-relative scoring). Persistence backward-compatible with old `dna_stats` key.
@@ -23,18 +38,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Identity response shaping** — `identity()` and `onboard()` now consistently expose compact operator diagnostics (`session_resolution_source`, `continuity_token_supported`, `identity_status`, `bound_identity`) across the main and early-return paths.
 - **Process update orchestration** — `process_agent_update` response assembly and workflow sequencing now live in dedicated service modules, reducing handler/transport coupling.
 - **Ops scripts** — `start_unitares.sh` and `stop_unitares.sh` now wait for processes to exit and avoid unlinking marker files from a freshly restarted server.
+- **Tool surface reduction** — `TOOL_MODE` enforced at FastMCP registration, reducing exposed tools from 40 to 20.
+- **Trajectory identity aligned** with paper's six-component signature.
+- **KG search** — default multi-term queries use OR; redundant FTS per-term fallback removed.
 
 ### Security
 
 - **MCP listen defaults** — Default bind address is `127.0.0.1`. Opt in to `0.0.0.0` with `UNITARES_BIND_ALL_INTERFACES=1` or `UNITARES_MCP_HOST`. LAN/ngrok `Host` / Origin allowlists are no longer hard-coded in source: use `UNITARES_MCP_ALLOWED_HOSTS` and `UNITARES_MCP_ALLOWED_ORIGINS` (comma-separated). See `src/mcp_listen_config.py` and `CLAUDE.md`. LaunchAgent and `start_unitares.sh` set the previous bind-all + example allowlists for existing deployments.
+- **Secrets removed from git** — Docker services bound to localhost.
 
 ### Fixed
 
+- **Resident-agent resume safety** — strong continuity-token resume is now required for Vigil-style resident agents, and rejected identity-claim paths return structured errors instead of falling through into accidental forks.
+- **Timezone mismatch in auto-archive** — `_auto_archive_ephemeral_agents` used `datetime.now(timezone.utc)` for cutoff but timestamps were stored as naive local time, causing agents in non-UTC timezones to appear hours older than reality and get instantly archived.
+- **Content→details param mapping** — `content` parameter passed to `store_knowledge_graph` was not persisting to the `details` field due to Pydantic `model_dump()` populating all Optional fields as `None`, which defeated `dst_key not in arguments` guards in `action_router`.
+- **Search NoneType crash** — `limit=None` from Pydantic caused `NoneType * int` error in search handler.
 - **Identity continuity precedence** — explicit stable session continuity now wins over name-claim recovery, preventing `identity(client_session_id=..., name=...)` from silently jumping to an older named identity.
 - **Durable stable session binding** — `onboard()` now persists the returned stable `client_session_id` through the normal session-bind path, so a Redis miss no longer causes a fresh UUID to be created on later resume.
 - **HTTP work logging continuity** — `process_agent_update(client_session_id=...)` and `process_agent_update(continuity_token=...)` now resolve the correct bound identity on fresh HTTP requests instead of requiring the caller to pass the raw UUID manually.
 - **HTTP metrics continuity** — `get_governance_metrics(client_session_id=...)` now resolves the real bound agent instead of materializing an unrelated auto-generated identity on the HTTP path.
-- **Doc health drift** — stale file references, stale counts, and false-positive doc-health warnings were cleaned up; the repository doc-health check now reports cleanly.
+- **AGE discovery durability** and drift checks hardened.
+- **Tags preserved** on knowledge updates when omitted.
+- **High-severity KG updates** and anonymous note writes tightened.
+- **Dialectic reviewer selection**, Vigil signals, and convergence guidance fixes.
+- **Lock timeouts** classified as system errors.
+- **Missing agent rows** repaired during lazy persistence.
+- **Pre-existing test failures** resolved (circular import in `_generate_contextual_reflection`, identity adapter name claim path).
+- **Doc health drift** — stale file references, stale counts, and false-positive doc-health warnings cleaned up.
+
+### Removed
+
+- Docker Compose and `postgres-age` container setup.
+- Completed migration scripts archived.
+- Unused exceptions module.
 
 ---
 

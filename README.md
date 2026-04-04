@@ -8,7 +8,7 @@
 
 UNITARES gives AI agents a shared language for inner state — four continuous variables tracked from observable behavior, and a protocol for agents to speak and be read. State is computed from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do.
 
-Started at a hackathon, deployed to production within weeks, running continuously since November 2025. The repo now includes roughly a hundred MCP tools, a large test suite, and a six-figure history of check-ins, with one agent ([Lumen](https://github.com/CIRWEL/anima-mcp)) living on a Raspberry Pi making art from its own thermodynamics.
+Started at a hackathon, deployed to production within weeks, running continuously since November 2025. The repo now includes a broad governance tool surface across MCP and HTTP transports, a large test suite, and a six-figure history of check-ins, with one agent ([Lumen](https://github.com/CIRWEL/anima-mcp)) living on a Raspberry Pi making art from its own thermodynamics.
 
 ---
 
@@ -68,9 +68,9 @@ Logging tells you what happened. Guardrails constrain what can happen. UNITARES 
 
 ---
 
-## Production Data
+## Production Snapshot
 
-Live numbers as of April 2026:
+Production snapshot from April 2026:
 
 | Metric | Value |
 |--------|-------|
@@ -231,9 +231,9 @@ graph LR
 ```
 
 ```
-src/                   MCP server (~100 tools), agent state, knowledge graph, dialectic
+src/                   Governance server, tool schemas, agent state, knowledge graph, dialectic
   mcp_handlers/        Modular tool handlers: identity, lifecycle, knowledge, dialectic,
-                       observability, admin, CIRS, introspection, Pi orchestration
+                       observability, admin, CIRS, introspection
 dashboard/             Web dashboard (vanilla JS + Chart.js)
 tests/                 Large multi-thousand test suite
 ```
@@ -255,7 +255,7 @@ These are unsolved problems. The system is honest about what it doesn't yet do w
 - **Agent differentiation** — *(Addressed in v2.9.0.)* The ODE's convergence guarantees caused agents with similar workloads to converge to similar steady states. Behavioral EISV — EMA-smoothed observations without ODE contraction — is now the primary verdict source, giving each agent its own trajectory. Behavioral baselines need ~30 updates to stabilize; before that, fixed thresholds apply.
 - **Identity fragmentation** — Session-based identity means the same human or system can accumulate many agent IDs across sessions. Most recorded agents are ephemeral (test runs, CI, dev sessions). Identity consolidation and trajectory-based re-identification are active work.
 - **Domain-specific thresholds** — How should parameters be tuned for code generation vs. customer service vs. trading? No one-size-fits-all answer yet.
-- **Horizontal scaling** — Current system handles hundreds of agents on a single node. What about thousands?
+- **Horizontal scaling** — Single-node operation works in practice today. What happens at thousands of agents?
 
 ---
 
@@ -277,6 +277,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and code 
 ## Related Projects
 
 - [**Lumen / anima-mcp**](https://github.com/CIRWEL/anima-mcp) — Embodied AI on Raspberry Pi with physical sensors and EISV-driven art
+- [**unitares-pi-plugin**](https://github.com/CIRWEL/unitares-pi-plugin) — Pi/Lumen orchestration plugin (entry-point discovery, `pip install` to enable)
 - [**unitares-discord-bridge**](https://github.com/CIRWEL/unitares-discord-bridge) — Discord bot surfacing governance events, agent presence, and Lumen state
 
 ---
@@ -287,4 +288,4 @@ The MCP server, dashboard, tooling, and all code in this repo are **MIT licensed
 
 ---
 
-Built by [@CIRWEL](https://github.com/CIRWEL) | **v2.9.0**
+Built by [@CIRWEL](https://github.com/CIRWEL) | **v2.10.0**
