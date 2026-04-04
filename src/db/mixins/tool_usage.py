@@ -6,6 +6,7 @@ import json
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
+from src.eisv_state_json import normalize_agent_state_json
 from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -123,43 +124,39 @@ class ToolUsageMixin:
                 if not row:
                     return None
                 state_json = json.loads(row["state_json"]) if isinstance(row["state_json"], str) else (row["state_json"] or {})
-                primary_eisv = state_json.get("primary_eisv") or {}
-                behavioral_eisv = state_json.get("behavioral_eisv")
-                ode_eisv = state_json.get("ode_eisv") or state_json.get("ode") or {}
-                ode_diagnostics = state_json.get("ode_diagnostics") or {}
-                resolved_primary = {
-                    "E": primary_eisv.get("E", state_json.get("E")),
-                    "I": primary_eisv.get("I", row["integrity"]),
-                    "S": primary_eisv.get("S", row["entropy"]),
-                    "V": primary_eisv.get("V", row["volatility"]),
-                }
-                resolved_ode = {
-                    "E": ode_eisv.get("E", state_json.get("E")),
-                    "I": ode_eisv.get("I", row["integrity"]),
-                    "S": ode_eisv.get("S", row["entropy"]),
-                    "V": ode_eisv.get("V", row["volatility"]),
-                }
-                primary_source = state_json.get("primary_eisv_source") or (
-                    "behavioral" if behavioral_eisv else "legacy_flat"
+                state_json, _ = normalize_agent_state_json(
+                    state_json,
+                    energy=state_json.get("E", 0.5),
+                    integrity=row["integrity"],
+                    entropy=row["entropy"],
+                    void=row["volatility"],
+                    coherence=row["coherence"],
+                    regime=row["regime"],
+                    source_strategy="safe",
                 )
+                resolved_primary = dict(state_json.get("primary_eisv") or {})
+                resolved_ode = dict(state_json.get("ode_eisv") or state_json.get("ode") or {})
+                behavioral_eisv = state_json.get("behavioral_eisv")
+                ode_diagnostics = dict(state_json.get("ode_diagnostics") or {})
+                verdict = state_json.get("verdict") or ode_diagnostics.get("verdict")
                 return {
                     "E": resolved_primary["E"],
                     "I": resolved_primary["I"],
                     "S": resolved_primary["S"],
                     "V": resolved_primary["V"],
                     "phi": ode_diagnostics.get("phi", state_json.get("phi")),
-                    "verdict": state_json.get("verdict", ode_diagnostics.get("verdict")),
+                    "verdict": verdict,
                     "coherence": ode_diagnostics.get("coherence", row["coherence"]),
                     "regime": ode_diagnostics.get("regime", row["regime"]),
                     "primary_eisv": resolved_primary,
-                    "primary_eisv_source": primary_source,
+                    "primary_eisv_source": state_json.get("primary_eisv_source"),
                     "behavioral_eisv": behavioral_eisv,
                     "ode_eisv": resolved_ode,
                     "ode_diagnostics": {
                         "phi": ode_diagnostics.get("phi", state_json.get("phi")),
                         "coherence": ode_diagnostics.get("coherence", row["coherence"]),
                         "regime": ode_diagnostics.get("regime", row["regime"]),
-                        "verdict": ode_diagnostics.get("verdict", state_json.get("verdict")),
+                        "verdict": verdict,
                         "risk_score": ode_diagnostics.get("risk_score", state_json.get("risk_score")),
                     },
                 }

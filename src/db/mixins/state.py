@@ -6,6 +6,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from ..base import AgentStateRecord
+from src.eisv_state_json import normalize_agent_state_json
 from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -149,6 +150,16 @@ class StateMixin:
 
     def _row_to_agent_state(self, row) -> AgentStateRecord:
         sj = json.loads(row["state_json"]) if isinstance(row["state_json"], str) else (row["state_json"] or {})
+        sj, _ = normalize_agent_state_json(
+            sj,
+            energy=sj.get("E", 0.5),
+            integrity=row["integrity"],
+            entropy=row["entropy"],
+            void=row["volatility"],
+            coherence=row["coherence"],
+            regime=row["regime"],
+            source_strategy="safe",
+        )
         return AgentStateRecord(
             state_id=row["state_id"],
             identity_id=row["identity_id"],

@@ -12,6 +12,7 @@ from ..decorators import mcp_tool
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 from src.db import get_db
 from src.eisv_semantics import get_state_semantics
+from src.eisv_state_json import normalize_agent_state_json
 from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -34,7 +35,16 @@ def _round_payload(payload: Dict[str, Any] | None) -> Dict[str, Any] | None:
 
 
 def _state_views_from_record(state: Any) -> Dict[str, Any]:
-    sj = state.state_json or {}
+    sj, _ = normalize_agent_state_json(
+        state.state_json or {},
+        energy=state.energy,
+        integrity=state.integrity,
+        entropy=state.entropy,
+        void=state.void,
+        coherence=state.coherence,
+        regime=state.regime,
+        source_strategy="safe",
+    )
     primary = dict(sj.get("primary_eisv") or {})
     primary.setdefault("E", state.energy)
     primary.setdefault("I", state.integrity)
@@ -48,11 +58,8 @@ def _state_views_from_record(state: Any) -> Dict[str, Any]:
     ode.setdefault("V", state.void)
 
     behavioral = sj.get("behavioral_eisv")
-    primary_source = sj.get("primary_eisv_source") or (
-        "behavioral" if behavioral else "legacy_flat"
-    )
     risk = sj.get("risk_score")
-    verdict = sj.get("verdict", (sj.get("ode_diagnostics") or {}).get("verdict", "proceed"))
+    verdict = sj.get("verdict") or (sj.get("ode_diagnostics") or {}).get("verdict") or "proceed"
 
     ode_diagnostics = dict(sj.get("ode_diagnostics") or {})
     ode_diagnostics.setdefault("phi", sj.get("phi"))
@@ -75,7 +82,7 @@ def _state_views_from_record(state: Any) -> Dict[str, Any]:
             "verdict": verdict,
         },
         "primary_eisv": primary_rounded,
-        "primary_eisv_source": primary_source,
+        "primary_eisv_source": sj.get("primary_eisv_source"),
         "ode_eisv": ode_rounded,
         "ode": ode_rounded,
         "ode_diagnostics": ode_diagnostics_rounded,

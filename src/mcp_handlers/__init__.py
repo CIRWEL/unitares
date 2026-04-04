@@ -129,21 +129,27 @@ from .cirs import (
     maybe_apply_neighbor_pressure,  # Hook for process_agent_update
 )
 # Pi Orchestration - Mac→Pi coordination tools (Feb 2026)
-# Proxies calls to anima-mcp on Pi via Streamable HTTP transport (MCP 1.24.0+)
-from .observability.pi_orchestration import (
-    handle_pi_list_tools,
-    handle_pi_get_context,
-    handle_pi_health,
-    handle_pi_sync_eisv,
-    handle_pi_display,
-    handle_pi_say,
-    handle_pi_post_message,
-    handle_pi_lumen_qa,
-    handle_pi_query,
-    handle_pi_workflow,
-    handle_pi_git_pull,
-    handle_pi_restart_service,  # SSH-based fallback when MCP is down
-)
+# Optional plugin: proxies calls to anima-mcp on Pi via Streamable HTTP.
+# Set UNITARES_DISABLE_PI_TOOLS=1 to skip loading.
+import os as _os
+if not _os.environ.get("UNITARES_DISABLE_PI_TOOLS"):
+    try:
+        from .observability.pi_orchestration import (
+            handle_pi_list_tools,
+            handle_pi_get_context,
+            handle_pi_health,
+            handle_pi_sync_eisv,
+            handle_pi_display,
+            handle_pi_say,
+            handle_pi_post_message,
+            handle_pi_lumen_qa,
+            handle_pi_query,
+            handle_pi_workflow,
+            handle_pi_git_pull,
+            handle_pi_restart_service,  # SSH-based fallback when MCP is down
+        )
+    except ImportError:
+        pass
 # Keep helper functions from identity_shared.py (used by dispatch_tool)
 from .identity.shared import (
     get_bound_agent_id,

@@ -2,8 +2,13 @@
 Outcome Events Tool - Record measurable outcomes paired with EISV snapshots.
 
 Enables validation of the EISV model by collecting real outcome data
-(drawing completions, test results, task completions) alongside the
+(task completions, test results, domain-specific outcomes) alongside the
 EISV state at outcome time.
+
+Outcome types are extensible: any agent can report domain-specific types
+(e.g. "drawing_completed", "deploy_succeeded"). Known types get automatic
+good/bad classification; unknown types use suffix convention or require
+explicit is_bad.
 """
 
 from typing import Dict, Any, Sequence
@@ -14,11 +19,34 @@ from src.logging_utils import get_logger
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
-# Outcome types that are considered "bad" by default
-BAD_OUTCOME_TYPES = {"test_failed", "tool_rejected", "drawing_abandoned", "task_failed"}
-GOOD_OUTCOME_TYPES = {"test_passed", "drawing_completed", "task_completed"}
-NEUTRAL_OUTCOME_TYPES = {"trajectory_validated"}  # is_bad determined by score
-VALID_OUTCOME_TYPES = BAD_OUTCOME_TYPES | GOOD_OUTCOME_TYPES | NEUTRAL_OUTCOME_TYPES
+# Known outcome types with automatic good/bad classification.
+# Agents may report any string as outcome_type — unknown types are accepted
+# and classified by suffix convention: *_failed/*_abandoned/*_rejected → bad,
+# *_passed/*_completed/*_succeeded → good, else neutral (is_bad from score).
+BAD_OUTCOME_TYPES = {"test_failed", "tool_rejected", "task_failed"}
+GOOD_OUTCOME_TYPES = {"test_passed", "task_completed"}
+NEUTRAL_OUTCOME_TYPES = {"trajectory_validated"}
+KNOWN_OUTCOME_TYPES = BAD_OUTCOME_TYPES | GOOD_OUTCOME_TYPES | NEUTRAL_OUTCOME_TYPES
+
+# Suffix-based classification for unknown/domain-specific outcome types
+_BAD_SUFFIXES = ("_failed", "_abandoned", "_rejected", "_errored")
+_GOOD_SUFFIXES = ("_passed", "_completed", "_succeeded", "_resolved")
+
+
+def classify_outcome_type(outcome_type: str) -> bool | None:
+    """Classify an outcome type as bad (True), good (False), or neutral (None)."""
+    if outcome_type in BAD_OUTCOME_TYPES:
+        return True
+    if outcome_type in GOOD_OUTCOME_TYPES:
+        return False
+    if outcome_type in NEUTRAL_OUTCOME_TYPES:
+        return None
+    # Suffix convention for domain-specific types
+    if any(outcome_type.endswith(s) for s in _BAD_SUFFIXES):
+        return True
+    if any(outcome_type.endswith(s) for s in _GOOD_SUFFIXES):
+        return False
+    return None  # Neutral — caller should provide is_bad or it defaults from score
 
 @mcp_tool("outcome_event", timeout=15.0)
 async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -34,9 +62,10 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
             error_category="validation_error",
         )]
 
-    if outcome_type not in VALID_OUTCOME_TYPES:
+    # Validate: must be a non-empty snake_case string
+    if not outcome_type or not isinstance(outcome_type, str) or len(outcome_type) > 64:
         return [error_response(
-            f"Unknown outcome_type '{outcome_type}'. Valid: {sorted(VALID_OUTCOME_TYPES)}",
+            f"outcome_type must be a non-empty string (max 64 chars), got: {outcome_type!r}",
             error_code="INVALID_PARAM",
             error_category="validation_error",
         )]

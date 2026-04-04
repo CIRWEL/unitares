@@ -8,7 +8,7 @@ Reduces cognitive load for AI agents by consolidating related tools:
 - config: 2 actions → 1 tool (get, set)
 - export: 2 actions → 1 tool (history, file)
 - observe: 5 actions → 1 tool (agent, compare, similar, anomalies, aggregate)
-- pi: 12 actions → 1 tool (tools, context, health, sync_eisv, display, say, message, qa, query, workflow, git_pull, power)
+- pi: 12 actions → 1 tool (optional plugin, loads when pi_orchestration module available)
 - dialectic: 2 actions → 1 tool (get, list)
 
 Each consolidated tool uses an 'action' parameter to select the operation.
@@ -244,34 +244,36 @@ handle_observe = action_router(
 )
 
 # ============================================================
-# Consolidated Pi Orchestration Tool
+# Consolidated Pi Orchestration Tool (optional plugin)
 # ============================================================
 
-handle_pi = action_router(
-    "pi",
-    actions={
-        "tools": handle_pi_list_tools,
-        "context": handle_pi_get_context,
-        "health": handle_pi_health,
-        "sync_eisv": handle_pi_sync_eisv,
-        "display": handle_pi_display,
-        "say": handle_pi_say,
-        "message": handle_pi_post_message,
-        "qa": handle_pi_lumen_qa,
-        "query": handle_pi_query,
-        "workflow": handle_pi_workflow,
-        "git_pull": handle_pi_git_pull,
-        "power": handle_pi_system_power,
-    },
-    timeout=120.0,
-    description="Unified Pi/Lumen orchestration: tools, context, health, sync_eisv, display, say, message, qa, query, workflow, git_pull, power",
-    examples=[
-        "pi(action='tools')",
-        "pi(action='context')",
-        "pi(action='health')",
-        "pi(action='say', text='Hello!')",
-    ],
-)
+handle_pi = None
+if _PI_AVAILABLE:
+    handle_pi = action_router(
+        "pi",
+        actions={
+            "tools": handle_pi_list_tools,
+            "context": handle_pi_get_context,
+            "health": handle_pi_health,
+            "sync_eisv": handle_pi_sync_eisv,
+            "display": handle_pi_display,
+            "say": handle_pi_say,
+            "message": handle_pi_post_message,
+            "qa": handle_pi_lumen_qa,
+            "query": handle_pi_query,
+            "workflow": handle_pi_workflow,
+            "git_pull": handle_pi_git_pull,
+            "power": handle_pi_system_power,
+        },
+        timeout=120.0,
+        description="Unified Pi/Lumen orchestration: tools, context, health, sync_eisv, display, say, message, qa, query, workflow, git_pull, power",
+        examples=[
+            "pi(action='tools')",
+            "pi(action='context')",
+            "pi(action='health')",
+            "pi(action='say', text='Hello!')",
+        ],
+    )
 
 # ============================================================
 # Consolidated Dialectic Tool

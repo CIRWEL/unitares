@@ -862,6 +862,21 @@ class TestRecordAgentState:
         assert state_json["ode_diagnostics"]["phi"] == 0.42
 
     @pytest.mark.asyncio
+    async def test_state_json_defaults_new_rows_to_ode_fallback(self):
+        identity = _make_identity()
+        db = _mock_db(get_identity=identity, record_agent_state=1)
+        with patch("src.agent_storage.get_db", return_value=db):
+            from src.agent_storage import record_agent_state
+            await record_agent_state(
+                "agent-1",
+                E=0.5, I=0.5, S=0.5, V=0.0,
+                regime="nominal", coherence=1.0,
+            )
+
+        state_json = db.record_agent_state.call_args.kwargs["state_json"]
+        assert state_json["primary_eisv_source"] == "ode_fallback"
+
+    @pytest.mark.asyncio
     async def test_optional_fields_omitted_when_none(self):
         identity = _make_identity()
         db = _mock_db(get_identity=identity, record_agent_state=1)

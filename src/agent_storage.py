@@ -502,7 +502,7 @@ async def record_agent_state(
         "primary_eisv": resolved_primary_eisv,
         "primary_eisv_source": (
             primary_eisv_source
-            or ("behavioral" if behavioral_eisv else "legacy_flat")
+            or ("behavioral" if behavioral_eisv else "ode_fallback")
         ),
         "ode_eisv": resolved_ode_eisv,
     }
