@@ -304,6 +304,17 @@ class TestSuccessResponse:
         assert d["agent_signature"]["uuid"] == "u1"
         assert "caller_agent_id" not in d
 
+    @patch("src.mcp_handlers.support.agent_auth.compute_agent_signature", return_value={"uuid": "u1", "public_agent_id": "u1"})
+    def test_signature_prefers_explicit_identity_handles(self, ms):
+        d = _parse_tc(success_response({
+            "agent_uuid": "uuid-123",
+            "public_agent_id": "mcp_20260404",
+            "display_name": "Codex Agent",
+        })[0])
+        assert d["agent_signature"]["agent_uuid"] == "uuid-123"
+        assert d["agent_signature"]["public_agent_id"] == "mcp_20260404"
+        assert d["agent_signature"]["display_name"] == "Codex Agent"
+
     @patch("src.mcp_handlers.support.agent_auth.compute_agent_signature", return_value={"uuid": "u1"})
     def test_lite_omits_sig(self, ms):
         d = _parse_tc(success_response({"x": 1}, arguments={"lite_response": True})[0])

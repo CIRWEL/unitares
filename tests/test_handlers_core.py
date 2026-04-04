@@ -283,6 +283,8 @@ class TestGetGovernanceMetrics:
         """Lite mode returns minimal metrics with status indicators."""
         meta = MagicMock()
         meta.purpose = "test purpose"
+        meta.structured_id = "public-agent-1"
+        meta.label = "Agent One"
         mock_mcp_server.agent_metadata = {"agent-1": meta}
         mock_mcp_server.get_or_create_monitor.return_value = mock_monitor
 
@@ -299,6 +301,8 @@ class TestGetGovernanceMetrics:
 
             data = json.loads(result[0].text)
             assert data["agent_id"] == "agent-1"
+            assert data["agent_uuid"] == "agent-1"
+            assert data["public_agent_id"] == "public-agent-1"
             assert "status" in data
             assert "coherence" in data
             assert "risk_score" in data
@@ -308,7 +312,10 @@ class TestGetGovernanceMetrics:
     @pytest.mark.asyncio
     async def test_get_metrics_full_mode(self, mock_mcp_server, mock_monitor):
         """Full mode returns standardized metrics with interpretation."""
-        mock_mcp_server.agent_metadata = {"agent-1": MagicMock(purpose=None)}
+        meta = MagicMock(purpose=None)
+        meta.structured_id = "public-agent-1"
+        meta.label = "Agent One"
+        mock_mcp_server.agent_metadata = {"agent-1": meta}
         mock_mcp_server.get_or_create_monitor.return_value = mock_monitor
 
         with patch("src.mcp_handlers.core.mcp_server", mock_mcp_server), \
@@ -325,6 +332,8 @@ class TestGetGovernanceMetrics:
             data = json.loads(result[0].text)
             # Full mode should have summary; reflection is now conditional
             assert "summary" in data
+            assert data["agent_uuid"] == "agent-1"
+            assert data["public_agent_id"] == "public-agent-1"
 
     @pytest.mark.asyncio
     async def test_get_metrics_full_mode_exposes_eisv_split(self, mock_mcp_server, mock_monitor):
@@ -340,7 +349,10 @@ class TestGetGovernanceMetrics:
             "initialized": True, "status": "ok",
             "complexity": 0.5,
         }
-        mock_mcp_server.agent_metadata = {"agent-1": MagicMock(purpose=None)}
+        meta = MagicMock(purpose=None)
+        meta.structured_id = "public-agent-1"
+        meta.label = "Agent One"
+        mock_mcp_server.agent_metadata = {"agent-1": meta}
         mock_mcp_server.get_or_create_monitor.return_value = mock_monitor
 
         with patch("src.mcp_handlers.core.mcp_server", mock_mcp_server), \
@@ -360,6 +372,39 @@ class TestGetGovernanceMetrics:
             assert "state_semantics" in data
             assert data["behavioral_eisv"]["confidence"] == 1.0
             assert data["ode_eisv"]["V"] == 0.05
+            assert data["public_agent_id"] == "public-agent-1"
+
+    @pytest.mark.asyncio
+    async def test_get_metrics_falls_back_to_identity_metadata_for_public_id(self, mock_mcp_server, mock_monitor):
+        """When runtime metadata lacks structured_id, metrics should recover it from persisted identity metadata."""
+        meta = MagicMock(purpose=None)
+        meta.structured_id = None
+        meta.label = None
+        meta.display_name = None
+        mock_mcp_server.agent_metadata = {"agent-1": meta}
+        mock_mcp_server.get_or_create_monitor.return_value = mock_monitor
+        mock_db = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1",
+            metadata={"public_agent_id": "mcp_20260404", "label": "Codex Agent"},
+        )
+        mock_db.get_agent_label.return_value = "Codex Agent"
+
+        with patch("src.mcp_handlers.core.mcp_server", mock_mcp_server), \
+             patch("src.mcp_handlers.core.require_agent_id", return_value=("agent-1", None)), \
+             patch("src.governance_monitor.UNITARESMonitor") as MockMonitorClass, \
+             patch("src.db.get_db", return_value=mock_db):
+
+            MockMonitorClass.get_eisv_labels.return_value = {
+                "E": "Energy", "I": "Information", "S": "Entropy", "V": "Void"
+            }
+
+            from src.mcp_handlers.core import handle_get_governance_metrics
+            result = await handle_get_governance_metrics({"lite": False})
+
+            data = json.loads(result[0].text)
+            assert data["public_agent_id"] == "mcp_20260404"
+            assert data["display_name"] == "Codex Agent"
 
     @pytest.mark.asyncio
     async def test_get_metrics_uninitialized_agent(self, mock_mcp_server):

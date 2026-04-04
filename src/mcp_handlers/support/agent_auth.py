@@ -43,7 +43,12 @@ def compute_agent_signature(
             display_label = getattr(meta, 'label', None)
             structured_id = getattr(meta, 'structured_id', None)
 
-        signature = {"uuid": agent_uuid}
+        public_agent_id = structured_id or agent_uuid
+        signature = {
+            "uuid": agent_uuid,
+            "agent_uuid": agent_uuid,
+            "public_agent_id": public_agent_id,
+        }
         if structured_id:
             signature["agent_id"] = structured_id
         if display_label:

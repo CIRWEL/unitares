@@ -112,7 +112,15 @@ def success_response(data: Dict[str, Any], agent_id: str = None, arguments: Dict
     if lite_response:
         pass
     else:
-        response["agent_signature"] = _auth.compute_agent_signature(agent_id=agent_id, arguments=arguments)
+        signature = _auth.compute_agent_signature(agent_id=agent_id, arguments=arguments)
+        if data.get("agent_uuid"):
+            signature["agent_uuid"] = data["agent_uuid"]
+            signature.setdefault("uuid", data["agent_uuid"])
+        if data.get("public_agent_id"):
+            signature["public_agent_id"] = data["public_agent_id"]
+        if data.get("display_name") is not None and not signature.get("display_name"):
+            signature["display_name"] = data["display_name"]
+        response["agent_signature"] = signature
 
     param_coercions = (arguments or {}).get("_param_coercions")
     if param_coercions and not lite_response:

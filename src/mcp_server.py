@@ -60,6 +60,10 @@ from src._imports import ensure_project_root
 project_root = ensure_project_root()
 
 from src.logging_utils import get_logger
+from src.services.identity_continuity import (
+    format_identity_continuity_startup_message,
+    get_identity_continuity_status,
+)
 from src.versioning import load_version_from_file
 logger = get_logger(__name__)
 
@@ -657,6 +661,13 @@ async def main():
         release_server_lock(lock_fd)
         remove_server_pid_file()
         sys.exit(1)
+
+    continuity_status = get_identity_continuity_status()
+    continuity_message = format_identity_continuity_startup_message(continuity_status)
+    if continuity_status.get("mode") == "redis":
+        logger.info(continuity_message)
+    else:
+        logger.warning(continuity_message)
 
     # Give audit logger a reference to the event loop for executor-thread writes
     from src.audit_log import AuditLogger

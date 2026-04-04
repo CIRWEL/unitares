@@ -6,6 +6,37 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 
+def _normalize_public_agent_id(agent_uuid: str, public_agent_id: Optional[str]) -> str:
+    """Return the human-facing/public agent identifier, falling back to UUID."""
+    return public_agent_id or agent_uuid
+
+
+def attach_identity_handles(
+    payload: Dict[str, Any],
+    *,
+    agent_uuid: str,
+    public_agent_id: Optional[str],
+    display_name: Optional[str],
+    include_uuid_alias: bool = False,
+) -> Dict[str, Any]:
+    """Attach explicit UUID/public identity handles to a payload."""
+    resolved_public_id = _normalize_public_agent_id(agent_uuid, public_agent_id)
+    payload["agent_uuid"] = agent_uuid
+    payload["public_agent_id"] = resolved_public_id
+    if include_uuid_alias:
+        payload["uuid"] = agent_uuid
+    if "display_name" not in payload:
+        payload["display_name"] = display_name
+    payload["identity_handles"] = {
+        "agent_uuid": agent_uuid,
+        "public_agent_id": resolved_public_id,
+        "display_name": display_name,
+        "canonical_join_key": "agent_uuid",
+        "human_reference_key": "public_agent_id",
+    }
+    return payload
+
+
 def build_identity_response_data(
     *,
     agent_uuid: str,
@@ -23,7 +54,6 @@ def build_identity_response_data(
 ) -> Dict[str, Any]:
     """Build the identity() response payload."""
     response_data = {
-        "uuid": agent_uuid,
         "agent_id": agent_id,
         "display_name": display_name,
         "client_session_id": client_session_id,
@@ -31,11 +61,20 @@ def build_identity_response_data(
         "continuity_token_supported": continuity_support.get("enabled", False),
         "identity_status": identity_status,
         "bound_identity": {
-            "uuid": agent_uuid,
             "agent_id": agent_id,
+            "agent_uuid": agent_uuid,
+            "public_agent_id": _normalize_public_agent_id(agent_uuid, agent_id),
             "display_name": display_name,
         },
     }
+    attach_identity_handles(
+        response_data,
+        agent_uuid=agent_uuid,
+        public_agent_id=agent_id,
+        display_name=display_name,
+        include_uuid_alias=True,
+    )
+    response_data["bound_identity"]["uuid"] = agent_uuid
     if model_type:
         response_data["model_type"] = model_type
     if continuity_token:
@@ -85,7 +124,6 @@ def build_identity_diag_payload(
 ) -> Dict[str, Any]:
     """Build the lightweight identity diagnostic payload used by fast-return paths."""
     payload = {
-        "uuid": agent_uuid,
         "agent_id": agent_id,
         "display_name": display_name,
         "client_session_id": client_session_id,
@@ -93,11 +131,20 @@ def build_identity_diag_payload(
         "continuity_token_supported": continuity_support.get("enabled", False),
         "identity_status": identity_status,
         "bound_identity": {
-            "uuid": agent_uuid,
             "agent_id": agent_id,
+            "agent_uuid": agent_uuid,
+            "public_agent_id": _normalize_public_agent_id(agent_uuid, agent_id),
             "display_name": display_name,
         },
     }
+    attach_identity_handles(
+        payload,
+        agent_uuid=agent_uuid,
+        public_agent_id=agent_id,
+        display_name=display_name,
+        include_uuid_alias=True,
+    )
+    payload["bound_identity"]["uuid"] = agent_uuid
     if continuity_token:
         payload["continuity_token"] = continuity_token
     return payload
@@ -197,7 +244,6 @@ def build_onboard_response_data(
     result = {
         "success": True,
         "welcome": welcome,
-        "uuid": agent_uuid,
         "agent_id": structured_agent_id,
         "display_name": agent_label,
         "is_new": is_new,
@@ -207,6 +253,13 @@ def build_onboard_response_data(
         "date_context": {"date": datetime.now().strftime("%Y-%m-%d"), "source": "mcp-server"},
         "next_step": "Call process_agent_update with response_text describing your work",
     }
+    attach_identity_handles(
+        result,
+        agent_uuid=agent_uuid,
+        public_agent_id=structured_agent_id,
+        display_name=agent_label,
+        include_uuid_alias=True,
+    )
 
     if verbose:
         result["welcome_message"] = welcome_message

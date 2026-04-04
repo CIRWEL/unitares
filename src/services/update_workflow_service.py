@@ -53,6 +53,8 @@ async def run_process_update_workflow(ctx, *, serializer=None) -> Sequence[TextC
             ctx.response_data = build_process_update_response_data(
                 result=ctx.result,
                 agent_id=ctx.agent_id,
+                public_agent_id=getattr(ctx, "public_agent_id", None),
+                display_name=getattr(ctx, "label", None),
                 identity_assurance=ctx.identity_assurance,
             )
 

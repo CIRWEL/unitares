@@ -22,6 +22,8 @@ def test_build_identity_response_data_verbose_includes_continuity_context():
     )
 
     assert payload["agent_id"] == "agent-123"
+    assert payload["agent_uuid"] == "uuid-123"
+    assert payload["public_agent_id"] == "agent-123"
     assert payload["continuity_token"] == "token-abc"
     assert payload["session_continuity"]["continuity_token"] == "token-abc"
     assert payload["quick_reference"]["for_strong_resume"] == "token-abc"
@@ -42,6 +44,7 @@ def test_build_identity_diag_payload_keeps_fast_path_shape_consistent():
     assert payload["identity_status"] == "archived"
     assert payload["bound_identity"]["uuid"] == "uuid-123"
     assert payload["continuity_token"] == "token-abc"
+    assert payload["identity_handles"]["canonical_join_key"] == "agent_uuid"
 
 
 def test_build_onboard_response_data_includes_thread_and_workflow_when_verbose():
@@ -75,3 +78,5 @@ def test_build_onboard_response_data_includes_thread_and_workflow_when_verbose()
     assert payload["workflow"]["step_1"] == "Copy client_session_id from above"
     assert payload["tool_mode"]["current_mode"] == "lite"
     assert payload["trajectory"]["trust_tier"]["tier"] == 1
+    assert payload["agent_uuid"] == "uuid-123"
+    assert payload["public_agent_id"] == "agent-123"

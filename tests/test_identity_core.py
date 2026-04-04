@@ -401,6 +401,23 @@ class TestGetAgentLabel:
 class TestGetAgentIdFromMetadata:
 
     @pytest.mark.asyncio
+    async def test_prefers_public_agent_id_from_identity_metadata(self):
+        from src.mcp_handlers.identity.handlers import _get_agent_id_from_metadata
+
+        mock_db = AsyncMock()
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1",
+            metadata={
+                "public_agent_id": "Gpt_5_4_Codex_20260404",
+                "agent_id": "Legacy_20260404",
+            },
+        )
+
+        with patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db):
+            result = await _get_agent_id_from_metadata("uuid-public")
+            assert result == "Gpt_5_4_Codex_20260404"
+
+    @pytest.mark.asyncio
     async def test_returns_agent_id_from_identity_metadata(self):
         from src.mcp_handlers.identity.handlers import _get_agent_id_from_metadata
 
@@ -772,6 +789,8 @@ class TestSetAgentLabelCacheManagement:
 
         assert result is True
         assert meta.label == "NewLabel"
+        sync_call = mock_db.upsert_identity.await_args_list[-1]
+        assert sync_call.kwargs["metadata"]["public_agent_id"] == "existing_id"
 
     @pytest.mark.asyncio
     async def test_creates_new_metadata_entry_when_not_cached(self):
@@ -1276,4 +1295,3 @@ class TestIdentityAuditLogging:
 # ============================================================================
 # Additional coverage: handle_identity_adapter structured_id regeneration (lines 1323-1345)
 # ============================================================================
-

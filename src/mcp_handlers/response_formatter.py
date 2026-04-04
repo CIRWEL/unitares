@@ -11,6 +11,14 @@ from src.logging_utils import get_logger
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
+
+def _copy_identity_fields(source: dict, target: dict) -> None:
+    """Carry explicit identity handles through filtered response modes."""
+    for key in ("agent_id", "agent_uuid", "public_agent_id", "display_name", "identity_handles"):
+        if key in source:
+            target[key] = source.get(key)
+
+
 def format_response(
     response_data: dict,
     arguments: dict,
@@ -147,6 +155,7 @@ def _format_standard(response_data: dict, task_type: str) -> dict:
         "_mode": "standard",
         "_raw_available": "Use response_mode='full' to see complete metrics",
     }
+    _copy_identity_fields(response_data, result)
     if "thread_context" in response_data:
         result["thread_context"] = response_data["thread_context"]
     if "identity_assurance" in response_data:
@@ -252,6 +261,7 @@ def _format_mirror(response_data: dict, saved_trust_tier: Optional[str], meta: A
         "_mode": "mirror",
         "mirror": mirror_signals if mirror_signals else ["No actionable signals — steady state"],
     }
+    _copy_identity_fields(response_data, result)
 
     if relevant_prior:
         result["relevant_prior_work"] = relevant_prior
@@ -296,6 +306,7 @@ def _format_minimal(response_data: dict, using_default_mode: bool, saved_trust_t
         "coherence": metrics.get("coherence"),
         "risk_score": metrics.get("latest_risk_score") or metrics.get("risk_score"),
     }
+    _copy_identity_fields(response_data, result)
 
     margin = decision.get("margin")
     if margin:
@@ -365,6 +376,7 @@ def _format_compact(response_data: dict, using_default_mode: bool, saved_trust_t
         "summary": summary,
         "_mode": "compact",
     }
+    _copy_identity_fields(response_data, result)
 
     if saved_trust_tier:
         result["trust_tier"] = saved_trust_tier

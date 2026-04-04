@@ -224,7 +224,11 @@ async def _persist_rebadged_agent_id(agent_uuid: str, new_agent_id: str) -> None
         await db.upsert_identity(
             agent_id=agent_uuid,
             api_key_hash="",
-            metadata={"agent_id": new_agent_id},
+            metadata={
+                "agent_id": new_agent_id,
+                "public_agent_id": new_agent_id,
+                "structured_id": new_agent_id,
+            },
         )
     except Exception as e:
         logger.debug(f"[ONBOARD] Could not persist rebadged agent_id: {e}")
@@ -604,7 +608,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     if arguments is None:
         arguments = {}
     arguments["lite_response"] = True
-    return success_response(response_data, agent_id=final_agent_id, arguments=arguments)
+    return success_response(response_data, agent_id=agent_uuid, arguments=arguments)
 
 
 async def _perform_session_bind(

@@ -13,10 +13,15 @@ def test_build_process_update_response_data_sets_agent_fields():
     payload = build_process_update_response_data(
         result={"status": "ok"},
         agent_id="agent-123",
+        public_agent_id="public-123",
+        display_name="Tester",
         identity_assurance={"tier": "strong"},
     )
     assert payload["status"] == "ok"
     assert payload["agent_id"] == "agent-123"
+    assert payload["agent_uuid"] == "agent-123"
+    assert payload["public_agent_id"] == "public-123"
+    assert payload["display_name"] == "Tester"
     assert payload["identity_assurance"] == {"tier": "strong"}
 
 

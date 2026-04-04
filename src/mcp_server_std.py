@@ -44,6 +44,10 @@ except ImportError:
     pass
 
 from src.logging_utils import get_logger
+from src.services.identity_continuity import (
+    format_identity_continuity_startup_message,
+    get_identity_continuity_status,
+)
 logger = get_logger(__name__)
 
 try:
@@ -472,6 +476,16 @@ async def main():
     """Main entry point for STDIO MCP server"""
     # Initialize server process (PID file, signal handlers, heartbeat)
     init_server_process()
+
+    if STDIO_PROXY_URL or STDIO_PROXY_HTTP_URL:
+        logger.info("Identity continuity mode: proxied (delegated to upstream HTTP server)")
+    else:
+        continuity_status = get_identity_continuity_status()
+        continuity_message = format_identity_continuity_startup_message(continuity_status)
+        if continuity_status.get("mode") == "redis":
+            logger.info(continuity_message)
+        else:
+            logger.warning(continuity_message)
 
     async def startup_background_tasks():
         """Run startup tasks in background after server starts"""

@@ -10,6 +10,8 @@ from config.governance_config import GovernanceConfig
 from src.eisv_semantics import get_state_semantics
 from src.logging_utils import get_logger
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
+from src.services.identity_continuity import get_identity_continuity_status
+from src.services.identity_payloads import attach_identity_handles
 
 logger = get_logger(__name__)
 
@@ -70,6 +72,36 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
         pass
 
     meta = server.agent_metadata.get(agent_id)
+    display_name = None
+    public_agent_id = agent_id
+    if meta:
+        display_name = getattr(meta, "display_name", None) or getattr(meta, "label", None)
+        public_agent_id = getattr(meta, "structured_id", None) or public_agent_id
+    if public_agent_id == agent_id or display_name is None:
+        try:
+            from src.db import get_db
+
+            db = get_db()
+            identity = await db.get_identity(agent_id)
+            if identity and identity.metadata:
+                metadata = identity.metadata
+                public_agent_id = (
+                    metadata.get("public_agent_id")
+                    or metadata.get("agent_id")
+                    or metadata.get("structured_id")
+                    or public_agent_id
+                )
+                display_name = display_name or metadata.get("label")
+            if display_name is None:
+                display_name = await db.get_agent_label(agent_id)
+        except Exception:
+            pass
+    attach_identity_handles(
+        standardized_metrics,
+        agent_uuid=agent_id,
+        public_agent_id=public_agent_id,
+        display_name=display_name,
+    )
     if meta and getattr(meta, "purpose", None):
         standardized_metrics["purpose"] = meta.purpose
 
@@ -135,7 +167,6 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
         state = standardized_metrics.get("state", {})
         standard_metrics = {
             "agent_id": agent_id,
-            "display_name": getattr(meta, "label", None) if meta else None,
             "E": metrics.get("E"),
             "I": metrics.get("I"),
             "S": metrics.get("S"),
@@ -154,6 +185,12 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
             "ode_eisv": metrics.get("ode_eisv") or metrics.get("ode"),
             "ode_diagnostics": metrics.get("ode_diagnostics"),
         }
+        attach_identity_handles(
+            standard_metrics,
+            agent_uuid=agent_id,
+            public_agent_id=public_agent_id,
+            display_name=display_name,
+        )
         if reflection:
             standard_metrics["reflection"] = reflection
         standard_metrics["_note"] = (
@@ -220,6 +257,12 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
             "coherence": {"value": coherence, "range": "[0, 1]", "status": coherence_status},
             "risk_score": {"value": risk_score, "threshold": 0.5, "status": risk_status},
         }
+        attach_identity_handles(
+            lite_metrics,
+            agent_uuid=agent_id,
+            public_agent_id=public_agent_id,
+            display_name=display_name,
+        )
         if "state" in standardized_metrics:
             lite_metrics["mode"] = standardized_metrics["state"].get("mode")
             lite_metrics["basin"] = standardized_metrics["state"].get("basin")
@@ -261,6 +304,7 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
 
     checks = {}
     loop = asyncio.get_running_loop()
+    continuity_status = None
 
     try:
         pending = await loop.run_in_executor(None, lambda: calibration_checker.get_pending_updates())
@@ -322,6 +366,7 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
             lock_health = await dist_lock.health_check()
             checks["redis_cache"] = {
                 "status": cache_health.get("status", "unknown"),
+                "present": True,
                 "session_cache": cache_health,
                 "distributed_lock": lock_health,
                 "features": ["session_cache", "distributed_locking", "rate_limiting", "metadata_cache"],
@@ -353,11 +398,25 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
             except Exception as e:
                 checks["redis_cache"]["stats_error"] = str(e)
         else:
-            checks["redis_cache"] = {"status": "unavailable", "note": "Redis not available - using fallback modes"}
+            checks["redis_cache"] = {
+                "status": "unavailable",
+                "present": False,
+                "note": "Redis not available - using fallback modes",
+            }
     except ImportError:
-        checks["redis_cache"] = {"status": "unavailable", "note": "Redis cache module not installed"}
+        checks["redis_cache"] = {
+            "status": "unavailable",
+            "present": False,
+            "note": "Redis cache module not installed",
+        }
     except Exception as e:
-        checks["redis_cache"] = {"status": "error", "error": str(e)}
+        checks["redis_cache"] = {"status": "error", "present": False, "error": str(e)}
+
+    continuity_status = get_identity_continuity_status(
+        redis_present=checks.get("redis_cache", {}).get("present"),
+        redis_operational=checks.get("redis_cache", {}).get("status") not in {"error", "unavailable"},
+    )
+    checks["identity_continuity"] = continuity_status
 
     try:
         from src.knowledge_graph import get_knowledge_graph
@@ -445,6 +504,11 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
         first_action = "Check PostgreSQL availability and database initialization first."
     elif "redis_cache" in failing_checks:
         first_action = "Check Redis connectivity or continue in fallback mode if Redis is optional."
+    elif continuity_status and continuity_status.get("mode") == "degraded-local":
+        first_action = (
+            "Redis is absent; identity continuity is running in degraded-local mode. "
+            "Restore Redis if you need cross-process session continuity."
+        )
     elif "knowledge_graph" in failing_checks:
         first_action = "Check knowledge graph backend and embeddings availability."
     elif "pi_connectivity" in degraded_checks or "pi_connectivity" in failing_checks:
@@ -457,6 +521,8 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
     response = {
         "status": overall_status,
         "version": getattr(server, "SERVER_VERSION", "unknown"),
+        "redis_present": continuity_status.get("redis_present", False) if continuity_status else False,
+        "identity_continuity_mode": continuity_status.get("mode", "unknown") if continuity_status else "unknown",
         "status_breakdown": status_breakdown,
         "operator_summary": {
             "overall_status": overall_status,
@@ -472,6 +538,9 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
         lite_checks = {}
         for name, check in checks.items():
             lite_checks[name] = {"status": check.get("status", "unknown")}
+            for key in ("mode", "redis_present", "present", "source_of_truth", "session_binding_backend"):
+                if key in check:
+                    lite_checks[name][key] = check[key]
             if "warning" in check:
                 lite_checks[name]["warning"] = check["warning"]
             if "note" in check:

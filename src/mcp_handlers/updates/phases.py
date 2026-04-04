@@ -183,18 +183,38 @@ async def resolve_identity_and_guards(ctx: UpdateContext) -> Optional[Sequence[T
 
     ctx.is_new_agent = ctx.agent_uuid not in mcp_server.agent_metadata
 
-    # Label from arguments or existing metadata
-    ctx.label = ctx.arguments.get("agent_id") or ctx.arguments.get("id") or ctx.arguments.get("name")
-    if not ctx.label and ctx.agent_uuid in mcp_server.agent_metadata:
+    requested_identity = ctx.arguments.get("agent_id") or ctx.arguments.get("id") or ctx.arguments.get("name")
+    runtime_label = None
+    runtime_public_agent_id = None
+    if ctx.agent_uuid in mcp_server.agent_metadata:
         meta = mcp_server.agent_metadata[ctx.agent_uuid]
-        ctx.label = getattr(meta, 'label', None)
+        runtime_label = getattr(meta, "label", None) or getattr(meta, "display_name", None)
+        runtime_public_agent_id = getattr(meta, "structured_id", None)
+    if not runtime_public_agent_id or runtime_label is None:
+        try:
+            from ..identity.persistence import _get_agent_id_from_metadata, _get_agent_label
+
+            if not runtime_public_agent_id:
+                runtime_public_agent_id = await _get_agent_id_from_metadata(ctx.agent_uuid)
+            if runtime_label is None:
+                runtime_label = await _get_agent_label(ctx.agent_uuid)
+        except Exception:
+            pass
+
+    # Treat incoming agent_id that matches the runtime public ID as identity routing,
+    # not as a label write. Only store a new label when the caller is actually naming.
+    if requested_identity and requested_identity not in {ctx.agent_uuid, runtime_public_agent_id}:
+        ctx.label = requested_identity
+    else:
+        ctx.label = runtime_label
 
     # Set up identity aliases
     ctx.agent_id = ctx.agent_uuid
-    ctx.declared_agent_id = ctx.label or ctx.agent_uuid
+    ctx.public_agent_id = runtime_public_agent_id or ctx.label or ctx.agent_uuid
+    ctx.declared_agent_id = ctx.public_agent_id
     ctx.arguments["agent_id"] = ctx.declared_agent_id
     ctx.arguments["_agent_uuid"] = ctx.agent_uuid
-    ctx.arguments["_agent_label"] = ctx.declared_agent_id
+    ctx.arguments["_agent_label"] = ctx.label or ctx.declared_agent_id
 
     # Store label in PostgreSQL
     if ctx.label and ctx.label != ctx.agent_uuid:

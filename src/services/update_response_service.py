@@ -9,6 +9,7 @@ from typing import Any, Dict, Sequence
 from mcp.types import TextContent
 
 from src.logging_utils import get_logger
+from src.services.identity_payloads import attach_identity_handles
 
 logger = get_logger(__name__)
 
@@ -17,11 +18,19 @@ def build_process_update_response_data(
     *,
     result: Dict[str, Any],
     agent_id: str,
+    public_agent_id: str | None,
+    display_name: str | None,
     identity_assurance: Any,
 ) -> Dict[str, Any]:
     """Build the base response payload before enrichments and mode filtering."""
     response_data = result.copy()
     response_data["agent_id"] = agent_id
+    attach_identity_handles(
+        response_data,
+        agent_uuid=agent_id,
+        public_agent_id=public_agent_id,
+        display_name=display_name,
+    )
     response_data["identity_assurance"] = identity_assurance
     return response_data
 
