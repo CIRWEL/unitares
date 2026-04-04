@@ -593,6 +593,10 @@ class TestHealthCheck:
              patch("src.telemetry.telemetry_collector", MagicMock()), \
              patch("src.audit_log.audit_logger", mock_audit), \
              patch("src.db.get_db", return_value=mock_db), \
+             patch("src.embeddings.embeddings_available", return_value=True), \
+             patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy"}), \
              patch("src.calibration_db.calibration_health_check_async",
                    new_callable=AsyncMock,
                    return_value={"status": "healthy", "backend": "postgres"}), \
@@ -615,6 +619,127 @@ class TestHealthCheck:
             assert "status_breakdown" in data
             assert "operator_summary" in data
             assert data["version"] == "test-1.0.0"
+            assert data["status"] == "healthy"
+
+    @pytest.mark.asyncio
+    async def test_health_check_reports_degraded_local_identity_continuity(
+        self,
+        mock_mcp_server,
+        patch_context_agent_id,
+    ):
+        """Default health output should state when continuity is degraded-local."""
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        mock_db = AsyncMock()
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+        mock_db.init = AsyncMock()
+
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.embeddings.embeddings_available", return_value=True), \
+             patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy"}), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=False), \
+             patch("src.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock) as mock_kg:
+
+            mock_kg_instance = AsyncMock()
+            mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_kg.return_value = mock_kg_instance
+
+            from src.mcp_handlers.admin.handlers import handle_health_check
+            result = await handle_health_check({})
+
+            data = parse_result(result)
+            assert data["status"] == "healthy"
+            assert data["redis_present"] is False
+            assert data["identity_continuity_mode"] == "degraded-local"
+            assert data["checks"]["redis_cache"]["present"] is False
+            assert data["checks"]["identity_continuity"]["mode"] == "degraded-local"
+            assert data["checks"]["identity_continuity"]["redis_present"] is False
+
+    @pytest.mark.asyncio
+    async def test_health_check_reports_redis_identity_continuity(
+        self,
+        mock_mcp_server,
+        patch_context_agent_id,
+    ):
+        """Health output should explicitly report Redis-backed continuity when available."""
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        mock_db = AsyncMock()
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+        mock_db.init = AsyncMock()
+
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        session_cache = AsyncMock()
+        session_cache.health_check = AsyncMock(return_value={"status": "healthy", "backend": "redis"})
+        dist_lock = AsyncMock()
+        dist_lock.health_check = AsyncMock(return_value={"status": "healthy", "backend": "redis"})
+        raw_redis = AsyncMock()
+        raw_redis.info = AsyncMock(return_value={"keyspace_hits": 5, "keyspace_misses": 1, "total_commands_processed": 12})
+
+        async def _scan_iter(match=None, count=None):
+            if match == "session:*":
+                yield "session:test"
+
+        raw_redis.scan_iter = _scan_iter
+
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.embeddings.embeddings_available", return_value=True), \
+             patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy"}), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=True), \
+             patch("src.cache.get_session_cache", return_value=session_cache), \
+             patch("src.cache.get_distributed_lock", return_value=dist_lock), \
+             patch("src.cache.get_redis", new_callable=AsyncMock, return_value=raw_redis), \
+             patch("src.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock) as mock_kg:
+
+            mock_kg_instance = AsyncMock()
+            mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_kg.return_value = mock_kg_instance
+
+            from src.mcp_handlers.admin.handlers import handle_health_check
+            result = await handle_health_check({})
+
+            data = parse_result(result)
+            assert data["status"] == "healthy"
+            assert data["redis_present"] is True
+            assert data["identity_continuity_mode"] == "redis"
+            assert data["checks"]["redis_cache"]["present"] is True
+            assert data["checks"]["identity_continuity"]["mode"] == "redis"
+            assert data["checks"]["identity_continuity"]["redis_present"] is True
 
     @pytest.mark.asyncio
     async def test_health_check_knowledge_graph_lifecycle_warning(self, mock_mcp_server, patch_context_agent_id):

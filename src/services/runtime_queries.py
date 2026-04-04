@@ -9,6 +9,7 @@ from typing import Any, Dict
 from config.governance_config import GovernanceConfig
 from src.logging_utils import get_logger
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
+from src.services.identity_continuity import get_identity_continuity_status
 
 logger = get_logger(__name__)
 
@@ -242,6 +243,7 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
 
     checks = {}
     loop = asyncio.get_running_loop()
+    continuity_status = None
 
     try:
         pending = await loop.run_in_executor(None, lambda: calibration_checker.get_pending_updates())
@@ -303,6 +305,7 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
             lock_health = await dist_lock.health_check()
             checks["redis_cache"] = {
                 "status": cache_health.get("status", "unknown"),
+                "present": True,
                 "session_cache": cache_health,
                 "distributed_lock": lock_health,
                 "features": ["session_cache", "distributed_locking", "rate_limiting", "metadata_cache"],
@@ -334,11 +337,25 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
             except Exception as e:
                 checks["redis_cache"]["stats_error"] = str(e)
         else:
-            checks["redis_cache"] = {"status": "unavailable", "note": "Redis not available - using fallback modes"}
+            checks["redis_cache"] = {
+                "status": "unavailable",
+                "present": False,
+                "note": "Redis not available - using fallback modes",
+            }
     except ImportError:
-        checks["redis_cache"] = {"status": "unavailable", "note": "Redis cache module not installed"}
+        checks["redis_cache"] = {
+            "status": "unavailable",
+            "present": False,
+            "note": "Redis cache module not installed",
+        }
     except Exception as e:
-        checks["redis_cache"] = {"status": "error", "error": str(e)}
+        checks["redis_cache"] = {"status": "error", "present": False, "error": str(e)}
+
+    continuity_status = get_identity_continuity_status(
+        redis_present=checks.get("redis_cache", {}).get("present"),
+        redis_operational=checks.get("redis_cache", {}).get("status") not in {"error", "unavailable"},
+    )
+    checks["identity_continuity"] = continuity_status
 
     try:
         from src.knowledge_graph import get_knowledge_graph
@@ -409,7 +426,17 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
     except (asyncio.TimeoutError, Exception) as e:
         checks["pi_connectivity"] = {"status": "warning", "reachable": False, "error": str(e)}
 
-    statuses = [c.get("status") for c in checks.values()]
+    effective_checks = dict(checks)
+    redis_check = effective_checks.get("redis_cache")
+    if (
+        continuity_status
+        and continuity_status.get("mode") == "degraded-local"
+        and isinstance(redis_check, dict)
+        and redis_check.get("status") == "unavailable"
+    ):
+        effective_checks.pop("redis_cache", None)
+
+    statuses = [c.get("status") for c in effective_checks.values()]
     overall_status = "critical" if "error" in statuses else ("healthy" if all(s == "healthy" for s in statuses) else "moderate")
     status_breakdown = {
         "healthy": sum(1 for s in statuses if s == "healthy"),
@@ -418,8 +445,10 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
         "unavailable": sum(1 for s in statuses if s == "unavailable"),
         "error": sum(1 for s in statuses if s == "error"),
     }
-    failing_checks = sorted(name for name, check in checks.items() if check.get("status") == "error")
-    degraded_checks = sorted(name for name, check in checks.items() if check.get("status") in {"warning", "deprecated", "unavailable"})
+    failing_checks = sorted(name for name, check in effective_checks.items() if check.get("status") == "error")
+    degraded_checks = sorted(
+        name for name, check in effective_checks.items() if check.get("status") in {"warning", "deprecated", "unavailable"}
+    )
 
     first_action = "No action needed."
     if "primary_db" in failing_checks:
@@ -438,12 +467,15 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
     response = {
         "status": overall_status,
         "version": getattr(server, "SERVER_VERSION", "unknown"),
+        "redis_present": continuity_status.get("redis_present", False),
+        "identity_continuity_mode": continuity_status.get("mode", "unknown"),
         "status_breakdown": status_breakdown,
         "operator_summary": {
             "overall_status": overall_status,
             "failing_checks": failing_checks,
             "degraded_checks": degraded_checks,
             "first_action": first_action,
+            "identity_continuity_mode": continuity_status.get("mode", "unknown"),
         },
         "timestamp": datetime.now().isoformat(),
     }
@@ -453,6 +485,9 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
         lite_checks = {}
         for name, check in checks.items():
             lite_checks[name] = {"status": check.get("status", "unknown")}
+            for key in ("mode", "redis_present", "present", "source_of_truth", "session_binding_backend"):
+                if key in check:
+                    lite_checks[name][key] = check[key]
             if "warning" in check:
                 lite_checks[name]["warning"] = check["warning"]
             if "note" in check:

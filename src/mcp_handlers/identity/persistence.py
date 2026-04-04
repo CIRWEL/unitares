@@ -55,6 +55,28 @@ async def _cache_session(
             call on subsequent hits (optimization hint).
         label: Auto-generated or user-set label to store alongside the binding.
     """
+    try:
+        from .shared import _session_identities
+
+        binding = _session_identities.get(session_key) or {}
+        bind_count = binding.get("bind_count", 0)
+        new_binding = {
+            "bound_agent_id": agent_uuid,
+            "agent_uuid": agent_uuid,
+            "public_agent_id": display_agent_id or agent_uuid,
+            "display_agent_id": display_agent_id,
+            "agent_label": label or binding.get("agent_label"),
+            "created_at": binding.get("created_at") or datetime.now().isoformat(),
+            "bound_at": datetime.now().isoformat(),
+            "bind_count": bind_count,
+            "trajectory_required": trajectory_required,
+        }
+        if label:
+            new_binding["label"] = label
+        _session_identities[session_key] = new_binding
+    except Exception as e:
+        logger.debug(f"In-memory session cache update failed for {session_key[:20]}...: {e}")
+
     session_cache = _get_redis()
     if session_cache:
         try:
@@ -128,12 +150,17 @@ async def _get_agent_label(agent_uuid: str) -> Optional[str]:
         return None
 
 async def _get_agent_id_from_metadata(agent_uuid: str) -> Optional[str]:
-    """Fetch agent_id (model+date format) from identity metadata."""
+    """Fetch the public/human-facing agent ID from identity metadata."""
     try:
         db = get_db()
         identity = await db.get_identity(agent_uuid)
         if identity and identity.metadata:
-            return identity.metadata.get("agent_id")
+            metadata = identity.metadata
+            return (
+                metadata.get("public_agent_id")
+                or metadata.get("agent_id")
+                or metadata.get("structured_id")
+            )
     except Exception:
         pass
     return None
@@ -184,7 +211,69 @@ async def ensure_agent_persisted(
         identity = await db.get_identity(agent_uuid)
         agent_record = await db.get_agent(agent_uuid)
 
+        public_agent_id = None
+        structured_id = None
+        label = None
+        try:
+            meta = mcp_server.agent_metadata.get(agent_uuid)
+            if meta:
+                structured_id = getattr(meta, "structured_id", None)
+                public_agent_id = structured_id or getattr(meta, "public_agent_id", None)
+                label = getattr(meta, "label", None) or getattr(meta, "display_name", None)
+        except Exception:
+            pass
+
+        if not public_agent_id or not label:
+            session_cache = _get_redis()
+            if session_cache:
+                try:
+                    cached = await session_cache.get(session_key)
+                    if isinstance(cached, dict):
+                        display_agent_id = cached.get("display_agent_id")
+                        if not public_agent_id and display_agent_id and display_agent_id != agent_uuid:
+                            public_agent_id = display_agent_id
+                        if not label:
+                            label = cached.get("label")
+                except Exception as e:
+                    logger.debug(f"Could not hydrate identity handles from session cache: {e}")
+        if not public_agent_id or not label:
+            try:
+                from .shared import _session_identities
+
+                cached = _session_identities.get(session_key)
+                if isinstance(cached, dict):
+                    display_agent_id = cached.get("display_agent_id") or cached.get("public_agent_id")
+                    if not public_agent_id and display_agent_id and display_agent_id != agent_uuid:
+                        public_agent_id = display_agent_id
+                    if not label:
+                        label = cached.get("agent_label") or cached.get("label")
+            except Exception as e:
+                logger.debug(f"Could not hydrate identity handles from in-memory session cache: {e}")
+
         if identity and agent_record:
+            if public_agent_id and public_agent_id != agent_uuid:
+                existing_public_id = None
+                if getattr(identity, "metadata", None):
+                    existing_public_id = (
+                        identity.metadata.get("public_agent_id")
+                        or identity.metadata.get("agent_id")
+                        or identity.metadata.get("structured_id")
+                    )
+                if not existing_public_id:
+                    metadata_patch = {
+                        "public_agent_id": public_agent_id,
+                        "agent_id": public_agent_id,
+                    }
+                    if structured_id:
+                        metadata_patch["structured_id"] = structured_id
+                    if label:
+                        metadata_patch["label"] = label
+                    await db.upsert_identity(
+                        agent_id=agent_uuid,
+                        api_key_hash="",
+                        parent_agent_id=parent_agent_id,
+                        metadata=metadata_patch,
+                    )
             return False  # Already fully persisted
 
         if not agent_record:
@@ -199,29 +288,40 @@ async def ensure_agent_persisted(
             )
 
         if not identity:
+            identity_metadata = {
+                "source": "lazy_creation",
+                "created_at": datetime.now().isoformat(),
+                "total_updates": 0,  # Initialize counter for persistence
+                "thread_id": thread_id,
+                "thread_position": thread_position,
+                "node_index": thread_position,  # AgentMetadata uses node_index
+            }
+            if public_agent_id and public_agent_id != agent_uuid:
+                identity_metadata["public_agent_id"] = public_agent_id
+                identity_metadata["agent_id"] = public_agent_id
+            if structured_id:
+                identity_metadata["structured_id"] = structured_id
+            if label:
+                identity_metadata["label"] = label
             await db.upsert_identity(
                 agent_id=agent_uuid,
                 api_key_hash="",
                 parent_agent_id=parent_agent_id,
-                metadata={
-                    "source": "lazy_creation",
-                    "created_at": datetime.now().isoformat(),
-                    "total_updates": 0,  # Initialize counter for persistence
-                    "thread_id": thread_id,
-                    "thread_position": thread_position,
-                    "node_index": thread_position,  # AgentMetadata uses node_index
-                }
+                metadata=identity_metadata,
             )
             identity = await db.get_identity(agent_uuid)
 
         # Create session binding once we have a durable identity row.
         if identity:
+            client_info = {"agent_id": agent_uuid, "agent_uuid": agent_uuid, "lazy_created": True}
+            if public_agent_id and public_agent_id != agent_uuid:
+                client_info["public_agent_id"] = public_agent_id
             await db.create_session(
                 session_id=session_key,
                 identity_id=identity.identity_id,
                 expires_at=datetime.now() + timedelta(hours=GovernanceConfig.SESSION_TTL_HOURS),
                 client_type="mcp",
-                client_info={"agent_id": agent_uuid, "lazy_created": True}
+                client_info=client_info,
             )
 
         logger.info(f"Lazy-persisted agent on first work: {agent_uuid[:8]}...")
@@ -265,19 +365,8 @@ async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str
         success = await db.update_agent_fields(agent_uuid, label=label)
 
         if success:
-            # Sync label into core.identities.metadata JSONB so both sources agree
-            try:
-                identity = await db.get_identity(agent_uuid)
-                if identity:
-                    await db.upsert_identity(
-                        agent_id=agent_uuid,
-                        api_key_hash="",
-                        metadata={"label": label},
-                    )
-            except Exception as e:
-                logger.debug(f"Could not sync label to identities metadata: {e}")
-
             # Sync label to runtime cache so compute_agent_signature can find it
+            structured_id = None
             try:
                 if agent_uuid in mcp_server.agent_metadata:
                     meta = mcp_server.agent_metadata[agent_uuid]
@@ -303,6 +392,7 @@ async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str
                         except Exception as e:
                             logger.debug(f"Could not generate structured_id: {e}")
 
+                    structured_id = getattr(meta, "structured_id", None)
                     logger.info(f"Synced label '{label}' to existing cache entry for {agent_uuid[:8]}")
                 else:
                     # Agent not in cache yet - create proper AgentMetadata entry
@@ -337,6 +427,7 @@ async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str
                     except Exception as e:
                         logger.debug(f"Could not generate structured_id: {e}")
 
+                    structured_id = getattr(meta, "structured_id", None)
                     mcp_server.agent_metadata[agent_uuid] = meta
                     logger.info(f"Created cache entry with label '{label}' for {agent_uuid[:8]}")
 
@@ -351,6 +442,23 @@ async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str
                     logger.debug(f"Could not update session binding cache: {e}")
             except Exception as e:
                 logger.warning(f"Runtime cache sync failed: {e}")
+
+            # Sync label + public identity handles into core.identities.metadata
+            try:
+                identity = await db.get_identity(agent_uuid)
+                if identity:
+                    identity_metadata = {"label": label}
+                    if structured_id:
+                        identity_metadata["structured_id"] = structured_id
+                        identity_metadata["public_agent_id"] = structured_id
+                        identity_metadata["agent_id"] = structured_id
+                    await db.upsert_identity(
+                        agent_id=agent_uuid,
+                        api_key_hash="",
+                        metadata=identity_metadata,
+                    )
+            except Exception as e:
+                logger.debug(f"Could not sync identity metadata after label update: {e}")
 
             # Invalidate any other cached data
             redis = _get_redis()

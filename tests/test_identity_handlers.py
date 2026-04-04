@@ -62,6 +62,11 @@ def mock_db():
     db.update_agent_fields = AsyncMock(return_value=True)
     db.get_agent_thread_info = AsyncMock(return_value=None)
     db.get_thread_nodes = AsyncMock(return_value=[])
+    db.get_active_sessions_for_identity = AsyncMock(return_value=[])
+    db.get_last_inactive_session = AsyncMock(return_value=None)
+    db.get_latest_agent_state = AsyncMock(return_value=None)
+    db.get_agent_state_history = AsyncMock(return_value=[])
+    db.kg_query = AsyncMock(return_value=[])
     return db
 
 
@@ -208,6 +213,159 @@ class TestEnsureAgentPersisted:
             result = await ensure_agent_persisted("uuid-error", "session-error")
 
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_persists_public_identity_handles_from_runtime_metadata(self):
+        """Lazy persistence should carry structured/public identity info into metadata."""
+        from src.mcp_handlers.identity.handlers import ensure_agent_persisted
+
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_agent.return_value = None
+        mock_db.get_identity.side_effect = [
+            None,
+            SimpleNamespace(identity_id="new-ident", metadata={}),
+        ]
+        mock_db.upsert_agent = AsyncMock()
+        mock_db.upsert_identity = AsyncMock()
+        mock_db.create_session = AsyncMock()
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {
+            "uuid-lazy": SimpleNamespace(structured_id="mcp_20260404", label="Codex Agent")
+        }
+
+        with patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity.persistence.mcp_server", mock_server):
+            result = await ensure_agent_persisted("uuid-lazy", "session-lazy")
+
+        assert result is True
+        metadata = mock_db.upsert_identity.await_args.kwargs["metadata"]
+        assert metadata["public_agent_id"] == "mcp_20260404"
+        assert metadata["structured_id"] == "mcp_20260404"
+        assert metadata["label"] == "Codex Agent"
+
+    @pytest.mark.asyncio
+    async def test_persists_public_identity_handles_from_session_cache(self):
+        """Lazy persistence should recover cached display_agent_id when runtime metadata is absent."""
+        from src.mcp_handlers.identity.handlers import ensure_agent_persisted
+
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_agent.return_value = None
+        mock_db.get_identity.side_effect = [
+            None,
+            SimpleNamespace(identity_id="new-ident", metadata={}),
+        ]
+        mock_db.upsert_agent = AsyncMock()
+        mock_db.upsert_identity = AsyncMock()
+        mock_db.create_session = AsyncMock()
+
+        mock_cache = AsyncMock()
+        mock_cache.get.return_value = {
+            "agent_id": "uuid-lazy",
+            "display_agent_id": "mcp_20260404",
+            "label": "Codex Agent",
+        }
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+
+        with patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity.persistence._get_redis", return_value=mock_cache), \
+             patch("src.mcp_handlers.identity.persistence.mcp_server", mock_server):
+            result = await ensure_agent_persisted("uuid-lazy", "session-lazy")
+
+        assert result is True
+        metadata = mock_db.upsert_identity.await_args.kwargs["metadata"]
+        assert metadata["public_agent_id"] == "mcp_20260404"
+        assert metadata["label"] == "Codex Agent"
+
+    @pytest.mark.asyncio
+    async def test_persists_public_identity_handles_from_in_memory_session_cache(self):
+        """Lazy persistence should recover public identity handles from in-memory session bindings when Redis is unavailable."""
+        from src.mcp_handlers.identity.handlers import ensure_agent_persisted
+
+        mock_db = AsyncMock()
+        mock_db.init = AsyncMock()
+        mock_db.get_agent.return_value = None
+        mock_db.get_identity.side_effect = [
+            None,
+            SimpleNamespace(identity_id="new-ident", metadata={}),
+        ]
+        mock_db.upsert_agent = AsyncMock()
+        mock_db.upsert_identity = AsyncMock()
+        mock_db.create_session = AsyncMock()
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+        in_memory_bindings = {
+            "session-lazy": {
+                "bound_agent_id": "uuid-lazy",
+                "display_agent_id": "mcp_20260404",
+                "agent_label": "Codex Agent",
+            }
+        }
+
+        with patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity.persistence._get_redis", return_value=None), \
+             patch("src.mcp_handlers.identity.persistence.mcp_server", mock_server), \
+             patch("src.mcp_handlers.identity.shared._session_identities", in_memory_bindings):
+            result = await ensure_agent_persisted("uuid-lazy", "session-lazy")
+
+        assert result is True
+        metadata = mock_db.upsert_identity.await_args.kwargs["metadata"]
+        assert metadata["public_agent_id"] == "mcp_20260404"
+        assert metadata["label"] == "Codex Agent"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode_fixture", ["patch_all_deps", "patch_no_redis"])
+    async def test_session_binding_parity_between_redis_and_degraded_local(
+        self,
+        request,
+        mode_fixture,
+        mock_db,
+    ):
+        """Redis-backed and degraded-local modes should persist the same public identity handles."""
+        from src.mcp_handlers.identity.handlers import _cache_session, ensure_agent_persisted
+
+        request.getfixturevalue(mode_fixture)
+        mock_db.get_agent.return_value = None
+        mock_db.get_identity.side_effect = [
+            None,
+            SimpleNamespace(identity_id="new-ident", metadata={}),
+        ]
+        mock_db.upsert_agent = AsyncMock()
+        mock_db.upsert_identity = AsyncMock()
+        mock_db.create_session = AsyncMock()
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+        session_bindings = {}
+
+        with patch("src.mcp_handlers.identity.persistence.mcp_server", mock_server), \
+             patch("src.mcp_handlers.identity.shared._session_identities", session_bindings):
+            await _cache_session(
+                "session-parity",
+                "uuid-lazy",
+                display_agent_id="mcp_20260404",
+                label="Codex Agent",
+            )
+            assert session_bindings["session-parity"]["public_agent_id"] == "mcp_20260404"
+            assert session_bindings["session-parity"]["agent_label"] == "Codex Agent"
+
+            result = await ensure_agent_persisted("uuid-lazy", "session-parity")
+
+        assert result is True
+        metadata = mock_db.upsert_identity.await_args.kwargs["metadata"]
+        assert metadata["public_agent_id"] == "mcp_20260404"
+        assert metadata["agent_id"] == "mcp_20260404"
+        assert metadata["label"] == "Codex Agent"
+
+        client_info = mock_db.create_session.await_args.kwargs["client_info"]
+        assert client_info["agent_id"] == "uuid-lazy"
+        assert client_info["agent_uuid"] == "uuid-lazy"
+        assert client_info["public_agent_id"] == "mcp_20260404"
 
 
 # ============================================================================
@@ -1075,6 +1233,15 @@ class TestHandleOnboardV2:
         async def _get_raw():
             return mock_raw_redis
 
+        def _discard_task(coro):
+            try:
+                coro.close()
+            except Exception:
+                pass
+            task = MagicMock()
+            task.cancel = MagicMock()
+            return task
+
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
@@ -1089,6 +1256,7 @@ class TestHandleOnboardV2:
              patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_client_hint", return_value="test"), \
              patch("src.mcp_handlers.context.update_context_agent_id"), \
+             patch("asyncio.create_task", side_effect=_discard_task), \
              patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
              patch("src.mcp_handlers.identity.shared._register_uuid_prefix"):
             yield mock_server
@@ -1738,9 +1906,12 @@ class TestHandleVerifyTrajectoryIdentity:
             "tiers": {"coherence": {"similarity": 0.9}, "lineage": {"similarity": 0.85}},
         }
 
+        async def verify_ok(*args, **kwargs):
+            return mock_verification_result
+
         with patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-verify"), \
              patch("src.trajectory_identity.TrajectorySignature") as MockTrajSig, \
-             patch("src.trajectory_identity.verify_trajectory_identity", new_callable=AsyncMock, return_value=mock_verification_result):
+             patch("src.trajectory_identity.verify_trajectory_identity", new=verify_ok):
             MockTrajSig.from_dict.return_value = mock_sig
 
             result = await handle_verify_trajectory_identity({
@@ -1761,9 +1932,12 @@ class TestHandleVerifyTrajectoryIdentity:
         mock_sig = MagicMock()
         mock_verification_result = {"error": "No genesis signature found"}
 
+        async def verify_error(*args, **kwargs):
+            return mock_verification_result
+
         with patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-verify"), \
              patch("src.trajectory_identity.TrajectorySignature") as MockTrajSig, \
-             patch("src.trajectory_identity.verify_trajectory_identity", new_callable=AsyncMock, return_value=mock_verification_result):
+             patch("src.trajectory_identity.verify_trajectory_identity", new=verify_error):
             MockTrajSig.from_dict.return_value = mock_sig
 
             result = await handle_verify_trajectory_identity({
@@ -1779,11 +1953,13 @@ class TestHandleVerifyTrajectoryIdentity:
         from src.mcp_handlers.identity.handlers import handle_verify_trajectory_identity
 
         mock_sig = MagicMock()
-        mock_verify = AsyncMock(side_effect=Exception("Verification module error"))
+
+        async def verify_boom(*args, **kwargs):
+            raise Exception("Verification module error")
 
         with patch("src.mcp_handlers.context.get_context_agent_id", return_value="uuid-verify"), \
              patch("src.trajectory_identity.TrajectorySignature") as MockTrajSig, \
-             patch("src.trajectory_identity.verify_trajectory_identity", mock_verify):
+             patch("src.trajectory_identity.verify_trajectory_identity", new=verify_boom):
             MockTrajSig.from_dict.return_value = mock_sig
 
             result = await handle_verify_trajectory_identity({
@@ -2226,6 +2402,15 @@ class TestOnboardStructuredIdFallback:
         async def _get_raw():
             return mock_raw_redis
 
+        def _discard_task(coro):
+            try:
+                coro.close()
+            except Exception:
+                pass
+            task = MagicMock()
+            task.cancel = MagicMock()
+            return task
+
         mock_server = MagicMock()
         mock_server.agent_metadata = {}
 
@@ -2240,6 +2425,7 @@ class TestOnboardStructuredIdFallback:
              patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
              patch("src.mcp_handlers.context.get_context_client_hint", return_value="test"), \
              patch("src.mcp_handlers.context.update_context_agent_id"), \
+             patch("asyncio.create_task", side_effect=_discard_task), \
              patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
              patch("src.mcp_handlers.identity.shared._register_uuid_prefix"):
             yield mock_server
