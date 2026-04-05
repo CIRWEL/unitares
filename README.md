@@ -275,7 +275,7 @@ tests/                 Large test suite
 | Topic | Source of truth |
 |-------|-----------------|
 | Governance pipeline, verdict meanings | [`docs/UNIFIED_ARCHITECTURE.md`](docs/UNIFIED_ARCHITECTURE.md) |
-| Tool mode membership (`minimal` / `lite` / `full`) | [`src/tool_modes.py`](src/tool_modes.py) — `get_tools_for_mode()`; **`full`** uses `get_tool_definitions()` in [`src/tool_schemas.py`](src/tool_schemas.py) |
+| Tool mode membership (`minimal` / `lite` / `full`) | [`src/tool_modes.py`](src/tool_modes.py) for mode sets; [`src/tool_schemas.py`](src/tool_schemas.py) for the full tool-definition registry |
 | Mirror and other response shaping | [`src/mcp_handlers/response_formatter.py`](src/mcp_handlers/response_formatter.py) |
 | MCP transport wiring | [`src/mcp_server.py`](src/mcp_server.py) |
 
