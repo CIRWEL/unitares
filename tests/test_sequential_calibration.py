@@ -82,3 +82,22 @@ def test_agent_metrics_are_isolated(tmp_path):
     assert b_metrics["empirical_accuracy"] == 1.0
     assert a_metrics["signal_sources"] == {"tests": 1}
     assert b_metrics["signal_sources"] == {"lint": 1}
+
+
+def test_prediction_id_is_echoed_in_return_payload(tmp_path):
+    """record_exogenous_tactical_outcome should pass prediction_id through for audit."""
+    tracker = SequentialCalibrationTracker(state_file=tmp_path / "seq_state.json")
+
+    result = tracker.record_exogenous_tactical_outcome(
+        confidence=0.85,
+        outcome_correct=True,
+        agent_id="agent-pid",
+        signal_source="tests",
+        decision_action="proceed",
+        outcome_type="test_passed",
+        prediction_id="pid-trace-1",
+    )
+
+    assert result["prediction_id"] == "pid-trace-1"
+    assert result["agent_id"] == "agent-pid"
+    assert result["signal_source"] == "tests"

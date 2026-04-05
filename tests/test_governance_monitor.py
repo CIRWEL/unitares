@@ -1742,3 +1742,65 @@ class TestFullLifecycle:
         assert mon.state.I > 0.5
         # Coherence should be valid
         assert 0.0 <= mon.state.coherence <= 1.0
+
+
+# ============================================================================
+# Tactical prediction registry (prediction_id seam for sequential calibration)
+# ============================================================================
+
+class TestTacticalPredictionRegistry:
+    """Tests for the per-monitor prediction_id registry that feeds outcome_event."""
+
+    def test_register_returns_unique_id_and_stores_record(self, monitor):
+        pid = monitor.register_tactical_prediction(0.8, decision_action="proceed")
+        assert isinstance(pid, str) and len(pid) > 0
+        assert monitor._last_prediction_id == pid
+        record = monitor.lookup_prediction(pid)
+        assert record is not None
+        assert record["confidence"] == 0.8
+        assert record["decision_action"] == "proceed"
+        assert record["consumed"] is False
+
+    def test_register_mints_distinct_ids_for_distinct_calls(self, monitor):
+        pid_a = monitor.register_tactical_prediction(0.7)
+        pid_b = monitor.register_tactical_prediction(0.9)
+        assert pid_a != pid_b
+        assert monitor._last_prediction_id == pid_b
+        assert monitor.lookup_prediction(pid_a)["confidence"] == 0.7
+        assert monitor.lookup_prediction(pid_b)["confidence"] == 0.9
+
+    def test_consume_returns_record_once_then_none(self, monitor):
+        pid = monitor.register_tactical_prediction(0.75, decision_action="proceed")
+        first = monitor.consume_prediction(pid)
+        assert first is not None
+        assert first["confidence"] == 0.75
+        # Second consume is a no-op because the record is already marked consumed
+        assert monitor.consume_prediction(pid) is None
+
+    def test_consume_unknown_id_returns_none(self, monitor):
+        assert monitor.consume_prediction("never-minted") is None
+        assert monitor.consume_prediction("") is None
+        assert monitor.consume_prediction(None) is None
+
+    def test_expire_old_predictions_drops_stale_entries(self, monitor):
+        import time
+
+        pid_old = monitor.register_tactical_prediction(0.6)
+        pid_fresh = monitor.register_tactical_prediction(0.8)
+        # Backdate the old entry AFTER registration so the opportunistic
+        # expire inside register_tactical_prediction doesn't touch it.
+        monitor._open_predictions[pid_old]["created_at"] = time.monotonic() - 7200.0
+
+        removed = monitor.expire_old_predictions(ttl_seconds=3600.0)
+        assert removed == 1
+        assert monitor.lookup_prediction(pid_old) is None
+        assert monitor.lookup_prediction(pid_fresh) is not None
+        assert monitor._last_prediction_id == pid_fresh
+
+    def test_expire_clears_last_prediction_id_if_stale(self, monitor):
+        import time
+
+        pid = monitor.register_tactical_prediction(0.5)
+        monitor._open_predictions[pid]["created_at"] = time.monotonic() - 7200.0
+        monitor.expire_old_predictions(ttl_seconds=3600.0)
+        assert monitor._last_prediction_id is None

@@ -190,8 +190,14 @@ class SequentialCalibrationTracker:
         decision_action: Optional[str] = None,
         outcome_type: Optional[str] = None,
         timestamp: Optional[str] = None,
+        prediction_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Record one eligible hard exogenous tactical outcome."""
+        """Record one eligible hard exogenous tactical outcome.
+
+        prediction_id, if provided, is included in the return payload for
+        forensic audit. The tracker state itself remains aggregate and is
+        not indexed by prediction_id.
+        """
         if not signal_source:
             raise ValueError("signal_source is required")
 
@@ -219,6 +225,7 @@ class SequentialCalibrationTracker:
 
         return {
             "agent_id": agent_id,
+            "prediction_id": prediction_id,
             "decision_action": decision_action,
             "outcome_type": outcome_type,
             "signal_source": signal_source,

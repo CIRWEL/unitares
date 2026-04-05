@@ -153,6 +153,15 @@ class UNITARESMonitor:
         self._prev_confidence: Optional[float] = None
         self._prev_checkin_time: Optional[float] = None  # monotonic time of last check-in
 
+        # Tactical prediction registry: open (confidence, id) pairs awaiting an
+        # outcome. Minted at check-in time, consumed when an outcome references
+        # the id. Enables exact filtration for the sequential calibration lane
+        # when the agent echoes the id back on outcome_event. See
+        # src/sequential_calibration.py module docstring for the null it serves.
+        self._open_predictions: Dict[str, Dict[str, Any]] = {}
+        self._last_prediction_id: Optional[str] = None
+        self._prediction_ttl_seconds: float = 3600.0  # orphan cleanup threshold
+
         # CIRS: Initialize oscillation detector / adaptive governor
         from config.governance_config import GovernanceConfig as GovConfig
         if GovConfig.ADAPTIVE_GOVERNOR_ENABLED:
@@ -1360,6 +1369,11 @@ class UNITARESMonitor:
         self._prev_confidence = confidence
         self._prev_checkin_time = now_mono
 
+        # Mint a tactical prediction id for this (agent, confidence) pair so
+        # outcome_event can later reference it exactly. The id is returned
+        # in the process_agent_update response for the agent to echo back.
+        self.register_tactical_prediction(confidence, decision_action=decision.get('action'))
+
         # Record prediction for STRATEGIC calibration.
         #
         # Trajectory-based ground truth is already recorded by the retrospective
@@ -1405,6 +1419,80 @@ class UNITARESMonitor:
                 )
 
         return trajectory_validation
+
+    # ------------------------------------------------------------------
+    # Tactical prediction registry
+    #
+    # Mints per-check-in ids so outcome_event can reference a specific
+    # (confidence, timestamp) pair exactly instead of relying on the
+    # _prev_confidence temporal proxy. The registry is in-memory only;
+    # orphaned entries are expired by TTL. See sequential_calibration.py
+    # module docstring for how this feeds the anytime-valid e-process.
+    # ------------------------------------------------------------------
+
+    def register_tactical_prediction(
+        self,
+        confidence: float,
+        *,
+        decision_action: Optional[str] = None,
+    ) -> str:
+        """Mint a prediction id for this (agent, confidence) pair and register it."""
+        import uuid
+        import time as _time
+
+        # Opportunistic cleanup: bound registry growth without a background task.
+        self.expire_old_predictions()
+
+        prediction_id = str(uuid.uuid4())
+        self._open_predictions[prediction_id] = {
+            "confidence": float(confidence),
+            "decision_action": decision_action,
+            "created_at": _time.monotonic(),
+            "created_at_iso": datetime.now().isoformat(),
+            "consumed": False,
+        }
+        self._last_prediction_id = prediction_id
+        return prediction_id
+
+    def lookup_prediction(self, prediction_id: str) -> Optional[Dict[str, Any]]:
+        """Return the registered record for prediction_id, or None if unknown."""
+        if not prediction_id:
+            return None
+        record = self._open_predictions.get(prediction_id)
+        if not record:
+            return None
+        return dict(record)
+
+    def consume_prediction(self, prediction_id: str) -> Optional[Dict[str, Any]]:
+        """Mark a prediction as consumed and return its record.
+
+        Returns None if the id is unknown or already consumed. The record is
+        kept in the registry (with consumed=True) until TTL expiry so repeated
+        outcome events against the same prediction can be detected by callers.
+        """
+        if not prediction_id:
+            return None
+        record = self._open_predictions.get(prediction_id)
+        if not record or record.get("consumed"):
+            return None
+        record["consumed"] = True
+        return dict(record)
+
+    def expire_old_predictions(self, ttl_seconds: Optional[float] = None) -> int:
+        """Drop prediction records older than ttl_seconds. Returns count removed."""
+        import time as _time
+
+        ttl = float(ttl_seconds if ttl_seconds is not None else self._prediction_ttl_seconds)
+        now = _time.monotonic()
+        stale_ids = [
+            pid for pid, rec in self._open_predictions.items()
+            if (now - float(rec.get("created_at", 0.0))) > ttl
+        ]
+        for pid in stale_ids:
+            self._open_predictions.pop(pid, None)
+        if self._last_prediction_id in stale_ids:
+            self._last_prediction_id = None
+        return len(stale_ids)
 
     def _build_result(
         self,

@@ -356,6 +356,7 @@ class TestExplicitOutcomeEventCalibration:
             signal_source='tests',
             decision_action='proceed',
             outcome_type='test_passed',
+            prediction_id=None,
         )
         _, kwargs = mock_db.record_outcome_event.call_args
         assert kwargs['detail']['hard_exogenous_signal'] == 'tests'
@@ -480,6 +481,7 @@ class TestExplicitOutcomeEventCalibration:
             signal_source='tests',
             decision_action='proceed',
             outcome_type='test_failed',
+            prediction_id=None,
         )
 
 
@@ -506,3 +508,130 @@ class TestOutcomeEventParamsSchema:
         from src.mcp_handlers.schemas.core import OutcomeEventParams
         params = OutcomeEventParams(outcome_type='test_passed')
         assert params.confidence is None
+
+    def test_prediction_id_field_exists(self):
+        from src.mcp_handlers.schemas.core import OutcomeEventParams
+        fields = OutcomeEventParams.model_fields
+        assert 'prediction_id' in fields
+        assert fields['prediction_id'].default is None
+
+    def test_prediction_id_accepts_string(self):
+        from src.mcp_handlers.schemas.core import OutcomeEventParams
+        params = OutcomeEventParams(outcome_type='test_passed', prediction_id='pid-abc')
+        assert params.prediction_id == 'pid-abc'
+
+
+# ============================================================================
+# Phase-one seam: prediction_id lookup on outcome_event
+# ============================================================================
+
+class TestPredictionIdLookup:
+    """outcome_event should prefer the registered confidence when prediction_id is provided."""
+
+    @pytest.mark.asyncio
+    async def test_prediction_id_uses_registered_confidence(self):
+        """When prediction_id is present, registered confidence wins over _prev_confidence."""
+        mock_db = MagicMock()
+        mock_db.record_outcome_event = AsyncMock(return_value='oe-pid-1')
+        mock_db.get_latest_eisv_by_agent_id = AsyncMock(return_value={
+            'E': 0.7, 'I': 0.75, 'S': 0.15, 'V': -0.03,
+            'phi': 0.1, 'verdict': 'safe', 'coherence': 0.48, 'regime': 'CONVERGENCE',
+        })
+
+        mock_monitor = MagicMock()
+        # _prev_confidence is intentionally different to prove the registry path wins
+        mock_monitor._prev_confidence = 0.4
+        mock_monitor.consume_prediction = MagicMock(return_value={
+            'confidence': 0.9,
+            'decision_action': 'proceed',
+            'consumed': False,
+        })
+
+        mock_checker = MagicMock()
+        mock_seq_tracker = MagicMock()
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-pid'), \
+             patch('src.calibration.calibration_checker', mock_checker), \
+             patch('src.sequential_calibration.sequential_calibration_tracker', mock_seq_tracker):
+
+            mock_server.monitors = {'agent-pid': mock_monitor}
+
+            from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+            result = await handle_outcome_event({
+                'outcome_type': 'test_passed',
+                'prediction_id': 'pid-xyz',
+            })
+
+        parsed = parse_result(result)
+        assert parsed.get('outcome_id') == 'oe-pid-1'
+
+        # Registry was consulted
+        mock_monitor.consume_prediction.assert_called_once_with('pid-xyz')
+
+        # Calibration used the registered confidence (0.9), not _prev_confidence (0.4)
+        mock_checker.record_prediction.assert_called_once_with(
+            confidence=0.9,
+            predicted_correct=True,
+            actual_correct=1.0,
+        )
+
+        # Sequential tracker received prediction_id for audit
+        mock_seq_tracker.record_exogenous_tactical_outcome.assert_called_once()
+        _, seq_kwargs = mock_seq_tracker.record_exogenous_tactical_outcome.call_args
+        assert seq_kwargs['confidence'] == 0.9
+        assert seq_kwargs['prediction_id'] == 'pid-xyz'
+        assert seq_kwargs['signal_source'] == 'tests'
+
+        # Detail preserves provenance
+        _, db_kwargs = mock_db.record_outcome_event.call_args
+        assert db_kwargs['detail']['reported_confidence'] == 0.9
+        assert db_kwargs['detail']['prediction_id'] == 'pid-xyz'
+        assert db_kwargs['detail']['prediction_source'] == 'registry'
+        assert db_kwargs['detail']['eprocess_eligible'] is True
+
+    @pytest.mark.asyncio
+    async def test_unknown_prediction_id_falls_back_to_prev_confidence(self):
+        """If prediction_id is unknown to the monitor, fall back to _prev_confidence."""
+        mock_db = MagicMock()
+        mock_db.record_outcome_event = AsyncMock(return_value='oe-pid-2')
+        mock_db.get_latest_eisv_by_agent_id = AsyncMock(return_value={
+            'E': 0.7, 'I': 0.75, 'S': 0.15, 'V': -0.03,
+            'phi': 0.1, 'verdict': 'safe', 'coherence': 0.48, 'regime': 'CONVERGENCE',
+        })
+
+        mock_monitor = MagicMock()
+        mock_monitor._prev_confidence = 0.55
+        mock_monitor.consume_prediction = MagicMock(return_value=None)  # unknown id
+
+        mock_checker = MagicMock()
+        mock_seq_tracker = MagicMock()
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-unknown-pid'), \
+             patch('src.calibration.calibration_checker', mock_checker), \
+             patch('src.sequential_calibration.sequential_calibration_tracker', mock_seq_tracker):
+
+            mock_server.monitors = {'agent-unknown-pid': mock_monitor}
+
+            from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+            result = await handle_outcome_event({
+                'outcome_type': 'task_completed',
+                'prediction_id': 'pid-stale',
+            })
+
+        parsed = parse_result(result)
+        assert parsed.get('outcome_id') == 'oe-pid-2'
+
+        # Fallback confidence used
+        mock_checker.record_prediction.assert_called_once_with(
+            confidence=0.55,
+            predicted_correct=True,
+            actual_correct=1.0,
+        )
+        _, db_kwargs = mock_db.record_outcome_event.call_args
+        assert db_kwargs['detail']['reported_confidence'] == 0.55
+        assert db_kwargs['detail']['prediction_source'] == 'prev_confidence_fallback'
+        assert db_kwargs['detail']['prediction_id'] == 'pid-stale'

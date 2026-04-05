@@ -18,11 +18,22 @@ def build_process_update_response_data(
     result: Dict[str, Any],
     agent_id: str,
     identity_assurance: Any,
+    monitor: Any = None,
 ) -> Dict[str, Any]:
-    """Build the base response payload before enrichments and mode filtering."""
+    """Build the base response payload before enrichments and mode filtering.
+
+    If a monitor is provided and has a recently-minted tactical prediction id
+    (self._last_prediction_id), surface it as top-level `prediction_id` so the
+    agent can echo it back on outcome_event for exact filtration in the
+    sequential calibration lane.
+    """
     response_data = result.copy()
     response_data["agent_id"] = agent_id
     response_data["identity_assurance"] = identity_assurance
+    if monitor is not None:
+        last_prediction_id = getattr(monitor, "_last_prediction_id", None)
+        if last_prediction_id:
+            response_data["prediction_id"] = last_prediction_id
     return response_data
 
 

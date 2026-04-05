@@ -159,19 +159,47 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
         detail["snapshot_missing"] = True
 
     # Resolve confidence before persisting detail so exports can reconstruct the lane.
-    _confidence = arguments.get('confidence')
-    if _confidence is not None:
-        _confidence = float(_confidence)
-    else:
+    #
+    # Resolution order:
+    #   1. Explicit `prediction_id` — exact lookup against the agent's open
+    #      prediction registry. This is the phase-one seam that lets
+    #      outcome_event reference a specific (confidence, timestamp) pair
+    #      instead of relying on the _prev_confidence temporal proxy.
+    #   2. Explicit `confidence` argument — caller overrode registration.
+    #   3. Fallback to monitor._prev_confidence (most recent value seen).
+    _confidence = None
+    prediction_id = arguments.get("prediction_id")
+    prediction_source = None
+    prediction_record = None
+    if prediction_id:
+        try:
+            _m = mcp_server.monitors.get(agent_id)
+            if _m is not None:
+                prediction_record = _m.consume_prediction(prediction_id)
+                if prediction_record is not None:
+                    _confidence = float(prediction_record.get("confidence"))
+                    prediction_source = "registry"
+        except Exception:
+            pass
+
+    if _confidence is None:
+        _raw_conf = arguments.get("confidence")
+        if _raw_conf is not None:
+            _confidence = float(_raw_conf)
+            prediction_source = prediction_source or "argument"
+    if _confidence is None:
         try:
             monitor = mcp_server.monitors.get(agent_id)
             prev_confidence = getattr(monitor, "_prev_confidence", None) if monitor else None
             if isinstance(prev_confidence, (int, float)):
                 _confidence = float(prev_confidence)
+                prediction_source = prediction_source or "prev_confidence_fallback"
         except Exception:
             pass
 
     decision_action = arguments.get("decision_action")
+    if decision_action is None and prediction_record is not None:
+        decision_action = prediction_record.get("decision_action")
     if decision_action is None and outcome_type in {"test_passed", "test_failed"}:
         decision_action = "proceed"
 
@@ -183,6 +211,8 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
     detail["hard_exogenous_signal"] = hard_exogenous_signal
     detail["hard_exogenous"] = bool(hard_exogenous_signal)
     detail["eprocess_eligible"] = eprocess_eligible
+    detail["prediction_id"] = prediction_id
+    detail["prediction_source"] = prediction_source
 
     # Insert
     outcome_id = await db.record_outcome_event(
@@ -244,6 +274,7 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
                     signal_source=hard_exogenous_signal,
                     decision_action=decision_action,
                     outcome_type=outcome_type,
+                    prediction_id=prediction_id,
                 )
             except Exception as e_seq:
                 logger.debug(f"Sequential calibration tracking skipped: {e_seq}")
