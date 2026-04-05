@@ -18,9 +18,9 @@ Started at a hackathon, deployed to production within weeks, running continuousl
 |--|--|
 | **Role** | Turn agent check-ins into **EISV** state (energy, integrity, entropy, void), **verdicts** (`proceed` / `guide` / `pause` / `reject`), guidance, calibration, dialectic, and a **shared knowledge graph** (PostgreSQL + Apache AGE). |
 | **Default workflow** | `onboard()` → `process_agent_update()` → `get_governance_metrics()` — details in [Getting Started](docs/guides/START_HERE.md). |
-| **Transports** | **Streamable HTTP** MCP on `/mcp/` (this server does not use legacy SSE). REST tool calls on `/v1/tools/call`, dashboard on `/dashboard`, health on `/health`. |
+| **Transports** | **Streamable HTTP** MCP on `/mcp/` (MCP 1.24+). The `/mcp` stack may still use **SSE streams inside** that transport (`json_response=False` in `mcp_server.py`); what is deprecated is older **standalone** MCP SSE usage, not streaming as such. REST: `/v1/tools/call`; dashboard `/dashboard`; health `/health`. |
 | **Check-in pipeline** | Identity and guards → optional onboarding/resume → **per-agent lock** (concurrent clients, one updating writer per agent) → behavioral state update → verdict and response. |
-| **Tool modes** | **`GOVERNANCE_TOOL_MODE`** defaults to **`lite`** (~17 consolidated tools). Use **`minimal`** for six tools or **`full`** for all **49** registered tools. `list_tools` and `describe_tool` are always exposed. |
+| **Tool modes** | **`GOVERNANCE_TOOL_MODE`** defaults to **`lite`**. Sets are defined in [`src/tool_modes.py`](src/tool_modes.py) (`MINIMAL_MODE_TOOLS`, `LITE_MODE_TOOLS`; **`full`** unions all tools from `get_tool_definitions()` in [`src/tool_schemas.py`](src/tool_schemas.py)). Call **`list_tools`** on a running server for the exact list. `list_tools` and `describe_tool` are always exposed. |
 
 ---
 
@@ -32,7 +32,7 @@ Started at a hackathon, deployed to production within weeks, running continuousl
 3. get_governance_metrics()     → Check your state
 ```
 
-Example check-in:
+Example check-in (non-mirror responses include full `metrics`, `decision`, etc.):
 
 ```jsonc
 process_agent_update({
@@ -42,20 +42,25 @@ process_agent_update({
   "task_type": "refactoring",
   "response_mode": "mirror"  // or: minimal, compact, standard, full, auto
 })
+```
 
-// Response includes governance decision and metrics, e.g.:
+**`response_mode: "mirror"`** shapes the payload for self-awareness: `mirror` is a **list of strings** (actionable signals), not a nested object. Optional `relevant_prior_work` surfaces knowledge-graph items. See `_format_mirror` in [`src/mcp_handlers/response_formatter.py`](src/mcp_handlers/response_formatter.py).
+
+```jsonc
 {
   "verdict": "proceed",
-  "E": 0.74, "I": 0.78, "S": 0.15, "V": -0.02,
-  "coherence": 0.52,
-  "guidance": "State healthy. Proceed.",
-  "mirror": {
-    "calibration_feedback": "confidence tracks outcomes well",
-    "complexity_note": "within your normal range",
-    "knowledge_graph": "2 related discoveries from other agents"
-  }
+  "_mode": "mirror",
+  "mirror": [
+    "Calibration: 72% accuracy over 12 decisions (high-conf: 0.8, low-conf: 0.5)",
+    "You reported complexity=0.60 but system derives 0.45 (divergence=0.15) — what's driving your sense of difficulty?"
+  ],
+  "relevant_prior_work": [
+    { "summary": "Rate limiter bypass in auth …", "by": "agent-abc", "relevance": 0.82 }
+  ]
 }
 ```
+
+**Verdict field:** Responses expose `verdict` from `decision.action`. Governance actions are **`proceed` / `guide` / `pause` / `reject`** ([Architecture](docs/UNIFIED_ARCHITECTURE.md)). If `action` is absent, formatters fall back to **`continue`** — see `response_formatter.py`.
 
 The `onboard()` response includes templates for the next calls. See [Getting Started](docs/guides/START_HERE.md) for continuity (`client_session_id`, `continuity_token`) and alternative entry paths.
 
@@ -114,7 +119,7 @@ Agents self-identify through `onboard()`; no hardcoded agent-name header is requ
 
 | Endpoint | Transport | Use case |
 |----------|-----------|----------|
-| `/mcp/` | Streamable HTTP | MCP clients |
+| `/mcp/` | Streamable HTTP (may stream over SSE inside the MCP session) | MCP clients |
 | `/v1/tools/call` | REST POST | CLI, scripts, non-MCP clients |
 | `/dashboard` | HTTP | Web dashboard |
 | `/health` | HTTP | Health checks |
@@ -261,6 +266,17 @@ tests/                 Large test suite
 | [Dashboard](dashboard/README.md) | Web UI |
 | [Database](docs/database_architecture.md) | PostgreSQL + AGE |
 | [Changelog](CHANGELOG.md) | Releases |
+
+### Canonical sources (keep README in sync)
+
+| Topic | Source of truth |
+|-------|-----------------|
+| Governance pipeline, verdict meanings | [`docs/UNIFIED_ARCHITECTURE.md`](docs/UNIFIED_ARCHITECTURE.md) |
+| Tool mode membership (`minimal` / `lite` / `full`) | [`src/tool_modes.py`](src/tool_modes.py) — `get_tools_for_mode()`; **`full`** uses `get_tool_definitions()` in [`src/tool_schemas.py`](src/tool_schemas.py) |
+| Mirror and other response shaping | [`src/mcp_handlers/response_formatter.py`](src/mcp_handlers/response_formatter.py) |
+| MCP transport wiring | [`src/mcp_server.py`](src/mcp_server.py) |
+
+When in doubt, prefer those files over this README for counts and payload shapes.
 
 ## Contributing
 
