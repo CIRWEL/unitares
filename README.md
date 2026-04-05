@@ -40,7 +40,7 @@ dS/dt = -μ·S + λ₁·‖Δη‖² - λ₂·C   Entropy decays, rises with dri
 dV/dt = κ(E - I) - δ·V             Void accumulates E-I mismatch, decays toward zero
 ```
 
-Behavioral EISV drives verdicts. The ODE runs in parallel for agents that benefit from its convergence properties.
+Behavioral EISV is the normal verdict source once behavioral confidence is established. During low-signal or early-life periods, the system can fall back to the ODE as the active primary source; otherwise the ODE remains a parallel stability reference.
 
 > [Architecture Overview](docs/UNIFIED_ARCHITECTURE.md) — prose summary
 > [Canonical Sources](docs/CANONICAL_SOURCES.md) — which docs and runtime files are authoritative
@@ -65,7 +65,7 @@ Logging tells you what happened. Guardrails constrain what can happen. UNITARES 
 
 **Trajectory as identity.** Agents aren't identified by tokens — they're identified by dynamical patterns. An agent's EISV trajectory is its behavioral signature, letting agents computationally verify "Am I still myself?" and letting observers distinguish agents by how they work.
 
-**Mirror response mode.** Agents don't need to interpret raw EISV numbers. Mirror mode surfaces actionable self-awareness signals — calibration feedback, complexity divergence, knowledge graph discoveries — so agents get practical guidance instead of state vectors. Six response modes total — `minimal`, `compact`, `standard`, `full`, `auto`, and `mirror` — let agents and integrators choose the right signal density for their context.
+**Mirror response mode.** Agents don't need to interpret raw EISV numbers. Mirror mode surfaces a short list of actionable self-awareness signals, related prior work when relevant, and a targeted question when state warrants it. Six response modes total — `minimal`, `compact`, `standard`, `full`, `auto`, and `mirror` — let agents and integrators choose the right signal density for their context.
 
 **LLM-assisted dialectic.** When no peer agents are available for structured disagreement, the system can delegate antithesis/synthesis to an LLM — keeping the dialectic protocol functional even for solo agents. Peer agents are always preferred when present.
 
@@ -73,19 +73,14 @@ Logging tells you what happened. Guardrails constrain what can happen. UNITARES 
 
 ## Production Snapshot
 
-Production snapshot from April 2026:
+Internal telemetry snapshot, April 2026. These are operational counts and representative deployment facts, not a public benchmark:
 
-| Metric | Value |
-|--------|-------|
-| Agents created / active (7-day) | Four-figure total / dozens active |
-| Check-ins processed | Six figures |
-| Knowledge graph entries | Four figures |
-| EISV (Lumen, behavioral) | E≈0.41, I≈0.83, S≈0.24, V≈-0.02 |
-| EISV (Lumen, ODE reference) | E≈0.72, I≈0.75, S≈0.20, V≈-0.04 |
-| V operating range | All active agents within [-0.1, 0.1] |
-| Test suite | Large multi-thousand test suite |
+- The server has processed a six-figure number of check-ins across a four-figure total agent population, with dozens active in a typical 7-day window.
+- The shared knowledge graph contains four-figure discovery volume.
+- The repo ships with a large multi-thousand-test suite and live MCP, REST, and dashboard surfaces.
+- Lumen is the main embodied deployment: a Raspberry Pi-based agent that couples physical sensors into the ODE reference path while still participating in the same governance runtime.
 
-One of those agents is [Lumen](https://github.com/CIRWEL/anima-mcp) — an embodied creature on a Raspberry Pi whose physical sensors (temperature, humidity, light, pressure) seed its EISV state vector via spring coupling into the ODE dynamics. Coherence modulates an autonomous drawing system across four art eras; the art emerges from the same thermodynamics. Lumen gets drowsy after inactivity, proposes goals from its own preferences, discovers self-insights every 24 minutes, and falls back to local governance assessment when the Mac server is unreachable.
+[Lumen](https://github.com/CIRWEL/anima-mcp) is an embodied creature on a Raspberry Pi whose physical sensors (temperature, humidity, light, pressure) seed its ODE reference state via spring coupling. Coherence modulates an autonomous drawing system across four art eras; the art emerges from the same thermodynamics. Lumen gets drowsy after inactivity, proposes goals from its own preferences, discovers self-insights every 24 minutes, and falls back to local governance assessment when the Mac server is unreachable.
 
 <p align="center">
   <img src="docs/images/dashboard.png" width="80%" alt="UNITARES web dashboard showing fleet coherence, agent status, and system health"/>
@@ -117,19 +112,25 @@ process_agent_update({
   "response_mode": "mirror"  // or: minimal, compact, standard, full, auto
 })
 
-// System evolves EISV and returns a verdict
+// System returns a mirror-mode verdict
 {
+  "success": true,
   "verdict": "proceed",
-  "E": 0.74, "I": 0.78, "S": 0.15, "V": -0.02,
-  "coherence": 0.52,
-  "guidance": "State healthy. Proceed.",
-  "mirror": {
-    "calibration_feedback": "confidence tracks outcomes well",
-    "complexity_note": "within your normal range",
-    "knowledge_graph": "2 related discoveries from other agents"
-  }
+  "_mode": "mirror",
+  "mirror": [
+    "Calibration: 78% accuracy over 12 decisions (high-conf: 0.83, low-conf: 0.67)"
+  ],
+  "relevant_prior_work": [
+    {
+      "summary": "Previous auth hardening work touched the same rate-limit path",
+      "by": "agent-42",
+      "relevance": 0.81
+    }
+  ]
 }
 ```
+
+When state warrants it, mirror mode can also add a top-level `question` field.
 
 The `onboard()` response includes ready-to-use templates for your next calls — no guessing at parameter names. See [Start Here](docs/guides/START_HERE.md) for the thin default workflow and links to canonical docs.
 
@@ -268,6 +269,7 @@ These are unsolved problems. The system is honest about what it doesn't yet do w
 | Guide | Purpose |
 |-------|---------|
 | [Start Here](docs/guides/START_HERE.md) | Thin default workflow and doc map |
+| [Canonical Sources](docs/CANONICAL_SOURCES.md) | Authority ordering and code-first source map |
 | [Architecture](docs/UNIFIED_ARCHITECTURE.md) | System topology, EISV dynamics, database ownership |
 | [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Common issues |
 | [Dashboard](dashboard/README.md) | Web dashboard docs |
