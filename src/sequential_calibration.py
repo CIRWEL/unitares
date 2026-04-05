@@ -11,6 +11,46 @@ exogenous outcome. It is intentionally narrow:
 
 We expose a bounded alarm transform for operator use and keep the raw
 e-process internal to the tracker.
+
+Null and construction
+---------------------
+- Null H0: for each eligible sample n, Y_n ~ Bernoulli(p_n) where p_n is
+  the confidence reported by the agent before the outcome was observable.
+  This is a sequential composite null — p_n varies across samples — not a
+  single fixed Bernoulli.
+- Alternative: Beta-Bernoulli predictive plug-in. q_n is the posterior
+  mean of the success rate after n-1 observations, using a Beta(prior_success,
+  prior_failure) prior (default Beta(1, 1)).
+- Per-sample e-value: e_n = (q_n / p_n) if Y_n = 1 else ((1 - q_n) / (1 - p_n)).
+  Clamped to avoid degenerate 0/1 confidences.
+- q_n is computed from the state *before* the current sample is folded in,
+  making the bet F_{n-1}-measurable. Under H0, E[e_n | F_{n-1}] = 1, so the
+  running product is a nonnegative martingale with mean 1 and the cumulative
+  log is a valid e-process for anytime-valid testing.
+- The exposed alarm metric is capped_alarm = 1 - exp(-max(0, log_e_value)),
+  which lives in [0, 1). log_evidence is similarly clamped at 0 from below
+  so favorable trajectories do not produce negative alarms. Raw e-values
+  remain internal to the tracker and are not exposed as governance state.
+
+Known limitations
+-----------------
+- No prediction_id seam yet. Reported confidences are attached to outcomes
+  via explicit argument or a monitor-level `_prev_confidence` fallback
+  resolved at outcome time (see
+  src/mcp_handlers/observability/outcome_events.py). This is sufficient when
+  an agent has at most one tactical prediction in flight per outcome window,
+  but degrades to approximate temporal matching when multiple predictions
+  overlap. The filtration is therefore approximate, not exact, and forensic
+  replay from an alarm back to the specific (confidence, outcome) pair is
+  not guaranteed. A prediction_id seam is phase-two work and is required
+  before composing this e-process with knowledge-graph or dialectic
+  evidence streams.
+- Global and per-agent trackers update from the same samples. Each is
+  individually a valid e-process under H0, but they are correlated by
+  construction and must not be multiplied together.
+- prior_success / prior_failure are constructor parameters but are not
+  wired to configuration in v1. Defaults (Beta(1, 1)) are intentional and
+  should not be tuned without also reviewing downstream alarm thresholds.
 """
 
 from __future__ import annotations
@@ -113,6 +153,9 @@ class SequentialCalibrationTracker:
         signal_source: str,
         timestamp: str,
     ) -> Dict[str, float]:
+        # Betting martingale step. See module docstring for the null and
+        # construction. q is computed from the pre-update state to preserve
+        # F_{n-1}-measurability; the state increments happen after e_value.
         p = self._clamp_probability(confidence)
         y = 1.0 if outcome_correct else 0.0
         q = self._predictive_alt_probability(state)
