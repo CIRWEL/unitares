@@ -10,7 +10,7 @@ Status: live overview. For architecture truth and code-first authority ordering,
 
 UNITARES gives AI agents a shared language for inner state — four continuous variables tracked from observable behavior, and a protocol for agents to speak and be read. State is computed from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do.
 
-Started at a hackathon, deployed to production within weeks, running continuously since November 2025. The repo now includes a broad governance tool surface across MCP and HTTP transports, a large test suite, and a six-figure history of check-ins, with one agent ([Lumen](https://github.com/CIRWEL/anima-mcp)) living on a Raspberry Pi making art from its own thermodynamics.
+Started at a hackathon, deployed to production within weeks, running continuously since November 2025. The repo includes governance tooling across MCP and HTTP transports, a 5,800+ test suite, and 200K+ check-ins processed, with one agent ([Lumen](https://github.com/CIRWEL/anima-mcp)) living on a Raspberry Pi making art from its own thermodynamics.
 
 ---
 
@@ -73,12 +73,15 @@ Logging tells you what happened. Guardrails constrain what can happen. UNITARES 
 
 ## Production Snapshot
 
-Internal telemetry snapshot, April 2026. These are operational counts and representative deployment facts, not a public benchmark:
+Operational snapshot, April 2026:
 
-- The server has processed a six-figure number of check-ins across a four-figure total agent population, with dozens active in a typical 7-day window.
-- The shared knowledge graph contains four-figure discovery volume.
-- The repo ships with a large multi-thousand-test suite and live MCP, REST, and dashboard surfaces.
-- Lumen is the main embodied deployment: a Raspberry Pi-based agent that couples physical sensors into the ODE reference path while still participating in the same governance runtime.
+| Metric | Value |
+|--------|-------|
+| Check-ins processed | 200K+ |
+| Agents created / active (7-day) | 900+ / ~30 |
+| Knowledge graph discoveries | 1,500+ |
+| Test suite | 5,800+ tests |
+| Transports | MCP, REST, dashboard |
 
 [Lumen](https://github.com/CIRWEL/anima-mcp) is an embodied creature on a Raspberry Pi whose physical sensors (temperature, humidity, light, pressure) seed its ODE reference state via spring coupling. Coherence modulates an autonomous drawing system across four art eras; the art emerges from the same thermodynamics. Lumen gets drowsy after inactivity, proposes goals from its own preferences, discovers self-insights every 24 minutes, and falls back to local governance assessment when the Mac server is unreachable.
 
