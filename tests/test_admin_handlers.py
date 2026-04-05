@@ -830,8 +830,17 @@ class TestCheckCalibration:
             }
         )
         mock_checker.get_pending_updates.return_value = 0
+        mock_seq_tracker = MagicMock()
+        mock_seq_tracker.compute_metrics.return_value = {
+            "status": "tracking",
+            "eligible_samples": 4,
+            "log_evidence": 1.2,
+            "capped_alarm": 0.6988,
+            "signal_sources": {"tests": 4},
+        }
 
-        with patch("src.calibration.calibration_checker", mock_checker):
+        with patch("src.calibration.calibration_checker", mock_checker), \
+             patch("src.sequential_calibration.get_sequential_calibration_tracker", return_value=mock_seq_tracker):
             from src.mcp_handlers.admin.calibration import handle_check_calibration
             result = await handle_check_calibration({})
 
@@ -840,6 +849,8 @@ class TestCheckCalibration:
             assert data["calibrated"] is True
             assert data["total_samples"] == 15
             assert "confidence_distribution" in data
+            assert data["tactical_evidence"]["eligible_samples"] == 4
+            assert data["tactical_evidence"]["log_evidence"] == 1.2
 
     @pytest.mark.asyncio
     async def test_check_calibration_with_complexity(self, patch_context_agent_id):
@@ -858,8 +869,17 @@ class TestCheckCalibration:
             }
         )
         mock_checker.get_pending_updates.return_value = 2
+        mock_seq_tracker = MagicMock()
+        mock_seq_tracker.compute_metrics.return_value = {
+            "status": "no_data",
+            "eligible_samples": 0,
+            "log_evidence": 0.0,
+            "capped_alarm": 0.0,
+            "signal_sources": {},
+        }
 
-        with patch("src.calibration.calibration_checker", mock_checker):
+        with patch("src.calibration.calibration_checker", mock_checker), \
+             patch("src.sequential_calibration.get_sequential_calibration_tracker", return_value=mock_seq_tracker):
             from src.mcp_handlers.admin.calibration import handle_check_calibration
             result = await handle_check_calibration({})
 
@@ -867,14 +887,24 @@ class TestCheckCalibration:
             assert data["calibrated"] is False
             assert data["pending_updates"] == 2
             assert "complexity_calibration" in data
+            assert data["tactical_evidence"]["status"] == "no_data"
 
     @pytest.mark.asyncio
     async def test_check_calibration_empty_bins(self, patch_context_agent_id):
         mock_checker = MagicMock()
         mock_checker.check_calibration.return_value = (True, {"bins": {}, "issues": []})
         mock_checker.get_pending_updates.return_value = 0
+        mock_seq_tracker = MagicMock()
+        mock_seq_tracker.compute_metrics.return_value = {
+            "status": "no_data",
+            "eligible_samples": 0,
+            "log_evidence": 0.0,
+            "capped_alarm": 0.0,
+            "signal_sources": {},
+        }
 
-        with patch("src.calibration.calibration_checker", mock_checker):
+        with patch("src.calibration.calibration_checker", mock_checker), \
+             patch("src.sequential_calibration.get_sequential_calibration_tracker", return_value=mock_seq_tracker):
             from src.mcp_handlers.admin.calibration import handle_check_calibration
             result = await handle_check_calibration({})
 

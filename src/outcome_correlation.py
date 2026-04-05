@@ -120,6 +120,11 @@ def _exogenous_signal_flags(detail: Dict[str, Any]) -> Dict[str, bool]:
     }
 
 
+def _is_eprocess_eligible(detail: Dict[str, Any]) -> bool:
+    """Return True when the outcome is eligible for the hard exogenous e-process lane."""
+    return bool(detail.get("eprocess_eligible"))
+
+
 def compute_observability_coverage(outcomes: List[Dict]) -> Dict[str, Any]:
     """Measure how grounded the current outcome dataset is."""
     total = len(outcomes)
@@ -130,16 +135,19 @@ def compute_observability_coverage(outcomes: List[Dict]) -> Dict[str, Any]:
             "with_behavioral_eisv": _count_pct(0, 0),
             "with_behavioral_primary": _count_pct(0, 0),
             "with_exogenous_signals": _count_pct(0, 0),
+            "with_eprocess_eligible": _count_pct(0, 0),
             "with_snapshot": _count_pct(0, 0),
             "with_outcome_score": _count_pct(0, 0),
             "primary_source_counts": {},
             "exogenous_signal_counts": {},
+            "eprocess_signal_counts": {},
         }
 
     with_primary_eisv = 0
     with_behavioral_eisv = 0
     with_behavioral_primary = 0
     with_exogenous_signals = 0
+    with_eprocess_eligible = 0
     with_snapshot = 0
     with_outcome_score = 0
     primary_source_counts: Dict[str, int] = {}
@@ -151,6 +159,7 @@ def compute_observability_coverage(outcomes: List[Dict]) -> Dict[str, Any]:
         "tool_observations": 0,
         "outcome_events": 0,
     }
+    eprocess_signal_counts: Dict[str, int] = {}
 
     for outcome in outcomes:
         detail = _get_detail(outcome)
@@ -176,16 +185,23 @@ def compute_observability_coverage(outcomes: List[Dict]) -> Dict[str, Any]:
             if present:
                 exogenous_signal_counts[signal_type] += 1
 
+        if _is_eprocess_eligible(detail):
+            with_eprocess_eligible += 1
+            source = detail.get("hard_exogenous_signal") or "unknown"
+            eprocess_signal_counts[source] = eprocess_signal_counts.get(source, 0) + 1
+
     return {
         "total_outcomes": total,
         "with_primary_eisv": _count_pct(with_primary_eisv, total),
         "with_behavioral_eisv": _count_pct(with_behavioral_eisv, total),
         "with_behavioral_primary": _count_pct(with_behavioral_primary, total),
         "with_exogenous_signals": _count_pct(with_exogenous_signals, total),
+        "with_eprocess_eligible": _count_pct(with_eprocess_eligible, total),
         "with_snapshot": _count_pct(with_snapshot, total),
         "with_outcome_score": _count_pct(with_outcome_score, total),
         "primary_source_counts": primary_source_counts,
         "exogenous_signal_counts": exogenous_signal_counts,
+        "eprocess_signal_counts": eprocess_signal_counts,
     }
 
 
@@ -212,6 +228,10 @@ def flatten_outcome_for_export(outcome: Dict[str, Any]) -> Dict[str, Any]:
         "eisv_regime": outcome.get("eisv_regime"),
         "primary_eisv_source": detail.get("primary_eisv_source"),
         "snapshot_missing": detail.get("snapshot_missing"),
+        "reported_confidence": detail.get("reported_confidence"),
+        "decision_action": detail.get("decision_action"),
+        "hard_exogenous_signal": detail.get("hard_exogenous_signal"),
+        "eprocess_eligible": detail.get("eprocess_eligible"),
         "primary_e": primary.get("E"),
         "primary_i": primary.get("I"),
         "primary_s": primary.get("S"),
@@ -297,6 +317,12 @@ def _build_summary(report: CorrelationReport) -> str:
                 f"{exogenous.get('count', 0)}/{report.total_outcomes} outcomes have exogenous signals; "
                 f"{behavioral_primary.get('count', 0)}/{report.total_outcomes} use behavioral primary state"
             )
+        eprocess_eligible = coverage.get("with_eprocess_eligible", {})
+        if isinstance(eprocess_eligible, dict):
+            lines.append(
+                "Sequential lane: "
+                f"{eprocess_eligible.get('count', 0)}/{report.total_outcomes} outcomes are hard-exogenous tactical candidates"
+            )
 
     # Verdict distribution insight
     for v, d in report.verdict_distribution.items():
@@ -380,7 +406,7 @@ class OutcomeCorrelation:
                     FROM audit.outcome_events
                     WHERE agent_id = $1
                       AND ts >= now() - make_interval(hours => $2)
-                    ORDER BY ts DESC
+                    ORDER BY ts ASC
                     """,
                     agent_id, since_hours,
                 )
@@ -393,7 +419,7 @@ class OutcomeCorrelation:
                            detail, ts, agent_id
                     FROM audit.outcome_events
                     WHERE ts >= now() - make_interval(hours => $1)
-                    ORDER BY ts DESC
+                    ORDER BY ts ASC
                     """,
                     since_hours,
                 )

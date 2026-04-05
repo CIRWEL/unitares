@@ -275,6 +275,7 @@ class TestExplicitOutcomeEventCalibration:
         mock_monitor._behavioral_state = SimpleNamespace(
             E=0.51, I=0.68, S=0.22, V=-0.11, confidence=0.45,
         )
+        mock_monitor._prev_confidence = None
         mock_monitor.get_primary_eisv.return_value = (0.51, 0.68, 0.22, -0.11)
 
         with patch('src.db.get_db', return_value=mock_db), \
@@ -304,6 +305,8 @@ class TestExplicitOutcomeEventCalibration:
         assert kwargs['detail']['primary_eisv_source'] == 'behavioral'
         assert kwargs['detail']['behavioral_eisv']['E'] == 0.51
         assert kwargs['detail']['ode_eisv']['E'] == 0.7
+        assert kwargs['detail']['reported_confidence'] is None
+        assert kwargs['detail']['eprocess_eligible'] is False
 
     @pytest.mark.asyncio
     async def test_records_calibration_with_explicit_confidence(self):
@@ -318,11 +321,13 @@ class TestExplicitOutcomeEventCalibration:
         mock_checker = MagicMock()
         mock_checker.record_prediction = MagicMock()
         mock_checker.record_tactical_decision = MagicMock()
+        mock_seq_tracker = MagicMock()
 
         with patch('src.db.get_db', return_value=mock_db), \
              patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
              patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-test'), \
-             patch('src.calibration.calibration_checker', mock_checker):
+             patch('src.calibration.calibration_checker', mock_checker), \
+             patch('src.sequential_calibration.sequential_calibration_tracker', mock_seq_tracker):
 
             from src.mcp_handlers.observability.outcome_events import handle_outcome_event
             result = await handle_outcome_event({
@@ -344,6 +349,18 @@ class TestExplicitOutcomeEventCalibration:
             decision='proceed',
             immediate_outcome=True,  # not is_bad
         )
+        mock_seq_tracker.record_exogenous_tactical_outcome.assert_called_once_with(
+            confidence=0.85,
+            outcome_correct=True,
+            agent_id='agent-test',
+            signal_source='tests',
+            decision_action='proceed',
+            outcome_type='test_passed',
+        )
+        _, kwargs = mock_db.record_outcome_event.call_args
+        assert kwargs['detail']['hard_exogenous_signal'] == 'tests'
+        assert kwargs['detail']['eprocess_eligible'] is True
+        assert kwargs['detail']['reported_confidence'] == 0.85
 
     @pytest.mark.asyncio
     async def test_confidence_fallback_from_monitor(self):
@@ -359,11 +376,13 @@ class TestExplicitOutcomeEventCalibration:
         mock_monitor._prev_confidence = 0.7
 
         mock_checker = MagicMock()
+        mock_seq_tracker = MagicMock()
 
         with patch('src.db.get_db', return_value=mock_db), \
              patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
              patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-mon'), \
-             patch('src.calibration.calibration_checker', mock_checker):
+             patch('src.calibration.calibration_checker', mock_checker), \
+             patch('src.sequential_calibration.sequential_calibration_tracker', mock_seq_tracker):
 
             mock_server.monitors = {'agent-mon': mock_monitor}
 
@@ -381,6 +400,10 @@ class TestExplicitOutcomeEventCalibration:
             predicted_correct=True,
             actual_correct=1.0,
         )
+        mock_seq_tracker.record_exogenous_tactical_outcome.assert_not_called()
+        _, kwargs = mock_db.record_outcome_event.call_args
+        assert kwargs['detail']['reported_confidence'] == 0.7
+        assert kwargs['detail']['eprocess_eligible'] is False
 
     @pytest.mark.asyncio
     async def test_no_calibration_when_no_confidence_available(self):
@@ -393,11 +416,13 @@ class TestExplicitOutcomeEventCalibration:
         })
 
         mock_checker = MagicMock()
+        mock_seq_tracker = MagicMock()
 
         with patch('src.db.get_db', return_value=mock_db), \
              patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
              patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-no-conf'), \
-             patch('src.calibration.calibration_checker', mock_checker):
+             patch('src.calibration.calibration_checker', mock_checker), \
+             patch('src.sequential_calibration.sequential_calibration_tracker', mock_seq_tracker):
 
             mock_server.monitors = {}  # No monitor for this agent
 
@@ -409,6 +434,7 @@ class TestExplicitOutcomeEventCalibration:
         parsed = parse_result(result)
         assert parsed.get('outcome_id') == 'oe-3'
         mock_checker.record_prediction.assert_not_called()
+        mock_seq_tracker.record_exogenous_tactical_outcome.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_test_failed_records_tactical_with_bad_outcome(self):
@@ -421,11 +447,13 @@ class TestExplicitOutcomeEventCalibration:
         })
 
         mock_checker = MagicMock()
+        mock_seq_tracker = MagicMock()
 
         with patch('src.db.get_db', return_value=mock_db), \
              patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
              patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-tf'), \
-             patch('src.calibration.calibration_checker', mock_checker):
+             patch('src.calibration.calibration_checker', mock_checker), \
+             patch('src.sequential_calibration.sequential_calibration_tracker', mock_seq_tracker):
 
             mock_server.monitors = {}
 
@@ -444,6 +472,14 @@ class TestExplicitOutcomeEventCalibration:
             confidence=0.9,
             decision='proceed',
             immediate_outcome=False,  # is_bad=True → not is_bad = False
+        )
+        mock_seq_tracker.record_exogenous_tactical_outcome.assert_called_once_with(
+            confidence=0.9,
+            outcome_correct=False,
+            agent_id='agent-tf',
+            signal_source='tests',
+            decision_action='proceed',
+            outcome_type='test_failed',
         )
 
 

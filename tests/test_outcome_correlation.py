@@ -206,6 +206,8 @@ class TestCoverage:
                     "primary_eisv_source": "behavioral",
                     "behavioral_eisv": {"E": 0.7, "I": 0.8, "S": 0.2, "V": 0.0, "confidence": 0.9},
                     "tests": [{"name": "pytest", "passed": True}],
+                    "hard_exogenous_signal": "tests",
+                    "eprocess_eligible": True,
                 },
             ),
             _make_outcome(
@@ -225,11 +227,13 @@ class TestCoverage:
         assert coverage["with_behavioral_eisv"]["count"] == 1
         assert coverage["with_behavioral_primary"]["count"] == 1
         assert coverage["with_exogenous_signals"]["count"] == 2
+        assert coverage["with_eprocess_eligible"]["count"] == 1
         assert coverage["with_snapshot"]["count"] == 2
         assert coverage["primary_source_counts"]["behavioral"] == 1
         assert coverage["primary_source_counts"]["ode"] == 1
         assert coverage["exogenous_signal_counts"]["tests"] == 1
         assert coverage["exogenous_signal_counts"]["commands"] == 1
+        assert coverage["eprocess_signal_counts"]["tests"] == 1
 
     def test_flatten_outcome_for_export_surfaces_signal_flags(self):
         row = flatten_outcome_for_export(
@@ -242,12 +246,20 @@ class TestCoverage:
                     "behavioral_eisv": {"E": 0.4, "I": 0.7, "S": 0.6, "V": -0.1, "confidence": 0.55},
                     "files": [{"path": "foo.py"}],
                     "tool_results": [{"tool": "pytest", "exit_code": 1}],
+                    "reported_confidence": 0.6,
+                    "decision_action": "proceed",
+                    "hard_exogenous_signal": "files",
+                    "eprocess_eligible": True,
                 },
             )
         )
         assert row["primary_eisv_source"] == "behavioral"
         assert row["primary_e"] == 0.4
         assert row["behavioral_confidence"] == 0.55
+        assert row["reported_confidence"] == 0.6
+        assert row["decision_action"] == "proceed"
+        assert row["hard_exogenous_signal"] == "files"
+        assert row["eprocess_eligible"] is True
         assert row["files"] is True
         assert row["tool_observations"] is True
         assert row["has_exogenous_signals"] is True

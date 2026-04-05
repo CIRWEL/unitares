@@ -21,6 +21,24 @@ GOOD_OUTCOME_TYPES = {"test_passed", "drawing_completed", "task_completed"}
 NEUTRAL_OUTCOME_TYPES = {"trajectory_validated"}  # is_bad determined by score
 VALID_OUTCOME_TYPES = BAD_OUTCOME_TYPES | GOOD_OUTCOME_TYPES | NEUTRAL_OUTCOME_TYPES
 
+_HARD_EXOGENOUS_DETAIL_KEYS = (
+    ("tests", "tests"),
+    ("commands", "commands"),
+    ("files", "files"),
+    ("lint", "lint"),
+    ("tool_results", "tool_observations"),
+)
+
+
+def _classify_hard_exogenous_signal(outcome_type: str, detail: Dict[str, Any]) -> str | None:
+    """Return the hard exogenous signal source when this outcome is e-process eligible."""
+    if outcome_type in {"test_passed", "test_failed"}:
+        return "tests"
+    for key, label in _HARD_EXOGENOUS_DETAIL_KEYS:
+        if detail.get(key):
+            return label
+    return None
+
 @mcp_tool("outcome_event", timeout=15.0)
 async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Record an outcome event paired with the agent's current EISV snapshot."""
@@ -140,6 +158,32 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
         detail["snapshot_source"] = "missing"
         detail["snapshot_missing"] = True
 
+    # Resolve confidence before persisting detail so exports can reconstruct the lane.
+    _confidence = arguments.get('confidence')
+    if _confidence is not None:
+        _confidence = float(_confidence)
+    else:
+        try:
+            monitor = mcp_server.monitors.get(agent_id)
+            prev_confidence = getattr(monitor, "_prev_confidence", None) if monitor else None
+            if isinstance(prev_confidence, (int, float)):
+                _confidence = float(prev_confidence)
+        except Exception:
+            pass
+
+    decision_action = arguments.get("decision_action")
+    if decision_action is None and outcome_type in {"test_passed", "test_failed"}:
+        decision_action = "proceed"
+
+    hard_exogenous_signal = _classify_hard_exogenous_signal(outcome_type, detail)
+    eprocess_eligible = bool(hard_exogenous_signal and _confidence is not None)
+
+    detail["reported_confidence"] = _confidence
+    detail["decision_action"] = decision_action
+    detail["hard_exogenous_signal"] = hard_exogenous_signal
+    detail["hard_exogenous"] = bool(hard_exogenous_signal)
+    detail["eprocess_eligible"] = eprocess_eligible
+
     # Insert
     outcome_id = await db.record_outcome_event(
         agent_id=agent_id,
@@ -171,17 +215,6 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
     )
 
     # Record calibration from outcome event
-    _confidence = arguments.get('confidence')
-    if _confidence is not None:
-        _confidence = float(_confidence)
-    else:
-        try:
-            monitor = mcp_server.monitors.get(agent_id)
-            if monitor and monitor._prev_confidence is not None:
-                _confidence = float(monitor._prev_confidence)
-        except Exception:
-            pass
-
     if _confidence is not None:
         try:
             from src.calibration import calibration_checker
@@ -199,6 +232,21 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
                 )
         except Exception as e_cal:
             logger.debug(f"Calibration from outcome_event skipped: {e_cal}")
+
+        if eprocess_eligible:
+            try:
+                from src.sequential_calibration import sequential_calibration_tracker
+
+                sequential_calibration_tracker.record_exogenous_tactical_outcome(
+                    confidence=_confidence,
+                    outcome_correct=not is_bad,
+                    agent_id=agent_id,
+                    signal_source=hard_exogenous_signal,
+                    decision_action=decision_action,
+                    outcome_type=outcome_type,
+                )
+            except Exception as e_seq:
+                logger.debug(f"Sequential calibration tracking skipped: {e_seq}")
 
     return success_response({
         "outcome_id": outcome_id,

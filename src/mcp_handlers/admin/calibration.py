@@ -86,6 +86,19 @@ async def handle_check_calibration(arguments: Dict[str, Any]) -> Sequence[TextCo
             "Low confidence + excellent outcome = underconfident (False)."
         )
     }
+
+    try:
+        from src.sequential_calibration import get_sequential_calibration_tracker
+
+        response["tactical_evidence"] = {
+            **get_sequential_calibration_tracker().compute_metrics(),
+            "note": (
+                "Sequential evidence is tracked only for hard exogenous tactical outcomes "
+                "(tests, commands, files, lint, tool-result evidence)."
+            ),
+        }
+    except Exception:
+        pass
     
     # Add complexity calibration metrics if available
     if 'complexity_calibration' in metrics:
@@ -309,4 +322,3 @@ async def handle_backfill_calibration_from_dialectic(arguments: Dict[str, Any]) 
         })
     except Exception as e:
         return [error_response(f"Error during backfill: {str(e)}")]
-
