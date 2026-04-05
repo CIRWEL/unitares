@@ -88,7 +88,7 @@ Installed location: `~/Library/LaunchAgents/`
 AGE (Apache Graph Extension) utilities — bootstrap SQL, export scripts, sample Cypher queries.
 
 ### `analysis/`
-Analysis and reporting scripts.
+Analysis and reporting scripts, including outcome / calibration reporting and offline dataset export for validation studies.
 
 ### `diagnostics/`
 Diagnostic scripts for debugging server and agent issues.

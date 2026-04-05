@@ -36,6 +36,7 @@ REQUIRED_STATUS_PREFIX = {
     "docs/guides/CIRS_PROTOCOL.md": "Status:",
     "docs/dev/TOOL_REGISTRATION.md": "Status:",
     "docs/engineering/contract-drift-playbook.md": "Status:",
+    "docs/engineering/validation-roadmap.md": "Status:",
     "docs/meta/MARKDOWN_PROLIFERATION_POLICY.md": "Status:",
 }
 

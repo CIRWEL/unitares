@@ -64,6 +64,7 @@ These are live but intentionally specialized. They should not be treated as gene
 | `docs/CIRCUIT_BREAKER_DIALECTIC.md` | specialized recovery reference | Circuit-breaker and dialectic recovery flow |
 | `docs/dev/TOOL_REGISTRATION.md` | specialized developer reference | MCP/tool registration work |
 | `docs/engineering/contract-drift-playbook.md` | specialized engineering playbook | Tool-contract and drift-prevention work |
+| `docs/engineering/validation-roadmap.md` | specialized engineering roadmap | Empirical validation ladder for groundedness, prediction, and intervention |
 | `docs/meta/MARKDOWN_PROLIFERATION_POLICY.md` | specialized policy reference | Markdown creation policy and consolidation rules |
 
 ## Known Stale-Risk Patterns
