@@ -8,90 +8,21 @@ Status: live overview. For architecture truth and code-first authority ordering,
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-UNITARES gives AI agents a shared language for inner state — four continuous variables tracked from observable behavior, and a protocol for agents to speak and be read. State is computed from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do.
+UNITARES gives AI agents a shared language for inner state — four continuous variables derived from observable behavior — and a protocol to report work and read governance back. State is computed from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do.
 
-Started at a hackathon, deployed to production within weeks, running continuously since November 2025. The repo includes governance tooling across MCP and HTTP transports, a 5,800+ test suite, and 200K+ check-ins processed, with one agent ([Lumen](https://github.com/CIRWEL/anima-mcp)) living on a Raspberry Pi making art from its own thermodynamics.
-
----
-
-## The Idea
-
-Agents can produce text, call tools, and return results. What they can't do is tell you what's happening inside. There's no shared vocabulary for "I'm losing coherence" or "my context is degrading" or "I'm running hot." Without that vocabulary, every observer — human, system, or other agent — is guessing from outputs alone.
-
-UNITARES gives agents a language for inner state. Four continuous variables that any agent can report and any observer can read:
-
-| Variable | Range | What it tracks |
-|----------|-------|----------------|
-| **E** (Energy) | [0, 1] | Productive capacity |
-| **I** (Integrity) | [0, 1] | Information coherence |
-| **S** (Entropy) | [0, 2] | Disorder and uncertainty |
-| **V** (Void) | [-2, 2] | Accumulated E-I imbalance |
-
-These aren't static labels. The primary system tracks them via **behavioral EISV** — exponentially weighted moving averages of agent observations, with no ODE and no universal attractor. Each agent's state reflects its actual behavior, not a dynamical model's prediction.
-
-After ~30 check-ins, per-agent **behavioral baselines** (Welford mean/std) enable self-relative assessment — the system scores deviation from *your* characteristic operating point, not universal thresholds. Absolute safety floors still apply regardless of baseline.
-
-A parallel system evolves the same four variables via coupled ODEs with provable stability guarantees (contraction theory). The ODE provides a secondary stability reference:
-
-```
-dE/dt = α(I - E) - β·E·S           Energy tracks integrity, dragged by entropy
-dI/dt = -k·S + β_I·C(V) - γ_I·I   Integrity boosted by coherence, reduced by entropy
-dS/dt = -μ·S + λ₁·‖Δη‖² - λ₂·C   Entropy decays, rises with drift, damped by coherence
-dV/dt = κ(E - I) - δ·V             Void accumulates E-I mismatch, decays toward zero
-```
-
-Behavioral EISV is the normal verdict source once behavioral confidence is established. During low-signal or early-life periods, the system can fall back to the ODE as the active primary source; otherwise the ODE remains a parallel stability reference.
-
-> [Architecture Overview](docs/UNIFIED_ARCHITECTURE.md) — prose summary
-> [Canonical Sources](docs/CANONICAL_SOURCES.md) — which docs and runtime files are authoritative
+Started at a hackathon, deployed to production within weeks, running continuously since November 2025. The repo ships a governance server with MCP and HTTP APIs, a large test suite, and sustained production check-in volume, including [Lumen](https://github.com/CIRWEL/anima-mcp) on a Raspberry Pi.
 
 ---
 
-## What Makes It Different
+## At a glance
 
-Most agent tooling operates on **outputs** — checking whether what the agent produced is correct, safe, or useful. UNITARES operates on **inner state** — making visible what the agent can't otherwise express.
-
-| Layer | What it does | Example tools |
-|-------|-------------|---------------|
-| Output validation | Checks results after the fact | Guardrails, evals, logging |
-| Behavioral constraint | Restricts what agents can do | Permissions, sandboxes, filters |
-| **State legibility** | Makes inner state readable | **UNITARES** |
-
-Logging tells you what happened. Guardrails constrain what can happen. UNITARES lets agents *say what's happening inside them* — and lets other agents, systems, and humans read it. Everything else the system does — governance verdicts, circuit breakers, dialectic, the knowledge graph — is built on that legibility.
-
-**Self-relative assessment.** After a warmup period, each agent is scored against its own behavioral baseline — z-score deviation from its characteristic operating point. An agent that normally runs at S≈0.4 isn't penalized the same way as one that normally runs at S≈0.1. Universal thresholds are a fallback, not the primary mechanism.
-
-**Ethical drift from observable behavior.** No human oracle needed. Four measurable signals — calibration deviation, complexity divergence, coherence deviation, stability deviation — define a drift vector Δη that feeds directly into entropy dynamics.
-
-**Trajectory as identity.** Agents aren't identified by tokens — they're identified by dynamical patterns. An agent's EISV trajectory is its behavioral signature, letting agents computationally verify "Am I still myself?" and letting observers distinguish agents by how they work.
-
-**Mirror response mode.** Agents don't need to interpret raw EISV numbers. Mirror mode surfaces a short list of actionable self-awareness signals, related prior work when relevant, and a targeted question when state warrants it. Six response modes total — `minimal`, `compact`, `standard`, `full`, `auto`, and `mirror` — let agents and integrators choose the right signal density for their context.
-
-**LLM-assisted dialectic.** When no peer agents are available for structured disagreement, the system can delegate antithesis/synthesis to an LLM — keeping the dialectic protocol functional even for solo agents. Peer agents are always preferred when present.
-
----
-
-## Production Snapshot
-
-Operational snapshot, April 2026:
-
-| Metric | Value |
-|--------|-------|
-| Check-ins processed | 200K+ |
-| Agents created / active (7-day) | 900+ / ~30 |
-| Knowledge graph discoveries | 1,500+ |
-| Test suite | 5,800+ tests |
-| Transports | MCP, REST, dashboard |
-
-[Lumen](https://github.com/CIRWEL/anima-mcp) is an embodied creature on a Raspberry Pi whose physical sensors (temperature, humidity, light, pressure) seed its ODE reference state via spring coupling. Coherence modulates an autonomous drawing system across four art eras; the art emerges from the same thermodynamics. Lumen gets drowsy after inactivity, proposes goals from its own preferences, discovers self-insights every 24 minutes, and falls back to local governance assessment when the Mac server is unreachable.
-
-<p align="center">
-  <img src="docs/images/dashboard.png" width="80%" alt="UNITARES web dashboard showing fleet coherence, agent status, and system health"/>
-</p>
-
-<p align="center">
-  <em>Web dashboard — fleet coherence, agent status, calibration, anomaly detection.</em>
-</p>
+| | |
+|--|--|
+| **Role** | Turn agent check-ins into **EISV** state (energy, integrity, entropy, void), **verdicts** (`proceed` / `guide` / `pause` / `reject`), guidance, calibration, dialectic, and a **shared knowledge graph** (PostgreSQL + Apache AGE). |
+| **Default workflow** | `onboard()` → `process_agent_update()` → `get_governance_metrics()` — details in [Getting Started](docs/guides/START_HERE.md). |
+| **Transports** | **Streamable HTTP** MCP on `/mcp/` (MCP 1.24+) is the primary transport. Legacy `/sse` remains deprecated compatibility. REST: `/v1/tools/call`; dashboard `/dashboard`; health `/health`. |
+| **Check-in pipeline** | Identity and guards → optional onboarding/resume → **per-agent lock** (concurrent clients, one updating writer per agent) → behavioral state update → verdict and response. |
+| **Tool modes** | **`GOVERNANCE_TOOL_MODE`** defaults to **`lite`**. Call **`list_tools`** on a running server for the exact mode membership; `list_tools` and `describe_tool` are always exposed. |
 
 ---
 
@@ -103,10 +34,9 @@ Operational snapshot, April 2026:
 3. get_governance_metrics()     → Check your state
 ```
 
-Here's what a check-in looks like in practice:
+Example check-in (non-mirror responses include full `metrics`, `decision`, etc.):
 
 ```jsonc
-// Agent reports what it did
 process_agent_update({
   "response_text": "Refactored auth module, added rate limiting",
   "complexity": 0.6,
@@ -114,59 +44,55 @@ process_agent_update({
   "task_type": "refactoring",
   "response_mode": "mirror"  // or: minimal, compact, standard, full, auto
 })
+```
 
-// System returns a mirror-mode verdict
+**`response_mode: "mirror"`** shapes the payload for self-awareness: `mirror` is a **list of strings** (actionable signals), not a nested object. Optional top-level `question` and `relevant_prior_work` surface a targeted nudge and knowledge-graph items when relevant. See `_format_mirror` in [`src/mcp_handlers/response_formatter.py`](src/mcp_handlers/response_formatter.py).
+
+```jsonc
 {
-  "success": true,
   "verdict": "proceed",
   "_mode": "mirror",
   "mirror": [
-    "Calibration: 78% accuracy over 12 decisions (high-conf: 0.83, low-conf: 0.67)"
+    "Calibration: 72% accuracy over 12 decisions (high-conf: 0.8, low-conf: 0.5)",
+    "Complexity divergence: you reported 0.60 but system derives 0.45 (divergence=0.15)"
   ],
+  "question": "What's driving your sense of difficulty?",
   "relevant_prior_work": [
-    {
-      "summary": "Previous auth hardening work touched the same rate-limit path",
-      "by": "agent-42",
-      "relevance": 0.81
-    }
+    { "summary": "Rate limiter bypass in auth …", "by": "agent-abc", "relevance": 0.82 }
   ]
 }
 ```
 
-When state warrants it, mirror mode can also add a top-level `question` field.
+**Verdict field:** Responses expose `verdict` from `decision.action`. Governance actions are **`proceed` / `guide` / `pause` / `reject`** ([Architecture](docs/UNIFIED_ARCHITECTURE.md)). If `action` is absent, formatters fall back to **`continue`** — see `response_formatter.py`.
 
-The `onboard()` response includes ready-to-use templates for your next calls — no guessing at parameter names. See [Start Here](docs/guides/START_HERE.md) for the thin default workflow and links to canonical docs.
+The `onboard()` response includes templates for the next calls. See [Getting Started](docs/guides/START_HERE.md) for continuity (`client_session_id`, `continuity_token`) and alternative entry paths.
 
 ### Installation
 
-**Prerequisites:** Python 3.12+, PostgreSQL 16+ with Apache AGE + pgvector (examples below use PostgreSQL 17), Redis (optional — session cache only, not required)
+**Prerequisites:** Python 3.12+, PostgreSQL 16+ with Apache AGE + pgvector (examples use PostgreSQL 17), Redis optional (session cache only).
+
+**Full local server (recommended for MCP + HTTP stack):**
 
 ```bash
 git clone https://github.com/CIRWEL/unitares.git
 cd unitares
-
-# HTTP server / normal local deployment
 pip install -r requirements-full.txt
 
-# Database target
 export DB_BACKEND=postgres
 export DB_POSTGRES_URL=postgresql://postgres:postgres@localhost:5432/governance
 export DB_AGE_GRAPH=governance_graph
 export UNITARES_KNOWLEDGE_BACKEND=age
 
-# MCP server (multi-client)
 python src/mcp_server.py --port 8767
 ```
 
-For a minimal stdio/proxy setup, `requirements-core.txt` is still available, but the normal local server path is `requirements-full.txt`.
+**Lean dev install** (venv, lighter dependency set): use `requirements-core.txt` and follow [CONTRIBUTING.md](CONTRIBUTING.md). Database setup (PostgreSQL 17 + AGE + pgvector): [db/postgres/README.md](db/postgres/README.md).
 
-For database setup details (Homebrew PostgreSQL 17 + AGE + pgvector), see [db/postgres/README.md](db/postgres/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+The EISV **ODE** engine ships as the compiled **`unitares-core`** package (installed via requirements). See [CONTRIBUTING.md](CONTRIBUTING.md#compiled-dependency) for CI and local symlinks.
 
-> **Note:** The EISV dynamics engine (`unitares-core`) is a compiled dependency installed automatically via the requirements files. See [CONTRIBUTING.md](CONTRIBUTING.md) for build details.
+### MCP configuration
 
-### MCP Configuration
-
-**Cursor / Claude Code** (supports `type: http` natively):
+**Cursor / Claude Code** (native `type: http`):
 
 ```json
 {
@@ -179,7 +105,7 @@ For database setup details (Homebrew PostgreSQL 17 + AGE + pgvector), see [db/po
 }
 ```
 
-**Claude Desktop** (requires `mcp-remote` bridge):
+**Claude Desktop** (via `mcp-remote`):
 
 ```json
 {
@@ -192,30 +118,101 @@ For database setup details (Homebrew PostgreSQL 17 + AGE + pgvector), see [db/po
 }
 ```
 
-Agents self-identify through the `onboard()` flow — no hardcoded agent name header needed.
+Agents self-identify through `onboard()`; no hardcoded agent-name header is required.
 
-| Endpoint | Transport | Use Case |
+| Endpoint | Transport | Use case |
 |----------|-----------|----------|
-| `/mcp/` | Streamable HTTP | MCP clients (Cursor, Claude Code, Claude Desktop) |
+| `/mcp/` | Streamable HTTP | MCP clients |
 | `/v1/tools/call` | REST POST | CLI, scripts, non-MCP clients |
 | `/dashboard` | HTTP | Web dashboard |
 | `/health` | HTTP | Health checks |
 
-**Security:** The server binds to `127.0.0.1` by default. For LAN/remote access, set `UNITARES_BIND_ALL_INTERFACES=1` and configure `UNITARES_MCP_ALLOWED_HOSTS` / `UNITARES_MCP_ALLOWED_ORIGINS` (comma-separated). See the [launchd plist](scripts/ops/) for a working example.
+**Security:** The server binds to `127.0.0.1` by default. For LAN or remote access, set `UNITARES_BIND_ALL_INTERFACES=1` and configure `UNITARES_MCP_ALLOWED_HOSTS` and `UNITARES_MCP_ALLOWED_ORIGINS` (comma-separated). See [scripts/ops/](scripts/ops/) for an example plist.
 
-> **For AI agents:** Start with `onboard()`, keep `client_session_id` from the response, then call `process_agent_update()` with `response_mode: "mirror"`, then `get_governance_metrics()`. If `continuity_token_supported=true`, prefer `continuity_token` for resume. Use `bind_session()` only when you intentionally bridge MCP and REST transports. See [docs/guides/START_HERE.md](docs/guides/START_HERE.md), [docs/CANONICAL_SOURCES.md](docs/CANONICAL_SOURCES.md), and [docs/operations/OPERATOR_RUNBOOK.md](docs/operations/OPERATOR_RUNBOOK.md).
+> **For AI agents:** Prefer `continuity_token` when `continuity_token_supported=true`. Use `bind_session()` only when bridging MCP and REST. See [docs/guides/START_HERE.md](docs/guides/START_HERE.md) and [docs/operations/OPERATOR_RUNBOOK.md](docs/operations/OPERATOR_RUNBOOK.md).
 
 ---
 
-## What You Can Build On It
+## How state works (EISV)
 
-- **Monitoring & early warning** — EISV trajectories show state changes as they happen. Circuit breakers can pause agents automatically at risk thresholds.
-- **Inter-agent observation** — Agents can read each other's state vectors. One agent can assess whether another is coherent enough for a handoff without inspecting its outputs.
-- **Trajectory identity** — An agent's behavioral signature over time. Enables "Am I still myself?" checks and anomaly detection for forks or impersonation.
-- **Outcome correlation** — Feed task results back via `outcome_event` to build a calibration curve. The system tracks whether EISV instability predicts bad outcomes — validation is ongoing, but the plumbing works.
-- **Dialectic resolution** — Structured disagreement (thesis → antithesis → synthesis) with a shared state language. Agents negotiate meaningfully when they can read each other's coherence and confidence. Falls back to LLM-assisted dialectic when no peers are available.
-- **Knowledge persistence** — Discoveries tagged to agent state and system version, stored in a shared graph with staleness detection. Agents build on each other's findings across sessions.
-- **Session identity bridging** — `bind_session` links MCP and REST identities so an agent's governance state follows it across transport changes.
+Agents emit text and tool results; they rarely expose a stable notion of internal condition. UNITARES exposes four continuous variables any client can report and any observer can read:
+
+| Variable | Range | What it tracks |
+|----------|-------|----------------|
+| **E** (Energy) | [0, 1] | Productive capacity |
+| **I** (Integrity) | [0, 1] | Information coherence |
+| **S** (Entropy) | [0, 2] | Disorder and uncertainty |
+| **V** (Void) | [-2, 2] | Accumulated E-I imbalance |
+
+**Behavioral EISV (primary, verdict-driving)** — Implemented in `src/behavioral_state.py` and `src/behavioral_assessment.py`: EMA-smoothed observations per dimension, no ODE and no universal attractor. After **~30** updates, per-agent **Welford** baselines enable self-relative scoring (z-score vs *your* operating point). Earlier check-ins use bootstrap behavior; absolute safety floors still apply.
+
+**ODE in `governance_core` (secondary, diagnostic/fallback)** — The same four variables also evolve in a coupled ODE with contraction-style stability analysis. That integration runs **in parallel for analysis**; governance verdicts normally follow behavioral EISV once behavioral confidence is established, while ODE remains the fallback when behavioral confidence is still insufficient. See [Architecture](docs/UNIFIED_ARCHITECTURE.md) for the full pipeline (drift → entropy, calibration, circuit breaker, dialectic).
+
+```
+dE/dt = α(I - E) - β·E·S           Energy tracks integrity, dragged by entropy
+dI/dt = -k·S + β_I·C(V) - γ_I·I   Integrity boosted by coherence, reduced by entropy
+dS/dt = -μ·S + λ₁·‖Δη‖² - λ₂·C   Entropy decays, rises with drift, damped by coherence
+dV/dt = κ(E - I) - δ·V             Void accumulates E-I mismatch, decays toward zero
+```
+
+---
+
+## What makes it different
+
+Most tooling scores **outputs** (correct, safe, useful). UNITARES emphasizes **state legibility**: a shared representation of condition that humans, services, and other agents can read without reverse-engineering logs.
+
+| Layer | What it does | Examples |
+|-------|----------------|----------|
+| Output validation | Judges results after the fact | Guardrails, evals |
+| Behavioral constraint | Limits what can be done | Sandboxes, permissions |
+| **State legibility** | Makes inner state readable | **UNITARES** |
+
+**Self-relative assessment.** After warmup, scoring uses deviation from *your* baseline, not only global thresholds.
+
+**Ethical drift from observables.** Calibration deviation, complexity divergence, coherence deviation, and stability deviation define a drift signal that feeds entropy dynamics — no hand-labeled “ethics” oracle.
+
+**Trajectory as identity.** Long-run EISV patterns support continuity and anomaly questions (“still the same agent?”).
+
+**Response modes.** Including `mirror` for actionable calibration and graph hints without raw vector overload — plus `minimal`, `compact`, `standard`, `full`, `auto`.
+
+**Dialectic.** Thesis → antithesis → synthesis with peer agents when available; **LLM-assisted** dialectic when alone.
+
+---
+
+## Production snapshot
+
+April 2026:
+
+| Metric | Value |
+|--------|-------|
+| Agents created / active (7-day) | Four-figure total / dozens active |
+| Check-ins processed | Six figures |
+| Knowledge graph entries | Four figures |
+| EISV (Lumen, illustrative) | E≈0.72, I≈0.75, S≈0.20, V≈-0.04 |
+| V operating range | Active agents often within [-0.1, 0.1] |
+| Tests | Large multi-thousand suite |
+
+[Lumen](https://github.com/CIRWEL/anima-mcp) is an embodied agent on a Raspberry Pi: sensors feed check-ins; local drawing is modulated by coherence-related dynamics. See [anima-mcp](https://github.com/CIRWEL/anima-mcp) for hardware and art pipeline details.
+
+<p align="center">
+  <img src="docs/images/dashboard.png" width="80%" alt="UNITARES web dashboard showing fleet coherence, agent status, and system health"/>
+</p>
+
+<p align="center">
+  <em>Web dashboard — fleet coherence, agent status, calibration, anomaly detection.</em>
+</p>
+
+---
+
+## What you can build on it
+
+- **Monitoring and early warning** — Trajectories and risk signals; circuit breakers at thresholds.
+- **Inter-agent observation** — Read peer state for handoff or review without scraping outputs.
+- **Trajectory identity** — Behavioral signatures for continuity and fork detection.
+- **Outcome correlation** — `outcome_event` feeds calibration (tests, exit codes, lint). Predictive value is still an open question; instrumentation is live.
+- **Dialectic resolution** — Shared state language for structured disagreement.
+- **Knowledge persistence** — Discoveries in a versioned graph with staleness awareness.
+- **Session bridging** — `bind_session` links MCP and REST identities.
 
 ---
 
@@ -226,8 +223,8 @@ graph LR
     A[AI Agent] -->|check-in| M[MCP Server :8767]
     M -->|observations| BS[Behavioral EISV]
     BS -->|verdict + guidance| M
-    M -->|parallel| UC[unitares-core ODE]
-    UC -.->|secondary state| M
+    M -->|parallel diagnostic| UC[unitares-core ODE]
+    UC -.->|analysis only| M
     M -->|verdict + guidance| A
     M <-->|state, audit, calibration| PG[(PostgreSQL + AGE)]
     M <-->|knowledge graph| PG
@@ -239,31 +236,26 @@ graph LR
 ```
 
 ```
-src/                   Governance server, tool schemas, agent state, knowledge graph, dialectic
-  mcp_handlers/        Modular tool handlers: identity, lifecycle, knowledge, dialectic,
-                       observability, admin, CIRS, introspection
+src/                   Server, tool schemas, behavioral state, knowledge graph, dialectic
+  mcp_handlers/        Handlers: identity, lifecycle, knowledge, dialectic, observability, admin, CIRS, …
 dashboard/             Web dashboard (vanilla JS + Chart.js)
-tests/                 Large multi-thousand test suite
+tests/                 Large test suite
 ```
-
-Behavioral EISV (`src/behavioral_state.py`, `src/behavioral_assessment.py`) runs observation-first state tracking. The ODE engine (`governance_core`) — coupled dynamics, coherence, scoring — is a compiled package (unitares-core) providing parallel stability analysis.
 
 | Storage | Purpose | Required |
 |---------|---------|----------|
-| PostgreSQL + AGE + pgvector | Agent state, knowledge graph, dialectic, calibration | Yes |
-| Redis | Session cache only — falls back gracefully without it | Optional |
+| PostgreSQL + AGE + pgvector | State, graph, dialectic, calibration | Yes |
+| Redis | Session cache | No (graceful without) |
 
 ---
 
-## Open Questions
+## Open questions
 
-These are unsolved problems. The system is honest about what it doesn't yet do well.
-
-- **Outcome correlation** — *(Partially addressed.)* The `outcome_event` tool now feeds task results (test pass/fail, command exit codes, lint results) back into calibration automatically. Confidence calibration is currently around 50% accuracy — better than chance but not yet reliably predictive. Whether EISV instability predicts real-world failure remains the central empirical question.
-- **Agent differentiation** — *(Addressed in v2.9.0.)* The ODE's convergence guarantees caused agents with similar workloads to converge to similar steady states. Behavioral EISV — EMA-smoothed observations without ODE contraction — is now the primary verdict source, giving each agent its own trajectory. Behavioral baselines need ~30 updates to stabilize; before that, fixed thresholds apply.
-- **Identity fragmentation** — Session-based identity means the same human or system can accumulate many agent IDs across sessions. Most recorded agents are ephemeral (test runs, CI, dev sessions). Identity consolidation and trajectory-based re-identification are active work.
-- **Domain-specific thresholds** — How should parameters be tuned for code generation vs. customer service vs. trading? No one-size-fits-all answer yet.
-- **Horizontal scaling** — Single-node operation works in practice today. What happens at thousands of agents?
+- **Outcome correlation** — `outcome_event` is wired; whether instability predicts real failures is still empirical.
+- **Agent differentiation** — Behavioral EISV is the primary verdict path so trajectories do not collapse to a single ODE attractor. Baselines need ~30 updates.
+- **Identity fragmentation** — Session-scoped IDs multiply across tools and CI; consolidation and trajectory re-identification are open.
+- **Domain tuning** — Defaults are general-purpose; code vs. support vs. trading may need different profiles.
+- **Horizontal scaling** — Single-node operation is the practical default today.
 
 ---
 
@@ -271,29 +263,39 @@ These are unsolved problems. The system is honest about what it doesn't yet do w
 
 | Guide | Purpose |
 |-------|---------|
-| [Start Here](docs/guides/START_HERE.md) | Thin default workflow and doc map |
-| [Canonical Sources](docs/CANONICAL_SOURCES.md) | Authority ordering and code-first source map |
-| [Architecture](docs/UNIFIED_ARCHITECTURE.md) | System topology, EISV dynamics, database ownership |
+| [Getting Started](docs/guides/START_HERE.md) | Setup, workflows, tool modes |
+| [Architecture](docs/UNIFIED_ARCHITECTURE.md) | Pipeline, verdicts, recovery, storage |
 | [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Common issues |
-| [Dashboard](dashboard/README.md) | Web dashboard docs |
-| [Database Architecture](docs/database_architecture.md) | Thin storage/backend reference |
-| [Changelog](CHANGELOG.md) | Release history |
+| [Dashboard](dashboard/README.md) | Web UI |
+| [Database](docs/database_architecture.md) | PostgreSQL + AGE |
+| [Changelog](CHANGELOG.md) | Releases |
+
+### Canonical sources (keep README in sync)
+
+| Topic | Source of truth |
+|-------|-----------------|
+| Governance pipeline, verdict meanings | [`docs/UNIFIED_ARCHITECTURE.md`](docs/UNIFIED_ARCHITECTURE.md) |
+| Tool mode membership (`minimal` / `lite` / `full`) | [`src/tool_modes.py`](src/tool_modes.py) — `get_tools_for_mode()`; **`full`** uses `get_tool_definitions()` in [`src/tool_schemas.py`](src/tool_schemas.py) |
+| Mirror and other response shaping | [`src/mcp_handlers/response_formatter.py`](src/mcp_handlers/response_formatter.py) |
+| MCP transport wiring | [`src/mcp_server.py`](src/mcp_server.py) |
+
+When in doubt, prefer those files over this README for counts and payload shapes.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and code style.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and style.
 
-## Related Projects
+## Related projects
 
-- [**Lumen / anima-mcp**](https://github.com/CIRWEL/anima-mcp) — Embodied AI on Raspberry Pi with physical sensors and EISV-driven art
-- [**unitares-pi-plugin**](https://github.com/CIRWEL/unitares-pi-plugin) — Pi/Lumen orchestration plugin (entry-point discovery, `pip install` to enable)
-- [**unitares-discord-bridge**](https://github.com/CIRWEL/unitares-discord-bridge) — Discord bot surfacing governance events, agent presence, and Lumen state
+- [**Lumen / anima-mcp**](https://github.com/CIRWEL/anima-mcp) — Embodied agent on Raspberry Pi
+- [**unitares-pi-plugin**](https://github.com/CIRWEL/unitares-pi-plugin) — Pi/Lumen orchestration
+- [**unitares-discord-bridge**](https://github.com/CIRWEL/unitares-discord-bridge) — Discord presence and governance events
 
 ---
 
 ## Licensing
 
-The MCP server, dashboard, tooling, and all code in this repo are **MIT licensed** — see [LICENSE](LICENSE). The EISV dynamics engine (`unitares-core`) is a **proprietary compiled dependency**. It installs automatically via the requirements files, but its source is not in this repo. You can freely use, modify, and deploy the server; the mathematical core is not open source. See [CONTRIBUTING.md](CONTRIBUTING.md#compiled-dependency) for details.
+The MCP server, dashboard, and tooling in this repo are **MIT** — see [LICENSE](LICENSE). The ODE and related dynamics ship as the proprietary compiled **`unitares-core`** dependency (installed via requirements; source not in this repo). See [CONTRIBUTING.md](CONTRIBUTING.md#compiled-dependency).
 
 ---
 
