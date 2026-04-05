@@ -1,8 +1,8 @@
 """
 Tests for mirror signal enrichments in src/mcp_handlers/updates/enrichments.py.
 
-Tests _detect_gaming, _search_kg_by_checkin_text, _generate_reflection_prompt,
-and the async enrich_mirror_signals orchestrator.
+Tests _detect_gaming, _generate_mirror_question,
+and mirror KG-search gating helpers.
 """
 
 import pytest
@@ -17,7 +17,8 @@ sys.path.insert(0, str(project_root))
 
 from src.mcp_handlers.updates.enrichments import (
     _detect_gaming,
-    _generate_reflection_prompt,
+    _generate_mirror_question,
+    _should_search_kg_by_checkin_text,
 )
 
 
@@ -31,7 +32,10 @@ def _make_ctx(
     task_type="mixed",
     complexity=0.5,
     confidence=None,
+    verdict="proceed",
     arguments=None,
+    response_data=None,
+    total_updates=10,
     complexity_history=None,
     confidence_history=None,
 ):
@@ -42,9 +46,12 @@ def _make_ctx(
     ctx.complexity = complexity
     ctx.confidence = confidence
     ctx.arguments = arguments or {}
-    ctx.response_data = {}
+    ctx.response_data = response_data or {}
     ctx.agent_uuid = "test-uuid-1234"
     ctx.mcp_server = MagicMock()
+    ctx.metrics_dict = {"verdict": verdict}
+    ctx.meta = MagicMock()
+    ctx.meta.total_updates = total_updates
 
     # Mock monitor with state histories
     monitor = MagicMock()
@@ -111,48 +118,68 @@ class TestDetectGaming:
 
 
 # ============================================================================
-# _generate_reflection_prompt
+# _generate_mirror_question
 # ============================================================================
 
-class TestGenerateReflectionPrompt:
+class TestGenerateMirrorQuestion:
 
-    def test_introspection_task_type(self):
-        ctx = _make_ctx(task_type="introspection")
-        prompt = _generate_reflection_prompt(ctx)
-        assert prompt is not None
-        assert "understanding" in prompt.lower()
-
-    def test_debugging_task_type(self):
-        ctx = _make_ctx(task_type="debugging")
-        prompt = _generate_reflection_prompt(ctx)
-        assert prompt is not None
-        assert "assumption" in prompt.lower()
-
-    def test_mixed_task_type_no_text(self):
-        ctx = _make_ctx(task_type="mixed", response_text="")
-        prompt = _generate_reflection_prompt(ctx)
-        assert prompt is None
-
-    def test_stuck_keyword_in_text(self):
+    def test_stuck_keyword_in_text_returns_unblock_question(self):
         ctx = _make_ctx(task_type="mixed", response_text="I'm stuck on this problem")
-        prompt = _generate_reflection_prompt(ctx)
-        assert prompt is not None
-        assert "unblock" in prompt.lower()
+        question = _generate_mirror_question(ctx, signals=[])
+        assert question is not None
+        assert "unblock" in question.lower()
 
-    def test_refactor_keyword_in_text(self):
-        ctx = _make_ctx(task_type="mixed", response_text="Continuing the refactor of auth module")
-        prompt = _generate_reflection_prompt(ctx)
-        assert prompt is not None
-        assert "structural" in prompt.lower()
+    def test_tight_margin_returns_edge_question(self):
+        ctx = _make_ctx(
+            response_data={"decision": {"margin": 0.05, "nearest_edge": "coherence"}}
+        )
+        question = _generate_mirror_question(ctx, signals=[])
+        assert question is not None
+        assert "coherence edge" in question.lower()
 
-    def test_testing_task_type(self):
-        ctx = _make_ctx(task_type="testing")
-        prompt = _generate_reflection_prompt(ctx)
-        assert prompt is not None
-        assert "covered" in prompt.lower()
+    def test_settling_margin_does_not_trigger_edge_question(self):
+        ctx = _make_ctx(
+            response_data={"decision": {"margin": "settling", "nearest_edge": None}}
+        )
+        question = _generate_mirror_question(ctx, signals=[])
+        assert question is None
 
-    def test_feature_task_type(self):
-        ctx = _make_ctx(task_type="feature")
-        prompt = _generate_reflection_prompt(ctx)
-        assert prompt is not None
-        assert "simplest" in prompt.lower()
+    def test_complexity_disagreement_returns_question(self):
+        ctx = _make_ctx(
+            response_data={
+                "continuity": {
+                    "self_reported_complexity": 0.8,
+                    "derived_complexity": 0.22,
+                    "complexity_divergence": 0.58,
+                }
+            }
+        )
+        question = _generate_mirror_question(ctx, signals=[])
+        assert question is not None
+        assert "disagree on difficulty" in question.lower()
+
+    def test_autopilot_signal_returns_question(self):
+        ctx = _make_ctx()
+        question = _generate_mirror_question(ctx, signals=["Real work varies -- are you on autopilot?"])
+        assert question is not None
+        assert "actually changed" in question.lower()
+
+    def test_steady_state_returns_none(self):
+        ctx = _make_ctx(task_type="feature", response_text="Finished tracing the mirror output path.")
+        question = _generate_mirror_question(ctx, signals=[])
+        assert question is None
+
+
+# ============================================================================
+# KG search gating
+# ============================================================================
+
+class TestShouldSearchKgByCheckinText:
+
+    def test_steady_state_skips_kg_search(self):
+        ctx = _make_ctx(response_text="Completed a small cleanup without notable issues.")
+        assert _should_search_kg_by_checkin_text(ctx, signals=[], question=None) is False
+
+    def test_signal_or_question_enables_kg_search(self):
+        ctx = _make_ctx(response_text="I am stuck investigating a regression in auth.")
+        assert _should_search_kg_by_checkin_text(ctx, signals=[], question="What unblocks you?") is True

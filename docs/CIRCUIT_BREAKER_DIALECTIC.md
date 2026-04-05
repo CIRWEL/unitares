@@ -1,5 +1,7 @@
 # Circuit Breaker + Dialectic Recovery
 
+Status: specialized recovery reference. Use for circuit-breaker and dialectic recovery semantics, not as the general architecture overview.
+
 **Last Updated:** 2026-03-22
 
 This system uses a **circuit breaker** to pause agents when risk signals or coherence drop below safe thresholds. Recovery is handled via a **dialectic protocol** that provides a safe path to resume.

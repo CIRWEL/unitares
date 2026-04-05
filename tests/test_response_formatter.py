@@ -86,6 +86,7 @@ def _sample_response():
         # Internal signals (stripped unconditionally by _strip_context)
         "_mirror_signals": [],
         "_mirror_kg_results": [],
+        "_mirror_question": None,
         "_mirror_reflection": None,
         "_has_sensor_data": False,
         "_eisv_validation_warning": "warning",
@@ -293,10 +294,12 @@ class TestStripContext:
         # Set non-empty values to verify they get stripped
         data["_mirror_signals"] = ["signal"]
         data["_mirror_kg_results"] = [{"summary": "result"}]
+        data["_mirror_question"] = "question"
         data["_mirror_reflection"] = "reflect"
         _strip_context(data, is_new_agent=True, key_was_generated=False, api_key_auto_retrieved=False)
         assert "_mirror_signals" not in data
         assert "_mirror_kg_results" not in data
+        assert "_mirror_question" not in data
         assert "_mirror_reflection" not in data
         assert "_has_sensor_data" not in data
         assert "_eisv_validation_warning" not in data
@@ -536,11 +539,17 @@ class TestFormatMirror:
         assert "relevant_prior_work" in result
         assert result["relevant_prior_work"][0]["by"] == "AlvaNoto"
 
-    def test_reflection_prompt(self):
+    def test_question_prompt(self):
+        data = _sample_response()
+        data["_mirror_question"] = "What changed in your understanding?"
+        result = _format_mirror(data, saved_trust_tier=None)
+        assert result["question"] == "What changed in your understanding?"
+
+    def test_legacy_reflection_prompt_supported(self):
         data = _sample_response()
         data["_mirror_reflection"] = "What changed in your understanding?"
         result = _format_mirror(data, saved_trust_tier=None)
-        assert result["reflection"] == "What changed in your understanding?"
+        assert result["question"] == "What changed in your understanding?"
 
     def test_trust_tier_included(self):
         data = _sample_response()
@@ -562,8 +571,11 @@ class TestFormatMirror:
         data.pop("continuity", None)
         data.pop("restorative", None)
         data.pop("relevant_discoveries", None)
+        data.pop("_mirror_question", None)
+        data.pop("_mirror_reflection", None)
         result = _format_mirror(data, saved_trust_tier=None)
         assert "steady state" in result["mirror"][0].lower()
+        assert "question" not in result
 
     def test_margin_included_when_tight(self):
         data = _sample_response()
@@ -620,7 +632,7 @@ class TestFormatMirror:
         data = _sample_response()
         data["restorative"] = {
             "needs_restoration": True,
-            "reasons": ["complexity divergence pattern (0.48 cumulative)"],
+            "reason": "complexity divergence pattern (0.48 cumulative)",
         }
         result = _format_mirror(data, saved_trust_tier=None)
         assert any("restorative" in s.lower() for s in result["mirror"])

@@ -54,12 +54,19 @@ def _build_eisv_semantics(metrics: Dict[str, Any], monitor: Any) -> Dict[str, An
         confidence_value = getattr(beh, "confidence", 0.0) if beh is not None else 0.0
         if beh is not None and isinstance(confidence_value, Real):
             behavioral_confidence = float(confidence_value or 0.0)
+            warmup = None
+            try:
+                beh_dict = beh.to_dict()
+                warmup = beh_dict.get("warmup")
+            except Exception:
+                pass
             behavioral_eisv = {
                 "E": float(getattr(beh, "E")),
                 "I": float(getattr(beh, "I")),
                 "S": float(getattr(beh, "S")),
                 "V": float(getattr(beh, "V")),
                 "confidence": behavioral_confidence,
+                "warmup": warmup,
             }
     except Exception:
         behavioral_eisv = None
@@ -84,10 +91,24 @@ def _build_eisv_semantics(metrics: Dict[str, Any], monitor: Any) -> Dict[str, An
         "ode_diagnostics": ode_diagnostics,
         "state_semantics": {
             "flat_fields_mean": "primary_eisv",
-            "primary_eisv_role": "live state to read first",
-            "behavioral_eisv_role": "observation-first behavioral state",
-            "ode_eisv_role": "ODE fallback/control reference",
-            "ode_diagnostics_role": "thermostat/dynamics diagnostics",
+            "primary_eisv_role": (
+                "Live state to read first. Source is behavioral when confidence >= 0.3, "
+                "ODE otherwise. Check primary_eisv_source for which is active."
+            ),
+            "behavioral_eisv_role": (
+                "PRIMARY for verdicts. Observation-first EMA of actual agent behavior. "
+                "Determines proceed/guide/pause/reject decisions."
+            ),
+            "ode_eisv_role": (
+                "DIAGNOSTIC only. ODE dynamics with universal attractor. "
+                "Used for convergence tracking and phi calculation. NOT used for verdicts."
+            ),
+            "ode_diagnostics_role": "Thermostat dynamics diagnostics (phi, regime, lambda1)",
+            "verdict_source": primary_source,
+            "hierarchy": [
+                "1. behavioral_eisv (primary when confidence >= 0.3)",
+                "2. ode_eisv (fallback when behavioral data insufficient)",
+            ],
         },
     }
 

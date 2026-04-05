@@ -164,7 +164,7 @@ def _format_mirror(response_data: dict, saved_trust_tier: Optional[str], meta: A
     verdict = decision.get("action", "continue")
 
     # Collect mirror signals from enrichment-produced data
-    mirror_signals = response_data.get("_mirror_signals", [])
+    mirror_signals = list(response_data.get("_mirror_signals", []))
 
     # 1. Confidence reliability — surface source for transparency
     conf_rel = response_data.get("confidence_reliability", {})
@@ -220,9 +220,12 @@ def _format_mirror(response_data: dict, saved_trust_tier: Optional[str], meta: A
     # 4. Restorative action — surface if system is cooling down
     restorative = response_data.get("restorative", {})
     if isinstance(restorative, dict) and restorative.get("needs_restoration"):
-        reasons = restorative.get("reasons", [])
-        if reasons:
-            mirror_signals.append(f"Restorative action: {'; '.join(str(r) for r in reasons[:2])}")
+        restorative_reason = restorative.get("reason")
+        restorative_reasons = restorative.get("reasons", [])
+        if isinstance(restorative_reason, str) and restorative_reason:
+            mirror_signals.append(f"Restorative action: {restorative_reason}")
+        elif restorative_reasons:
+            mirror_signals.append(f"Restorative action: {'; '.join(str(r) for r in restorative_reasons[:2])}")
 
     # 5. Surface relevant KG discoveries — from mirror enrichment AND from existing enrichments
     relevant_prior = []
@@ -243,8 +246,11 @@ def _format_mirror(response_data: dict, saved_trust_tier: Optional[str], meta: A
             entry["relevance"] = relevance
         relevant_prior.append(entry)
 
-    # 6. Get reflection prompt
-    reflection = response_data.get("_mirror_reflection", None)
+    # 6. Surface the single most relevant question when state warrants it
+    question = response_data.get("_mirror_question")
+    if question is None:
+        # Backward compatibility for older enrichments/tests
+        question = response_data.get("_mirror_reflection", None)
 
     result = {
         "success": True,
@@ -256,8 +262,8 @@ def _format_mirror(response_data: dict, saved_trust_tier: Optional[str], meta: A
     if relevant_prior:
         result["relevant_prior_work"] = relevant_prior
 
-    if reflection:
-        result["reflection"] = reflection
+    if question:
+        result["question"] = question
 
     # Include margin/edge warnings
     margin = decision.get("margin")
@@ -387,6 +393,7 @@ def _strip_context(response_data: dict, is_new_agent: bool, key_was_generated: b
     # Internal mirror signals (consumed during _format_mirror, not needed after)
     response_data.pop("_mirror_signals", None)
     response_data.pop("_mirror_kg_results", None)
+    response_data.pop("_mirror_question", None)
     response_data.pop("_mirror_reflection", None)
     response_data.pop("_has_sensor_data", None)
     response_data.pop("_eisv_validation_warning", None)

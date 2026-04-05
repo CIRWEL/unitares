@@ -54,7 +54,27 @@ def validate_file_path_policy(file_path: str) -> Tuple[Optional[str], Optional[T
             warning = f"⚠️ POLICY VIOLATION: Test script '{basename}' should be in 'tests/' directory.\nLocation: {file_path}\nPolicy: All test_*.py and demo_*.py files must be in tests/ to prevent proliferation.\nAction: Move this file to tests/ directory or rename it."
             return (warning, None)
     if basename.endswith('.md'):
-        APPROVED_FILES = {'README.md', 'CHANGELOG.md', 'START_HERE.md', 'docs/README.md', 'docs/guides/ONBOARDING.md', 'docs/guides/TROUBLESHOOTING.md', 'docs/guides/MCP_SETUP.md', 'docs/guides/THRESHOLDS.md', 'docs/reference/AI_ASSISTANT_GUIDE.md', 'scripts/README.md', 'data/README.md', 'demos/README.md', 'tools/README.md'}
+        APPROVED_FILES = {
+            'README.md',
+            'CHANGELOG.md',
+            'docs/CANONICAL_SOURCES.md',
+            'docs/UNIFIED_ARCHITECTURE.md',
+            'docs/CIRCUIT_BREAKER_DIALECTIC.md',
+            'docs/database_architecture.md',
+            'docs/guides/START_HERE.md',
+            'docs/guides/TROUBLESHOOTING.md',
+            'docs/guides/NGROK_DEPLOYMENT.md',
+            'docs/guides/CIRS_PROTOCOL.md',
+            'docs/operations/DEFINITIVE_PORTS.md',
+            'docs/operations/OPERATOR_RUNBOOK.md',
+            'docs/dev/TOOL_REGISTRATION.md',
+            'docs/engineering/contract-drift-playbook.md',
+            'docs/engineering/validation-roadmap.md',
+            'docs/meta/MARKDOWN_PROLIFERATION_POLICY.md',
+            'scripts/README.md',
+            'data/README.md',
+            'tools/README.md',
+        }
         MIGRATION_TARGET_DIRS = {'analysis', 'fixes', 'reflection', 'proposals'}
         if 'docs' in path_parts:
             docs_index = path_parts.index('docs')
@@ -71,7 +91,7 @@ def validate_file_path_policy(file_path: str) -> Tuple[Optional[str], Optional[T
                 docs_index = path_parts.index('docs')
                 if docs_index + 1 < len(path_parts):
                     subdir = path_parts[docs_index + 1]
-                    if subdir not in {'guides', 'reference', 'archive'}:
+                    if subdir not in {'guides', 'reference', 'archive', 'operations', 'dev', 'engineering', 'meta'}:
                         warning = f"⚠️ POLICY WARNING: New markdown file not on approved list.\nLocation: {file_path}\nPolicy: New markdown files should be ≥500 words and on approved list, or use store_knowledge_graph() instead.\nAction: Consider using store_knowledge_graph() for insights, or ensure file is ≥500 words and consolidate into existing docs.\nApproved files: {', '.join(sorted(APPROVED_FILES))}"
                         return (warning, None)
     return (None, None)

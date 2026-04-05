@@ -1,8 +1,10 @@
 # Contract Drift Playbook
 
+Status: specialized engineering playbook. Use for tool-contract changes and drift prevention, not as a user/operator guide.
+
 **Created:** March 14, 2026  
 **Last Updated:** March 14, 2026  
-**Status:** Active
+**Doc State:** Active
 
 ---
 
@@ -144,4 +146,3 @@ Include this in PR descriptions for tool-contract changes:
 - **Drift guard tests added/updated:** `<files>`
 
 Using a standard snippet makes drift visible during review and prevents accidental omission of one surface.
-

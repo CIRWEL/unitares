@@ -932,6 +932,93 @@ class CalibrationChecker:
 
         return corrections
 
+    def characterize_failure_modes(self, min_samples: int = 5) -> Dict[str, Any]:
+        """Characterize calibration failure modes from current bin data.
+
+        Returns structured failure characterization: ECE, curve inversion,
+        per-bin diagnosis, and verdict quality implications.
+        """
+        strategic = self.compute_calibration_metrics()
+        tactical = self.compute_tactical_metrics()
+
+        result: Dict[str, Any] = {
+            "strategic": self._characterize_dimension(strategic, min_samples),
+            "tactical": self._characterize_dimension(tactical, min_samples),
+        }
+
+        is_inverted = result["strategic"].get("curve_inverted", False)
+        worst = result["strategic"].get("worst_bin")
+
+        if is_inverted:
+            result["verdict_quality_warning"] = (
+                "INVERTED calibration curve: agents with HIGH confidence have WORSE outcomes. "
+                "High-confidence 'proceed' verdicts may be the LEAST trustworthy."
+            )
+        elif worst and worst.get("calibration_error", 0) > 0.3:
+            result["verdict_quality_warning"] = (
+                f"Severe miscalibration in bin {worst.get('bin')}: "
+                f"calibration error {worst['calibration_error']:.2f}. "
+                "Verdicts in this confidence range should be treated with caution."
+            )
+        else:
+            result["verdict_quality_warning"] = None
+
+        return result
+
+    def _characterize_dimension(
+        self, bins: Dict[str, CalibrationBin], min_samples: int
+    ) -> Dict[str, Any]:
+        """Characterize a single calibration dimension (strategic or tactical)."""
+        if not bins:
+            return {"status": "no_data", "bins_analyzed": 0}
+
+        valid = {k: v for k, v in bins.items() if v.count >= min_samples}
+        if not valid:
+            return {"status": "insufficient_samples", "bins_analyzed": 0}
+
+        total_count = sum(v.count for v in valid.values())
+        ece = sum(v.calibration_error * v.count for v in valid.values()) / total_count
+
+        sorted_bins = sorted(valid.items(), key=lambda x: x[1].expected_accuracy)
+        curve_inverted = False
+        if len(sorted_bins) >= 2:
+            low_conf_acc = sorted_bins[0][1].accuracy
+            high_conf_acc = sorted_bins[-1][1].accuracy
+            curve_inverted = high_conf_acc < low_conf_acc
+
+        worst = max(valid.items(), key=lambda x: x[1].calibration_error)
+
+        bin_characterizations = {}
+        for k, v in sorted(valid.items()):
+            overconfident = v.expected_accuracy > v.accuracy + 0.1
+            underconfident = v.accuracy > v.expected_accuracy + 0.1
+            bin_characterizations[k] = {
+                "count": v.count,
+                "expected": round(v.expected_accuracy, 3),
+                "actual": round(v.accuracy, 3),
+                "calibration_error": round(v.calibration_error, 3),
+                "diagnosis": (
+                    "overconfident" if overconfident
+                    else "underconfident" if underconfident
+                    else "well_calibrated"
+                ),
+            }
+
+        return {
+            "status": "analyzed",
+            "bins_analyzed": len(valid),
+            "total_samples": total_count,
+            "ece": round(ece, 4),
+            "curve_inverted": curve_inverted,
+            "worst_bin": {
+                "bin": worst[0],
+                "calibration_error": round(worst[1].calibration_error, 3),
+                "expected": round(worst[1].expected_accuracy, 3),
+                "actual": round(worst[1].accuracy, 3),
+            },
+            "bins": bin_characterizations,
+        }
+
     def apply_confidence_correction(self, reported_confidence: float,
                                     min_samples: int = 5) -> Tuple[float, Optional[str]]:
         """

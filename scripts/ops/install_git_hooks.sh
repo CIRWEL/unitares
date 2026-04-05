@@ -33,15 +33,16 @@ if [ -f ".git/hooks/pre-commit" ]; then
 fi
 
 # Copy and make executable
-cp scripts/git-hooks/pre-commit .git/hooks/pre-commit
+cp scripts/git-hooks/pre-commit-combined .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 
 echo "✅ Pre-commit hook installed"
 echo ""
 echo "Hook functionality:"
 echo "  • Warns when new scripts are added to scripts/"
-echo "  • Enforces anti-proliferation policy"
-echo "  • Prompts for confirmation"
+echo "  • Checks markdown proliferation policy"
+echo "  • Validates markdown formatting (warning-only)"
+echo "  • Auto-updates generated tool docs when handlers change"
 echo ""
 echo "To test:"
 echo "  1. Create a test script: touch scripts/test_script.sh"

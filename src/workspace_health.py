@@ -98,9 +98,9 @@ def check_documentation_coherence() -> Dict[str, Any]:
     # Check if key documentation files exist
     key_docs = [
         "README.md",
-        "docs/guides/ONBOARDING.md",  # Updated: ONBOARDING.md is in docs/guides/
-        "docs/README.md",
-        "docs/guides/MCP_SETUP.md",
+        "docs/guides/START_HERE.md",
+        "docs/CANONICAL_SOURCES.md",
+        "docs/UNIFIED_ARCHITECTURE.md",
     ]
     
     missing_docs = []
@@ -295,4 +295,3 @@ def get_workspace_health() -> Dict[str, Any]:
             "health": "error",
             "recommendation": f"Health check encountered an error: {str(e)}"
         }
-

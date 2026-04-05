@@ -97,10 +97,49 @@ def report_calibration():
     
     # Check calibration status
     is_calibrated, result = checker.check_calibration(min_samples_per_bin=5)
-    
+
     print("=" * 70)
-    print(f"Overall Status: {'✅ CALIBRATED' if is_calibrated else '⚠️  NOT CALIBRATED'}")
+    print(f"Overall Status: {'CALIBRATED' if is_calibrated else 'NOT CALIBRATED'}")
     print("=" * 70)
+
+    # Failure characterization
+    print()
+    print("=" * 70)
+    print("FAILURE CHARACTERIZATION")
+    print("=" * 70)
+    print()
+
+    characterization = checker.characterize_failure_modes(min_samples=3)
+
+    for dimension in ("strategic", "tactical"):
+        dim_data = characterization.get(dimension, {})
+        dim_status = dim_data.get("status", "no_data")
+        label = "STRATEGIC (Trajectory Health)" if dimension == "strategic" else "TACTICAL (Per-Decision)"
+        print(f"   {label}:")
+        if dim_status in ("no_data", "insufficient_samples"):
+            print(f"      {dim_status}")
+        else:
+            print(f"      ECE (Expected Calibration Error): {dim_data['ece']:.4f}")
+            print(f"      Curve inverted: {'YES' if dim_data['curve_inverted'] else 'no'}")
+            wb = dim_data["worst_bin"]
+            print(f"      Worst bin: {wb['bin']} "
+                  f"(error={wb['calibration_error']:.3f}, "
+                  f"expected={wb['expected']:.3f}, actual={wb['actual']:.3f})")
+            print()
+            for bin_key, bin_info in dim_data.get("bins", {}).items():
+                diag = bin_info["diagnosis"]
+                indicator = {"overconfident": "!", "underconfident": "?", "well_calibrated": "+"}[diag]
+                print(f"      [{indicator}] {bin_key}: {diag} "
+                      f"(expected={bin_info['expected']:.3f}, actual={bin_info['actual']:.3f}, "
+                      f"n={bin_info['count']})")
+        print()
+
+    warning = characterization.get("verdict_quality_warning")
+    if warning:
+        print(f"   VERDICT QUALITY: {warning}")
+    else:
+        print("   VERDICT QUALITY: No systemic issues detected")
+    print()
 
 
 if __name__ == "__main__":

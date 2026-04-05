@@ -66,6 +66,30 @@ def get_identity_continuity_status(
             "with process-local session bindings and PostgreSQL persistence."
         )
 
+    if mode == "redis":
+        capabilities = {
+            "identity_persistence": "postgres (survives restart)",
+            "session_binding": "redis-backed (cross-process, fast TTL expiry)",
+            "onboard_pins": "redis (30min TTL, browser fingerprint resumption)",
+            "distributed_locking": "redis (prevents concurrent updates)",
+            "metadata_cache": "redis (sub-ms reads)",
+        }
+        degraded_capabilities: list = []
+    else:
+        capabilities = {
+            "identity_persistence": "postgres (survives restart)",
+            "session_binding": "in-memory (this process only, lost on restart)",
+            "onboard_pins": "unavailable (redis-only)",
+            "distributed_locking": "unavailable (single-process assumed)",
+            "metadata_cache": "in-memory (per-process, no shared cache)",
+        }
+        degraded_capabilities = [
+            "session_binding: in-memory only, lost on restart, not shared across processes",
+            "onboard_pins: unavailable, clients must pass explicit client_session_id",
+            "distributed_locking: unavailable, concurrent access not guarded",
+            "metadata_cache: per-process only, no cross-instance sharing",
+        ]
+
     payload: Dict[str, Any] = {
         "status": status,
         "mode": mode,
@@ -74,6 +98,8 @@ def get_identity_continuity_status(
         "session_binding_backend": (
             "redis-backed session cache" if mode == "redis" else "in-memory fallback cache"
         ),
+        "capabilities": capabilities,
+        "degraded_capabilities": degraded_capabilities,
         "note": note,
     }
     if mode == "redis" and not redis_operational:

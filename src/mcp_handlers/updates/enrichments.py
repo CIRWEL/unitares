@@ -1191,7 +1191,7 @@ async def enrich_mirror_signals(ctx: UpdateContext) -> None:
     Produces:
       - _mirror_signals: list of short insight strings
       - _mirror_kg_results: relevant KG discoveries by text search
-      - _mirror_reflection: targeted reflection prompt
+      - _mirror_question: targeted question when state warrants it
       - _has_sensor_data: bool for auto-mode routing
     """
     try:
@@ -1211,15 +1211,16 @@ async def enrich_mirror_signals(ctx: UpdateContext) -> None:
         # 1. Gaming / autopilot detection (low variance in recent reports)
         signals.extend(_detect_gaming(ctx))
 
-        # 2. KG text-based search using response_text
-        kg_results = await _search_kg_by_checkin_text(ctx)
-        if kg_results:
-            ctx.response_data["_mirror_kg_results"] = kg_results
+        # 2. Targeted question — only when there is something worth reflecting on
+        question = _generate_mirror_question(ctx, signals)
+        if question:
+            ctx.response_data["_mirror_question"] = question
 
-        # 3. Targeted reflection prompt
-        reflection = _generate_reflection_prompt(ctx)
-        if reflection:
-            ctx.response_data["_mirror_reflection"] = reflection
+        # 3. KG search is useful when there is a concrete signal/question, not on steady-state check-ins
+        if _should_search_kg_by_checkin_text(ctx, signals, question):
+            kg_results = await _search_kg_by_checkin_text(ctx)
+            if kg_results:
+                ctx.response_data["_mirror_kg_results"] = kg_results
 
         if signals:
             ctx.response_data["_mirror_signals"] = signals
@@ -1331,43 +1332,140 @@ async def _search_kg_by_checkin_text(ctx: UpdateContext) -> list:
         return []
 
 
-def _generate_reflection_prompt(ctx: UpdateContext) -> str:
-    """Generate a targeted reflection prompt based on task type and context."""
+def _has_tight_margin(response_data: dict) -> bool:
+    """Return True when the decision is close enough to a governance edge to warrant a nudge."""
     try:
-        task_type = ctx.task_type or "mixed"
-        response_text = ctx.response_text or ""
+        decision = response_data.get("decision", {})
+        if not isinstance(decision, dict):
+            return False
+        margin = decision.get("margin")
+        if isinstance(margin, str):
+            return margin.lower() in {"tight", "warning", "critical"}
+        return isinstance(margin, (int, float)) and margin < 0.1
+    except Exception:
+        return False
 
-        prompts_by_type = {
-            "introspection": "You described this as introspection. What changed in your understanding?",
-            "debugging": "Debugging often reveals assumptions. What assumption did you test?",
-            "refactoring": "What structural insight drove this refactoring?",
-            "exploration": "What's the most surprising thing you found?",
-            "research": "What question do you still not have an answer to?",
-            "testing": "What case are you most worried you haven't covered?",
-            "review": "What's the one thing you'd push back on if you saw it in someone else's work?",
-            "design": "What tradeoff are you making that you haven't articulated?",
-            "feature": "What's the simplest version of this that would still be valuable?",
-            "bugfix": "Is the bug a symptom or the root cause?",
-            "deployment": "What's your rollback plan if this goes wrong?",
-        }
 
-        prompt = prompts_by_type.get(task_type)
-        if prompt:
-            return prompt
+def _get_complexity_disagreement(response_data: dict, meta: Any = None) -> dict | None:
+    """Return the strongest available complexity disagreement signal, if any."""
+    try:
+        update_count = getattr(meta, "total_updates", 999) if meta else 999
+        if update_count <= 3:
+            return None
 
-        # Fallback: generate from response_text keywords
-        if response_text:
-            text_lower = response_text.lower()
-            if "stuck" in text_lower or "blocked" in text_lower:
-                return "You mentioned being stuck. What would unblock you -- a different approach or more information?"
-            if "refactor" in text_lower:
-                return "What structural insight drove this refactoring?"
-            if "test" in text_lower:
-                return "What case are you most worried you haven't covered?"
+        continuity = response_data.get("continuity", {})
+        if isinstance(continuity, dict) and continuity.get("complexity_divergence", 0) > 0.15:
+            return {
+                "reported": continuity.get("self_reported_complexity"),
+                "derived": continuity.get("derived_complexity"),
+                "divergence": continuity.get("complexity_divergence"),
+                "source": "continuity",
+            }
+
+        calibration_feedback = response_data.get("calibration_feedback", {})
+        if isinstance(calibration_feedback, dict):
+            complexity = calibration_feedback.get("complexity", {})
+            if isinstance(complexity, dict) and complexity.get("discrepancy", 0) > 0.3:
+                return {
+                    "reported": complexity.get("reported"),
+                    "derived": complexity.get("derived"),
+                    "divergence": complexity.get("discrepancy"),
+                    "source": "calibration_feedback",
+                }
+    except Exception:
+        return None
+    return None
+
+
+def _generate_mirror_question(ctx: UpdateContext, signals: list) -> str | None:
+    """Generate a targeted mirror-mode question only when the current state merits a nudge."""
+    try:
+        response_data = ctx.response_data if isinstance(ctx.response_data, dict) else {}
+        decision = response_data.get("decision", {})
+        state = response_data.get("state", {})
+        restorative = response_data.get("restorative", {})
+        conf_rel = response_data.get("confidence_reliability", {})
+        text_lower = (ctx.response_text or "").lower()
+        verdict = ctx.metrics_dict.get("verdict", "proceed")
+
+        if "stuck" in text_lower or "blocked" in text_lower:
+            return "You said you're stuck. What's the smallest concrete step that would unblock you right now?"
+
+        if verdict in ("guide", "pause", "reject"):
+            return f"Your state just triggered a {verdict} verdict. What changed immediately before that?"
+
+        if isinstance(restorative, dict) and restorative.get("needs_restoration"):
+            return "The system thinks you're pushing too hard. What can you simplify, defer, or slow down before the next step?"
+
+        if _has_tight_margin(response_data) or (isinstance(state, dict) and state.get("borderline")):
+            nearest_edge = decision.get("nearest_edge")
+            if nearest_edge == "coherence":
+                return "You're close to a coherence edge. What's the smallest next step that would simplify the plan?"
+            if nearest_edge in ("risk", "risk_threshold"):
+                return "You're close to a risk edge. What assumption would you verify before continuing?"
+            return "You're close to a governance edge. What's one simplification that would make the next step safer?"
+
+        disagreement = _get_complexity_disagreement(response_data, ctx.meta)
+        if disagreement:
+            return (
+                "You and the system disagree on difficulty. "
+                "Is that coming from scope, uncertainty, or hidden dependencies?"
+            )
+
+        if isinstance(conf_rel, dict):
+            external = conf_rel.get("external_provided")
+            derived_cap = conf_rel.get("derived_cap")
+            try:
+                if external is not None and derived_cap is not None and float(external) - float(derived_cap) > 0.1:
+                    return "Your reported confidence is above what the system can justify so far. What evidence are you leaning on?"
+            except (TypeError, ValueError):
+                pass
+
+        for signal in signals:
+            signal_lower = str(signal).lower()
+            if "autopilot" in signal_lower:
+                return "Your recent check-ins look repetitive. What actually changed since the last one?"
+            if "confidence" in signal_lower and "variance" in signal_lower:
+                return "Your confidence reports have been very flat. What evidence shifted this time?"
 
         return None
     except Exception:
         return None
+
+
+def _should_search_kg_by_checkin_text(ctx: UpdateContext, signals: list, question: str | None) -> bool:
+    """Gate KG search so steady-state mirror responses stay cheap."""
+    try:
+        response_text = ctx.response_text or ""
+        if len(response_text) < 10:
+            return False
+
+        if signals or question:
+            return True
+
+        response_data = ctx.response_data if isinstance(ctx.response_data, dict) else {}
+        state = response_data.get("state", {})
+        restorative = response_data.get("restorative", {})
+        verdict = ctx.metrics_dict.get("verdict", "proceed")
+
+        if verdict in ("guide", "pause", "reject"):
+            return True
+
+        if _has_tight_margin(response_data):
+            return True
+
+        if isinstance(state, dict) and state.get("borderline"):
+            return True
+
+        if isinstance(restorative, dict) and restorative.get("needs_restoration"):
+            return True
+
+        if _get_complexity_disagreement(response_data, ctx.meta):
+            return True
+
+        return False
+    except Exception:
+        return False
 
 
 # ─── Identity Notifications ──────────────────────────────────────────

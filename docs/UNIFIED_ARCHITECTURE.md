@@ -2,6 +2,8 @@
 
 **How agents check in, how state evolves, how verdicts are issued.**
 
+Status: canonical prose summary. If this file and runtime code disagree, trust [CANONICAL_SOURCES.md](CANONICAL_SOURCES.md) and the referenced runtime files.
+
 ```
   Any AI Agent                                    UNITARES Server
   (Cursor, Claude Code,                           (port 8767)
@@ -35,19 +37,21 @@ Every agent check-in flows through the same pipeline:
 ### 1. Check-in
 
 An agent calls `process_agent_update` with:
-- `response_text` — what it did
-- `complexity` — self-reported cognitive load [0, 1]
-- `confidence` — how confident it is in its work [0, 1] (optional)
+- `response_text` — what it did; primary operational input
+- `complexity` — optional reflective self-report [0, 1]
+- `confidence` — optional reflective self-report [0, 1]
 
 Identity is resolved automatically from the session. First call auto-creates the agent.
 
+At runtime, these reflective fields are not trusted in isolation. The dual-log layer compares them against server-derived operational signals, tool usage, continuity metrics, and other exogenous evidence when available.
+
 ### 2. EISV Evolution
 
-**Primary system: Behavioral EISV** — EMA (exponential moving average) observations from check-ins. No ODE, no decay terms. Each EISV dimension is smoothed with per-dimension alpha values. After ~30 check-ins, the system builds per-agent Welford baselines and assesses agents by z-score deviation from their own operating point rather than universal thresholds.
+**Primary system: Behavioral EISV** — EMA (exponential moving average) observations from grounded behavioral signals. These signals are assembled from operational log analysis, continuity metrics, tool usage, calibration history, and outcome history; self-reports are one input, not the whole substrate. After ~30 check-ins, the system builds per-agent Welford baselines and assesses agents by z-score deviation from their own operating point rather than universal thresholds.
 
 **Secondary system: ODE (diagnostic only)** — coupled differential equations run in parallel but do not drive verdicts. The ODE provides a thermodynamic lens for analysis but behavioral verdicts override.
 
-The behavioral engine lives in `src/behavioral_state.py` and `src/behavioral_assessment.py`. The ODE engine lives in `governance_core` (compiled package, unitares-core).
+The grounding path lives in `src/dual_log/`, `src/behavioral_sensor.py`, `src/behavioral_state.py`, and `src/behavioral_assessment.py`. The ODE engine lives in `governance_core` (compiled package, unitares-core).
 
 ### 3. Ethical Drift
 
@@ -60,7 +64,7 @@ Four observable signals define a drift vector that feeds entropy:
 | Coherence deviation | How far coherence has moved from baseline |
 | Stability deviation | EISV variance over recent window |
 
-No human oracle needed — drift is computed from behavioral signals only.
+No human oracle is needed for runtime drift estimation. Independent exogenous outcomes still matter for calibration and research validation.
 
 ### 4. Verdict
 

@@ -1,5 +1,7 @@
 # Tool Registration Guide
 
+Status: specialized developer reference. Use for MCP/tool-surface changes, not runtime architecture semantics.
+
 **For AI agents and developers adding/modifying tools in the governance MCP server.**
 
 ## Quick Reference: Adding a New Tool

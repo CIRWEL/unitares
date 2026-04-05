@@ -217,8 +217,9 @@ class ToolDocExtractor:
                 md.append("---\n\n")
 
         md.append("\n## 📚 Additional Resources\n\n")
-        md.append("- **Onboarding:** `docs/guides/ONBOARDING.md`\n")
-        md.append("- **Architecture:** `docs/reference/HANDLER_ARCHITECTURE.md`\n")
+        md.append("- **Start Here:** `docs/guides/START_HERE.md`\n")
+        md.append("- **Architecture:** `docs/UNIFIED_ARCHITECTURE.md`\n")
+        md.append("- **Canonical Sources:** `docs/CANONICAL_SOURCES.md`\n")
         md.append("- **Runtime Discovery:** Call `list_tools()` MCP tool for up-to-date tool list\n\n")
 
         md.append("---\n\n")

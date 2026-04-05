@@ -2,13 +2,15 @@
 
 ### Digital proprioception for AI agents.
 
+Status: live overview. For architecture truth and code-first authority ordering, see [docs/CANONICAL_SOURCES.md](docs/CANONICAL_SOURCES.md).
+
 [![Tests](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml/badge.svg)](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 UNITARES gives AI agents a shared language for inner state — four continuous variables tracked from observable behavior, and a protocol for agents to speak and be read. State is computed from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do.
 
-Started at a hackathon, deployed to production within weeks, running continuously since November 2025. The repo now includes a broad governance tool surface across MCP and HTTP transports, a large test suite, and a six-figure history of check-ins, with one agent ([Lumen](https://github.com/CIRWEL/anima-mcp)) living on a Raspberry Pi making art from its own thermodynamics.
+Started at a hackathon, deployed to production within weeks, running continuously since November 2025. The repo includes governance tooling across MCP and HTTP transports, a 5,800+ test suite, and 200K+ check-ins processed, with one agent ([Lumen](https://github.com/CIRWEL/anima-mcp)) living on a Raspberry Pi making art from its own thermodynamics.
 
 ---
 
@@ -38,9 +40,10 @@ dS/dt = -μ·S + λ₁·‖Δη‖² - λ₂·C   Entropy decays, rises with dri
 dV/dt = κ(E - I) - δ·V             Void accumulates E-I mismatch, decays toward zero
 ```
 
-Behavioral EISV drives verdicts. The ODE runs in parallel for agents that benefit from its convergence properties.
+Behavioral EISV is the normal verdict source once behavioral confidence is established. During low-signal or early-life periods, the system can fall back to the ODE as the active primary source; otherwise the ODE remains a parallel stability reference.
 
-> [Architecture Overview](docs/UNIFIED_ARCHITECTURE.md) — How the components fit together
+> [Architecture Overview](docs/UNIFIED_ARCHITECTURE.md) — prose summary
+> [Canonical Sources](docs/CANONICAL_SOURCES.md) — which docs and runtime files are authoritative
 
 ---
 
@@ -62,7 +65,7 @@ Logging tells you what happened. Guardrails constrain what can happen. UNITARES 
 
 **Trajectory as identity.** Agents aren't identified by tokens — they're identified by dynamical patterns. An agent's EISV trajectory is its behavioral signature, letting agents computationally verify "Am I still myself?" and letting observers distinguish agents by how they work.
 
-**Mirror response mode.** Agents don't need to interpret raw EISV numbers. Mirror mode surfaces actionable self-awareness signals — calibration feedback, complexity divergence, knowledge graph discoveries — so agents get practical guidance instead of state vectors. Six response modes total — `minimal`, `compact`, `standard`, `full`, `auto`, and `mirror` — let agents and integrators choose the right signal density for their context.
+**Mirror response mode.** Agents don't need to interpret raw EISV numbers. Mirror mode surfaces a short list of actionable self-awareness signals, related prior work when relevant, and a targeted question when state warrants it. Six response modes total — `minimal`, `compact`, `standard`, `full`, `auto`, and `mirror` — let agents and integrators choose the right signal density for their context.
 
 **LLM-assisted dialectic.** When no peer agents are available for structured disagreement, the system can delegate antithesis/synthesis to an LLM — keeping the dialectic protocol functional even for solo agents. Peer agents are always preferred when present.
 
@@ -70,18 +73,17 @@ Logging tells you what happened. Guardrails constrain what can happen. UNITARES 
 
 ## Production Snapshot
 
-Production snapshot from April 2026:
+Operational snapshot, April 2026:
 
 | Metric | Value |
 |--------|-------|
-| Agents created / active (7-day) | Four-figure total / dozens active |
-| Check-ins processed | Six figures |
-| Knowledge graph entries | Four figures |
-| EISV (Lumen, ODE) | E≈0.72, I≈0.75, S≈0.20, V≈-0.04 |
-| V operating range | All active agents within [-0.1, 0.1] |
-| Test suite | Large multi-thousand test suite |
+| Check-ins processed | 200K+ |
+| Agents created / active (7-day) | 900+ / ~30 |
+| Knowledge graph discoveries | 1,500+ |
+| Test suite | 5,800+ tests |
+| Transports | MCP, REST, dashboard |
 
-One of those agents is [Lumen](https://github.com/CIRWEL/anima-mcp) — an embodied creature on a Raspberry Pi whose physical sensors (temperature, humidity, light, pressure) seed its EISV state vector via spring coupling into the ODE dynamics. Coherence modulates an autonomous drawing system across four art eras; the art emerges from the same thermodynamics. Lumen gets drowsy after inactivity, proposes goals from its own preferences, discovers self-insights every 24 minutes, and falls back to local governance assessment when the Mac server is unreachable.
+[Lumen](https://github.com/CIRWEL/anima-mcp) is an embodied creature on a Raspberry Pi whose physical sensors (temperature, humidity, light, pressure) seed its ODE reference state via spring coupling. Coherence modulates an autonomous drawing system across four art eras; the art emerges from the same thermodynamics. Lumen gets drowsy after inactivity, proposes goals from its own preferences, discovers self-insights every 24 minutes, and falls back to local governance assessment when the Mac server is unreachable.
 
 <p align="center">
   <img src="docs/images/dashboard.png" width="80%" alt="UNITARES web dashboard showing fleet coherence, agent status, and system health"/>
@@ -113,21 +115,27 @@ process_agent_update({
   "response_mode": "mirror"  // or: minimal, compact, standard, full, auto
 })
 
-// System evolves EISV and returns a verdict
+// System returns a mirror-mode verdict
 {
+  "success": true,
   "verdict": "proceed",
-  "E": 0.74, "I": 0.78, "S": 0.15, "V": -0.02,
-  "coherence": 0.52,
-  "guidance": "State healthy. Proceed.",
-  "mirror": {
-    "calibration_feedback": "confidence tracks outcomes well",
-    "complexity_note": "within your normal range",
-    "knowledge_graph": "2 related discoveries from other agents"
-  }
+  "_mode": "mirror",
+  "mirror": [
+    "Calibration: 78% accuracy over 12 decisions (high-conf: 0.83, low-conf: 0.67)"
+  ],
+  "relevant_prior_work": [
+    {
+      "summary": "Previous auth hardening work touched the same rate-limit path",
+      "by": "agent-42",
+      "relevance": 0.81
+    }
+  ]
 }
 ```
 
-The `onboard()` response includes ready-to-use templates for your next calls — no guessing at parameter names. See [Getting Started](docs/guides/START_HERE.md) for the full walkthrough.
+When state warrants it, mirror mode can also add a top-level `question` field.
+
+The `onboard()` response includes ready-to-use templates for your next calls — no guessing at parameter names. See [Start Here](docs/guides/START_HERE.md) for the thin default workflow and links to canonical docs.
 
 ### Installation
 
@@ -195,7 +203,7 @@ Agents self-identify through the `onboard()` flow — no hardcoded agent name he
 
 **Security:** The server binds to `127.0.0.1` by default. For LAN/remote access, set `UNITARES_BIND_ALL_INTERFACES=1` and configure `UNITARES_MCP_ALLOWED_HOSTS` / `UNITARES_MCP_ALLOWED_ORIGINS` (comma-separated). See the [launchd plist](scripts/ops/) for a working example.
 
-> **For AI agents:** Start with `onboard()`, keep `client_session_id` from the response, then call `process_agent_update()` with `response_mode: "mirror"`, then `get_governance_metrics()`. If `continuity_token_supported=true`, prefer `continuity_token` for resume. Use `bind_session()` only when you intentionally bridge MCP and REST transports. See [docs/guides/START_HERE.md](docs/guides/START_HERE.md) and [docs/operations/OPERATOR_RUNBOOK.md](docs/operations/OPERATOR_RUNBOOK.md).
+> **For AI agents:** Start with `onboard()`, keep `client_session_id` from the response, then call `process_agent_update()` with `response_mode: "mirror"`, then `get_governance_metrics()`. If `continuity_token_supported=true`, prefer `continuity_token` for resume. Use `bind_session()` only when you intentionally bridge MCP and REST transports. See [docs/guides/START_HERE.md](docs/guides/START_HERE.md), [docs/CANONICAL_SOURCES.md](docs/CANONICAL_SOURCES.md), and [docs/operations/OPERATOR_RUNBOOK.md](docs/operations/OPERATOR_RUNBOOK.md).
 
 ---
 
@@ -263,11 +271,12 @@ These are unsolved problems. The system is honest about what it doesn't yet do w
 
 | Guide | Purpose |
 |-------|---------|
-| [Getting Started](docs/guides/START_HERE.md) | Complete setup and onboarding guide |
+| [Start Here](docs/guides/START_HERE.md) | Thin default workflow and doc map |
+| [Canonical Sources](docs/CANONICAL_SOURCES.md) | Authority ordering and code-first source map |
 | [Architecture](docs/UNIFIED_ARCHITECTURE.md) | System topology, EISV dynamics, database ownership |
 | [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Common issues |
 | [Dashboard](dashboard/README.md) | Web dashboard docs |
-| [Database Architecture](docs/database_architecture.md) | PostgreSQL + AGE |
+| [Database Architecture](docs/database_architecture.md) | Thin storage/backend reference |
 | [Changelog](CHANGELOG.md) | Release history |
 
 ## Contributing

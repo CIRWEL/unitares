@@ -1,5 +1,7 @@
 # ngrok Deployment Guide
 
+Status: specialized deployment reference. Not primary onboarding or default local setup.
+
 **Last Updated:** March 2026
 **Transport:** Streamable HTTP (`/mcp/` endpoint)
 **Port:** 8767

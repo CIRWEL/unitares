@@ -1,5 +1,7 @@
 # CIRS Protocol — Multi-Agent Coordination
 
+Status: specialized protocol reference. Use when working on CIRS-specific coordination flows, not as a general architecture overview.
+
 **Cooperative Inter-agent Resonance Signaling**
 
 CIRS enables agents to broadcast state, coordinate recovery, and establish trust boundaries. It builds on the EISV vocabulary to let agents observe and respond to each other's governance state.

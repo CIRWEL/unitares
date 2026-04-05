@@ -21,28 +21,31 @@ from typing import Dict, List, Tuple, Set
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# Approved markdown files (from policy) - updated 2025-12-09
+# Approved markdown files (from policy) - updated 2026-04-04
 APPROVED_FILES = {
-    # Root
     'README.md',
     'CHANGELOG.md',
-    'START_HERE.md',
-    # Docs
-    'docs/README.md',
-    'docs/guides/ONBOARDING.md',
+    'docs/CANONICAL_SOURCES.md',
+    'docs/UNIFIED_ARCHITECTURE.md',
+    'docs/CIRCUIT_BREAKER_DIALECTIC.md',
+    'docs/database_architecture.md',
+    'docs/guides/START_HERE.md',
     'docs/guides/TROUBLESHOOTING.md',
-    'docs/guides/MCP_SETUP.md',
-    'docs/guides/THRESHOLDS.md',
-    'docs/reference/AI_ASSISTANT_GUIDE.md',
-    # Module READMEs (auto-approved)
+    'docs/guides/NGROK_DEPLOYMENT.md',
+    'docs/guides/CIRS_PROTOCOL.md',
+    'docs/operations/DEFINITIVE_PORTS.md',
+    'docs/operations/OPERATOR_RUNBOOK.md',
+    'docs/dev/TOOL_REGISTRATION.md',
+    'docs/engineering/contract-drift-playbook.md',
+    'docs/engineering/validation-roadmap.md',
+    'docs/meta/MARKDOWN_PROLIFERATION_POLICY.md',
     'scripts/README.md',
     'data/README.md',
-    'demos/README.md',
     'tools/README.md',
 }
 
 # Max total files allowed (hard limit)
-MAX_MARKDOWN_FILES = 20
+MAX_MARKDOWN_FILES = 30
 
 # Directories that should be mostly migrated
 MIGRATION_TARGET_DIRS = {
@@ -56,6 +59,10 @@ MIGRATION_TARGET_DIRS = {
 GUIDE_DIRS = {
     'guides',
     'reference',
+    'operations',
+    'dev',
+    'engineering',
+    'meta',
 }
 
 
@@ -344,4 +351,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

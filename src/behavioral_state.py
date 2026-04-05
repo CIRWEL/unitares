@@ -226,6 +226,15 @@ class BehavioralEISV:
 
     def to_dict(self) -> Dict:
         """Export current state for inclusion in governance responses."""
+        if self.update_count == 0:
+            phase = "uninitialized"
+        elif self.update_count < BOOTSTRAP_UPDATES:
+            phase = "bootstrapping"
+        elif self.update_count < BASELINE_WARMUP_UPDATES:
+            phase = "warming_up"
+        else:
+            phase = "baselined"
+
         d = {
             "E": round(self.E, 4),
             "I": round(self.I, 4),
@@ -233,6 +242,13 @@ class BehavioralEISV:
             "V": round(self.V, 4),
             "confidence": round(self.confidence, 2),
             "updates": self.update_count,
+            "warmup": {
+                "phase": phase,
+                "updates_completed": self.update_count,
+                "baseline_target": BASELINE_WARMUP_UPDATES,
+                "baseline_confidence": round(self.baseline_confidence, 2),
+                "is_baselined": self.is_baselined,
+            },
         }
         if self.is_baselined:
             d["baseline_profile"] = self.baseline_profile

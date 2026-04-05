@@ -1,9 +1,10 @@
-"""Outcome Correlation Study — does EISV instability predict bad outcomes?
+"""Outcome correlation study and export helpers for empirical validation.
 
 Joins EISV snapshots with outcome events to compute:
-1. Verdict distribution: bad-outcome rate per verdict (safe/caution/high-risk)
+1. Verdict distribution: bad-outcome rate per verdict
 2. Metric correlations: Pearson r between each EISV metric and outcome_score
 3. Risk binning: bad-outcome rate per risk score range
+4. Coverage: how much of the dataset is grounded in behavioral/primary/exogenous data
 
 Data source: audit.outcome_events table (EISV snapshot embedded at outcome time).
 """
@@ -28,7 +29,8 @@ class CorrelationReport:
     verdict_distribution: Dict[str, Dict[str, Any]]
     metric_correlations: Dict[str, Optional[float]]
     risk_bins: List[Dict[str, Any]]
-    summary: str
+    summary: str = ""
+    coverage: Dict[str, Any] = field(default_factory=dict)
 
 
 def _pearson_r(xs: List[float], ys: List[float]) -> Optional[float]:
@@ -84,6 +86,146 @@ def compute_metric_correlations(outcomes: List[Dict]) -> Dict[str, Optional[floa
         label = m.replace("eisv_", "").upper()
         result[label] = round(r, 4) if r is not None else None
     return result
+
+
+def _count_pct(count: int, total: int) -> Dict[str, Any]:
+    """Return a compact count/percentage pair."""
+    pct = round(count / total, 4) if total else 0.0
+    return {"count": count, "pct": pct}
+
+
+def _get_detail(outcome: Dict[str, Any]) -> Dict[str, Any]:
+    """Return detail as a dict, never None."""
+    detail = outcome.get("detail")
+    return detail if isinstance(detail, dict) else {}
+
+
+def _has_snapshot(detail: Dict[str, Any], key: str) -> bool:
+    """Return True when a snapshot payload exists and has at least one populated field."""
+    payload = detail.get(key)
+    if not isinstance(payload, dict):
+        return False
+    return any(payload.get(field) is not None for field in ("E", "I", "S", "V", "risk", "confidence"))
+
+
+def _exogenous_signal_flags(detail: Dict[str, Any]) -> Dict[str, bool]:
+    """Return booleans for exogenous evidence types present in outcome detail."""
+    return {
+        "tests": bool(detail.get("tests")),
+        "commands": bool(detail.get("commands")),
+        "files": bool(detail.get("files")),
+        "lint": bool(detail.get("lint")),
+        "tool_observations": bool(detail.get("tool_usage") or detail.get("tool_results")),
+        "outcome_events": bool(detail.get("outcome_events")),
+    }
+
+
+def compute_observability_coverage(outcomes: List[Dict]) -> Dict[str, Any]:
+    """Measure how grounded the current outcome dataset is."""
+    total = len(outcomes)
+    if total == 0:
+        return {
+            "total_outcomes": 0,
+            "with_primary_eisv": _count_pct(0, 0),
+            "with_behavioral_eisv": _count_pct(0, 0),
+            "with_behavioral_primary": _count_pct(0, 0),
+            "with_exogenous_signals": _count_pct(0, 0),
+            "with_snapshot": _count_pct(0, 0),
+            "with_outcome_score": _count_pct(0, 0),
+            "primary_source_counts": {},
+            "exogenous_signal_counts": {},
+        }
+
+    with_primary_eisv = 0
+    with_behavioral_eisv = 0
+    with_behavioral_primary = 0
+    with_exogenous_signals = 0
+    with_snapshot = 0
+    with_outcome_score = 0
+    primary_source_counts: Dict[str, int] = {}
+    exogenous_signal_counts = {
+        "tests": 0,
+        "commands": 0,
+        "files": 0,
+        "lint": 0,
+        "tool_observations": 0,
+        "outcome_events": 0,
+    }
+
+    for outcome in outcomes:
+        detail = _get_detail(outcome)
+        if detail.get("snapshot_missing") is False:
+            with_snapshot += 1
+        if _has_snapshot(detail, "primary_eisv"):
+            with_primary_eisv += 1
+        if _has_snapshot(detail, "behavioral_eisv"):
+            with_behavioral_eisv += 1
+
+        source = detail.get("primary_eisv_source") or "unknown"
+        primary_source_counts[source] = primary_source_counts.get(source, 0) + 1
+        if source == "behavioral":
+            with_behavioral_primary += 1
+
+        if outcome.get("outcome_score") is not None:
+            with_outcome_score += 1
+
+        signal_flags = _exogenous_signal_flags(detail)
+        if any(signal_flags.values()):
+            with_exogenous_signals += 1
+        for signal_type, present in signal_flags.items():
+            if present:
+                exogenous_signal_counts[signal_type] += 1
+
+    return {
+        "total_outcomes": total,
+        "with_primary_eisv": _count_pct(with_primary_eisv, total),
+        "with_behavioral_eisv": _count_pct(with_behavioral_eisv, total),
+        "with_behavioral_primary": _count_pct(with_behavioral_primary, total),
+        "with_exogenous_signals": _count_pct(with_exogenous_signals, total),
+        "with_snapshot": _count_pct(with_snapshot, total),
+        "with_outcome_score": _count_pct(with_outcome_score, total),
+        "primary_source_counts": primary_source_counts,
+        "exogenous_signal_counts": exogenous_signal_counts,
+    }
+
+
+def flatten_outcome_for_export(outcome: Dict[str, Any]) -> Dict[str, Any]:
+    """Flatten an outcome event into a row suitable for CSV/JSONL export."""
+    detail = _get_detail(outcome)
+    primary = detail.get("primary_eisv") if isinstance(detail.get("primary_eisv"), dict) else {}
+    behavioral = detail.get("behavioral_eisv") if isinstance(detail.get("behavioral_eisv"), dict) else {}
+    signal_flags = _exogenous_signal_flags(detail)
+
+    row = {
+        "agent_id": outcome.get("agent_id"),
+        "ts": outcome.get("ts"),
+        "outcome_type": outcome.get("outcome_type"),
+        "is_bad": outcome.get("is_bad"),
+        "outcome_score": outcome.get("outcome_score"),
+        "eisv_verdict": outcome.get("eisv_verdict"),
+        "eisv_e": outcome.get("eisv_e"),
+        "eisv_i": outcome.get("eisv_i"),
+        "eisv_s": outcome.get("eisv_s"),
+        "eisv_v": outcome.get("eisv_v"),
+        "eisv_phi": outcome.get("eisv_phi"),
+        "eisv_coherence": outcome.get("eisv_coherence"),
+        "eisv_regime": outcome.get("eisv_regime"),
+        "primary_eisv_source": detail.get("primary_eisv_source"),
+        "snapshot_missing": detail.get("snapshot_missing"),
+        "primary_e": primary.get("E"),
+        "primary_i": primary.get("I"),
+        "primary_s": primary.get("S"),
+        "primary_v": primary.get("V"),
+        "behavioral_e": behavioral.get("E"),
+        "behavioral_i": behavioral.get("I"),
+        "behavioral_s": behavioral.get("S"),
+        "behavioral_v": behavioral.get("V"),
+        "behavioral_confidence": behavioral.get("confidence"),
+        "behavioral_risk": behavioral.get("risk"),
+    }
+    row.update(signal_flags)
+    row["has_exogenous_signals"] = any(signal_flags.values())
+    return row
 
 
 # Risk bin boundaries aligned with behavioral assessment thresholds
@@ -145,6 +287,17 @@ def _build_summary(report: CorrelationReport) -> str:
     """Generate a human-readable summary of the correlation study."""
     lines = [f"Outcomes: {report.total_outcomes} ({report.good_outcomes} good, {report.bad_outcomes} bad)"]
 
+    coverage = report.coverage or {}
+    if coverage:
+        exogenous = coverage.get("with_exogenous_signals", {})
+        behavioral_primary = coverage.get("with_behavioral_primary", {})
+        if isinstance(exogenous, dict) and isinstance(behavioral_primary, dict):
+            lines.append(
+                "Coverage: "
+                f"{exogenous.get('count', 0)}/{report.total_outcomes} outcomes have exogenous signals; "
+                f"{behavioral_primary.get('count', 0)}/{report.total_outcomes} use behavioral primary state"
+            )
+
     # Verdict distribution insight
     for v, d in report.verdict_distribution.items():
         if d["count"] >= 3:
@@ -186,6 +339,7 @@ class OutcomeCorrelation:
         verdict_dist = compute_verdict_distribution(outcomes)
         correlations = compute_metric_correlations(outcomes)
         risk_bins = compute_risk_bins(outcomes)
+        coverage = compute_observability_coverage(outcomes)
 
         report = CorrelationReport(
             total_outcomes=len(outcomes),
@@ -194,10 +348,20 @@ class OutcomeCorrelation:
             verdict_distribution=verdict_dist,
             metric_correlations=correlations,
             risk_bins=risk_bins,
+            coverage=coverage,
             summary="",
         )
         report.summary = _build_summary(report)
         return report
+
+    async def export_rows(
+        self,
+        agent_id: Optional[str] = None,
+        since_hours: float = 168.0,
+    ) -> List[Dict[str, Any]]:
+        """Fetch and flatten outcome rows for offline validation analysis."""
+        outcomes = await self._fetch_outcomes(agent_id, since_hours)
+        return [flatten_outcome_for_export(outcome) for outcome in outcomes]
 
     async def _fetch_outcomes(
         self, agent_id: Optional[str], since_hours: float
@@ -228,7 +392,7 @@ class OutcomeCorrelation:
                            eisv_verdict, eisv_coherence, eisv_regime,
                            detail, ts, agent_id
                     FROM audit.outcome_events
-                    WHERE ts >= now() - make_interval(hours => $2)
+                    WHERE ts >= now() - make_interval(hours => $1)
                     ORDER BY ts DESC
                     """,
                     since_hours,
