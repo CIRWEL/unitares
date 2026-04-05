@@ -24,8 +24,11 @@ ACTIVE_DOC_CHECKS = {
 
 REQUIRED_STATUS_PREFIX = {
     "README.md": "Status:",
+    "docs/CIRCUIT_BREAKER_DIALECTIC.md": "Status:",
     "docs/UNIFIED_ARCHITECTURE.md": "Status:",
+    "docs/guides/TROUBLESHOOTING.md": "Status:",
     "docs/guides/START_HERE.md": "Status:",
+    "docs/operations/OPERATOR_RUNBOOK.md": "Status:",
     "docs/CANONICAL_SOURCES.md": "Status:",
     "docs/database_architecture.md": "Status:",
     "docs/operations/DEFINITIVE_PORTS.md": "Status:",
@@ -33,6 +36,7 @@ REQUIRED_STATUS_PREFIX = {
     "docs/guides/CIRS_PROTOCOL.md": "Status:",
     "docs/dev/TOOL_REGISTRATION.md": "Status:",
     "docs/engineering/contract-drift-playbook.md": "Status:",
+    "docs/meta/MARKDOWN_PROLIFERATION_POLICY.md": "Status:",
 }
 
 MAX_LINES = {

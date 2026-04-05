@@ -20,8 +20,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 # Files that reference tool count
 DOC_FILES = [
     "README.md",
-    "START_HERE.md",
-    "docs/guides/ONBOARDING.md",
+    "docs/guides/START_HERE.md",
 ]
 
 # Patterns to match and replace

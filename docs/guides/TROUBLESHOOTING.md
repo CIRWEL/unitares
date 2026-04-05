@@ -1,5 +1,7 @@
 # Troubleshooting Guide
 
+Status: live troubleshooting guide. Use for failure diagnosis and operator recovery steps, not as the primary architecture reference.
+
 **Last Updated:** March 2026
 
 ---

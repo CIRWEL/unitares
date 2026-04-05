@@ -73,10 +73,6 @@ VERSION_REFERENCES = [
         (r'"version": "([\d.]+)"', r'"version": "{version}"'),
         (r'"server_version": "([\d.]+)"', r'"server_version": "{version}"'),
     ]),
-    # Docs
-    ("docs/guides/MCP_SETUP.md", [
-        (r'MCP Server v([\d.]+)', r'MCP Server v{version}'),
-    ]),
 ]
 
 

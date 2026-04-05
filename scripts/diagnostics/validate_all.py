@@ -47,7 +47,6 @@ class SemanticDriftValidator:
         'docs/meta/DEPRECATION_REMOVAL_PLAN.md',  # About the deprecation itself
         'docs/guides/BRIDGE_SYNC_AUTOMATION.md',  # Documents the migration itself
         'docs/analysis/SYSTEM_AUDIT_20251208.md',  # Audit report mentions both terms
-        'docs/reference/AI_ASSISTANT_GUIDE.md',  # Guide explains the terminology change
         'scripts/validate_all.py',  # Contains deprecated terms in config by design
         'scripts/sync_bridge_with_mcp.py',  # Syncs deprecated → current terms
         'CHANGELOG.md',
@@ -188,4 +187,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

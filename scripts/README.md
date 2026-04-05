@@ -97,7 +97,10 @@ Diagnostic scripts for debugging server and agent issues.
 Database maintenance scripts (embeddings backfill, ghost agent cleanup, knowledge graph maintenance).
 
 ### `git-hooks/`
-Git hook scripts (pre-commit, pre-push).
+Git hook scripts.
+
+- `pre-commit-combined` is the current default pre-commit hook installed by `scripts/ops/install_git_hooks.sh`
+- `pre-commit` is the older script-proliferation-only hook retained for reference
 
 ### `safeguards/`
 Safety-related scripts and checks.

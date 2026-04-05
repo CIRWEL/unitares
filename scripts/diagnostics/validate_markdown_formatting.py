@@ -29,10 +29,9 @@ sys.path.insert(0, str(project_root))
 APPROVED_FILES = {
     'README.md',
     'CHANGELOG.md',
-    'START_HERE.md',
-    'docs/README.md',
-    'docs/QUICK_REFERENCE.md',
-    'docs/DOC_MAP.md',
+    'docs/guides/START_HERE.md',
+    'docs/CANONICAL_SOURCES.md',
+    'docs/UNIFIED_ARCHITECTURE.md',
 }
 
 # Archive directories (exempt from checks - historical records)
@@ -259,4 +258,3 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
-

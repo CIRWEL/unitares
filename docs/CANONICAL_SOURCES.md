@@ -47,6 +47,8 @@ These docs should stay aligned with the runtime sources above:
 |-----|--------|--------------|
 | `README.md` | live overview | Public-facing summary and top-level framing |
 | `docs/UNIFIED_ARCHITECTURE.md` | canonical prose summary | Human-readable architecture explanation |
+| `docs/guides/TROUBLESHOOTING.md` | live troubleshooting guide | Failure diagnosis and practical remediation |
+| `docs/operations/OPERATOR_RUNBOOK.md` | live operator guide | Startup, health checks, and operator procedures |
 | `docs/guides/START_HERE.md` | thin compatibility entrypoint | Minimal workflow and links outward; should stay short |
 | `docs/database_architecture.md` | thin infrastructure reference | Storage/backend facts only; should not restate runtime semantics |
 | `docs/operations/DEFINITIVE_PORTS.md` | thin operational registry | Port assignments only; should stay small and factual |
@@ -59,8 +61,10 @@ These are live but intentionally specialized. They should not be treated as gene
 |-----|--------|--------------|
 | `docs/guides/NGROK_DEPLOYMENT.md` | specialized deployment reference | Remote/ngrok exposure only |
 | `docs/guides/CIRS_PROTOCOL.md` | specialized protocol reference | CIRS-specific coordination flows |
+| `docs/CIRCUIT_BREAKER_DIALECTIC.md` | specialized recovery reference | Circuit-breaker and dialectic recovery flow |
 | `docs/dev/TOOL_REGISTRATION.md` | specialized developer reference | MCP/tool registration work |
 | `docs/engineering/contract-drift-playbook.md` | specialized engineering playbook | Tool-contract and drift-prevention work |
+| `docs/meta/MARKDOWN_PROLIFERATION_POLICY.md` | specialized policy reference | Markdown creation policy and consolidation rules |
 
 ## Known Stale-Risk Patterns
 

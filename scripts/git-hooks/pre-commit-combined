@@ -1,6 +1,6 @@
 #!/bin/bash
 # Combined pre-commit hook: Markdown checks + auto-documentation
-# Install: ln -s ../../scripts/pre-commit-combined .git/hooks/pre-commit
+# Install: ln -s ../../scripts/git-hooks/pre-commit-combined .git/hooks/pre-commit
 
 set -e
 
@@ -35,7 +35,7 @@ if [ -n "$NEW_MARKDOWN_FILES" ]; then
         # Skip approved files
         if [[ "$file" == "README.md" ]] || \
            [[ "$file" == "CHANGELOG.md" ]] || \
-           [[ "$file" == "START_HERE.md" ]] || \
+           [[ "$file" == "docs/guides/START_HERE.md" ]] || \
            [[ "$file" == "docs/README.md" ]] || \
            [[ "$file" == "docs/QUICK_REFERENCE.md" ]] || \
            [[ "$file" == "docs/DOC_MAP.md" ]] || \
@@ -97,4 +97,3 @@ fi
 
 echo ""
 echo "✅ Pre-commit checks passed"
-
