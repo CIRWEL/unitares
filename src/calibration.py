@@ -3,7 +3,7 @@ Calibration Checking System
 Bins predictions by confidence and measures real accuracy to detect miscalibration.
 """
 
-from typing import Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
