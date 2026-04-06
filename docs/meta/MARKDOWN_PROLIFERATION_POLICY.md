@@ -19,7 +19,7 @@ That means:
 - broad user-facing explanations should be consolidated into existing live docs
 - narrow workflows may have their own docs, but must be marked as specialized
 - compatibility entrypoints should stay thin
-- historical material should live in `docs/archive/`
+- historical material should be deleted or noted inline as stale
 
 ## Current Active Doc Model
 

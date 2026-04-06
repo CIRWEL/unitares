@@ -59,7 +59,6 @@ These are live but intentionally specialized. They should not be treated as gene
 
 | Doc | Status | Intended use |
 |-----|--------|--------------|
-| `docs/guides/NGROK_DEPLOYMENT.md` | specialized deployment reference | Remote/ngrok exposure only |
 | `docs/guides/CIRS_PROTOCOL.md` | specialized protocol reference | CIRS-specific coordination flows |
 | `docs/CIRCUIT_BREAKER_DIALECTIC.md` | specialized recovery reference | Circuit-breaker and dialectic recovery flow |
 | `docs/dev/TOOL_REGISTRATION.md` | specialized developer reference | MCP/tool registration work |
