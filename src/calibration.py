@@ -475,7 +475,6 @@ class CalibrationChecker:
         strategic_issues = []
         for bin_key, bin_metrics in strategic_metrics.items():
             if bin_metrics.count < min_samples_per_bin:
-                strategic_issues.append(f"Bin {bin_key}: insufficient samples ({bin_metrics.count} < {min_samples_per_bin})")
                 continue
             
             # High confidence bins should have high trajectory health

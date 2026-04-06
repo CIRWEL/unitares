@@ -2111,11 +2111,21 @@ if (calibrationCard) {
             const r = await callTool('check_calibration', {});
             const th = r?.trajectory_health ?? r?.accuracy ?? 0;
             const dist = r?.confidence_distribution || {};
-            modalBody.innerHTML = '<div class="detail-section">' +
-                '<div><strong>Calibrated:</strong> ' + (r?.calibrated ? 'Yes' : 'No') + '</div>' +
+            const samples = r?.total_samples ?? 0;
+            const issues = r?.issues || [];
+            var calHtml = '<div class="detail-section">' +
+                '<div><strong>Calibrated:</strong> ' + (r?.calibrated ? 'Yes' : 'No') +
+                (samples === 0 ? ' <span style="opacity:0.6">(no samples yet)</span>' : '') + '</div>' +
                 '<div><strong>Trajectory health:</strong> ' + (th * 100).toFixed(1) + '%</div>' +
-                (dist.mean != null ? '<div><strong>Confidence mean:</strong> ' + (dist.mean * 100).toFixed(1) + '%</div>' : '') +
-                '</div>';
+                '<div><strong>Samples:</strong> ' + samples + '</div>' +
+                (dist.mean != null ? '<div><strong>Confidence mean:</strong> ' + (dist.mean * 100).toFixed(1) + '%</div>' : '');
+            if (issues.length > 0) {
+                calHtml += '<div style="margin-top:8px"><strong>Issues:</strong><ul style="margin:4px 0;padding-left:18px">';
+                issues.forEach(function (iss) { calHtml += '<li>' + escapeHtml(iss) + '</li>'; });
+                calHtml += '</ul></div>';
+            }
+            calHtml += '</div>';
+            modalBody.innerHTML = calHtml;
         } catch (e) {
             modalBody.innerHTML = '<div class="loading">Error: ' + escapeHtml(e.message) + '</div>';
         }

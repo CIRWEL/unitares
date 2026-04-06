@@ -603,11 +603,14 @@ class TestCheckCalibration:
         _, metrics = checker.check_calibration(include_complexity=False)
         assert "complexity_calibration" not in metrics
 
-    def test_insufficient_samples_generates_issue(self, checker):
+    def test_insufficient_samples_skipped_not_flagged(self, checker):
+        """Bins with too few samples are skipped, not flagged as issues."""
         checker.update_ground_truth(0.85, True, True)
         is_cal, metrics = checker.check_calibration(min_samples_per_bin=10)
         issues = metrics.get("issues", [])
-        assert any("insufficient" in i.lower() for i in issues)
+        # No real miscalibration issues — just insufficient data
+        assert len(issues) == 0
+        assert is_cal is True
 
     def test_large_calibration_error_flagged(self, checker):
         """Calibration error > 0.2 should be flagged."""

@@ -258,9 +258,10 @@ class TestCheckCalibration:
         _, metrics = checker.check_calibration(min_samples_per_bin=5)
         assert "tactical_calibration" in metrics
 
-    def test_insufficient_samples_per_bin(self, checker):
+    def test_insufficient_samples_skipped(self, checker):
         checker.update_ground_truth(confidence=0.85, predicted_correct=True, actual_correct=True)
         is_cal, metrics = checker.check_calibration(min_samples_per_bin=10)
-        # With only 1 sample and min=10, should report insufficient
+        # With only 1 sample and min=10, bins are skipped (no issues)
         issues = metrics.get("issues", [])
-        assert any("insufficient" in i.lower() for i in issues)
+        assert len(issues) == 0
+        assert is_cal is True

@@ -1289,7 +1289,7 @@ class TestHandlePiRestartService:
     @pytest.mark.asyncio
     async def test_allowed_services(self, _mock_audit_logger):
         """Test that all allowed services pass validation."""
-        for svc in ["anima", "anima-broker", "ngrok"]:
+        for svc in ["anima", "anima-broker", "cloudflared-lumen"]:
             mock_completed = MagicMock()
             mock_completed.returncode = 0
             mock_completed.stdout = "active"
