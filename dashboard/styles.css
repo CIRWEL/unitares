@@ -953,6 +953,12 @@ body {
     background: rgba(255, 255, 255, 0.08);
 }
 
+.panel-button.active {
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+    background: rgba(0, 240, 255, 0.08);
+}
+
 .panel-select-label {
     color: var(--text-secondary);
     font-size: 0.7rem;

@@ -118,16 +118,21 @@
             var pt = allPoints[k];
             var bucket = Math.floor(pt.ts / EISV_BUCKET_MS) * EISV_BUCKET_MS;
             if (!buckets[bucket]) {
-                buckets[bucket] = { E: [], I: [], S: [], V: [], coherence: [] };
+                buckets[bucket] = { E: [], I: [], S: [], V: [], coherence: [], ode_E: [], ode_I: [], ode_S: [], ode_V: [] };
             }
             buckets[bucket].E.push(pt.E);
             buckets[bucket].I.push(pt.I);
             buckets[bucket].S.push(pt.S);
             buckets[bucket].V.push(pt.V);
             buckets[bucket].coherence.push(pt.coherence);
+            if (pt.ode_E != null) buckets[bucket].ode_E.push(pt.ode_E);
+            if (pt.ode_I != null) buckets[bucket].ode_I.push(pt.ode_I);
+            if (pt.ode_S != null) buckets[bucket].ode_S.push(pt.ode_S);
+            if (pt.ode_V != null) buckets[bucket].ode_V.push(pt.ode_V);
         }
 
         function avg(arr) {
+            if (!arr.length) return null;
             var sum = 0;
             for (var n = 0; n < arr.length; n++) sum += arr[n];
             return sum / arr.length;
@@ -144,7 +149,11 @@
                 I: avg(vals.I),
                 S: avg(vals.S),
                 V: avg(vals.V),
-                coherence: avg(vals.coherence)
+                coherence: avg(vals.coherence),
+                ode_E: avg(vals.ode_E),
+                ode_I: avg(vals.ode_I),
+                ode_S: avg(vals.ode_S),
+                ode_V: avg(vals.ode_V)
             });
         }
         return result;
@@ -174,8 +183,12 @@
                     eisvChartUpper.data.datasets[0].data.push({ x: pt.x, y: pt.E });
                     eisvChartUpper.data.datasets[1].data.push({ x: pt.x, y: pt.I });
                     eisvChartUpper.data.datasets[2].data.push({ x: pt.x, y: pt.coherence });
+                    if (pt.ode_E != null) eisvChartUpper.data.datasets[3].data.push({ x: pt.x, y: pt.ode_E });
+                    if (pt.ode_I != null) eisvChartUpper.data.datasets[4].data.push({ x: pt.x, y: pt.ode_I });
                     eisvChartLower.data.datasets[0].data.push({ x: pt.x, y: pt.S });
                     eisvChartLower.data.datasets[1].data.push({ x: pt.x, y: pt.V });
+                    if (pt.ode_S != null) eisvChartLower.data.datasets[2].data.push({ x: pt.x, y: pt.ode_S });
+                    if (pt.ode_V != null) eisvChartLower.data.datasets[3].data.push({ x: pt.x, y: pt.ode_V });
                 });
             }
         } else if (selectedAgentView === '__all__') {
@@ -188,8 +201,12 @@
                         eisvChartUpper.data.datasets[0].data.push({ x: x, y: pt.E });
                         eisvChartUpper.data.datasets[1].data.push({ x: x, y: pt.I });
                         eisvChartUpper.data.datasets[2].data.push({ x: x, y: pt.coherence });
+                        if (pt.ode_E != null) eisvChartUpper.data.datasets[3].data.push({ x: x, y: pt.ode_E });
+                        if (pt.ode_I != null) eisvChartUpper.data.datasets[4].data.push({ x: x, y: pt.ode_I });
                         eisvChartLower.data.datasets[0].data.push({ x: x, y: pt.S });
                         eisvChartLower.data.datasets[1].data.push({ x: x, y: pt.V });
+                        if (pt.ode_S != null) eisvChartLower.data.datasets[2].data.push({ x: x, y: pt.ode_S });
+                        if (pt.ode_V != null) eisvChartLower.data.datasets[3].data.push({ x: x, y: pt.ode_V });
                     }
                 }
             }
@@ -206,8 +223,12 @@
                     eisvChartUpper.data.datasets[0].data.push({ x: xd, y: hist[q].E });
                     eisvChartUpper.data.datasets[1].data.push({ x: xd, y: hist[q].I });
                     eisvChartUpper.data.datasets[2].data.push({ x: xd, y: hist[q].coherence });
+                    if (hist[q].ode_E != null) eisvChartUpper.data.datasets[3].data.push({ x: xd, y: hist[q].ode_E });
+                    if (hist[q].ode_I != null) eisvChartUpper.data.datasets[4].data.push({ x: xd, y: hist[q].ode_I });
                     eisvChartLower.data.datasets[0].data.push({ x: xd, y: hist[q].S });
                     eisvChartLower.data.datasets[1].data.push({ x: xd, y: hist[q].V });
+                    if (hist[q].ode_S != null) eisvChartLower.data.datasets[2].data.push({ x: xd, y: hist[q].ode_S });
+                    if (hist[q].ode_V != null) eisvChartLower.data.datasets[3].data.push({ x: xd, y: hist[q].ode_V });
                 }
             }
         }
@@ -329,7 +350,7 @@
         var CS = MetricColors.HEX.chartEntropy;
         var CV = MetricColors.HEX.chartVoid;
 
-        // Upper chart: E, I, Coherence
+        // Upper chart: E, I, Coherence + ODE overlay
         var upperOpts = makeChartOptions({ grace: '5%' });
         upperOpts.plugins.equilibriumLines = [
             { value: 0.593, label: 'E eq \u22480.593', color: 'rgba(124,58,237,0.3)', dash: [3, 6] },
@@ -341,15 +362,19 @@
             type: 'line',
             data: {
                 datasets: [
+                    // [0-2] Behavioral (primary)
                     { label: 'Energy (E)', borderColor: CE, backgroundColor: 'rgba(124,58,237,0.08)', fill: true, data: [], tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 },
                     { label: 'Integrity (I)', borderColor: CI, backgroundColor: 'rgba(16,185,129,0.08)', fill: true, data: [], tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 },
-                    { label: 'Coherence', borderColor: CC, backgroundColor: 'transparent', data: [], tension: 0.3, pointRadius: 0, borderWidth: 2, borderDash: [6, 3] }
+                    { label: 'Coherence', borderColor: CC, backgroundColor: 'transparent', data: [], tension: 0.3, pointRadius: 0, borderWidth: 2, borderDash: [6, 3] },
+                    // [3-4] ODE overlay (dashed, dimmer)
+                    { label: 'E (ODE)', borderColor: 'rgba(124,58,237,0.35)', backgroundColor: 'transparent', data: [], tension: 0.3, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 4], hidden: !state.get('showODE') },
+                    { label: 'I (ODE)', borderColor: 'rgba(16,185,129,0.35)', backgroundColor: 'transparent', data: [], tension: 0.3, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 4], hidden: !state.get('showODE') }
                 ]
             },
             options: upperOpts
         });
 
-        // Lower chart: S, V
+        // Lower chart: S, V + ODE overlay
         var lowerOpts = makeChartOptions({ grace: '10%' });
         lowerOpts.plugins.equilibriumLines = [
             { value: 0.012, label: 'S eq \u22480.012', color: 'rgba(245,158,11,0.3)', dash: [3, 6] },
@@ -360,8 +385,12 @@
             type: 'line',
             data: {
                 datasets: [
+                    // [0-1] Behavioral (primary)
                     { label: 'Entropy (S)', borderColor: CS, backgroundColor: 'rgba(245,158,11,0.08)', fill: true, data: [], tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 },
-                    { label: 'Void (V)', borderColor: CV, backgroundColor: 'rgba(239,68,68,0.08)', fill: true, data: [], tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 }
+                    { label: 'Void (V)', borderColor: CV, backgroundColor: 'rgba(239,68,68,0.08)', fill: true, data: [], tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 },
+                    // [2-3] ODE overlay (dashed, dimmer)
+                    { label: 'S (ODE)', borderColor: 'rgba(245,158,11,0.35)', backgroundColor: 'transparent', data: [], tension: 0.3, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 4], hidden: !state.get('showODE') },
+                    { label: 'V (ODE)', borderColor: 'rgba(239,68,68,0.35)', backgroundColor: 'transparent', data: [], tension: 0.3, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 4], hidden: !state.get('showODE') }
                 ]
             },
             options: lowerOpts
@@ -388,6 +417,9 @@
         var knownAgents = state.get('knownAgents');
         var selectedAgentView = state.get('selectedAgentView');
 
+        // Extract ODE state from metrics (separate from behavioral EISV)
+        var ode = (data.metrics && data.metrics.ode) || {};
+
         // Store in per-agent history
         if (!agentEISVHistory[agentId]) {
             agentEISVHistory[agentId] = [];
@@ -399,7 +431,11 @@
             I: eisv.I || 0,
             S: eisv.S || 0,
             V: eisv.V || 0,
-            coherence: data.coherence || 0
+            coherence: data.coherence || 0,
+            ode_E: ode.E != null ? ode.E : null,
+            ode_I: ode.I != null ? ode.I : null,
+            ode_S: ode.S != null ? ode.S : null,
+            ode_V: ode.V != null ? ode.V : null
         });
 
         // Track known agents for dropdown
@@ -426,8 +462,12 @@
             eisvChartUpper.data.datasets[0].data.push({ x: ts, y: eisv.E || 0 });
             eisvChartUpper.data.datasets[1].data.push({ x: ts, y: eisv.I || 0 });
             eisvChartUpper.data.datasets[2].data.push({ x: ts, y: data.coherence || 0 });
+            if (ode.E != null) eisvChartUpper.data.datasets[3].data.push({ x: ts, y: ode.E });
+            if (ode.I != null) eisvChartUpper.data.datasets[4].data.push({ x: ts, y: ode.I });
             eisvChartLower.data.datasets[0].data.push({ x: ts, y: eisv.S || 0 });
             eisvChartLower.data.datasets[1].data.push({ x: ts, y: eisv.V || 0 });
+            if (ode.S != null) eisvChartLower.data.datasets[2].data.push({ x: ts, y: ode.S });
+            if (ode.V != null) eisvChartLower.data.datasets[3].data.push({ x: ts, y: ode.V });
 
             var cutoffDate = new Date(cutoff);
             [eisvChartUpper, eisvChartLower].forEach(function (chart) {
@@ -1027,6 +1067,33 @@
                 if (emptyMsg) emptyMsg.style.display = '';
                 var info = document.getElementById('eisv-chart-info');
                 if (info) info.innerHTML = '';
+            });
+        }
+
+        // Wire up ODE overlay toggle
+        var odeBtn = document.getElementById('ode-toggle');
+        if (odeBtn) {
+            // Set initial visual state
+            if (state.get('showODE')) odeBtn.classList.add('active');
+
+            odeBtn.addEventListener('click', function () {
+                var show = !state.get('showODE');
+                state.set({ showODE: show });
+                localStorage.setItem('unitares_show_ode', show ? 'true' : 'false');
+                odeBtn.classList.toggle('active', show);
+
+                var upper = state.get('eisvChartUpper');
+                var lower = state.get('eisvChartLower');
+                if (upper) {
+                    upper.data.datasets[3].hidden = !show;  // E (ODE)
+                    upper.data.datasets[4].hidden = !show;  // I (ODE)
+                    upper.update('none');
+                }
+                if (lower) {
+                    lower.data.datasets[2].hidden = !show;  // S (ODE)
+                    lower.data.datasets[3].hidden = !show;  // V (ODE)
+                    lower.update('none');
+                }
             });
         }
 
