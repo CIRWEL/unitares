@@ -343,8 +343,13 @@ class HeartbeatAgent:
         self.running = True
 
     def _inject_session(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Inject client_session_id for identity continuity."""
-        if tool_name == "onboard":
+        """Inject client_session_id for identity continuity.
+
+        Skip injection for onboard and identity calls — identity uses name-claim
+        path for resumption, and injecting client_session_id sets
+        explicit_resume_binding=True which bypasses the name-claim fallback.
+        """
+        if tool_name in ("onboard", "identity"):
             return arguments
         if self.client_session_id and "client_session_id" not in arguments:
             arguments = dict(arguments)
@@ -405,7 +410,8 @@ class HeartbeatAgent:
     def _extract_continuity_token(self, result: Dict[str, Any]) -> Optional[str]:
         """Extract continuity_token for trajectory-verified resume."""
         return (
-            result.get("session_continuity", {}).get("continuity_token")
+            result.get("continuity_token")
+            or result.get("session_continuity", {}).get("continuity_token")
             or result.get("identity_summary", {}).get("continuity_token", {}).get("value")
             or result.get("quick_reference", {}).get("for_strong_resume")
         )
