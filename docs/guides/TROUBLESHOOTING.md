@@ -202,7 +202,7 @@ curl http://localhost:8767/dashboard | head -20
 
 ```bash
 # List all related processes
-ps aux | grep -E "(mcp_server|ngrok|python.*governance)"
+ps aux | grep -E "(mcp_server|cloudflared|python.*governance)"
 
 # Check port usage
 lsof -i :8767
