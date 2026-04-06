@@ -1,6 +1,6 @@
 #!/bin/bash
-# Start UNITARES MCP Server + ngrok tunnel
-# Unified startup script for reliable operation
+# Start UNITARES MCP Server
+# Cloudflare tunnel is managed separately via launchd (com.cloudflare.tunnel.governance)
 
 set -e
 
@@ -9,10 +9,10 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cd "$PROJECT_ROOT"
 
-# LAN/ngrok: Host header allowlists must be set before Python imports (see src/mcp_listen_config.py)
+# Host header allowlists for LAN/Cloudflare access (see src/mcp_listen_config.py)
 export UNITARES_BIND_ALL_INTERFACES="${UNITARES_BIND_ALL_INTERFACES:-1}"
-export UNITARES_MCP_ALLOWED_HOSTS="${UNITARES_MCP_ALLOWED_HOSTS:-192.168.1.151:*,192.168.1.164:*,100.96.201.46:*,unitares.ngrok.io}"
-export UNITARES_MCP_ALLOWED_ORIGINS="${UNITARES_MCP_ALLOWED_ORIGINS:-http://192.168.1.151:*,http://192.168.1.164:*,http://100.96.201.46:*,https://unitares.ngrok.io}"
+export UNITARES_MCP_ALLOWED_HOSTS="${UNITARES_MCP_ALLOWED_HOSTS:-192.168.1.151:*,192.168.1.164:*,100.96.201.46:*,gov.cirwel.org}"
+export UNITARES_MCP_ALLOWED_ORIGINS="${UNITARES_MCP_ALLOWED_ORIGINS:-http://192.168.1.151:*,http://192.168.1.164:*,http://100.96.201.46:*,https://gov.cirwel.org}"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -64,13 +64,6 @@ if pgrep -f "mcp_server.py" > /dev/null; then
     fi
 fi
 
-# Check if ngrok is already running for this port
-if pgrep -f "ngrok.*8767" > /dev/null; then
-    echo -e "${YELLOW}⚠️  Ngrok appears to be running. Stopping existing instance...${NC}"
-    pkill -f "ngrok.*8767" || true
-    wait_for_exit "ngrok.*8767" 10 0.3 || true
-fi
-
 echo "🧹 Cleaning up stale lock files..."
 cleanup_stale_markers
 
@@ -96,27 +89,6 @@ else
     echo -e "${YELLOW}⚠️  Server started but health check failed. It may still be warming up.${NC}"
 fi
 
-# Start ngrok tunnel (pass domain as argument or use random URL)
-NGROK_DOMAIN="${NGROK_DOMAIN:-}"
-echo "🌐 Starting ngrok tunnel..."
-if [ -n "$NGROK_DOMAIN" ]; then
-    nohup ngrok http 8767 --url="$NGROK_DOMAIN" --log=stdout > /tmp/ngrok.log 2>&1 &
-else
-    echo -e "${YELLOW}ℹ️  No NGROK_DOMAIN set - using random URL. Set NGROK_DOMAIN env var for stable URL.${NC}"
-    nohup ngrok http 8767 --log=stdout > /tmp/ngrok.log 2>&1 &
-fi
-NGROK_PID=$!
-
-# Wait for ngrok to start
-sleep 2
-
-# Check if ngrok started successfully
-if ps -p $NGROK_PID > /dev/null; then
-    echo -e "${GREEN}✅ Ngrok tunnel started (PID: $NGROK_PID)${NC}"
-else
-    echo -e "${YELLOW}⚠️  Ngrok may have failed to start. Check logs: tail -f /tmp/ngrok.log${NC}"
-fi
-
 # Display status
 echo ""
 echo "════════════════════════════════════════════════════════════"
@@ -124,15 +96,11 @@ echo "  UNITARES Status"
 echo "════════════════════════════════════════════════════════════"
 echo "  MCP Server:  http://localhost:8767/mcp/"
 echo "  Health:      http://localhost:8767/health"
-if [ -n "$NGROK_DOMAIN" ]; then
-    echo "  Ngrok URL:   https://$NGROK_DOMAIN/mcp/"
-else
-    echo "  Ngrok URL:   (check /tmp/ngrok.log for URL)"
-fi
+echo "  Tunnel:      https://gov.cirwel.org/mcp/"
 echo ""
 echo "  Logs:"
 echo "    Server:    tail -f /tmp/unitares.log"
-echo "    Ngrok:     tail -f /tmp/ngrok.log"
+echo "    Tunnel:    tail -f /tmp/cloudflared-gov.log"
 echo ""
 echo "  Stop:        ./scripts/stop_unitares.sh"
 echo "════════════════════════════════════════════════════════════"

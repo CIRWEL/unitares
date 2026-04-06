@@ -15,7 +15,7 @@ UNITARES governance MCP server. Thermodynamic governance framework for AI agents
 ### MCP listen defaults (security)
 
 - **Default bind:** `127.0.0.1` unless `UNITARES_BIND_ALL_INTERFACES=1` (then `0.0.0.0`) or `UNITARES_MCP_HOST` is set.
-- **Transport allowlists:** localhost always; add `UNITARES_MCP_ALLOWED_HOSTS` and `UNITARES_MCP_ALLOWED_ORIGINS` (comma-separated) for LAN/ngrok Host headers. Optional: `UNITARES_HTTP_CORS_EXTRA_ORIGINS`, `UNITARES_MCP_ALLOW_NULL_ORIGIN` (default on for `file://`).
+- **Transport allowlists:** localhost always; add `UNITARES_MCP_ALLOWED_HOSTS` and `UNITARES_MCP_ALLOWED_ORIGINS` (comma-separated) for LAN/Cloudflare tunnel Host headers. Optional: `UNITARES_HTTP_CORS_EXTRA_ORIGINS`, `UNITARES_MCP_ALLOW_NULL_ORIGIN` (default on for `file://`).
 - LaunchAgent `scripts/ops/com.unitares.governance-mcp.plist` sets bind-all + example allowlists for this machine.
 
 ## Before Committing

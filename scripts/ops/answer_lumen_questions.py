@@ -15,8 +15,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# Pi MCP URL - try ngrok first, then direct
-PI_MCP_URL = os.environ.get("PI_MCP_URL", "https://lumen-anima.ngrok.io/mcp/")
+# Pi MCP URL — Cloudflare tunnel, with Tailscale fallback
+PI_MCP_URL = os.environ.get("PI_MCP_URL", "https://lumen.cirwel.org/mcp/")
 PI_MCP_TIMEOUT = 30.0
 
 
