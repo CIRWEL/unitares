@@ -113,7 +113,7 @@ class PiSystemPowerParams(AgentIdentityMixin):
 
 class PiRestartServiceParams(AgentIdentityMixin):
     """Parameters for pi_restart_service"""
-    service: Literal["anima", "anima-broker", "ngrok"] = Field("anima", description="Service to control: anima, anima-broker, or ngrok")
+    service: Literal["anima", "anima-broker", "cloudflared-lumen"] = Field("anima", description="Service to control: anima, anima-broker, or cloudflared-lumen")
     action: Literal["restart", "start", "stop", "status"] = Field("restart", description="Action: restart, start, stop, or status")
 
 

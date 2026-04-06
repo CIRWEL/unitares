@@ -995,7 +995,7 @@ async def handle_pi_restart_service(arguments: Dict[str, Any]) -> Sequence[TextC
     action = arguments.get("action", "restart")  # restart, start, stop, status
 
     # Whitelist allowed services
-    ALLOWED_SERVICES = ["anima", "anima-broker", "ngrok"]
+    ALLOWED_SERVICES = ["anima", "anima-broker", "cloudflared-lumen"]
     if service not in ALLOWED_SERVICES:
         return error_response(f"Service '{service}' not in allowed list: {ALLOWED_SERVICES}")
 

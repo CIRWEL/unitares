@@ -8,7 +8,7 @@ simultaneously and share state via this single server instance.
 Usage:
     python src/mcp_server.py [--port PORT] [--host HOST]
 
-    Default bind: 127.0.0.1 (see src/mcp_listen_config.py). For LAN/ngrok use
+    Default bind: 127.0.0.1 (see src/mcp_listen_config.py). For LAN/tunnel use
     UNITARES_BIND_ALL_INTERFACES=1 and set UNITARES_MCP_ALLOWED_HOSTS / UNITARES_MCP_ALLOWED_ORIGINS.
 
     Default URL: http://127.0.0.1:8767/mcp
@@ -211,7 +211,7 @@ if _oauth_issuer_url:
         _auth_settings = None
 
 # Create the FastMCP server
-# Default bind: 127.0.0.1 (see default_listen_host). LAN/ngrok: set UNITARES_BIND_ALL_INTERFACES=1
+# Default bind: 127.0.0.1 (see default_listen_host). LAN/tunnel: set UNITARES_BIND_ALL_INTERFACES=1
 # and UNITARES_MCP_ALLOWED_HOSTS / UNITARES_MCP_ALLOWED_ORIGINS as needed.
 _LISTEN_HOST = default_listen_host()
 mcp = FastMCP(
@@ -541,7 +541,7 @@ def parse_args():
         help=(
             "Host to bind to (default: from UNITARES_MCP_HOST, else 127.0.0.1, "
             "or 0.0.0.0 when UNITARES_BIND_ALL_INTERFACES=1). "
-            "Override for LAN/ngrok; set UNITARES_MCP_ALLOWED_HOSTS for non-local Host headers."
+            "Override for LAN/tunnel; set UNITARES_MCP_ALLOWED_HOSTS for non-local Host headers."
         ),
     )
     parser.add_argument(
@@ -697,7 +697,7 @@ async def main():
     logger.info(f"Starting governance server on http://{args.host}:{args.port}/mcp")
     if args.host in ("127.0.0.1", "::1", "localhost"):
         logger.info(
-            "Listening on loopback only. For LAN/ngrok set --host 0.0.0.0 or "
+            "Listening on loopback only. For LAN/tunnel set --host 0.0.0.0 or "
             "UNITARES_BIND_ALL_INTERFACES=1, and configure UNITARES_MCP_ALLOWED_HOSTS / "
             "UNITARES_MCP_ALLOWED_ORIGINS."
         )
@@ -968,7 +968,7 @@ async def main():
             limit_concurrency=100,  # Max concurrent connections
             timeout_keep_alive=5,  # Keep-alive timeout (seconds)
             timeout_graceful_shutdown=10,  # Graceful shutdown timeout
-            forwarded_allow_ips="127.0.0.1",  # Only trust proxy headers from localhost (ngrok agent)
+            forwarded_allow_ips="127.0.0.1",  # Only trust proxy headers from localhost (cloudflared)
             proxy_headers=True  # Process X-Forwarded-* headers
         )
         server = uvicorn.Server(config)

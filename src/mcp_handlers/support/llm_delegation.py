@@ -62,7 +62,7 @@ def _get_default_model() -> str:
 async def call_local_llm(
     prompt: str,
     model: Optional[str] = None,
-    max_tokens: int = 500,
+    max_tokens: int = 2048,
     temperature: float = 0.7,
     timeout: float = 30.0
 ) -> Optional[str]:
@@ -128,7 +128,7 @@ async def synthesize_results(
     discoveries: List[Dict[str, Any]],
     query: Optional[str] = None,
     max_discoveries: int = 8,
-    max_tokens: int = 250
+    max_tokens: int = 2048
 ) -> Optional[Dict[str, Any]]:
     """
     Synthesize knowledge graph search results into key insights.
@@ -186,7 +186,7 @@ async def explain_anomaly(
     anomaly_type: str,
     description: str,
     metrics: Optional[Dict[str, Any]] = None,
-    max_tokens: int = 300
+    max_tokens: int = 2048
 ) -> Optional[str]:
     """
     Generate explanation for governance anomaly.

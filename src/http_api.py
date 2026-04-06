@@ -767,7 +767,7 @@ async def http_dashboard_static(request):
     }, status_code=404)
 
 
-# HTTP polling fallback for EISV (when WebSocket is blocked by proxy/ngrok auth)
+# HTTP polling fallback for EISV (when WebSocket is blocked by proxy auth)
 async def http_eisv_latest(request):
     """Return the latest EISV update as JSON (polling fallback for WebSocket)."""
     if broadcaster_instance.last_update:

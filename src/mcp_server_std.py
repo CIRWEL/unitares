@@ -201,7 +201,7 @@ async def _proxy_http_call_tool(name: str, arguments: dict[str, Any]) -> Sequenc
 
 
 def _create_http1_only_client_factory():
-    """Create httpx client factory that forces HTTP/1.1 only (fixes ngrok 421 errors)."""
+    """Create httpx client factory that forces HTTP/1.1 only (fixes reverse proxy 421 errors)."""
     import httpx
     def http1_client_factory(**kwargs):
         return httpx.AsyncClient(http2=False, **kwargs)
