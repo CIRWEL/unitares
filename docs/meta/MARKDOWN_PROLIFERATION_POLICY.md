@@ -32,7 +32,7 @@ The active documentation set is intentionally structured:
 - `docs/guides/TROUBLESHOOTING.md`: live troubleshooting guide
 - `docs/operations/OPERATOR_RUNBOOK.md`: live operator procedures
 - thin infrastructure registries such as `docs/database_architecture.md` and `docs/operations/DEFINITIVE_PORTS.md`
-- specialized references for narrow topics such as CIRS, ngrok deployment, tool registration, and contract drift
+- specialized references for narrow topics such as CIRS, tunnel deployment, tool registration, and contract drift
 
 If a proposed new file does not fit one of those roles clearly, it is probably a sign that the content belongs in an existing doc or in the archive/knowledge layer instead.
 

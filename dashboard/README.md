@@ -16,7 +16,7 @@ Once the MCP server is running, access the dashboard at:
 
 - **Local:** http://127.0.0.1:8767/dashboard
 - **Root:** http://127.0.0.1:8767/ (also serves dashboard)
-- **Via ngrok:** https://unitares.ngrok.io/dashboard
+- **Via tunnel:** https://gov.cirwel.org/dashboard
 
 ## Features
 

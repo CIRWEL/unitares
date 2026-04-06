@@ -91,10 +91,6 @@ Use these rules when deciding whether to edit, shrink, or add a doc:
 2. If the content is narrow and task-specific, mark it as specialized so agents do not treat it as default guidance.
 3. If a doc mainly points to other docs, keep it thin and add an explicit status line saying so.
 4. If a statement describes runtime behavior, verify it against the canonical source files before merging.
-5. If a doc becomes historical, move it under `docs/archive/` instead of leaving it in the active set.
+5. If a doc becomes historical, delete it or note its status inline. Do not preserve stale docs.
 
 The goal is not to minimize documentation at all costs. The goal is to keep the active docs set small enough that agents can form the right model quickly, while still preserving specialized references for the narrower workflows that genuinely need them.
-
-## Archive Boundary
-
-Anything under `docs/archive/` is historical context unless explicitly promoted back into an active doc. Do not use archived prose as the source of truth for current runtime behavior.

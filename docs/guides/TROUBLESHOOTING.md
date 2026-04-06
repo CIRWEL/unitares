@@ -14,7 +14,7 @@ Status: live troubleshooting guide. Use for failure diagnosis and operator recov
 curl http://localhost:8767/health | python3 -m json.tool
 
 # Check processes
-ps aux | grep -E "(mcp_server|ngrok)"
+ps aux | grep -E "(mcp_server|cloudflared)"
 
 # Check logs
 tail -f data/logs/mcp_server.log
@@ -41,7 +41,7 @@ tail -f data/logs/mcp_server_error.log
 2. **Kill existing processes:**
    ```bash
    pkill -f "mcp_server"
-   pkill -f "ngrok.*8767"
+   launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.governance.plist
    ```
 
 3. **Restart via launchd (macOS production):**
@@ -57,11 +57,11 @@ tail -f data/logs/mcp_server_error.log
 
 ---
 
-### Issue 2: Ngrok Not Connecting
+### Issue 2: Cloudflare Tunnel Not Connecting
 
 **Symptoms:**
-- `https://your-domain.ngrok.io/mcp` returns 404
-- Ngrok log shows "connection refused"
+- `https://gov.cirwel.org/health` returns connection error
+- `cloudflared` logs show failures
 
 **Solutions:**
 
@@ -70,20 +70,15 @@ tail -f data/logs/mcp_server_error.log
    curl http://localhost:8767/health
    ```
 
-2. **Verify ngrok tunnel:**
+2. **Check tunnel status:**
    ```bash
-   curl http://localhost:4040/api/tunnels | python3 -m json.tool | grep -A 5 "8767"
+   tail -20 /tmp/cloudflared-gov.log
    ```
 
-3. **Restart ngrok:**
+3. **Restart tunnel:**
    ```bash
-   pkill -f "ngrok.*8767"
-   ngrok http 8767 --url=your-domain.ngrok.io
-   ```
-
-4. **Check ngrok authentication:**
-   ```bash
-   ngrok config check
+   launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.governance.plist
+   launchctl load ~/Library/LaunchAgents/com.cloudflare.tunnel.governance.plist
    ```
 
 ---
