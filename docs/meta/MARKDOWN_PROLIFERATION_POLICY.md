@@ -95,17 +95,9 @@ Recommended labels:
 
 This is not cosmetic. It tells agents whether a doc is meant to explain the whole system or only a narrow slice.
 
-## Archive Boundary
+## Stale Material
 
-Historical material belongs in `docs/archive/`. If a document is mainly:
-
-- a completed plan
-- a one-time incident writeup
-- a migration narrative
-- a session artifact
-- an obsolete architecture explanation
-
-then archive it instead of keeping it live. Archived docs are still valuable, but they should not sit beside current docs without a strong reason.
+If a document is mainly a completed plan, one-time incident writeup, migration narrative, session artifact, or obsolete architecture explanation — delete it or mark it inline as historical. Do not maintain a parallel archive tree.
 
 ## Relationship To Knowledge Storage
 
