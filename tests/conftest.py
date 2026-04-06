@@ -243,6 +243,19 @@ def _isolate_identity_state():
         warnings.warn(f"test cleanup failed: {exc}", stacklevel=2)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_drift_telemetry(tmp_path, monkeypatch):
+    """
+    Redirect drift telemetry to a temp dir so tests don't pollute
+    data/telemetry/drift_telemetry.jsonl (was generating ~17MB/day).
+    """
+    import src.drift_telemetry as dt_module
+    old = dt_module._telemetry
+    dt_module._telemetry = dt_module.DriftTelemetry(data_dir=tmp_path)
+    yield
+    dt_module._telemetry = old
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _cleanup_stale_ghost_files():
     """Remove test agent files left over from previous test runs."""

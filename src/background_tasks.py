@@ -423,7 +423,7 @@ async def periodic_telemetry_rotation(interval_hours: float = 24.0):
         try:
             from src.drift_telemetry import get_telemetry
             telemetry = get_telemetry()
-            result = telemetry.rotate(max_size_mb=100.0, archive_months=12)
+            result = telemetry.rotate(max_size_mb=50.0, archive_months=3)
             if result:
                 logger.info(f"[ROTATION] Drift telemetry rotated -> {result}")
         except Exception as e:

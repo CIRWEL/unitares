@@ -12,12 +12,11 @@ Version History:
 
 import os
 import numpy as np
-from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional, Any
+from dataclasses import field
+from typing import Dict, Optional, Any
 from datetime import datetime
 from pathlib import Path
 import json
-import sys
 
 from config.governance_config import config
 
@@ -28,7 +27,6 @@ logger = get_logger(__name__)
 # Import audit logging and calibration for accountability and self-awareness
 from src.audit_log import audit_logger
 from src.calibration import calibration_checker
-from src.runtime_config import get_effective_threshold
 
 # Extracted monitor subsystems (Phase 6 decomposition)
 from src.monitor_void import check_void_state as _check_void_state, calculate_void_frequency as _calculate_void_frequency
@@ -40,8 +38,6 @@ from src.monitor_lambda import update_lambda1 as _update_lambda1
 # Import dual-log architecture for grounded EISV inputs (Patent: Dual-Log Architecture)
 from src.dual_log import ContinuityLayer, RestorativeBalanceMonitor
 
-# Import drift telemetry for empirical data collection (Patent: De-abstracted Δη)
-from src.drift_telemetry import record_drift
 
 # Import UNITARES Phase-3 engine from governance_core (v2.0)
 # Core dynamics are now in governance_core module
@@ -52,16 +48,11 @@ ensure_project_root()
 
 # Import core dynamics from governance_core (canonical implementation)
 from governance_core import (
-    State, Theta, Weights,
-    DEFAULT_STATE, DEFAULT_THETA, DEFAULT_WEIGHTS,
+    State, Theta,
+    DEFAULT_STATE, DEFAULT_THETA, DEFAULT_PARAMS,
     step_state, coherence,
-    lambda1 as lambda1_from_theta,
     phi_objective, verdict_from_phi,
-    DynamicsParams, DEFAULT_PARAMS,
-    # Concrete ethical drift (Δη) - measurable components
-    EthicalDriftVector, AgentBaseline, compute_ethical_drift, get_agent_baseline,
-    # Research tools (migrated from unitaires_core)
-    approximate_stability_check, suggest_theta_update,
+    compute_ethical_drift,
 )
 
 # UNITARES params profile selection (optional v4.1 alignment)
@@ -72,7 +63,7 @@ from src.governance_state import GovernanceState
 from src.confidence import derive_confidence
 from src.cirs import (
     OscillationDetector, ResonanceDamper, OscillationState,
-    classify_response, CIRS_DEFAULTS, HCK_DEFAULTS
+    CIRS_DEFAULTS,
 )
 from src.hck_reflexive import (
     compute_update_coherence as _compute_update_coherence,
@@ -87,6 +78,19 @@ from src.monitor_metrics import (
 from src.behavioral_state import BehavioralEISV
 from src.behavioral_assessment import assess_behavioral_state
 from src.behavioral_sensor import compute_behavioral_sensor_eisv
+
+# Extracted monitor subsystems (Phase 7 decomposition)
+from src.monitor_drift import compute_drift_vector as _compute_drift_vector_impl
+from src.monitor_phi import compute_phi_and_risk as _compute_phi_and_risk_impl
+from src.monitor_cirs import run_cirs as _run_cirs_impl
+from src.monitor_calibration import run_calibration_recording as _run_calibration_recording_impl
+from src.monitor_result import build_result as _build_result_impl
+from src.monitor_prediction import (
+    register_tactical_prediction as _register_prediction,
+    lookup_prediction as _lookup_prediction,
+    consume_prediction as _consume_prediction,
+    expire_old_predictions as _expire_predictions,
+)
 
 
 class UNITARESMonitor:
@@ -1038,387 +1042,21 @@ class UNITARESMonitor:
             behavioral_assessment=behavioral_assessment,
         )
     
-    def _compute_drift_vector(self, grounded_agent_state: Dict, agent_state: Dict,
-                              confidence, task_type: str, continuity_metrics):
-        """Compute concrete ethical drift vector from measurable signals.
+    def _compute_drift_vector(self, grounded_agent_state, agent_state, confidence, task_type, continuity_metrics):
+        """Compute concrete ethical drift vector from measurable signals."""
+        return _compute_drift_vector_impl(self, grounded_agent_state, agent_state, confidence, task_type, continuity_metrics)
 
-        Blends governance-computed drift with agent-reported drift. Mutates
-        grounded_agent_state['ethical_drift'] with the final drift list.
+    def _compute_phi_and_risk(self, grounded_agent_state, agent_state, task_type):
+        """Compute phi objective, UNITARES verdict, risk score with task-type adjustments."""
+        return _compute_phi_and_risk_impl(self, grounded_agent_state, agent_state, task_type)
 
-        Sets self._last_drift_vector, self._consecutive_high_drift.
+    def _run_cirs(self, risk_score, unitares_verdict):
+        """Run CIRS oscillation detection and resonance damping."""
+        return _run_cirs_impl(self, risk_score, unitares_verdict)
 
-        Returns (drift_vector, agent_drift_norm).
-        """
-        # Compute Δη from MEASURABLE signals, not abstract concepts.
-        # This makes ethical drift empirically verifiable.
-        agent_baseline = get_agent_baseline(self.agent_id)
-
-        # Get calibration error from calibration system if available
-        calibration_error = None
-        try:
-            cal_status = calibration_checker.check()
-            if cal_status.get('calibrated') and cal_status.get('total_samples', 0) > 10:
-                # Use trajectory health deviation from 50% baseline
-                # Well-calibrated system should show ~50% success rate on challenging predictions
-                trajectory_health = cal_status.get('trajectory_health', 0.5)
-                if trajectory_health is not None:
-                    # Convert percentage to 0-1 and measure deviation from 0.5 (ideal)
-                    calibration_error = abs((trajectory_health / 100.0) - 0.5) * 2  # Scale to [0, 1]
-        except Exception:
-            pass  # Calibration not available, will use fallback
-
-        # Get current coherence for deviation calculation
-        active_params = get_active_params()
-        current_coherence = coherence(self.state.V, self.state.unitaires_theta, active_params)
-
-        # Compute concrete drift vector from governance-observed signals
-        drift_vector = compute_ethical_drift(
-            agent_id=self.agent_id,
-            baseline=agent_baseline,
-            current_coherence=current_coherence,
-            current_confidence=confidence if confidence is not None else 0.6,
-            complexity_divergence=continuity_metrics.complexity_divergence,
-            calibration_error=calibration_error,
-            decision=None,  # Will be updated after decision is made
-            state_velocity=self._last_state_velocity,
-            task_context=task_type,
-        )
-
-        # Blend agent-sent drift with governance-computed drift.
-        # Agent drift captures proprioceptive signals (e.g. Lumen's warmth/clarity/stability
-        # changes) that governance can't observe. Governance drift captures system-level
-        # deviations (calibration, complexity divergence, coherence, stability).
-        # Both matter — combine them so agent signals actually affect dynamics.
-        agent_drift_raw = agent_state.get('ethical_drift', [0.0, 0.0, 0.0])
-        if isinstance(agent_drift_raw, (list, tuple)) and len(agent_drift_raw) >= 1:
-            agent_drift_norm = sum(d * d for d in agent_drift_raw) ** 0.5
-        else:
-            agent_drift_norm = 0.0
-
-        # If agent sent non-trivial drift, blend it into the governance vector.
-        # Agent drift maps to: [0]=emotional→calibration, [1]=epistemic→coherence,
-        # [2]=behavioral→stability. Weight: 30% agent signal, 70% governance signal.
-        # This ensures agent signals matter but governance ground-truth dominates.
-        if agent_drift_norm > 0.01:
-            ad = list(agent_drift_raw) + [0.0] * max(0, 3 - len(agent_drift_raw))
-            blend = 0.3
-            drift_vector.calibration_deviation = (
-                (1 - blend) * drift_vector.calibration_deviation + blend * min(1.0, abs(ad[0]))
-            )
-            drift_vector.coherence_deviation = (
-                (1 - blend) * drift_vector.coherence_deviation + blend * min(1.0, abs(ad[1]))
-            )
-            drift_vector.stability_deviation = (
-                (1 - blend) * drift_vector.stability_deviation + blend * min(1.0, abs(ad[2]))
-            )
-
-        # Store for later access and time-series logging
-        self._last_drift_vector = drift_vector
-
-        # Track consecutive high-drift updates for auto-dialectic trigger
-        drift_dialectic_threshold = 0.7
-        if drift_vector.norm > drift_dialectic_threshold:
-            self._consecutive_high_drift = getattr(self, '_consecutive_high_drift', 0) + 1
-        else:
-            self._consecutive_high_drift = 0
-
-        # Convert to list format for dynamics engine (all 4 components)
-        drift_vector_list = drift_vector.to_list()
-
-        # Prevent drift signal from vanishing on complex tasks
-        complexity = grounded_agent_state.get('complexity', 0.0)
-        drift_norm_sq = sum(d ** 2 for d in drift_vector_list)
-        if drift_norm_sq < 0.001 and complexity > 0.3:
-            # Complex work always has some uncertainty, even with stable baselines
-            min_component = 0.05 * complexity / max(1, len(drift_vector_list))
-            drift_vector_list = [max(d, min_component) for d in drift_vector_list]
-
-        grounded_agent_state['ethical_drift'] = drift_vector_list
-
-        # Log drift if significant
-        if drift_vector.norm > 0.3:
-            logger.info(
-                f"Ethical drift for {self.agent_id}: "
-                f"||Δη||={drift_vector.norm:.3f} "
-                f"[cal={drift_vector.calibration_deviation:.3f}, "
-                f"cpx={drift_vector.complexity_divergence:.3f}, "
-                f"coh={drift_vector.coherence_deviation:.3f}, "
-                f"stab={drift_vector.stability_deviation:.3f}]"
-                f"{' (blended with agent signal)' if agent_drift_norm > 0.01 else ''}"
-            )
-
-        return drift_vector, agent_drift_norm
-
-    def _compute_phi_and_risk(self, grounded_agent_state: Dict, agent_state: Dict, task_type: str):
-        """Compute phi objective, UNITARES verdict, risk score with task-type adjustments.
-
-        Returns (phi, unitares_verdict, risk_score, task_type_adjustment, original_risk_score).
-        """
-        # Use GROUNDED ethical drift (governance-computed + agent-blended, all 4 components)
-        # Previously used agent_state (raw 3-element) and truncated to 3, dropping stability.
-        delta_eta = grounded_agent_state.get('ethical_drift', [0.0, 0.0, 0.0, 0.0])
-        if not delta_eta:
-            delta_eta = [0.0, 0.0, 0.0, 0.0]
-
-        # Use governance_core phi_objective and verdict_from_phi
-        # drift_norm() handles any-length lists — no truncation needed
-        phi = phi_objective(
-            state=self.state.unitaires_state,
-            delta_eta=delta_eta,
-            weights=DEFAULT_WEIGHTS
-        )
-        unitares_verdict = verdict_from_phi(phi)
-        score_result = {'phi': phi, 'verdict': unitares_verdict}
-
-        # Estimate risk (uses score_result internally to avoid recomputation)
-        risk_score = self.estimate_risk(agent_state, score_result=score_result)
-
-        # Adjust decision based on task_type context for S=0 interpretation
-        # Convergent tasks (standardization): S=0 is healthy compliance
-        # Divergent tasks (divergence): S=0 may indicate lack of creative risk-taking
-        # Prefer explicit function argument; fall back to agent_state
-        if task_type == "mixed":
-            task_type = agent_state.get("task_type", "mixed")
-        task_type_adjustment = None
-        original_risk_score = risk_score
-
-        if task_type == "convergent" and self.state.S == 0.0:
-            # S=0 in convergent work is healthy - don't penalize
-            # Reduce risk score adjustment for low entropy in convergent tasks
-            if risk_score > 0.3:  # Only adjust if risk is already elevated
-                risk_score = max(0.2, risk_score * 0.8)  # Reduce risk by 20%, floor at 0.2
-                task_type_adjustment = {
-                    "applied": True,
-                    "reason": "Convergent task with S=0 (healthy standardization)",
-                    "original_risk": original_risk_score,
-                    "adjusted_risk": risk_score,
-                    "adjustment": "reduced"
-                }
-        elif task_type == "divergent" and self.state.S == 0.0:
-            # S=0 in divergent work may indicate lack of divergence
-            # Slightly increase risk awareness (but don't block - divergence needs freedom)
-            if risk_score < 0.4:  # Only adjust if risk is low
-                risk_score = min(0.5, risk_score * 1.15)  # Increase by 15%, cap at 0.5
-                task_type_adjustment = {
-                    "applied": True,
-                    "reason": "Divergent task with S=0 (may indicate lack of divergence)",
-                    "original_risk": original_risk_score,
-                    "adjusted_risk": risk_score,
-                    "adjustment": "increased"
-                }
-        elif task_type in ("exploration", "introspection") and risk_score > 0.5:
-            # Honest uncertainty on exploratory/introspective tasks is not degradation.
-            # Low confidence is the appropriate epistemic state — don't trigger pause.
-            risk_adjustment = -0.08
-            risk_score = max(0.45, risk_score + risk_adjustment)  # floor raised to match RISK_APPROVE_THRESHOLD
-            task_type_adjustment = {
-                "applied": True,
-                "reason": f"{task_type} task: low confidence is appropriate epistemic state",
-                "original_risk": original_risk_score,
-                "adjusted_risk": risk_score,
-                "adjustment": "reduced",
-                "risk_adjusted_by": risk_adjustment,
-            }
-
-        return phi, unitares_verdict, risk_score, task_type_adjustment, original_risk_score
-
-    def _run_cirs(self, risk_score: float, unitares_verdict: str):
-        """Run CIRS oscillation detection and resonance damping.
-
-        Returns (oscillation_state, response_tier, cirs_result_or_none, damping_result_or_none).
-        Mutates self._last_oscillation_state and various self.state history fields.
-        """
-        from config.governance_config import GovernanceConfig as GovConfig
-
-        if GovConfig.ADAPTIVE_GOVERNOR_ENABLED and self.adaptive_governor is not None:
-            # CIRS v2: Adaptive Governor — PID-based threshold management
-            cirs_result = self.adaptive_governor.update(
-                coherence=float(self.state.coherence),
-                risk=float(risk_score),
-                verdict=unitares_verdict,
-                E_history=list(getattr(self.state, 'E_history', [0.5]*6)),
-                I_history=list(getattr(self.state, 'I_history', [0.5]*6)),
-                S_history=list(getattr(self.state, 'S_history', [0.5]*6)),
-                complexity_history=list(getattr(self.state, 'complexity_history', [0.3]*6)),
-                V_history=list(getattr(self.state, 'V_history', [0.0]*6)),
-            )
-            oscillation_state = OscillationState(
-                oi=cirs_result['oi'],
-                flips=cirs_result['flips'],
-                resonant=cirs_result['resonant'],
-                trigger=cirs_result['trigger'],
-            )
-            self._last_oscillation_state = oscillation_state
-            response_tier = cirs_result['verdict']
-            damping_result = None  # Damping is built into the PID cycle
-        else:
-            # Legacy v0.1 path (unchanged)
-            cirs_result = None
-            oscillation_state = self.oscillation_detector.update(
-                coherence=float(self.state.coherence),
-                risk=float(risk_score),
-                route=unitares_verdict,  # Use verdict as route proxy
-                threshold_coherence=config.COHERENCE_CRITICAL_THRESHOLD,
-                threshold_risk=config.RISK_REVISE_THRESHOLD
-            )
-            self._last_oscillation_state = oscillation_state
-
-            # Track OI in history
-            self.state.oi_history.append(oscillation_state.oi)
-
-            # Apply resonance damping if needed
-            damping_result = None
-            if oscillation_state.resonant:
-                self.state.resonance_events += 1
-
-                # Apply damping (threshold adjustment)
-                damping_result = self.resonance_damper.apply_damping(
-                    current_coherence=float(self.state.coherence),
-                    current_risk=float(risk_score),
-                    tau=config.COHERENCE_CRITICAL_THRESHOLD,
-                    beta=config.RISK_REVISE_THRESHOLD,
-                    oscillation_state=oscillation_state
-                )
-
-                if damping_result.damping_applied:
-                    self.state.damping_applied_count += 1
-
-                    logger.info(
-                        f"CIRS resonance damping for {self.agent_id}: "
-                        f"OI={oscillation_state.oi:.3f}, flips={oscillation_state.flips}, "
-                        f"trigger={oscillation_state.trigger}"
-                    )
-
-            # Use damped thresholds if damping was applied, otherwise static config
-            effective_tau = (damping_result.tau_new
-                            if damping_result and damping_result.damping_applied
-                            else config.COHERENCE_CRITICAL_THRESHOLD)
-            effective_beta = (damping_result.beta_new
-                              if damping_result and damping_result.damping_applied
-                              else config.RISK_REVISE_THRESHOLD)
-
-            # Classify response tier (proceed/soft_dampen/hard_block)
-            response_tier = classify_response(
-                coherence=float(self.state.coherence),
-                risk=float(risk_score),
-                tau=effective_tau,
-                beta=effective_beta,
-                tau_low=CIRS_DEFAULTS['tau_low'],
-                beta_high=CIRS_DEFAULTS['beta_high'],
-                oscillation_state=oscillation_state
-            )
-
-        return oscillation_state, response_tier, cirs_result, damping_result
-
-    def _run_calibration_recording(self, confidence: float, decision: Dict, drift_vector) -> Optional[Dict]:
-        """Retrospective trajectory validation + strategic/tactical calibration.
-
-        Compares previous verdict to current drift norm to assess whether the
-        intervention improved the trajectory.  Records calibration signals for
-        both trajectory-based and tool-usage ground truth.
-
-        Mutates self._prev_verdict_action, self._prev_drift_norm,
-        self._prev_confidence, self._prev_checkin_time.
-
-        Returns trajectory_validation dict or None.
-        """
-        import math
-        import time as _time
-
-        current_norm = drift_vector.norm if self._last_drift_vector else 0.0
-        trajectory_validation = None
-
-        now_mono = _time.monotonic()
-        elapsed_since_prev = (now_mono - self._prev_checkin_time) if self._prev_checkin_time else float('inf')
-
-        # Only record trajectory-based calibration when enough time has elapsed
-        # (>10s) to prevent rapid-fire calibration pollution from burst check-ins
-        if (self._prev_verdict_action is not None
-                and self._prev_drift_norm is not None
-                and elapsed_since_prev > 10.0):
-            norm_delta = self._prev_drift_norm - current_norm  # positive = improved
-
-            # Convert to [0, 1] quality signal via sigmoid
-            # Scale: +/-0.2 norm change saturates the response
-            trajectory_quality = 1.0 / (1.0 + math.exp(-norm_delta * 10.0))
-
-            # NOTE: Trajectory quality is NOT recorded to strategic calibration.
-            # It centers at ~0.5 for typical small norm changes, polluting bins.
-            # Strategic calibration is fed only by exogenous signals (tool-usage,
-            # outcome events).
-
-            if (self._prev_verdict_action in ('proceed', 'pause')
-                    and abs(norm_delta) > 0.03):
-                calibration_checker.record_tactical_decision(
-                    confidence=self._prev_confidence,
-                    decision=self._prev_verdict_action,
-                    immediate_outcome=(trajectory_quality > 0.5),
-                )
-
-            trajectory_validation = {
-                'quality': trajectory_quality,
-                'prev_verdict': self._prev_verdict_action,
-                'prev_norm': self._prev_drift_norm,
-                'current_norm': current_norm,
-                'norm_delta': norm_delta,
-            }
-
-        # Store current verdict for next check-in's validation
-        self._prev_verdict_action = decision['action']
-        self._prev_drift_norm = current_norm
-        self._prev_confidence = confidence
-        self._prev_checkin_time = now_mono
-
-        # Mint a tactical prediction id for this (agent, confidence) pair so
-        # outcome_event can later reference it exactly. The id is returned
-        # in the process_agent_update response for the agent to echo back.
-        self.register_tactical_prediction(confidence, decision_action=decision.get('action'))
-
-        # Record prediction for STRATEGIC calibration.
-        #
-        # Trajectory-based ground truth is already recorded by the retrospective
-        # validation block above (using prev_confidence). This block adds
-        # tool-usage ground truth for the CURRENT confidence when available.
-        predicted_correct = confidence >= 0.5
-        actual_correct = None
-
-        try:
-            from src.tool_usage_tracker import get_tool_usage_tracker
-            tracker = get_tool_usage_tracker()
-            stats = tracker.get_usage_stats(window_hours=1, agent_id=self.agent_id)
-            total_calls = stats.get('total_calls', 0)
-            if total_calls >= 3:
-                tools = stats.get('tools', {})
-                total_success = sum(t.get('success_count', 0) for t in tools.values())
-                tool_accuracy = float(total_success) / float(total_calls)
-                actual_correct = tool_accuracy
-        except Exception:
-            pass
-
-        if actual_correct is not None:
-            calibration_checker.record_prediction(
-                confidence=confidence,
-                predicted_correct=predicted_correct,
-                actual_correct=actual_correct
-            )
-
-            # Record for TACTICAL calibration (per-decision)
-            decision_action = decision['action']
-            outcome_was_good = actual_correct >= 0.6
-
-            if confidence >= 0.6:
-                immediate_outcome = outcome_was_good
-            else:
-                immediate_outcome = not outcome_was_good
-
-            if decision_action in ('proceed', 'pause'):
-                calibration_checker.record_tactical_decision(
-                    confidence=confidence,
-                    decision=decision_action,
-                    immediate_outcome=immediate_outcome
-                )
-
-        return trajectory_validation
+    def _run_calibration_recording(self, confidence, decision, drift_vector):
+        """Retrospective trajectory validation + strategic/tactical calibration."""
+        return _run_calibration_recording_impl(self, confidence, decision, drift_vector)
 
     # ------------------------------------------------------------------
     # Tactical prediction registry
@@ -1430,235 +1068,41 @@ class UNITARESMonitor:
     # module docstring for how this feeds the anytime-valid e-process.
     # ------------------------------------------------------------------
 
-    def register_tactical_prediction(
-        self,
-        confidence: float,
-        *,
-        decision_action: Optional[str] = None,
-    ) -> str:
+    def register_tactical_prediction(self, confidence: float, *, decision_action: Optional[str] = None) -> str:
         """Mint a prediction id for this (agent, confidence) pair and register it."""
-        import uuid
-        import time as _time
-
-        # Opportunistic cleanup: bound registry growth without a background task.
-        self.expire_old_predictions()
-
-        prediction_id = str(uuid.uuid4())
-        self._open_predictions[prediction_id] = {
-            "confidence": float(confidence),
-            "decision_action": decision_action,
-            "created_at": _time.monotonic(),
-            "created_at_iso": datetime.now().isoformat(),
-            "consumed": False,
-        }
-        self._last_prediction_id = prediction_id
-        return prediction_id
+        pid = _register_prediction(
+            self._open_predictions, confidence,
+            decision_action=decision_action,
+            prediction_ttl_seconds=self._prediction_ttl_seconds,
+        )
+        self._last_prediction_id = pid
+        return pid
 
     def lookup_prediction(self, prediction_id: str) -> Optional[Dict[str, Any]]:
         """Return the registered record for prediction_id, or None if unknown."""
-        if not prediction_id:
-            return None
-        record = self._open_predictions.get(prediction_id)
-        if not record:
-            return None
-        return dict(record)
+        return _lookup_prediction(self._open_predictions, prediction_id)
 
     def consume_prediction(self, prediction_id: str) -> Optional[Dict[str, Any]]:
-        """Mark a prediction as consumed and return its record.
-
-        Returns None if the id is unknown or already consumed. The record is
-        kept in the registry (with consumed=True) until TTL expiry so repeated
-        outcome events against the same prediction can be detected by callers.
-        """
-        if not prediction_id:
-            return None
-        record = self._open_predictions.get(prediction_id)
-        if not record or record.get("consumed"):
-            return None
-        record["consumed"] = True
-        return dict(record)
+        """Mark a prediction as consumed and return its record."""
+        return _consume_prediction(self._open_predictions, prediction_id)
 
     def expire_old_predictions(self, ttl_seconds: Optional[float] = None) -> int:
         """Drop prediction records older than ttl_seconds. Returns count removed."""
-        import time as _time
-
         ttl = float(ttl_seconds if ttl_seconds is not None else self._prediction_ttl_seconds)
-        now = _time.monotonic()
-        stale_ids = [
-            pid for pid, rec in self._open_predictions.items()
-            if (now - float(rec.get("created_at", 0.0))) > ttl
-        ]
-        for pid in stale_ids:
-            self._open_predictions.pop(pid, None)
-        if self._last_prediction_id in stale_ids:
+        removed = _expire_predictions(self._open_predictions, ttl)
+        if self._last_prediction_id and self._last_prediction_id not in self._open_predictions:
             self._last_prediction_id = None
-        return len(stale_ids)
+        return removed
 
-    def _build_result(
-        self,
-        status: str,
-        decision: Dict,
-        metrics: Dict,
-        confidence: float,
-        confidence_metadata: Dict,
-        task_type_adjustment,
-        trajectory_validation,
-        oscillation_state,
-        response_tier: str,
-        cirs_result,
-        damping_result,
-        behavioral_assessment=None,
-    ) -> Dict:
-        """Assemble the final result dict returned by process_update().
-
-        Pure dict construction — no state mutations except drift telemetry recording.
-        """
-        from config.governance_config import GovernanceConfig as GovConfig
-
-        result = {
-            'status': status,
-            'decision': decision,
-            'metrics': metrics,
-            'timestamp': datetime.now().isoformat(),
-            # TRANSPARENCY: Surface confidence reliability info (was computed but hidden)
-            'confidence_reliability': {
-                'reliability': confidence_metadata.get('reliability', 'unknown'),
-                'source': confidence_metadata.get('source', 'unknown'),
-                'calibration_applied': confidence_metadata.get('calibration_applied', False),
-                'calibration_samples': confidence_metadata.get('calibration_samples', 0),
-                'external_provided': confidence_metadata.get('external_provided'),
-                'derived_cap': confidence_metadata.get('derived_cap'),
-                'honesty_note': confidence_metadata.get('honesty_note', 'No metadata available')
-            }
-        }
-
-        # Add task_type adjustment info if applied (transparency)
-        if task_type_adjustment:
-            result['task_type_adjustment'] = task_type_adjustment
-
-        # Add trajectory self-validation data (for outcome event recording)
-        if trajectory_validation is not None:
-            result['trajectory_validation'] = trajectory_validation
-
-        # Add dual-log continuity metrics (grounded EISV inputs)
-        if self._last_continuity_metrics:
-            cm = self._last_continuity_metrics
-            result['continuity'] = {
-                'derived_complexity': cm.derived_complexity,
-                'self_reported_complexity': cm.self_complexity,
-                'complexity_divergence': cm.complexity_divergence,
-                'overconfidence_signal': cm.overconfidence_signal,
-                'underconfidence_signal': cm.underconfidence_signal,
-                'E_input': cm.E_input,
-                'I_input': cm.I_input,
-                'S_input': cm.S_input,
-                'calibration_weight': cm.calibration_weight,
-            }
-
-        # Add restorative balance status if needed
-        # Suppress for first few check-ins — not enough data for meaningful guidance
-        if self._last_restorative_status and self._last_restorative_status.needs_restoration:
-            rs = self._last_restorative_status
-            if self.state.update_count <= 3:
-                result['restorative'] = {
-                    'needs_restoration': False,
-                    'suppressed': True,
-                    'note': 'Restorative guidance suppressed — not enough check-ins for reliable assessment.',
-                }
-            else:
-                result['restorative'] = {
-                    'needs_restoration': rs.needs_restoration,
-                    'reason': rs.reason,
-                    'suggested_cooldown_seconds': rs.suggested_cooldown_seconds,
-                    'activity_rate': rs.activity_rate,
-                    'cumulative_divergence': rs.cumulative_divergence,
-                }
-                result['guidance'] = (
-                    f"Consider slowing down: {rs.reason}. "
-                    f"Suggested cooldown: {rs.suggested_cooldown_seconds}s"
-                )
-
-        # =================================================================
-        # Concrete Ethical Drift (Patent: De-abstracted Δη)
-        # =================================================================
-        if self._last_drift_vector:
-            dv = self._last_drift_vector
-            result['ethical_drift'] = {
-                'calibration_deviation': dv.calibration_deviation,
-                'complexity_divergence': dv.complexity_divergence,
-                'coherence_deviation': dv.coherence_deviation,
-                'stability_deviation': dv.stability_deviation,
-                'norm': dv.norm,
-                'norm_squared': dv.norm_squared,
-            }
-
-            # Record telemetry for empirical analysis
-            try:
-                record_drift(
-                    drift_vector=dv,
-                    agent_id=self.agent_id,
-                    update_count=self.state.update_count,
-                    baseline=get_agent_baseline(self.agent_id),
-                    decision=decision['action'],
-                    confidence=confidence,
-                )
-            except Exception as e:
-                logger.debug(f"Failed to record drift telemetry: {e}")
-
-        # =================================================================
-        # HCK v3.0 / CIRS v0.1: Add reflexive control and resonance metrics
-        # =================================================================
-        result['hck'] = {
-            'rho': float(getattr(self.state, 'current_rho', 0.0)),
-            'CE': float(self.state.CE_history[-1]) if self.state.CE_history else 0.0,
-            'gains_modulated': getattr(self, '_gains_modulated', False)
-        }
-
-        if GovConfig.ADAPTIVE_GOVERNOR_ENABLED and self.adaptive_governor is not None:
-            result['cirs'] = cirs_result  # Full observability from governor
-        else:
-            result['cirs'] = {
-                'oi': float(oscillation_state.oi),
-                'flips': int(oscillation_state.flips),
-                'resonant': bool(oscillation_state.resonant),
-                'trigger': oscillation_state.trigger,
-                'response_tier': response_tier,
-                'resonance_events': int(getattr(self.state, 'resonance_events', 0)),
-                'damping_applied_count': int(getattr(self.state, 'damping_applied_count', 0))
-            }
-
-            # Add damping details if applied this cycle
-            if damping_result and damping_result.damping_applied:
-                result['cirs']['damping'] = {
-                    'd_tau': damping_result.adjustments.get('d_tau', 0),
-                    'd_beta': damping_result.adjustments.get('d_beta', 0)
-                }
-
-        # =================================================================
-        # Behavioral EISV: observation-first state (parallel to ODE)
-        # =================================================================
-        if behavioral_assessment is not None:
-            result['behavioral'] = {
-                'state': self._behavioral_state.to_dict(),
-                'assessment': {
-                    'health': behavioral_assessment.health,
-                    'verdict': behavioral_assessment.verdict,
-                    'risk': behavioral_assessment.risk,
-                    'coherence': behavioral_assessment.coherence,
-                    'components': behavioral_assessment.components,
-                    'guidance': behavioral_assessment.guidance,
-                },
-            }
-            # Include baseline deviation when baselined and unhealthy
-            if self._behavioral_state.is_baselined and behavioral_assessment.health != "healthy":
-                result['behavioral']['deviation'] = {
-                    'E': round(self._behavioral_state.deviation("E"), 2),
-                    'I': round(self._behavioral_state.deviation("I"), 2),
-                    'S': round(self._behavioral_state.deviation("S"), 2),
-                    'V': round(self._behavioral_state.deviation("V"), 2),
-                }
-
-        return result
+    def _build_result(self, status, decision, metrics, confidence, confidence_metadata,
+                       task_type_adjustment, trajectory_validation, oscillation_state,
+                       response_tier, cirs_result, damping_result, behavioral_assessment=None):
+        """Assemble the final result dict returned by process_update()."""
+        return _build_result_impl(
+            self, status, decision, metrics, confidence, confidence_metadata,
+            task_type_adjustment, trajectory_validation, oscillation_state,
+            response_tier, cirs_result, damping_result, behavioral_assessment,
+        )
 
     def get_primary_eisv(self) -> tuple:
         """Primary EISV: behavioral when confident, ODE fallback.
