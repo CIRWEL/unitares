@@ -54,7 +54,7 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
       "prompt": "Analyze this code for potential bugs",
       "model": "gemini-flash",
       "task_type": "analysis",
-      "max_tokens": 500
+      "max_tokens": 2048
     }
     """
     if not OPENAI_AVAILABLE:
@@ -81,7 +81,7 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     # Get optional parameters
     model = arguments.get("model", "auto")  # auto, hf, gemini-flash, llama-3.1-8b, etc.
     task_type = arguments.get("task_type", "reasoning")  # reasoning, generation, analysis
-    max_tokens = int(arguments.get("max_tokens", 500))  # Must be int for Ollama
+    max_tokens = int(arguments.get("max_tokens", 2048))  # Must be int for Ollama
     temperature = float(arguments.get("temperature", 0.7))
     privacy = arguments.get("privacy", "local")  # local (Ollama default), auto, cloud
     provider = arguments.get("provider", "auto")  # auto, hf, gemini, ollama
@@ -170,7 +170,7 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             # Prefer Ollama (local, free, no token needed)
             base_url = "http://localhost:11434/v1"
             api_key = "ollama"
-            model = os.getenv("UNITARES_LLM_MODEL", "gemma3:27b") if model == "auto" else model
+            model = os.getenv("UNITARES_LLM_MODEL", "gemma4:latest") if model == "auto" else model
             provider = "ollama"
             logger.info(f"Auto-selected Ollama (local): {model}")
         else:

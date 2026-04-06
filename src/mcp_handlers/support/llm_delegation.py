@@ -56,8 +56,8 @@ def _get_default_model() -> str:
     if env_model:
         return env_model
 
-    # llama3:70b for governance coaching — needs real reasoning, not Alexa
-    return "llama3:70b"
+    # gemma4 for governance coaching — needs real reasoning
+    return "gemma4:latest"
 
 async def call_local_llm(
     prompt: str,
@@ -74,7 +74,7 @@ async def call_local_llm(
 
     Args:
         prompt: The prompt to send to the model
-        model: Model name (default: llama3:70b)
+        model: Model name (default: gemma4:latest)
         max_tokens: Maximum tokens in response
         temperature: Sampling temperature (0.0-1.0)
         timeout: Request timeout in seconds
@@ -168,7 +168,7 @@ Give 2-3 key insights in 2-3 sentences total. Be concise."""
         prompt=prompt,
         max_tokens=max_tokens,
         temperature=0.7,
-        timeout=12.0  # Tight timeout - synthesis is optional
+        timeout=30.0
     )
 
     if not result:
@@ -225,7 +225,7 @@ async def generate_recovery_coaching(
     agent_id: str,
     blockers: List[str],
     current_state: Optional[Dict[str, Any]] = None,
-    max_tokens: int = 200
+    max_tokens: int = 2048
 ) -> Optional[str]:
     """
     Generate personalized recovery coaching for stuck agent.
@@ -275,7 +275,7 @@ Give ONE clear, specific action they can take right now."""
 async def generate_antithesis(
     thesis: Dict[str, Any],
     agent_state: Optional[Dict[str, Any]] = None,
-    max_tokens: int = 400
+    max_tokens: int = 2048
 ) -> Optional[Dict[str, Any]]:
     """
     Generate dialectic antithesis (counterargument) for a thesis.
@@ -374,7 +374,7 @@ async def generate_synthesis(
     thesis: Dict[str, Any],
     antithesis: Dict[str, Any],
     synthesis_round: int = 1,
-    max_tokens: int = 350
+    max_tokens: int = 2048
 ) -> Optional[Dict[str, Any]]:
     """
     Generate dialectic synthesis - merging thesis and antithesis.

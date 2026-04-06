@@ -809,7 +809,7 @@ class TestParameterHandling:
 
         # Verify parameters passed to chat.completions.create
         call_kwargs = mock_client_instance.chat.completions.create.call_args[1]
-        assert call_kwargs["max_tokens"] == 500
+        assert call_kwargs["max_tokens"] == 2048
         assert call_kwargs["temperature"] == 0.7
 
     @pytest.mark.asyncio
