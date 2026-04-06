@@ -380,12 +380,6 @@ class HeartbeatAgent:
                             if isinstance(data, dict):
                                 final_result.update(data)
                                 json_parsed = True
-                                # Capture session ID, preserve existing continuity token
-                                if "client_session_id" in data:
-                                    self.client_session_id = data["client_session_id"]
-                                    existing = load_session()
-                                    token = data.get("continuity_token") or existing.get("continuity_token")
-                                    save_session(data["client_session_id"], token)
                         except json.JSONDecodeError:
                             continue
 
