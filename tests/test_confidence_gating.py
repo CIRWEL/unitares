@@ -53,7 +53,7 @@ class TestConfidenceGating:
         # Run enough updates to trigger lambda1 update cycle
         # Use low confidence (< threshold, typically 0.8)
         for i in range(10):
-            result = monitor.process_update(agent_state, confidence=0.5)
+            result = monitor.process_update(agent_state, confidence=0.35)
         
         # Should have skipped lambda1 update (attribute is lambda1_update_skips)
         assert hasattr(monitor.state, 'lambda1_update_skips')
@@ -93,7 +93,8 @@ class TestConfidenceGating:
         
         # Use confidence just below threshold
         threshold = config.CONTROLLER_CONFIDENCE_THRESHOLD
-        low_confidence = threshold - 0.01
+        # Stay below threshold even when coherence-relaxation lowers the gate (~0.4 floor)
+        low_confidence = max(0.05, threshold - 0.25)
         
         for i in range(10):
             result = monitor.process_update(agent_state, confidence=low_confidence)
@@ -134,14 +135,14 @@ class TestConfidenceGating:
         
         # First 10 updates with low confidence (should trigger skip)
         for i in range(10):
-            monitor.process_update(agent_state, confidence=0.5)
+            monitor.process_update(agent_state, confidence=0.35)
         
         skips_after_first = getattr(monitor.state, 'lambda1_update_skips', 0)
         assert skips_after_first >= 1, f"Should have skipped at least once, got {skips_after_first}"
         
         # Next 10 updates with low confidence (should trigger more skips)
         for i in range(10):
-            monitor.process_update(agent_state, confidence=0.5)
+            monitor.process_update(agent_state, confidence=0.35)
         
         skips_after_second = getattr(monitor.state, 'lambda1_update_skips', 0)
         assert skips_after_second > skips_after_first, f"Skips should increase: {skips_after_first} -> {skips_after_second}"
@@ -161,7 +162,7 @@ class TestConfidenceGating:
         # Note: Lambda1 update happens every 10 updates, so we need more updates
         # to see the effect of confidence gating
         for i in range(20):
-            conf = 0.5 if i % 2 == 0 else 0.9  # Alternate low/high
+            conf = 0.35 if i % 2 == 0 else 0.9  # Alternate low/high
             monitor.process_update(agent_state, confidence=conf)
         
         # Should have at least some skips due to low confidence updates
@@ -181,7 +182,7 @@ class TestConfidenceGating:
         }
         
         # Low confidence
-        result_low = monitor.process_update(agent_state, confidence=0.5)
+        result_low = monitor.process_update(agent_state, confidence=0.35)
         
         # High confidence
         result_high = monitor.process_update(agent_state, confidence=0.9)

@@ -148,7 +148,7 @@ def test_governance_core_usage():
     print("\n6. Verifying governance_core usage...")
 
     # Import to check that it's using governance_core
-    from governance_monitor import (
+    from src.governance_monitor import (
         step_state, coherence, phi_objective, verdict_from_phi
     )
 

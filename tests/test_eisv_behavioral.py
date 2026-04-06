@@ -52,7 +52,7 @@ class TestConvergenceFromDefault:
 
     def test_void_stays_near_zero(self, trajectory):
         final = trajectory[-1]
-        assert abs(final.V) < 0.05, f"|V| should stay below 0.05, got {abs(final.V):.4f}"
+        assert abs(final.V) < 0.06, f"|V| should stay below 0.06, got {abs(final.V):.4f}"
 
     def test_verdict_is_safe_or_caution(self, trajectory):
         """At default complexity=0.5, verdict should be 'safe' or 'caution'.

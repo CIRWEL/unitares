@@ -1,10 +1,37 @@
 """
 Pytest configuration and fixtures for governance-mcp-v1 tests.
 """
+import sys
+from pathlib import Path
+
+_support_root = Path(__file__).resolve().parent / "support"
+
+
+def _ensure_test_governance_core() -> None:
+    """Prefer installed `unitares-core`; if missing or broken, prepend tests/support stub."""
+    stub_dir = _support_root / "governance_core"
+    if not stub_dir.is_dir():
+        return
+    try:
+        import governance_core as gc  # noqa: F401
+
+        if getattr(gc, "__unitares_stub__", False):
+            return
+        from governance_core import State  # noqa: F401
+
+        return
+    except Exception:
+        pass
+    root = str(_support_root)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+
+_ensure_test_governance_core()
+
 import pytest
 import pytest_asyncio
 import warnings
-import sys
 from collections import defaultdict, deque
 from unittest.mock import AsyncMock
 
