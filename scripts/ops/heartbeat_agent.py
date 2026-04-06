@@ -340,6 +340,7 @@ class HeartbeatAgent:
         self.with_audit = with_audit
         self.force_new = force_new
         self.client_session_id: Optional[str] = None
+        self.agent_uuid: Optional[str] = None  # Expected UUID, set by _capture_identity
         self.running = True
 
     def _inject_session(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -419,9 +420,21 @@ class HeartbeatAgent:
         """Extract and save session ID + continuity token from a successful identity response."""
         sid = self._extract_session_id(result)
         token = self._extract_continuity_token(result)
+        resolved_uuid = result.get("uuid") or result.get("agent_uuid") or result.get("bound_identity", {}).get("uuid")
+
+        # Identity drift detection: if we already have an expected UUID and this
+        # one doesn't match, something went wrong — alert instead of silently switching.
+        if self.agent_uuid and resolved_uuid and resolved_uuid != self.agent_uuid:
+            log(f"IDENTITY DRIFT: expected {self.agent_uuid[:12]}... but got {resolved_uuid[:12]}...")
+            notify("Vigil", f"Identity drift detected! Expected {self.agent_uuid[:8]}...")
+            return False
+
+        if resolved_uuid:
+            self.agent_uuid = resolved_uuid
         if sid:
             self.client_session_id = sid
             save_session(sid, token)
+
         # Prefer self.label over auto-generated agent_id (e.g. "Vigil_7d9966bb")
         raw_name = result.get("display_name") or result.get("label")
         agent_name = raw_name if (raw_name and "_" not in raw_name) else self.label
@@ -448,10 +461,30 @@ class HeartbeatAgent:
             if saved.get("client_session_id"):
                 self.client_session_id = saved["client_session_id"]
 
+            # Validate saved token before trusting it — decode and check the
+            # embedded agent UUID matches what we expect. Catches token corruption
+            # and the session-overwrite bug where another agent's token replaced ours.
+            token = saved.get("continuity_token")
+            if token:
+                try:
+                    import base64 as _b64
+                    parts = token.split(".")
+                    if len(parts) == 3 and parts[0] == "v1":
+                        payload = json.loads(_b64.urlsafe_b64decode(parts[1] + "==").decode())
+                        token_aid = payload.get("aid")
+                        if self.agent_uuid and token_aid and token_aid != self.agent_uuid:
+                            log(f"TOKEN MISMATCH: token has {token_aid[:12]}... but expected {self.agent_uuid[:12]}... — discarding stale token")
+                            notify("Vigil", f"Stale token detected (wrong agent UUID)")
+                            token = None
+                        elif token_aid:
+                            # First run or no prior UUID — trust the token and set expectation
+                            self.agent_uuid = token_aid
+                except Exception:
+                    pass  # Token decode failed — let the server validate it
+
             # If we have a continuity token, use it for strong resume.
             # Don't pass name — it triggers name-claim path which requires trajectory_signature.
             # Session-key resolution via token is sufficient to find the identity.
-            token = saved.get("continuity_token")
             if token:
                 result = await self.call_tool(session, "identity", {
                     "resume": True,
@@ -702,6 +735,18 @@ class HeartbeatAgent:
                     metrics = result.get("metrics", {}) if result.get("success") else {}
                     coherence = metrics.get("coherence")
                     verdict = result.get("decision", {}).get("action")
+
+                    # --- Self-verification: did the check-in land on the right agent? ---
+                    response_agent = (
+                        result.get("agent_signature", {}).get("uuid")
+                        or result.get("resolved_agent_id")
+                    )
+                    if self.agent_uuid and response_agent and response_agent != self.agent_uuid:
+                        log(
+                            f"CHECK-IN MISDIRECTED: sent to {response_agent[:12]}... "
+                            f"but expected {self.agent_uuid[:12]}... — identity may need refresh"
+                        )
+                        notify("Vigil", f"Check-in went to wrong agent! Run --force-new")
 
                     # --- Uptime tracking ---
                     total_cycles = prev_state.get("total_cycles", 0) + 1
