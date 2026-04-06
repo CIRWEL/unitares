@@ -42,6 +42,7 @@ from .session import (
     set_onboard_pin,
     create_continuity_token,
     resolve_continuity_token,
+    extract_token_agent_uuid,
     continuity_token_support_status,
 )
 
@@ -475,13 +476,34 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
             })
             return success_response(payload)
 
+    # Extract agent UUID from continuity token for direct lookup fallback.
+    # If session bindings expired, this allows rebinding without forking.
+    _token_agent_uuid = None
+    if arguments.get("continuity_token"):
+        _token_agent_uuid = extract_token_agent_uuid(str(arguments["continuity_token"]))
+
     # STEP 1: Check for existing identity under BASE key first (unless force_new)
     # Pass resume= through so resolve_session_identity respects the flag
     existing_identity = None
     session_key = base_session_key
 
     if not force_new:
-        existing_identity = await resolve_session_identity(base_session_key, persist=False, resume=resume)
+        existing_identity = await resolve_session_identity(
+            base_session_key, persist=False, resume=resume,
+            token_agent_uuid=_token_agent_uuid,
+        )
+
+        # Token-based resume failed — agent not found or not active
+        if existing_identity.get("resume_failed"):
+            return error_response(
+                existing_identity.get("message", "Could not resume identity"),
+                recovery={
+                    "reason": "resume_failed",
+                    "token_agent_uuid": existing_identity.get("token_agent_uuid"),
+                    "hint": "Call onboard(force_new=true) to create a new identity.",
+                }
+            )
+
         if not existing_identity.get("created"):
             # EXISTING AGENT FOUND under base key (only happens when resume=True)
             agent_uuid = existing_identity.get("agent_uuid")

@@ -252,6 +252,8 @@ async def resolve_session_identity(
 
     resume: bool = False,
 
+    token_agent_uuid: Optional[str] = None,
+
 ) -> Dict[str, Any]:
 
     """
@@ -602,6 +604,67 @@ async def resolve_session_identity(
             if auto_result:
                 logger.info(f"[AUTO_NAME] Reused identity via auto-label '{auto_label}' (trajectory verified)")
                 return auto_result
+
+    # PATH 2.8: Direct agent lookup from continuity token
+    # The token embeds the agent UUID. If session bindings expired but the
+    # agent still exists in PG, rebind the session and return — no fork.
+    if token_agent_uuid and not force_new:
+        try:
+            if await _agent_exists_in_postgres(token_agent_uuid):
+                status = await _get_agent_status(token_agent_uuid)
+                if status == "active":
+                    agent_id = await _get_agent_id_from_metadata(token_agent_uuid) or token_agent_uuid
+                    label = await _get_agent_label(token_agent_uuid)
+
+                    # Rebind session in Redis + PG
+                    await _cache_session(session_key, token_agent_uuid, display_agent_id=agent_id)
+                    try:
+                        db = get_db()
+                        identity = await db.get_identity(token_agent_uuid)
+                        if identity:
+                            await db.create_session(
+                                session_id=session_key,
+                                identity_id=identity.identity_id,
+                                expires_at=datetime.now() + timedelta(hours=GovernanceConfig.SESSION_TTL_HOURS),
+                                client_type="mcp",
+                                client_info={"agent_uuid": token_agent_uuid, "rebound_from_token": True},
+                            )
+                    except Exception as e:
+                        logger.debug(f"[TOKEN_REBIND] PG session rebind failed (non-fatal): {e}")
+
+                    logger.info(
+                        f"[TOKEN_REBIND] Rebound {token_agent_uuid[:8]}... via direct agent lookup "
+                        f"(session binding had expired)"
+                    )
+                    return {
+                        "agent_id": agent_id,
+                        "public_agent_id": agent_id,
+                        "agent_uuid": token_agent_uuid,
+                        "display_name": label,
+                        "label": label,
+                        "created": False,
+                        "persisted": True,
+                        "source": "token_rebind",
+                    }
+                else:
+                    logger.info(f"[TOKEN_REBIND] Agent {token_agent_uuid[:8]}... is {status}, not resumable")
+        except Exception as e:
+            logger.warning(f"[TOKEN_REBIND] Direct agent lookup failed: {e}")
+
+        # Token was provided but agent not found/resumable — don't silently fork
+        logger.warning(
+            f"[IDENTITY] resume with token but agent {token_agent_uuid[:8]}... "
+            f"not found or not active — refusing to create fork"
+        )
+        return {
+            "resume_failed": True,
+            "error": "resume_failed",
+            "token_agent_uuid": token_agent_uuid,
+            "message": (
+                f"Continuity token references agent {token_agent_uuid[:8]}... "
+                f"which is not active. Use force_new=true or onboard() to create a new identity."
+            ),
+        }
 
     # PATH 3: Create new agent
 

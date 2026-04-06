@@ -83,6 +83,34 @@ def create_continuity_token(
     return f"v1.{payload_b64}.{sig_b64}"
 
 
+def extract_token_agent_uuid(token: str) -> Optional[str]:
+    """Extract agent UUID from a continuity token after signature verification.
+
+    Unlike resolve_continuity_token, this does NOT check expiry — an expired
+    token still proves identity. Used for direct agent lookup when session
+    bindings have expired but the agent still exists.
+    """
+    if not token or not isinstance(token, str):
+        return None
+    secret = _get_continuity_secret()
+    if not secret:
+        return None
+    try:
+        version, payload_b64, sig_b64 = token.split(".", 2)
+        if version != "v1":
+            return None
+        expected_sig = _b64url_encode(hmac.new(secret, payload_b64.encode(), hashlib.sha256).digest())
+        if not hmac.compare_digest(expected_sig, sig_b64):
+            return None
+        payload = json.loads(_b64url_decode(payload_b64).decode())
+        aid = payload.get("aid")
+        if not aid or not isinstance(aid, str):
+            return None
+        return aid
+    except Exception:
+        return None
+
+
 def resolve_continuity_token(
     token: str,
     *,
