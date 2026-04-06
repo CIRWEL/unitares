@@ -32,7 +32,6 @@ REQUIRED_STATUS_PREFIX = {
     "docs/CANONICAL_SOURCES.md": "Status:",
     "docs/database_architecture.md": "Status:",
     "docs/operations/DEFINITIVE_PORTS.md": "Status:",
-    "docs/guides/NGROK_DEPLOYMENT.md": "Status:",
     "docs/guides/CIRS_PROTOCOL.md": "Status:",
     "docs/dev/TOOL_REGISTRATION.md": "Status:",
     "docs/engineering/contract-drift-playbook.md": "Status:",
