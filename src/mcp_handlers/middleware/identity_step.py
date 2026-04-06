@@ -178,6 +178,15 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
             logger.debug(f"[DISPATCH] Using X-Agent-Id as name claim: {x_agent_id_header}")
     trajectory_sig = arguments.get("trajectory_signature") if arguments else None
 
+    # Extract agent UUID from continuity token for PATH 2.8 direct lookup
+    _token_agent_uuid = None
+    if arguments and arguments.get("continuity_token"):
+        try:
+            from ..identity.session import extract_token_agent_uuid
+            _token_agent_uuid = extract_token_agent_uuid(str(arguments["continuity_token"]))
+        except Exception:
+            pass
+
     bound_agent_id = None
     identity_result = None
     try:
@@ -189,6 +198,7 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
             agent_name=agent_name_hint,
             trajectory_signature=trajectory_sig,
             resume=True,
+            token_agent_uuid=_token_agent_uuid,
         )
         bound_agent_id = identity_result.get("agent_uuid")
 

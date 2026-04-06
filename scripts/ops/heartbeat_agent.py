@@ -343,7 +343,7 @@ class HeartbeatAgent:
         self.running = True
 
     def _inject_session(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Inject client_session_id for identity continuity.
+        """Inject client_session_id and continuity_token for identity continuity.
 
         Skip injection for onboard and identity calls — identity uses name-claim
         path for resumption, and injecting client_session_id sets
@@ -351,9 +351,14 @@ class HeartbeatAgent:
         """
         if tool_name in ("onboard", "identity"):
             return arguments
+        arguments = dict(arguments)
         if self.client_session_id and "client_session_id" not in arguments:
-            arguments = dict(arguments)
             arguments["client_session_id"] = self.client_session_id
+        # Also inject continuity_token so PATH 2.8 can rebind after server restart
+        saved = load_session()
+        token = saved.get("continuity_token")
+        if token and "continuity_token" not in arguments:
+            arguments["continuity_token"] = token
         return arguments
 
     async def call_tool(self, session: ClientSession, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
