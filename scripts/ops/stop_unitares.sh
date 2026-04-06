@@ -1,6 +1,6 @@
 #!/bin/bash
-# Stop UNITARES MCP Server + ngrok tunnel
-# Clean shutdown script
+# Stop UNITARES MCP Server
+# Clean shutdown script (tunnel managed by launchd separately)
 
 set -e
 
@@ -49,23 +49,6 @@ if pgrep -f "mcp_server.py" > /dev/null; then
     echo -e "${GREEN}✅ MCP server stopped${NC}"
 else
     echo "ℹ️  MCP server not running"
-fi
-
-# Stop ngrok (check both old port 8765 and current 8767)
-if pgrep -f "ngrok http" > /dev/null; then
-    echo "🌐 Stopping ngrok tunnel..."
-    pkill -f "ngrok http" || true
-    wait_for_exit "ngrok http" 10 0.3 || true
-
-    # Force kill if still running
-    if pgrep -f "ngrok http" > /dev/null; then
-        echo -e "${YELLOW}⚠️  Force killing ngrok...${NC}"
-        pkill -9 -f "ngrok http" || true
-        wait_for_exit "ngrok http" 10 0.3 || true
-    fi
-    echo -e "${GREEN}✅ Ngrok tunnel stopped${NC}"
-else
-    echo "ℹ️  Ngrok not running"
 fi
 
 # Clean up only when the server is actually gone; avoids racing a fresh restart.

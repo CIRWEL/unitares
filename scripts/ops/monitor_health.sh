@@ -100,23 +100,23 @@ send_alert() {
 
 check_processes() {
     local server_running=false
-    local ngrok_running=false
-    
+    local tunnel_running=false
+
     if pgrep -f "mcp_server.py" > /dev/null; then
         server_running=true
     fi
-    
-    if pgrep -f "ngrok.*8767" > /dev/null || pgrep -f "ngrok.*unitares" > /dev/null; then
-        ngrok_running=true
+
+    if pgrep -f "cloudflared.*tunnel" > /dev/null; then
+        tunnel_running=true
     fi
-    
-    if [ "$server_running" = true ] && [ "$ngrok_running" = true ]; then
+
+    if [ "$server_running" = true ] && [ "$tunnel_running" = true ]; then
         echo -e "${GREEN}✅ Processes running${NC}"
         return 0
     else
         echo -e "${RED}❌ Process check failed${NC}"
         [ "$server_running" = false ] && echo "  MCP server not running"
-        [ "$ngrok_running" = false ] && echo "  Ngrok not running"
+        [ "$tunnel_running" = false ] && echo "  Cloudflare tunnel not running"
         return 1
     fi
 }

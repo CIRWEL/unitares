@@ -21,6 +21,7 @@ scripts_dir = project_root / "scripts" / "ops"
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(scripts_dir))
 
+import heartbeat_agent as _hb_module
 from heartbeat_agent import (
     HeartbeatAgent,
     _atomic_write,
@@ -29,6 +30,9 @@ from heartbeat_agent import (
     notify,
     ANIMA_HEALTH_URLS,
 )
+
+# Redirect log output to a temp file so tests don't pollute Vigil's production log
+_hb_module.LOG_FILE = Path(tempfile.gettempdir()) / "unitares-heartbeat-test.log"
 
 
 # =============================================================================

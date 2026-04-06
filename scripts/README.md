@@ -45,7 +45,6 @@ The bulk of operational scripts live in `scripts/ops/`.
 | `stop_unitares.sh` | Stop the governance MCP server |
 | `start_server.sh` | Alternative server start |
 | `start_with_deps.sh` | Start server with all dependencies |
-| `deploy_ngrok.sh` | Deploy ngrok tunnel |
 
 ### Health & Monitoring
 
