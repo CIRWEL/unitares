@@ -7,9 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [2.11.0] - 2026-04-07
 
-*Nothing yet.*
+### Added
+
+- **Sentinel agent** — continuous independent observer that monitors governance in real-time via WebSocket. Detects fleet-wide anomalies (coordinated degradation, entropy outliers, verdict shifts), correlates incidents across typed events, and generates template-based situation reports from the audit trail. Runs as a launchd-managed persistent service alongside Vigil. (`scripts/ops/sentinel_agent.py`)
+- **Broadcaster event bus** — typed event emission (`lifecycle_*`, `identity_*`, `knowledge_*`, `circuit_breaker_*`) with a queryable in-memory ring buffer (2000 events, ~6h). Foundation for Sentinel and future dashboard consumers.
+- **Behavioral baseline persistence** — Welford stats (mean, variance, count per signal) now persist to PostgreSQL (`core.agent_behavioral_baselines` table) via fire-and-forget async writes. Baselines survive server restarts instead of resetting.
+- **KG confidence cross-check** — discovery confidence is clamped to `agent_coherence + 0.3` on write. Annotates provenance with `confidence_clamped: true` and broadcasts `knowledge_confidence_clamped` event.
+- **Circuit breaker telemetry** — trip timestamp ring buffers on both governance and Redis circuit breakers. Exposed via `get_governance_metrics()` as `circuit_breakers` section with `trips_1h`, `trips_24h`, `last_trip`.
+- **Trajectory drift alerts** — emits `trajectory_drift` audit event and `identity_drift` broadcast when lineage similarity drops below 0.6. Also broadcasts `identity_assurance_change` on trust tier transitions.
+- **Agent silence detection** — background task (every 10 min) monitors persistent agents (Vigil, Lumen, Sentinel) for missed check-ins. Alerts at 2x expected interval, critical alert at 5x. Deduplicates alerts, clears on recovery.
+
+### Fixed
+
+- **CI doc drift check** — removed stale reference to deleted `docs/guides/NGROK_DEPLOYMENT.md` that caused `FileNotFoundError` in CI.
 
 ---
 
