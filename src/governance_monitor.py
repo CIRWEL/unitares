@@ -476,8 +476,9 @@ class UNITARESMonitor:
         self.state.timestamp_history.append(datetime.now().isoformat())  # Track timestamp
         
         # Track current lambda1 value (even if not updated this cycle)
-        current_lambda1 = self.state.lambda1
-        self.state.lambda1_history.append(float(current_lambda1))
+        # Records the value active during THIS ODE step; the PI controller
+        # in process_update() may change it afterward for the NEXT step.
+        self.state.lambda1_history.append(float(self.state.lambda1))
         
         # Detect and track regime (operational state)
         

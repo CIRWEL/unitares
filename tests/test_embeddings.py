@@ -235,7 +235,7 @@ async def test_get_embeddings_service_singleton():
 
     # Reset global state
     emb_module._embeddings_service = None
-    emb_module._service_lock = None
+    emb_module._service_lock = asyncio.Lock()
 
     svc1 = await emb_module.get_embeddings_service()
     svc2 = await emb_module.get_embeddings_service()

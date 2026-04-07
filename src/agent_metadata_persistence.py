@@ -129,7 +129,7 @@ async def _load_metadata_from_postgres_async() -> dict:
             thread_id=agent.metadata.get("thread_id", None),
             node_index=agent.metadata.get("node_index", 1),
             dialectic_conditions=agent.metadata.get("dialectic_conditions", []),
-            lifecycle_events=agent.metadata.get("lifecycle_events", []),
+            lifecycle_events=agent.metadata.get("lifecycle_events", [])[-AgentMetadata.MAX_LIFECYCLE_EVENTS:],
             recent_update_timestamps=agent.metadata.get("recent_update_timestamps", []),
             recent_decisions=agent.metadata.get("recent_decisions", []),
             total_updates=agent.metadata.get("total_updates", 0),

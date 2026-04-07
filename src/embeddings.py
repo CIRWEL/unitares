@@ -203,16 +203,13 @@ class EmbeddingsService:
 
 # Global singleton
 _embeddings_service: Optional[EmbeddingsService] = None
-_service_lock: Optional[asyncio.Lock] = None
+_service_lock: asyncio.Lock = asyncio.Lock()
 
 
 async def get_embeddings_service() -> EmbeddingsService:
     """Get global embeddings service singleton."""
-    global _embeddings_service, _service_lock
-    
-    if _service_lock is None:
-        _service_lock = asyncio.Lock()
-    
+    global _embeddings_service
+
     async with _service_lock:
         if _embeddings_service is None:
             _embeddings_service = EmbeddingsService()

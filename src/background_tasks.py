@@ -162,7 +162,10 @@ async def concept_extraction_background_task(interval_hours: float = 24.0):
             break
         except Exception as e:
             logger.debug(f"[CONCEPT_EXTRACTION] Skipped: {e}")
-        await asyncio.sleep(interval_hours * 3600)
+        try:
+            await asyncio.sleep(interval_hours * 3600)
+        except asyncio.CancelledError:
+            break
 
 
 # ---------------------------------------------------------------------------
@@ -585,6 +588,7 @@ async def check_agent_silence():
 
                 if silence_seconds >= interval * 5 and agent_id not in _silence_critical_alerted:
                     _silence_critical_alerted.add(agent_id)
+                    _silence_alerted.add(agent_id)  # prevent downgrade WARNING after CRITICAL
                     logger.error(
                         f"[SILENCE] CRITICAL: {meta.label or agent_id[:12]} silent for {silence_minutes:.0f}m "
                         f"(expected every {interval // 60}m)"

@@ -81,9 +81,7 @@ async def handle_resume_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
     # PostgreSQL: Update status and refresh last_update to clear stuck detection
     try:
         await agent_storage.update_agent(agent_uuid, status="active")
-        # Refresh last_update so detect_stuck_agents no longer flags this agent
-        if is_stuck_unstick:
-            await agent_storage.update_agent(agent_uuid, last_update=datetime.now(timezone.utc).isoformat())
+        # status update already sets updated_at = now() in DB, clearing stuck detection
         logger.debug(f"PostgreSQL: {'Unstuck' if is_stuck_unstick else 'Resumed'} agent {agent_id}")
 
         await _invalidate_agent_cache(agent_id)
@@ -138,7 +136,7 @@ async def handle_mark_response_complete(arguments: Dict[str, Any]) -> Sequence[T
 
     # PostgreSQL: Update status (single source of truth)
     try:
-        await agent_storage.update_agent(agent_id, status="waiting_input")
+        await agent_storage.update_agent(agent_uuid, status="waiting_input")
     except Exception as e:
         logger.debug(f"PostgreSQL status update failed: {e}")
 

@@ -160,6 +160,8 @@ class AgentMetadata:
         """Convert to dictionary for JSON serialization"""
         return asdict(self)
 
+    MAX_LIFECYCLE_EVENTS = 50
+
     def add_lifecycle_event(self, event: str, reason: str = None):
         """Add a lifecycle event with timestamp. Broadcasts via event bus."""
         ts = datetime.now().isoformat()
@@ -168,6 +170,8 @@ class AgentMetadata:
             "timestamp": ts,
             "reason": reason
         })
+        if len(self.lifecycle_events) > self.MAX_LIFECYCLE_EVENTS:
+            self.lifecycle_events = self.lifecycle_events[-self.MAX_LIFECYCLE_EVENTS:]
         # Fire-and-forget broadcast + audit for sentinel consumption
         _emit_lifecycle_event(self.agent_id, event, reason, ts)
 

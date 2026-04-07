@@ -340,7 +340,7 @@ class TrajectorySignature:
         rv1 = self.relational.get("valence_tendency")
         rv2 = other.relational.get("valence_tendency")
         if rv1 is not None and rv2 is not None:
-            scores.append(1 - abs(rv1 - rv2) / 2)
+            scores.append(max(0.0, 1 - abs(rv1 - rv2) / 2))
             weights.append(0.10)
 
         # Eta: Homeostatic similarity
@@ -542,6 +542,9 @@ async def update_current_signature(
             # No genesis - store this as genesis
             await store_genesis_signature(agent_id, signature)
             result["genesis_created"] = True
+            # Reflect genesis in local metadata so trust tier computation is correct
+            metadata["trajectory_genesis"] = signature.to_dict()
+            metadata["trajectory_genesis_at"] = datetime.now(timezone.utc).isoformat()
 
         # Compute and store trust tier before saving
         old_tier = metadata.get("trust_tier", {}).get("tier", 0) if isinstance(metadata.get("trust_tier"), dict) else 0

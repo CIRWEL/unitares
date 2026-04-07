@@ -15,15 +15,18 @@ import json
 class TelemetryCache:
     """Simple TTL-based cache for telemetry queries"""
     
+    MAX_ENTRIES = 2000
+
     def __init__(self, default_ttl_seconds: int = 60):
         """
         Initialize cache with default TTL.
-        
+
         Args:
             default_ttl_seconds: Default cache TTL in seconds (default: 60s)
         """
         self.cache: Dict[str, Dict[str, Any]] = {}
         self.default_ttl = default_ttl_seconds
+        self._sweep_counter = 0
     
     def _make_key(self, query_type: str, agent_id: Optional[str] = None, 
                   window_hours: int = 24, **kwargs) -> str:
@@ -86,6 +89,11 @@ class TelemetryCache:
             'cached_at': datetime.now().isoformat(),
             'query_type': query_type
         }
+        # Sweep expired entries every 50 writes or when over max size
+        self._sweep_counter += 1
+        if self._sweep_counter >= 50 or len(self.cache) > self.MAX_ENTRIES:
+            self.sweep()
+            self._sweep_counter = 0
     
     def invalidate(self, query_type: Optional[str] = None,
                    agent_id: Optional[str] = None) -> int:
@@ -125,6 +133,21 @@ class TelemetryCache:
         
         return len(keys_to_remove)
     
+    def sweep(self) -> int:
+        """Remove all expired entries. Returns number removed."""
+        now = datetime.now()
+        expired = [k for k, v in self.cache.items()
+                   if v.get('expires_at') and now > v['expires_at']]
+        for k in expired:
+            del self.cache[k]
+        # If still over max after expiry sweep, drop oldest entries
+        if len(self.cache) > self.MAX_ENTRIES:
+            by_age = sorted(self.cache.items(), key=lambda x: x[1].get('cached_at', ''))
+            for k, _ in by_age[:len(self.cache) - self.MAX_ENTRIES]:
+                del self.cache[k]
+            expired.extend([k for k, _ in by_age[:len(self.cache) - self.MAX_ENTRIES]])
+        return len(expired)
+
     def clear(self) -> None:
         """Clear all cache entries"""
         self.cache.clear()
