@@ -168,6 +168,8 @@ scripts/archive/
 .kimi_governance_session
 .vigil_session
 .vigil_state
+.sentinel_session
+.sentinel_state
 
 # Generated config
 config/generated-*.json
