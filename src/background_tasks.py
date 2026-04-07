@@ -525,6 +525,109 @@ def _on_background_task_done(task: asyncio.Task) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Agent silence detection
+# ---------------------------------------------------------------------------
+
+# Expected check-in intervals for persistent agents (seconds)
+_PERSISTENT_AGENT_INTERVALS = {
+    "Vigil": 1800,     # 30 min
+    "Lumen": 300,      # 5 min
+    "Sentinel": 600,   # 10 min
+}
+
+_silence_alerted: set[str] = set()
+_silence_critical_alerted: set[str] = set()
+
+
+def _get_expected_interval(meta) -> int | None:
+    """Return expected check-in interval for persistent agents, None for ephemeral."""
+    if meta.label and meta.label in _PERSISTENT_AGENT_INTERVALS:
+        return _PERSISTENT_AGENT_INTERVALS[meta.label]
+    tags = meta.tags or []
+    if "embodied" in tags or "autonomous" in tags:
+        return 300  # default for embodied/autonomous agents
+    return None  # ephemeral — skip
+
+
+async def check_agent_silence():
+    """Detect persistent agents that have missed expected check-ins."""
+    await asyncio.sleep(120)  # startup delay
+    while True:
+        try:
+            from src.agent_metadata_model import agent_metadata
+            from src.broadcaster import broadcaster_instance
+            from src.audit_db import append_audit_event_async
+
+            now = datetime.now()
+            for agent_id, meta in list(agent_metadata.items()):
+                if meta.status != "active":
+                    continue
+                interval = _get_expected_interval(meta)
+                if interval is None:
+                    continue
+                if not meta.last_update:
+                    continue
+
+                try:
+                    last = datetime.fromisoformat(meta.last_update)
+                    silence_seconds = (now - last).total_seconds()
+                except (ValueError, TypeError):
+                    continue
+
+                silence_minutes = silence_seconds / 60
+
+                if silence_seconds >= interval * 5 and agent_id not in _silence_critical_alerted:
+                    _silence_critical_alerted.add(agent_id)
+                    logger.error(
+                        f"[SILENCE] CRITICAL: {meta.label or agent_id[:12]} silent for {silence_minutes:.0f}m "
+                        f"(expected every {interval // 60}m)"
+                    )
+                    await broadcaster_instance.broadcast_event(
+                        "lifecycle_silent_critical",
+                        agent_id=agent_id,
+                        payload={
+                            "silence_duration_minutes": round(silence_minutes, 1),
+                            "expected_interval_minutes": interval // 60,
+                            "label": meta.label,
+                        },
+                    )
+                elif silence_seconds >= interval * 2 and agent_id not in _silence_alerted:
+                    _silence_alerted.add(agent_id)
+                    logger.warning(
+                        f"[SILENCE] {meta.label or agent_id[:12]} silent for {silence_minutes:.0f}m "
+                        f"(expected every {interval // 60}m)"
+                    )
+                    await broadcaster_instance.broadcast_event(
+                        "lifecycle_silent",
+                        agent_id=agent_id,
+                        payload={
+                            "silence_duration_minutes": round(silence_minutes, 1),
+                            "expected_interval_minutes": interval // 60,
+                            "label": meta.label,
+                        },
+                    )
+                    await append_audit_event_async({
+                        "timestamp": now.isoformat(),
+                        "event_type": "agent_silent",
+                        "agent_id": agent_id,
+                        "details": {
+                            "silence_duration_minutes": round(silence_minutes, 1),
+                            "expected_interval_minutes": interval // 60,
+                            "label": meta.label,
+                        },
+                    })
+                elif silence_seconds < interval * 2:
+                    # Agent recovered — clear alert state
+                    _silence_alerted.discard(agent_id)
+                    _silence_critical_alerted.discard(agent_id)
+
+        except Exception as e:
+            logger.debug(f"[SILENCE] Check failed: {e}")
+
+        await asyncio.sleep(600)  # every 10 minutes
+
+
 def _supervised_create_task(coro, *, name: str | None = None) -> asyncio.Task:
     """Create a background task with crash logging."""
     task = asyncio.create_task(coro, name=name)
@@ -571,3 +674,6 @@ def start_all_background_tasks(connection_tracker, set_ready):
     _supervised_create_task(periodic_audit_log_rotation(), name="audit_log_rotation")
     _supervised_create_task(periodic_server_log_rotation(), name="server_log_rotation")
     logger.info("[ROTATION] Started periodic log/telemetry rotation tasks")
+
+    _supervised_create_task(check_agent_silence(), name="silence_detection")
+    logger.info("[SILENCE] Started agent silence detection (every 10m)")

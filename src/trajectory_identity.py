@@ -515,15 +515,55 @@ async def update_current_signature(
                     if current_sig:
                         metadata["trajectory_current"] = current_sig
                         metadata["trajectory_updated_at"] = updated_at
+
+            # Drift alert: emit audit event + broadcast if anomaly persists after reseed
+            if result.get("is_anomaly"):
+                try:
+                    from src.audit_db import append_audit_event_async
+                    from src.broadcaster import broadcaster_instance
+                    await append_audit_event_async({
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "event_type": "trajectory_drift",
+                        "agent_id": agent_id,
+                        "details": {
+                            "lineage_similarity": lineage_sim,
+                            "threshold": 0.6,
+                            "trust_tier": tier,
+                        },
+                    })
+                    await broadcaster_instance.broadcast_event(
+                        "identity_drift",
+                        agent_id=agent_id,
+                        payload={"lineage_similarity": lineage_sim, "threshold": 0.6},
+                    )
+                except Exception as e:
+                    logger.debug(f"Drift alert emission failed: {e}")
         else:
             # No genesis - store this as genesis
             await store_genesis_signature(agent_id, signature)
             result["genesis_created"] = True
 
         # Compute and store trust tier before saving
+        old_tier = metadata.get("trust_tier", {}).get("tier", 0) if isinstance(metadata.get("trust_tier"), dict) else 0
         trust_tier = compute_trust_tier(metadata)
         metadata["trust_tier"] = trust_tier
         result["trust_tier"] = trust_tier
+
+        # Broadcast on trust tier change
+        if trust_tier.get("tier", 0) != old_tier:
+            try:
+                from src.broadcaster import broadcaster_instance
+                await broadcaster_instance.broadcast_event(
+                    "identity_assurance_change",
+                    agent_id=agent_id,
+                    payload={
+                        "old_tier": old_tier,
+                        "new_tier": trust_tier["tier"],
+                        "tier_name": trust_tier.get("name", "unknown"),
+                    },
+                )
+            except Exception as e:
+                logger.debug(f"Trust tier change broadcast failed: {e}")
 
         # Save updated metadata
         await db.update_identity_metadata(agent_id, metadata)
