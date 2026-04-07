@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Optional, Any, Dict, Callable, TypeVar
 from functools import wraps
 from contextlib import asynccontextmanager
+import json as _json
 import threading
 import inspect
 
@@ -169,10 +170,36 @@ class CircuitBreaker:
             self._failure_count = 0
             self._last_failure_time = None
 
+    def snapshot_for_persist(self) -> str:
+        """Serialize circuit breaker state to JSON for Redis storage."""
+        with self._lock:
+            return _json.dumps({
+                "state": self._state,
+                "failure_count": self._failure_count,
+                "trip_timestamps": [t.isoformat() for t in self._trip_timestamps],
+            })
+
+    def restore_from_persist(self, raw: str) -> None:
+        """Restore circuit breaker state from a JSON string."""
+        try:
+            data = _json.loads(raw)
+            with self._lock:
+                self._state = data.get("state", self.CLOSED)
+                self._failure_count = data.get("failure_count", 0)
+                for ts in data.get("trip_timestamps", []):
+                    self._trip_timestamps.append(datetime.fromisoformat(ts))
+            logger.info(f"Restored circuit breaker from Redis (state={self._state})")
+        except Exception as e:
+            logger.warning(f"Failed to restore circuit breaker from Redis: {e}")
+
 
 # =============================================================================
 # FALLBACK METRICS
 # =============================================================================
+
+METRICS_REDIS_KEY = "unitares:metrics:redis_client"
+CB_REDIS_KEY = "unitares:metrics:circuit_breaker"
+
 
 @dataclass
 class RedisMetrics:
@@ -205,6 +232,33 @@ class RedisMetrics:
 
     # Timing
     _start_time: float = field(default_factory=time.time)
+
+    # Persistence fields (not serialized to dict)
+    _PERSIST_FIELDS: tuple = field(
+        default=(
+            "operations_total", "operations_success", "operations_failed",
+            "operations_fallback", "retries_total", "retries_success",
+            "circuit_opens", "circuit_half_opens", "connections_created",
+            "connections_failed", "reconnections", "health_checks_total",
+            "health_checks_failed",
+        ),
+        init=False, repr=False,
+    )
+
+    def snapshot_for_persist(self) -> str:
+        """Serialize counter fields to JSON for Redis storage."""
+        return _json.dumps({f: getattr(self, f) for f in self._PERSIST_FIELDS})
+
+    def restore_from_persist(self, raw: str) -> None:
+        """Restore counter fields from a JSON string."""
+        try:
+            data = _json.loads(raw)
+            for f in self._PERSIST_FIELDS:
+                if f in data:
+                    setattr(self, f, data[f])
+            logger.info(f"Restored metrics from Redis (ops_total={self.operations_total})")
+        except Exception as e:
+            logger.warning(f"Failed to restore metrics from Redis: {e}")
 
     def to_dict(self) -> Dict[str, Any]:
         """Export metrics as dict."""
@@ -263,6 +317,7 @@ class ResilientRedisClient:
         self._available: Optional[bool] = None
         self._lock = asyncio.Lock()
         self._init_lock = threading.Lock()
+        self._metrics_restored = False
 
         # Circuit breaker
         self.circuit_breaker = CircuitBreaker(
@@ -316,6 +371,12 @@ class ResilientRedisClient:
             self.metrics.connections_created += 1
             self._available = True
             logger.info(f"Redis connected: {self.config.url} (pool_size={self.config.pool_size})")
+
+            # Restore persisted metrics only on first successful connection
+            if not self._metrics_restored:
+                await self._restore_metrics()
+                self._metrics_restored = True
+
             return self._redis
 
         except Exception as e:
@@ -499,6 +560,31 @@ class ResilientRedisClient:
         ]
         return any(err in error_str for err in connection_errors)
 
+    async def _restore_metrics(self) -> None:
+        """Restore metrics and circuit breaker state from Redis on startup."""
+        if self._redis is None:
+            return
+        try:
+            raw_metrics = await self._redis.get(METRICS_REDIS_KEY)
+            if raw_metrics:
+                self.metrics.restore_from_persist(raw_metrics)
+
+            raw_cb = await self._redis.get(CB_REDIS_KEY)
+            if raw_cb:
+                self.circuit_breaker.restore_from_persist(raw_cb)
+        except Exception as e:
+            logger.debug(f"Could not restore persisted metrics: {e}")
+
+    async def _persist_metrics(self) -> None:
+        """Flush current metrics and circuit breaker state to Redis."""
+        if self._redis is None:
+            return
+        try:
+            await self._redis.set(METRICS_REDIS_KEY, self.metrics.snapshot_for_persist())
+            await self._redis.set(CB_REDIS_KEY, self.circuit_breaker.snapshot_for_persist())
+        except Exception as e:
+            logger.debug(f"Could not persist metrics to Redis: {e}")
+
     def _ensure_health_check_running(self) -> None:
         """Start health check background task if not running."""
         if self._health_check_task is None or self._health_check_task.done():
@@ -525,6 +611,8 @@ class ResilientRedisClient:
                         )
                         self.metrics.last_healthy = time.time()
                         self.circuit_breaker.record_success()
+                        # Persist metrics every health check cycle
+                        await self._persist_metrics()
                     except Exception as e:
                         self.metrics.health_checks_failed += 1
                         logger.warning(f"Redis health check failed: {e}")
@@ -547,6 +635,9 @@ class ResilientRedisClient:
                 await self._health_check_task
             except asyncio.CancelledError:
                 pass
+
+        # Final metrics flush before closing
+        await self._persist_metrics()
 
         if self._redis is not None:
             try:
@@ -606,6 +697,7 @@ class ResilientRedisClient:
         """Reset client state (for testing)."""
         self._redis = None
         self._available = None
+        self._metrics_restored = False
         self.circuit_breaker.reset()
         self.metrics = RedisMetrics()
 

@@ -1031,3 +1031,162 @@ class TestWithRedisFallback:
             assert result == ["default"]
         finally:
             mod._client = original_client
+
+
+# =============================================================================
+# Metrics Persistence Tests
+# =============================================================================
+
+class TestMetricsPersistence:
+    """Tests for metrics and circuit breaker persist/restore round-trips."""
+
+    def test_metrics_snapshot_round_trip(self):
+        """RedisMetrics survives serialize/deserialize."""
+        m = RedisMetrics()
+        m.operations_total = 100
+        m.operations_failed = 7
+        m.circuit_opens = 2
+        m.reconnections = 3
+
+        snap = m.snapshot_for_persist()
+        m2 = RedisMetrics()
+        m2.restore_from_persist(snap)
+
+        assert m2.operations_total == 100
+        assert m2.operations_failed == 7
+        assert m2.circuit_opens == 2
+        assert m2.reconnections == 3
+        # Non-persisted fields stay default
+        assert m2.last_health_check is None
+
+    def test_metrics_restore_ignores_bad_json(self):
+        """Corrupt JSON doesn't crash, metrics stay at defaults."""
+        m = RedisMetrics()
+        m.restore_from_persist("not valid json{{{")
+        assert m.operations_total == 0
+
+    def test_metrics_restore_handles_partial_data(self):
+        """Missing fields in persisted data are left at defaults."""
+        import json
+        m = RedisMetrics()
+        m.restore_from_persist(json.dumps({"operations_total": 42}))
+        assert m.operations_total == 42
+        assert m.operations_failed == 0  # not in payload, stays default
+
+    def test_cb_snapshot_round_trip(self):
+        """CircuitBreaker state survives serialize/deserialize."""
+        cb = CircuitBreaker(threshold=3)
+        cb.record_failure()
+        cb.record_failure()
+        cb.record_failure()  # trips to OPEN
+        assert cb.state == CircuitBreaker.OPEN
+
+        snap = cb.snapshot_for_persist()
+        cb2 = CircuitBreaker(threshold=3)
+        cb2.restore_from_persist(snap)
+
+        assert cb2._failure_count == 3
+        assert cb2._state == CircuitBreaker.OPEN
+        assert len(cb2._trip_timestamps) == 1
+
+    def test_cb_restore_ignores_bad_json(self):
+        """Corrupt JSON doesn't crash circuit breaker."""
+        cb = CircuitBreaker()
+        cb.restore_from_persist("garbage!!!")
+        assert cb._state == CircuitBreaker.CLOSED
+        assert cb._failure_count == 0
+
+    def test_cb_restore_handles_empty_trips(self):
+        """Restoring with no trip timestamps works."""
+        import json
+        cb = CircuitBreaker()
+        cb.restore_from_persist(json.dumps({
+            "state": "half_open",
+            "failure_count": 1,
+            "trip_timestamps": [],
+        }))
+        assert cb._state == "half_open"
+        assert cb._failure_count == 1
+        assert len(cb._trip_timestamps) == 0
+
+    @pytest.mark.asyncio
+    async def test_persist_metrics_writes_to_redis(self):
+        """_persist_metrics writes both keys to Redis."""
+        from src.cache.redis_client import METRICS_REDIS_KEY, CB_REDIS_KEY
+
+        client = ResilientRedisClient(RedisConfig(enabled=True))
+        mock_redis = AsyncMock()
+        client._redis = mock_redis
+        client.metrics.operations_total = 50
+
+        await client._persist_metrics()
+
+        assert mock_redis.set.call_count == 2
+        calls = {c.args[0]: c.args[1] for c in mock_redis.set.call_args_list}
+        assert METRICS_REDIS_KEY in calls
+        assert CB_REDIS_KEY in calls
+        assert '"operations_total": 50' in calls[METRICS_REDIS_KEY]
+
+    @pytest.mark.asyncio
+    async def test_persist_metrics_noop_when_no_redis(self):
+        """_persist_metrics is safe when redis is None."""
+        client = ResilientRedisClient(RedisConfig(enabled=True))
+        client._redis = None
+        await client._persist_metrics()  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_restore_metrics_reads_from_redis(self):
+        """_restore_metrics reads and applies both keys."""
+        import json
+        from src.cache.redis_client import METRICS_REDIS_KEY, CB_REDIS_KEY
+
+        client = ResilientRedisClient(RedisConfig(enabled=True))
+        mock_redis = AsyncMock()
+
+        metrics_data = json.dumps({"operations_total": 99, "operations_failed": 5,
+                                    "operations_success": 0, "operations_fallback": 0,
+                                    "retries_total": 0, "retries_success": 0,
+                                    "circuit_opens": 0, "circuit_half_opens": 0,
+                                    "connections_created": 0, "connections_failed": 0,
+                                    "reconnections": 0, "health_checks_total": 0,
+                                    "health_checks_failed": 0})
+        cb_data = json.dumps({"state": "closed", "failure_count": 0, "trip_timestamps": []})
+
+        async def mock_get(key):
+            return {METRICS_REDIS_KEY: metrics_data, CB_REDIS_KEY: cb_data}.get(key)
+
+        mock_redis.get = AsyncMock(side_effect=mock_get)
+        client._redis = mock_redis
+
+        await client._restore_metrics()
+
+        assert client.metrics.operations_total == 99
+        assert client.metrics.operations_failed == 5
+
+    @pytest.mark.asyncio
+    async def test_restore_metrics_noop_when_no_redis(self):
+        """_restore_metrics is safe when redis is None."""
+        client = ResilientRedisClient(RedisConfig(enabled=True))
+        client._redis = None
+        await client._restore_metrics()  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_restore_metrics_handles_redis_error(self):
+        """_restore_metrics doesn't crash on Redis errors."""
+        client = ResilientRedisClient(RedisConfig(enabled=True))
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=ConnectionError("gone"))
+        client._redis = mock_redis
+
+        await client._restore_metrics()  # should not raise
+        assert client.metrics.operations_total == 0
+
+    @pytest.mark.asyncio
+    async def test_persist_metrics_handles_redis_error(self):
+        """_persist_metrics doesn't crash on Redis errors."""
+        client = ResilientRedisClient(RedisConfig(enabled=True))
+        mock_redis = AsyncMock()
+        mock_redis.set = AsyncMock(side_effect=ConnectionError("gone"))
+        client._redis = mock_redis
+
+        await client._persist_metrics()  # should not raise

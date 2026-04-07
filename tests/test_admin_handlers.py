@@ -767,6 +767,7 @@ class TestHealthCheck:
                    new_callable=AsyncMock,
                    return_value={"status": "healthy", "backend": "postgres"}), \
              patch("src.cache.is_redis_available", return_value=False), \
+             patch("src.embeddings.embeddings_available", return_value=True), \
              patch("src.knowledge_graph_lifecycle.get_kg_lifecycle_health",
                    return_value={"status": "error", "last_error": "graph with oid 17401 does not exist", "last_run": "2026-04-01T15:00:00"}), \
              patch("src.knowledge_graph.get_knowledge_graph",
