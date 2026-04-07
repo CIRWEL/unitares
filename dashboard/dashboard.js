@@ -72,6 +72,17 @@ if (typeof state !== 'undefined') {
 }
 
 // ============================================================================
+// INCIDENT HISTORY (fetches from server audit trail)
+// ============================================================================
+async function fetchIncidents(type, limit = 100) {
+    try {
+        const resp = await authFetch('/api/incidents?type=' + encodeURIComponent(type) + '&limit=' + limit);
+        const data = await resp.json();
+        return data.success ? (data.incidents || []) : [];
+    } catch (e) { return []; }
+}
+
+// ============================================================================
 // MODAL FUNCTIONS
 // ============================================================================
 let modalTriggerElement = null;
@@ -2085,13 +2096,48 @@ if (discoveriesContainer) {
     });
 }
 
-// Click handler for stuck agents card to expand
+// Click handler for stuck agents card — shows current + server history
 const stuckAgentsCard = document.getElementById('stuck-agents-card');
 if (stuckAgentsCard) {
-    stuckAgentsCard.addEventListener('click', () => {
-        if (cachedStuckAgents.length > 0) {
-            expandPanel('stuck-agents');
+    stuckAgentsCard.addEventListener('click', async () => {
+        const modal = document.getElementById('panel-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalBody = document.getElementById('modal-body');
+        if (!modal || !modalTitle || !modalBody) return;
+
+        const stuck = cachedStuckAgents || [];
+        modalTitle.textContent = 'Stuck Agents (' + stuck.length + ')';
+        modal.classList.add('visible');
+        document.body.style.overflow = 'hidden';
+
+        // Current
+        let html = '<div style="margin-bottom:16px;">';
+        if (stuck.length > 0) {
+            html += renderStuckAgentsForModal(stuck);
+        } else {
+            html += '<div style="padding:8px; opacity:0.6;">No agents currently stuck</div>';
         }
+        html += '</div>';
+
+        // Server history
+        modalBody.innerHTML = html + '<div class="loading" style="font-size:12px;">Loading history...</div>';
+        const incidents = await fetchIncidents('stuck_detected');
+        html += '<h3 style="font-size:13px; opacity:0.5; margin:16px 0 8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:12px;">History (' + incidents.length + ' incidents)</h3>';
+        if (incidents.length === 0) {
+            html += '<div style="opacity:0.5; padding:8px; font-size:12px;">No incidents recorded yet</div>';
+        } else {
+            html += incidents.map(function (inc) {
+                const d = inc.details || {};
+                const when = formatRelativeTime ? formatRelativeTime(inc.timestamp) : new Date(inc.timestamp).toLocaleString();
+                const names = (d.agents || []).map(a => escapeHtml(a.agent_name || a.agent_id || '?')).join(', ');
+                return '<div style="padding:6px 8px; border-left:2px solid var(--accent-orange); margin-bottom:4px; font-size:12px;">' +
+                    '<span style="opacity:0.5;">' + when + '</span> &mdash; ' +
+                    '<strong>' + (d.count || '?') + ' stuck</strong>' +
+                    (names ? ' <span style="opacity:0.6;">(' + names + ')</span>' : '') +
+                    '</div>';
+            }).join('');
+        }
+        modalBody.innerHTML = html;
     });
 }
 
@@ -2132,7 +2178,7 @@ if (calibrationCard) {
     });
 }
 
-// Anomalies card - expand to modal
+// Anomalies card — shows current + server history
 const anomaliesCard = document.getElementById('anomalies-card');
 if (anomaliesCard) {
     anomaliesCard.addEventListener('click', async () => {
@@ -2147,16 +2193,39 @@ if (anomaliesCard) {
         try {
             const r = await callTool('detect_anomalies', {});
             const anomalies = r?.anomalies || [];
+
+            // Current
+            let html = '<div style="margin-bottom:16px;">';
             if (anomalies.length === 0) {
-                modalBody.innerHTML = '<div class="loading">No anomalies detected</div>';
+                html += '<div style="padding:8px; opacity:0.6;">No anomalies currently detected</div>';
             } else {
-                modalBody.innerHTML = anomalies.map(a =>
-                    '<div class="anomaly-item" style="margin-bottom: 10px; padding: 8px; border-left: 3px solid var(--accent-orange);">' +
+                html += anomalies.map(a =>
+                    '<div style="margin-bottom:10px; padding:8px; border-left:3px solid var(--accent-orange);">' +
                     '<strong>' + escapeHtml(a.type || 'anomaly') + '</strong> ' + escapeHtml(a.severity || '') + '<br>' +
                     escapeHtml(a.description || '') + ' ' + (a.agent_id ? '<code>' + escapeHtml(a.agent_id) + '</code>' : '') +
                     '</div>'
                 ).join('');
             }
+            html += '</div>';
+
+            // Server history
+            const incidents = await fetchIncidents('anomaly_detected');
+            html += '<h3 style="font-size:13px; opacity:0.5; margin:16px 0 8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:12px;">History (' + incidents.length + ' incidents)</h3>';
+            if (incidents.length === 0) {
+                html += '<div style="opacity:0.5; padding:8px; font-size:12px;">No incidents recorded yet</div>';
+            } else {
+                html += incidents.map(function (inc) {
+                    const d = inc.details || {};
+                    const when = formatRelativeTime ? formatRelativeTime(inc.timestamp) : new Date(inc.timestamp).toLocaleString();
+                    const items = (d.anomalies || []).map(a => escapeHtml(a.type || '?') + ' (' + escapeHtml(a.severity || '') + ')').join(', ');
+                    return '<div style="padding:6px 8px; border-left:2px solid var(--accent-orange); margin-bottom:4px; font-size:12px;">' +
+                        '<span style="opacity:0.5;">' + when + '</span> &mdash; ' +
+                        '<strong>' + (d.count || '?') + ' anomal' + ((d.count || 0) === 1 ? 'y' : 'ies') + '</strong>' +
+                        (items ? ' <span style="opacity:0.6;">(' + items + ')</span>' : '') +
+                        '</div>';
+                }).join('');
+            }
+            modalBody.innerHTML = html;
         } catch (e) {
             modalBody.innerHTML = '<div class="loading">Error: ' + escapeHtml(e.message) + '</div>';
         }

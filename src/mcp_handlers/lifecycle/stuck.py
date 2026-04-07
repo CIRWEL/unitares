@@ -486,6 +486,21 @@ async def handle_detect_stuck_agents(arguments: Dict[str, Any]) -> Sequence:
                 if result:
                     recovered.extend(result if isinstance(result, list) else [result])
 
+        # Log stuck agents to audit trail (if any detected)
+        if stuck_agents:
+            from src.audit_log import audit_logger, AuditEntry
+            from datetime import datetime
+            audit_logger._write_entry(AuditEntry(
+                timestamp=datetime.now().isoformat(),
+                agent_id="system",
+                event_type="stuck_detected",
+                confidence=1.0,
+                details={
+                    "count": len(stuck_agents),
+                    "agents": [{"agent_id": s.get("agent_id"), "reason": s.get("reason"), "agent_name": s.get("agent_name", "")} for s in stuck_agents[:10]],
+                }
+            ))
+
         return success_response({
             "stuck_agents": stuck_agents,
             "recovered": recovered if auto_recover else [],

@@ -601,6 +601,21 @@ async def handle_detect_anomalies(arguments: Dict[str, Any]) -> Sequence[TextCon
         logger.error(f"Error in detect_anomalies: {e}", exc_info=True)
         return [error_response(f"Error detecting anomalies: {str(e)}")]
     
+    # Log anomalies to audit trail (if any detected)
+    if all_anomalies:
+        from src.audit_log import audit_logger, AuditEntry
+        from datetime import datetime
+        audit_logger._write_entry(AuditEntry(
+            timestamp=datetime.now().isoformat(),
+            agent_id="system",
+            event_type="anomaly_detected",
+            confidence=1.0,
+            details={
+                "count": len(all_anomalies),
+                "anomalies": [{"agent_id": a.get("agent_id"), "type": a.get("type"), "severity": a.get("severity"), "description": a.get("description", "")} for a in all_anomalies[:10]],
+            }
+        ))
+
     # Sort by severity (high first)
     all_anomalies.sort(key=lambda x: severity_levels.get(x.get("severity", "low"), 0), reverse=True)
     

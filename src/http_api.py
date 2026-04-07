@@ -828,6 +828,35 @@ async def http_events(request):
         }, status_code=500)
 
 
+# Incident history endpoint (anomalies + stuck agents from audit log)
+async def http_incidents(request):
+    """Return historical anomaly and stuck-agent incidents from the audit trail."""
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    if not _check_http_auth(request, http_api_token=http_api_token):
+        return _http_unauthorized()
+    try:
+        from src.audit_db import query_audit_events_async
+
+        event_type = request.query_params.get("type")  # "anomaly_detected" or "stuck_detected"
+        limit = min(int(request.query_params.get("limit", 200)), 500)
+
+        # Query both types if none specified
+        types_to_query = [event_type] if event_type else ["anomaly_detected", "stuck_detected"]
+        all_events = []
+        for et in types_to_query:
+            events = await query_audit_events_async(event_type=et, order="desc", limit=limit)
+            all_events.extend(events)
+
+        # Sort by timestamp descending, limit total
+        all_events.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+        all_events = all_events[:limit]
+
+        return JSONResponse({"success": True, "incidents": all_events, "count": len(all_events)})
+    except Exception as e:
+        logger.error(f"Error fetching incidents: {e}")
+        return JSONResponse({"success": False, "error": str(e), "incidents": []}, status_code=500)
+
+
 # Activity sparkline endpoint
 async def http_activity(request):
     """Return check-in activity buckets for sparkline chart."""
@@ -927,4 +956,5 @@ def register_http_routes(
     app.routes.append(Route("/v1/eisv/latest", http_eisv_latest, methods=["GET"]))
     app.routes.append(Route("/api/events", http_events, methods=["GET"]))
     app.routes.append(Route("/api/activity", http_activity, methods=["GET"]))
+    app.routes.append(Route("/api/incidents", http_incidents, methods=["GET"]))
     app.routes.append(WebSocketRoute("/ws/eisv", websocket_eisv_stream))
