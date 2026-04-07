@@ -25,6 +25,38 @@ SESSION_PREFIX = "session:"
 # In-memory fallback cache
 _fallback_cache: Dict[str, Dict[str, Any]] = {}
 
+# Prune fallback cache every N operations to prevent unbounded growth
+_FALLBACK_PRUNE_INTERVAL = 50
+_FALLBACK_MAX_AGE_SECONDS = 86400  # 24 hours
+_fallback_op_counter = 0
+
+
+def _prune_fallback_cache() -> None:
+    """Remove stale entries from in-memory fallback cache."""
+    global _fallback_op_counter
+    _fallback_op_counter += 1
+    if _fallback_op_counter < _FALLBACK_PRUNE_INTERVAL:
+        return
+    _fallback_op_counter = 0
+
+    now = datetime.now(timezone.utc)
+    stale = []
+    for sid, data in _fallback_cache.items():
+        bound_at = data.get("bound_at")
+        if bound_at:
+            try:
+                age = (now - datetime.fromisoformat(bound_at)).total_seconds()
+                if age > _FALLBACK_MAX_AGE_SECONDS:
+                    stale.append(sid)
+            except (ValueError, TypeError):
+                stale.append(sid)
+        else:
+            stale.append(sid)
+    for sid in stale:
+        del _fallback_cache[sid]
+    if stale:
+        logger.debug(f"Pruned {len(stale)} stale sessions from fallback cache")
+
 
 class SessionCache:
     """
@@ -82,6 +114,7 @@ class SessionCache:
                 logger.warning(f"Redis bind failed: {e}")
 
         # Fallback to in-memory (already handles fallback if Redis fails or is None)
+        _prune_fallback_cache()
         existing = _fallback_cache.get(session_id)
         if existing:
             data["bind_count"] = existing.get("bind_count", 0) + 1

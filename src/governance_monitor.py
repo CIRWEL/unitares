@@ -1027,6 +1027,9 @@ class UNITARESMonitor:
             'V': float(self.state.V),
         }
 
+        # Expire stale predictions each cycle to prevent unbounded growth
+        self.expire_old_predictions()
+
         return self._build_result(
             status=status,
             decision=decision,

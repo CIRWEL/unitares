@@ -514,15 +514,21 @@ _supervised_tasks: list = []
 
 
 def _on_background_task_done(task: asyncio.Task) -> None:
-    """Callback for background task completion — logs crashes."""
+    """Callback for background task completion — logs crashes and removes from supervised list."""
     if task.cancelled():
-        return
-    exc = task.exception()
-    if exc:
-        logger.error(
-            f"Background task '{task.get_name()}' crashed: {exc}",
-            exc_info=exc,
-        )
+        pass
+    else:
+        exc = task.exception()
+        if exc:
+            logger.error(
+                f"Background task '{task.get_name()}' crashed: {exc}",
+                exc_info=exc,
+            )
+    # Prevent unbounded growth of _supervised_tasks
+    try:
+        _supervised_tasks.remove(task)
+    except ValueError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -621,6 +627,11 @@ async def check_agent_silence():
                     # Agent recovered — clear alert state
                     _silence_alerted.discard(agent_id)
                     _silence_critical_alerted.discard(agent_id)
+
+            # Prune alert sets — remove agents no longer active
+            active_ids = {aid for aid, m in agent_metadata.items() if m.status == "active"}
+            _silence_alerted.intersection_update(active_ids)
+            _silence_critical_alerted.intersection_update(active_ids)
 
         except Exception as e:
             logger.debug(f"[SILENCE] Check failed: {e}")
