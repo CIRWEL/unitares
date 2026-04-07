@@ -206,8 +206,9 @@ async def _soft_verify_trajectory(
             return {"verified": False, "checked": False, "warning": "trajectory_unverified"}
 
         # Signature provided — verify it
-        from src.trajectory_identity import verify_trajectory_identity
-        verification = await verify_trajectory_identity(agent_uuid, trajectory_signature)
+        from src.trajectory_identity import TrajectorySignature, verify_trajectory_identity
+        sig = TrajectorySignature.from_dict(trajectory_signature)
+        verification = await verify_trajectory_identity(agent_uuid, sig)
 
         if verification and not verification.get("verified", True):
             lineage_sim = verification.get("tiers", {}).get("lineage", {}).get("similarity", 1.0)
@@ -824,8 +825,9 @@ async def resolve_by_name_claim(
 
         # Verify trajectory
         try:
-            from src.trajectory_identity import verify_trajectory_identity
-            verification = await verify_trajectory_identity(agent_uuid, trajectory_signature)
+            from src.trajectory_identity import TrajectorySignature, verify_trajectory_identity
+            sig = TrajectorySignature.from_dict(trajectory_signature)
+            verification = await verify_trajectory_identity(agent_uuid, sig)
             if verification and not verification.get("verified", True):
                 lineage_sim = verification.get("tiers", {}).get("lineage", {}).get("similarity", 1.0)
                 if lineage_sim < 0.6:
@@ -850,8 +852,9 @@ async def resolve_by_name_claim(
         # No stored trajectory — optional verification (backward compat)
         if trajectory_signature and isinstance(trajectory_signature, dict):
             try:
-                from src.trajectory_identity import verify_trajectory_identity
-                verification = await verify_trajectory_identity(agent_uuid, trajectory_signature)
+                from src.trajectory_identity import TrajectorySignature, verify_trajectory_identity
+                sig = TrajectorySignature.from_dict(trajectory_signature)
+                verification = await verify_trajectory_identity(agent_uuid, sig)
                 if verification and not verification.get("verified", True):
                     lineage_sim = verification.get("tiers", {}).get("lineage", {}).get("similarity", 1.0)
                     if lineage_sim < 0.6:
