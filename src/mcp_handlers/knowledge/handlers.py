@@ -32,6 +32,48 @@ from ..support.tool_hints import (
 logger = get_logger(__name__)
 
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
+from src.broadcaster import broadcaster_instance
+
+
+async def _clamp_confidence_to_coherence(discovery, agent_id: str) -> bool:
+    """Cross-check discovery confidence against agent's EISV coherence.
+
+    If confidence > coherence + 0.3, clamp it and annotate provenance.
+    Returns True if clamping occurred.
+    """
+    if discovery.confidence is None:
+        return False
+    try:
+        monitor = mcp_server.monitors.get(agent_id)
+        if monitor is None:
+            return False
+        coherence = monitor.state.coherence
+        max_allowed = coherence + 0.3
+        if discovery.confidence > max_allowed:
+            original = discovery.confidence
+            discovery.confidence = round(max_allowed, 6)
+            # Annotate provenance
+            if discovery.provenance is None:
+                discovery.provenance = {}
+            discovery.provenance["confidence_clamped"] = True
+            discovery.provenance["original_confidence"] = original
+            logger.info(
+                "Confidence clamped for agent %s: %.3f -> %.3f (coherence=%.3f)",
+                agent_id, original, discovery.confidence, coherence,
+            )
+            await broadcaster_instance.broadcast_event(
+                "knowledge_confidence_clamped",
+                agent_id=agent_id,
+                payload={
+                    "original_confidence": original,
+                    "clamped_confidence": discovery.confidence,
+                    "coherence": round(coherence, 6),
+                },
+            )
+            return True
+    except Exception as e:
+        logger.debug("Confidence cross-check skipped: %s", e)
+    return False
 
 
 def _compute_staleness_warning(discovery, current_server_version: str) -> Optional[str]:
@@ -470,6 +512,16 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
         elif "system_version" not in provenance:
             provenance["system_version"] = system_version
 
+        # Parse confidence if provided
+        raw_confidence = arguments.get("confidence")
+        parsed_confidence = None
+        if raw_confidence is not None:
+            try:
+                parsed_confidence = float(raw_confidence)
+                parsed_confidence = max(0.0, min(1.0, parsed_confidence))
+            except (ValueError, TypeError):
+                pass
+
         discovery = DiscoveryNode(
             id=discovery_id,
             agent_id=agent_id,
@@ -481,8 +533,12 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
             status=arguments.get("status", "open"),
             response_to=response_to,
             references_files=arguments.get("related_files", []),
-            provenance=provenance
+            provenance=provenance,
+            confidence=parsed_confidence
         )
+
+        # CONFIDENCE CROSS-CHECK: Clamp to agent coherence + 0.3
+        await _clamp_confidence_to_coherence(discovery, agent_id)
 
         # Find similar discoveries (fast with tag index) - DEFAULT: true for better linking
         similar_discoveries = []
@@ -1453,6 +1509,15 @@ async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_i
                     if severity not in VALID_SEVERITIES:
                         severity = "medium"  # Use default if invalid
                 
+                # Parse confidence if provided
+                batch_confidence = None
+                if disc_data.get("confidence") is not None:
+                    try:
+                        batch_confidence = float(disc_data["confidence"])
+                        batch_confidence = max(0.0, min(1.0, batch_confidence))
+                    except (ValueError, TypeError):
+                        pass
+
                 discovery = DiscoveryNode(
                     id=discovery_id,
                     agent_id=agent_id,
@@ -1462,9 +1527,13 @@ async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_i
                     tags=disc_data.get("tags", []),
                     severity=severity,
                     response_to=response_to,
-                    references_files=disc_data.get("related_files", [])
+                    references_files=disc_data.get("related_files", []),
+                    confidence=batch_confidence
                 )
-                
+
+                # CONFIDENCE CROSS-CHECK: Clamp to agent coherence + 0.3
+                await _clamp_confidence_to_coherence(discovery, agent_id)
+
                 # Auto-link similar discoveries
                 if disc_data.get("auto_link_related", True):
                     similar = await graph.find_similar(discovery, limit=3)

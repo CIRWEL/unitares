@@ -77,3 +77,46 @@ class BaselineMixin:
         except Exception as e:
             logger.warning(f"Failed to load agent baseline for {agent_id}: {e}")
             return None
+
+    # --- Behavioral baselines (Welford stats) ---
+
+    async def save_behavioral_baseline(self, agent_id: str, stats_dict: Dict[str, Any]) -> bool:
+        """UPSERT Welford stats into core.agent_behavioral_baselines."""
+        import json as _json
+        try:
+            async with self.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO core.agent_behavioral_baselines (agent_id, stats, updated_at)
+                    VALUES ($1, $2::jsonb, now())
+                    ON CONFLICT (agent_id) DO UPDATE SET
+                        stats = EXCLUDED.stats,
+                        updated_at = now()
+                    """,
+                    agent_id,
+                    _json.dumps(stats_dict),
+                )
+                return True
+        except Exception as e:
+            logger.warning(f"Failed to save behavioral baseline for {agent_id}: {e}")
+            return False
+
+    async def load_behavioral_baseline(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Load Welford stats from core.agent_behavioral_baselines."""
+        import json as _json
+        try:
+            async with self.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT stats FROM core.agent_behavioral_baselines WHERE agent_id = $1",
+                    agent_id,
+                )
+                if row is None:
+                    return None
+                stats = row["stats"]
+                # asyncpg returns JSONB as a string or dict depending on version
+                if isinstance(stats, str):
+                    return _json.loads(stats)
+                return dict(stats) if stats else None
+        except Exception as e:
+            logger.warning(f"Failed to load behavioral baseline for {agent_id}: {e}")
+            return None

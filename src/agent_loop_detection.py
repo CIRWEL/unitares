@@ -11,9 +11,9 @@ import os
 import re
 import json
 import asyncio
-from typing import Optional
-from collections import Counter
-from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+from collections import Counter, deque
+from datetime import datetime, timedelta, timezone
 from functools import partial
 
 from src.logging_utils import get_logger
@@ -23,6 +23,23 @@ from src.agent_identity_auth import verify_agent_ownership
 from src.agent_metadata_persistence import load_metadata_async
 
 logger = get_logger(__name__)
+
+# Telemetry: ring buffer of governance circuit breaker pause timestamps
+_governance_pause_timestamps: deque[datetime] = deque(maxlen=100)
+
+
+def get_circuit_breaker_telemetry() -> Dict[str, Any]:
+    """Return governance circuit breaker telemetry snapshot."""
+    now = datetime.now(timezone.utc)
+    trips = list(_governance_pause_timestamps)
+    trips_1h = sum(1 for t in trips if (now - t).total_seconds() <= 3600)
+    trips_24h = sum(1 for t in trips if (now - t).total_seconds() <= 86400)
+    last_trip = trips[-1].isoformat() if trips else None
+    return {
+        "trips_1h": trips_1h,
+        "trips_24h": trips_24h,
+        "last_trip": last_trip,
+    }
 
 
 def detect_loop_pattern(agent_id: str) -> tuple[bool, str]:
@@ -431,6 +448,20 @@ async def process_update_authenticated_async(
             logger.warning(f"⚠️  Circuit breaker triggered for agent '{agent_id}': {decision_reason}")
             result["paused"] = True
             result["circuit_breaker_triggered"] = True
+
+            # Telemetry: record governance pause timestamp
+            _governance_pause_timestamps.append(datetime.now(timezone.utc))
+
+            # Broadcast circuit_breaker_trip event
+            try:
+                from src.broadcaster import broadcaster_instance
+                loop.create_task(broadcaster_instance.broadcast_event(
+                    "circuit_breaker_trip",
+                    agent_id=agent_id,
+                    payload={"reason": decision_reason},
+                ))
+            except Exception as e:
+                logger.debug(f"Could not broadcast circuit_breaker_trip: {e}")
 
             try:
                 auto_recovery = os.getenv("UNITARES_AUTO_DIALECTIC_RECOVERY", "1").strip().lower() not in ("0", "false", "no")

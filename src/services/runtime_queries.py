@@ -341,6 +341,19 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
         lite_metrics["_note"] = "Use lite=false for full diagnostics"
         return lite_metrics
 
+    # Circuit breaker telemetry (full verbosity only)
+    try:
+        from src.agent_loop_detection import get_circuit_breaker_telemetry
+        from src.cache.redis_client import get_circuit_breaker as get_redis_cb
+        gov_telemetry = get_circuit_breaker_telemetry()
+        redis_telemetry = get_redis_cb().get_telemetry()
+        standardized_metrics["circuit_breakers"] = {
+            "governance": gov_telemetry,
+            "redis": redis_telemetry,
+        }
+    except Exception as e:
+        logger.debug(f"Could not gather circuit breaker telemetry: {e}")
+
     return standardized_metrics
 
 

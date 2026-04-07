@@ -756,9 +756,9 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
     # Per-agent anomaly detection: add entropy if current signals deviate from baseline
     try:
         from src.agent_behavioral_baseline import (
-            get_agent_behavioral_baseline, compute_anomaly_entropy,
+            ensure_baseline_loaded, compute_anomaly_entropy,
         )
-        baseline = get_agent_behavioral_baseline(ctx.agent_id)
+        baseline = await ensure_baseline_loaded(ctx.agent_id)
         # Collect current signals for anomaly check
         anomaly_signals = {}
         try:
@@ -857,7 +857,7 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
 
     # Record current signals into per-agent behavioral baseline (post-ODE)
     try:
-        from src.agent_behavioral_baseline import get_agent_behavioral_baseline
+        from src.agent_behavioral_baseline import get_agent_behavioral_baseline, schedule_baseline_save
         baseline = get_agent_behavioral_baseline(agent_id)
         if ctx.coherence is not None:
             baseline.update("coherence", ctx.coherence)
@@ -883,6 +883,8 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
             cm = getattr(monitor, '_last_continuity_metrics', None)
             if cm and hasattr(cm, 'complexity_divergence'):
                 baseline.update("complexity_divergence", cm.complexity_divergence)
+        # Fire-and-forget persist to PostgreSQL
+        schedule_baseline_save(agent_id)
     except Exception as e:
         logger.debug(f"Baseline recording skipped for {agent_id}: {e}")
 

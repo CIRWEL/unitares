@@ -33,6 +33,44 @@ except ImportError:
 from src.logging_utils import get_logger
 logger = get_logger(__name__)
 
+
+def _emit_lifecycle_event(agent_id: str, event: str, reason: str | None, timestamp: str):
+    """Broadcast a lifecycle event via the event bus. Fire-and-forget."""
+    try:
+        import asyncio
+        from src.broadcaster import broadcaster_instance
+
+        async def _emit():
+            try:
+                await broadcaster_instance.broadcast_event(
+                    event_type=f"lifecycle_{event}",
+                    agent_id=agent_id,
+                    payload={"reason": reason},
+                )
+            except Exception as e:
+                logger.debug(f"Lifecycle broadcast failed: {e}")
+
+            # Also write to audit DB (best-effort)
+            try:
+                from src.audit_db import append_audit_event_async
+                await append_audit_event_async({
+                    "timestamp": timestamp,
+                    "event_type": f"lifecycle_{event}",
+                    "agent_id": agent_id,
+                    "details": {"reason": reason, "event": event},
+                })
+            except Exception as e:
+                logger.debug(f"Lifecycle audit write failed: {e}")
+
+        # Schedule onto the running event loop if available
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_emit())
+        except RuntimeError:
+            pass  # No event loop — skip broadcast (e.g. during tests)
+    except Exception:
+        pass  # Never let broadcasting break lifecycle transitions
+
 # Project root (single source of truth for file locations)
 project_root = _PROJECT_ROOT
 
@@ -123,12 +161,15 @@ class AgentMetadata:
         return asdict(self)
 
     def add_lifecycle_event(self, event: str, reason: str = None):
-        """Add a lifecycle event with timestamp"""
+        """Add a lifecycle event with timestamp. Broadcasts via event bus."""
+        ts = datetime.now().isoformat()
         self.lifecycle_events.append({
             "event": event,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": ts,
             "reason": reason
         })
+        # Fire-and-forget broadcast + audit for sentinel consumption
+        _emit_lifecycle_event(self.agent_id, event, reason, ts)
 
     def validate_consistency(self) -> tuple[bool, list[str]]:
         """

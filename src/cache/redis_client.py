@@ -25,7 +25,9 @@ from __future__ import annotations
 import os
 import time
 import asyncio
+from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional, Any, Dict, Callable, TypeVar
 from functools import wraps
 from contextlib import asynccontextmanager
@@ -97,6 +99,8 @@ class CircuitBreaker:
         self._failure_count = 0
         self._last_failure_time: Optional[float] = None
         self._lock = threading.Lock()
+        # Telemetry: ring buffer of trip timestamps (state transitions to OPEN)
+        self._trip_timestamps: deque[datetime] = deque(maxlen=100)
 
     @property
     def state(self) -> str:
@@ -126,15 +130,37 @@ class CircuitBreaker:
             if self._state == self.HALF_OPEN:
                 # Failed during test, back to open
                 self._state = self.OPEN
+                self._trip_timestamps.append(datetime.now(timezone.utc))
                 logger.warning("Circuit breaker: HALF_OPEN -> OPEN (recovery failed)")
             elif self._failure_count >= self.threshold:
                 if self._state != self.OPEN:
                     logger.warning(f"Circuit breaker: CLOSED -> OPEN (threshold {self.threshold} reached)")
+                    self._trip_timestamps.append(datetime.now(timezone.utc))
                 self._state = self.OPEN
 
     def is_available(self) -> bool:
         """Check if requests should be allowed through."""
         return self.state != self.OPEN
+
+    def get_telemetry(self) -> Dict[str, Any]:
+        """Return circuit breaker telemetry snapshot."""
+        now = datetime.now(timezone.utc)
+        with self._lock:
+            trips = list(self._trip_timestamps)
+            state = self._state
+            failure_count = self._failure_count
+
+        trips_1h = sum(1 for t in trips if (now - t).total_seconds() <= 3600)
+        trips_24h = sum(1 for t in trips if (now - t).total_seconds() <= 86400)
+        last_trip = trips[-1].isoformat() if trips else None
+
+        return {
+            "state": state,
+            "trips_1h": trips_1h,
+            "trips_24h": trips_24h,
+            "last_trip": last_trip,
+            "failure_count": failure_count,
+        }
 
     def reset(self) -> None:
         """Reset circuit breaker to closed state."""

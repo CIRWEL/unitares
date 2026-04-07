@@ -3,11 +3,16 @@
 Tracks rolling statistics (mean, variance) for each agent's behavioral signals.
 Anomalous values (>N std from agent's own baseline) can trigger mild entropy.
 
-In-memory only — no external dependencies. Can persist to PostgreSQL later.
+Welford stats are persisted to PostgreSQL (core.agent_behavioral_baselines)
+so baselines survive server restarts.
 """
 
+import asyncio
+import logging
 import math
 from typing import Dict, Optional
+
+_logger = logging.getLogger(__name__)
 
 
 class WelfordStats:
@@ -106,16 +111,70 @@ class AgentBehavioralBaseline:
         return b
 
 
-# --- Global registry (in-memory) ---
+# --- Global registry (in-memory, backed by PostgreSQL) ---
 
 _baselines: Dict[str, AgentBehavioralBaseline] = {}
 
 
 def get_agent_behavioral_baseline(agent_id: str) -> AgentBehavioralBaseline:
-    """Get or create the behavioral baseline for an agent."""
+    """Get or create the behavioral baseline for an agent.
+
+    Returns the in-memory cached baseline immediately.  If missing from cache,
+    creates a fresh one.  Call ``ensure_baseline_loaded(agent_id)`` first from
+    an async context to hydrate from PostgreSQL on cache miss.
+    """
     if agent_id not in _baselines:
         _baselines[agent_id] = AgentBehavioralBaseline()
     return _baselines[agent_id]
+
+
+async def ensure_baseline_loaded(agent_id: str) -> AgentBehavioralBaseline:
+    """Load a behavioral baseline from PostgreSQL if not already cached.
+
+    Should be called once when an agent resumes (e.g. at the start of
+    ``get_agent_behavioral_baseline`` usage in an async handler).
+    """
+    if agent_id in _baselines:
+        return _baselines[agent_id]
+
+    try:
+        from src.db import get_db
+        db = get_db()
+        stats_dict = await db.load_behavioral_baseline(agent_id)
+        if stats_dict:
+            _baselines[agent_id] = AgentBehavioralBaseline.from_dict(stats_dict)
+            _logger.debug("Loaded behavioral baseline from DB for %s", agent_id)
+            return _baselines[agent_id]
+    except Exception:
+        _logger.debug("Could not load behavioral baseline from DB for %s", agent_id, exc_info=True)
+
+    # Fall through: create fresh baseline
+    _baselines[agent_id] = AgentBehavioralBaseline()
+    return _baselines[agent_id]
+
+
+def schedule_baseline_save(agent_id: str) -> None:
+    """Fire-and-forget: persist the current baseline to PostgreSQL.
+
+    Safe to call from sync code inside an async event loop.
+    """
+    baseline = _baselines.get(agent_id)
+    if baseline is None:
+        return
+
+    async def _do_save():
+        try:
+            from src.db import get_db
+            db = get_db()
+            await db.save_behavioral_baseline(agent_id, baseline.to_dict())
+        except Exception:
+            _logger.debug("Behavioral baseline save failed for %s", agent_id, exc_info=True)
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_do_save())
+    except RuntimeError:
+        pass  # No event loop — skip persistence (e.g. tests, CLI)
 
 
 def compute_anomaly_entropy(
