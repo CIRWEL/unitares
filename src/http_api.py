@@ -727,6 +727,22 @@ async def http_dashboard(request):
     }, status_code=404)
 
 
+async def http_phase(request):
+    """Serve the phase-space visualization"""
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    phase_path = Path(__file__).parent.parent / "dashboard" / "phase.html"
+    if phase_path.exists():
+        html = phase_path.read_text()
+        if http_api_token:
+            token_script = (
+                f'<script>if(!localStorage.getItem("unitares_api_token"))'
+                f'{{localStorage.setItem("unitares_api_token","{http_api_token}")}}</script>'
+            )
+            html = html.replace("</head>", f"{token_script}</head>", 1)
+        return Response(content=html, media_type="text/html")
+    return JSONResponse({"error": "Phase view not found", "path": str(phase_path)}, status_code=404)
+
+
 # Dashboard static files (utils.js, components.js)
 async def http_dashboard_static(request):
     """Serve dashboard static files"""
@@ -740,6 +756,7 @@ async def http_dashboard_static(request):
         "visualizations.js", "agents.js", "discoveries.js",
         "dialectic.js", "eisv-charts.js", "timeline.js",
         "styles.css", "dashboard.js",
+        "phase.js",
     ]
     if file_path not in allowed_files:
         return JSONResponse({
@@ -901,6 +918,7 @@ def register_http_routes(
     # to match /dashboard/utils.js, etc.
     app.routes.append(Route("/dashboard/{file}", http_dashboard_static, methods=["GET"]))
     app.routes.append(Route("/dashboard", http_dashboard, methods=["GET"]))
+    app.routes.append(Route("/phase", http_phase, methods=["GET"]))
     app.routes.append(Route("/", http_dashboard, methods=["GET"]))  # Root also serves dashboard
     app.routes.append(Route("/v1/tools", http_list_tools, methods=["GET"]))
     app.routes.append(Route("/v1/tools/call", http_call_tool, methods=["POST"]))

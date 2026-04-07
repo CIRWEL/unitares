@@ -2341,6 +2341,7 @@ if (typeof EISVWebSocket !== 'undefined') {
     // Smooth scroll on click
     navItems.forEach(item => {
         item.addEventListener('click', (e) => {
+            if (!item.dataset.section) return; // External links (e.g. Phase Space)
             e.preventDefault();
             const target = document.getElementById(item.dataset.section);
             if (target) {

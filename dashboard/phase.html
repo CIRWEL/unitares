@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UNITARES — Phase Space</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: #08080d;
+            color: #e2e8f0;
+            font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        #topbar {
+            height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            background: rgba(8,8,13,0.95);
+            backdrop-filter: blur(8px);
+            position: relative;
+            z-index: 10;
+        }
+
+        .logo {
+            font-size: 13px;
+            letter-spacing: 3px;
+            color: rgba(255,255,255,0.5);
+            font-weight: 500;
+        }
+
+        .logo span {
+            color: rgba(52, 211, 153, 0.7);
+        }
+
+        #topbar a {
+            color: rgba(255,255,255,0.35);
+            text-decoration: none;
+            font-size: 12px;
+            letter-spacing: 0.5px;
+            transition: color 0.2s;
+        }
+        #topbar a:hover { color: rgba(255,255,255,0.7); }
+
+        #phase-container {
+            width: 100vw;
+            height: calc(100vh - 44px);
+            position: relative;
+        }
+
+        /* Tooltip */
+        #tooltip {
+            position: absolute;
+            pointer-events: none;
+            background: rgba(15, 15, 25, 0.95);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 11px;
+            line-height: 1.6;
+            backdrop-filter: blur(12px);
+            opacity: 0;
+            transition: opacity 0.15s;
+            z-index: 20;
+            min-width: 160px;
+        }
+        #tooltip.visible { opacity: 1; }
+        #tooltip .tt-name {
+            font-size: 12px;
+            font-weight: 600;
+            color: #e2e8f0;
+            margin-bottom: 6px;
+            letter-spacing: 0.3px;
+        }
+        #tooltip .tt-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        #tooltip .tt-label { color: rgba(255,255,255,0.4); }
+        #tooltip .tt-value { color: rgba(255,255,255,0.8); font-variant-numeric: tabular-nums; }
+        #tooltip .tt-verdict {
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px solid rgba(255,255,255,0.06);
+        }
+
+        /* Status indicator */
+        #status {
+            position: absolute;
+            bottom: 14px;
+            left: 20px;
+            font-size: 10px;
+            color: rgba(255,255,255,0.25);
+            letter-spacing: 0.5px;
+            z-index: 10;
+        }
+        #status .dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+        #status .dot.connected { background: rgba(52, 211, 153, 0.6); }
+        #status .dot.polling { background: rgba(251, 191, 36, 0.6); }
+        #status .dot.disconnected { background: rgba(239, 68, 68, 0.6); }
+
+        /* Legend */
+        #legend {
+            position: absolute;
+            bottom: 14px;
+            right: 20px;
+            font-size: 10px;
+            color: rgba(255,255,255,0.3);
+            display: flex;
+            gap: 20px;
+            z-index: 10;
+        }
+        #legend .leg-item { display: flex; align-items: center; gap: 6px; }
+        #legend .leg-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+    </style>
+</head>
+<body>
+    <div id="topbar">
+        <div class="logo">UNITARES <span>// phase space</span></div>
+        <a href="/dashboard">dashboard &rarr;</a>
+    </div>
+    <div id="phase-container"></div>
+    <div id="tooltip"></div>
+    <div id="status"><span class="dot disconnected"></span>connecting</div>
+    <div id="legend">
+        <div class="leg-item">
+            <div class="leg-dot" style="background: #60A5FA;"></div>
+            V &lt; 0 careful
+        </div>
+        <div class="leg-item">
+            <div class="leg-dot" style="background: #E2E8F0;"></div>
+            V &asymp; 0 balanced
+        </div>
+        <div class="leg-item">
+            <div class="leg-dot" style="background: #F59E0B;"></div>
+            V &gt; 0 hot
+        </div>
+        <div class="leg-item" style="margin-left: 8px; opacity: 0.6;">
+            size = confidence (1/S)
+        </div>
+    </div>
+    <script src="/dashboard/phase.js"></script>
+</body>
+</html>
