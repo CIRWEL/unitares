@@ -1150,14 +1150,21 @@ class TestSoftTrajectoryVerification:
 
     @pytest.mark.asyncio
     async def test_helper_genesis_exists_signature_verified(self):
-        """Genesis exists + valid signature → verified=True, checked=True."""
+        """Genesis exists + valid signature → verified=True, checked=True.
+        Does NOT mock TrajectorySignature.from_dict — exercises the real conversion."""
         from src.mcp_handlers.identity.resolution import _soft_verify_trajectory
+        from src.trajectory_identity import TrajectorySignature
+
+        async def _verify_accepts_signature(agent_id, sig):
+            assert isinstance(sig, TrajectorySignature), \
+                f"verify_trajectory_identity received {type(sig).__name__}, expected TrajectorySignature"
+            return {"verified": True}
 
         with patch("src.trajectory_identity.get_trajectory_status",
                    new_callable=AsyncMock, return_value={"has_genesis": True}), \
              patch("src.trajectory_identity.verify_trajectory_identity",
-                   new_callable=AsyncMock, return_value={"verified": True}):
-            result = await _soft_verify_trajectory("uuid-3", {"sig": "ok"}, "redis")
+                   new_callable=AsyncMock, side_effect=_verify_accepts_signature):
+            result = await _soft_verify_trajectory("uuid-3", {"preferences": {"vector": [1, 0]}}, "redis")
 
         assert result["verified"] is True
         assert result["checked"] is True
@@ -1165,19 +1172,26 @@ class TestSoftTrajectoryVerification:
 
     @pytest.mark.asyncio
     async def test_helper_genesis_exists_signature_mismatch(self):
-        """Genesis exists + mismatched signature → verified=False, warning=trajectory_mismatch."""
+        """Genesis exists + mismatched signature → verified=False, warning=trajectory_mismatch.
+        Does NOT mock TrajectorySignature.from_dict — exercises the real conversion."""
         from src.mcp_handlers.identity.resolution import _soft_verify_trajectory
+        from src.trajectory_identity import TrajectorySignature
 
         mock_verification = {
             "verified": False,
             "tiers": {"lineage": {"similarity": 0.3}},
         }
 
+        async def _verify_accepts_signature(agent_id, sig):
+            assert isinstance(sig, TrajectorySignature), \
+                f"verify_trajectory_identity received {type(sig).__name__}, expected TrajectorySignature"
+            return mock_verification
+
         with patch("src.trajectory_identity.get_trajectory_status",
                    new_callable=AsyncMock, return_value={"has_genesis": True}), \
              patch("src.trajectory_identity.verify_trajectory_identity",
-                   new_callable=AsyncMock, return_value=mock_verification):
-            result = await _soft_verify_trajectory("uuid-4", {"sig": "bad"}, "postgres")
+                   new_callable=AsyncMock, side_effect=_verify_accepts_signature):
+            result = await _soft_verify_trajectory("uuid-4", {"beliefs": {"values": [0.5]}}, "postgres")
 
         assert result["verified"] is False
         assert result["checked"] is True
