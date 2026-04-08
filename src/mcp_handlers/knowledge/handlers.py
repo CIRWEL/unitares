@@ -1966,3 +1966,30 @@ async def handle_audit_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
         }, arguments=arguments)
     except Exception as e:
         return [error_response(f"Failed to run KG audit: {str(e)}")]
+
+
+async def store_discovery_internal(
+    agent_id: str,
+    summary: str,
+    discovery_type: str = "note",
+    details: str = "",
+    tags: Optional[list] = None,
+    severity: str = "low",
+) -> None:
+    """Internal helper for storing discoveries without MCP handler overhead.
+
+    Used by lifecycle/self_recovery to log reflections and resume events.
+    Raises on failure (callers should catch exceptions).
+    """
+    graph = await get_knowledge_graph()
+    discovery_id = datetime.now().isoformat()
+    node = DiscoveryNode(
+        id=discovery_id,
+        agent_id=agent_id,
+        type=discovery_type,
+        summary=summary,
+        details=details,
+        tags=normalize_tags(tags or []),
+        severity=severity,
+    )
+    await graph.add_discovery(node)

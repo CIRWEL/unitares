@@ -193,7 +193,8 @@ def enrich_warnings(ctx: UpdateContext) -> None:
     """Collect warnings: loop cooldown, default agent_id, policy warnings."""
     try:
         mcp_server = ctx.mcp_server
-        ctx.warnings = []
+        if not hasattr(ctx, 'warnings') or ctx.warnings is None:
+            ctx.warnings = []
 
         # Loop cooldown
         ctx.loop_info = None

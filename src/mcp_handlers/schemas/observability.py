@@ -6,7 +6,7 @@ class ObserveAgentParams(AgentIdentityMixin):
     """
     Observe another agent's governance state with pattern analysis
     """
-    target_agent: str = Field(..., description="UUID or label of agent to observe")
+    target_agent_id: str = Field(..., description="UUID or label of agent to observe")
 
 class CompareAgentsParams(AgentIdentityMixin):
     """

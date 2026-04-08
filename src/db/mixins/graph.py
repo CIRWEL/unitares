@@ -58,6 +58,9 @@ class GraphMixin:
 
         This handles cases where ag_catalog.ag_graph still references an old OID
         for a schema that has since been recreated.
+
+        Uses a fresh non-transactional connection because drop_graph/create_graph
+        are DDL operations that cannot run inside an active transaction.
         """
         if not self._is_stale_age_graph_error(error):
             return False
@@ -65,8 +68,9 @@ class GraphMixin:
         logger.warning(
             f"Repairing stale AGE graph '{self._age_graph}' after error: {error}"
         )
-        await conn.execute("SELECT * FROM ag_catalog.drop_graph($1, true)", self._age_graph)
-        await conn.execute("SELECT * FROM ag_catalog.create_graph($1)", self._age_graph)
+        async with self.acquire() as fresh_conn:
+            await fresh_conn.execute("SELECT * FROM ag_catalog.drop_graph($1, true)", self._age_graph)
+            await fresh_conn.execute("SELECT * FROM ag_catalog.create_graph($1)", self._age_graph)
         return True
 
     async def graph_query(

@@ -231,3 +231,64 @@ class TestGetTelemetryCache:
         c1 = get_telemetry_cache()
         c2 = get_telemetry_cache()
         assert c1 is c2
+
+
+# ============================================================================
+# TelemetryCache - sweep
+# ============================================================================
+
+class TestSweep:
+
+    def test_sweep_removes_expired(self):
+        cache = TelemetryCache()
+        cache.set("a", {"data": 1}, ttl_seconds=0)
+        cache.set("b", {"data": 2}, ttl_seconds=3600)
+        time.sleep(0.01)
+        removed = cache.sweep()
+        assert removed >= 1
+        assert len(cache.cache) == 1
+        assert cache.get("b") == {"data": 2}
+
+    def test_sweep_empty_cache(self):
+        cache = TelemetryCache()
+        assert cache.sweep() == 0
+
+    def test_sweep_nothing_expired(self):
+        cache = TelemetryCache()
+        cache.set("a", {"data": 1}, ttl_seconds=3600)
+        assert cache.sweep() == 0
+        assert len(cache.cache) == 1
+
+    def test_max_entries_eviction(self):
+        cache = TelemetryCache()
+        original_max = TelemetryCache.MAX_ENTRIES
+        TelemetryCache.MAX_ENTRIES = 5
+        try:
+            # Insert directly to bypass auto-sweep
+            for i in range(10):
+                key = cache._make_key(f"type_{i}")
+                cache.cache[key] = {
+                    'data': {"i": i},
+                    'expires_at': datetime.now() + timedelta(hours=1),
+                    'cached_at': datetime.now().isoformat(),
+                    'query_type': f"type_{i}",
+                }
+            assert len(cache.cache) == 10
+            cache.sweep()
+            assert len(cache.cache) == 5
+        finally:
+            TelemetryCache.MAX_ENTRIES = original_max
+
+    def test_auto_sweep_on_write(self):
+        cache = TelemetryCache()
+        # Add expired entries
+        for i in range(5):
+            cache.set(f"old_{i}", {"i": i}, ttl_seconds=0)
+        cache._sweep_counter = 0
+        time.sleep(0.01)
+        # Set counter to 49 so next write triggers sweep
+        cache._sweep_counter = 49
+        cache.set("trigger", {"data": "new"}, ttl_seconds=3600)
+        # Expired entries should have been swept
+        assert len(cache.cache) == 1
+        assert cache.get("trigger") == {"data": "new"}

@@ -324,9 +324,9 @@ class GovernanceConfig:
             }
         """
         # Get thresholds
-        risk_approve = GovernanceConfig.RISK_APPROVE_THRESHOLD  # 0.35
-        risk_revise = GovernanceConfig.RISK_REVISE_THRESHOLD    # 0.60
-        risk_reject = GovernanceConfig.RISK_REJECT_THRESHOLD    # 0.70
+        risk_approve = GovernanceConfig.RISK_APPROVE_THRESHOLD  # 0.45
+        risk_revise = GovernanceConfig.RISK_REVISE_THRESHOLD    # 0.70
+        risk_reject = GovernanceConfig.RISK_REJECT_THRESHOLD    # 0.80
         coherence_critical = GovernanceConfig.COHERENCE_CRITICAL_THRESHOLD  # 0.40
         void_threshold = GovernanceConfig.VOID_THRESHOLD_INITIAL  # 0.15
         

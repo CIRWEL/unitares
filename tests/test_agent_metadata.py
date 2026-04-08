@@ -127,6 +127,22 @@ class TestAddLifecycleEvent:
         meta.add_lifecycle_event("resumed")
         assert len(meta.lifecycle_events) == 3
 
+    def test_lifecycle_events_capped_at_max(self):
+        meta = AgentMetadata(agent_id="test", status="active",
+                            created_at="2026-01-15", last_update="2026-01-15")
+        for i in range(AgentMetadata.MAX_LIFECYCLE_EVENTS + 20):
+            meta.add_lifecycle_event(f"event_{i}")
+        assert len(meta.lifecycle_events) == AgentMetadata.MAX_LIFECYCLE_EVENTS
+
+    def test_lifecycle_events_keeps_most_recent(self):
+        meta = AgentMetadata(agent_id="test", status="active",
+                            created_at="2026-01-15", last_update="2026-01-15")
+        for i in range(AgentMetadata.MAX_LIFECYCLE_EVENTS + 10):
+            meta.add_lifecycle_event(f"event_{i}")
+        # Oldest events should be evicted, newest kept
+        assert meta.lifecycle_events[0]["event"] == "event_10"
+        assert meta.lifecycle_events[-1]["event"] == f"event_{AgentMetadata.MAX_LIFECYCLE_EVENTS + 9}"
+
 
 # ============================================================================
 # AgentMetadata.validate_consistency

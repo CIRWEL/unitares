@@ -37,6 +37,13 @@ async def test_graph_available_creates_missing_graph():
 async def test_run_cypher_repairs_stale_graph_and_retries():
     backend = _GraphBackend()
     conn = AsyncMock()
+    fresh_conn = AsyncMock()
+
+    # Set up acquire() to return a fresh connection for DDL repair
+    acquire_ctx = AsyncMock()
+    acquire_ctx.__aenter__.return_value = fresh_conn
+    acquire_ctx.__aexit__.return_value = False
+    backend.acquire = lambda: acquire_ctx
 
     conn.fetchval.return_value = True
     conn.fetch.side_effect = [
@@ -47,11 +54,12 @@ async def test_run_cypher_repairs_stale_graph_and_retries():
     result = await backend._run_cypher_on_conn(conn, "RETURN 1", {})
 
     assert result == [{"ok": True}]
-    conn.execute.assert_any_call(
+    # DDL should run on the fresh connection, not the transactional one
+    fresh_conn.execute.assert_any_call(
         "SELECT * FROM ag_catalog.drop_graph($1, true)",
         "governance_graph",
     )
-    conn.execute.assert_any_call(
+    fresh_conn.execute.assert_any_call(
         "SELECT * FROM ag_catalog.create_graph($1)",
         "governance_graph",
     )
