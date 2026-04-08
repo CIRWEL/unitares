@@ -385,7 +385,7 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
         return success_response({
             "success": False,
             "action": "not_resumed",
-            "message": "Reflection logged, but not yet safe to resume.",
+            "message": "Reflection logged, but not yet safe to resume." if reflection_logged else "Not yet safe to resume (reflection failed to log).",
             "reflection_logged": reflection_logged,
             "failed_checks": failed,
             "metrics": {
