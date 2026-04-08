@@ -157,24 +157,26 @@ class TelemetryCache:
 
     def clear(self) -> None:
         """Clear all cache entries"""
-        self.cache.clear()
-    
+        with self._lock:
+            self.cache.clear()
+
     def stats(self) -> Dict[str, Any]:
         """Get cache statistics"""
-        total_entries = len(self.cache)
-        expired_count = 0
-        now = datetime.now()
-        
-        for entry in self.cache.values():
-            if entry.get('expires_at') and now > entry.get('expires_at'):
-                expired_count += 1
-        
-        return {
-            'total_entries': total_entries,
-            'expired_entries': expired_count,
-            'active_entries': total_entries - expired_count,
-            'default_ttl_seconds': self.default_ttl
-        }
+        with self._lock:
+            total_entries = len(self.cache)
+            expired_count = 0
+            now = datetime.now()
+
+            for entry in self.cache.values():
+                if entry.get('expires_at') and now > entry.get('expires_at'):
+                    expired_count += 1
+
+            return {
+                'total_entries': total_entries,
+                'expired_entries': expired_count,
+                'active_entries': total_entries - expired_count,
+                'default_ttl_seconds': self.default_ttl
+            }
 
 
 # Global cache instance
