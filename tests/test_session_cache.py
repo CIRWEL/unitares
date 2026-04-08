@@ -270,3 +270,61 @@ class TestHealthCheck:
         await cache.bind("sess-1", "agent-1")
         result = await cache.health_check()
         assert "fallback_count" in result
+
+
+# ============================================================================
+# Cache Coherency Tests
+# ============================================================================
+
+class TestCacheCoherency:
+    """Verify fallback cache stays consistent with Redis as source of truth."""
+
+    @pytest.fixture
+    def fake_redis(self):
+        return fakeredis.aioredis.FakeRedis(decode_responses=True)
+
+    @pytest.fixture
+    def cache(self, fake_redis):
+        _fallback_cache.clear()
+
+        async def _get_redis():
+            return fake_redis
+
+        with patch("src.cache.session_cache.get_redis", side_effect=_get_redis):
+            yield SessionCache()
+        _fallback_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_expired_redis_key_evicts_fallback(self, cache, fake_redis):
+        """When Redis key expires, get() must NOT return stale fallback data."""
+        with patch("src.cache.session_cache.get_redis", return_value=fake_redis):
+            await cache.bind("sess-exp", "agent-exp")
+
+            # Verify it's in both Redis and fallback
+            assert "sess-exp" in _fallback_cache
+            key = f"{SESSION_PREFIX}sess-exp"
+            assert await fake_redis.get(key) is not None
+
+            # Simulate Redis TTL expiry
+            await fake_redis.delete(key)
+
+            # get() should return None and evict from fallback
+            result = await cache.get("sess-exp")
+            assert result is None, "Expired Redis key returned stale fallback data"
+            assert "sess-exp" not in _fallback_cache, "Stale fallback entry not evicted"
+
+    @pytest.mark.asyncio
+    async def test_redis_update_syncs_to_fallback(self, cache, fake_redis):
+        """When Redis has newer data, fallback should be updated on read."""
+        with patch("src.cache.session_cache.get_redis", return_value=fake_redis):
+            await cache.bind("sess-sync", "agent-old")
+
+            # Directly update Redis (simulating another process)
+            key = f"{SESSION_PREFIX}sess-sync"
+            new_data = json.dumps({"agent_id": "agent-new", "bound_at": "2026-04-07T00:00:00+00:00", "bind_count": 5})
+            await fake_redis.set(key, new_data)
+
+            # get() should return the Redis version and sync fallback
+            result = await cache.get("sess-sync")
+            assert result["agent_id"] == "agent-new"
+            assert _fallback_cache["sess-sync"]["agent_id"] == "agent-new"

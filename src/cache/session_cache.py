@@ -141,13 +141,17 @@ class SessionCache:
                 data = await redis.get(key)
                 if data:
                     result = json.loads(data)
-                    # Also populate in-memory cache for faster subsequent lookups
+                    # Sync in-memory cache with Redis (authoritative source)
                     _fallback_cache[session_id] = result
                     return result
+                else:
+                    # Key expired or deleted in Redis — evict stale fallback
+                    _fallback_cache.pop(session_id, None)
+                    return None
             except Exception as e:
                 logger.warning(f"Redis get failed: {e}")
 
-        # Fallback to in-memory
+        # Fallback to in-memory (only when Redis is unavailable, not when key is missing)
         return _fallback_cache.get(session_id)
 
     async def get_agent_id(self, session_id: str) -> Optional[str]:
