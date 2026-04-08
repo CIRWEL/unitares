@@ -323,6 +323,7 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
     all_safe = all(safety_checks.values())
 
     # 8. Log reflection to knowledge graph (always, even if not resuming)
+    reflection_logged = False
     try:
         from ..knowledge.handlers import store_discovery_internal
         await store_discovery_internal(
@@ -333,6 +334,7 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
             tags=["recovery", "self-reflection", margin_info.get('margin', 'unknown')],
             severity="info" if all_safe else "warning"
         )
+        reflection_logged = True
     except Exception as e:
         logger.warning(f"Failed to log recovery reflection: {e}")
 
@@ -358,7 +360,7 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
             "success": True,
             "action": "resumed",
             "message": "Recovery successful. Agent resumed.",
-            "reflection_logged": True,
+            "reflection_logged": reflection_logged,
             "conditions": proposed_conditions,
             "metrics": {
                 "coherence": coherence,
@@ -384,7 +386,7 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
             "success": False,
             "action": "not_resumed",
             "message": "Reflection logged, but not yet safe to resume.",
-            "reflection_logged": True,
+            "reflection_logged": reflection_logged,
             "failed_checks": failed,
             "metrics": {
                 "coherence": coherence,
