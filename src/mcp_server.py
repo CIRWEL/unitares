@@ -996,6 +996,10 @@ async def main():
 
 
 if __name__ == "__main__":
+    # Enable tracemalloc for memory leak diagnosis (low overhead, ~5%)
+    import tracemalloc
+    tracemalloc.start(25)  # 25 frames deep
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

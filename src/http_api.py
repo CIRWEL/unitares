@@ -900,6 +900,51 @@ async def websocket_eisv_stream(websocket):
 
 
 # ---------------------------------------------------------------------------
+# Debug: memory profiling (tracemalloc)
+# ---------------------------------------------------------------------------
+
+async def http_debug_memory(request):
+    """Top memory allocations via tracemalloc (if enabled)."""
+    import tracemalloc
+    if not tracemalloc.is_tracing():
+        return JSONResponse({"error": "tracemalloc not enabled"}, status_code=503)
+
+    snapshot = tracemalloc.take_snapshot()
+    # Filter out importlib/tracemalloc noise
+    snapshot = snapshot.filter_traces([
+        tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
+        tracemalloc.Filter(False, "<frozen importlib._bootstrap_external>"),
+        tracemalloc.Filter(False, tracemalloc.__file__),
+    ])
+
+    top_n = int(request.query_params.get("top", "25"))
+    stats = snapshot.statistics("lineno")
+
+    current, peak = tracemalloc.get_traced_memory()
+    result = {
+        "current_mb": round(current / 1024 / 1024, 1),
+        "peak_mb": round(peak / 1024 / 1024, 1),
+        "top_allocations": [
+            {
+                "file": str(stat.traceback),
+                "size_mb": round(stat.size / 1024 / 1024, 2),
+                "count": stat.count,
+            }
+            for stat in stats[:top_n]
+        ],
+    }
+
+    # Also include monitor cache size
+    try:
+        from src.agent_monitor_state import monitors
+        result["monitors_cached"] = len(monitors)
+    except Exception:
+        pass
+
+    return JSONResponse(result)
+
+
+# ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
 
@@ -958,3 +1003,4 @@ def register_http_routes(
     app.routes.append(Route("/api/activity", http_activity, methods=["GET"]))
     app.routes.append(Route("/api/incidents", http_incidents, methods=["GET"]))
     app.routes.append(WebSocketRoute("/ws/eisv", websocket_eisv_stream))
+    app.routes.append(Route("/debug/memory", http_debug_memory, methods=["GET"]))
