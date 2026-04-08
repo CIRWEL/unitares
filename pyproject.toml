@@ -49,10 +49,11 @@ pythonpath = ["."]
 addopts = [
     "--cov=src",
     "--cov-report=term-missing",
-    "--cov-report=html",
     "--cov-fail-under=25",
     "-v",
 ]
+# HTML coverage: run manually with --cov-report=html when needed
+# (22MB per run was causing 2GB+ disk write storms during dev sessions)
 markers = [
     "smoke: Fast smoke tests for pre-push validation (target <60s)",
 ]
