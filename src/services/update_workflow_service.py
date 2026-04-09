@@ -50,6 +50,7 @@ async def run_process_update_workflow(ctx, *, serializer=None) -> Sequence[TextC
             # Capture monitor ref while lock guarantees consistent state
             ctx.monitor = ctx.mcp_server.monitors.get(ctx.agent_id)
     except TimeoutError:
+        cleaned = False
         try:
             from src.lock_cleanup import cleanup_stale_state_locks
             project_root = Path(__file__).resolve().parent.parent
@@ -58,13 +59,18 @@ async def run_process_update_workflow(ctx, *, serializer=None) -> Sequence[TextC
             )
             if cleanup_result["cleaned"] > 0:
                 logger.info(f"Auto-recovery: Cleaned {cleanup_result['cleaned']} stale lock(s) after timeout")
+                cleaned = True
         except Exception as cleanup_error:
             logger.warning(f"Could not perform emergency lock cleanup: {cleanup_error}")
 
+        cleanup_msg = (
+            "The system has automatically cleaned stale locks. " if cleaned
+            else "Automatic lock cleanup was attempted but did not resolve the issue. "
+        )
         return [error_response(
             f"Failed to acquire lock for agent '{ctx.agent_id}' after automatic retries and cleanup. "
             f"This usually means another active process is updating this agent. "
-            f"The system has automatically cleaned stale locks. If this persists, try: "
+            f"{cleanup_msg}If this persists, try: "
             f"1) Wait a few seconds and retry, 2) Check for other Cursor/Claude sessions, "
             f"3) Use cleanup_stale_locks tool, or 4) Restart Cursor if stuck."
             ,
