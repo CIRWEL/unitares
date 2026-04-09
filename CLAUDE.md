@@ -48,6 +48,14 @@ UNITARES governance MCP server. Thermodynamic governance framework for AI agents
 - Do not run DROP/TRUNCATE/DELETE on the governance database without explicit user approval
 - Do not include Co-Authored-By lines in commit messages
 
+## Active Issue: anyio-asyncio Deadlock
+
+`start_streamable_http()` in `mcp_server.py` creates an `anyio.create_task_group()` that conflicts with asyncpg/Redis async operations. Any MCP tool handler that `await`s a DB call deadlocks. `health_check` via MCP times out; REST `/v1/tools/call` hangs for DB-touching tools. Non-DB tools (`get_governance_metrics`) work fine.
+
+**Workarounds in place:** KG health check skipped, KG lifecycle disabled, `call_pi_tool` uses sync httpx in executor thread.
+
+**Next step:** Investigate Starlette lifespan with `session_manager.run()` cleanly (Option E in `docs/handoffs/2026-04-09-anyio-asyncio-refactor.md`). Previous attempt froze the server but wasn't diagnosed thoroughly.
+
 ## Known Test Notes
 
 - Knowledge graph AGE tests require a live AGE connection (errors, not failures, when unavailable)
