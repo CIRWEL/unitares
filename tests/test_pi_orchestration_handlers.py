@@ -88,7 +88,7 @@ from src.mcp_handlers.observability.pi_orchestration import (
 # so we patch at their source modules rather than on pi_orchestration itself.
 _PATCH_STREAMABLE = "mcp.client.streamable_http.streamable_http_client"
 _PATCH_SESSION = "mcp.client.session.ClientSession"
-_PATCH_HTTPX_CLIENT = "src.mcp_handlers.observability.pi_orchestration.httpx.AsyncClient"
+_PATCH_HTTPX_CLIENT = "src.mcp_handlers.observability.pi_orchestration.httpx.Client"
 
 
 def _make_mcp_text_content(text):
@@ -105,7 +105,7 @@ def _build_transport_mocks(mock_session):
     """
     Return (http_side_effect, session_side_effect) callables that yield the
     given mock_session through the async context manager protocol used by
-    call_pi_tool and handle_pi_list_tools.
+    handle_pi_list_tools (which still uses the MCP client SDK).
     """
     @asynccontextmanager
     async def fake_http(*a, **kw):
@@ -116,6 +116,37 @@ def _build_transport_mocks(mock_session):
         yield mock_session
 
     return fake_http, fake_session
+
+
+def _build_httpx_mock(rpc_result_content, *, status_code=200, rpc_error=None):
+    """Build a mock httpx.Client (sync) that returns a JSON-RPC response.
+
+    call_pi_tool runs httpx.Client in run_in_executor (sync thread),
+    so mocks use sync context manager protocol.
+
+    Args:
+        rpc_result_content: list of {"type":"text","text":"..."} dicts for the MCP result
+        status_code: HTTP status code
+        rpc_error: if set, return a JSON-RPC error instead of result
+    """
+    if rpc_error:
+        rpc_body = json.dumps({"jsonrpc": "2.0", "id": 1, "error": rpc_error})
+    else:
+        rpc_body = json.dumps({
+            "jsonrpc": "2.0", "id": 1,
+            "result": {"content": rpc_result_content, "isError": False},
+        })
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = status_code
+    mock_resp.text = rpc_body
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_client = MagicMock()
+    mock_client.post = MagicMock(return_value=mock_resp)
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    return mock_client
 
 
 # ============================================================================
@@ -271,25 +302,15 @@ class TestMapAnimaToEisv:
 # ============================================================================
 
 class TestCallPiTool:
-    """Tests for call_pi_tool - exercises MCP transport, retry, parsing."""
+    """Tests for call_pi_tool - exercises raw httpx transport, retry, parsing."""
 
     @pytest.mark.asyncio
     async def test_success_json_response(self, _mock_audit_logger):
         """Successful JSON response from Pi is returned as dict."""
         json_data = {"anima": {"warmth": 0.8}}
-        content = _make_mcp_text_content(json.dumps(json_data))
-        mock_result = _make_mcp_result([content])
+        mock_client = _build_httpx_mock([{"type": "text", "text": json.dumps(json_data)}])
 
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-        mock_session.call_tool = AsyncMock(return_value=mock_result)
-
-        fake_http, fake_cs = _build_transport_mocks(mock_session)
-
-        with patch(_PATCH_STREAMABLE, side_effect=fake_http), \
-             patch(_PATCH_SESSION, side_effect=fake_cs), \
-             patch(_PATCH_HTTPX_CLIENT):
-
+        with patch(_PATCH_HTTPX_CLIENT, return_value=mock_client):
             result = await call_pi_tool("get_lumen_context", {"include": ["anima"]})
             assert result == json_data
             _mock_audit_logger.log_cross_device_call.assert_called()
@@ -298,19 +319,9 @@ class TestCallPiTool:
     async def test_error_json_response(self, _mock_audit_logger):
         """Error JSON response from Pi is standardized and returned."""
         error_data = {"error": "sensor offline", "error_type": "hardware"}
-        content = _make_mcp_text_content(json.dumps(error_data))
-        mock_result = _make_mcp_result([content])
+        mock_client = _build_httpx_mock([{"type": "text", "text": json.dumps(error_data)}])
 
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-        mock_session.call_tool = AsyncMock(return_value=mock_result)
-
-        fake_http, fake_cs = _build_transport_mocks(mock_session)
-
-        with patch(_PATCH_STREAMABLE, side_effect=fake_http), \
-             patch(_PATCH_SESSION, side_effect=fake_cs), \
-             patch(_PATCH_HTTPX_CLIENT):
-
+        with patch(_PATCH_HTTPX_CLIENT, return_value=mock_client):
             result = await call_pi_tool("diagnostics", {})
             assert "error" in result
             assert result["error"] == "sensor offline"
@@ -318,57 +329,18 @@ class TestCallPiTool:
     @pytest.mark.asyncio
     async def test_non_json_text_response(self, _mock_audit_logger):
         """Non-JSON text response is wrapped in a text dict."""
-        content = _make_mcp_text_content("Hello from Lumen")
-        mock_result = _make_mcp_result([content])
+        mock_client = _build_httpx_mock([{"type": "text", "text": "Hello from Lumen"}])
 
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-        mock_session.call_tool = AsyncMock(return_value=mock_result)
-
-        fake_http, fake_cs = _build_transport_mocks(mock_session)
-
-        with patch(_PATCH_STREAMABLE, side_effect=fake_http), \
-             patch(_PATCH_SESSION, side_effect=fake_cs), \
-             patch(_PATCH_HTTPX_CLIENT):
-
+        with patch(_PATCH_HTTPX_CLIENT, return_value=mock_client):
             result = await call_pi_tool("say", {"text": "hi"})
             assert result == {"text": "Hello from Lumen"}
 
     @pytest.mark.asyncio
     async def test_empty_response(self, _mock_audit_logger):
         """Empty response (no content) returns standardized error."""
-        mock_result = _make_mcp_result([])
+        mock_client = _build_httpx_mock([])
 
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-        mock_session.call_tool = AsyncMock(return_value=mock_result)
-
-        fake_http, fake_cs = _build_transport_mocks(mock_session)
-
-        with patch(_PATCH_STREAMABLE, side_effect=fake_http), \
-             patch(_PATCH_SESSION, side_effect=fake_cs), \
-             patch(_PATCH_HTTPX_CLIENT):
-
-            result = await call_pi_tool("diagnostics", {})
-            assert "error" in result
-            assert "Empty response" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_content_without_text_attribute(self, _mock_audit_logger):
-        """Content objects without .text are skipped, resulting in empty response."""
-        content = SimpleNamespace(data="binary data")
-        mock_result = _make_mcp_result([content])
-
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-        mock_session.call_tool = AsyncMock(return_value=mock_result)
-
-        fake_http, fake_cs = _build_transport_mocks(mock_session)
-
-        with patch(_PATCH_STREAMABLE, side_effect=fake_http), \
-             patch(_PATCH_SESSION, side_effect=fake_cs), \
-             patch(_PATCH_HTTPX_CLIENT):
-
+        with patch(_PATCH_HTTPX_CLIENT, return_value=mock_client):
             result = await call_pi_tool("diagnostics", {})
             assert "error" in result
             assert "Empty response" in result["error"]
@@ -376,13 +348,12 @@ class TestCallPiTool:
     @pytest.mark.asyncio
     async def test_connection_failure_all_urls(self, _mock_audit_logger):
         """When all URLs fail with connection errors, returns standardized error."""
-        @asynccontextmanager
-        async def fail_http(*a, **kw):
-            raise httpx.ConnectError("connection refused")
-            yield  # pragma: no cover
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(side_effect=httpx.ConnectError("connection refused"))
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
 
-        with patch(_PATCH_STREAMABLE, side_effect=fail_http), \
-             patch(_PATCH_HTTPX_CLIENT), \
+        with patch(_PATCH_HTTPX_CLIENT, return_value=mock_client), \
              patch("src.mcp_handlers.observability.pi_orchestration.PI_RETRY_MAX_ATTEMPTS", 0):
 
             result = await call_pi_tool("diagnostics", {})
@@ -392,13 +363,12 @@ class TestCallPiTool:
     @pytest.mark.asyncio
     async def test_timeout_failure_all_urls(self, _mock_audit_logger):
         """When all URLs timeout, returns standardized error."""
-        @asynccontextmanager
-        async def fail_http(*a, **kw):
-            raise httpx.TimeoutException("read timeout")
-            yield  # pragma: no cover
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(side_effect=httpx.TimeoutException("read timeout"))
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
 
-        with patch(_PATCH_STREAMABLE, side_effect=fail_http), \
-             patch(_PATCH_HTTPX_CLIENT), \
+        with patch(_PATCH_HTTPX_CLIENT, return_value=mock_client), \
              patch("src.mcp_handlers.observability.pi_orchestration.PI_RETRY_MAX_ATTEMPTS", 0):
 
             result = await call_pi_tool("diagnostics", {})
@@ -408,33 +378,29 @@ class TestCallPiTool:
     @pytest.mark.asyncio
     async def test_generic_exception_continues_to_next_url(self, _mock_audit_logger):
         """Generic exceptions are caught, logged, and the next URL is tried."""
-        call_count = [0]
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(side_effect=RuntimeError("unexpected error"))
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
 
-        @asynccontextmanager
-        async def fail_always(*a, **kw):
-            call_count[0] += 1
-            raise RuntimeError("unexpected error")
-            yield  # pragma: no cover
-
-        with patch(_PATCH_STREAMABLE, side_effect=fail_always), \
-             patch(_PATCH_HTTPX_CLIENT), \
+        with patch(_PATCH_HTTPX_CLIENT, return_value=mock_client), \
              patch("src.mcp_handlers.observability.pi_orchestration.PI_RETRY_MAX_ATTEMPTS", 0):
 
             result = await call_pi_tool("diagnostics", {})
-            assert call_count[0] == len(PI_MCP_URLS)
+            # Should have tried all URLs
+            assert mock_client.post.call_count == len(PI_MCP_URLS)
             assert "error" in result
 
     @pytest.mark.asyncio
     async def test_retry_with_backoff_on_connection_error(self, _mock_audit_logger):
         """Retries with exponential backoff when connection fails."""
-        @asynccontextmanager
-        async def always_fail(*a, **kw):
-            raise httpx.ConnectError("refused")
-            yield  # pragma: no cover
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(side_effect=httpx.ConnectError("refused"))
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
 
-        with patch(_PATCH_STREAMABLE, side_effect=always_fail), \
-             patch(_PATCH_HTTPX_CLIENT), \
-             patch("src.mcp_handlers.observability.pi_orchestration.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with patch(_PATCH_HTTPX_CLIENT, return_value=mock_client), \
+             patch("src.mcp_handlers.observability.pi_orchestration.time.sleep") as mock_sleep:
 
             result = await call_pi_tool("diagnostics", {}, retry_attempt=0)
             assert "error" in result
@@ -443,13 +409,12 @@ class TestCallPiTool:
     @pytest.mark.asyncio
     async def test_sanitizes_sensitive_arguments(self, _mock_audit_logger):
         """Sensitive keys like api_key and secret are stripped from audit logs."""
-        @asynccontextmanager
-        async def fail_http(*a, **kw):
-            raise httpx.ConnectError("refused")
-            yield  # pragma: no cover
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(side_effect=httpx.ConnectError("refused"))
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
 
-        with patch(_PATCH_STREAMABLE, side_effect=fail_http), \
-             patch(_PATCH_HTTPX_CLIENT), \
+        with patch(_PATCH_HTTPX_CLIENT, return_value=mock_client), \
              patch("src.mcp_handlers.observability.pi_orchestration.PI_RETRY_MAX_ATTEMPTS", 0):
 
             await call_pi_tool("test", {"api_key": "secret123", "secret": "s", "safe": "v"})

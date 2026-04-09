@@ -134,10 +134,15 @@ async def startup_kg_lifecycle():
     try:
         from src.knowledge_graph_lifecycle import kg_lifecycle_background_task, run_kg_lifecycle_cleanup
 
-        result = await run_kg_lifecycle_cleanup(dry_run=False)
-        archived = result.get("ephemeral_archived", 0) + result.get("discoveries_archived", 0)
-        if archived > 0:
-            logger.info(f"KG lifecycle startup: archived {archived} entries")
+        # KG cleanup does AGE graph queries that block the event loop in the
+        # MCP server's anyio context. Wrap in timeout to prevent server freeze.
+        try:
+            result = await asyncio.wait_for(run_kg_lifecycle_cleanup(dry_run=False), timeout=10.0)
+            archived = result.get("ephemeral_archived", 0) + result.get("discoveries_archived", 0)
+            if archived > 0:
+                logger.info(f"KG lifecycle startup: archived {archived} entries")
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            logger.warning("KG lifecycle startup cleanup timed out (non-fatal)")
 
         asyncio.create_task(kg_lifecycle_background_task(interval_hours=24.0))
         logger.info("Started periodic KG lifecycle cleanup (runs every 24 hours)")
@@ -643,6 +648,58 @@ async def check_agent_silence():
         await asyncio.sleep(600)  # every 10 minutes
 
 
+async def identity_cache_warmup():
+    """Pre-populate sticky transport identity cache from recent session bindings.
+
+    Prevents first-request timeouts after server restart by warming the
+    in-memory cache from Redis/PostgreSQL before any client connects.
+    """
+    await asyncio.sleep(2)  # Wait for DB and Redis to be ready
+    try:
+        from src.cache import is_redis_available
+        if not is_redis_available():
+            logger.info("[WARMUP] Redis unavailable, skipping identity cache warmup")
+            return
+
+        from src.cache.redis_client import get_redis
+        redis = await get_redis()
+        if not redis:
+            logger.info("[WARMUP] Redis client not ready, skipping identity cache warmup")
+            return
+
+        from src.mcp_handlers.middleware.identity_step import update_transport_binding
+        import json
+        warmed = 0
+        max_scan = 500  # Cap total keys scanned to avoid memory/time issues
+        scanned = 0
+        async for key in redis.scan_iter(match="session:*", count=50):
+            scanned += 1
+            if scanned > max_scan:
+                logger.debug(f"[WARMUP] Scan cap reached ({max_scan} keys)")
+                break
+            try:
+                data = await redis.get(key)
+                if not data:
+                    continue
+                binding = json.loads(data)
+                agent_uuid = binding.get("agent_uuid") or binding.get("agent_id")
+                session_key = binding.get("session_key") or (key.decode() if isinstance(key, bytes) else str(key))
+                ip_ua_fp = binding.get("ip_ua_fingerprint")
+                if agent_uuid and ip_ua_fp:
+                    cache_key = f"sticky:{ip_ua_fp}"
+                    update_transport_binding(cache_key, agent_uuid, session_key, source="warmup")
+                    warmed += 1
+            except Exception:
+                continue  # Skip malformed entries
+
+        if warmed > 0:
+            logger.info(f"[WARMUP] Pre-populated identity cache with {warmed} binding(s)")
+        else:
+            logger.info("[WARMUP] No recent session bindings found to warm")
+    except Exception as e:
+        logger.warning(f"[WARMUP] Identity cache warmup failed (non-fatal): {e}")
+
+
 def _supervised_create_task(coro, *, name: str | None = None) -> asyncio.Task:
     """Create a background task with crash logging."""
     task = asyncio.create_task(coro, name=name)
@@ -663,7 +720,9 @@ def start_all_background_tasks(connection_tracker, set_ready):
     logger.info("[HEARTBEAT] Connection health monitoring started")
 
     _supervised_create_task(startup_auto_calibration(), name="auto_calibration")
-    _supervised_create_task(startup_kg_lifecycle(), name="kg_lifecycle")
+    # KG lifecycle temporarily disabled — AGE graph queries deadlock in anyio context
+    # _supervised_create_task(startup_kg_lifecycle(), name="kg_lifecycle")
+    logger.info("[KG_LIFECYCLE] Disabled — AGE query deadlock under investigation")
     _supervised_create_task(concept_extraction_background_task(), name="concept_extraction")
     _supervised_create_task(periodic_matview_refresh(), name="matview_refresh")
     _supervised_create_task(periodic_partition_maintenance(), name="partition_maintenance")
@@ -692,3 +751,5 @@ def start_all_background_tasks(connection_tracker, set_ready):
 
     _supervised_create_task(check_agent_silence(), name="silence_detection")
     logger.info("[SILENCE] Started agent silence detection (every 10m)")
+
+    _supervised_create_task(identity_cache_warmup(), name="identity_cache_warmup")

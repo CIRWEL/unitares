@@ -705,34 +705,27 @@ async def main():
     # Run the governance MCP server
     try:
         import uvicorn
+        from starlette.applications import Starlette
         from starlette.responses import JSONResponse
         from starlette.middleware.cors import CORSMiddleware
-        
-        # Get the Starlette app from FastMCP (SSE transport)
+        from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+
+        # Create Streamable HTTP session manager (primary MCP transport)
+        # stateless=True: any client can connect without MCP-level session management
+        #   (we handle identity separately via transport signals + sticky cache)
+        import anyio
+
+        _streamable_session_manager = StreamableHTTPSessionManager(
+            app=mcp._mcp_server,
+            stateless=True,
+        )
+        HAS_STREAMABLE_HTTP = True
+        logger.info("Streamable HTTP transport available at /mcp")
+
+        # NOTE: sse_app() provides the Starlette base app. The SSE transport at /sse
+        # is unused (all clients use /mcp), but sse_app() is needed because bare
+        # Starlette(routes=[]) breaks POST body reading for REST routes.
         app = mcp.sse_app()
-        
-        # === Add Streamable HTTP transport (MCP 1.24.0+) ===
-        # Clients can connect to /mcp for the new transport with resumability
-        try:
-            from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-            from mcp.server.streamable_http import StreamableHTTPServerTransport
-            
-            # Create session manager for Streamable HTTP
-            # NOTE: stateless=True allows any client to connect without session management
-            # But we still capture mcp-session-id header when present for implicit identity binding
-            # This is a hybrid approach: stateless for compatibility, but identity-aware when possible
-            _streamable_session_manager = StreamableHTTPSessionManager(
-                app=mcp._mcp_server,  # Access the underlying MCP server
-                json_response=False,  # Use SSE streams (default, more efficient)
-                stateless=True,       # Allow stateless for compatibility (we handle identity separately)
-            )
-            
-            HAS_STREAMABLE_HTTP = True
-            logger.info("Streamable HTTP transport available at /mcp")
-        except Exception as e:
-            HAS_STREAMABLE_HTTP = False
-            _streamable_session_manager = None
-            logger.info(f"Streamable HTTP transport not available: {e}")
         
         # === Add CORS support for web-based GPT/Gemini clients ===
         # CORS: restrict to known origins (dashboard, local dev, Tailscale)
@@ -752,7 +745,7 @@ async def main():
             expose_headers=["*"],
         )
         
-        # === Connection Tracking Middleware (ASGI-safe for streaming SSE) ===
+        # === Connection Tracking Middleware ===
         # Class lives in src/connection_tracker.py — see ConnectionTrackingMiddleware
         app.add_middleware(
             ConnectionTrackingMiddleware,
@@ -789,23 +782,18 @@ async def main():
         )
 
         # === Streamable HTTP endpoint (/mcp) ===
-        # New MCP 1.24.0+ transport with resumability and bidirectional streaming
-        _streamable_task_group = None
         _streamable_running = False
-        
-        if HAS_STREAMABLE_HTTP and _streamable_session_manager is not None:
-            import anyio
-            
+
+        if HAS_STREAMABLE_HTTP:
             async def start_streamable_http():
                 """Start the Streamable HTTP session manager in background."""
-                nonlocal _streamable_task_group, _streamable_running
+                nonlocal _streamable_running
                 try:
                     async with anyio.create_task_group() as tg:
                         _streamable_session_manager._task_group = tg
                         _streamable_session_manager._has_started = True
                         _streamable_running = True
                         logger.info("[STREAMABLE] Session manager started")
-                        # Keep running until cancelled
                         await asyncio.Event().wait()
                 except asyncio.CancelledError:
                     logger.info("[STREAMABLE] Session manager shutting down")
@@ -813,21 +801,18 @@ async def main():
                 except Exception as e:
                     logger.error(f"[STREAMABLE] Session manager error: {e}", exc_info=True)
                     _streamable_running = False
-            
-            # Start the session manager as a background task
-            streamable_task = asyncio.create_task(start_streamable_http())
-            
+
+            asyncio.create_task(start_streamable_http())
+
             # Create a pure ASGI app for /mcp that wraps the session manager
             # Using Mount with an ASGI app avoids Starlette's Route handler wrapper
             # which expects a Response to be returned (causing NoneType callable error)
             async def streamable_mcp_asgi(scope, receive, send):
                 """ASGI app for Streamable HTTP MCP at /mcp."""
-                # Only handle HTTP requests
                 if scope.get("type") != "http":
                     return
 
                 if not _streamable_running:
-                    # Return 503 if not ready
                     response = JSONResponse({
                         "error": "Streamable HTTP transport not ready",
                         "hint": "Try again in a moment"
@@ -953,8 +938,7 @@ async def main():
             app.routes.append(Mount("/mcp", app=streamable_mcp_asgi))
             logger.info("Registered /mcp endpoint for Streamable HTTP transport")
 
-        # NOTE: CORS middleware is already registered above (line ~780).
-        # HTTP_CORS_ALLOW_ORIGIN is merged into the main CORS config there.
+        # NOTE: CORS middleware is already registered above.
         # Do not add a second CORSMiddleware — duplicate registration causes confusing behavior.
         
         # Run with uvicorn

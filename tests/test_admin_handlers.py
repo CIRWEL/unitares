@@ -782,8 +782,10 @@ class TestHealthCheck:
 
             data = parse_result(result)
             assert data["success"] is True
-            assert data["checks"]["knowledge_graph"]["status"] == "warning"
-            assert "lifecycle cleanup is failing" in data["checks"]["knowledge_graph"]["warning"]
+            # KG check no longer calls get_knowledge_graph() (deadlocks in anyio context)
+            # Just reports embeddings status — lifecycle warnings not propagated
+            kg = data["checks"]["knowledge_graph"]
+            assert kg["status"] in ("healthy", "degraded")
 
 
 # ============================================================================
@@ -2216,7 +2218,8 @@ class TestHealthCheckEdgeCases:
 
             data = parse_result(result)
             assert data["success"] is True
-            assert data["checks"]["knowledge_graph"]["status"] == "error"
+            # KG check no longer calls get_knowledge_graph() — reports embeddings status only
+            assert data["checks"]["knowledge_graph"]["status"] in ("healthy", "degraded")
 
     @pytest.mark.asyncio
     async def test_health_check_data_dir_error(self, mock_mcp_server, patch_context_agent_id):

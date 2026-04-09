@@ -214,143 +214,133 @@ async def call_pi_tool(tool_name: str, arguments: Dict[str, Any],
         status="initiated"
     )
 
-    # Try each URL (LAN first, then Tailscale)
+    # Run in executor thread to avoid anyio event loop conflicts.
+    # httpx uses anyio internally; running it in the same event loop as the MCP
+    # server's anyio task group causes deadlocks. Sync httpx in a thread is safe.
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, _call_pi_tool_sync, tool_name, arguments, agent_id, timeout, retry_attempt, start_time
+    )
+
+
+def _call_pi_tool_sync(
+    tool_name: str, arguments: Dict[str, Any],
+    agent_id: str, timeout: float, retry_attempt: int, start_time: float,
+) -> Dict[str, Any]:
+    """Synchronous Pi call — runs in executor thread to avoid anyio conflicts."""
     last_error = None
     for url_index, pi_url in enumerate(PI_MCP_URLS):
         try:
-            # Use MCP client library for proper Streamable HTTP transport
-            from mcp.client.session import ClientSession
-            from mcp.client.streamable_http import streamable_http_client
-            
-            # Use full timeout per URL attempt (not divided)
-            # This ensures each attempt gets the full timeout budget
-            # Include stable session headers so Pi resolves all Mac calls
-            # to the same identity instead of minting a new UUID each time
-            http_client = httpx.AsyncClient(
-                http2=True,
+            with httpx.Client(
                 timeout=timeout,
                 headers={
                     "X-Session-ID": PI_STABLE_SESSION_ID,
                     "X-Agent-Name": "mac-governance",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
                 },
-            )
-            async with streamable_http_client(pi_url, http_client=http_client) as (read, write, _):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    
-                    # Call the tool
-                    result = await session.call_tool(tool_name, arguments)
-                    
-                    latency_ms = (time.time() - start_time) * 1000
-                    
-                    # Parse MCP TextContent response
-                    parsed_content = []
-                    for content in result.content:
-                        if hasattr(content, 'text'):
-                            text = content.text
-                            parsed_content.append(text)
-                            try:
-                                # Try to parse as JSON
-                                data = json.loads(text)
-                                if isinstance(data, dict):
-                                    # Check if it's an error response
-                                    if "error" in data:
-                                        # Standardize error format
-                                        standardized_error = _standardize_error(data)
-                                        audit_logger.log_cross_device_call(
-                                            agent_id=agent_id,
-                                            source_device="mac",
-                                            target_device="pi",
-                                            tool_name=tool_name,
-                                            arguments=arguments,
-                                            status="error",
-                                            latency_ms=latency_ms,
-                                            error=standardized_error["error"]
-                                        )
-                                        return standardized_error
-                                    
-                                    # Success - log and return
+            ) as client:
+                rpc_request = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": tool_name, "arguments": arguments},
+                }
+                resp = client.post(pi_url, json=rpc_request)
+                resp.raise_for_status()
+
+                latency_ms = (time.time() - start_time) * 1000
+
+                # Parse response — may be JSON or SSE event stream
+                body = resp.text
+                if body.startswith("event:"):
+                    for line in body.split("\n"):
+                        if line.startswith("data:"):
+                            body = line[5:].strip()
+                            break
+
+                rpc_response = json.loads(body)
+
+                if "error" in rpc_response:
+                    standardized_error = _standardize_error(rpc_response["error"])
+                    audit_logger.log_cross_device_call(
+                        agent_id=agent_id, source_device="mac", target_device="pi",
+                        tool_name=tool_name, arguments=arguments,
+                        status="error", latency_ms=latency_ms,
+                        error=standardized_error["error"],
+                    )
+                    return standardized_error
+
+                result = rpc_response.get("result", {})
+                content_list = result.get("content", [])
+
+                for item in content_list:
+                    text = item.get("text") if isinstance(item, dict) else None
+                    if text:
+                        try:
+                            data = json.loads(text)
+                            if isinstance(data, dict):
+                                if "error" in data:
+                                    standardized_error = _standardize_error(data)
                                     audit_logger.log_cross_device_call(
-                                        agent_id=agent_id,
-                                        source_device="mac",
-                                        target_device="pi",
-                                        tool_name=tool_name,
-                                        arguments=arguments,
-                                        status="success",
-                                        latency_ms=latency_ms
+                                        agent_id=agent_id, source_device="mac",
+                                        target_device="pi", tool_name=tool_name,
+                                        arguments=arguments, status="error",
+                                        latency_ms=latency_ms,
+                                        error=standardized_error["error"],
                                     )
-                                    return data
-                            except json.JSONDecodeError:
-                                # Not JSON, keep as text
-                                pass
-                    
-                    # If we got here, either no content or non-JSON content
-                    if parsed_content:
-                        # Return as text if not JSON
-                        result_dict = {"text": "\n".join(parsed_content)}
-                        audit_logger.log_cross_device_call(
-                            agent_id=agent_id,
-                            source_device="mac",
-                            target_device="pi",
-                            tool_name=tool_name,
-                            arguments=arguments,
-                            status="success",
-                            latency_ms=latency_ms
-                        )
-                        return result_dict
-                    else:
-                        # Empty response
-                        standardized_error = _standardize_error("Empty response from Pi MCP")
-                        audit_logger.log_cross_device_call(
-                            agent_id=agent_id,
-                            source_device="mac",
-                            target_device="pi",
-                            tool_name=tool_name,
-                            arguments=arguments,
-                            status="error",
-                            latency_ms=latency_ms,
-                            error=standardized_error["error"]
-                        )
-                        return standardized_error
+                                    return standardized_error
+                                audit_logger.log_cross_device_call(
+                                    agent_id=agent_id, source_device="mac",
+                                    target_device="pi", tool_name=tool_name,
+                                    arguments=arguments, status="success",
+                                    latency_ms=latency_ms,
+                                )
+                                return data
+                        except json.JSONDecodeError:
+                            pass
+
+                if content_list:
+                    texts = [c.get("text", "") for c in content_list if isinstance(c, dict)]
+                    audit_logger.log_cross_device_call(
+                        agent_id=agent_id, source_device="mac", target_device="pi",
+                        tool_name=tool_name, arguments=arguments,
+                        status="success", latency_ms=latency_ms,
+                    )
+                    return {"text": "\n".join(texts)}
+
+                standardized_error = _standardize_error("Empty response from Pi MCP")
+                audit_logger.log_cross_device_call(
+                    agent_id=agent_id, source_device="mac", target_device="pi",
+                    tool_name=tool_name, arguments=arguments,
+                    status="error", latency_ms=latency_ms,
+                    error=standardized_error["error"],
+                )
+                return standardized_error
 
         except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as e:
-            # Connection/network error - try next URL or retry
             last_error = e
             logger.debug(f"Pi connection failed via {pi_url} (attempt {url_index + 1}/{len(PI_MCP_URLS)}): {e}")
 
-            # If this was the last URL and we haven't exhausted retries, retry with backoff
             if url_index == len(PI_MCP_URLS) - 1 and retry_attempt < PI_RETRY_MAX_ATTEMPTS:
                 delay = PI_RETRY_BASE_DELAY * (2 ** retry_attempt)
                 logger.debug(f"Retrying Pi call after {delay}s (attempt {retry_attempt + 1}/{PI_RETRY_MAX_ATTEMPTS})")
-                await asyncio.sleep(delay)
-                return await call_pi_tool(tool_name, arguments, agent_id, timeout, retry_attempt + 1)
-
-            continue  # Try next URL
+                time.sleep(delay)
+                return _call_pi_tool_sync(tool_name, arguments, agent_id, timeout, retry_attempt + 1, start_time)
+            continue
 
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
             standardized_error = _standardize_error(e)
             audit_logger.log_cross_device_call(
-                agent_id=agent_id,
-                source_device="mac",
-                target_device="pi",
-                tool_name=tool_name,
-                arguments=arguments,
-                status="error",
-                latency_ms=latency_ms,
-                error=standardized_error["error"]
+                agent_id=agent_id, source_device="mac", target_device="pi",
+                tool_name=tool_name, arguments=arguments,
+                status="error", latency_ms=latency_ms,
+                error=standardized_error["error"],
             )
-            # Continue to next URL instead of returning immediately
             last_error = e
             logger.debug(f"Pi MCP call failed via {pi_url}: {e}")
             continue
-
-        finally:
-            # Always close the httpx client to prevent socket leaks
-            try:
-                await http_client.aclose()
-            except (TypeError, AttributeError):
-                pass  # Handles mocked clients in tests
 
     # All URLs failed
     latency_ms = (time.time() - start_time) * 1000

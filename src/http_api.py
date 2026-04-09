@@ -593,8 +593,7 @@ async def http_health(request):
         },
         "database": db_health,
         "transports": {
-            "streamable_http": "/mcp (primary, with resumability)" if has_streamable_http else "not available",
-            "sse": "/sse (legacy, deprecated)"
+            "streamable_http": "/mcp (primary, JSON response mode)" if has_streamable_http else "not available",
         },
         "endpoints": {
             "list_tools": "GET /v1/tools",
@@ -614,7 +613,7 @@ async def http_health(request):
             "header": "X-Agent-Id",
             "description": "CLI/GPT identity - pass your agent name to maintain identity across REST requests"
         },
-        "note": "Use /mcp for MCP clients (Streamable HTTP). Legacy /sse still works but is deprecated."
+        "note": "Use /mcp for MCP clients (Streamable HTTP)."
     })
 
 

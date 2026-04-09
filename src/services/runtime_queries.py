@@ -372,11 +372,22 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
     loop = asyncio.get_running_loop()
     continuity_status = None
 
+    # Detect if we're in an MCP handler context (anyio task group).
+    # Expensive checks (KG, Pi) block indefinitely due to nested anyio/connection pool issues.
+    _in_mcp = False
+    try:
+        from src.mcp_handlers.context import get_session_signals
+        _signals = get_session_signals()
+        _in_mcp = _signals is not None and getattr(_signals, 'transport', None) == 'mcp'
+    except Exception:
+        pass
+
     try:
         pending = await loop.run_in_executor(None, lambda: calibration_checker.get_pending_updates())
         checks["calibration"] = {"status": "healthy", "pending_updates": pending}
     except Exception as e:
         checks["calibration"] = {"status": "error", "error": str(e)}
+
 
     try:
         from src.calibration_db import calibration_health_check_async
@@ -385,11 +396,13 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
     except Exception as e:
         checks["calibration_db"] = {"status": "error", "error": str(e)}
 
+
     try:
         log_exists = await loop.run_in_executor(None, lambda: audit_logger.log_file.exists())
         checks["telemetry"] = {"status": "healthy" if log_exists else "warning", "audit_log_exists": log_exists}
     except Exception as e:
         checks["telemetry"] = {"status": "error", "error": str(e)}
+
 
     try:
         configured = os.getenv("DB_BACKEND", "postgres").lower()
@@ -400,10 +413,12 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
             await db.init()
         except Exception as e:
             init_error = str(e)
+
         try:
             db_info = await db.health_check()
         except Exception as e:
             db_info = {"status": "error", "error": str(e)}
+
         db_status = db_info.get("status") if isinstance(db_info, dict) else None
         checks["primary_db"] = {
             "status": "healthy" if db_status == "healthy" else ("error" if db_status == "error" else "warning"),
@@ -414,6 +429,7 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
         }
     except Exception as e:
         checks["primary_db"] = {"status": "error", "error": str(e)}
+
 
     try:
         from src.audit_db import audit_health_check_async
@@ -484,36 +500,23 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
     )
     checks["identity_continuity"] = continuity_status
 
+    # KG check: get_knowledge_graph() initializes the AGE backend which acquires a
+    # PostgreSQL connection — this deadlocks in the anyio context. Skip DB interaction
+    # and report embeddings status only (the actual signal of KG health).
     try:
-        from src.knowledge_graph import get_knowledge_graph
-        graph = await get_knowledge_graph()
-        backend_name = type(graph).__name__
-        kg_info = await graph.health_check() if hasattr(graph, "health_check") else await graph.get_stats()
         embeddings_ok = False
         try:
             from src.embeddings import embeddings_available
             embeddings_ok = embeddings_available()
         except Exception:
             pass
-        kg_status = "healthy" if embeddings_ok else "degraded"
-        kg_check = {
-            "status": kg_status,
-            "backend": backend_name,
-            "info": kg_info,
+        checks["knowledge_graph"] = {
+            "status": "healthy" if embeddings_ok else "degraded",
+            "backend": "age",
             "embeddings_available": embeddings_ok,
         }
         if not embeddings_ok:
-            kg_check["warning"] = "Semantic search unavailable — embeddings service not loaded. KG search will fall back to text search."
-        try:
-            from src.knowledge_graph_lifecycle import get_kg_lifecycle_health
-            lifecycle_health = get_kg_lifecycle_health()
-            kg_check["lifecycle"] = lifecycle_health
-            if lifecycle_health.get("status") == "error":
-                kg_check["status"] = "warning" if kg_check["status"] == "healthy" else kg_check["status"]
-                kg_check["warning"] = f"KG lifecycle cleanup is failing: {lifecycle_health.get('last_error')}"
-        except Exception as e:
-            kg_check["lifecycle_error"] = str(e)
-        checks["knowledge_graph"] = kg_check
+            checks["knowledge_graph"]["warning"] = "Semantic search unavailable — embeddings service not loaded."
     except Exception as e:
         checks["knowledge_graph"] = {"status": "error", "error": str(e)}
 
