@@ -577,8 +577,8 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
                         tool_err = tu_failed / tu_total
                         tool_vel = tu_total / 60.0  # calls per minute
                         tool_div = tu_stats.get("unique_tools", 0) / tu_total
-                except Exception:
-                    pass  # Fail-safe: sensor works without tool usage
+                except Exception as e:
+                    logger.debug(f"Tool usage stats unavailable for {ctx.agent_id}: {e}")
 
                 # Recent outcome events for behavioral feedback
                 outcome_hist = None
@@ -591,8 +591,8 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
                             limit=20,
                             since_hours=24.0,
                         )
-                except Exception:
-                    pass  # Fail-safe: sensor works without outcomes
+                except Exception as e:
+                    logger.debug(f"Outcome history unavailable for {ctx.agent_id}: {e}")
 
                 # Cache outcome history on monitor for use in sync process_update
                 if outcome_hist is not None:
@@ -847,7 +847,10 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
     agent_id = ctx.agent_id
 
     # Heartbeat
-    await ctx.loop.run_in_executor(None, mcp_server.process_mgr.write_heartbeat)
+    try:
+        await ctx.loop.run_in_executor(None, mcp_server.process_mgr.write_heartbeat)
+    except Exception as e:
+        logger.debug(f"Heartbeat write skipped: {e}")
 
     # Health status
     ctx.metrics_dict = ctx.result.get('metrics', {})
@@ -919,19 +922,23 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"Dialectic condition enforcement skipped: {e}")
 
-    ctx.health_status, ctx.health_message = mcp_server.health_checker.get_health_status(
-        risk_score=ctx.risk_score,
-        coherence=ctx.coherence,
-        void_active=void_active
-    )
+    try:
+        ctx.health_status, ctx.health_message = mcp_server.health_checker.get_health_status(
+            risk_score=ctx.risk_score,
+            coherence=ctx.coherence,
+            void_active=void_active
+        )
+    except Exception as e:
+        logger.debug(f"Health status check failed: {e}")
 
     if 'metrics' not in ctx.result:
         ctx.result['metrics'] = {}
-    ctx.result['metrics']['health_status'] = ctx.health_status.value
-    ctx.result['metrics']['health_message'] = ctx.health_message
+    _hs = getattr(ctx.health_status, 'value', 'unknown') if ctx.health_status else 'unknown'
+    ctx.result['metrics']['health_status'] = _hs
+    ctx.result['metrics']['health_message'] = ctx.health_message or ""
 
     if ctx.meta:
-        ctx.meta.health_status = ctx.health_status.value
+        ctx.meta.health_status = _hs
 
     # CIRS: Void alert
     ctx.cirs_alert = None
