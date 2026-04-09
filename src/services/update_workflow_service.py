@@ -42,44 +42,13 @@ async def run_process_update_workflow(ctx, *, serializer=None) -> Sequence[TextC
         return early_exit
 
     try:
-        async with ctx.mcp_server.lock_manager.acquire_agent_lock_async(ctx.agent_id, timeout=2.0, max_retries=1):
+        async with ctx.mcp_server.lock_manager.acquire_agent_lock_async(ctx.agent_id, timeout=5.0, max_retries=3):
             early_exit = await execute_locked_update(ctx)
             if early_exit:
                 return early_exit
 
+            # Capture monitor ref while lock guarantees consistent state
             ctx.monitor = ctx.mcp_server.monitors.get(ctx.agent_id)
-            await execute_post_update_effects(ctx)
-
-            ctx.response_data = build_process_update_response_data(
-                result=ctx.result,
-                agent_id=ctx.agent_id,
-                identity_assurance=ctx.identity_assurance,
-                monitor=ctx.monitor,
-            )
-
-            await run_enrichment_pipeline(ctx)
-
-            try:
-                ctx.response_data = format_response(
-                    ctx.response_data,
-                    ctx.arguments,
-                    meta=ctx.meta,
-                    is_new_agent=ctx.is_new_agent,
-                    key_was_generated=ctx.key_was_generated,
-                    api_key_auto_retrieved=ctx.api_key_auto_retrieved,
-                    task_type=ctx.task_type,
-                )
-            except Exception as fmt_err:
-                logger.error(f"Response formatting failed: {fmt_err}", exc_info=True)
-
-            ctx.arguments["lite_response"] = True
-            return serialize_process_update_response(
-                response_data=ctx.response_data,
-                agent_uuid=ctx.agent_uuid,
-                arguments=ctx.arguments,
-                fallback_result=ctx.result,
-                serializer=serializer,
-            )
     except TimeoutError:
         try:
             from src.lock_cleanup import cleanup_stale_state_locks
@@ -107,3 +76,38 @@ async def run_process_update_workflow(ctx, *, serializer=None) -> Sequence[TextC
             },
             arguments=ctx.arguments,
         )]
+
+    # --- Everything below runs OUTSIDE the lock ---
+
+    await execute_post_update_effects(ctx)
+
+    ctx.response_data = build_process_update_response_data(
+        result=ctx.result,
+        agent_id=ctx.agent_id,
+        identity_assurance=ctx.identity_assurance,
+        monitor=ctx.monitor,
+    )
+
+    await run_enrichment_pipeline(ctx)
+
+    try:
+        ctx.response_data = format_response(
+            ctx.response_data,
+            ctx.arguments,
+            meta=ctx.meta,
+            is_new_agent=ctx.is_new_agent,
+            key_was_generated=ctx.key_was_generated,
+            api_key_auto_retrieved=ctx.api_key_auto_retrieved,
+            task_type=ctx.task_type,
+        )
+    except Exception as fmt_err:
+        logger.error(f"Response formatting failed: {fmt_err}", exc_info=True)
+
+    ctx.arguments["lite_response"] = True
+    return serialize_process_update_response(
+        response_data=ctx.response_data,
+        agent_uuid=ctx.agent_uuid,
+        arguments=ctx.arguments,
+        fallback_result=ctx.result,
+        serializer=serializer,
+    )
