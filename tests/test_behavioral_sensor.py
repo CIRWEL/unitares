@@ -1,5 +1,7 @@
 """Tests for behavioral_sensor.py — EISV from governance observables."""
 
+import asyncio
+
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 
@@ -295,6 +297,32 @@ class TestBehavioralSensorInjection:
         monitor._last_continuity_metrics = MagicMock(complexity_divergence=0.15)
         return monitor
 
+    def _make_ctx(self, monitor):
+        """Build an UpdateContext wired for execute_locked_update with a mock monitor."""
+        from src.mcp_handlers.updates.context import UpdateContext
+        mcp_server = MagicMock()
+        mcp_server.monitors = {"test-agent": monitor}
+        mcp_server.agent_metadata = {}
+        # ODE call returns a valid result
+        mcp_server.process_update_authenticated_async = AsyncMock(return_value={
+            "status": "ok",
+            "metrics": {"coherence": 0.8, "risk_score": 0.1},
+        })
+
+        ctx = UpdateContext(  # noqa: F811 — imported in method scope
+            agent_id="test-agent",
+            agent_uuid="test-agent",
+            arguments={"client_session_id": "test-session"},
+            response_text="test response",
+            complexity=0.5,
+            ethical_drift=[0.0, 0.0, 0.0],
+            is_new_agent=False,
+            meta=MagicMock(purpose="testing", active_session_key="test-session"),
+            loop=asyncio.get_event_loop(),
+            mcp_server=mcp_server,
+        )
+        return ctx
+
     def test_physical_sensor_takes_priority(self):
         """When sensor_data with eisv is provided, behavioral sensor is skipped."""
         from src.behavioral_sensor import compute_behavioral_sensor_eisv
@@ -336,30 +364,80 @@ class TestBehavioralSensorInjection:
         )
         assert result is None
 
-    def test_computation_failure_is_silent(self):
-        """If compute_behavioral_sensor_eisv raises, no crash."""
-        with patch(
-            "src.behavioral_sensor.compute_behavioral_sensor_eisv",
-            side_effect=RuntimeError("boom"),
-        ):
-            # The injection code wraps in try/except — simulate that
-            try:
-                from src.behavioral_sensor import compute_behavioral_sensor_eisv
-                compute_behavioral_sensor_eisv(
-                    decision_history=["proceed"] * 5,
-                    coherence_history=[0.5] * 5,
-                    regime_history=["high"] * 5,
-                    E_history=[0.7] * 5,
-                    I_history=[0.6] * 5,
-                    S_history=[0.3] * 5,
-                    V_history=[0.1] * 5,
-                )
-            except Exception:
-                pass  # This is the expected behavior in the injection code
-        # No assertion needed — just verify no crash propagates
+    def _patch_execute_locked_deps(self, **overrides):
+        """Context manager stack for mocking execute_locked_update's heavy dependencies."""
+        from contextlib import ExitStack
+        patches = {
+            "src.mcp_handlers.updates.phases.agent_storage": MagicMock(
+                get_agent=AsyncMock(return_value=MagicMock(api_key="fake-key")),
+            ),
+            "src.calibration.calibration_checker": MagicMock(
+                compute_calibration_metrics=MagicMock(return_value=None),
+            ),
+            "src.agent_behavioral_baseline.ensure_baseline_loaded": AsyncMock(return_value=None),
+            "src.agent_behavioral_baseline.compute_anomaly_entropy": MagicMock(return_value=0.0),
+        }
+        patches.update(overrides)
 
-    def test_no_monitor_returns_none(self):
-        """When monitors.get returns None, behavioral sensor isn't computed."""
+        stack = ExitStack()
+        for target, mock_val in patches.items():
+            if isinstance(mock_val, Exception):
+                stack.enter_context(patch(target, side_effect=mock_val))
+            else:
+                stack.enter_context(patch(target, mock_val))
+        return stack
+
+    @pytest.mark.asyncio
+    async def test_tool_tracker_failure_still_computes_sensor(self):
+        """Tool usage tracker raising doesn't prevent behavioral sensor injection."""
+        from src.mcp_handlers.updates.phases import execute_locked_update
+        monitor = self._make_mock_monitor(n=10)
+        ctx = self._make_ctx(monitor)
+
+        with self._patch_execute_locked_deps(), \
+             patch("src.tool_usage_tracker.get_tool_usage_tracker", side_effect=RuntimeError("tracker down")), \
+             patch("src.db.get_db", return_value=None):
+            result = await execute_locked_update(ctx)
+
+        assert result is None  # no early exit = success
+        assert "sensor_eisv" in ctx.agent_state, "Sensor should still be injected despite tracker failure"
+
+    @pytest.mark.asyncio
+    async def test_db_outcomes_failure_still_computes_sensor(self):
+        """get_recent_outcomes raising doesn't prevent behavioral sensor injection."""
+        from src.mcp_handlers.updates.phases import execute_locked_update
+        monitor = self._make_mock_monitor(n=10)
+        ctx = self._make_ctx(monitor)
+
+        mock_db = MagicMock()
+        mock_db.get_recent_outcomes = AsyncMock(side_effect=ConnectionError("db gone"))
+
+        with self._patch_execute_locked_deps(), \
+             patch("src.tool_usage_tracker.get_tool_usage_tracker",
+                   return_value=MagicMock(get_usage_stats=MagicMock(return_value={"total_calls": 0}))), \
+             patch("src.db.get_db", return_value=mock_db):
+            result = await execute_locked_update(ctx)
+
+        assert result is None
+        assert "sensor_eisv" in ctx.agent_state, "Sensor should still be injected despite DB failure"
+
+    @pytest.mark.asyncio
+    async def test_compute_behavioral_raises_no_sensor_injected(self):
+        """If compute_behavioral_sensor_eisv itself raises, update succeeds without sensor."""
+        from src.mcp_handlers.updates.phases import execute_locked_update
+        monitor = self._make_mock_monitor(n=10)
+        ctx = self._make_ctx(monitor)
+
+        with self._patch_execute_locked_deps(), \
+             patch("src.behavioral_sensor.compute_behavioral_sensor_eisv", side_effect=RuntimeError("boom")), \
+             patch("src.db.get_db", return_value=None):
+            result = await execute_locked_update(ctx)
+
+        assert result is None  # update still succeeds
+        assert "sensor_eisv" not in ctx.agent_state, "No sensor should be injected when computation fails"
+
+    def test_no_monitor_skips_sensor(self):
+        """When no monitor exists, behavioral sensor is not computed."""
         monitors = {}
         monitor = monitors.get("nonexistent_agent")
         assert monitor is None
