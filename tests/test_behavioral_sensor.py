@@ -1,7 +1,5 @@
 """Tests for behavioral_sensor.py — EISV from governance observables."""
 
-import asyncio
-
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 
@@ -318,7 +316,7 @@ class TestBehavioralSensorInjection:
             ethical_drift=[0.0, 0.0, 0.0],
             is_new_agent=False,
             meta=MagicMock(purpose="testing", active_session_key="test-session"),
-            loop=asyncio.get_event_loop(),
+            loop=AsyncMock(),
             mcp_server=mcp_server,
         )
         return ctx
