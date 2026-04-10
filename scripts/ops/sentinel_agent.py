@@ -61,6 +61,14 @@ MCP_URL = "http://127.0.0.1:8767/mcp/"
 # Analysis cycle interval
 ANALYSIS_INTERVAL = 300  # 5 minutes
 
+# Hard upper bound on a single analysis cycle. Normal process_agent_update
+# completes in <10s; 45s leaves comfortable slack while preventing a hung
+# MCP call from blocking the main loop indefinitely (the anyio/asyncpg
+# deadlock documented in governance-mcp-v1 CLAUDE.md can hang call_tool
+# without raising, which previously wedged Sentinel for ~30h until
+# manual restart).
+CYCLE_TIMEOUT = 45  # seconds
+
 # Fleet anomaly thresholds
 FLEET_COHERENCE_DROP_THRESHOLD = 0.15   # single-agent coherence drop to flag
 FLEET_COORDINATED_WINDOW = 600          # 10 min window for coordinated detection
@@ -738,6 +746,22 @@ class SentinelAgent:
 
     # --- Main loops ---
 
+    async def _bounded_analysis_cycle(self) -> str:
+        """Run one analysis cycle with a hard timeout.
+
+        Wraps ``run_analysis_cycle`` in ``asyncio.wait_for`` so a hung
+        MCP call (e.g. from the governance-side anyio/asyncpg deadlock)
+        can never block the main loop forever. A timeout is logged and
+        the next cycle will run at its normal cadence.
+        """
+        try:
+            return await asyncio.wait_for(
+                self.run_analysis_cycle(), timeout=CYCLE_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            log(f"Analysis cycle exceeded {CYCLE_TIMEOUT}s — skipping")
+            return f"TIMEOUT after {CYCLE_TIMEOUT}s"
+
     async def run_continuous(self):
         """Run Sentinel continuously: WebSocket consumer + periodic analysis."""
         log("=== Sentinel starting ===")
@@ -754,14 +778,14 @@ class SentinelAgent:
 
         # Initial check-in
         await asyncio.sleep(5)  # let WS connect
-        await self.run_analysis_cycle()
+        await self._bounded_analysis_cycle()
 
         # Periodic analysis
         while self.running:
             await asyncio.sleep(self.analysis_interval)
             if self.running:
                 try:
-                    await self.run_analysis_cycle()
+                    await self._bounded_analysis_cycle()
                 except Exception as e:
                     log(f"Analysis cycle error: {e}")
                 trim_log()

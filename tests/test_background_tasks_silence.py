@@ -1,0 +1,200 @@
+"""Regression tests for ``check_agent_silence`` timezone handling.
+
+Prior behaviour: ``meta.last_update`` was hydrated from postgres as a
+tz-aware ISO string but compared against a naive ``datetime.now()``.
+The resulting ``TypeError`` was silently swallowed, so any agent that
+had not checked in since the last governance restart was invisible to
+the silence monitor — the exact agents the monitor was meant to catch.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
+
+import pytest
+
+from src import background_tasks
+from src.agent_metadata_model import AgentMetadata, agent_metadata
+
+
+@pytest.fixture
+def isolated_silence_state(monkeypatch):
+    """Reset module-level silence alert sets and metadata dict for each test."""
+    agent_metadata.clear()
+    background_tasks._silence_alerted.clear()
+    background_tasks._silence_critical_alerted.clear()
+
+    broadcaster = AsyncMock()
+    audit = AsyncMock()
+
+    # Patch the broadcaster and audit at module lookup time.
+    import src.broadcaster as broadcaster_module
+    import src.audit_db as audit_module
+
+    monkeypatch.setattr(broadcaster_module, "broadcaster_instance", broadcaster)
+    monkeypatch.setattr(audit_module, "append_audit_event_async", audit)
+
+    yield broadcaster, audit
+
+    agent_metadata.clear()
+    background_tasks._silence_alerted.clear()
+    background_tasks._silence_critical_alerted.clear()
+
+
+def _make_meta(agent_id: str, label: str, last_update: str) -> AgentMetadata:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    return AgentMetadata(
+        agent_id=agent_id,
+        status="active",
+        created_at=now_iso,
+        last_update=last_update,
+        label=label,
+    )
+
+
+@pytest.mark.asyncio
+async def test_tz_aware_last_update_fires_critical(isolated_silence_state):
+    """Agent hydrated from postgres (tz-aware ISO) must still be flagged.
+
+    This is the regression: before the fix, subtracting a naive ``now``
+    from a tz-aware ``last`` raised ``TypeError`` and was swallowed, so
+    the agent was silently skipped.
+    """
+    broadcaster, _ = isolated_silence_state
+
+    # Sentinel interval is 600s; 5× = 3000s ⇒ CRITICAL.
+    stale = datetime.now(timezone.utc) - timedelta(hours=30)
+    aware_iso = stale.isoformat()  # keeps the +00:00 suffix
+
+    agent_metadata["sentinel-uuid"] = _make_meta(
+        "sentinel-uuid", "Sentinel", aware_iso
+    )
+
+    await background_tasks._silence_check_iteration()
+
+    broadcaster.broadcast_event.assert_awaited_once()
+    call = broadcaster.broadcast_event.await_args
+    assert call.args[0] == "lifecycle_silent_critical"
+    assert call.kwargs["agent_id"] == "sentinel-uuid"
+    assert "sentinel-uuid" in background_tasks._silence_critical_alerted
+
+
+@pytest.mark.asyncio
+async def test_tz_naive_last_update_still_fires(isolated_silence_state):
+    """Runtime-written naive timestamps continue to work (backwards compat)."""
+    broadcaster, _ = isolated_silence_state
+
+    stale = datetime.now(timezone.utc) - timedelta(hours=30)
+    # Strip tzinfo to produce the naive ISO form that
+    # ``datetime.now().isoformat()`` emits at runtime.
+    naive_iso = stale.replace(tzinfo=None).isoformat()
+
+    agent_metadata["sentinel-uuid"] = _make_meta(
+        "sentinel-uuid", "Sentinel", naive_iso
+    )
+
+    await background_tasks._silence_check_iteration()
+
+    broadcaster.broadcast_event.assert_awaited_once()
+    assert (
+        broadcaster.broadcast_event.await_args.args[0]
+        == "lifecycle_silent_critical"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fresh_checkin_is_not_flagged(isolated_silence_state):
+    """Recent check-ins (tz-aware or naive) must not trigger an alert."""
+    broadcaster, _ = isolated_silence_state
+
+    fresh = datetime.now(timezone.utc) - timedelta(seconds=30)
+    agent_metadata["sentinel-uuid"] = _make_meta(
+        "sentinel-uuid", "Sentinel", fresh.isoformat()
+    )
+
+    await background_tasks._silence_check_iteration()
+
+    broadcaster.broadcast_event.assert_not_awaited()
+    assert "sentinel-uuid" not in background_tasks._silence_alerted
+    assert "sentinel-uuid" not in background_tasks._silence_critical_alerted
+
+
+@pytest.mark.asyncio
+async def test_mixed_tz_naive_and_aware(isolated_silence_state):
+    """Neither form should poison the loop for the other.
+
+    Before the fix, a raised TypeError from one agent would skip the
+    rest of the iteration only for that agent via the inner ``except``,
+    but the bug was that tz-aware agents were all individually skipped.
+    This test makes the invariant explicit: both forms in the same pass
+    must be detected independently.
+    """
+    broadcaster, _ = isolated_silence_state
+
+    stale = datetime.now(timezone.utc) - timedelta(hours=30)
+    aware_iso = stale.isoformat()
+    naive_iso = stale.replace(tzinfo=None).isoformat()
+
+    agent_metadata["lumen"] = _make_meta("lumen", "Lumen", naive_iso)
+    agent_metadata["sentinel"] = _make_meta("sentinel", "Sentinel", aware_iso)
+
+    await background_tasks._silence_check_iteration()
+
+    assert broadcaster.broadcast_event.await_count == 2
+    fired_agents = {
+        call.kwargs["agent_id"]
+        for call in broadcaster.broadcast_event.await_args_list
+    }
+    assert fired_agents == {"lumen", "sentinel"}
+
+
+@pytest.mark.asyncio
+async def test_parse_last_update_aware_returns_utc():
+    """Helper normalises both forms into tz-aware UTC datetimes."""
+    aware = background_tasks._parse_last_update_aware(
+        "2026-04-08T23:27:36.861374-06:00"
+    )
+    naive = background_tasks._parse_last_update_aware(
+        "2026-04-08T23:27:36.861374"
+    )
+
+    assert aware is not None and aware.tzinfo is not None
+    assert naive is not None and naive.tzinfo is not None
+    # The aware form is -06:00, so its UTC equivalent is 05:27 on the 9th.
+    assert aware == datetime(2026, 4, 9, 5, 27, 36, 861374, tzinfo=timezone.utc)
+
+    assert background_tasks._parse_last_update_aware("not-a-date") is None
+    assert background_tasks._parse_last_update_aware("") is None
+
+
+@pytest.mark.asyncio
+async def test_non_persistent_agent_skipped(isolated_silence_state):
+    """Ephemeral agents (no entry in _PERSISTENT_AGENT_INTERVALS) are skipped."""
+    broadcaster, _ = isolated_silence_state
+
+    stale = datetime.now(timezone.utc) - timedelta(hours=30)
+    agent_metadata["ephemeral"] = _make_meta(
+        "ephemeral", "claude_cirwel_20260410", stale.isoformat()
+    )
+
+    await background_tasks._silence_check_iteration()
+
+    broadcaster.broadcast_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_repeat_iteration_does_not_refire(isolated_silence_state):
+    """Once an agent has fired CRITICAL, subsequent iterations stay quiet."""
+    broadcaster, _ = isolated_silence_state
+
+    stale = datetime.now(timezone.utc) - timedelta(hours=30)
+    agent_metadata["sentinel-uuid"] = _make_meta(
+        "sentinel-uuid", "Sentinel", stale.isoformat()
+    )
+
+    await background_tasks._silence_check_iteration()
+    await background_tasks._silence_check_iteration()
+
+    # Only one broadcast, despite two iterations.
+    broadcaster.broadcast_event.assert_awaited_once()
