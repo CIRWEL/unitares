@@ -713,8 +713,6 @@ async def main():
         # Create Streamable HTTP session manager (primary MCP transport)
         # stateless=True: any client can connect without MCP-level session management
         #   (we handle identity separately via transport signals + sticky cache)
-        import anyio
-
         _streamable_session_manager = StreamableHTTPSessionManager(
             app=mcp._mcp_server,
             stateless=True,
@@ -782,42 +780,13 @@ async def main():
         )
 
         # === Streamable HTTP endpoint (/mcp) ===
-        _streamable_running = False
-
         if HAS_STREAMABLE_HTTP:
-            async def start_streamable_http():
-                """Start the Streamable HTTP session manager in background."""
-                nonlocal _streamable_running
-                try:
-                    async with anyio.create_task_group() as tg:
-                        _streamable_session_manager._task_group = tg
-                        _streamable_session_manager._has_started = True
-                        _streamable_running = True
-                        logger.info("[STREAMABLE] Session manager started")
-                        await asyncio.Event().wait()
-                except asyncio.CancelledError:
-                    logger.info("[STREAMABLE] Session manager shutting down")
-                    _streamable_running = False
-                except Exception as e:
-                    logger.error(f"[STREAMABLE] Session manager error: {e}", exc_info=True)
-                    _streamable_running = False
-
-            asyncio.create_task(start_streamable_http())
-
             # Create a pure ASGI app for /mcp that wraps the session manager
             # Using Mount with an ASGI app avoids Starlette's Route handler wrapper
             # which expects a Response to be returned (causing NoneType callable error)
             async def streamable_mcp_asgi(scope, receive, send):
                 """ASGI app for Streamable HTTP MCP at /mcp."""
                 if scope.get("type") != "http":
-                    return
-
-                if not _streamable_running:
-                    response = JSONResponse({
-                        "error": "Streamable HTTP transport not ready",
-                        "hint": "Try again in a moment"
-                    }, status_code=503)
-                    await response(scope, receive, send)
                     return
 
                 # BUILD SESSION SIGNALS — single capture of all transport headers
@@ -956,7 +925,16 @@ async def main():
             proxy_headers=True  # Process X-Forwarded-* headers
         )
         server = uvicorn.Server(config)
-        await server.serve()
+
+        # session_manager.run() owns the anyio task group lifecycle;
+        # no manual _task_group/_has_started poking needed.
+        if HAS_STREAMABLE_HTTP:
+            async with _streamable_session_manager.run():
+                logger.info("[STREAMABLE] Session manager started")
+                await server.serve()
+            logger.info("[STREAMABLE] Session manager shut down")
+        else:
+            await server.serve()
     except ImportError:
         print("Error: uvicorn not installed. Install with: pip install uvicorn", file=sys.stderr)
         sys.exit(1)
