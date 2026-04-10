@@ -1532,10 +1532,16 @@ class TestDispatchTool:
     async def test_dispatch_health_check(self):
         """health_check should be a registered tool that returns success."""
         from src.mcp_handlers import dispatch_tool
-        result = await dispatch_tool("health_check", {})
-        assert result is not None
-        parsed = json.loads(result[0].text)
-        assert parsed.get("status") in ("ok", "healthy") or parsed.get("success") is True or "version" in parsed
+        from src.services.health_snapshot import set_snapshot, clear_snapshot
+        try:
+            # Option F: handler reads from cached snapshot — seed it.
+            await set_snapshot({"status": "healthy", "version": "test", "checks": {}})
+            result = await dispatch_tool("health_check", {})
+            assert result is not None
+            parsed = json.loads(result[0].text)
+            assert parsed.get("status") in ("ok", "healthy") or parsed.get("success") is True or "version" in parsed
+        finally:
+            clear_snapshot()
 
 
 # ============================================================================

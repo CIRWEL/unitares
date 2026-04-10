@@ -59,13 +59,19 @@ async def test_handler_registry():
     assert response_data.get("success") == True, "config should succeed"
     print(f"✅ config handler works")
     
-    # Test health_check
-    result = await dispatch_tool("health_check", {})
-    assert result is not None, "health_check should return result"
-    response_data = json.loads(result[0].text)
-    assert response_data.get("success") == True, "health_check should succeed"
-    assert "status" in response_data, "Response should have status"
-    print(f"✅ health_check handler works: status {response_data.get('status')}")
+    # Test health_check — reads cached snapshot (Option F). Seed the cache
+    # because the deep_health_probe_task hasn't run in the test process.
+    from src.services.health_snapshot import set_snapshot, clear_snapshot
+    try:
+        await set_snapshot({"status": "healthy", "version": "test", "checks": {}})
+        result = await dispatch_tool("health_check", {})
+        assert result is not None, "health_check should return result"
+        response_data = json.loads(result[0].text)
+        assert response_data.get("success") == True, "health_check should succeed"
+        assert "status" in response_data, "Response should have status"
+        print(f"✅ health_check handler works: status {response_data.get('status')}")
+    finally:
+        clear_snapshot()
     
     # Unknown handler now returns a helpful error response (with suggestions)
     result = await dispatch_tool("unknown_tool", {})
@@ -86,13 +92,18 @@ async def test_call_tool_integration():
     # Import call_tool from mcp_server_std
     from src.mcp_server_std import call_tool
     
-    # Test health_check through call_tool
-    result = await call_tool("health_check", {})
-    assert len(result) > 0, "call_tool should return result"
+    # Test health_check through call_tool — seed the snapshot cache (Option F)
+    from src.services.health_snapshot import set_snapshot, clear_snapshot
+    try:
+        await set_snapshot({"status": "healthy", "version": "test", "checks": {}})
+        result = await call_tool("health_check", {})
+        assert len(result) > 0, "call_tool should return result"
 
-    response_data = json.loads(result[0].text)
-    assert response_data.get("success") == True, "call_tool should succeed"
-    print("✅ call_tool integration works with registry")
+        response_data = json.loads(result[0].text)
+        assert response_data.get("success") == True, "call_tool should succeed"
+        print("✅ call_tool integration works with registry")
+    finally:
+        clear_snapshot()
     
     # Test consolidated config tool via call_tool
     result = await call_tool("config", {})

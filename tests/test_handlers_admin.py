@@ -255,11 +255,11 @@ class TestHealthCheck:
 
             mock_server.project_root = str(project_root)
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
+            # Option F: handle_health_check reads from the cached snapshot.
+            # Test the underlying builder directly (get_health_check_data).
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({}, server=mock_server)
 
-            data = json.loads(result[0].text)
-            # health_check wraps in success_response, checks are inside "checks" key
             assert "checks" in data
             assert "calibration" in data["checks"]
             assert data["checks"]["calibration"]["status"] == "healthy"

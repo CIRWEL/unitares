@@ -564,11 +564,8 @@ class TestHealthCheck:
             mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_kg.return_value = mock_kg_instance
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
-
-            data = parse_result(result)
-            assert data["success"] is True
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
             assert "checks" in data
             assert data["checks"]["calibration"]["status"] == "error"
             assert "operator_summary" in data
@@ -611,10 +608,8 @@ class TestHealthCheck:
             mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_kg.return_value = mock_kg_instance
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
-
-            data = parse_result(result)
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({}, server=mock_mcp_server)
             assert "status" in data
             assert "status_breakdown" in data
             assert "operator_summary" in data
@@ -662,10 +657,8 @@ class TestHealthCheck:
             mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_kg.return_value = mock_kg_instance
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
-
-            data = parse_result(result)
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
             assert data["status"] == "healthy"
             assert data["redis_present"] is False
             assert data["identity_continuity_mode"] == "degraded-local"
@@ -730,10 +723,8 @@ class TestHealthCheck:
             mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_kg.return_value = mock_kg_instance
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
-
-            data = parse_result(result)
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
             assert data["status"] == "healthy"
             assert data["redis_present"] is True
             assert data["identity_continuity_mode"] == "redis"
@@ -777,11 +768,8 @@ class TestHealthCheck:
             mock_kg_instance.health_check = AsyncMock(return_value={"total_discoveries": 1, "total_tags": 1, "total_edges": 1})
             mock_kg.return_value = mock_kg_instance
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
-
-            data = parse_result(result)
-            assert data["success"] is True
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
             # KG check no longer calls get_knowledge_graph() (deadlocks in anyio context)
             # Just reports embeddings status — lifecycle warnings not propagated
             kg = data["checks"]["knowledge_graph"]
@@ -1979,11 +1967,8 @@ class TestHealthCheckEdgeCases:
             mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_kg.return_value = mock_kg_instance
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
-
-            data = parse_result(result)
-            assert data["success"] is True
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
             assert data["checks"]["telemetry"]["status"] == "error"
 
     @pytest.mark.asyncio
@@ -2019,11 +2004,8 @@ class TestHealthCheckEdgeCases:
             mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_kg.return_value = mock_kg_instance
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({"lite": False})
-
-            data = parse_result(result)
-            assert data["success"] is True
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({"lite": False}, server=mock_mcp_server)
             assert data["checks"]["primary_db"]["init_error"] is not None
 
     @pytest.mark.asyncio
@@ -2059,11 +2041,8 @@ class TestHealthCheckEdgeCases:
             mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_kg.return_value = mock_kg_instance
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
-
-            data = parse_result(result)
-            assert data["success"] is True
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
             assert data["checks"]["primary_db"]["status"] == "error"
 
     @pytest.mark.asyncio
@@ -2095,11 +2074,8 @@ class TestHealthCheckEdgeCases:
             mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_kg.return_value = mock_kg_instance
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
-
-            data = parse_result(result)
-            assert data["success"] is True
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
             assert data["checks"]["primary_db"]["status"] == "error"
 
     @pytest.mark.asyncio
@@ -2135,11 +2111,8 @@ class TestHealthCheckEdgeCases:
             mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_kg.return_value = mock_kg_instance
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
-
-            data = parse_result(result)
-            assert data["success"] is True
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
             assert data["checks"]["audit_db"]["status"] == "error"
 
     @pytest.mark.asyncio
@@ -2175,11 +2148,8 @@ class TestHealthCheckEdgeCases:
             mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_kg.return_value = mock_kg_instance
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
-
-            data = parse_result(result)
-            assert data["success"] is True
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
             # Redis cache should show unavailable or error
             assert data["checks"]["redis_cache"]["status"] in ("unavailable", "error")
 
@@ -2213,11 +2183,8 @@ class TestHealthCheckEdgeCases:
                    new_callable=AsyncMock,
                    side_effect=RuntimeError("KG unavailable")):
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
-
-            data = parse_result(result)
-            assert data["success"] is True
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
             # KG check no longer calls get_knowledge_graph() — reports embeddings status only
             assert data["checks"]["knowledge_graph"]["status"] in ("healthy", "degraded")
 
@@ -2255,11 +2222,8 @@ class TestHealthCheckEdgeCases:
             mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_kg.return_value = mock_kg_instance
 
-            from src.mcp_handlers.admin.handlers import handle_health_check
-            result = await handle_health_check({})
-
-            data = parse_result(result)
-            assert data["success"] is True
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
             # data_directory should still work (nonexistent but no exception)
 
 

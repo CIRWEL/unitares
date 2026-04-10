@@ -617,6 +617,55 @@ async def http_health(request):
     })
 
 
+async def http_health_live(request):
+    """Liveness probe — server process is up. Always public, no checks."""
+    return JSONResponse({"status": "alive"})
+
+
+async def http_health_ready(request):
+    """Readiness probe — server has completed warmup and is accepting requests."""
+    server_ready = request.state._http_api_server_ready_fn()
+    if server_ready:
+        return JSONResponse({"status": "ready"})
+    return JSONResponse({"status": "warming_up"}, status_code=503)
+
+
+async def http_health_deep(request):
+    """Deep health — reads the cached snapshot produced by deep_health_probe_task.
+
+    Does NOT touch the DB at request time (see
+    docs/handoffs/2026-04-10-option-f-spec.md). If the probe has not populated
+    the cache yet, returns 503 and instructs the caller to retry.
+    """
+    from src.services.health_snapshot import (
+        get_snapshot,
+        is_stale,
+        PROBE_INTERVAL_SECONDS,
+        STALENESS_THRESHOLD_SECONDS,
+    )
+
+    snapshot, age_seconds, produced_at = get_snapshot()
+    if snapshot is None:
+        return JSONResponse(
+            {
+                "status": "unavailable",
+                "error": "Health snapshot not yet populated — deep probe has not run.",
+                "retry_after_seconds": 5,
+            },
+            status_code=503,
+        )
+
+    response = dict(snapshot)
+    response["_cache"] = {
+        "age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
+        "produced_at": produced_at,
+        "stale": is_stale(age_seconds),
+        "probe_interval_seconds": PROBE_INTERVAL_SECONDS,
+        "staleness_threshold_seconds": STALENESS_THRESHOLD_SECONDS,
+    }
+    return JSONResponse(response)
+
+
 async def http_metrics(request):
     """Prometheus metrics endpoint using prometheus-client library"""
     http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
@@ -996,6 +1045,9 @@ def register_http_routes(
     app.routes.append(Route("/v1/tools", http_list_tools, methods=["GET"]))
     app.routes.append(Route("/v1/tools/call", http_call_tool, methods=["POST"]))
     app.routes.append(Route("/health", http_health, methods=["GET"]))
+    app.routes.append(Route("/health/live", http_health_live, methods=["GET"]))
+    app.routes.append(Route("/health/ready", http_health_ready, methods=["GET"]))
+    app.routes.append(Route("/health/deep", http_health_deep, methods=["GET"]))
     app.routes.append(Route("/metrics", http_metrics, methods=["GET"]))
     app.routes.append(Route("/v1/eisv/latest", http_eisv_latest, methods=["GET"]))
     app.routes.append(Route("/api/events", http_events, methods=["GET"]))

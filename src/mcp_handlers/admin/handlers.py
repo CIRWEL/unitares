@@ -275,12 +275,77 @@ def set_workspace_last_agent(mcp_server, agent_id: str) -> None:
     except Exception:
         pass  # Non-critical
 
-@mcp_tool("health_check", timeout=20.0, rate_limit_exempt=True)
+@mcp_tool("health_check", timeout=5.0, rate_limit_exempt=True)
 async def handle_health_check(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    """Handle health_check tool - quick health check of system components"""
-    from src.services.runtime_queries import get_health_check_data
-    response_data = await get_health_check_data(arguments, server=mcp_server)
-    return success_response(response_data)
+    """Read the most recent cached health snapshot.
+
+    Does NOT call the DB, Redis, or Pi at request time. That is intentional:
+    calling get_health_check_data from inside an MCP tool handler awaits
+    asyncpg inside the SDK's anyio task group and deadlocks. The snapshot
+    is refreshed every 30s by the deep_health_probe_task background task
+    running on the main event loop.
+
+    See docs/handoffs/2026-04-10-option-f-spec.md.
+
+    Args:
+        lite: If True (default), strip per-check detail and return a compact
+              status summary. If False, return the full cached snapshot.
+    """
+    from src.services.health_snapshot import (
+        get_snapshot,
+        is_stale,
+        PROBE_INTERVAL_SECONDS,
+        STALENESS_THRESHOLD_SECONDS,
+    )
+
+    snapshot, age_seconds, produced_at = get_snapshot()
+
+    if snapshot is None:
+        return error_response(
+            "Health snapshot not yet available — the deep health probe has "
+            "not run. Try again in a few seconds.",
+        )
+
+    # Lite filter operates on the cached copy — does not re-run checks
+    lite = arguments.get("lite", True)
+    if lite:
+        response = {
+            "status": snapshot.get("status"),
+            "version": snapshot.get("version"),
+            "redis_present": snapshot.get("redis_present"),
+            "identity_continuity_mode": snapshot.get("identity_continuity_mode"),
+            "status_breakdown": snapshot.get("status_breakdown"),
+            "operator_summary": snapshot.get("operator_summary"),
+            "timestamp": snapshot.get("timestamp"),
+        }
+        full_checks = snapshot.get("checks", {})
+        lite_checks = {}
+        for name, check in full_checks.items():
+            if not isinstance(check, dict):
+                lite_checks[name] = check
+                continue
+            entry = {"status": check.get("status", "unknown")}
+            for key in ("mode", "redis_present", "present", "source_of_truth", "session_binding_backend"):
+                if key in check:
+                    entry[key] = check[key]
+            if "warning" in check:
+                entry["warning"] = check["warning"]
+            if "note" in check:
+                entry["note"] = check["note"]
+            lite_checks[name] = entry
+        response["checks"] = lite_checks
+        response["_note"] = "Use lite=false for full diagnostic detail"
+    else:
+        response = dict(snapshot)
+
+    response["_cache"] = {
+        "age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
+        "produced_at": produced_at,
+        "stale": is_stale(age_seconds),
+        "probe_interval_seconds": PROBE_INTERVAL_SECONDS,
+        "staleness_threshold_seconds": STALENESS_THRESHOLD_SECONDS,
+    }
+    return success_response(response)
 
 @mcp_tool("get_telemetry_metrics", timeout=15.0, rate_limit_exempt=True, register=False)
 async def handle_get_telemetry_metrics(arguments: Dict[str, Any]) -> Sequence[TextContent]:

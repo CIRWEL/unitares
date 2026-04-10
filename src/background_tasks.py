@@ -9,7 +9,7 @@ import asyncio
 import gzip
 import os
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.logging_utils import get_logger
@@ -326,6 +326,75 @@ async def server_warmup_task(set_ready):
 
 
 # ---------------------------------------------------------------------------
+# Deep health probe (Option F — cached health snapshots)
+# ---------------------------------------------------------------------------
+
+PROBE_TIMEOUT_SECONDS = 15.0  # Hard ceiling on a single probe call
+
+
+async def deep_health_probe_task(interval_seconds: float | None = None):
+    """Periodically run the deep health check and cache the result.
+
+    Runs in the main event loop alongside other background tasks, NOT inside
+    an MCP tool handler's anyio context. This sidesteps the anyio/asyncpg
+    deadlock that makes calling get_health_check_data from a handler hang.
+    Readers (the health_check MCP handler, /health/deep REST endpoint) serve
+    the cached snapshot instead of touching the DB at request time.
+
+    Each probe is bounded by PROBE_TIMEOUT_SECONDS. If a probe exceeds the
+    budget we log a warning and keep whatever snapshot was there before —
+    the `_cache.stale` flag will trip naturally based on age. That way a
+    single slow component (huge Redis keyspace, KG stall, etc.) cannot lock
+    the probe task forever.
+
+    See docs/handoffs/2026-04-10-option-f-spec.md.
+    """
+    import os
+    from src.services.health_snapshot import (
+        set_snapshot,
+        PROBE_INTERVAL_SECONDS,
+    )
+
+    if interval_seconds is None:
+        override = os.getenv("UNITARES_HEALTH_PROBE_INTERVAL_SECONDS")
+        interval_seconds = float(override) if override else PROBE_INTERVAL_SECONDS
+
+    # Let the DB pool warm up before the first probe
+    await asyncio.sleep(5.0)
+    logger.info(
+        f"[HEALTH_PROBE] Starting deep health probe "
+        f"(every {interval_seconds}s, timeout {PROBE_TIMEOUT_SECONDS}s)"
+    )
+
+    while True:
+        try:
+            from src.services.runtime_queries import get_health_check_data
+            # lite=False → capture full per-check detail; the handler filters at read time.
+            # Bounded by PROBE_TIMEOUT_SECONDS so a single hang can't freeze the task.
+            snapshot = await asyncio.wait_for(
+                get_health_check_data({"lite": False}),
+                timeout=PROBE_TIMEOUT_SECONDS,
+            )
+            await set_snapshot(snapshot)
+            logger.debug("[HEALTH_PROBE] Snapshot refreshed")
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[HEALTH_PROBE] Probe exceeded {PROBE_TIMEOUT_SECONDS}s budget — "
+                f"keeping previous snapshot; staleness will trip naturally."
+            )
+        except asyncio.CancelledError:
+            logger.info("[HEALTH_PROBE] Task cancelled")
+            break
+        except Exception as e:
+            logger.warning(f"[HEALTH_PROBE] Probe failed: {e}", exc_info=True)
+
+        try:
+            await asyncio.sleep(interval_seconds)
+        except asyncio.CancelledError:
+            break
+
+
+# ---------------------------------------------------------------------------
 # Session cleanup
 # ---------------------------------------------------------------------------
 
@@ -564,84 +633,107 @@ def _get_expected_interval(meta) -> int | None:
     return None  # ephemeral — skip
 
 
+def _parse_last_update_aware(last_update: str) -> datetime | None:
+    """Parse ``meta.last_update`` into a tz-aware UTC datetime.
+
+    The stored string may be naive (written at runtime via
+    ``datetime.now().isoformat()``) or tz-aware (hydrated from the
+    postgres ``TIMESTAMPTZ`` column). Normalising here prevents the
+    silence detector from silently swallowing a ``TypeError`` when the
+    two forms are subtracted.
+    """
+    try:
+        parsed = datetime.fromisoformat(last_update)
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed
+
+
+async def _silence_check_iteration() -> None:
+    """Single pass of silence detection. Extracted for testability."""
+    from src.agent_metadata_model import agent_metadata
+    from src.broadcaster import broadcaster_instance
+    from src.audit_db import append_audit_event_async
+
+    now = datetime.now(timezone.utc)
+    for agent_id, meta in list(agent_metadata.items()):
+        if meta.status != "active":
+            continue
+        interval = _get_expected_interval(meta)
+        if interval is None:
+            continue
+        if not meta.last_update:
+            continue
+
+        last = _parse_last_update_aware(meta.last_update)
+        if last is None:
+            continue
+        silence_seconds = (now - last).total_seconds()
+
+        silence_minutes = silence_seconds / 60
+
+        if silence_seconds >= interval * 5 and agent_id not in _silence_critical_alerted:
+            _silence_critical_alerted.add(agent_id)
+            _silence_alerted.add(agent_id)  # prevent downgrade WARNING after CRITICAL
+            logger.error(
+                f"[SILENCE] CRITICAL: {meta.label or agent_id[:12]} silent for {silence_minutes:.0f}m "
+                f"(expected every {interval // 60}m)"
+            )
+            await broadcaster_instance.broadcast_event(
+                "lifecycle_silent_critical",
+                agent_id=agent_id,
+                payload={
+                    "silence_duration_minutes": round(silence_minutes, 1),
+                    "expected_interval_minutes": interval // 60,
+                    "label": meta.label,
+                },
+            )
+        elif silence_seconds >= interval * 2 and agent_id not in _silence_alerted:
+            _silence_alerted.add(agent_id)
+            logger.warning(
+                f"[SILENCE] {meta.label or agent_id[:12]} silent for {silence_minutes:.0f}m "
+                f"(expected every {interval // 60}m)"
+            )
+            await broadcaster_instance.broadcast_event(
+                "lifecycle_silent",
+                agent_id=agent_id,
+                payload={
+                    "silence_duration_minutes": round(silence_minutes, 1),
+                    "expected_interval_minutes": interval // 60,
+                    "label": meta.label,
+                },
+            )
+            await append_audit_event_async({
+                "timestamp": now.isoformat(),
+                "event_type": "agent_silent",
+                "agent_id": agent_id,
+                "details": {
+                    "silence_duration_minutes": round(silence_minutes, 1),
+                    "expected_interval_minutes": interval // 60,
+                    "label": meta.label,
+                },
+            })
+        elif silence_seconds < interval * 2:
+            # Agent recovered — clear alert state
+            _silence_alerted.discard(agent_id)
+            _silence_critical_alerted.discard(agent_id)
+
+    # Prune alert sets — remove agents no longer active
+    active_ids = {aid for aid, m in agent_metadata.items() if m.status == "active"}
+    _silence_alerted.intersection_update(active_ids)
+    _silence_critical_alerted.intersection_update(active_ids)
+
+
 async def check_agent_silence():
     """Detect persistent agents that have missed expected check-ins."""
     await asyncio.sleep(120)  # startup delay
     while True:
         try:
-            from src.agent_metadata_model import agent_metadata
-            from src.broadcaster import broadcaster_instance
-            from src.audit_db import append_audit_event_async
-
-            now = datetime.now()
-            for agent_id, meta in list(agent_metadata.items()):
-                if meta.status != "active":
-                    continue
-                interval = _get_expected_interval(meta)
-                if interval is None:
-                    continue
-                if not meta.last_update:
-                    continue
-
-                try:
-                    last = datetime.fromisoformat(meta.last_update)
-                    silence_seconds = (now - last).total_seconds()
-                except (ValueError, TypeError):
-                    continue
-
-                silence_minutes = silence_seconds / 60
-
-                if silence_seconds >= interval * 5 and agent_id not in _silence_critical_alerted:
-                    _silence_critical_alerted.add(agent_id)
-                    _silence_alerted.add(agent_id)  # prevent downgrade WARNING after CRITICAL
-                    logger.error(
-                        f"[SILENCE] CRITICAL: {meta.label or agent_id[:12]} silent for {silence_minutes:.0f}m "
-                        f"(expected every {interval // 60}m)"
-                    )
-                    await broadcaster_instance.broadcast_event(
-                        "lifecycle_silent_critical",
-                        agent_id=agent_id,
-                        payload={
-                            "silence_duration_minutes": round(silence_minutes, 1),
-                            "expected_interval_minutes": interval // 60,
-                            "label": meta.label,
-                        },
-                    )
-                elif silence_seconds >= interval * 2 and agent_id not in _silence_alerted:
-                    _silence_alerted.add(agent_id)
-                    logger.warning(
-                        f"[SILENCE] {meta.label or agent_id[:12]} silent for {silence_minutes:.0f}m "
-                        f"(expected every {interval // 60}m)"
-                    )
-                    await broadcaster_instance.broadcast_event(
-                        "lifecycle_silent",
-                        agent_id=agent_id,
-                        payload={
-                            "silence_duration_minutes": round(silence_minutes, 1),
-                            "expected_interval_minutes": interval // 60,
-                            "label": meta.label,
-                        },
-                    )
-                    await append_audit_event_async({
-                        "timestamp": now.isoformat(),
-                        "event_type": "agent_silent",
-                        "agent_id": agent_id,
-                        "details": {
-                            "silence_duration_minutes": round(silence_minutes, 1),
-                            "expected_interval_minutes": interval // 60,
-                            "label": meta.label,
-                        },
-                    })
-                elif silence_seconds < interval * 2:
-                    # Agent recovered — clear alert state
-                    _silence_alerted.discard(agent_id)
-                    _silence_critical_alerted.discard(agent_id)
-
-            # Prune alert sets — remove agents no longer active
-            active_ids = {aid for aid, m in agent_metadata.items() if m.status == "active"}
-            _silence_alerted.intersection_update(active_ids)
-            _silence_critical_alerted.intersection_update(active_ids)
-
+            await _silence_check_iteration()
         except Exception as e:
             logger.debug(f"[SILENCE] Check failed: {e}")
 
@@ -730,6 +822,8 @@ def start_all_background_tasks(connection_tracker, set_ready):
     _supervised_create_task(periodic_orphan_cleanup(), name="orphan_cleanup")
     _supervised_create_task(stuck_agent_recovery_task(), name="stuck_agent_recovery")
     _supervised_create_task(server_warmup_task(set_ready), name="server_warmup")
+    _supervised_create_task(deep_health_probe_task(), name="deep_health_probe")
+    logger.info("[HEALTH_PROBE] Deep health probe started (cached snapshots for health_check handler)")
 
     try:
         from src.mcp_handlers.observability.pi_orchestration import eisv_sync_task

@@ -317,11 +317,19 @@ async def test_empty_arguments():
     assert response_data.get("success") == True, "config should work with empty args"
     print("✅ Handles empty arguments for optional-arg tools")
     
-    # Test with None (should be treated as empty)
-    result = await dispatch_tool("health_check", {})
-    assert result is not None, "Should return result"
-    response_data = json.loads(result[0].text)
-    assert response_data.get("success") == True, "health_check should work"
+    # Test with None (should be treated as empty).
+    # health_check now reads a cached snapshot produced by deep_health_probe_task;
+    # seed the cache so the handler returns success instead of the
+    # "snapshot not yet available" error (Option F, 2026-04-10 spec).
+    from src.services.health_snapshot import set_snapshot, clear_snapshot
+    try:
+        await set_snapshot({"status": "healthy", "version": "test", "checks": {}})
+        result = await dispatch_tool("health_check", {})
+        assert result is not None, "Should return result"
+        response_data = json.loads(result[0].text)
+        assert response_data.get("success") == True, "health_check should work"
+    finally:
+        clear_snapshot()
     print("✅ Handles None arguments")
 
 
