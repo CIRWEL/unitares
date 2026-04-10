@@ -52,11 +52,11 @@ app = Starlette(routes=[], lifespan=_lifespan)
 
 ## Key Files
 
-- `src/mcp_server.py:795-812` — `start_streamable_http()` creates the problematic anyio task group
-- `src/services/runtime_queries.py:360+` — `get_health_check_data()` with all the async DB calls
-- `src/mcp_handlers/observability/pi_orchestration.py:174+` — `call_pi_tool` (fixed — uses sync httpx in executor)
-- `src/background_tasks.py:131` — `startup_kg_lifecycle` (disabled)
-- `src/storage/knowledge_graph_age.py:897` — `health_check()` does AGE graph queries
+- `src/mcp_server.py` — `session_manager.run()` wraps `server.serve()` (refactored 9742ba9; previously manual `_task_group`/`_has_started`)
+- `src/services/runtime_queries.py` — `get_health_check_data()` with all the async DB calls
+- `src/mcp_handlers/observability/pi_orchestration.py` — `call_pi_tool` (fixed — uses sync httpx in executor)
+- `src/background_tasks.py` — `startup_kg_lifecycle` (disabled)
+- `src/storage/knowledge_graph_age.py` — `health_check()` does AGE graph queries
 
 ## Architecture Options (Not Vetted)
 
@@ -66,11 +66,8 @@ Wrap every asyncpg/Redis `await` in `loop.run_in_executor()` using synchronous D
 **Pro:** Surgical fix, doesn't change the MCP transport setup.
 **Con:** Replaces async DB with sync-in-thread everywhere. Loses connection pooling benefits. Large surface area.
 
-### Option B: Replace manual anyio task group with asyncio-native equivalent
-The `start_streamable_http()` function manually sets `_streamable_session_manager._task_group` and `_has_started`. If we could create a task group equivalent using pure asyncio (no anyio), the conflict disappears.
-
-**Pro:** Fixes root cause. Minimal blast radius.
-**Con:** Depends on MCP SDK internals. May break with SDK updates.
+### Option B: ~~Replace manual anyio task group with asyncio-native equivalent~~ (OBSOLETE)
+Manual task group replaced with `session_manager.run()` in 9742ba9. The anyio task group still exists inside the SDK — this option no longer applies.
 
 ### Option C: Use anyio throughout (full migration)
 Switch from asyncpg to an anyio-compatible PostgreSQL driver. Use anyio for all async operations.
@@ -84,17 +81,18 @@ Run the StreamableHTTP transport in a separate process that proxies tool calls t
 **Pro:** Complete isolation. Zero conflict.
 **Con:** Adds complexity, latency, and a new failure mode.
 
-### Option E: Investigate why the lifespan approach froze
-The Starlette lifespan with `session_manager.run()` is the MCP SDK's recommended pattern. It froze the server — but I didn't diagnose WHY thoroughly. It's possible a specific background task or middleware was the actual blocker, not the lifespan itself.
+### ~~Option E~~ (DONE — 9742ba9)
+Replaced manual `_task_group`/`_has_started` mutation with `session_manager.run()` wrapping `server.serve()`. The original failure (Option 1 above) used bare `Starlette(routes=[])` which also broke POST body reading (Option 3); the freeze was likely misattributed to the lifespan. Current approach keeps `mcp.sse_app()` as the base app.
 
-**Pro:** If it works, it's the cleanest solution.
-**Con:** Requires careful investigation of what specifically blocked.
+**Status:** Deployed but NOT yet verified against real MCP requests with DB calls. The anyio task group from the SDK still exists, so the asyncpg conflict may persist.
 
 ## Recommendation
 
-Start with **Option E**. The lifespan approach is the SDK's intended pattern. My attempt was during a chaotic session with many variables changing simultaneously. A clean investigation — starting from a minimal Starlette app with just the lifespan + one DB call — would isolate whether the conflict is fundamental or an interaction bug.
+The lifecycle is now clean. The remaining problem is asyncpg/anyio coexistence. Next steps:
 
-If Option E fails definitively, **Option B** is the next best bet.
+1. **Verify**: Restart governance, call a DB-touching tool via MCP, confirm whether the deadlock is the same, better, or worse.
+2. **If still deadlocking**: Wrap asyncpg calls in `run_in_executor` (extend the pattern already used for `call_pi_tool`), or investigate anyio-compatible PG drivers.
+3. **If worse**: Revert 9742ba9 — the manual task group approach kept anyio as a sibling rather than parent context.
 
 ## Reproduction
 
