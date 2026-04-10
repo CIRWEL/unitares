@@ -753,7 +753,7 @@ async def main():
         )
         
         # === Start all background tasks ===
-        from src.background_tasks import start_all_background_tasks
+        from src.background_tasks import start_all_background_tasks, stop_all_background_tasks
 
         def _set_server_ready():
             global SERVER_READY, SERVER_STARTUP_TIME
@@ -949,6 +949,10 @@ async def main():
             pass
         except Exception as e:
             logger.debug(f"Error stopping process marker maintenance: {e}")
+        try:
+            await stop_all_background_tasks()
+        except Exception as e:
+            logger.debug(f"Error stopping background tasks: {e}")
         try:
             await close_db()
         except Exception as e:

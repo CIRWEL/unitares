@@ -118,7 +118,10 @@ async def startup_auto_calibration():
         if result.get('updated', 0) > 0:
             logger.info(f"Auto-collected ground truth: {result['updated']} decisions updated")
 
-        asyncio.create_task(auto_ground_truth_collector_task(interval_hours=6.0))
+        _supervised_create_task(
+            auto_ground_truth_collector_task(interval_hours=6.0),
+            name="auto_ground_truth_collector",
+        )
         logger.info("Started periodic auto ground truth collector (runs every 6 hours)")
     except Exception as e:
         logger.warning(f"Could not start auto ground truth collector: {e}", exc_info=True)
@@ -144,7 +147,10 @@ async def startup_kg_lifecycle():
         except (asyncio.TimeoutError, asyncio.CancelledError):
             logger.warning("KG lifecycle startup cleanup timed out (non-fatal)")
 
-        asyncio.create_task(kg_lifecycle_background_task(interval_hours=24.0))
+        _supervised_create_task(
+            kg_lifecycle_background_task(interval_hours=24.0),
+            name="kg_lifecycle",
+        )
         logger.info("Started periodic KG lifecycle cleanup (runs every 24 hours)")
     except Exception as e:
         logger.warning(f"Could not start KG lifecycle task: {e}", exc_info=True)
@@ -798,6 +804,24 @@ def _supervised_create_task(coro, *, name: str | None = None) -> asyncio.Task:
     task.add_done_callback(_on_background_task_done)
     _supervised_tasks.append(task)
     return task
+
+
+async def stop_all_background_tasks() -> None:
+    """Cancel and await all supervised background tasks before teardown."""
+    tasks = [task for task in list(_supervised_tasks) if not task.done()]
+    if not tasks:
+        return
+
+    logger.info(f"[SHUTDOWN] Cancelling {len(tasks)} background task(s)")
+    for task in tasks:
+        task.cancel()
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for task, result in zip(tasks, results):
+        if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
+            logger.debug(
+                f"[SHUTDOWN] Background task '{task.get_name()}' exited with error during cancellation: {result}"
+            )
 
 
 def start_all_background_tasks(connection_tracker, set_ready):

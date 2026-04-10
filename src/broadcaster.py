@@ -181,6 +181,17 @@ class EISVBroadcaster:
                 for ws in dead:
                     if ws in self.connections:
                         self.connections.remove(ws)
+
+            async def _close_one(ws):
+                try:
+                    await asyncio.wait_for(
+                        ws.close(),
+                        timeout=self._SEND_TIMEOUT_SECONDS,
+                    )
+                except Exception:
+                    pass
+
+            await asyncio.gather(*(_close_one(ws) for ws in dead))
             logger.info(f"[WS] Removed {len(dead)} dead/slow connections")
 
 broadcaster_instance = EISVBroadcaster()
