@@ -175,15 +175,14 @@ def _detect_stuck_agents(
         try:
             monitor = mcp_server.monitors.get(agent_id)
             if monitor is None:
-                # Try to load state
-                persisted_state = mcp_server.load_monitor_state(agent_id)
-                if persisted_state:
-                    monitor = __import__('src.governance_monitor', fromlist=['UNITARESMonitor']).UNITARESMonitor(agent_id, load_state=False)
-                    monitor.state = persisted_state
-                else:
-                    # No state - can't compute margin, can't determine if stuck
-                    # Inactivity alone does NOT mean stuck
+                # Require persisted state — inactivity alone isn't stuck
+                if mcp_server.load_monitor_state(agent_id) is None:
                     continue
+                # Use the cached factory so the monitor lands in mcp_server.monitors
+                # and subsequent cycles hit the cache. Previously we constructed a
+                # transient UNITARESMonitor here, which bypassed the cache and
+                # leaked ~160 inits/min across a large agent pool.
+                monitor = mcp_server.get_or_create_monitor(agent_id)
 
             # Pattern detection: check for cognitive loops and unproductive behavior
             if include_pattern_detection:

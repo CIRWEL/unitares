@@ -435,38 +435,56 @@ class TestDetectStuckAgentsEdgeCases:
     @patch(_PATCHES["gov_config"])
     @patch(_PATCHES["mcp_server"])
     def test_persisted_state_used_when_no_monitor(self, mock_server, mock_config):
-        """When no in-memory monitor, loads persisted state."""
+        """When no in-memory monitor, loads persisted state via the cached factory."""
         old_time = datetime.now(timezone.utc) - timedelta(minutes=10)
         mock_server.agent_metadata = {
             "a1": _make_agent_meta(last_update=old_time),
         }
         mock_server.monitors = {}
 
-        # Return a mock persisted state
+        # Persisted state exists (truthy sentinel); the fix gates on `is not None`
         persisted_state = MagicMock()
-        persisted_state.coherence = 0.42
-        persisted_state.V = 0.0
-        persisted_state.void_active = False
         mock_server.load_monitor_state.return_value = persisted_state
+
+        # stuck.py should now call mcp_server.get_or_create_monitor (cached path)
+        # instead of constructing a transient UNITARESMonitor.
+        monitor_instance = _make_monitor(risk=0.7, coherence=0.42)
+        mock_server.get_or_create_monitor.return_value = monitor_instance
 
         mock_config.compute_proprioceptive_margin.return_value = _margin_info(
             "critical", "coherence"
         )
 
         from src.mcp_handlers.lifecycle.stuck import _detect_stuck_agents
-        # Need to also patch UNITARESMonitor since it's used to wrap persisted state
-        with patch("src.governance_monitor.UNITARESMonitor") as mock_monitor_cls:
-            monitor_instance = MagicMock()
-            monitor_instance.state = persisted_state
-            monitor_instance.get_metrics.return_value = {"mean_risk": 0.7}
-            mock_monitor_cls.return_value = monitor_instance
+        result = _detect_stuck_agents(
+            critical_margin_timeout_minutes=5,
+            include_pattern_detection=False,
+        )
+        assert len(result) == 1
+        assert result[0]["reason"] == "critical_margin_timeout"
+        # Regression: must use the caching factory, not a transient constructor.
+        mock_server.get_or_create_monitor.assert_called_once_with("a1")
 
-            result = _detect_stuck_agents(
-                critical_margin_timeout_minutes=5,
-                include_pattern_detection=False,
-            )
-            assert len(result) == 1
-            assert result[0]["reason"] == "critical_margin_timeout"
+    @patch(_PATCHES["gov_config"])
+    @patch(_PATCHES["mcp_server"])
+    def test_no_persisted_state_skips_without_calling_factory(self, mock_server, mock_config):
+        """Regression: when load_monitor_state returns None, we must skip the agent
+        WITHOUT calling get_or_create_monitor (which would otherwise synthesize a
+        fresh zero-state monitor and cache it permanently)."""
+        old_time = datetime.now(timezone.utc) - timedelta(minutes=45)
+        mock_server.agent_metadata = {
+            "a1": _make_agent_meta(last_update=old_time),
+        }
+        mock_server.monitors = {}
+        mock_server.load_monitor_state.return_value = None
+
+        from src.mcp_handlers.lifecycle.stuck import _detect_stuck_agents
+        result = _detect_stuck_agents(
+            max_age_minutes=30,
+            include_pattern_detection=False,
+        )
+        assert result == []
+        mock_server.get_or_create_monitor.assert_not_called()
 
 
 class TestBaselineRelativeMargin:
