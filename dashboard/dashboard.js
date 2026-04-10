@@ -1049,13 +1049,20 @@ async function loadAgents() {
         console.error('Error loading agents:', error);
         const errorMsg = error.message || 'Unknown error';
         showError(`Failed to load agents: ${errorMsg}`);
-        cachedAgents = [];
-        const container = document.getElementById('agents-container');
-        if (container) {
-            container.innerHTML = `<div class="loading">Error loading agents: ${escapeHtml(errorMsg)}</div>`;
+        // Preserve prior cachedAgents on transient failure. Wiping the list
+        // on every caught error caused agents to "drop" whenever the
+        // backend tool timed out (anyio deadlock): a successful refresh
+        // would populate the list, and a concurrent / subsequent failing
+        // refresh's catch block would clear it. Only render the error
+        // placeholder if we never had data to begin with.
+        if (!cachedAgents || cachedAgents.length === 0) {
+            const container = document.getElementById('agents-container');
+            if (container) {
+                container.innerHTML = `<div class="loading">Error loading agents: ${escapeHtml(errorMsg)}</div>`;
+            }
+            updateAgentFilterInfo(0);
+            updateStatusLegend(null);
         }
-        updateAgentFilterInfo(0);
-        updateStatusLegend(null);
         return false;
     }
 }

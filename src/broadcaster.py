@@ -146,25 +146,41 @@ class EISVBroadcaster:
         results.reverse()
         return results
 
+    # Per-client send timeout. Without this, a single slow or hung
+    # WebSocket client blocks broadcasts to *every* client, so live
+    # dashboard tabs never see new EISV updates (chart stops rendering).
+    _SEND_TIMEOUT_SECONDS = 2.0
+
     async def _send_to_clients(self, data: dict):
-        """Send data to all connected WebSocket clients."""
+        """Send data to all connected WebSocket clients.
+
+        Sends run in parallel, each bounded by a 2s timeout. Clients that
+        error or stall past the timeout are culled so a stuck consumer
+        can't hold up the broadcast for healthy ones.
+        """
         async with self._lock:
             if not self.connections:
                 return
             conns = list(self.connections)
 
-        dead = []
-        for ws in conns:
+        async def _send_one(ws):
             try:
-                await ws.send_json(data)
-            except Exception:
-                dead.append(ws)
+                await asyncio.wait_for(
+                    ws.send_json(data),
+                    timeout=self._SEND_TIMEOUT_SECONDS,
+                )
+                return None
+            except Exception as exc:
+                return exc
+
+        results = await asyncio.gather(*(_send_one(ws) for ws in conns))
+        dead = [ws for ws, result in zip(conns, results) if result is not None]
 
         if dead:
             async with self._lock:
                 for ws in dead:
                     if ws in self.connections:
                         self.connections.remove(ws)
-            logger.info(f"[WS] Removed {len(dead)} dead connections")
+            logger.info(f"[WS] Removed {len(dead)} dead/slow connections")
 
 broadcaster_instance = EISVBroadcaster()

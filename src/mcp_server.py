@@ -958,9 +958,21 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Enable tracemalloc for memory leak diagnosis (low overhead, ~5%)
-    import tracemalloc
-    tracemalloc.start(25)  # 25 frames deep
+    # Tracemalloc is opt-in — enable with UNITARES_TRACEMALLOC=1 (optionally
+    # UNITARES_TRACEMALLOC_FRAMES=N to control traceback depth). It was
+    # previously unconditional and pegged the event loop at high CPU because
+    # a 25-frame traceback was captured on every allocation in a very
+    # allocation-heavy async server. Default off; turn on only when actively
+    # chasing a memory leak, and use a small frame count (e.g. 3-5).
+    import os
+    if os.getenv("UNITARES_TRACEMALLOC", "").lower() in ("1", "true", "yes"):
+        import tracemalloc
+        try:
+            _frames = int(os.getenv("UNITARES_TRACEMALLOC_FRAMES", "5"))
+        except ValueError:
+            _frames = 5
+        tracemalloc.start(_frames)
+        print(f"[tracemalloc] enabled with {_frames} frames")
 
     try:
         asyncio.run(main())
