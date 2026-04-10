@@ -1165,6 +1165,39 @@ async def eisv_sync_task(interval_minutes: float = 5.0):
     """
     logger.info(f"[EISV_SYNC] Starting periodic sync (interval: {interval_minutes} min, governance: enabled)")
 
+    # Ensure the eisv-sync-task agent has a label + pioneer tag so it
+    # stops flickering in the dashboard. Without this, the agent has
+    # 0 total_updates (sync pushes sensor_eisv through
+    # process_update_authenticated_async, which doesn't bump the
+    # per-agent update counter), no label, and matches Tier 2 of
+    # auto_archive_orphan_agents (unlabeled + 0 updates + >=3h old).
+    # Every ~3h it gets archived, the next sync cycle recreates it,
+    # and the dashboard agent list flickers. The pioneer tag + label
+    # are belt-and-suspenders alongside the SYSTEM_AGENT_IDS whitelist
+    # in agent_lifecycle.auto_archive_orphan_agents.
+    try:
+        from src.agent_metadata_model import agent_metadata
+        from src.agent_metadata_persistence import get_or_create_metadata
+        meta = get_or_create_metadata("eisv-sync-task")
+        if meta is not None:
+            changed = False
+            if not getattr(meta, "label", None):
+                meta.label = "Lumen EISV Sync"
+                changed = True
+            tags = list(meta.tags or [])
+            if "pioneer" not in tags:
+                tags.append("pioneer")
+                meta.tags = tags
+                changed = True
+            if "system" not in tags:
+                tags.append("system")
+                meta.tags = tags
+                changed = True
+            if changed:
+                logger.info("[EISV_SYNC] Tagged eisv-sync-task agent (label, pioneer, system) to exempt from auto-archive")
+    except Exception as e:
+        logger.debug(f"[EISV_SYNC] Could not seed eisv-sync-task metadata (non-fatal): {e}")
+
     while True:
         try:
             await asyncio.sleep(interval_minutes * 60)

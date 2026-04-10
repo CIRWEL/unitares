@@ -64,7 +64,9 @@ async def auto_archive_orphan_agents(
       4. Ephemeral session agents (auto-generated labels like claude_*)
          with few updates after ephemeral_hours
 
-    Protected: agents with "pioneer" tag, "Lumen" label, or trust_tier >= "verified".
+    Protected: agents with "pioneer" tag, "Lumen" label, trust_tier >=
+    "verified", or agent_id in SYSTEM_AGENT_IDS (known long-running
+    background workers that never check in via process_agent_update).
 
     Returns:
         Number of agents archived
@@ -73,6 +75,13 @@ async def auto_archive_orphan_agents(
     # Auto-generated session labels: claude_<project>_<date> or claude_<dir>_<date>_<uuid>
     EPHEMERAL_LABEL = re.compile(r'^claude_\w+_\d{8}', re.I)
     PROTECTED_TIERS = {"verified", "established", "trusted"}
+    # Long-running background workers registered under stable string IDs.
+    # These push sensor/observability data but don't call
+    # process_agent_update themselves, so their total_updates counter
+    # stays at 0 and they'd otherwise match Tier 2 (unlabeled, 0 updates,
+    # >3h old). Flickered in the dashboard every 3h before this whitelist:
+    # sync creates agent -> archiver removes it -> next sync recreates.
+    SYSTEM_AGENT_IDS = {"eisv-sync-task"}
 
     archived_count = 0
     current_time = datetime.now()
@@ -82,6 +91,8 @@ async def auto_archive_orphan_agents(
             continue
 
         # Protected agents
+        if agent_id in SYSTEM_AGENT_IDS:
+            continue
         if "pioneer" in (meta.tags or []):
             continue
         label = getattr(meta, 'label', None) or getattr(meta, 'display_name', None) or ""
