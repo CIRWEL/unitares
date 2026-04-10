@@ -82,17 +82,28 @@ Run the StreamableHTTP transport in a separate process that proxies tool calls t
 **Con:** Adds complexity, latency, and a new failure mode.
 
 ### ~~Option E~~ (DONE — 9742ba9)
-Replaced manual `_task_group`/`_has_started` mutation with `session_manager.run()` wrapping `server.serve()`. The original failure (Option 1 above) used bare `Starlette(routes=[])` which also broke POST body reading (Option 3); the freeze was likely misattributed to the lifespan. Current approach keeps `mcp.sse_app()` as the base app.
+Replaced manual `_task_group`/`_has_started` mutation with `session_manager.run()` wrapping `server.serve()`. Keeps `mcp.sse_app()` as the base app. Deployed and verified: `get_governance_metrics` (non-DB) works, `health_check` (DB) still times out at 20s. The lifecycle is clean but the asyncpg conflict is unchanged — it's in the SDK's task group, not in how we start it.
 
-**Status:** Deployed but NOT yet verified against real MCP requests with DB calls. The anyio task group from the SDK still exists, so the asyncpg conflict may persist.
+### Option F: Cached health snapshots (RECOMMENDED NEXT)
+Stop making `/health` and `health_check` actively await loop-bound dependencies at request time. Split health into three layers:
+
+- **liveness**: process/transport up (no DB)
+- **readiness**: lifespan entered, not shutting down, core task group alive (no DB)
+- **deep health**: cached snapshot produced by a periodic probe running on the owning loop
+
+The endpoint then returns the latest cached snapshot plus a staleness timestamp. This matches the ownership model and avoids the cross-loop asyncpg/anyio deadlock entirely — the deep probe runs on the main loop alongside everything else, and consumers just read the cached dict.
+
+**Pro:** Doesn't fight the anyio/asyncpg conflict; sidesteps it by changing when DB checks happen. Keeps asyncpg as-is.
+**Con:** Health data can be stale (bounded by probe interval). Need a small cache layer + periodic task.
+
+**Why this over A/B/C:**
+- Option A (thread-local pools): multiplies pools/teardown paths/connection accounting — trades one hard bug for a worse class of bugs
+- Option B (psycopg2 fallback): only quarantines the compromise to health checks, but still touches DB at request time
+- Option C (subprocess): too large unless you want process isolation for other reasons
 
 ## Recommendation
 
-The lifecycle is now clean. The remaining problem is asyncpg/anyio coexistence. Next steps:
-
-1. **Verify**: Restart governance, call a DB-touching tool via MCP, confirm whether the deadlock is the same, better, or worse.
-2. **If still deadlocking**: Wrap asyncpg calls in `run_in_executor` (extend the pattern already used for `call_pi_tool`), or investigate anyio-compatible PG drivers.
-3. **If worse**: Revert 9742ba9 — the manual task group approach kept anyio as a sibling rather than parent context.
+**Next session:** Spec Option F — design the cache layer, probe cadence, staleness contract, and the liveness/readiness/deep split. Then implement. Do NOT attempt A/B/C without this design first.
 
 ## Reproduction
 

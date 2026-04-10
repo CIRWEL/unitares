@@ -52,11 +52,11 @@ UNITARES governance MCP server. Thermodynamic governance framework for AI agents
 
 The MCP SDK's anyio task group (inside `session_manager.run()`) conflicts with asyncpg/Redis async operations. Any MCP tool handler that `await`s a DB call can deadlock. `health_check` via MCP times out; REST `/v1/tools/call` hangs for DB-touching tools. Non-DB tools (`get_governance_metrics`) work fine.
 
-**Done:** Replaced manual `_task_group`/`_has_started` mutation with `session_manager.run()` (9742ba9). The anyio task group still exists (it's inside the SDK), so the asyncpg conflict remains.
+**Done:** Replaced manual `_task_group`/`_has_started` mutation with `session_manager.run()` (9742ba9). Verified: `health_check` via MCP still times out at 20s. The lifecycle is clean but asyncpg conflict is unchanged.
 
 **Workarounds in place:** KG health check skipped, KG lifecycle disabled, `call_pi_tool` uses sync httpx in executor thread.
 
-**Next step:** Fix the asyncpg side — either wrap DB calls in executor threads, or use an anyio-native DB driver.
+**Next step:** Option F in `docs/handoffs/2026-04-09-anyio-asyncio-refactor.md` — cached health snapshots produced by a periodic probe on the owning loop, with liveness/readiness/deep split. Do NOT attempt thread-local pools or psycopg2 fallback without designing this first.
 
 ## Known Test Notes
 
