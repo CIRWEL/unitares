@@ -132,6 +132,23 @@ async def auto_archive_orphan_agents(
             reason = f"ephemeral session agent '{label}', {updates} updates, {age_hours:.1f}h old"
 
         if should_archive:
+            # Persist archival to Postgres BEFORE mutating in-memory state.
+            # In-memory mutation alone is wiped on the next
+            # load_metadata_async(force=True) call (observability handlers,
+            # lifecycle mutations, dialectic resolution all force-reload), so
+            # without this the task "archives" the same agents on every cron
+            # cycle indefinitely (root cause of the 2026-04-10 stuck-monitor
+            # leak incident — stale ephemerals were never actually archived).
+            try:
+                from src.agent_storage import archive_agent
+                await archive_agent(agent_id)
+            except Exception as e:
+                logger.warning(
+                    f"Could not persist archival for {agent_id[:12]}...: {e}",
+                    exc_info=True,
+                )
+                continue
+
             meta.status = "archived"
             meta.archived_at = current_time.isoformat()
             meta.add_lifecycle_event("archived", f"Auto-archived: {reason}")

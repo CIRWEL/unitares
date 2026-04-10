@@ -1181,9 +1181,11 @@ class TestAutoArchiveOrphanAgents:
             total_updates=0,
         )
         try:
-            archived = await auto_archive_orphan_agents(zero_update_hours=1.0)
-            assert archived >= 1
-            assert agent_metadata[test_id].status == "archived"
+            with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
+                archived = await auto_archive_orphan_agents(zero_update_hours=1.0)
+                assert archived >= 1
+                assert agent_metadata[test_id].status == "archived"
+                mock_archive.assert_any_call(test_id)
         finally:
             agent_metadata.pop(test_id, None)
 
@@ -1197,8 +1199,12 @@ class TestAutoArchiveOrphanAgents:
             total_updates=0, tags=["pioneer"],
         )
         try:
-            await auto_archive_orphan_agents(zero_update_hours=1.0)
-            assert agent_metadata[test_id].status == "active"
+            with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
+                await auto_archive_orphan_agents(zero_update_hours=1.0)
+                assert agent_metadata[test_id].status == "active"
+                # Pioneer agents must never be persisted as archived
+                for call in mock_archive.call_args_list:
+                    assert call.args[0] != test_id
         finally:
             agent_metadata.pop(test_id, None)
 
@@ -1215,8 +1221,41 @@ class TestAutoArchiveOrphanAgents:
             total_updates=0, label="My Important Agent",
         )
         try:
-            await auto_archive_orphan_agents(zero_update_hours=1.0, low_update_hours=3.0)
-            # Should NOT be archived because it has a label
+            with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
+                await auto_archive_orphan_agents(zero_update_hours=1.0, low_update_hours=3.0)
+                assert agent_metadata[test_id].status == "active"
+                for call in mock_archive.call_args_list:
+                    assert call.args[0] != test_id
+        finally:
+            agent_metadata.pop(test_id, None)
+
+    @pytest.mark.asyncio
+    async def test_persistence_failure_does_not_mutate_in_memory_state(self):
+        """Regression (2026-04-10 stuck-monitor leak incident):
+        auto_archive_orphan_agents used to mutate meta.status in memory only.
+        On the next load_metadata_async(force=True), the mutation was wiped
+        and the same agents got re-archived on every cron cycle — producing
+        the 'Archived 73, Archived 73, Archived 73' log pattern. The fix
+        calls archive_agent() to persist to Postgres FIRST, and if persistence
+        fails the in-memory meta must not be mutated (avoid divergence).
+        """
+        from src.agent_state import auto_archive_orphan_agents, agent_metadata, AgentMetadata
+        old_time = (datetime.now() - timedelta(hours=2)).isoformat()
+        test_id = "12345678-1234-4234-8234-123456789aaa"
+        agent_metadata[test_id] = AgentMetadata(
+            agent_id=test_id, status="active", created_at=old_time, last_update=old_time,
+            total_updates=0,
+        )
+        try:
+            with patch(
+                "src.agent_storage.archive_agent",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("DB down"),
+            ):
+                archived = await auto_archive_orphan_agents(zero_update_hours=1.0)
+            # Persistence failed → count must not include this agent
+            assert archived == 0
+            # In-memory state must not diverge from DB
             assert agent_metadata[test_id].status == "active"
         finally:
             agent_metadata.pop(test_id, None)
