@@ -50,7 +50,7 @@ import time
 import urllib.request
 import urllib.error
 from dataclasses import dataclass, asdict, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -117,16 +117,38 @@ class Finding:
     severity: str  # critical | high | medium | low
     detected_at: str
     model_used: str
+    # Hash of the normalized source line at `line` at the time of detection.
+    # Included in the fingerprint so the same pattern flagged at the same
+    # line number but against DIFFERENT code (e.g. you fixed bug A at line 47
+    # and a new bug B arrived at the same line) does not get silently
+    # dedup'd as a rerun of the old finding.
+    line_content_hash: str = ""
     fingerprint: str = ""
     status: str = "open"  # open | surfaced | confirmed | dismissed | aged_out
 
     def __post_init__(self) -> None:
         if not self.fingerprint:
-            self.fingerprint = self._compute_fingerprint()
+            self.fingerprint = self.compute_fingerprint()
 
-    def _compute_fingerprint(self) -> str:
-        key = f"{self.pattern}|{self.file}|{self.line}"
+    def compute_fingerprint(self) -> str:
+        """Stable identifier combining pattern, file, line, and (optionally)
+        a content hash. Callers that want content-aware dedup should set
+        ``line_content_hash`` BEFORE invoking this and then assign the
+        result back to ``fingerprint``.
+        """
+        key = f"{self.pattern}|{self.file}|{self.line}|{self.line_content_hash}"
         return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def hash_line_content(source_line: str) -> str:
+    """Stable hash of a source line for content-aware fingerprinting.
+
+    Whitespace is stripped from both ends so indent-only reformats do not
+    trigger spurious re-flags. Internal whitespace is preserved because it
+    can be semantically meaningful (e.g. dict literal formatting).
+    """
+    normalized = (source_line or "").strip()
+    return hashlib.sha256(normalized.encode()).hexdigest()[:12]
 
 
 # ---------------------------------------------------------------------------
@@ -493,10 +515,55 @@ def save_dedup(dedup: dict[str, str]) -> None:
     DEDUP_FILE.write_text(json.dumps(dedup, indent=2))
 
 
+def sweep_stale_dedup(
+    dedup: dict[str, str],
+    ttl_days: int = FINDINGS_TTL_DAYS,
+    now: datetime | None = None,
+) -> dict[str, str]:
+    """Drop dedup entries older than ``ttl_days``.
+
+    Prevents the dedup dict from growing unboundedly over months — a P002
+    pattern match against the Watcher's own code that Ogler correctly
+    flagged at :78 / :127 / :496 on 2026-04-10. ``FINDINGS_TTL_DAYS`` was
+    defined but never enforced in the first cut of this module; this
+    function is the enforcement point.
+
+    Entries with an unparseable timestamp are kept (fail-open), so a
+    corrupted dedup file never silently empties itself.
+    """
+    if not dedup:
+        return dedup
+    reference = now or datetime.now(timezone.utc)
+    cutoff = reference - timedelta(days=ttl_days)
+    pruned: dict[str, str] = {}
+    dropped = 0
+    for fingerprint, ts in dedup.items():
+        try:
+            detected = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc
+            )
+        except (TypeError, ValueError):
+            # Unparseable timestamp — keep the entry rather than drop it
+            # blindly. We'd rather leak a few entries than lose findings.
+            pruned[fingerprint] = ts
+            continue
+        if detected >= cutoff:
+            pruned[fingerprint] = ts
+        else:
+            dropped += 1
+    if dropped:
+        log(
+            f"dedup sweep: dropped {dropped} stale entries older than {ttl_days}d "
+            f"({len(pruned)} remain)"
+        )
+    return pruned
+
+
 def persist_findings(new_findings: list[Finding]) -> list[Finding]:
     """Append new (non-duplicate) findings to findings.jsonl. Return the ones
     that were actually new (dedup filter applied)."""
     dedup = load_dedup()
+    dedup = sweep_stale_dedup(dedup)
     fresh: list[Finding] = []
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     for f in new_findings:
@@ -505,11 +572,15 @@ def persist_findings(new_findings: list[Finding]) -> list[Finding]:
         dedup[f.fingerprint] = now
         fresh.append(f)
 
-    if fresh:
+    if fresh or dedup != load_dedup():
+        # Persist even if `fresh` is empty, so the sweep's pruning actually
+        # lands on disk. Otherwise stale entries would rematerialize on the
+        # next scan.
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        with FINDINGS_FILE.open("a") as fh:
-            for f in fresh:
-                fh.write(json.dumps(asdict(f)) + "\n")
+        if fresh:
+            with FINDINGS_FILE.open("a") as fh:
+                for f in fresh:
+                    fh.write(json.dumps(asdict(f)) + "\n")
         save_dedup(dedup)
 
     return fresh
@@ -633,7 +704,18 @@ def _verify_finding_against_source(
     return True
 
 
-def scan_file(file_path: str, region: str | None = None) -> list[Finding]:
+def scan_file(
+    file_path: str,
+    region: str | None = None,
+    persist: bool = True,
+) -> list[Finding]:
+    """Scan a file and return findings.
+
+    ``persist`` controls whether findings are appended to ``findings.jsonl``
+    and whether high/critical severity findings get escalated. The self-test
+    harness calls this with ``persist=False`` so synthetic results don't
+    pollute the real findings feed.
+    """
     skip, reason = should_skip(file_path)
     if skip:
         log(f"skip {file_path}: {reason}")
@@ -669,21 +751,33 @@ def scan_file(file_path: str, region: str | None = None) -> list[Finding]:
     parsed = parse_findings(
         result["text"], file_path, result.get("model_used", DEFAULT_MODEL), region_start
     )
-    findings = [
-        f
-        for f, raw_evidence in parsed
-        if _verify_finding_against_source(f, raw_evidence, snippet_lines_by_num)
-    ]
-    fresh = persist_findings(findings)
+    findings: list[Finding] = []
+    for f, raw_evidence in parsed:
+        if not _verify_finding_against_source(f, raw_evidence, snippet_lines_by_num):
+            continue
+        # Stamp a content hash onto the finding so its fingerprint encodes
+        # WHAT the code looked like, not just where it lived. Fixes the
+        # silent-dedup bug where bug B arriving at the same line as fixed
+        # bug A would never resurface.
+        source_line = snippet_lines_by_num.get(f.line, "")
+        f.line_content_hash = hash_line_content(source_line)
+        f.fingerprint = f.compute_fingerprint()
+        findings.append(f)
+    if persist:
+        fresh = persist_findings(findings)
+    else:
+        fresh = findings
 
     log(
         f"scan complete: {len(findings)} raw, {len(fresh)} new, "
         f"tokens={result.get('tokens_used')}, region=L{region_start}-L{region_end}"
+        + ("" if persist else " (persist=False)")
     )
 
-    for f in fresh:
-        if f.severity in ("high", "critical"):
-            escalate(f)
+    if persist:
+        for f in fresh:
+            if f.severity in ("high", "critical"):
+                escalate(f)
 
     return fresh
 
@@ -710,7 +804,10 @@ def self_test() -> int:
         tmp_path = tf.name
 
     try:
-        findings = scan_file(tmp_path)
+        # persist=False so synthetic findings never land in the real
+        # findings.jsonl — keeps the self-test entry point safe to run
+        # ad-hoc without polluting the live findings feed.
+        findings = scan_file(tmp_path, persist=False)
     finally:
         try:
             os.unlink(tmp_path)
