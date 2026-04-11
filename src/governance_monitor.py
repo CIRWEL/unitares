@@ -620,8 +620,54 @@ class UNITARESMonitor:
     
     def make_decision(self, risk_score: float, unitares_verdict: str = None,
                       response_tier: str = None, oscillation_state: 'OscillationState' = None) -> Dict:
-        """Makes autonomous governance decision using UNITARES verdict and CIRS response tier."""
-        return _make_decision(self.state, risk_score, unitares_verdict, response_tier, oscillation_state)
+        """Makes autonomous governance decision using UNITARES verdict and CIRS response tier.
+
+        System agents (tagged "system", e.g. eisv-sync-task) are exempt from
+        the void_active pause. The void pause is a safety check for reasoning
+        agents whose decisions have diverged, but for a sensor-anchoring
+        conduit agent it fires on legitimate readings — a calm Lumen with
+        I > E accumulates negative V from valid sensor data, not from
+        misbehavior. Other pauses (coherence, CIRS hard_block, high-risk)
+        still apply to system agents; only the void_pause sub_action is
+        converted to proceed.
+        """
+        decision = _make_decision(self.state, risk_score, unitares_verdict, response_tier, oscillation_state)
+
+        if decision.get('sub_action') == 'void_pause' and self._is_system_agent():
+            logger.info(
+                f"[SYSTEM_AGENT] Suppressing void_pause for '{self.agent_id}' "
+                f"(V={self.state.V:.3f}, void_active={self.state.void_active}) — "
+                f"sensor-derived EISV, not agent misbehavior"
+            )
+            return {
+                'action': 'proceed',
+                'sub_action': 'system_exempt',
+                'reason': 'System agent exempt from void pause (sensor conduit)',
+                'guidance': None,
+                'margin': 'comfortable',
+                'nearest_edge': None,
+                'suppressed_decision': decision,
+            }
+        return decision
+
+    def _is_system_agent(self) -> bool:
+        """True if this agent is tagged "system" in its metadata.
+
+        System agents are long-running background workers that push data
+        into governance (e.g. sensor sync) rather than reasoning agents
+        that should be subject to the full circuit-breaker logic. See
+        commit history around eisv-sync-task and discovery
+        2026-04-10T23:20:24.723516 for context.
+        """
+        try:
+            from src.agent_metadata_model import agent_metadata
+            meta = agent_metadata.get(self.agent_id)
+            if meta is None:
+                return False
+            tags = getattr(meta, 'tags', None) or []
+            return 'system' in tags
+        except Exception:
+            return False
     
     def simulate_update(self, agent_state: Dict, confidence: Optional[float] = None) -> Dict:
         """
