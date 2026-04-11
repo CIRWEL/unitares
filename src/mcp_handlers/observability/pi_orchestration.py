@@ -1166,19 +1166,56 @@ async def eisv_sync_task(interval_minutes: float = 5.0):
     """
     logger.info(f"[EISV_SYNC] Starting periodic sync (interval: {interval_minutes} min, governance: enabled)")
 
-    # Ensure the eisv-sync-task agent has a label + pioneer tag so it
-    # stops flickering in the dashboard. Without this, the agent has
-    # 0 total_updates (sync pushes sensor_eisv through
-    # process_update_authenticated_async, which doesn't bump the
-    # per-agent update counter), no label, and matches Tier 2 of
-    # auto_archive_orphan_agents (unlabeled + 0 updates + >=3h old).
-    # Every ~3h it gets archived, the next sync cycle recreates it,
-    # and the dashboard agent list flickers. The pioneer tag + label
-    # are belt-and-suspenders alongside the SYSTEM_AGENT_IDS whitelist
-    # in agent_lifecycle.auto_archive_orphan_agents.
+    # Ensure the eisv-sync-task agent is persisted to Postgres. Without
+    # this, the agent lives only in the in-memory dict
+    # (get_or_create_metadata writes only to memory, never to Postgres).
+    # The circuit-breaker pause path inside process_update_authenticated_async
+    # triggers _auto_initiate_dialectic_recovery, which calls
+    # load_metadata_async(force=True); that force-reload runs
+    # agent_metadata.clear() and re-populates from Postgres. If Postgres
+    # doesn't have eisv-sync-task, it drops out of the dict, and the next
+    # sync cycle's get_or_create_monitor → get_or_create_metadata creates
+    # it fresh (logging "Created new agent 'eisv-sync-task'" again, along
+    # with a fresh API key). That is the dashboard flicker.
+    #
+    # The circuit breaker itself fires because sensor readings have I >> E,
+    # so V = accumulated (I − E) crosses the void threshold after a few
+    # cycles and GovernanceConfig.make_decision returns pause
+    # unconditionally when void_active is true. That's a separate bug
+    # (the breaker should exempt "system"-tagged agents or sensor-anchoring
+    # updates). Persisting to Postgres stops the flicker; the breaker will
+    # still pause the agent periodically until that second fix lands, but
+    # the agent record survives the force-reload so no new record is
+    # created on each sync.
+    #
+    # NOTE: an earlier version of this comment claimed
+    # process_update_authenticated_async does not increment total_updates.
+    # That was wrong — it does, via db.increment_update_count at
+    # agent_loop_detection.py:431. The counter appears stuck at 0 because
+    # the record keeps being recreated, not because updates aren't logged.
     try:
-        from src.agent_metadata_model import agent_metadata
+        from src.agent_storage import create_agent, exists_agent
         from src.agent_metadata_persistence import get_or_create_metadata
+
+        persisted = await exists_agent("eisv-sync-task")
+        if not persisted:
+            try:
+                await create_agent(
+                    agent_id="eisv-sync-task",
+                    api_key="",  # system agent, session-bound, no auth required
+                    status="active",
+                    tags=["pioneer", "system"],
+                    purpose="Periodic Pi sensor EISV sync to governance behavioral track",
+                )
+                logger.info("[EISV_SYNC] Persisted eisv-sync-task to Postgres (was in-memory-only)")
+            except ValueError:
+                # Raced with another creator — fine, it exists now.
+                pass
+
+        # Seed in-memory metadata with label + tags so the dashboard
+        # renders a friendly label and Tier-2 auto-archive doesn't match
+        # on "unlabeled". Belt-and-suspenders alongside SYSTEM_AGENT_IDS
+        # in agent_lifecycle.auto_archive_orphan_agents.
         meta = get_or_create_metadata("eisv-sync-task")
         if meta is not None:
             changed = False
@@ -1186,16 +1223,13 @@ async def eisv_sync_task(interval_minutes: float = 5.0):
                 meta.label = "Lumen EISV Sync"
                 changed = True
             tags = list(meta.tags or [])
-            if "pioneer" not in tags:
-                tags.append("pioneer")
-                meta.tags = tags
-                changed = True
-            if "system" not in tags:
-                tags.append("system")
-                meta.tags = tags
-                changed = True
+            for required in ("pioneer", "system"):
+                if required not in tags:
+                    tags.append(required)
+                    changed = True
+            meta.tags = tags
             if changed:
-                logger.info("[EISV_SYNC] Tagged eisv-sync-task agent (label, pioneer, system) to exempt from auto-archive")
+                logger.info("[EISV_SYNC] Tagged eisv-sync-task (label, pioneer, system)")
     except Exception as e:
         logger.debug(f"[EISV_SYNC] Could not seed eisv-sync-task metadata (non-fatal): {e}")
 
