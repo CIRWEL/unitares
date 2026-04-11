@@ -417,9 +417,10 @@ async def handle_pi_list_tools(arguments: Dict[str, Any]) -> Sequence[TextConten
         # Try each URL (LAN first, then Tailscale)
         last_error = None
         for pi_url in PI_MCP_URLS:
+            http_client = None
             try:
                 http_client = httpx.AsyncClient(
-                    http2=True, timeout=15.0,
+                    http2=False, timeout=15.0,
                     headers={"X-Session-ID": PI_STABLE_SESSION_ID, "X-Agent-Name": "mac-governance"},
                 )
                 async with streamable_http_client(pi_url, http_client=http_client) as (read, write, _):
