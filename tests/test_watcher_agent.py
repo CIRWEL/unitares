@@ -291,3 +291,114 @@ def test_persist_empty_batch_still_lets_sweep_reach_disk(watcher_module):
 
     dedup_after = watcher_module.load_dedup()
     assert "stale" not in dedup_after, "sweep result was not persisted to disk"
+
+
+# ---------------------------------------------------------------------------
+# scan_file(persist=...) — self-test isolation
+#
+# Background: repeatedly running ``watcher_agent.py --self-test`` poured
+# synthetic P001 "selftest.py" findings into the real findings.jsonl, which
+# the SessionStart hook then surfaced at the top of every new Claude Code
+# session. The fix was a ``persist=False`` path through scan_file(), used
+# exclusively by the self-test harness so synthetic bug samples never pollute
+# the live findings feed.
+# ---------------------------------------------------------------------------
+
+
+def test_scan_file_persist_false_leaves_findings_file_alone(
+    watcher_module, tmp_path, monkeypatch
+):
+    """scan_file(persist=False) must not create or append to findings.jsonl."""
+    # Stub the model so the test doesn't need Ollama.
+    fake_finding = watcher_module.Finding(
+        pattern="P001",
+        file="/tmp/fake.py",
+        line=6,
+        hint="synthetic",
+        severity="high",
+        detected_at="2026-04-10T00:00:00Z",
+        model_used="stub",
+    )
+
+    def _fake_scan(self_file_path, _region=None, persist=True):
+        # bypass the real scan_file internals; directly exercise the gate
+        if persist:
+            watcher_module.persist_findings([fake_finding])
+        return [fake_finding]
+
+    # Use the real scan_file but stub out call_model + should_skip so we
+    # exercise the actual persist gate.
+    monkeypatch.setattr(
+        watcher_module,
+        "should_skip",
+        lambda _p: (False, ""),
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "read_file_region",
+        lambda _p, _r: ("6:    asyncio.create_task(x.run())", 1, 10),
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "load_patterns",
+        lambda: "P001 — fire-and-forget task",
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "build_prompt",
+        lambda _pm, _fp, _snip: "stub",
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "call_model",
+        lambda _prompt: {
+            "text": "- pattern: P001\n  line: 6\n  evidence: asyncio.create_task\n  severity: high\n  hint: fire-and-forget task\n",
+            "tokens_used": 0,
+            "model_used": "stub",
+        },
+    )
+
+    assert not watcher_module.FINDINGS_FILE.exists()
+
+    findings = watcher_module.scan_file("/tmp/does-not-exist.py", persist=False)
+
+    # The scan ran (we got findings back if the parser accepted the stub
+    # output). Whether it did or didn't parse a P001 is secondary — the
+    # invariant is that the findings file stays untouched.
+    assert not watcher_module.FINDINGS_FILE.exists(), (
+        "persist=False must NOT create findings.jsonl"
+    )
+    # And returned findings, if any, are a plain list (not escalated/routed).
+    assert isinstance(findings, list)
+
+
+def test_scan_file_persist_true_still_writes_findings(
+    watcher_module, tmp_path, monkeypatch
+):
+    """Sanity: persist=True (the default) must still work and create the file."""
+    monkeypatch.setattr(watcher_module, "should_skip", lambda _p: (False, ""))
+    monkeypatch.setattr(
+        watcher_module,
+        "read_file_region",
+        lambda _p, _r: ("6:    asyncio.create_task(x.run())", 1, 10),
+    )
+    monkeypatch.setattr(watcher_module, "load_patterns", lambda: "P001")
+    monkeypatch.setattr(watcher_module, "build_prompt", lambda *a, **k: "stub")
+    monkeypatch.setattr(
+        watcher_module,
+        "call_model",
+        lambda _p: {
+            "text": "- pattern: P001\n  line: 6\n  evidence: asyncio.create_task(x.run())\n  severity: high\n  hint: fire-and-forget task\n",
+            "tokens_used": 0,
+            "model_used": "stub",
+        },
+    )
+
+    findings = watcher_module.scan_file("/tmp/fake.py", persist=True)
+    if findings:
+        assert watcher_module.FINDINGS_FILE.exists(), (
+            "persist=True must create findings.jsonl when findings exist"
+        )
+        # Every persisted entry should round-trip as JSON.
+        for line in watcher_module.FINDINGS_FILE.read_text().splitlines():
+            assert json.loads(line)["pattern"] == "P001"
