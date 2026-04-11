@@ -80,6 +80,13 @@ def _isolate_db_backend(monkeypatch):
     # Thread operations
     mock_backend.get_agent_thread_info = AsyncMock(return_value=None)
     mock_backend.get_thread_nodes = AsyncMock(return_value=[])
+    # Identity batch lookup (used by list_agents full-mode trust_tier fallback
+    # in src/mcp_handlers/lifecycle/query.py:394). Without an explicit stub,
+    # the auto-generated AsyncMock child leaked unawaited _execute_mock_call
+    # coroutines whenever handle_list_agents walked trust_tier=None agents —
+    # observed as 2 surviving RuntimeWarnings after the _lm/_lo rebind fix
+    # (KG bug 2026-04-10T06:27:12.501426 follow-up).
+    mock_backend.get_identities_batch = AsyncMock(return_value={})
     # Health
     mock_backend.init.return_value = None
     mock_backend.close.return_value = None
