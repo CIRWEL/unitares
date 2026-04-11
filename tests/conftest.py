@@ -14,12 +14,64 @@ warnings.filterwarnings("ignore", category=ResourceWarning)
 
 def pytest_configure(config):
     """Configure pytest to filter ResourceWarnings from SQLite."""
-    # This catches warnings during collection phase
     warnings.filterwarnings(
         "ignore",
         message="unclosed database",
         category=ResourceWarning
     )
+
+
+# Track AsyncMock coroutine leaks across the session. We cannot catch them
+# via `filterwarnings = error:...` in pyproject.toml because pytest wraps
+# every test in `warnings.catch_warnings(record=True)`, which captures
+# warnings into a log instead of letting an "error" filter promote them to
+# exceptions. The `pytest_warning_recorded` hook fires for each recorded
+# warning — we inspect each one, stash the unawaited-coroutine ones, and
+# fail the session at teardown.
+#
+# Why fail at session teardown instead of per-test:
+#   - The warning often fires after the test body has returned but before
+#     pytest's per-test catch_warnings context exits (GC between items).
+#     Failing the already-completed test would require mutating its outcome,
+#     which pytest doesn't expose cleanly.
+#   - Session-level exit-status signal is enough to make CI fail, which is
+#     the actual regression gate we want.
+_ASYNCMOCK_LEAKS: list = []
+
+
+def pytest_warning_recorded(warning_message, nodeid, when, location):
+    """Capture unawaited-coroutine warnings for session-level enforcement."""
+    msg = str(warning_message.message)
+    if (
+        "coroutine" in msg
+        and "was never awaited" in msg
+        and warning_message.category is RuntimeWarning
+    ):
+        _ASYNCMOCK_LEAKS.append((nodeid, when, msg.splitlines()[0]))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the session if any AsyncMock coroutine leaks were observed."""
+    if not _ASYNCMOCK_LEAKS:
+        return
+    import sys
+    uniq = sorted({(nid, summary) for nid, _when, summary in _ASYNCMOCK_LEAKS})
+    print(
+        f"\n\nFAILED: {len(uniq)} unawaited AsyncMock coroutine leak(s):",
+        file=sys.stderr,
+    )
+    for nid, summary in uniq[:15]:
+        print(f"  - {nid}\n      {summary}", file=sys.stderr)
+    if len(uniq) > 15:
+        print(f"  ... and {len(uniq) - 15} more", file=sys.stderr)
+    print(
+        "\nHint: add an explicit AsyncMock stub to tests/conftest.py "
+        "_isolate_db_backend for the leaking db method, or fix the test\n"
+        "to ensure all mocked coroutines are awaited.\n",
+        file=sys.stderr,
+    )
+    if exitstatus == 0:
+        session.exitstatus = 1
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +164,46 @@ def _isolate_db_backend(monkeypatch):
     monkeypatch.setattr(db_module, "_db_instance", mock_backend)
     # Clear the db-ready cache so _ensure_db_ready() doesn't skip init
     storage_module._db_ready_cache.clear()
+
+    # Also neutralize src.dialectic_db, which keeps its OWN singleton
+    # (DialecticDB instance) that would otherwise open a real asyncpg pool
+    # during tests and leak AsyncMock coroutines when handlers call
+    # pg_update_phase / resolve_session_async. Observed failures:
+    #   - test_dialectic_session_handlers::TestSaveSession::test_save_session_error_logged_not_raised
+    #   - test_lifecycle_recovery::TestDetectStuckAgentsAutoRecover::test_auto_recover_*_triggers_dialectic
+    # Every dialectic_db.*_async wrapper does `db = await get_dialectic_db();
+    # return await db.<method>(...)` — so we need a mock with those methods
+    # as AsyncMock returning safe defaults.
+    try:
+        import src.dialectic_db as dialectic_db_module
+        mock_dialectic_db = AsyncMock()
+        mock_dialectic_db.update_session_phase.return_value = True
+        mock_dialectic_db.update_session_reviewer.return_value = True
+        mock_dialectic_db.update_session_status.return_value = True
+        mock_dialectic_db.resolve_session.return_value = True
+        mock_dialectic_db.create_session.return_value = {"session_id": "mock-session"}
+        mock_dialectic_db.get_session.return_value = None
+        mock_dialectic_db.get_session_by_agent.return_value = None
+        mock_dialectic_db.get_all_sessions_by_agent.return_value = []
+        mock_dialectic_db.is_agent_in_active_session.return_value = False
+        mock_dialectic_db.has_recently_reviewed.return_value = False
+        mock_dialectic_db.add_message.return_value = 1
+        mock_dialectic_db.get_active_sessions.return_value = []
+        mock_dialectic_db.get_sessions_awaiting_reviewer.return_value = []
+        mock_dialectic_db.init.return_value = None
+        mock_dialectic_db.close.return_value = None
+        # _ensure_pool / _pool: make _ensure_pool raise so the fast-path in
+        # load_session_as_dict (src/mcp_handlers/dialectic/session.py:242)
+        # hits its try/except and returns None cleanly, BEFORE it touches
+        # compatible_acquire(db._pool) with a mock pool whose .fetchrow is a
+        # plain MagicMock — that chain produced unawaited AsyncMock coroutines.
+        mock_dialectic_db._ensure_pool = AsyncMock(
+            side_effect=RuntimeError("test: dialectic DB pool not available")
+        )
+        mock_dialectic_db._pool = None
+        monkeypatch.setattr(dialectic_db_module, "_db_instance", mock_dialectic_db)
+    except ImportError:
+        pass  # dialectic_db not available in some minimal test configs
 
     yield mock_backend
 

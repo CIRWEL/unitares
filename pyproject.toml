@@ -61,6 +61,10 @@ filterwarnings = [
     "ignore::ResourceWarning",
     "ignore:unclosed database:ResourceWarning",
     "ignore::pytest.PytestReturnNotNoneWarning",
+    # Unawaited-coroutine leak enforcement lives in tests/conftest.py via
+    # pytest_warning_recorded + pytest_sessionfinish. filterwarnings cannot
+    # catch these because pytest wraps every test in catch_warnings(record=True),
+    # which stores warnings in a log and bypasses "error:" promotion.
 ]
 
 [tool.coverage.run]
