@@ -64,6 +64,18 @@ TEST_TIMEOUT = 180  # 3 minutes per suite
 # MCP retry on transient failures
 MCP_RETRY_DELAY = 3  # seconds
 
+# Wall-clock cap for a single heartbeat cycle.
+#
+# If run_cycle() stalls past this (e.g. MCP client parked on a dead
+# streamable-http session, or the anyio/asyncpg deadlock), the cycle is
+# aborted and the process exits so launchd's StartInterval can rotate.
+#
+# Prior to this, a hung --once invocation could stay alive for days
+# (2026-04-08 incident: PID 3985 hung ~46h, silently blocking all
+# subsequent launchd runs because StartInterval does not fire while the
+# previous instance is still running).
+CYCLE_TIMEOUT = int(os.getenv("HEARTBEAT_CYCLE_TIMEOUT", "120"))
+
 
 def _atomic_write(path: Path, data: str):
     """Write data to file atomically via temp file + rename."""
@@ -809,11 +821,27 @@ class HeartbeatAgent:
             log(f"MCP error: {e} | {summary}")
             return f"MCP ERROR ({e}) | {summary}"
 
-    async def run_once(self):
-        """Run a single heartbeat cycle."""
+    async def run_once(self, timeout: float = CYCLE_TIMEOUT):
+        """Run a single heartbeat cycle with a wall-clock timeout.
+
+        If run_cycle() stalls past ``timeout`` seconds, the cycle is aborted
+        via ``asyncio.wait_for``. This is the safety net against a hung MCP
+        client (dead streamable-http session, anyio/asyncpg deadlock) —
+        without it a ``--once`` invocation can stay alive indefinitely and
+        block every subsequent launchd ``StartInterval`` rotation.
+
+        Raises ``asyncio.TimeoutError`` on timeout so callers can choose
+        whether to rotate (``--once``) or continue (``--daemon``).
+        """
         log("--- Heartbeat cycle start ---")
         start = time.time()
-        result = await self.run_cycle()
+        try:
+            await asyncio.wait_for(self.run_cycle(), timeout=timeout)
+        except asyncio.TimeoutError:
+            elapsed = time.time() - start
+            log(f"CYCLE TIMEOUT after {elapsed:.1f}s (limit={timeout}s) — aborting")
+            trim_log()
+            raise
         elapsed = time.time() - start
         log(f"Cycle complete ({elapsed:.1f}s)")
         trim_log()
@@ -866,7 +894,12 @@ async def main():
     if args.daemon:
         await agent.run_daemon()
     else:
-        await agent.run_once()
+        try:
+            await agent.run_once()
+        except asyncio.TimeoutError:
+            # Already logged in run_once; exit non-zero so launchd rotates
+            # to a fresh invocation rather than blocking on a hung socket.
+            sys.exit(1)
 
 
 if __name__ == "__main__":
