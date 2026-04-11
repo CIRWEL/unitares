@@ -121,7 +121,7 @@ PI_RETRY_BASE_DELAY = 0.5  # Base delay in seconds for exponential backoff
 def _extract_error_message(result: Dict[str, Any]) -> Optional[str]:
     """
     Extract error message from standardized error format.
-    
+
     Returns None if no error, otherwise returns the error message string.
     """
     if "error" not in result:
@@ -131,7 +131,7 @@ def _extract_error_message(result: Dict[str, Any]) -> Optional[str]:
 def _standardize_error(error: Any) -> Dict[str, Any]:
     """
     Standardize error format across all pi tool calls.
-    
+
     Returns a consistent error dict structure:
     {
         "error": str,  # Error message
@@ -157,7 +157,7 @@ def _standardize_error(error: Any) -> Dict[str, Any]:
             error_type = "connection"
         else:
             error_type = "unknown"
-        
+
         return {
             "error": error_msg,
             "error_type": error_type,
@@ -271,8 +271,8 @@ def _call_pi_tool_sync(
                     )
                     return standardized_error
 
-                result = rpc_response.get("result", {})
-                content_list = result.get("content", [])
+                result = rpc_response.get("result") or {}
+                content_list = result.get("content") or []
 
                 for item in content_list:
                     text = item.get("text") if isinstance(item, dict) else None
@@ -301,7 +301,7 @@ def _call_pi_tool_sync(
                             pass
 
                 if content_list:
-                    texts = [c.get("text", "") for c in content_list if isinstance(c, dict)]
+                    texts = [(c.get("text") or "") for c in content_list if isinstance(c, dict)]
                     audit_logger.log_cross_device_call(
                         agent_id=agent_id, source_device="mac", target_device="pi",
                         tool_name=tool_name, arguments=arguments,
@@ -346,7 +346,7 @@ def _call_pi_tool_sync(
     latency_ms = (time.time() - start_time) * 1000
     standardized_error = _standardize_error(last_error or "All connection attempts failed")
     standardized_error["error"] = f"Cannot connect to Pi: {standardized_error['error']}"
-    
+
     audit_logger.log_cross_device_call(
         agent_id=agent_id,
         source_device="mac",
@@ -401,19 +401,19 @@ def map_anima_to_eisv(
 async def handle_pi_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     List all available tools on Pi's anima-mcp server.
-    
+
     This is useful for:
     - Discovering what tools are available
     - Checking tool availability before calling
     - Understanding tool capabilities
     """
     agent_id = arguments.get("agent_id", "mac-orchestrator")
-    
+
     try:
         # Use MCP client library to list tools
         from mcp.client.session import ClientSession
         from mcp.client.streamable_http import streamable_http_client
-        
+
         # Try each URL (LAN first, then Tailscale)
         last_error = None
         for pi_url in PI_MCP_URLS:
@@ -426,10 +426,10 @@ async def handle_pi_list_tools(arguments: Dict[str, Any]) -> Sequence[TextConten
                 async with streamable_http_client(pi_url, http_client=http_client) as (read, write, _):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
-                        
+
                         # List tools
                         tools_result = await session.list_tools()
-                        
+
                         tools_list = []
                         for tool in tools_result.tools:
                             tools_list.append({
@@ -437,7 +437,7 @@ async def handle_pi_list_tools(arguments: Dict[str, Any]) -> Sequence[TextConten
                                 "description": getattr(tool, 'description', ''),
                                 "inputSchema": getattr(tool, 'inputSchema', {})
                             })
-                        
+
                         return success_response({
                             "device": "pi",
                             "tools": tools_list,
@@ -469,7 +469,7 @@ async def handle_pi_list_tools(arguments: Dict[str, Any]) -> Sequence[TextConten
 
         # All URLs failed
         return error_response(f"Failed to list Pi tools: {last_error or 'All connection attempts failed'}")
-    
+
     except Exception as e:
         return error_response(f"Error listing Pi tools: {e}")
 
@@ -755,11 +755,11 @@ async def handle_pi_post_message(arguments: Dict[str, Any]) -> Sequence[TextCont
 async def handle_pi_lumen_qa(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Unified Q&A tool for Lumen via Pi.
-    
+
     Usage:
     - pi_lumen_qa() -> list unanswered questions
     - pi_lumen_qa(question_id="abc123", answer="...") -> answer question
-    
+
     This is the preferred method for answering questions as it validates
     question IDs and ensures proper linking to the Q&A screen.
     """
@@ -768,23 +768,23 @@ async def handle_pi_lumen_qa(arguments: Dict[str, Any]) -> Sequence[TextContent]
     answer = arguments.get("answer")
     limit = arguments.get("limit", 5)
     agent_name = arguments.get("agent_name", "agent")
-    
+
     tool_args = {
         "limit": limit,
         "agent_name": agent_name
     }
-    
+
     if question_id and answer:
         # Answer mode
         tool_args["question_id"] = question_id
         tool_args["answer"] = answer
-    
+
     result = await call_pi_tool("lumen_qa", tool_args, agent_id=agent_id)
-    
+
     error_msg = _extract_error_message(result)
     if error_msg:
         return error_response(f"Q&A operation failed: {error_msg}")
-    
+
     return success_response({
         "device": "pi",
         "action": "answered" if (question_id and answer) else "list",
@@ -1194,10 +1194,10 @@ async def eisv_sync_task(interval_minutes: float = 5.0):
     # agent_loop_detection.py:431. The counter appears stuck at 0 because
     # the record keeps being recreated, not because updates aren't logged.
     try:
-        from src.agent_storage import create_agent, exists_agent
+        from src.agent_storage import create_agent, agent_exists
         from src.agent_metadata_persistence import get_or_create_metadata
 
-        persisted = await exists_agent("eisv-sync-task")
+        persisted = await agent_exists("eisv-sync-task")
         if not persisted:
             try:
                 await create_agent(
@@ -1231,7 +1231,7 @@ async def eisv_sync_task(interval_minutes: float = 5.0):
             if changed:
                 logger.info("[EISV_SYNC] Tagged eisv-sync-task (label, pioneer, system)")
     except Exception as e:
-        logger.debug(f"[EISV_SYNC] Could not seed eisv-sync-task metadata (non-fatal): {e}")
+        logger.warning(f"[EISV_SYNC] Could not seed eisv-sync-task metadata (non-fatal): {e}", exc_info=True)
 
     while True:
         try:
