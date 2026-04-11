@@ -191,9 +191,17 @@ except Exception as exc:
     print("error: bad JSON from onboard: " + str(exc), file=sys.stderr)
     sys.exit(1)
 r = data.get("result") or {}
-if data.get("success") is False or not r:
-    msg = data.get("error") or r.get("error") or "onboard failed"
+# Fail on both outer envelope (data.success) and the tool-level success
+# field (r.success) — when an existing identity has an established
+# trajectory the outer envelope is still true but r.success is false
+# with a recovery hint.
+if data.get("success") is False or not r or r.get("success") is False:
+    msg = r.get("error") or data.get("error") or "onboard failed"
     print("error: " + str(msg), file=sys.stderr)
+    recovery = r.get("recovery") or {}
+    hint = recovery.get("hint") if isinstance(recovery, dict) else None
+    if hint:
+        print("hint: " + str(hint), file=sys.stderr)
     sys.exit(1)
 welcome = (r.get("welcome") or r.get("message") or "onboarded").strip()
 print("Welcome: " + welcome[:200])
@@ -313,19 +321,46 @@ cmd_diag() {
 }
 
 cmd_onboard() {
-    local name="${1:-$AGENT_ID}" purpose="${2:-}"
+    local name="${1:-$AGENT_ID}" purpose="${2:-}" force="${3:-}"
     local args
-    args=$(NAME="$name" PURPOSE="$purpose" python3 -c '
+    args=$(NAME="$name" PURPOSE="$purpose" FORCE="$force" python3 -c '
 import json, os
 args = {"name": os.environ["NAME"]}
 purpose = os.environ.get("PURPOSE") or ""
 if purpose:
     args["purpose"] = purpose
+force = (os.environ.get("FORCE") or "").lower()
+if force in ("1", "true", "force", "yes", "--force"):
+    args["force_new"] = True
 print(json.dumps(args))
 ')
     local body
     body=$(_curl_post_tool "onboard" "$args") || return 1
     _check_body "$body" "onboard" >/dev/null || return 1
+
+    # Check tool-level success BEFORE writing the session file. If the
+    # server returned result.success:false (e.g. trajectory_required), we
+    # must not clobber any existing continuity material.
+    local tool_ok
+    tool_ok=$(BODY="$body" python3 -c '
+import json, os
+try:
+    data = json.loads(os.environ["BODY"])
+    r = data.get("result") or {}
+    if data.get("success") is False:
+        print("no"); exit()
+    if r.get("success") is False:
+        print("no"); exit()
+    if not r:
+        print("no"); exit()
+    print("yes")
+except Exception:
+    print("no")
+')
+    if [ "$tool_ok" != "yes" ]; then
+        printf '%s' "$body" | parse_onboard
+        return 1
+    fi
 
     # Extract session + continuity token in a single python invocation.
     local extracted sid token
@@ -419,7 +454,8 @@ cmd_help() {
 UNITARES CLI — REST wrapper for the governance MCP server
 
 Commands:
-  onboard [name] [purpose]          Onboard / resume identity
+  onboard [name] [purpose] [force]  Onboard / resume identity; pass "force"
+                                    as 3rd arg to bypass trajectory check
   update "text" [complexity] [confidence]
                                     Post a governance check-in (defaults: 0.5 / 0.6)
   metrics                           Show EISV + summary
