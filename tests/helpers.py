@@ -269,6 +269,35 @@ _LIFECYCLE_MODULES = [
 
 
 @contextmanager
+def patch_agent_storage():
+    """Patch agent_storage across all lifecycle submodules with a shared mock.
+
+    The lifecycle submodules ``handlers``, ``mutation``, and ``operations`` each
+    import ``agent_storage`` at module load time, so a bare
+    ``patch("...handlers.agent_storage")`` leaves the other two modules pointing
+    at the real object. Tests previously worked around this with manual
+    ``_lm.agent_storage = mock_storage`` rebinds, but ``patch()`` does not track
+    those and never restores them — leaving live AsyncMock references in
+    later-loaded test modules and producing "coroutine was never awaited"
+    warnings (bug 2026-04-10T06:27:12.501426).
+
+    This helper installs a single shared ``MagicMock`` at all three call sites
+    via ``patch()``, which is tracked and restored on exit.
+
+    Usage::
+
+        with patch_agent_storage() as mock_storage:
+            mock_storage.update_agent = AsyncMock()
+            ...
+    """
+    shared = MagicMock()
+    with patch("src.mcp_handlers.lifecycle.handlers.agent_storage", shared), \
+         patch("src.mcp_handlers.lifecycle.mutation.agent_storage", shared), \
+         patch("src.mcp_handlers.lifecycle.operations.agent_storage", shared):
+        yield shared
+
+
+@contextmanager
 def patch_lifecycle_server(server, require_registered=None, **extra_patches):
     """Patch all lifecycle submodule mcp_server references in one call.
 
