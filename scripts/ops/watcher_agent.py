@@ -587,6 +587,207 @@ def persist_findings(new_findings: list[Finding]) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# Lifecycle commands
+#
+# Without these, findings.jsonl is append-only with no way to mark a finding
+# as confirmed, dismissed, or stale. Governance has no calibration signal and
+# the surface hook just accumulates noise. Ogler's critique of the rollup
+# daemon was specifically "build the bottom before the top" — this is the
+# bottom.
+# ---------------------------------------------------------------------------
+
+
+VALID_FINDING_STATUSES = ("open", "surfaced", "confirmed", "dismissed", "aged_out")
+MIN_FINGERPRINT_PREFIX = 4  # users can type the first N chars instead of all 16
+
+
+def _iter_findings_raw() -> list[dict[str, Any]]:
+    """Load all findings from findings.jsonl as raw dicts. Silently skips
+    malformed lines. Returns [] if the file doesn't exist."""
+    if not FINDINGS_FILE.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    with FINDINGS_FILE.open() as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return out
+
+
+def _write_findings_atomic(findings: list[dict[str, Any]]) -> None:
+    """Atomically replace findings.jsonl with the given list. Writes to a
+    sibling temp file and renames, so a crash mid-write cannot corrupt the
+    findings feed."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = FINDINGS_FILE.with_suffix(FINDINGS_FILE.suffix + ".tmp")
+    with tmp.open("w") as fh:
+        for f in findings:
+            fh.write(json.dumps(f) + "\n")
+    tmp.replace(FINDINGS_FILE)
+
+
+def match_fingerprint(prefix: str, findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str | None]:
+    """Return (matches, error) for a fingerprint prefix lookup.
+
+    - Exact 16-char match returns at most one finding.
+    - Shorter prefixes match all findings whose fingerprint starts with it.
+    - Prefix shorter than ``MIN_FINGERPRINT_PREFIX`` is rejected to guard
+      against accidental nukes from a 1-2 char typo.
+    """
+    if not prefix:
+        return [], "empty fingerprint"
+    if len(prefix) < MIN_FINGERPRINT_PREFIX:
+        return [], f"fingerprint too short (min {MIN_FINGERPRINT_PREFIX} chars)"
+    matches = [f for f in findings if f.get("fingerprint", "").startswith(prefix)]
+    return matches, None
+
+
+def update_finding_status(fingerprint_prefix: str, new_status: str) -> int:
+    """Mark a finding as ``new_status`` by fingerprint prefix.
+
+    Returns exit code:
+      0 — updated exactly one finding
+      1 — no match or ambiguous prefix
+      2 — invalid status
+    """
+    if new_status not in VALID_FINDING_STATUSES:
+        log(f"update_finding_status: invalid status {new_status!r}", "error")
+        print(f"error: invalid status {new_status!r}; must be one of {VALID_FINDING_STATUSES}")
+        return 2
+
+    findings = _iter_findings_raw()
+    if not findings:
+        print("error: findings.jsonl is empty or absent")
+        return 1
+
+    matches, err = match_fingerprint(fingerprint_prefix, findings)
+    if err:
+        print(f"error: {err}")
+        return 1
+    if not matches:
+        print(f"error: no finding matches fingerprint prefix {fingerprint_prefix!r}")
+        return 1
+    if len(matches) > 1:
+        print(f"error: fingerprint prefix {fingerprint_prefix!r} is ambiguous ({len(matches)} matches):")
+        for m in matches:
+            print(
+                f"  {m.get('fingerprint','?')[:16]} {m.get('severity','?')} "
+                f"{m.get('pattern','?')} {m.get('file','?')}:{m.get('line','?')}"
+            )
+        return 1
+
+    target_fp = matches[0].get("fingerprint", "")
+    updated: list[dict[str, Any]] = []
+    for f in findings:
+        if f.get("fingerprint") == target_fp:
+            f = {**f, "status": new_status}
+        updated.append(f)
+    _write_findings_atomic(updated)
+    log(f"update_finding_status: {target_fp[:8]} → {new_status}")
+    print(
+        f"ok: {target_fp[:16]} → {new_status} "
+        f"({matches[0].get('pattern','?')} at {matches[0].get('file','?')}:{matches[0].get('line','?')})"
+    )
+    return 0
+
+
+def sweep_stale_findings() -> int:
+    """Drop findings whose target file no longer exists on disk.
+
+    This is the "the file got deleted or renamed" cleanup — we don't want
+    the surface hook to keep nagging you about a file that isn't there
+    anymore. Open/surfaced findings get aged_out via this path too because
+    there's no code to evaluate.
+    """
+    findings = _iter_findings_raw()
+    if not findings:
+        print("(no findings to sweep)")
+        return 0
+
+    kept: list[dict[str, Any]] = []
+    dropped = 0
+    for f in findings:
+        path = f.get("file", "")
+        if path and Path(path).exists():
+            kept.append(f)
+        else:
+            dropped += 1
+
+    if dropped == 0:
+        print(f"(nothing to sweep: {len(findings)} findings, all target files present)")
+        return 0
+
+    _write_findings_atomic(kept)
+    log(f"sweep_stale_findings: dropped {dropped} findings for missing files")
+    print(f"ok: dropped {dropped} finding(s) with missing target files, kept {len(kept)}")
+    return 0
+
+
+def compact_findings(max_age_days: int = 7, now: datetime | None = None) -> int:
+    """Rewrite findings.jsonl dropping confirmed/dismissed/aged_out entries
+    older than ``max_age_days``.
+
+    Active findings (``open`` / ``surfaced``) are always kept regardless of
+    age — they still need your attention. Only already-resolved entries get
+    compacted away. This is the fix for Ogler's P002-round-two: the findings
+    file itself was growing unboundedly even after the dedup dict got its
+    TTL sweep.
+    """
+    findings = _iter_findings_raw()
+    if not findings:
+        print("(no findings to compact)")
+        return 0
+
+    reference = now or datetime.now(timezone.utc)
+    cutoff = reference - timedelta(days=max_age_days)
+    resolved_states = {"confirmed", "dismissed", "aged_out"}
+
+    kept: list[dict[str, Any]] = []
+    dropped = 0
+    for f in findings:
+        status = f.get("status", "open")
+        if status not in resolved_states:
+            # open/surfaced — always keep
+            kept.append(f)
+            continue
+        ts = f.get("detected_at", "")
+        try:
+            detected = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc
+            )
+        except (TypeError, ValueError):
+            # Unparseable timestamp — keep it, fail-open
+            kept.append(f)
+            continue
+        if detected >= cutoff:
+            kept.append(f)
+        else:
+            dropped += 1
+
+    if dropped == 0:
+        print(
+            f"(nothing to compact: {len(findings)} findings, "
+            f"none resolved >{max_age_days}d ago)"
+        )
+        return 0
+
+    _write_findings_atomic(kept)
+    log(
+        f"compact_findings: dropped {dropped} resolved findings older than {max_age_days}d"
+    )
+    print(
+        f"ok: compacted {dropped} finding(s) older than {max_age_days}d, "
+        f"kept {len(kept)}"
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Severity routing
 # ---------------------------------------------------------------------------
 
@@ -833,23 +1034,24 @@ def self_test() -> int:
     return 2
 
 
-def list_findings() -> int:
-    if not FINDINGS_FILE.exists():
+def list_findings(only_open: bool = False) -> int:
+    findings = _iter_findings_raw()
+    if not findings:
         print("(no findings file yet)")
         return 0
-    with FINDINGS_FILE.open() as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            print(
-                f"{d.get('severity','?'):8s} {d.get('pattern','?'):6s} "
-                f"{d.get('file','?')}:{d.get('line','?')} — {d.get('hint','')}"
-            )
+    shown = 0
+    for d in findings:
+        status = d.get("status", "open")
+        if only_open and status not in ("open", "surfaced"):
+            continue
+        fp = d.get("fingerprint", "?")[:8]
+        print(
+            f"{fp}  {status:9s} {d.get('severity','?'):8s} {d.get('pattern','?'):6s} "
+            f"{d.get('file','?')}:{d.get('line','?')} — {d.get('hint','')}"
+        )
+        shown += 1
+    if shown == 0:
+        print("(nothing to show)")
     return 0
 
 
@@ -863,12 +1065,51 @@ def main() -> int:
     parser.add_argument(
         "--list-findings", action="store_true", help="dump current findings.jsonl"
     )
+    parser.add_argument(
+        "--only-open",
+        action="store_true",
+        help="with --list-findings, show only open/surfaced entries",
+    )
+    parser.add_argument(
+        "--resolve",
+        metavar="FINGERPRINT",
+        help="mark a finding as confirmed by fingerprint (or unique prefix, min 4 chars)",
+    )
+    parser.add_argument(
+        "--dismiss",
+        metavar="FINGERPRINT",
+        help="mark a finding as dismissed (false positive) by fingerprint",
+    )
+    parser.add_argument(
+        "--sweep-stale",
+        action="store_true",
+        help="drop findings whose target file no longer exists on disk",
+    )
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="drop resolved/dismissed/aged_out findings older than the TTL",
+    )
+    parser.add_argument(
+        "--compact-days",
+        type=int,
+        default=7,
+        help="age cutoff for --compact (default: 7 days)",
+    )
     args = parser.parse_args()
 
     if args.self_test:
         return self_test()
     if args.list_findings:
-        return list_findings()
+        return list_findings(only_open=args.only_open)
+    if args.resolve:
+        return update_finding_status(args.resolve, "confirmed")
+    if args.dismiss:
+        return update_finding_status(args.dismiss, "dismissed")
+    if args.sweep_stale:
+        return sweep_stale_findings()
+    if args.compact:
+        return compact_findings(max_age_days=args.compact_days)
     if not args.file:
         parser.print_help()
         return 1

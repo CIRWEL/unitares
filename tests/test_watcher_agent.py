@@ -423,3 +423,357 @@ def test_scan_file_persist_default_is_true(watcher_module, tmp_path, monkeypatch
     findings = watcher_module.scan_file("/tmp/fake.py")
     assert findings
     assert watcher_module.FINDINGS_FILE.exists()
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle commands — Stage 1
+#
+# These cover the three operations that make findings.jsonl more than an
+# append-only log: marking a finding as confirmed/dismissed, sweeping
+# findings whose target file vanished, and compacting resolved entries that
+# have aged out. Without these, Watcher has no differential signal to report
+# to governance and findings.jsonl grows unboundedly (Ogler's P002
+# round two).
+# ---------------------------------------------------------------------------
+
+
+def _seed_findings(watcher_module, entries: list[dict]) -> None:
+    """Write a raw findings.jsonl directly for tests that want explicit
+    control over what's in the file (status, timestamp, file path)."""
+    watcher_module.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with watcher_module.FINDINGS_FILE.open("w") as fh:
+        for e in entries:
+            fh.write(json.dumps(e) + "\n")
+
+
+def _make_raw_entry(
+    fingerprint: str,
+    *,
+    pattern: str = "P001",
+    file: str = "/tmp/seeded.py",
+    line: int = 10,
+    status: str = "open",
+    detected_at: str = "2026-04-11T00:00:00Z",
+    severity: str = "high",
+    hint: str = "fire-and-forget task",
+) -> dict:
+    return {
+        "pattern": pattern,
+        "file": file,
+        "line": line,
+        "hint": hint,
+        "severity": severity,
+        "detected_at": detected_at,
+        "model_used": "gemma4:latest",
+        "line_content_hash": "0123456789ab",
+        "fingerprint": fingerprint,
+        "status": status,
+    }
+
+
+# --- match_fingerprint ------------------------------------------------------
+
+
+def test_match_fingerprint_rejects_empty_and_too_short(watcher_module):
+    findings = [_make_raw_entry("aaaaaaaaaaaaaaaa")]
+    for bad in ("", "a", "ab", "abc"):
+        matches, err = watcher_module.match_fingerprint(bad, findings)
+        assert matches == []
+        assert err is not None
+
+
+def test_match_fingerprint_exact_match(watcher_module):
+    findings = [
+        _make_raw_entry("aaaaaaaaaaaaaaaa"),
+        _make_raw_entry("bbbbbbbbbbbbbbbb"),
+    ]
+    matches, err = watcher_module.match_fingerprint("aaaaaaaaaaaaaaaa", findings)
+    assert err is None
+    assert len(matches) == 1
+    assert matches[0]["fingerprint"] == "aaaaaaaaaaaaaaaa"
+
+
+def test_match_fingerprint_unique_prefix(watcher_module):
+    findings = [
+        _make_raw_entry("aaaaaaaaaaaaaaaa"),
+        _make_raw_entry("bbbbbbbbbbbbbbbb"),
+    ]
+    matches, err = watcher_module.match_fingerprint("aaaa", findings)
+    assert err is None
+    assert len(matches) == 1
+    assert matches[0]["fingerprint"] == "aaaaaaaaaaaaaaaa"
+
+
+def test_match_fingerprint_ambiguous_prefix(watcher_module):
+    findings = [
+        _make_raw_entry("aaaa11111111"),
+        _make_raw_entry("aaaa22222222"),
+    ]
+    matches, err = watcher_module.match_fingerprint("aaaa", findings)
+    assert err is None
+    assert len(matches) == 2
+
+
+def test_match_fingerprint_no_match(watcher_module):
+    findings = [_make_raw_entry("aaaaaaaaaaaaaaaa")]
+    matches, err = watcher_module.match_fingerprint("zzzz", findings)
+    assert err is None
+    assert matches == []
+
+
+# --- update_finding_status --------------------------------------------------
+
+
+def test_update_finding_status_marks_by_exact_fingerprint(watcher_module):
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry("aaaaaaaaaaaaaaaa", line=10),
+            _make_raw_entry("bbbbbbbbbbbbbbbb", line=20),
+        ],
+    )
+    rc = watcher_module.update_finding_status("aaaaaaaaaaaaaaaa", "confirmed")
+    assert rc == 0
+
+    after = watcher_module._iter_findings_raw()
+    by_fp = {f["fingerprint"]: f for f in after}
+    assert by_fp["aaaaaaaaaaaaaaaa"]["status"] == "confirmed"
+    # Untouched finding must keep its status
+    assert by_fp["bbbbbbbbbbbbbbbb"]["status"] == "open"
+
+
+def test_update_finding_status_accepts_unique_prefix(watcher_module):
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry("deadbeef11112222"),
+            _make_raw_entry("cafebabe33334444"),
+        ],
+    )
+    rc = watcher_module.update_finding_status("deadbeef", "dismissed")
+    assert rc == 0
+
+    after = watcher_module._iter_findings_raw()
+    by_fp = {f["fingerprint"]: f for f in after}
+    assert by_fp["deadbeef11112222"]["status"] == "dismissed"
+    assert by_fp["cafebabe33334444"]["status"] == "open"
+
+
+def test_update_finding_status_rejects_ambiguous_prefix(watcher_module, capsys):
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry("aaaa11111111"),
+            _make_raw_entry("aaaa22222222"),
+        ],
+    )
+    rc = watcher_module.update_finding_status("aaaa", "confirmed")
+    assert rc == 1
+
+    # Neither finding mutated
+    after = watcher_module._iter_findings_raw()
+    assert all(f["status"] == "open" for f in after)
+    captured = capsys.readouterr()
+    assert "ambiguous" in captured.out
+
+
+def test_update_finding_status_rejects_unknown_fingerprint(watcher_module, capsys):
+    _seed_findings(watcher_module, [_make_raw_entry("aaaaaaaaaaaaaaaa")])
+    rc = watcher_module.update_finding_status("zzzzzzzz", "dismissed")
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "no finding matches" in captured.out
+
+
+def test_update_finding_status_rejects_too_short_prefix(watcher_module, capsys):
+    _seed_findings(watcher_module, [_make_raw_entry("aaaaaaaaaaaaaaaa")])
+    rc = watcher_module.update_finding_status("a", "dismissed")
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "too short" in captured.out
+    # Finding untouched
+    after = watcher_module._iter_findings_raw()
+    assert after[0]["status"] == "open"
+
+
+def test_update_finding_status_rejects_invalid_status(watcher_module, capsys):
+    _seed_findings(watcher_module, [_make_raw_entry("aaaaaaaaaaaaaaaa")])
+    rc = watcher_module.update_finding_status("aaaaaaaaaaaaaaaa", "bogus")
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "invalid status" in captured.out
+
+
+def test_update_finding_status_handles_missing_file(watcher_module, capsys):
+    # No findings.jsonl at all
+    assert not watcher_module.FINDINGS_FILE.exists()
+    rc = watcher_module.update_finding_status("aaaaaaaaaaaaaaaa", "confirmed")
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "empty" in captured.out or "absent" in captured.out
+
+
+# --- sweep_stale_findings ---------------------------------------------------
+
+
+def test_sweep_stale_drops_findings_for_missing_files(
+    watcher_module, tmp_path, capsys
+):
+    real = tmp_path / "real.py"
+    real.write_text("print('hi')\n")
+    missing = tmp_path / "missing.py"  # never created
+
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry("aaaaaaaa11111111", file=str(real)),
+            _make_raw_entry("bbbbbbbb22222222", file=str(missing)),
+        ],
+    )
+    rc = watcher_module.sweep_stale_findings()
+    assert rc == 0
+
+    after = watcher_module._iter_findings_raw()
+    assert len(after) == 1
+    assert after[0]["fingerprint"] == "aaaaaaaa11111111"
+    captured = capsys.readouterr()
+    assert "dropped 1" in captured.out
+
+
+def test_sweep_stale_keeps_all_when_all_files_exist(
+    watcher_module, tmp_path, capsys
+):
+    real_a = tmp_path / "a.py"
+    real_b = tmp_path / "b.py"
+    real_a.write_text("")
+    real_b.write_text("")
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry("aaaa11111111aaaa", file=str(real_a)),
+            _make_raw_entry("bbbb22222222bbbb", file=str(real_b)),
+        ],
+    )
+    rc = watcher_module.sweep_stale_findings()
+    assert rc == 0
+
+    after = watcher_module._iter_findings_raw()
+    assert len(after) == 2
+    captured = capsys.readouterr()
+    assert "nothing to sweep" in captured.out
+
+
+def test_sweep_stale_handles_empty_findings(watcher_module, capsys):
+    rc = watcher_module.sweep_stale_findings()
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "no findings to sweep" in captured.out
+
+
+# --- compact_findings -------------------------------------------------------
+
+
+def test_compact_drops_old_resolved_entries(watcher_module):
+    now = datetime(2026, 4, 11, tzinfo=timezone.utc)
+    old = _iso(now - timedelta(days=30))
+    recent = _iso(now - timedelta(days=1))
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry(
+                "old_confirmed__", status="confirmed", detected_at=old
+            ),
+            _make_raw_entry(
+                "old_dismissed__", status="dismissed", detected_at=old
+            ),
+            _make_raw_entry(
+                "old_aged_out___", status="aged_out", detected_at=old
+            ),
+            _make_raw_entry(
+                "recent_confirm_", status="confirmed", detected_at=recent
+            ),
+        ],
+    )
+    rc = watcher_module.compact_findings(max_age_days=7, now=now)
+    assert rc == 0
+
+    after = watcher_module._iter_findings_raw()
+    fps = {f["fingerprint"] for f in after}
+    assert "recent_confirm_" in fps
+    assert "old_confirmed__" not in fps
+    assert "old_dismissed__" not in fps
+    assert "old_aged_out___" not in fps
+
+
+def test_compact_keeps_open_and_surfaced_regardless_of_age(watcher_module):
+    now = datetime(2026, 4, 11, tzinfo=timezone.utc)
+    ancient = _iso(now - timedelta(days=365))
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry("open_ancient___", status="open", detected_at=ancient),
+            _make_raw_entry(
+                "surface_ancient", status="surfaced", detected_at=ancient
+            ),
+        ],
+    )
+    rc = watcher_module.compact_findings(max_age_days=7, now=now)
+    assert rc == 0
+
+    after = watcher_module._iter_findings_raw()
+    assert len(after) == 2
+    fps = {f["fingerprint"] for f in after}
+    assert "open_ancient___" in fps
+    assert "surface_ancient" in fps
+
+
+def test_compact_preserves_entries_with_unparseable_timestamp(watcher_module):
+    """Fail-open: garbage timestamps are kept rather than silently dropped."""
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry(
+                "bad_timestamp__",
+                status="confirmed",
+                detected_at="not a date",
+            ),
+        ],
+    )
+    rc = watcher_module.compact_findings(max_age_days=1)
+    assert rc == 0
+    after = watcher_module._iter_findings_raw()
+    assert len(after) == 1
+
+
+def test_compact_noop_on_empty(watcher_module, capsys):
+    rc = watcher_module.compact_findings()
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "no findings" in captured.out
+
+
+# --- atomic write -----------------------------------------------------------
+
+
+def test_write_findings_atomic_round_trip(watcher_module):
+    entries = [
+        _make_raw_entry("aaaa1111aaaa1111", line=1),
+        _make_raw_entry("bbbb2222bbbb2222", line=2),
+        _make_raw_entry("cccc3333cccc3333", line=3),
+    ]
+    watcher_module._write_findings_atomic(entries)
+    round_trip = watcher_module._iter_findings_raw()
+    assert len(round_trip) == 3
+    assert [e["fingerprint"] for e in round_trip] == [
+        "aaaa1111aaaa1111",
+        "bbbb2222bbbb2222",
+        "cccc3333cccc3333",
+    ]
+
+
+def test_write_findings_atomic_leaves_no_temp_file(watcher_module):
+    watcher_module._write_findings_atomic([_make_raw_entry("aaaa1111aaaa1111")])
+    tmp = watcher_module.FINDINGS_FILE.with_suffix(
+        watcher_module.FINDINGS_FILE.suffix + ".tmp"
+    )
+    assert not tmp.exists(), "atomic write must rename, not leave a .tmp sibling"
