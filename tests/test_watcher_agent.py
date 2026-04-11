@@ -790,7 +790,9 @@ def test_write_findings_atomic_leaves_no_temp_file(watcher_module):
 
 
 def test_format_findings_block_returns_none_on_empty(watcher_module):
-    assert watcher_module._format_findings_block([], header="x") is None
+    block, shown = watcher_module._format_findings_block([], header="x")
+    assert block is None
+    assert shown == []
 
 
 def test_format_findings_block_suppresses_low_severity(watcher_module):
@@ -801,8 +803,9 @@ def test_format_findings_block_suppresses_low_severity(watcher_module):
         _make_raw_entry("low_____00000000", severity="low"),
         _make_raw_entry("low_____11111111", severity="low"),
     ]
-    block = watcher_module._format_findings_block(findings, header="x")
+    block, shown = watcher_module._format_findings_block(findings, header="x")
     assert block is None
+    assert shown == []
 
 
 def test_format_findings_block_never_hides_critical_or_high(watcher_module):
@@ -814,11 +817,12 @@ def test_format_findings_block_never_hides_critical_or_high(watcher_module):
         _make_raw_entry(f"fp_{i:013d}", severity="high")
         for i in range(15)
     ]
-    block = watcher_module._format_findings_block(findings, header="x")
+    block, shown = watcher_module._format_findings_block(findings, header="x")
     assert block is not None
     shown_count = sum(1 for line in block.splitlines() if line.startswith("  ["))
     assert shown_count == 15, f"all 15 high findings must show; got {shown_count}"
     assert "Total unresolved: 15" in block
+    assert len(shown) == 15
 
 
 def test_format_findings_block_caps_medium_when_criticals_leave_no_room(
@@ -831,10 +835,13 @@ def test_format_findings_block_caps_medium_when_criticals_leave_no_room(
     ] + [
         _make_raw_entry(f"md_{i:013d}", severity="medium") for i in range(5)
     ]
-    block = watcher_module._format_findings_block(findings, header="x")
+    block, shown = watcher_module._format_findings_block(findings, header="x")
     assert block is not None
     assert "[HIGH]" in block
     assert "[MEDIUM]" not in block  # no budget left after 10 highs
+    # Exactly the 10 highs were shown; none of the 5 mediums
+    assert len(shown) == 10
+    assert all(f.get("severity") == "high" for f in shown)
 
 
 def test_format_findings_block_rations_medium_alongside_criticals(
@@ -847,12 +854,13 @@ def test_format_findings_block_rations_medium_alongside_criticals(
     ] + [
         _make_raw_entry(f"med__{i:011d}", severity="medium") for i in range(15)
     ]
-    block = watcher_module._format_findings_block(findings, header="x")
+    block, shown = watcher_module._format_findings_block(findings, header="x")
     assert block is not None
     med_lines = [l for l in block.splitlines() if "[MEDIUM]" in l]
     crit_lines = [l for l in block.splitlines() if "[CRITICAL]" in l]
     assert len(crit_lines) == 3
     assert len(med_lines) == 7
+    assert len(shown) == 10  # 3 criticals + 7 mediums
 
 
 def test_format_findings_block_prioritizes_critical_over_medium(watcher_module):
@@ -861,7 +869,7 @@ def test_format_findings_block_prioritizes_critical_over_medium(watcher_module):
         _make_raw_entry("crit____00000000", severity="critical"),
         _make_raw_entry("high____00000000", severity="high"),
     ]
-    block = watcher_module._format_findings_block(findings, header="x")
+    block, shown = watcher_module._format_findings_block(findings, header="x")
     assert block is not None
     # Critical should appear before high, which should appear before medium
     crit_pos = block.find("[CRITICAL]")
@@ -1029,3 +1037,240 @@ def test_surface_pending_new_finding_after_chime_still_fires(
     assert "second__" in captured
     # First finding was already surfaced and must NOT re-chime
     assert "first___" not in captured
+
+
+# ---------------------------------------------------------------------------
+# Ogler round-3 self-review fixes — 2026-04-11
+#
+# After shipping the Qwen3-Coder-Next model upgrade, Ogler flagged five
+# latent issues in the Watcher code itself:
+#
+#   1. DEFAULT_CONTEXT_LINES=200 was a gemma4-era truncation that hid
+#      anything past line 200 of the file from the scan. Qwen3 has a
+#      256K context window — scanning whole files is cheap.
+#
+#   3. ~/Library/Logs/unitares-watcher.log was unbounded append — same
+#      P002 pattern (round three) the Watcher's own library warns about.
+#
+#   4. surface_pending marked ALL open findings as surfaced, including
+#      medium-severity findings the display cap had hidden. Combined with
+#      content-hash dedup, those findings became silent drops — the user
+#      never saw them but they'd never re-chime either.
+#
+# Fixes #2 (temperature 0.1 → 0.0) and #5 (max_tokens 2048 → 1024) are
+# config constants and aren't exercised by unit tests directly; they're
+# asserted by inspection below as a regression guard against drift.
+# ---------------------------------------------------------------------------
+
+
+def test_read_file_region_scans_whole_file_by_default(
+    watcher_module, tmp_path
+):
+    """Regression for #1: DEFAULT_CONTEXT_LINES must be large enough that
+    a typical source file is scanned end-to-end, not truncated at 200
+    lines. A file that passes should_skip's 256KB cap should be scanned
+    in full."""
+    f = tmp_path / "longfile.py"
+    f.write_text("\n".join(f"line_{i}" for i in range(500)))
+    text, start, end = watcher_module.read_file_region(str(f))
+    assert start == 1
+    assert end == 500, (
+        f"whole file should be scanned (500 lines); got end={end} — "
+        "is DEFAULT_CONTEXT_LINES still at 200?"
+    )
+    assert "line_0" in text
+    assert "line_499" in text
+
+
+def test_default_context_lines_is_large_enough_for_typical_files(
+    watcher_module,
+):
+    """Guard against re-regression to the gemma4-era 200-line cap. Must
+    be at least 2000 to cover typical source files end-to-end; 10000 is
+    the current target."""
+    assert watcher_module.DEFAULT_CONTEXT_LINES >= 2000, (
+        "DEFAULT_CONTEXT_LINES regressed to a small value — Qwen3 has "
+        "a 256K context window and should_skip caps at 256KB; scanning "
+        "whole files is the point."
+    )
+
+
+def test_model_call_uses_deterministic_temperature(watcher_module):
+    """Regression for #2: detector workload wants temperature=0.0, not
+    0.1. Asserts the constant hasn't drifted back to the creative-writing
+    value. We inspect the call_model_via_governance function body
+    textually rather than via a runtime probe because the temperature is
+    a literal in the payload dict."""
+    import inspect
+
+    src_gov = inspect.getsource(watcher_module.call_model_via_governance)
+    src_direct = inspect.getsource(watcher_module.call_ollama_direct)
+    for label, src in (("gov", src_gov), ("direct", src_direct)):
+        assert '"temperature": 0.0' in src, (
+            f"{label} path lost temperature=0.0 — detector must be "
+            "deterministic"
+        )
+        assert '"temperature": 0.1' not in src, (
+            f"{label} path regressed to temperature=0.1 — "
+            "Ogler caught this once, do not re-ship"
+        )
+
+
+def test_model_call_max_tokens_is_not_wasteful(watcher_module):
+    """Regression for #5: max_tokens should be right-sized for Qwen3's
+    ~40-tokens-per-finding economy, not gemma4's 2048-era budget."""
+    import inspect
+
+    src_gov = inspect.getsource(watcher_module.call_model_via_governance)
+    src_direct = inspect.getsource(watcher_module.call_ollama_direct)
+    for label, src in (("gov", src_gov), ("direct", src_direct)):
+        assert '"max_tokens": 2048' not in src, (
+            f"{label} path still has 2048 — trim to the Qwen3 economy"
+        )
+
+
+# --- Log rotation (#3) ------------------------------------------------------
+
+
+def test_rotate_log_trims_to_max_lines(
+    watcher_module, tmp_path, monkeypatch
+):
+    """The log file must be trimmed to the last MAX_LOG_LINES entries
+    when it exceeds the cap. Without this, the Watcher's own log file
+    was an unbounded P002 self-match — round three of the same pattern
+    Ogler has caught in this codebase."""
+    monkeypatch.setattr(watcher_module, "MAX_LOG_LINES", 10)
+    log = tmp_path / "rot.log"
+    monkeypatch.setattr(watcher_module, "LOG_FILE", log)
+    log.write_text("\n".join(f"line_{i}" for i in range(50)) + "\n")
+
+    watcher_module._rotate_log_if_needed()
+
+    remaining = log.read_text().splitlines()
+    assert len(remaining) == 10, f"expected 10 lines after rotation, got {len(remaining)}"
+    # Must keep the TAIL (most recent entries), not the head
+    assert remaining[0] == "line_40"
+    assert remaining[-1] == "line_49"
+
+
+def test_rotate_log_noop_when_under_limit(
+    watcher_module, tmp_path, monkeypatch
+):
+    """A log file smaller than MAX_LOG_LINES should not be rewritten."""
+    monkeypatch.setattr(watcher_module, "MAX_LOG_LINES", 100)
+    log = tmp_path / "small.log"
+    monkeypatch.setattr(watcher_module, "LOG_FILE", log)
+    content = "line_0\nline_1\nline_2\n"
+    log.write_text(content)
+    mtime_before = log.stat().st_mtime_ns
+
+    watcher_module._rotate_log_if_needed()
+
+    assert log.read_text() == content
+    # Additionally assert the file wasn't rewritten (mtime unchanged).
+    # On some filesystems this may not be reliable, but it's a useful guard.
+    assert log.stat().st_mtime_ns == mtime_before
+
+
+def test_rotate_log_missing_file_is_safe(
+    watcher_module, tmp_path, monkeypatch
+):
+    """A missing log file must not raise — this runs on every scan_file
+    entry and fire-and-forget hooks shouldn't crash on a fresh install."""
+    log = tmp_path / "nonexistent.log"
+    monkeypatch.setattr(watcher_module, "LOG_FILE", log)
+    # Must not raise
+    watcher_module._rotate_log_if_needed()
+    assert not log.exists()
+
+
+def test_max_log_lines_has_a_sane_upper_bound(watcher_module):
+    """Guard against MAX_LOG_LINES being removed or set to an absurd
+    value that defeats the rotation."""
+    assert 100 <= watcher_module.MAX_LOG_LINES <= 100000, (
+        f"MAX_LOG_LINES={watcher_module.MAX_LOG_LINES} is outside "
+        "the sane operational range"
+    )
+
+
+# --- surface_pending silent-drop fix (#4) ----------------------------------
+
+
+def test_surface_pending_does_not_silently_drop_hidden_mediums(
+    watcher_module,
+):
+    """Regression for the silent-drop bug: when the display cap (10
+    items, reserved first for critical/high) hides medium-severity
+    findings, those mediums must stay `open` so they appear on a later
+    chime once the queue drains.
+
+    The old behavior was to mark ALL open findings as surfaced regardless
+    of whether the display cap had shown them. Combined with the content-
+    hash dedup, that silently dropped real findings — the user never saw
+    them AND they'd never re-appear.
+    """
+    # Fill the 10-slot display cap with highs, plus 5 extra mediums
+    # that should NOT be shown
+    entries = [
+        _make_raw_entry(f"hi_{i:013d}", severity="high", status="open")
+        for i in range(10)
+    ]
+    entries += [
+        _make_raw_entry(f"md_{i:013d}", severity="medium", status="open")
+        for i in range(5)
+    ]
+    _seed_findings(watcher_module, entries)
+
+    watcher_module.surface_pending()
+
+    by_fp = {f["fingerprint"]: f for f in watcher_module._iter_findings_raw()}
+
+    # All 10 highs were displayed → transitioned to surfaced
+    for i in range(10):
+        assert by_fp[f"hi_{i:013d}"]["status"] == "surfaced", (
+            f"high finding {i} should have been surfaced (displayed)"
+        )
+
+    # None of the 5 mediums were displayed → must remain open
+    for i in range(5):
+        assert by_fp[f"md_{i:013d}"]["status"] == "open", (
+            f"medium finding {i} was silently dropped — it wasn't "
+            "displayed but got marked surfaced anyway"
+        )
+
+
+def test_surface_pending_second_chime_picks_up_previously_hidden_mediums(
+    watcher_module, capsys
+):
+    """With the silent-drop fix: if a first chime hides mediums behind a
+    wall of highs, and those highs later get resolved/dismissed, the
+    mediums should re-surface on the next chime."""
+    # First chime: 10 highs + 3 mediums (mediums hidden)
+    entries = [
+        _make_raw_entry(f"hi_{i:013d}", severity="high", status="open")
+        for i in range(10)
+    ]
+    entries += [
+        _make_raw_entry(f"md_{i:013d}", severity="medium", status="open")
+        for i in range(3)
+    ]
+    _seed_findings(watcher_module, entries)
+
+    watcher_module.surface_pending()
+    first = capsys.readouterr().out
+    assert "[HIGH]" in first
+    assert "[MEDIUM]" not in first
+
+    # Resolve all 10 highs (user acted on them)
+    for i in range(10):
+        watcher_module.update_finding_status(f"hi_{i:013d}", "confirmed")
+    capsys.readouterr()  # discard resolve output
+
+    # Second chime: highs are resolved, mediums should now appear
+    watcher_module.surface_pending()
+    second = capsys.readouterr().out
+    assert "[MEDIUM]" in second, (
+        "previously-hidden mediums should resurface once the "
+        "critical/high queue drains"
+    )
+    assert "[HIGH]" not in second  # all resolved

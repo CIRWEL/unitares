@@ -70,12 +70,24 @@ OLLAMA_FALLBACK_URL = "http://localhost:11434/v1/chat/completions"
 DEFAULT_MODEL = "qwen3-coder-next:latest"
 DEFAULT_TIMEOUT = 45
 
-# How many lines of context to include around an edit when no explicit region
-# is given
-DEFAULT_CONTEXT_LINES = 200
+# How many lines of context to include when no explicit region is given.
+# Qwen3-Coder-Next (the current default detector) has a 256K context window,
+# and should_skip() already caps at 256KB of file bytes (~6500 lines at
+# typical density), so DEFAULT_CONTEXT_LINES is effectively a last-resort
+# sanity cap rather than a real limit. The old 200-line value was a
+# gemma4-era relic that silently truncated scans to the file head and
+# missed every bug past line 200. Ogler's third-round self-review caught
+# it on 2026-04-11.
+DEFAULT_CONTEXT_LINES = 10000
 
 # Age findings out after this many days
 FINDINGS_TTL_DAYS = 14
+
+# Cap for ~/Library/Logs/unitares-watcher.log rotation. Watcher logs a few
+# lines per scan; 5000 lines ≈ 500 scans of operational history, which is
+# plenty for debugging. Without this, the log file was a direct P002 match
+# against the Watcher's own pattern library — unbounded append forever.
+MAX_LOG_LINES = 5000
 
 # Paths we never scan — too much churn, not worth the noise
 SKIP_PATH_FRAGMENTS = (
@@ -167,6 +179,27 @@ def log(msg: str, level: str = "info") -> None:
         pass  # never let logging errors take down the watcher
     if os.environ.get("WATCHER_DEBUG") == "1":
         sys.stderr.write(line)
+
+
+def _rotate_log_if_needed() -> None:
+    """Trim LOG_FILE to the last MAX_LOG_LINES lines if it has grown past
+    the cap. Called once per scan_file() entry — not per log() call, to
+    keep the hot path cheap. Failures are silent: we'd rather leak a few
+    log lines than crash the watcher on a log rotation error.
+    """
+    if not LOG_FILE.exists():
+        return
+    try:
+        lines = LOG_FILE.read_text().splitlines()
+    except OSError:
+        return
+    if len(lines) <= MAX_LOG_LINES:
+        return
+    tail = lines[-MAX_LOG_LINES:]
+    try:
+        LOG_FILE.write_text("\n".join(tail) + "\n")
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -320,8 +353,15 @@ def call_model_via_governance(prompt: str, model: str, timeout: int) -> dict[str
                 "prompt": prompt,
                 "provider": "ollama",
                 "model": model,
-                "max_tokens": 2048,
-                "temperature": 0.1,
+                # max_tokens: Qwen3-Coder-Next uses ~40 tokens per finding.
+                # A rich scan with ~15 findings is ~600 tokens. 1024 gives
+                # 2.5× headroom without the 2048-era waste from when
+                # gemma4 was emitting its "reasoning" in the content field.
+                "max_tokens": 1024,
+                # temperature: 0.0, NOT 0.1. A detector workload is not
+                # creative writing — we want the same input to produce
+                # the same output. Ogler caught this on 2026-04-11.
+                "temperature": 0.0,
             },
         }
     ).encode()
@@ -351,8 +391,11 @@ def call_ollama_direct(prompt: str, model: str, timeout: int) -> dict[str, Any]:
         {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 2048,
-            "temperature": 0.1,
+            # Same rationale as call_model_via_governance above:
+            # trimmed max_tokens to match Qwen3 token economy, and
+            # temperature=0.0 for deterministic detector output.
+            "max_tokens": 1024,
+            "temperature": 0.0,
         }
     ).encode()
     req = urllib.request.Request(
@@ -753,9 +796,24 @@ def _format_findings_block(
     findings: list[dict[str, Any]],
     *,
     header: str,
-) -> str | None:
-    """Render the <unitares-watcher-findings> block. Returns None if there's
-    nothing to surface (caller should emit no output in that case).
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Render the <unitares-watcher-findings> block.
+
+    Returns ``(block, shown)`` where:
+      - ``block`` is the formatted string to print, or None if nothing
+        should be surfaced (empty list / all-low-severity).
+      - ``shown`` is the ordered list of findings that actually made it
+        into the displayed block. Callers use this to decide which
+        findings to transition to ``surfaced`` status — we only want to
+        mark findings the user actually saw, never the ones dropped by
+        the display cap.
+
+    The (block, shown) tuple shape replaces an earlier bug where
+    surface_pending marked ALL open findings as surfaced regardless of
+    whether the display cap had hidden them. Medium-severity findings
+    behind a wall of criticals would transition silently and then get
+    dedup'd on re-detection — effectively a silent drop of real signal.
+    Ogler caught it on 2026-04-11.
 
     Severity rules for the displayed subset:
       - critical/high: always shown
@@ -765,7 +823,7 @@ def _format_findings_block(
       - low: never shown (file-only signal)
     """
     if not findings:
-        return None
+        return None, []
 
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     findings = sorted(
@@ -783,7 +841,7 @@ def _format_findings_block(
         shown += medium[: 10 - len(shown)]
 
     if not shown:
-        return None
+        return None, []
 
     lines: list[str] = []
     lines.append("<unitares-watcher-findings>")
@@ -808,7 +866,7 @@ def _format_findings_block(
         "Dismiss: python3 scripts/ops/watcher_agent.py --dismiss <fingerprint>"
     )
     lines.append("</unitares-watcher-findings>")
-    return "\n".join(lines)
+    return "\n".join(lines), shown
 
 
 def print_unresolved() -> int:
@@ -821,7 +879,7 @@ def print_unresolved() -> int:
         for f in _iter_findings_raw()
         if f.get("status", "open") in ("open", "surfaced")
     ]
-    block = _format_findings_block(
+    block, _shown = _format_findings_block(
         findings,
         header=(
             "The UNITARES Watcher agent flagged the following unresolved code\n"
@@ -836,17 +894,23 @@ def print_unresolved() -> int:
 
 
 def surface_pending() -> int:
-    """Chime mode: print findings with status == 'open' and transition them
-    to 'surfaced'. Called by the UserPromptSubmit hook so each prompt the
-    user sends gets a delta of "what Watcher caught since your last prompt".
+    """Chime mode: print findings with status == 'open' and transition ONLY
+    THOSE ACTUALLY DISPLAYED to 'surfaced'. Called by the UserPromptSubmit
+    hook so each prompt the user sends gets a delta of "what Watcher caught
+    since your last prompt".
 
-    After this runs, the printed findings are recorded as surfaced, so the
-    next prompt's chime only shows NEW open findings from subsequent scans.
+    After this runs, the findings that were actually shown in the block are
+    recorded as surfaced. Any findings dropped by the severity display cap
+    (typically medium-severity findings crowded out by a wall of
+    critical/high) stay `open` so they'll appear on a later chime once the
+    high-severity queue drains. This prevents the silent-drop bug where
+    medium findings were previously marked surfaced without the user ever
+    seeing them.
     """
     all_findings = _iter_findings_raw()
     open_findings = [f for f in all_findings if f.get("status", "open") == "open"]
 
-    block = _format_findings_block(
+    block, shown = _format_findings_block(
         open_findings,
         header=(
             "Watcher caught the following while you were working. These are\n"
@@ -857,14 +921,11 @@ def surface_pending() -> int:
     if block is None:
         return 0
 
-    # Transition the exact set that was actually printed — but only the
-    # 'shown' subset? No: simpler & safer to mark ALL open findings as
-    # surfaced here, including any that were dropped by the display cap.
-    # Otherwise a medium-severity finding could get stuck at "open" forever
-    # on a session with many criticals and never transition.
     print(block)
 
-    surfaced_fps = {f.get("fingerprint") for f in open_findings}
+    # Only transition findings that made it past the display cap. The ones
+    # the user saw → surfaced. The ones crowded out → stay open.
+    surfaced_fps = {f.get("fingerprint") for f in shown}
     updated: list[dict[str, Any]] = []
     changed = False
     for f in all_findings:
@@ -875,7 +936,8 @@ def surface_pending() -> int:
     if changed:
         _write_findings_atomic(updated)
         log(
-            f"surface_pending: marked {len(surfaced_fps)} open → surfaced"
+            f"surface_pending: marked {len(surfaced_fps)} open → surfaced "
+            f"({len(open_findings) - len(surfaced_fps)} left pending for next chime)"
         )
     return 0
 
@@ -1075,6 +1137,7 @@ def scan_file(
     harness calls this with ``persist=False`` so synthetic results don't
     pollute the real findings feed.
     """
+    _rotate_log_if_needed()
     skip, reason = should_skip(file_path)
     if skip:
         log(f"skip {file_path}: {reason}")
