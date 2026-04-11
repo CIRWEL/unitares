@@ -121,3 +121,53 @@ def test_cycle_timeout_default_is_bounded(heartbeat_module):
         f"CYCLE_TIMEOUT={heartbeat_module.CYCLE_TIMEOUT} is outside the sane "
         "operational window (30s..600s)"
     )
+
+
+# ---------------------------------------------------------------------------
+# load_state JSON hardening (watcher P012, finding cb6ecd12)
+#
+# load_state() is read with .get(k, default) everywhere, so a non-dict payload
+# (null, list, hand-edited junk, half-written file) used to crash the heartbeat
+# cycle. We now type-check the parsed JSON and fall back to {}.
+# ---------------------------------------------------------------------------
+
+
+def test_load_state_returns_empty_when_file_missing(heartbeat_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(heartbeat_module, "STATE_FILE", tmp_path / "missing.json")
+    assert heartbeat_module.load_state() == {}
+
+
+def test_load_state_returns_dict_payload(heartbeat_module, tmp_path, monkeypatch):
+    state_file = tmp_path / "state.json"
+    state_file.write_text('{"total_cycles": 7, "gov_up_cycles": 5}')
+    monkeypatch.setattr(heartbeat_module, "STATE_FILE", state_file)
+    assert heartbeat_module.load_state() == {"total_cycles": 7, "gov_up_cycles": 5}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "null",
+        "[]",
+        '[1, 2, 3]',
+        '"just-a-string"',
+        "42",
+        "true",
+    ],
+)
+def test_load_state_rejects_non_dict_payload(heartbeat_module, tmp_path, monkeypatch, payload):
+    """Non-mapping JSON must be rejected so downstream .get() calls are safe."""
+    state_file = tmp_path / "state.json"
+    state_file.write_text(payload)
+    monkeypatch.setattr(heartbeat_module, "STATE_FILE", state_file)
+    result = heartbeat_module.load_state()
+    assert result == {}
+    # Proves callers can do .get() without crashing.
+    assert result.get("total_cycles", 0) == 0
+
+
+def test_load_state_rejects_corrupt_json(heartbeat_module, tmp_path, monkeypatch):
+    state_file = tmp_path / "state.json"
+    state_file.write_text("{not even close to json")
+    monkeypatch.setattr(heartbeat_module, "STATE_FILE", state_file)
+    assert heartbeat_module.load_state() == {}

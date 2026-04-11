@@ -190,10 +190,17 @@ def trim_log():
 
 
 def load_state() -> Dict[str, Any]:
-    """Load Vigil's cross-cycle state."""
+    """Load Vigil's cross-cycle state.
+
+    Callers access keys via ``.get(k, default)`` and assume a mapping, so we
+    type-check the parsed payload and fall back to an empty dict on anything
+    unexpected (corrupt file, hand-edited list/null, partial write survived).
+    """
     if STATE_FILE.exists():
         try:
-            return json.loads(STATE_FILE.read_text())
+            data = json.loads(STATE_FILE.read_text())
+            if isinstance(data, dict):
+                return data
         except Exception:
             pass
     return {}
