@@ -169,6 +169,47 @@ fail or hit stale data.
 
 **Hint template:** `docker postgres-age retired — use homebrew psql on 5432`
 
+### P016 — Nested-success-false swallowed in envelope parsing (severity: high)
+
+Parsing a wrapped response that has BOTH an outer envelope success flag and a
+nested inner success flag, but only checking ONE layer. The outer envelope can
+report transport-level success while the inner result reports semantic failure.
+Any code that does `if response["success"]: ...` (or `.success`) without also
+checking the nested `result.success` is this pattern — and the consequences are
+particularly nasty when the code then writes state based on the assumed success.
+
+**BAD (flag this):**
+```python
+if data.get("success"):
+    # writes session file based on nothing — inner may have failed
+    write_session(data.get("result", {}))
+```
+
+**GOOD — DO NOT FLAG:**
+```python
+if data.get("success") and data.get("result", {}).get("success"):
+    write_session(data["result"])
+```
+
+**Seen in:** `scripts/unitares` parse_onboard (fix commit 718ccd3, 2026-04-11).
+The server returned `success:true` at the envelope layer and
+`result.success:false` with reason `trajectory_required` when the identity
+already existed with an established EISV trajectory and needed verification or
+`force_new=true`. The CLI's parse_onboard only checked the envelope; cmd_onboard
+then wrote an empty `{agent_id: ...}` session file, **clobbering any valid
+continuity token that was already there**. Two regression tests in the same
+commit now guard against re-introduction
+(`test_parse_onboard_detects_nested_success_false`,
+`test_onboard_with_force_creates_fresh_identity`).
+
+**Why this is in the active library and not experimental:** the shape is
+reasonably lexical — the model can spot a conditional on one success flag
+that ignores a nested success flag in the same response object. If Qwen3
+starts false-positiving on legitimate single-layer responses (flat APIs that
+don't have nested envelopes), move this to experimental.
+
+**Hint template:** `nested result.success not checked — outer envelope lies`
+
 ## Experimental patterns
 
 These are real bug shapes that the 8B local model cannot reliably detect
