@@ -1,147 +1,462 @@
 #!/usr/bin/env bash
-# UNITARES CLI - Simple wrapper with automatic session management
+# UNITARES CLI — thin REST wrapper for the governance MCP server.
 # Usage: unitares <command> [args...]
+#
+# Environment:
+#   UNITARES_URL          Base URL (default: http://localhost:8767). A trailing
+#                         "/" or "/mcp" or "/mcp/" is stripped automatically so
+#                         accidental MCP-path suffixes don't break REST calls.
+#   UNITARES_AGENT        Stable agent name for X-Agent-Id (default:
+#                         cli-<shorthost>-<user>). Identity is bound to this.
+#   UNITARES_TOKEN        Optional bearer token; sent as Authorization header.
+#   UNITARES_SESSION_FILE Path to the local session JSON (default:
+#                         ~/.unitares_session.json).
 
-set -e
+set -u
+set -o pipefail
 
-UNITARES_URL="${UNITARES_URL:-http://localhost:8767}"
-SESSION_FILE="${HOME}/.unitares_session"
+# --- config ------------------------------------------------------------------
 
-# Get or create session ID
-get_session() {
-    if [ -f "$SESSION_FILE" ]; then
-        cat "$SESSION_FILE"
+_raw_url="${UNITARES_URL:-http://localhost:8767}"
+# Strip trailing slash, then any trailing /mcp (common mistake when pasting
+# the streamable-http URL into UNITARES_URL).
+_raw_url="${_raw_url%/}"
+_raw_url="${_raw_url%/mcp}"
+_raw_url="${_raw_url%/}"
+UNITARES_URL="$_raw_url"
+
+SESSION_FILE="${UNITARES_SESSION_FILE:-${HOME}/.unitares_session.json}"
+
+_default_agent="cli-$(hostname -s 2>/dev/null || echo host)-${USER:-user}"
+AGENT_ID="${UNITARES_AGENT:-$_default_agent}"
+
+TIMEOUT="${UNITARES_TIMEOUT:-15}"
+
+# --- session store -----------------------------------------------------------
+
+_py_read_field() {
+    local field="$1"
+    [ -f "$SESSION_FILE" ] || return 0
+    SESSION_FILE="$SESSION_FILE" FIELD="$field" python3 -c '
+import json, os, sys
+try:
+    with open(os.environ["SESSION_FILE"]) as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+value = data.get(os.environ["FIELD"])
+if value is not None:
+    print(value)
+' 2>/dev/null
+}
+
+_py_write_session() {
+    SESSION_FILE="$SESSION_FILE" AGENT_ID="$AGENT_ID" CSID="${1:-}" CTOKEN="${2:-}" python3 -c '
+import json, os
+payload = {"agent_id": os.environ["AGENT_ID"]}
+sid = os.environ.get("CSID") or ""
+token = os.environ.get("CTOKEN") or ""
+if sid:
+    payload["client_session_id"] = sid
+if token:
+    payload["continuity_token"] = token
+with open(os.environ["SESSION_FILE"], "w") as f:
+    json.dump(payload, f, indent=2)
+'
+}
+
+SESSION_ID="$(_py_read_field client_session_id || true)"
+CONT_TOKEN="$(_py_read_field continuity_token || true)"
+
+# --- HTTP --------------------------------------------------------------------
+
+_headers=(
+    -H "Content-Type: application/json"
+    -H "X-Agent-Id: ${AGENT_ID}"
+)
+[ -n "${SESSION_ID:-}" ] && _headers+=( -H "X-Session-ID: ${SESSION_ID}" )
+[ -n "${UNITARES_TOKEN:-}" ] && _headers+=( -H "Authorization: Bearer ${UNITARES_TOKEN}" )
+
+_curl_fetch() {
+    # _curl_fetch <method> <path> [post-body]
+    # Prints body on 2xx, emits error + returns 1 on any other HTTP status,
+    # and returns 2 on network failure.
+    local method="$1" path="$2" body="${3:-}"
+    local tmp code curl_rc
+    tmp=$(mktemp -t unitares_cli_XXXXXX)
+    if [ "$method" = "POST" ]; then
+        code=$(curl -s --max-time "$TIMEOUT" "${_headers[@]}" \
+            -X POST -d "$body" \
+            -o "$tmp" -w "%{http_code}" "${UNITARES_URL}${path}")
+        curl_rc=$?
     else
-        SESSION="cli-$(date +%Y%m%d)-$$"
-        echo "$SESSION" > "$SESSION_FILE"
-        echo "$SESSION"
+        code=$(curl -s --max-time "$TIMEOUT" "${_headers[@]}" \
+            -o "$tmp" -w "%{http_code}" "${UNITARES_URL}${path}")
+        curl_rc=$?
     fi
+    if [ $curl_rc -ne 0 ] || [ "$code" = "000" ]; then
+        echo "error: could not reach ${UNITARES_URL}${path} (curl exit ${curl_rc}, http ${code})" >&2
+        echo "hint: run 'unitares diag' to check reachability; UNITARES_URL=${UNITARES_URL}" >&2
+        rm -f "$tmp"
+        return 2
+    fi
+    if [ "${code:0:1}" != "2" ]; then
+        echo "error: HTTP ${code} from ${UNITARES_URL}${path}" >&2
+        if [ "${UNITARES_DEBUG:-0}" = "1" ]; then
+            echo "--- response body ---" >&2
+            head -c 2000 "$tmp" >&2
+            echo >&2
+        else
+            echo "hint: set UNITARES_DEBUG=1 to see response body; check UNITARES_URL." >&2
+        fi
+        rm -f "$tmp"
+        return 1
+    fi
+    cat "$tmp"
+    rm -f "$tmp"
 }
 
-SESSION=$(get_session)
-
-call_tool() {
-    local tool="$1"
-    local args="$2"
-    curl -s -X POST "${UNITARES_URL}/v1/tools/call" \
-        -H "Content-Type: application/json" \
-        -H "X-Session-ID: ${SESSION}" \
-        -d "{\"name\": \"${tool}\", \"arguments\": ${args}}"
+_curl_get() {
+    _curl_fetch GET "$1"
 }
 
-parse_onboard() {
-    python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-r = data.get('result', {})
-print(f'Welcome: {r.get(\"welcome\", r.get(\"message\", \"Onboarded\"))[:60]}')
-print(f'UUID: {r.get(\"uuid\", r.get(\"agent_uuid\", \"?\"))}')
-"
+_curl_post_tool() {
+    local tool="$1" args="${2:-{\}}"
+    # Inject known continuity material if present, then POST.
+    local payload
+    payload=$(TOOL="$tool" RAW_ARGS="$args" CSID="${SESSION_ID:-}" CTOKEN="${CONT_TOKEN:-}" python3 -c '
+import json, os, sys
+tool = os.environ["TOOL"]
+raw_args = os.environ.get("RAW_ARGS") or "{}"
+sid = os.environ.get("CSID") or ""
+token = os.environ.get("CTOKEN") or ""
+try:
+    args = json.loads(raw_args) if raw_args else {}
+except json.JSONDecodeError as exc:
+    sys.stderr.write(f"error: invalid JSON for arguments: {exc}\n")
+    sys.exit(2)
+if not isinstance(args, dict):
+    sys.stderr.write("error: arguments must be a JSON object\n")
+    sys.exit(2)
+if sid:
+    args.setdefault("client_session_id", sid)
+if token:
+    args.setdefault("continuity_token", token)
+print(json.dumps({"name": tool, "arguments": args}))
+') || return $?
+    _curl_fetch POST "/v1/tools/call" "$payload"
 }
 
-parse_update() {
-    python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-r = data.get('result', {})
-print(f'Verdict: {r.get(\"verdict\", \"?\")}')
-print(f'Coherence: {r.get(\"coherence\", \"?\")}')
-print(f'Risk: {r.get(\"risk_score\", \"?\")}')
-"
+_check_body() {
+    local body="$1" what="$2"
+    if [ -z "$body" ]; then
+        echo "error: empty response from ${UNITARES_URL} (${what})" >&2
+        echo "hint: check 'unitares diag' — the server may be unreachable or the URL has a stale path." >&2
+        return 1
+    fi
+    printf '%s' "$body"
 }
 
-parse_metrics() {
-    python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-r = data.get('result', {})
-def v(x): return x.get('value', x) if isinstance(x, dict) else x
-print(f'E={v(r.get(\"E\",0)):.2f} I={v(r.get(\"I\",0)):.2f} S={v(r.get(\"S\",0)):.2f} V={v(r.get(\"V\",0)):.2f}')
-print(f'Summary: {r.get(\"summary\", \"?\")}')
-"
+# --- pretty-printers ---------------------------------------------------------
+
+_pretty_json() {
+    python3 -c "import json,sys; print(json.dumps(json.loads(sys.stdin.read()), indent=2))" 2>/dev/null || cat
 }
 
 parse_health() {
-    python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-print(f'Status: {data.get(\"status\", \"?\")}')
-print(f'Version: {data.get(\"version\", \"?\")}')
-print(f'Uptime: {data.get(\"uptime\", {}).get(\"formatted\", \"?\")}')
-"
+    local body; body=$(cat)
+    BODY="$body" python3 -c '
+import json, os, sys
+try:
+    data = json.loads(os.environ["BODY"])
+except Exception as exc:
+    print("error: bad JSON from /health: " + str(exc), file=sys.stderr)
+    sys.exit(1)
+print("Status:  " + str(data.get("status", "?")))
+print("Version: " + str(data.get("version", "?")))
+uptime = data.get("uptime") or {}
+print("Uptime:  " + str(uptime.get("formatted", "?")))
+db = data.get("database") or {}
+print("DB:      " + str(db.get("status", "?")) + " (pool " + str(db.get("pool_size", "?")) + "/" + str(db.get("pool_max", "?")) + ")")
+'
+}
+
+parse_onboard() {
+    local body; body=$(cat)
+    BODY="$body" python3 -c '
+import json, os, sys
+try:
+    data = json.loads(os.environ["BODY"])
+except Exception as exc:
+    print("error: bad JSON from onboard: " + str(exc), file=sys.stderr)
+    sys.exit(1)
+r = data.get("result") or {}
+if data.get("success") is False or not r:
+    msg = data.get("error") or r.get("error") or "onboard failed"
+    print("error: " + str(msg), file=sys.stderr)
+    sys.exit(1)
+welcome = (r.get("welcome") or r.get("message") or "onboarded").strip()
+print("Welcome: " + welcome[:200])
+print("Agent:   " + str(r.get("display_name") or r.get("agent_id") or "?"))
+print("UUID:    " + str(r.get("uuid", "?")))
+'
+}
+
+parse_update() {
+    local body; body=$(cat)
+    BODY="$body" python3 -c '
+import json, os, sys
+try:
+    data = json.loads(os.environ["BODY"])
+except Exception as exc:
+    print("error: bad JSON from process_agent_update: " + str(exc), file=sys.stderr)
+    sys.exit(1)
+r = data.get("result") or {}
+if data.get("success") is False or not r:
+    msg = data.get("error") or r.get("error") or "update failed"
+    print("error: " + str(msg), file=sys.stderr)
+    sys.exit(1)
+print("Verdict: " + str(r.get("verdict", "?")))
+if "margin" in r:
+    print("Margin:  " + str(r.get("margin")))
+mirror = r.get("mirror") or []
+for line in mirror[:3]:
+    print("  - " + str(line))
+ia = r.get("identity_assurance") or {}
+if ia:
+    print("Identity: " + str(ia.get("tier", "?")) + " (" + str(ia.get("session_source", "?")) + ")")
+'
+}
+
+parse_metrics() {
+    local body; body=$(cat)
+    BODY="$body" python3 -c '
+import json, os, sys
+try:
+    data = json.loads(os.environ["BODY"])
+except Exception as exc:
+    print("error: bad JSON from get_governance_metrics: " + str(exc), file=sys.stderr)
+    sys.exit(1)
+r = data.get("result") or {}
+if not r:
+    print("error: empty metrics response", file=sys.stderr)
+    sys.exit(1)
+def v(x):
+    return x.get("value", x) if isinstance(x, dict) else x
+def f(x):
+    try:
+        return format(float(x), ".2f")
+    except Exception:
+        return str(x)
+E = v(r.get("E", 0))
+I = v(r.get("I", 0))
+S = v(r.get("S", 0))
+V = v(r.get("V", 0))
+print("Agent:   " + str(r.get("display_name") or r.get("agent_id", "?")))
+print("Status:  " + str(r.get("status", "?")))
+print("EISV:    E=" + f(E) + " I=" + f(I) + " S=" + f(S) + " V=" + f(V))
+print("Summary: " + str(r.get("summary", "?")))
+'
 }
 
 parse_tools() {
-    python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-print(f'Tools: {data.get(\"count\", \"?\")}/{data.get(\"total_available\", \"?\")} ({data.get(\"mode\", \"?\")} mode)')
-"
+    local body; body=$(cat)
+    BODY="$body" python3 -c '
+import json, os, sys
+try:
+    data = json.loads(os.environ["BODY"])
+except Exception as exc:
+    print("error: bad JSON from /v1/tools: " + str(exc), file=sys.stderr)
+    sys.exit(1)
+tools = data.get("tools") or []
+count = data.get("count") or len(tools)
+total = data.get("total_available", "?")
+mode = data.get("mode", "?")
+print("Tools: " + str(count) + "/" + str(total) + " (" + str(mode) + " mode)")
+def tool_name_desc(tool):
+    if not isinstance(tool, dict):
+        return str(tool), ""
+    # OpenAI-style: {"type":"function","function":{"name":...,"description":...}}
+    fn = tool.get("function")
+    if isinstance(fn, dict):
+        return str(fn.get("name", "?")), str(fn.get("description", ""))
+    # Fallback: flat shape
+    return str(tool.get("name", "?")), str(tool.get("description") or tool.get("hint") or "")
+for tool in tools[:20]:
+    name, desc = tool_name_desc(tool)
+    first_line = desc.split(".")[0][:60]
+    print("  " + name.ljust(32) + " " + first_line)
+more = len(tools) - 20
+if more > 0:
+    print("  ... +" + str(more) + " more")
+'
 }
 
-case "${1:-help}" in
-    onboard|o)
-        NAME="${2:-CLI-Agent}"
-        call_tool "onboard" "{\"name\": \"${NAME}\"}" | parse_onboard
-        echo "Session: ${SESSION}"
-        ;;
+# --- commands ----------------------------------------------------------------
 
-    update|u)
-        TEXT="${2:-Update}"
-        COMPLEXITY="${3:-0.5}"
-        call_tool "process_agent_update" "{\"response_text\": \"${TEXT}\", \"complexity\": ${COMPLEXITY}}" | parse_update
-        ;;
+cmd_diag() {
+    echo "UNITARES_URL    : ${UNITARES_URL}"
+    echo "UNITARES_AGENT  : ${AGENT_ID}"
+    echo "SESSION_FILE    : ${SESSION_FILE}"
+    echo "SESSION_ID      : ${SESSION_ID:-<none>}"
+    [ -n "${CONT_TOKEN:-}" ] && echo "CONTINUITY      : present (len=${#CONT_TOKEN})" || echo "CONTINUITY      : <none>"
+    echo
+    echo -n "Reachability    : "
+    local code
+    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${UNITARES_URL}/health" || echo "000")
+    if [ "$code" = "200" ]; then
+        echo "OK (${code})"
+    else
+        echo "FAIL (${code})"
+        return 1
+    fi
+}
 
-    metrics|m)
-        call_tool "get_governance_metrics" "{}" | parse_metrics
-        ;;
+cmd_onboard() {
+    local name="${1:-$AGENT_ID}" purpose="${2:-}"
+    local args
+    args=$(NAME="$name" PURPOSE="$purpose" python3 -c '
+import json, os
+args = {"name": os.environ["NAME"]}
+purpose = os.environ.get("PURPOSE") or ""
+if purpose:
+    args["purpose"] = purpose
+print(json.dumps(args))
+')
+    local body
+    body=$(_curl_post_tool "onboard" "$args") || return 1
+    _check_body "$body" "onboard" >/dev/null || return 1
 
-    health|h)
-        curl -s "${UNITARES_URL}/health" | parse_health
-        ;;
+    # Extract session + continuity token in a single python invocation.
+    local extracted sid token
+    extracted=$(BODY="$body" python3 -c '
+import json, os
+try:
+    data = json.loads(os.environ["BODY"])
+    r = data.get("result") or {}
+    print((r.get("client_session_id") or "") + "\t" + (r.get("continuity_token") or ""))
+except Exception:
+    print("\t")
+')
+    sid="${extracted%%	*}"
+    token="${extracted#*	}"
+    _py_write_session "$sid" "$token"
+    printf '%s' "$body" | parse_onboard
+    echo "Session: ${sid:-<none>}"
+}
 
-    tools|t)
-        curl -s "${UNITARES_URL}/v1/tools" | parse_tools
-        ;;
+cmd_update() {
+    local text="${1:-Update}" complexity="${2:-0.5}" confidence="${3:-0.6}"
+    local args
+    args=$(TEXT="$text" COMPLEXITY="$complexity" CONFIDENCE="$confidence" python3 -c '
+import json, os, sys
+try:
+    complexity = float(os.environ.get("COMPLEXITY") or 0.5)
+    confidence = float(os.environ.get("CONFIDENCE") or 0.6)
+except ValueError as exc:
+    sys.stderr.write("error: complexity/confidence must be numeric: " + str(exc) + "\n")
+    sys.exit(2)
+print(json.dumps({
+    "response_text": os.environ.get("TEXT") or "",
+    "complexity": complexity,
+    "confidence": confidence,
+}))
+') || return 1
+    local body
+    body=$(_curl_post_tool "process_agent_update" "$args") || return 1
+    _check_body "$body" "process_agent_update" >/dev/null || return 1
+    printf '%s' "$body" | parse_update
+}
 
-    call|c)
-        TOOL="$2"
-        ARGS="${3:-{}}"
-        call_tool "$TOOL" "$ARGS"
-        ;;
+cmd_metrics() {
+    local body
+    body=$(_curl_post_tool "get_governance_metrics" "{}") || return 1
+    _check_body "$body" "get_governance_metrics" >/dev/null || return 1
+    printf '%s' "$body" | parse_metrics
+}
 
-    reset)
-        rm -f "$SESSION_FILE"
-        echo "Session reset. Next command will create new identity."
-        ;;
+cmd_health() {
+    local body
+    body=$(_curl_get "/health") || return 1
+    _check_body "$body" "/health" >/dev/null || return 1
+    printf '%s' "$body" | parse_health
+}
 
-    session)
-        echo "Session ID: ${SESSION}"
-        echo "Stored in: ${SESSION_FILE}"
-        ;;
+cmd_tools() {
+    local body
+    body=$(_curl_get "/v1/tools") || return 1
+    _check_body "$body" "/v1/tools" >/dev/null || return 1
+    printf '%s' "$body" | parse_tools
+}
 
-    help|--help|-h|*)
-        cat << 'EOF'
-UNITARES CLI
+cmd_call() {
+    local tool="${1:-}" args="${2:-{\}}"
+    if [ -z "$tool" ]; then
+        echo "usage: unitares call <tool_name> [args_json]" >&2
+        return 2
+    fi
+    local body
+    body=$(_curl_post_tool "$tool" "$args") || return 1
+    _check_body "$body" "tool:$tool" >/dev/null || return 1
+    printf '%s' "$body" | _pretty_json
+}
+
+cmd_session() {
+    echo "Agent ID:     ${AGENT_ID}"
+    echo "Session file: ${SESSION_FILE}"
+    echo "Session ID:   ${SESSION_ID:-<none>}"
+    [ -n "${CONT_TOKEN:-}" ] && echo "Continuity:   present" || echo "Continuity:   <none>"
+    echo "URL:          ${UNITARES_URL}"
+}
+
+cmd_reset() {
+    rm -f "$SESSION_FILE"
+    echo "Session reset. Next onboard will create/resume identity for agent '${AGENT_ID}'."
+}
+
+cmd_help() {
+    cat <<'EOF'
+UNITARES CLI — REST wrapper for the governance MCP server
 
 Commands:
-  onboard [name]              Onboard with optional name
-  update "text" [complexity]  Log work (complexity 0-1, default 0.5)
-  metrics                     Show EISV governance metrics
-  health                      Check server health
-  tools                       List available tools
-  call <tool> [args_json]     Call any tool directly
-  session                     Show current session ID
-  reset                       Reset session (new identity)
-
-Examples:
-  unitares onboard "MyAgent"
-  unitares update "Fixed bug in auth module" 0.6
-  unitares metrics
-  unitares call list_agents '{}'
+  onboard [name] [purpose]          Onboard / resume identity
+  update "text" [complexity] [confidence]
+                                    Post a governance check-in (defaults: 0.5 / 0.6)
+  metrics                           Show EISV + summary
+  health                            Server health (GET /health)
+  tools                             List available tools (GET /v1/tools)
+  call <tool> [args_json]           Invoke any tool by name
+  session                           Show local session/identity state
+  reset                             Clear local session
+  diag                              Print config and server reachability
+  help                              Show this message
 
 Environment:
-  UNITARES_URL  Server URL (default: http://localhost:8767)
+  UNITARES_URL       Base URL (default: http://localhost:8767; /mcp suffix stripped)
+  UNITARES_AGENT     Stable agent name for X-Agent-Id
+  UNITARES_TOKEN     Optional bearer token
+  UNITARES_TIMEOUT   curl --max-time seconds (default: 15)
+
+Examples:
+  unitares diag
+  unitares onboard "kenny-laptop" "interactive dev work"
+  unitares update "Fixed CLI sanitization bug" 0.4 0.9
+  unitares metrics
+  unitares call list_agents '{}'
 EOF
-        ;;
+}
+
+# --- dispatch ----------------------------------------------------------------
+
+case "${1:-help}" in
+    onboard|o)   shift; cmd_onboard "$@" ;;
+    update|u)    shift; cmd_update "$@" ;;
+    metrics|m)   shift; cmd_metrics ;;
+    health|h)    shift; cmd_health ;;
+    tools|t)     shift; cmd_tools ;;
+    call|c)      shift; cmd_call "$@" ;;
+    session|s)   shift; cmd_session ;;
+    reset)       shift; cmd_reset ;;
+    diag|d)      shift; cmd_diag ;;
+    help|--help|-h|*) cmd_help ;;
 esac
