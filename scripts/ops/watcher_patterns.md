@@ -1,7 +1,7 @@
 # Watcher Pattern Library
 
 Curated bug patterns for the Watcher agent. Seeded from real incidents in the
-UNITARES project. The Watcher feeds this file to a local LLM (gemma4 via Ollama)
+UNITARES project. The Watcher feeds this file to a local LLM (qwen3-coder-next via Ollama)
 and asks for pattern-matches against recently edited code.
 
 **Edit freely.** Add patterns you've been bitten by. Remove patterns that produce

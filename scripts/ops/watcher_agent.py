@@ -3,7 +3,7 @@
 Watcher — Independent Bug-Pattern Observer
 
 A non-blocking agent that scans recently edited code for known-bad patterns
-using a local LLM (gemma4 via Ollama, routed through governance call_model).
+using a local LLM (qwen3-coder-next via Ollama, routed through governance call_model).
 Unlike Vigil (cron, janitorial) and Sentinel (continuous, analytical), Watcher
 is event-driven — fired by PostToolUse hooks on Edit/Write.
 
@@ -67,7 +67,7 @@ LOG_FILE = Path.home() / "Library" / "Logs" / "unitares-watcher.log"
 
 GOV_REST_URL = "http://localhost:8767/v1/tools/call"
 OLLAMA_FALLBACK_URL = "http://localhost:11434/v1/chat/completions"
-DEFAULT_MODEL = "gemma4:latest"
+DEFAULT_MODEL = "qwen3-coder-next:latest"
 DEFAULT_TIMEOUT = 45
 
 # How many lines of context to include around an edit when no explicit region
@@ -971,6 +971,12 @@ _PERSIST_VERB_PATTERN = re.compile(
 _PATTERN_REQUIRED_TOKENS: dict[str, tuple[str, ...]] = {
     "P001": ("create_task(",),
     "P003": ("UNITARESMonitor(",),
+    # P005 needs a literal acquire/cursor call on the flagged line.
+    # Without this, the model sometimes associates a P005 "resource leak"
+    # finding with the method DEFINITION (async def __aexit__, etc.)
+    # instead of the acquire call itself. Caught when qwen3-coder-next
+    # flagged postgres_backend.py:199 on 2026-04-11.
+    "P005": (".acquire(", ".cursor(", ".connect(", ".lock("),
     "P008": ("shell=True", "os.system(", "subprocess.run(", "subprocess.call("),
     "P012": ("json.loads(", "yaml.load(", "yaml.safe_load("),
 }
