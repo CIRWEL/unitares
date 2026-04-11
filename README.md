@@ -12,7 +12,7 @@ Status: live overview. For architecture truth and code-first authority ordering,
 
 UNITARES gives AI agents a shared language for inner state — four continuous variables derived from observable behavior — and a protocol to report work and read governance back. State is computed from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do.
 
-Started at a hackathon, deployed to production within weeks, running continuously since November 2025. The repo ships a governance server with MCP and HTTP APIs, a 5,932-test suite with 77% coverage, and sustained production check-in volume, including [Lumen](https://github.com/CIRWEL/anima-mcp) on a Raspberry Pi.
+Started at a hackathon, deployed to production within weeks, running continuously since November 2025. The repo ships a governance server with MCP and HTTP APIs, a test suite of 5,900+ passing at 77% coverage, and sustained production check-in volume, including [Lumen](https://github.com/CIRWEL/anima-mcp) on a Raspberry Pi.
 
 ---
 
@@ -192,7 +192,7 @@ April 2026:
 | Knowledge graph entries | Four figures |
 | EISV (Lumen, illustrative) | E≈0.72, I≈0.75, S≈0.20, V≈-0.04 |
 | V operating range | Active agents often within [-0.1, 0.1] |
-| Tests | 5,932 passing across 188 files (77% coverage) |
+| Tests | 5,900+ passing · 188 files · 77% coverage |
 
 [Lumen](https://github.com/CIRWEL/anima-mcp) is an embodied agent on a Raspberry Pi: sensors feed check-ins; local drawing is modulated by coherence-related dynamics. See [anima-mcp](https://github.com/CIRWEL/anima-mcp) for hardware and art pipeline details.
 
@@ -241,7 +241,7 @@ graph LR
 src/                   Server, tool schemas, behavioral state, knowledge graph, dialectic
   mcp_handlers/        Handlers: identity, lifecycle, knowledge, dialectic, observability, admin, CIRS, …
 dashboard/             Web dashboard (vanilla JS + Chart.js)
-tests/                 5,932 tests across 188 files
+tests/                 188 files, 5,900+ passing
 ```
 
 | Storage | Purpose | Required |
