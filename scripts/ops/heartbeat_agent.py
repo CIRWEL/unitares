@@ -131,19 +131,32 @@ def _mcp_connect(url: str):
 
 
 def load_session() -> Dict[str, Optional[str]]:
-    """Load saved session data (client_session_id + continuity_token)."""
+    """Load saved session data (client_session_id + continuity_token).
+
+    Accepts two on-disk shapes:
+      * a JSON object (current format)
+      * a bare JSON string (legacy format, migrated in place)
+
+    Anything else — a list, a number, null, or a non-JSON file — is
+    discarded. The previous implementation fell through to
+    ``str(data)``, which happily converted e.g. ``[1, 2, 3]`` into the
+    literal string ``"[1, 2, 3]"`` and persisted it as a bogus
+    ``client_session_id``. We'd rather start fresh than corrupt state.
+    """
     if SESSION_FILE.exists():
         try:
             data = json.loads(SESSION_FILE.read_text())
             if isinstance(data, dict):
                 return data
-            # Migrate old format (bare string)
-            return {"client_session_id": data if isinstance(data, str) else str(data)}
+            if isinstance(data, str) and data:
+                # Migrate legacy bare-string format.
+                return {"client_session_id": data}
+            # list / number / null / bool → reject, fall through to {}
         except (json.JSONDecodeError, Exception):
-            # Try as plain text (old format)
+            # Try as plain text (pre-JSON legacy format)
             try:
                 text = SESSION_FILE.read_text().strip()
-                if text:
+                if text and not text.startswith(("{", "[")):
                     return {"client_session_id": text}
             except Exception:
                 pass

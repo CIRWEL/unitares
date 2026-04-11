@@ -171,3 +171,84 @@ def test_load_state_rejects_corrupt_json(heartbeat_module, tmp_path, monkeypatch
     state_file.write_text("{not even close to json")
     monkeypatch.setattr(heartbeat_module, "STATE_FILE", state_file)
     assert heartbeat_module.load_state() == {}
+
+
+# ---------------------------------------------------------------------------
+# load_session JSON hardening (watcher P012, finding c26e9d5a)
+#
+# load_session used to fall through to ``{"client_session_id": str(data)}``
+# for any non-dict payload, which silently turned a list like [1, 2, 3] into
+# the literal string "[1, 2, 3]" and persisted it as a bogus session id.
+# The only legitimate non-dict shape is the legacy bare JSON string format;
+# everything else must be rejected so we start fresh rather than corrupt.
+# ---------------------------------------------------------------------------
+
+
+def test_load_session_returns_empty_when_file_missing(
+    heartbeat_module, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", tmp_path / "missing.json")
+    assert heartbeat_module.load_session() == {}
+
+
+def test_load_session_returns_dict_payload(heartbeat_module, tmp_path, monkeypatch):
+    session_file = tmp_path / "session.json"
+    session_file.write_text(
+        '{"client_session_id": "abc-123", "continuity_token": "tok"}'
+    )
+    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", session_file)
+    assert heartbeat_module.load_session() == {
+        "client_session_id": "abc-123",
+        "continuity_token": "tok",
+    }
+
+
+def test_load_session_migrates_legacy_bare_json_string(
+    heartbeat_module, tmp_path, monkeypatch
+):
+    """Legacy format: the whole file was just a JSON-encoded string id."""
+    session_file = tmp_path / "session.json"
+    session_file.write_text('"abc-123"')
+    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", session_file)
+    assert heartbeat_module.load_session() == {"client_session_id": "abc-123"}
+
+
+def test_load_session_migrates_legacy_plaintext(
+    heartbeat_module, tmp_path, monkeypatch
+):
+    """Even older format: plain text, not JSON at all."""
+    session_file = tmp_path / "session.json"
+    session_file.write_text("abc-123\n")
+    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", session_file)
+    assert heartbeat_module.load_session() == {"client_session_id": "abc-123"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "[1, 2, 3]",
+        "[]",
+        "null",
+        "42",
+        "true",
+        "false",
+    ],
+)
+def test_load_session_rejects_non_dict_non_string_payload(
+    heartbeat_module, tmp_path, monkeypatch, payload
+):
+    """A list / number / null / bool must NOT be coerced into a bogus id."""
+    session_file = tmp_path / "session.json"
+    session_file.write_text(payload)
+    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", session_file)
+    result = heartbeat_module.load_session()
+    assert result == {}, (
+        f"payload {payload!r} should be rejected, got {result!r}"
+    )
+
+
+def test_load_session_rejects_empty_string(heartbeat_module, tmp_path, monkeypatch):
+    session_file = tmp_path / "session.json"
+    session_file.write_text('""')
+    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", session_file)
+    assert heartbeat_module.load_session() == {}
