@@ -43,16 +43,21 @@ def check_dead_refs(md_files: list[Path]) -> list[str]:
             for pat in _PATH_PATTERNS:
                 for match in pat.finditer(line):
                     ref = match.group(1).rstrip(".,;:)")
-                    if ref in seen:
+                    # Strip trailing line-number suffixes like :73 or :99-124
+                    # so `src/foo.py:73` checks existence of `src/foo.py`, not a
+                    # literal file named `foo.py:73`. Line numbers in doc refs
+                    # are deliberate and drift independently of file existence.
+                    ref_path = re.sub(r":\d+(?:-\d+)?$", "", ref)
+                    if ref_path in seen:
                         continue
-                    seen.add(ref)
+                    seen.add(ref_path)
                     # Skip wildcards, placeholders, and example paths
-                    if any(c in ref for c in "*<>{}"):
+                    if any(c in ref_path for c in "*<>{}"):
                         continue
-                    if "/foo" in ref or "YYYY" in ref:
+                    if "/foo" in ref_path or "YYYY" in ref_path:
                         continue
                     # Check if file or directory exists
-                    candidate = REPO_ROOT / ref
+                    candidate = REPO_ROOT / ref_path
                     if not candidate.exists():
                         rel = fpath.relative_to(REPO_ROOT)
                         warnings.append(f"  {rel}:{i}: dead ref `{ref}`")
