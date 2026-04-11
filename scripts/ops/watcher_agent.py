@@ -728,6 +728,158 @@ def sweep_stale_findings() -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Surfacing — how findings reach the main Claude session
+#
+# Two hooks call the functions below:
+#
+#   SessionStart → --print-unresolved (read-only, shows open+surfaced so the
+#     new session sees the full backlog — if it only showed open, findings
+#     already "surfaced" in a previous session would silently disappear from
+#     context)
+#
+#   UserPromptSubmit → --surface-pending (chime mode: shows only open
+#     findings, transitions them to surfaced so the next prompt doesn't
+#     re-chime the same items)
+#
+# Both print a <unitares-watcher-findings> block that the Claude Code hook
+# system injects as additionalContext. The formatter is shared between the
+# two commands so the block shape stays consistent no matter which hook
+# emitted it.
+# ---------------------------------------------------------------------------
+
+
+def _format_findings_block(
+    findings: list[dict[str, Any]],
+    *,
+    header: str,
+) -> str | None:
+    """Render the <unitares-watcher-findings> block. Returns None if there's
+    nothing to surface (caller should emit no output in that case).
+
+    Severity rules for the displayed subset:
+      - critical/high: always shown
+      - medium: shown only if there's room under the 10-item display cap
+        reserved for critical+high (keeps session context from drowning in
+        medium-severity noise while still surfacing some)
+      - low: never shown (file-only signal)
+    """
+    if not findings:
+        return None
+
+    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    findings = sorted(
+        findings,
+        key=lambda f: (
+            severity_order.get(f.get("severity", "low"), 9),
+            f.get("detected_at", ""),
+        ),
+    )
+
+    critical_high = [f for f in findings if f.get("severity") in ("critical", "high")]
+    medium = [f for f in findings if f.get("severity") == "medium"]
+    shown = critical_high[:]
+    if len(shown) < 10:
+        shown += medium[: 10 - len(shown)]
+
+    if not shown:
+        return None
+
+    lines: list[str] = []
+    lines.append("<unitares-watcher-findings>")
+    lines.append(header)
+    lines.append("")
+    for f in shown:
+        sev = str(f.get("severity", "?")).upper()
+        pat = f.get("pattern", "?")
+        file = f.get("file", "?")
+        line_no = f.get("line", "?")
+        hint = f.get("hint", "")
+        fp = str(f.get("fingerprint", ""))[:8]
+        status = f.get("status", "open")
+        marker = "" if status == "open" else f" ({status})"
+        lines.append(f"  [{sev}] {pat} {file}:{line_no} — {hint}  (#{fp}){marker}")
+    lines.append("")
+    lines.append(f"Total unresolved: {len(findings)} (showing {len(shown)})")
+    lines.append(
+        "Resolve: python3 scripts/ops/watcher_agent.py --resolve <fingerprint>"
+    )
+    lines.append(
+        "Dismiss: python3 scripts/ops/watcher_agent.py --dismiss <fingerprint>"
+    )
+    lines.append("</unitares-watcher-findings>")
+    return "\n".join(lines)
+
+
+def print_unresolved() -> int:
+    """Print the unresolved-findings block (open + surfaced) without mutating
+    state. Called by the SessionStart hook — it's read-only so session starts
+    never accidentally reshape the findings state.
+    """
+    findings = [
+        f
+        for f in _iter_findings_raw()
+        if f.get("status", "open") in ("open", "surfaced")
+    ]
+    block = _format_findings_block(
+        findings,
+        header=(
+            "The UNITARES Watcher agent flagged the following unresolved code\n"
+            "patterns in recently edited files. Watcher has a track record — these\n"
+            "are not noise. Investigate or explicitly --dismiss them."
+        ),
+    )
+    if block is None:
+        return 0
+    print(block)
+    return 0
+
+
+def surface_pending() -> int:
+    """Chime mode: print findings with status == 'open' and transition them
+    to 'surfaced'. Called by the UserPromptSubmit hook so each prompt the
+    user sends gets a delta of "what Watcher caught since your last prompt".
+
+    After this runs, the printed findings are recorded as surfaced, so the
+    next prompt's chime only shows NEW open findings from subsequent scans.
+    """
+    all_findings = _iter_findings_raw()
+    open_findings = [f for f in all_findings if f.get("status", "open") == "open"]
+
+    block = _format_findings_block(
+        open_findings,
+        header=(
+            "Watcher caught the following while you were working. These are\n"
+            "new since your last prompt. Look them over before proceeding — or\n"
+            "dismiss any false positives with --dismiss <fingerprint>."
+        ),
+    )
+    if block is None:
+        return 0
+
+    # Transition the exact set that was actually printed — but only the
+    # 'shown' subset? No: simpler & safer to mark ALL open findings as
+    # surfaced here, including any that were dropped by the display cap.
+    # Otherwise a medium-severity finding could get stuck at "open" forever
+    # on a session with many criticals and never transition.
+    print(block)
+
+    surfaced_fps = {f.get("fingerprint") for f in open_findings}
+    updated: list[dict[str, Any]] = []
+    changed = False
+    for f in all_findings:
+        if f.get("fingerprint") in surfaced_fps and f.get("status", "open") == "open":
+            f = {**f, "status": "surfaced"}
+            changed = True
+        updated.append(f)
+    if changed:
+        _write_findings_atomic(updated)
+        log(
+            f"surface_pending: marked {len(surfaced_fps)} open → surfaced"
+        )
+    return 0
+
+
 def compact_findings(max_age_days: int = 7, now: datetime | None = None) -> int:
     """Rewrite findings.jsonl dropping confirmed/dismissed/aged_out entries
     older than ``max_age_days``.
@@ -1096,6 +1248,16 @@ def main() -> int:
         default=7,
         help="age cutoff for --compact (default: 7 days)",
     )
+    parser.add_argument(
+        "--print-unresolved",
+        action="store_true",
+        help="print the unresolved-findings block (open+surfaced) without mutating state",
+    )
+    parser.add_argument(
+        "--surface-pending",
+        action="store_true",
+        help="print open findings as a chime block and transition them to surfaced",
+    )
     args = parser.parse_args()
 
     if args.self_test:
@@ -1110,6 +1272,10 @@ def main() -> int:
         return sweep_stale_findings()
     if args.compact:
         return compact_findings(max_age_days=args.compact_days)
+    if args.print_unresolved:
+        return print_unresolved()
+    if args.surface_pending:
+        return surface_pending()
     if not args.file:
         parser.print_help()
         return 1

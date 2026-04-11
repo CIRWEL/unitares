@@ -777,3 +777,255 @@ def test_write_findings_atomic_leaves_no_temp_file(watcher_module):
         watcher_module.FINDINGS_FILE.suffix + ".tmp"
     )
     assert not tmp.exists(), "atomic write must rename, not leave a .tmp sibling"
+
+
+# ---------------------------------------------------------------------------
+# Surfacing — the chime-in path
+#
+# Two commands back the two hooks that inject findings into the main Claude
+# session: --print-unresolved (SessionStart, read-only, shows open+surfaced)
+# and --surface-pending (UserPromptSubmit, chime mode, shows only open and
+# transitions them to surfaced so the next prompt doesn't repeat them).
+# ---------------------------------------------------------------------------
+
+
+def test_format_findings_block_returns_none_on_empty(watcher_module):
+    assert watcher_module._format_findings_block([], header="x") is None
+
+
+def test_format_findings_block_suppresses_low_severity(watcher_module):
+    """Low-severity findings are file-only signal; they must never show up
+    in an injected block because the display cap is already tight and
+    session context is precious."""
+    findings = [
+        _make_raw_entry("low_____00000000", severity="low"),
+        _make_raw_entry("low_____11111111", severity="low"),
+    ]
+    block = watcher_module._format_findings_block(findings, header="x")
+    assert block is None
+
+
+def test_format_findings_block_never_hides_critical_or_high(watcher_module):
+    """Critical and high findings are never capped — hiding them to save
+    context would be more dangerous than a long chime. The display cap
+    (10 items) only applies to medium-severity, which is rationed
+    against the room left after all critical+high are shown."""
+    findings = [
+        _make_raw_entry(f"fp_{i:013d}", severity="high")
+        for i in range(15)
+    ]
+    block = watcher_module._format_findings_block(findings, header="x")
+    assert block is not None
+    shown_count = sum(1 for line in block.splitlines() if line.startswith("  ["))
+    assert shown_count == 15, f"all 15 high findings must show; got {shown_count}"
+    assert "Total unresolved: 15" in block
+
+
+def test_format_findings_block_caps_medium_when_criticals_leave_no_room(
+    watcher_module,
+):
+    """With 10+ critical/high findings, medium-severity is fully suppressed
+    (no slots left under the 10-item budget reserved for critical+high)."""
+    findings = [
+        _make_raw_entry(f"hi_{i:013d}", severity="high") for i in range(10)
+    ] + [
+        _make_raw_entry(f"md_{i:013d}", severity="medium") for i in range(5)
+    ]
+    block = watcher_module._format_findings_block(findings, header="x")
+    assert block is not None
+    assert "[HIGH]" in block
+    assert "[MEDIUM]" not in block  # no budget left after 10 highs
+
+
+def test_format_findings_block_rations_medium_alongside_criticals(
+    watcher_module,
+):
+    """With 3 critical findings, 7 medium slots remain under the 10-item
+    budget. A 15-medium queue must be capped to exactly 7."""
+    findings = [
+        _make_raw_entry(f"crit_{i:011d}", severity="critical") for i in range(3)
+    ] + [
+        _make_raw_entry(f"med__{i:011d}", severity="medium") for i in range(15)
+    ]
+    block = watcher_module._format_findings_block(findings, header="x")
+    assert block is not None
+    med_lines = [l for l in block.splitlines() if "[MEDIUM]" in l]
+    crit_lines = [l for l in block.splitlines() if "[CRITICAL]" in l]
+    assert len(crit_lines) == 3
+    assert len(med_lines) == 7
+
+
+def test_format_findings_block_prioritizes_critical_over_medium(watcher_module):
+    findings = [
+        _make_raw_entry("med_____00000000", severity="medium"),
+        _make_raw_entry("crit____00000000", severity="critical"),
+        _make_raw_entry("high____00000000", severity="high"),
+    ]
+    block = watcher_module._format_findings_block(findings, header="x")
+    assert block is not None
+    # Critical should appear before high, which should appear before medium
+    crit_pos = block.find("[CRITICAL]")
+    high_pos = block.find("[HIGH]")
+    med_pos = block.find("[MEDIUM]")
+    assert 0 <= crit_pos < high_pos < med_pos
+
+
+# --- print_unresolved (SessionStart hook, read-only) -----------------------
+
+
+def test_print_unresolved_shows_both_open_and_surfaced(
+    watcher_module, capsys
+):
+    """Regression: session-start must include findings that were already
+    surfaced in a prior session. If it only showed status=='open', the
+    chime-transitioned findings would disappear across restarts and the
+    new session would start with stale context."""
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry("open____00000000", status="open"),
+            _make_raw_entry("surfac__00000000", status="surfaced"),
+            _make_raw_entry("confir__00000000", status="confirmed"),
+            _make_raw_entry("dismis__00000000", status="dismissed"),
+            _make_raw_entry("aged____00000000", status="aged_out"),
+        ],
+    )
+    rc = watcher_module.print_unresolved()
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "open____" in captured.out
+    assert "surfac__" in captured.out
+    assert "confir__" not in captured.out
+    assert "dismis__" not in captured.out
+    assert "aged____" not in captured.out
+
+
+def test_print_unresolved_does_not_mutate_status(watcher_module):
+    _seed_findings(
+        watcher_module,
+        [_make_raw_entry("open____00000000", status="open")],
+    )
+    watcher_module.print_unresolved()
+    after = watcher_module._iter_findings_raw()
+    # Critical: calling --print-unresolved at SessionStart must NEVER change
+    # state, otherwise the chime-mode would never have anything new to show.
+    assert after[0]["status"] == "open"
+
+
+def test_print_unresolved_silent_on_empty(watcher_module, capsys):
+    rc = watcher_module.print_unresolved()
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_print_unresolved_silent_when_only_resolved(watcher_module, capsys):
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry("confir__00000000", status="confirmed"),
+            _make_raw_entry("dismis__00000000", status="dismissed"),
+        ],
+    )
+    rc = watcher_module.print_unresolved()
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+# --- surface_pending (UserPromptSubmit hook, chime mode) -------------------
+
+
+def test_surface_pending_transitions_open_to_surfaced(watcher_module):
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry("open____00000000", status="open"),
+            _make_raw_entry("surfac__00000000", status="surfaced"),
+        ],
+    )
+    watcher_module.surface_pending()
+    after = {f["fingerprint"]: f["status"] for f in watcher_module._iter_findings_raw()}
+    assert after["open____00000000"] == "surfaced"
+    # Already-surfaced findings stay surfaced (no-op on them)
+    assert after["surfac__00000000"] == "surfaced"
+
+
+def test_surface_pending_only_prints_when_there_are_new_open_findings(
+    watcher_module, capsys
+):
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry("surfac__00000000", status="surfaced"),
+            _make_raw_entry("confir__00000000", status="confirmed"),
+        ],
+    )
+    rc = watcher_module.surface_pending()
+    assert rc == 0
+    captured = capsys.readouterr()
+    # No 'open' findings → nothing to chime → empty stdout. The
+    # UserPromptSubmit hook must stay silent when there's nothing new.
+    assert captured.out == ""
+
+
+def test_surface_pending_leaves_confirmed_dismissed_untouched(watcher_module):
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry("open____00000000", status="open"),
+            _make_raw_entry("confir__00000000", status="confirmed"),
+            _make_raw_entry("dismis__00000000", status="dismissed"),
+        ],
+    )
+    watcher_module.surface_pending()
+    after = {f["fingerprint"]: f["status"] for f in watcher_module._iter_findings_raw()}
+    assert after["open____00000000"] == "surfaced"
+    assert after["confir__00000000"] == "confirmed"
+    assert after["dismis__00000000"] == "dismissed"
+
+
+def test_surface_pending_chimes_then_goes_silent_on_second_call(
+    watcher_module, capsys
+):
+    """This is the core chime contract: a fresh open finding chimes once,
+    then the next call produces nothing until new open findings arrive.
+    Without this, every prompt would re-chime the same findings until the
+    user resolved them manually."""
+    _seed_findings(
+        watcher_module,
+        [_make_raw_entry("open____00000000", status="open")],
+    )
+
+    # First call — chime fires
+    watcher_module.surface_pending()
+    first = capsys.readouterr().out
+    assert "open____" in first
+    assert "unitares-watcher-findings" in first
+
+    # Second call — nothing to chime
+    watcher_module.surface_pending()
+    second = capsys.readouterr().out
+    assert second == ""
+
+
+def test_surface_pending_new_finding_after_chime_still_fires(
+    watcher_module, capsys
+):
+    _seed_findings(
+        watcher_module,
+        [_make_raw_entry("first___00000000", status="open")],
+    )
+    watcher_module.surface_pending()
+    capsys.readouterr()  # discard
+
+    # Simulate a background scan adding a new open finding
+    existing = watcher_module._iter_findings_raw()
+    existing.append(_make_raw_entry("second__00000000", status="open"))
+    watcher_module._write_findings_atomic(existing)
+
+    watcher_module.surface_pending()
+    captured = capsys.readouterr().out
+    assert "second__" in captured
+    # First finding was already surfaced and must NOT re-chime
+    assert "first___" not in captured
