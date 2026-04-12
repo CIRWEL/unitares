@@ -44,10 +44,11 @@ analysis = [
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-testpaths = ["tests"]
+testpaths = ["tests", "agents"]
 pythonpath = ["."]
 addopts = [
     "--cov=src",
+    "--cov=agents",
     "--cov-report=term-missing",
     "--cov-fail-under=25",
     "-v",

@@ -20,7 +20,7 @@ UNITARES governance MCP server. Thermodynamic governance framework for AI agents
 
 ## Before Committing
 
-- **ALWAYS run `python3 -m pytest tests/ -q --tb=short -x` before committing**
+- **ALWAYS run `python3 -m pytest tests/ agents/ -q --tb=short -x` before committing**
 - Fix any test failures your changes introduce — do not commit broken tests
 - If you change a function's behavior or signature, update its tests in the same commit
 - If you do a mechanical refactor (renames, import changes), update affected test mocks before committing
