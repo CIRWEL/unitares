@@ -280,8 +280,8 @@ class FleetState:
                 self.agents[agent_id] = AgentSnapshot(agent_id, event.get("agent_name", ""))
             self.agents[agent_id].record(event)
 
-    def analyze(self) -> List[Dict[str, Any]]:
-        """Run fleet-wide anomaly detection. Returns list of findings."""
+    def analyze(self, self_agent_id: str = "") -> List[Dict[str, Any]]:
+        """Run fleet-wide anomaly detection. Self-findings are tagged, not excluded."""
         findings: List[Dict[str, Any]] = []
         now = time.time()
 
@@ -323,11 +323,13 @@ class FleetState:
                     for aid, name, s in entropies:
                         z = (s - mean_s) / std_s
                         if z >= FLEET_ENTROPY_SIGMA:
+                            is_self = (aid == self_agent_id)
                             findings.append({
                                 "type": "entropy_outlier",
-                                "severity": "medium",
+                                "severity": "info" if is_self else "medium",
                                 "summary": f"{name or aid[:8]} entropy outlier (z={z:.1f}, S={s:.3f})",
                                 "agents": [aid],
+                                "self_observation": is_self,
                             })
 
         # --- 3. Verdict distribution shift ---
@@ -673,25 +675,33 @@ class SentinelAgent:
     async def run_analysis_cycle(self) -> str:
         """Run one analysis cycle: detect anomalies, check in to governance."""
         self._cycle_count += 1
-        findings = self.fleet.analyze()
+        findings = self.fleet.analyze(self_agent_id=self.agent_uuid or "")
         fleet = self.fleet.fleet_summary()
+
+        # Separate self-observations from fleet findings
+        fleet_findings = [f for f in findings if not f.get("self_observation")]
+        self_findings = [f for f in findings if f.get("self_observation")]
 
         # Build check-in text
         parts = [f"Cycle {self._cycle_count}"]
         parts.append(f"Fleet: {fleet['active_agents']} agents")
         parts.append(f"WS: {'connected' if self._ws_connected else 'DISCONNECTED'}")
 
-        if findings:
-            self._findings_total += len(findings)
-            for f in findings:
+        if fleet_findings:
+            self._findings_total += len(fleet_findings)
+            for f in fleet_findings:
                 parts.append(f"[{f['severity'].upper()}] {f['summary']}")
                 log(f"FINDING: [{f['severity']}] {f['summary']}")
-                # macOS notification for high severity
                 if f["severity"] == "high":
                     notify("Sentinel", f["summary"])
 
-        issues = len([f for f in findings if f["severity"] == "high"])
-        complexity = min(1.0, 0.2 + len(findings) * 0.15 + (0.1 if not self._ws_connected else 0))
+        # Self-observations: log but don't count toward complexity
+        for f in self_findings:
+            parts.append(f"[SELF] {f['summary']}")
+            log(f"SELF-OBS: {f['summary']}")
+
+        issues = len([f for f in fleet_findings if f["severity"] == "high"])
+        complexity = min(1.0, 0.2 + len(fleet_findings) * 0.15 + (0.1 if not self._ws_connected else 0))
         confidence = max(0.4, 0.85 - issues * 0.1 - (0.15 if not self._ws_connected else 0))
 
         summary = " | ".join(parts)
@@ -713,8 +723,8 @@ class SentinelAgent:
                         "response_mode": "compact",
                     })
 
-                    # Leave KG notes for significant findings
-                    for f in findings:
+                    # Leave KG notes for significant fleet findings (not self-observations)
+                    for f in fleet_findings:
                         if f["severity"] == "high":
                             await self.call_tool(session, "leave_note", {
                                 "summary": f"[Sentinel] {f['summary']}",
