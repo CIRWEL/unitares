@@ -371,7 +371,8 @@ function renderStuckAgentsForModal(agents) {
         const trustTier = agentData?.trust_tier || 0;
         const tierNames = ['Unknown', 'Emerging', 'Established', 'Verified'];
         const tierName = tierNames[trustTier] || 'Unknown';
-        const lastUpdate = agentData?.last_update ? new Date(agentData.last_update).toLocaleString() : '—';
+        const lastUpdate = agentData?.last_update ? formatTimestamp(agentData.last_update) : '—';
+        const stuckSince = stuck.age_minutes ? formatTimestamp(Date.now() - stuck.age_minutes * 60000) : null;
         const purpose = agentData?.purpose || '—';
 
         return `
@@ -425,7 +426,8 @@ function renderStuckAgentsForModal(agents) {
                 </div>
                 <div class="stuck-agent-footer">
                     <span class="stuck-agent-id" title="Click to copy">${escapeHtml(stuck.agent_id)}</span>
-                    <span class="stuck-agent-last-update">Last: ${lastUpdate}</span>
+                    ${stuckSince ? `<span class="stuck-agent-last-update">Stuck since: ${stuckSince}</span>` : ''}
+                    <span class="stuck-agent-last-update">Last update: ${lastUpdate}</span>
                 </div>
             </div>`;
     }).join('')}</div>`;
@@ -1421,10 +1423,10 @@ async function loadDiscoveries(searchQuery = '') {
                 }
             } else if (d.created_at) {
                 dateObj = new Date(d.created_at);
-                dateStr = !isNaN(dateObj.getTime()) ? dateObj.toLocaleString() : d.created_at;
+                dateStr = !isNaN(dateObj.getTime()) ? formatTimestamp(d.created_at) : d.created_at;
             } else if (d.timestamp) {
                 dateObj = new Date(d.timestamp);
-                dateStr = !isNaN(dateObj.getTime()) ? dateObj.toLocaleString() : d.timestamp;
+                dateStr = !isNaN(dateObj.getTime()) ? formatTimestamp(d.timestamp) : d.timestamp;
             }
 
             const timestampMs = dateObj ? dateObj.getTime() : null;
@@ -2135,7 +2137,7 @@ if (stuckAgentsCard) {
         } else {
             html += incidents.map(function (inc) {
                 const d = inc.details || {};
-                const when = formatRelativeTime ? formatRelativeTime(inc.timestamp) : new Date(inc.timestamp).toLocaleString();
+                const when = formatRelativeTime ? formatRelativeTime(inc.timestamp) : formatTimestamp(inc.timestamp);
                 const names = (d.agents || []).map(a => escapeHtml(a.agent_name || a.agent_id || '?')).join(', ');
                 return '<div style="padding:6px 8px; border-left:2px solid var(--accent-orange); margin-bottom:4px; font-size:12px;">' +
                     '<span style="opacity:0.5;">' + when + '</span> &mdash; ' +
@@ -2223,7 +2225,7 @@ if (anomaliesCard) {
             } else {
                 html += incidents.map(function (inc) {
                     const d = inc.details || {};
-                    const when = formatRelativeTime ? formatRelativeTime(inc.timestamp) : new Date(inc.timestamp).toLocaleString();
+                    const when = formatRelativeTime ? formatRelativeTime(inc.timestamp) : formatTimestamp(inc.timestamp);
                     const items = (d.anomalies || []).map(a => escapeHtml(a.type || '?') + ' (' + escapeHtml(a.severity || '') + ')').join(', ');
                     return '<div style="padding:6px 8px; border-left:2px solid var(--accent-orange); margin-bottom:4px; font-size:12px;">' +
                         '<span style="opacity:0.5;">' + when + '</span> &mdash; ' +

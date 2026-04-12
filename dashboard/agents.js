@@ -117,13 +117,13 @@
     function formatAgentTimestamp(agent) {
         var lastUpdateDate = agent.last_update ? new Date(agent.last_update) : null;
         if (lastUpdateDate && !isNaN(lastUpdateDate.getTime())) {
-            var lastUpdate = lastUpdateDate.toLocaleString();
+            var lastUpdate = DataProcessor.formatTimestamp(agent.last_update);
             var relative = formatRelativeTime(lastUpdateDate.getTime());
             return relative ? 'Updated ' + lastUpdate + ' (' + relative + ')' : 'Updated ' + lastUpdate;
         }
         var createdDate = agent.created_at ? new Date(agent.created_at) : null;
         if (createdDate && !isNaN(createdDate.getTime())) {
-            var created = createdDate.toLocaleString();
+            var created = DataProcessor.formatTimestamp(agent.created_at);
             var relative2 = formatRelativeTime(createdDate.getTime());
             return relative2 ? 'Created ' + created + ' (' + relative2 + ')' : 'Created ' + created;
         }

@@ -416,7 +416,14 @@ class DataProcessor {
         if (!timestamp) return null;
         const date = new Date(timestamp);
         if (isNaN(date.getTime())) return null;
-        return date.toLocaleString();
+        const now = new Date();
+        const sameYear = date.getFullYear() === now.getFullYear();
+        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const month = monthNames[date.getMonth()];
+        const day = date.getDate();
+        const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        if (sameYear) return `${month} ${day}, ${time}`;
+        return `${month} ${day} ${date.getFullYear()}, ${time}`;
     }
 
     /**
