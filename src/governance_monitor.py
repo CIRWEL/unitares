@@ -1012,6 +1012,12 @@ class UNITARESMonitor:
                 'void_active': void_active,
                 'unitares_verdict': unitares_verdict,
                 'beh_obs': [round(beh_E_obs, 4), round(beh_I_obs, 4), round(beh_S_obs, 4)],
+                'drift': {
+                    'emotional': round(drift_vector.calibration_deviation, 4),
+                    'epistemic': round(drift_vector.coherence_deviation, 4),
+                    'behavioral': round(drift_vector.stability_deviation, 4),
+                    'norm': round(drift_vector.norm, 4),
+                },
                 'continuity': {
                     'derived_cx': round(continuity_metrics.derived_complexity, 4),
                     'self_cx': round(continuity_metrics.self_complexity, 4) if continuity_metrics.self_complexity is not None else None,
