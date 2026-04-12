@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 280" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="900" y2="280" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#161b22"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#58a6ff"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="node-e" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3fb950"/>
+      <stop offset="100%" stop-color="#2ea043"/>
+    </linearGradient>
+    <linearGradient id="node-i" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#58a6ff"/>
+      <stop offset="100%" stop-color="#388bfd"/>
+    </linearGradient>
+    <linearGradient id="node-s" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#d29922"/>
+      <stop offset="100%" stop-color="#bb8009"/>
+    </linearGradient>
+    <linearGradient id="node-v" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#6e40c9"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="soft-glow">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="280" rx="12" fill="url(#bg)"/>
+  <rect width="900" height="280" rx="12" fill="none" stroke="#30363d" stroke-width="1"/>
+
+  <!-- EISV Network Visualization (right side) -->
+  <g transform="translate(660, 140)" filter="url(#soft-glow)">
+    <!-- Connection lines -->
+    <line x1="0" y1="-60" x2="-65" y2="20" stroke="#30363d" stroke-width="1.5" opacity="0.6"/>
+    <line x1="0" y1="-60" x2="65" y2="20" stroke="#30363d" stroke-width="1.5" opacity="0.6"/>
+    <line x1="-65" y1="20" x2="0" y2="70" stroke="#30363d" stroke-width="1.5" opacity="0.6"/>
+    <line x1="65" y1="20" x2="0" y2="70" stroke="#30363d" stroke-width="1.5" opacity="0.6"/>
+    <line x1="-65" y1="20" x2="65" y2="20" stroke="#30363d" stroke-width="1.5" opacity="0.4"/>
+    <line x1="0" y1="-60" x2="0" y2="70" stroke="#30363d" stroke-width="1.5" opacity="0.3"/>
+
+    <!-- Orbital ring -->
+    <ellipse cx="0" cy="10" rx="85" ry="75" fill="none" stroke="#30363d" stroke-width="0.5" opacity="0.3" stroke-dasharray="4 4"/>
+
+    <!-- E node (top) - Energy -->
+    <circle cx="0" cy="-60" r="18" fill="url(#node-e)" opacity="0.9" filter="url(#glow)"/>
+    <text x="0" y="-55" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="700" fill="#ffffff">E</text>
+
+    <!-- I node (left) - Information -->
+    <circle cx="-65" cy="20" r="18" fill="url(#node-i)" opacity="0.9" filter="url(#glow)"/>
+    <text x="-65" y="25" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="700" fill="#ffffff">I</text>
+
+    <!-- S node (right) - Entropy -->
+    <circle cx="65" cy="20" r="18" fill="url(#node-s)" opacity="0.9" filter="url(#glow)"/>
+    <text x="65" y="25" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="700" fill="#ffffff">S</text>
+
+    <!-- V node (bottom) - Void -->
+    <circle cx="0" cy="70" r="18" fill="url(#node-v)" opacity="0.9" filter="url(#glow)"/>
+    <text x="0" y="75" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="700" fill="#ffffff">V</text>
+
+    <!-- Labels -->
+    <text x="0" y="-86" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e" letter-spacing="0.5">ENERGY</text>
+    <text x="-65" y="50" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e" letter-spacing="0.5">INTEGRITY</text>
+    <text x="65" y="50" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e" letter-spacing="0.5">ENTROPY</text>
+    <text x="0" y="100" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e" letter-spacing="0.5">VOID</text>
+  </g>
+
+  <!-- Text content (left side) -->
+  <g transform="translate(60, 0)">
+    <!-- UNITARES wordmark -->
+    <text y="100" font-family="system-ui, -apple-system, sans-serif" font-size="42" font-weight="800" fill="#e6edf3" letter-spacing="3">UNITARES</text>
+
+    <!-- Tagline -->
+    <text y="135" font-family="system-ui, -apple-system, sans-serif" font-size="16" fill="#8b949e" letter-spacing="0.5">Digital proprioception for AI agents</text>
+
+    <!-- Descriptor line -->
+    <text y="175" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#58a6ff" opacity="0.8">Runtime governance</text>
+    <text y="175" x="130" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#484f58">|</text>
+    <text y="175" x="142" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#58a6ff" opacity="0.8">Thermodynamic state tracking</text>
+    <text y="175" x="340" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#484f58">|</text>
+    <text y="175" x="352" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#58a6ff" opacity="0.8">MCP + HTTP</text>
+
+    <!-- CIRWEL attribution -->
+    <text y="220" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#484f58" letter-spacing="1.5">CIRWEL SYSTEMS</text>
+  </g>
+</svg>

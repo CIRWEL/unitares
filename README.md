@@ -1,3 +1,9 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/hero.svg">
+  <img alt="UNITARES — Digital proprioception for AI agents" src="docs/assets/hero.svg" width="100%">
+</picture>
+
 # UNITARES
 
 ### Digital proprioception for AI agents.
