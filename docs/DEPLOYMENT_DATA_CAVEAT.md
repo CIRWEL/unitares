@@ -8,7 +8,7 @@
 
 The UNITARES governance system has been running for approximately 120 days (2025-12-11 → 2026-04-10) against a population of agents that were, during the deployment window, actively constructing the governance system itself.
 
-In Kenny's own words: *"we just don't have enough clean data, i've been building the system with agents being measured by the system they were building so it's a seesaw in a way."*
+Put simply: the system was being built by agents that were simultaneously being measured by the system they were building — a seesaw.
 
 The LLM agent population and the system under evaluation are not independent. UUID-named agents (Claude Code sessions identified in the pause audit) were writing `src/`, `db/`, and `tests/` for the same UNITARES codebase whose governance decisions were being logged to `audit.events`. There is no external deployment context in which UNITARES governed a population it had no hand in creating.
 

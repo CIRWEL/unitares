@@ -41,7 +41,6 @@ tail -f data/logs/mcp_server_error.log
 2. **Kill existing processes:**
    ```bash
    pkill -f "mcp_server"
-   launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.governance.plist
    ```
 
 3. **Restart via launchd (macOS production):**
@@ -57,29 +56,22 @@ tail -f data/logs/mcp_server_error.log
 
 ---
 
-### Issue 2: Cloudflare Tunnel Not Connecting
+### Issue 2: Remote Tunnel Not Connecting
 
 **Symptoms:**
-- `https://gov.cirwel.org/health` returns connection error
-- `cloudflared` logs show failures
+- Remote URL returns connection error
+- Tunnel process (`cloudflared`, `ngrok`, etc.) logs show failures
 
 **Solutions:**
 
-1. **Check server is running:**
+1. **Check local server is running:**
    ```bash
    curl http://localhost:8767/health
    ```
 
-2. **Check tunnel status:**
-   ```bash
-   tail -20 /tmp/cloudflared-gov.log
-   ```
+2. **Check tunnel process logs** for your tunnel provider
 
-3. **Restart tunnel:**
-   ```bash
-   launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.governance.plist
-   launchctl load ~/Library/LaunchAgents/com.cloudflare.tunnel.governance.plist
-   ```
+3. **Restart the tunnel service** (e.g., via launchd, systemd, or manually)
 
 ---
 

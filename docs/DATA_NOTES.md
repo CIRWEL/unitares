@@ -123,7 +123,7 @@ The exact mapping between the behavioral `verdict` field in `runtime_queries.py`
 
 | Agent category | Example IDs | Role | Independent? |
 |---|---|---|---|
-| `test_stress` | `test_stress` | Synthetic stress-test fixture run by Kenny to validate the governance system under intentional high-drift conditions. Not production traffic. | No — synthetic |
+| `test_stress` | `test_stress` | Synthetic stress-test fixture used to validate the governance system under intentional high-drift conditions. Not production traffic. | No — synthetic |
 | `eisv-sync-task` | `eisv-sync-task` | Periodic cron task that pushes Lumen's physical sensor-derived EISV into the governance layer. Runs on Lumen's behalf. | Yes — independent ground truth |
 | UUID-named LLM dev agents | `69a1a4f7-...`, `7d9966bb-...`, `85e15f04-...` | Claude Code sessions that were actively constructing UNITARES during the deployment window. The system governed its own construction crew. | No — co-constructed |
 | Lumen | `eisv-sync-task` (via sync) + direct Pi agent | Embodied agent on Raspberry Pi with physical sensors. Sensor readings provide independent ground truth regardless of the governance layer. | Yes — clean instrument |

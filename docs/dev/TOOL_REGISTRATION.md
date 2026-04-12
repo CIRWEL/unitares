@@ -246,7 +246,7 @@ curl -s -X POST "http://localhost:8767/v1/tools/call" \
   python3 -c "import json,sys; d=json.load(sys.stdin); print(f'Total tools: {len(d.get(\"result\",{}).get(\"tools\",[]))}')"
 
 # Check server logs for auto-registration count
-grep "AUTO_REGISTER" /Users/cirwel/projects/governance-mcp-v1/data/logs/mcp_server_error.log | tail -1
+grep "AUTO_REGISTER" data/logs/mcp_server_error.log | tail -1
 
 # Verify specific tool exists
 curl -s -X POST "http://localhost:8767/v1/tools/call" \

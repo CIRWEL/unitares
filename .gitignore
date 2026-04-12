@@ -146,6 +146,7 @@ scripts/ops/*.plist
 # Documentation — only docs/*.md and docs/guides/ tracked; everything else local
 docs/INTERNAL_CONFIG.md
 docs/archive/
+docs/handoffs/
 docs/plans/
 docs/superpowers/
 *.local.md
