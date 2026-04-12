@@ -27,6 +27,9 @@ logger = get_logger(__name__)
 # Telemetry: ring buffer of governance circuit breaker pause timestamps
 _governance_pause_timestamps: deque[datetime] = deque(maxlen=100)
 
+# prevent fire-and-forget tasks from being GC'd (P001)
+_background_tasks: set[asyncio.Task] = set()
+
 
 def get_circuit_breaker_telemetry() -> Dict[str, Any]:
     """Return governance circuit breaker telemetry snapshot."""
@@ -53,6 +56,7 @@ def detect_loop_pattern(agent_id: str) -> tuple[bool, str]:
     - Pattern 4: Decision loop - same decision repeated 5+ times in recent history
     - Pattern 5: Slow-stuck pattern - 3+ updates in 60s with any reject
     - Pattern 6: Extended rapid pattern - 5+ updates in 120s regardless of decisions
+    - Pattern 7: Slow proceed loop - 8+ proceed decisions in 5 min (no pause/reject needed)
 
     Returns:
         (is_loop, reason) - True if loop detected, with explanation
@@ -213,7 +217,7 @@ def detect_loop_pattern(agent_id: str) -> tuple[bool, str]:
             return True, f"Decision loop detected: {pause_count} 'pause' decisions in recent history (stuck state)"
 
         proceed_count = decision_counts.get("proceed", 0) + decision_counts.get("approve", 0) + decision_counts.get("reflect", 0) + decision_counts.get("revise", 0)
-        if proceed_count >= 15:
+        if proceed_count >= 10:
             return True, f"Decision loop detected: {proceed_count} consecutive 'proceed' decisions (agent may be stuck in feedback loop)"
 
     # Pattern 5: Slow-stuck pattern - 3+ updates in 60s with 2+ rejects
@@ -244,6 +248,27 @@ def detect_loop_pattern(agent_id: str) -> tuple[bool, str]:
                 concerning_count = sum(1 for d in last_five_decisions if d in ["pause", "reject"])
                 if concerning_count >= 3:
                     return True, f"Extended rapid pattern: {len(last_five_timestamps)} updates within {time_span:.1f}s with {concerning_count} pause/reject decision(s)"
+        except (ValueError, TypeError):
+            pass
+
+    # Pattern 7: Slow proceed loop - 8+ proceed decisions in 10 updates within 5 minutes.
+    # Catches agents looping without triggering pause/reject verdicts — the gap
+    # that Pattern 4 (count-only, no time window) and Pattern 5 (requires
+    # pause/reject) both miss.
+    if not is_autonomous and not in_recovery_grace and len(recent_timestamps) >= 8:
+        window_timestamps = recent_timestamps[-10:]
+        window_decisions = recent_decisions[-10:]
+        try:
+            timestamps = [datetime.fromisoformat(ts) for ts in window_timestamps]
+            time_span = (timestamps[-1] - timestamps[0]).total_seconds()
+
+            if time_span <= 300.0:  # 5 minutes
+                proceed_count = sum(
+                    1 for d in window_decisions
+                    if d in ["proceed", "approve", "reflect", "revise"]
+                )
+                if proceed_count >= 8:
+                    return True, f"Slow proceed loop: {proceed_count} proceed decisions within {time_span:.1f}s (agent may be repeating without progress)"
         except (ValueError, TypeError):
             pass
 
@@ -455,18 +480,22 @@ async def process_update_authenticated_async(
             # Broadcast circuit_breaker_trip event
             try:
                 from src.broadcaster import broadcaster_instance
-                loop.create_task(broadcaster_instance.broadcast_event(
+                task = loop.create_task(broadcaster_instance.broadcast_event(
                     "circuit_breaker_trip",
                     agent_id=agent_id,
                     payload={"reason": decision_reason},
                 ))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
             except Exception as e:
                 logger.debug(f"Could not broadcast circuit_breaker_trip: {e}")
 
             try:
                 auto_recovery = os.getenv("UNITARES_AUTO_DIALECTIC_RECOVERY", "1").strip().lower() not in ("0", "false", "no")
                 if auto_recovery:
-                    loop.create_task(_auto_initiate_dialectic_recovery(agent_id, decision_reason))
+                    task = loop.create_task(_auto_initiate_dialectic_recovery(agent_id, decision_reason))
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
                     result["auto_recovery_initiated"] = True
                     result["auto_recovery_note"] = "Dialectic recovery auto-initiated (self-governance mode)"
             except Exception as e:
@@ -574,3 +603,52 @@ async def _auto_initiate_dialectic_recovery(agent_id: str, reason: str) -> None:
 
     except Exception as e:
         logger.error(f"Failed to auto-initiate dialectic recovery for '{agent_id}': {e}")
+        # Safety net: if all dialectic paths failed (no peers, LLM down, DB error),
+        # check whether the agent's state is safe enough to auto-resume rather than
+        # leaving it paused indefinitely. This prevents single-agent deployments
+        # from getting permanently stuck when Ollama is unavailable.
+        await _safety_net_resume(agent_id, reason=str(e))
+
+
+async def _safety_net_resume(agent_id: str, reason: str) -> None:
+    """Auto-resume a paused agent if its EISV state is safe, as a last resort.
+
+    Thresholds mirror self_recovery's "quick" action: coherence > 0.40
+    and risk < 0.60. If the agent isn't safe, it stays paused for the
+    stuck-agent detector to pick up on its next sweep.
+    """
+    try:
+        meta = agent_metadata.get(agent_id)
+        if not meta or meta.status != "paused":
+            return
+
+        monitor = monitors.get(agent_id)
+        if not monitor or not hasattr(monitor, 'state'):
+            return
+
+        coherence = getattr(monitor.state, 'coherence', None) or 0.0
+        metrics = monitor.get_metrics()
+        risk = metrics.get('mean_risk') or metrics.get('risk_score') or 0.5
+
+        if coherence >= 0.40 and risk < 0.60:
+            meta.status = "active"
+            meta.paused_at = None
+            meta.loop_cooldown_until = None
+            meta.loop_detected_at = None
+            meta.recent_update_timestamps = []
+            meta.recent_decisions = []
+            meta.add_lifecycle_event(
+                "safety_net_resumed",
+                f"All dialectic paths failed ({reason}); state safe (coherence={coherence:.2f}, risk={risk:.2f}) — auto-resumed"
+            )
+            logger.info(
+                f"Agent '{agent_id}' safety-net resumed "
+                f"(coherence={coherence:.2f}, risk={risk:.2f}, dialectic failure: {reason})"
+            )
+        else:
+            logger.warning(
+                f"Agent '{agent_id}' NOT safe for safety-net resume "
+                f"(coherence={coherence:.2f}, risk={risk:.2f}) — stays paused"
+            )
+    except Exception as e:
+        logger.error(f"Safety-net resume check failed for '{agent_id}': {e}")

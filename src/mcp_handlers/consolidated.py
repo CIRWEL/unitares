@@ -3,7 +3,7 @@ Consolidated MCP Tool Handlers
 
 Reduces cognitive load for AI agents by consolidating related tools:
 - knowledge: 11 actions → 1 tool (store, search, get, list, update, details, note, cleanup, stats, supersede, audit)
-- agent: 5 actions → 1 tool (list, get, update, archive, delete)
+- agent: 6 actions → 1 tool (list, get, update, archive, resume, delete)
 - calibration: 4 actions → 1 tool (check, update, backfill, rebuild)
 - config: 2 actions → 1 tool (get, set)
 - export: 2 actions → 1 tool (history, file)

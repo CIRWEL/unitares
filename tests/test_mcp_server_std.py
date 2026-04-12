@@ -1004,6 +1004,119 @@ class TestDetectLoopPattern:
         finally:
             self._cleanup(test_id)
 
+    def test_pattern7_slow_proceed_loop_detected(self):
+        """Pattern 7: 8+ proceed decisions within 5 minutes should trip."""
+        from src.agent_state import detect_loop_pattern
+        test_id = "loop_pattern7_test"
+        now = datetime.now()
+        timestamps = [
+            (now - timedelta(seconds=280 - i * 40)).isoformat()
+            for i in range(8)
+        ]
+        decisions = ["proceed"] * 8
+        self._setup_agent(test_id, timestamps, decisions)
+        try:
+            is_loop, reason = detect_loop_pattern(test_id)
+            assert is_loop is True
+            assert "slow proceed loop" in reason.lower()
+        finally:
+            self._cleanup(test_id)
+
+    def test_autonomous_agent_exempt_from_slow_proceed_loop(self):
+        """Autonomous agents still bypass decision-only loop patterns."""
+        from src.agent_state import detect_loop_pattern
+        test_id = "loop_pattern7_autonomous_test"
+        now = datetime.now()
+        timestamps = [
+            (now - timedelta(seconds=280 - i * 40)).isoformat()
+            for i in range(8)
+        ]
+        decisions = ["proceed"] * 8
+        self._setup_agent(test_id, timestamps, decisions, tags=["autonomous"])
+        try:
+            is_loop, reason = detect_loop_pattern(test_id)
+            assert is_loop is False
+            assert reason == ""
+        finally:
+            self._cleanup(test_id)
+
+
+class TestSafetyNetResume:
+    """Tests for last-resort auto-resume when dialectic recovery fails."""
+
+    @pytest.mark.asyncio
+    async def test_resumes_safe_paused_agent(self):
+        from src.agent_loop_detection import _safety_net_resume
+        from src.agent_state import AgentMetadata, agent_metadata, monitors
+
+        agent_id = "safety_net_resume_test"
+        now = datetime.now().isoformat()
+        meta = AgentMetadata(
+            agent_id=agent_id,
+            status="paused",
+            created_at=now,
+            last_update=now,
+            paused_at=now,
+            loop_cooldown_until=now,
+            loop_detected_at=now,
+            recent_update_timestamps=["a", "b"],
+            recent_decisions=["pause", "pause"],
+        )
+        meta.add_lifecycle_event = MagicMock()
+
+        monitor = MagicMock()
+        monitor.state = MagicMock(coherence=0.62)
+        monitor.get_metrics.return_value = {"mean_risk": 0.21}
+
+        agent_metadata[agent_id] = meta
+        monitors[agent_id] = monitor
+        try:
+            await _safety_net_resume(agent_id, reason="dialectic offline")
+            assert meta.status == "active"
+            assert meta.paused_at is None
+            assert meta.loop_cooldown_until is None
+            assert meta.loop_detected_at is None
+            assert meta.recent_update_timestamps == []
+            assert meta.recent_decisions == []
+            meta.add_lifecycle_event.assert_called_once()
+            args = meta.add_lifecycle_event.call_args.args
+            assert args[0] == "safety_net_resumed"
+            assert "dialectic offline" in args[1]
+        finally:
+            agent_metadata.pop(agent_id, None)
+            monitors.pop(agent_id, None)
+
+    @pytest.mark.asyncio
+    async def test_leaves_unsafe_agent_paused(self):
+        from src.agent_loop_detection import _safety_net_resume
+        from src.agent_state import AgentMetadata, agent_metadata, monitors
+
+        agent_id = "safety_net_resume_unsafe_test"
+        now = datetime.now().isoformat()
+        meta = AgentMetadata(
+            agent_id=agent_id,
+            status="paused",
+            created_at=now,
+            last_update=now,
+            paused_at=now,
+        )
+        meta.add_lifecycle_event = MagicMock()
+
+        monitor = MagicMock()
+        monitor.state = MagicMock(coherence=0.25)
+        monitor.get_metrics.return_value = {"mean_risk": 0.75}
+
+        agent_metadata[agent_id] = meta
+        monitors[agent_id] = monitor
+        try:
+            await _safety_net_resume(agent_id, reason="dialectic offline")
+            assert meta.status == "paused"
+            assert meta.paused_at == now
+            meta.add_lifecycle_event.assert_not_called()
+        finally:
+            agent_metadata.pop(agent_id, None)
+            monitors.pop(agent_id, None)
+
 
 # ============================================================================
 # Test: build_standardized_agent_info
@@ -1633,5 +1746,4 @@ class TestWriteStateFile:
         _write_state_file(state_file, {"version": 2})
         loaded = json.loads(state_file.read_text())
         assert loaded["version"] == 2
-
 

@@ -426,6 +426,117 @@ def test_scan_file_persist_default_is_true(watcher_module, tmp_path, monkeypatch
 
 
 # ---------------------------------------------------------------------------
+# Severity routing — critical escalation
+# ---------------------------------------------------------------------------
+
+
+def test_escalate_high_does_not_call_external_targets(watcher_module, monkeypatch):
+    finding = _finding(watcher_module, severity="high")
+    lumen_calls = []
+    kg_calls = []
+
+    monkeypatch.setattr(
+        watcher_module, "_escalate_to_lumen", lambda f: lumen_calls.append(f)
+    )
+    monkeypatch.setattr(
+        watcher_module, "_escalate_to_kg", lambda f: kg_calls.append(f)
+    )
+
+    watcher_module.escalate(finding)
+
+    assert lumen_calls == []
+    assert kg_calls == []
+
+
+def test_escalate_critical_calls_lumen_and_kg(watcher_module, monkeypatch):
+    finding = _finding(watcher_module, severity="critical")
+    calls = []
+
+    monkeypatch.setattr(
+        watcher_module, "_escalate_to_lumen", lambda f: calls.append(("lumen", f))
+    )
+    monkeypatch.setattr(
+        watcher_module, "_escalate_to_kg", lambda f: calls.append(("kg", f))
+    )
+
+    watcher_module.escalate(finding)
+
+    assert calls == [("lumen", finding), ("kg", finding)]
+
+
+def test_escalate_to_lumen_falls_back_to_second_url(watcher_module, monkeypatch):
+    finding = _finding(watcher_module, severity="critical")
+    attempted = []
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    def fake_urlopen(req, timeout=0):
+        attempted.append((req.full_url, req.data, timeout))
+        if len(attempted) == 1:
+            raise watcher_module.urllib.error.URLError("down")
+        return _Resp()
+
+    monkeypatch.setattr(
+        watcher_module, "ANIMA_MCP_URLS", ["http://first/mcp/", "http://second/mcp/"]
+    )
+    monkeypatch.setattr(watcher_module.urllib.request, "urlopen", fake_urlopen)
+
+    watcher_module._escalate_to_lumen(finding)
+
+    assert [url for url, _data, _timeout in attempted] == [
+        "http://first/mcp/",
+        "http://second/mcp/",
+    ]
+    payload = json.loads(attempted[1][1].decode())
+    assert payload["method"] == "tools/call"
+    assert payload["params"]["name"] == "say"
+    assert finding.pattern in payload["params"]["arguments"]["text"]
+
+
+def test_escalate_to_kg_writes_critical_discovery(watcher_module, monkeypatch):
+    finding = _finding(watcher_module, severity="critical")
+    captured = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    def fake_urlopen(req, timeout=0):
+        captured["url"] = req.full_url
+        captured["timeout"] = timeout
+        captured["payload"] = json.loads(req.data.decode())
+        return _Resp()
+
+    monkeypatch.setattr(watcher_module.urllib.request, "urlopen", fake_urlopen)
+
+    watcher_module._escalate_to_kg(finding)
+
+    assert captured["url"] == watcher_module.GOV_REST_URL
+    assert captured["timeout"] == 5
+    assert captured["payload"]["name"] == "knowledge"
+    args = captured["payload"]["arguments"]
+    assert args["action"] == "store"
+    assert args["discovery_type"] == "bug_found"
+    assert args["severity"] == "critical"
+    assert "watcher" in args["tags"]
+    assert finding.fingerprint in args["details"]
+
+
+# ---------------------------------------------------------------------------
 # Lifecycle commands — Stage 1
 #
 # These cover the three operations that make findings.jsonl more than an

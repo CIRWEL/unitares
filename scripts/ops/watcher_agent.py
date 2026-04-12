@@ -67,6 +67,11 @@ LOG_FILE = Path.home() / "Library" / "Logs" / "unitares-watcher.log"
 
 GOV_REST_URL = "http://localhost:8767/v1/tools/call"
 OLLAMA_FALLBACK_URL = "http://localhost:11434/v1/chat/completions"
+# Anima MCP URLs for Lumen voice escalation (Tailscale, then LAN fallback)
+ANIMA_MCP_URLS = [
+    "http://100.84.100.128:8766/mcp/",
+    "http://192.168.1.165:8766/mcp/",
+]
 DEFAULT_MODEL = "qwen3-coder-next:latest"
 DEFAULT_TIMEOUT = 45
 
@@ -1021,13 +1026,80 @@ def compact_findings(max_age_days: int = 7, now: datetime | None = None) -> int:
 def escalate(finding: Finding) -> None:
     """Route high/critical findings beyond the findings.jsonl file.
 
-    For now this only logs; Lumen voice / KG discovery wiring is a follow-up.
-    The file-based surfacing happens automatically via the SessionStart hook
-    reading findings.jsonl.
+    High findings: logged + surfaced via SessionStart hook (findings.jsonl).
+    Critical findings: also announced via Lumen voice + stored in governance KG.
     """
     log(f"ESCALATE {finding.severity.upper()} {finding.fingerprint} {finding.pattern} {finding.file}:{finding.line} — {finding.hint}", "warning")
-    # TODO: for severity=="critical", call anima MCP say() and gov KG discovery write
-    # Left as a follow-up so the first deploy stays minimal and testable.
+
+    if finding.severity != "critical":
+        return
+
+    # --- Lumen voice announcement ---
+    _escalate_to_lumen(finding)
+
+    # --- Governance KG discovery ---
+    _escalate_to_kg(finding)
+
+
+def _escalate_to_lumen(finding: Finding) -> None:
+    """Announce a critical finding via Lumen's say() tool."""
+    message = f"Critical code issue detected: {finding.pattern} in {Path(finding.file).name} line {finding.line}. {finding.hint}"
+    for url in ANIMA_MCP_URLS:
+        try:
+            body = json.dumps({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "say",
+                    "arguments": {"text": message},
+                },
+            }).encode()
+            req = urllib.request.Request(
+                url, data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                resp.read()
+            log(f"Lumen notified via {url}", "info")
+            return
+        except Exception as e:
+            log(f"Lumen say() failed at {url}: {e}", "warning")
+    log("Could not reach Lumen on any URL — voice escalation skipped", "warning")
+
+
+def _escalate_to_kg(finding: Finding) -> None:
+    """Store a critical finding as a discovery in the governance knowledge graph."""
+    summary = f"[Watcher] {finding.pattern}: {finding.hint} ({Path(finding.file).name}:{finding.line})"
+    details = (
+        f"Pattern: {finding.pattern}\n"
+        f"File: {finding.file}:{finding.line}\n"
+        f"Hint: {finding.hint}\n"
+        f"Fingerprint: {finding.fingerprint}"
+    )
+    body = json.dumps({
+        "name": "knowledge",
+        "arguments": {
+            "action": "store",
+            "discovery_type": "bug_found",
+            "severity": "critical",
+            "summary": summary,
+            "details": details,
+            "tags": ["watcher", finding.pattern, "critical"],
+        },
+    }).encode()
+    try:
+        req = urllib.request.Request(
+            GOV_REST_URL, data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            resp.read()
+        log(f"KG discovery stored for {finding.fingerprint}", "info")
+    except Exception as e:
+        log(f"KG discovery write failed: {e}", "warning")
 
 
 # ---------------------------------------------------------------------------

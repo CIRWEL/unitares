@@ -200,8 +200,8 @@ class PingAgentParams(AgentIdentityMixin):
 
 class AgentParams(AgentIdentityMixin):
     """Parameters for agent"""
-    action: Literal["list", "get", "update", "archive", "delete"] = Field(..., description="Operation to perform (alias: op)")
-    op: Optional[Literal["list", "get", "update", "archive", "delete"]] = Field(None, description="Alias for action. Use action or op.")
+    action: Literal["list", "get", "update", "archive", "resume", "delete"] = Field(..., description="Operation to perform (alias: op)")
+    op: Optional[Literal["list", "get", "update", "archive", "resume", "delete"]] = Field(None, description="Alias for action. Use action or op.")
     agent_id: Optional[str] = Field(None, description="Target agent ID (for get, update, archive, delete)")
     tags: Optional[List[Any]] = Field(None, description="Tags to set (for action=update)")
     notes: Optional[str] = Field(None, description="Notes to set (for action=update)")
