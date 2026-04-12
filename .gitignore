@@ -21,6 +21,7 @@ wheels/
 *.egg
 
 # Virtual environments
+.venv/
 venv/
 venv313/
 ENV/
@@ -110,6 +111,7 @@ data/telemetry/
 # IDE
 .vscode/
 .idea/
+.ruff_cache/
 *.swp
 *.swo
 *~

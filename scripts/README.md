@@ -70,14 +70,13 @@ The bulk of operational scripts live in `scripts/ops/`.
 | `update_changelog.py` | Update changelog from commits |
 | `version_manager.py` | Version management (ops copy) |
 
-### Launchd Plists (reference copies)
+### Launchd Plists (local only)
 
-| File | Description |
-|------|-------------|
-| `com.unitares.governance-mcp.plist` | Governance MCP launchd config |
-| `com.unitares.gateway-mcp.plist` | Gateway MCP launchd config |
+LaunchAgent plists under `scripts/ops/*.plist` are intentionally untracked because
+they contain machine-specific paths and may contain secrets. Keep local copies in
+`scripts/ops/` while developing, and install the active versions to:
 
-Installed location: `~/Library/LaunchAgents/`
+`~/Library/LaunchAgents/`
 
 ---
 
