@@ -2150,7 +2150,10 @@ if (stuckAgentsCard) {
         } else {
             html += incidents.map(function (inc) {
                 const d = inc.details || {};
-                const when = formatRelativeTime ? formatRelativeTime(inc.timestamp) : formatTimestamp(inc.timestamp);
+                const tsMs = new Date(inc.timestamp).getTime();
+                const relative = !isNaN(tsMs) && formatRelativeTime ? formatRelativeTime(tsMs) : null;
+                const absolute = formatTimestamp(inc.timestamp);
+                const when = relative ? relative + ' — ' + absolute : (absolute || inc.timestamp);
                 const names = (d.agents || []).map(a => escapeHtml(a.agent_name || a.agent_id || '?')).join(', ');
                 return '<div style="padding:6px 8px; border-left:2px solid var(--accent-orange); margin-bottom:4px; font-size:12px;">' +
                     '<span style="opacity:0.5;">' + when + '</span> &mdash; ' +
@@ -2238,7 +2241,10 @@ if (anomaliesCard) {
             } else {
                 html += incidents.map(function (inc) {
                     const d = inc.details || {};
-                    const when = formatRelativeTime ? formatRelativeTime(inc.timestamp) : formatTimestamp(inc.timestamp);
+                    const tsMs = new Date(inc.timestamp).getTime();
+                    const relative = !isNaN(tsMs) && formatRelativeTime ? formatRelativeTime(tsMs) : null;
+                    const absolute = formatTimestamp(inc.timestamp);
+                    const when = relative ? relative + ' — ' + absolute : (absolute || inc.timestamp);
                     const items = (d.anomalies || []).map(a => escapeHtml(a.type || '?') + ' (' + escapeHtml(a.severity || '') + ')').join(', ');
                     return '<div style="padding:6px 8px; border-left:2px solid var(--accent-orange); margin-bottom:4px; font-size:12px;">' +
                         '<span style="opacity:0.5;">' + when + '</span> &mdash; ' +
