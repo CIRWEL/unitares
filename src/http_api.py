@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+_startup_ts = time.time()
+
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 
@@ -758,6 +760,14 @@ async def http_dashboard(request):
     dashboard_path = Path(__file__).parent.parent / "dashboard" / "index.html"
     if dashboard_path.exists():
         html = dashboard_path.read_text()
+        # Cache-bust: append ?v=<startup_ts> to local script/css refs
+        import re as _re
+        _v = str(int(_startup_ts))
+        html = _re.sub(
+            r'(src|href)="/dashboard/([^"]+)"',
+            rf'\1="/dashboard/\2?v={_v}"',
+            html,
+        )
         # Inject API token so dashboard JS can authenticate
         if http_api_token:
             token_script = (
@@ -767,7 +777,8 @@ async def http_dashboard(request):
             html = html.replace("</head>", f"{token_script}</head>", 1)
         return Response(
             content=html,
-            media_type="text/html"
+            media_type="text/html",
+            headers={"Cache-Control": "no-cache"},
         )
     return JSONResponse({
         "error": "Dashboard not found",
@@ -824,7 +835,8 @@ async def http_dashboard_static(request):
 
         return Response(
             content=static_path.read_text(),
-            media_type=content_type
+            media_type=content_type,
+            headers={"Cache-Control": "no-cache"},
         )
     return JSONResponse({
         "error": "File not found",
