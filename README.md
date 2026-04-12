@@ -12,7 +12,7 @@ Status: live overview. For architecture truth and code-first authority ordering,
 
 UNITARES is a runtime governance system for AI agents. It accepts check-ins over MCP and HTTP, turns observable behavior into shared state (**EISV**: energy, integrity, entropy, void), stores long-run trajectories in PostgreSQL + AGE, and returns verdicts, guidance, calibration, and recovery paths in real time.
 
-The state model is derived from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do. As a portfolio artifact, this repo demonstrates protocol/API design, stateful backend architecture, concurrency control, graph-backed storage, observability, dashboard work, and long-running maintenance. For a fast evaluation-oriented summary, see [PORTFOLIO.md](PORTFOLIO.md).
+The state model is derived from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do. The repo combines protocol/API design, stateful backend architecture, concurrency control, graph-backed storage, observability, dashboard work, and long-running maintenance. For a concise project summary, see [CASE_STUDY.md](CASE_STUDY.md).
 
 Started at a hackathon, deployed to production within weeks, and running continuously since November 2025. The repo ships a governance server with MCP and HTTP APIs, a test suite of 5,900+ passing at 77% coverage, and sustained production check-in volume, including [Lumen](https://github.com/CIRWEL/anima-mcp) on a Raspberry Pi.
 
