@@ -67,11 +67,6 @@ LOG_FILE = Path.home() / "Library" / "Logs" / "unitares-watcher.log"
 
 GOV_REST_URL = "http://localhost:8767/v1/tools/call"
 OLLAMA_FALLBACK_URL = "http://localhost:11434/v1/chat/completions"
-# Anima MCP URLs for Lumen voice escalation (Tailscale, then LAN fallback)
-ANIMA_MCP_URLS = [
-    "http://100.84.100.128:8766/mcp/",
-    "http://192.168.1.165:8766/mcp/",
-]
 DEFAULT_MODEL = "qwen3-coder-next:latest"
 DEFAULT_TIMEOUT = 45
 
@@ -303,6 +298,28 @@ def load_pattern_severities() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Prompt construction
 # ---------------------------------------------------------------------------
+
+
+def build_review_prompt(file_path: str, code_snippet: str) -> str:
+    """Reasoning-based code review prompt — no pattern library, model thinks freely."""
+    return f"""You are a senior code reviewer. Read the code below carefully and identify actual bugs, logic errors, resource leaks, race conditions, or security issues.
+
+RULES:
+1. Only report issues you are confident about. No style nitpicks, no "consider using X" suggestions.
+2. Each finding must explain WHY it's a bug — what breaks, under what conditions.
+3. Ignore comments. Only analyze executable code.
+4. If the code looks correct, return an empty findings list. That is the right answer most of the time.
+
+OUTPUT FORMAT — JSON only, no prose, no markdown fences:
+{{"findings":[{{"line":<int>,"severity":"high|medium|low","hint":"<what's wrong, <=15 words>","reasoning":"<1-2 sentences: what breaks and when>"}}]}}
+
+CODE TO REVIEW (from {file_path}):
+```
+{code_snippet}
+```
+
+Remember: JSON only. Empty findings list is correct if nothing is wrong. Quality over quantity — one real bug beats ten maybes.
+"""
 
 
 def build_prompt(patterns_md: str, file_path: str, code_snippet: str) -> str:
@@ -1027,46 +1044,15 @@ def escalate(finding: Finding) -> None:
     """Route high/critical findings beyond the findings.jsonl file.
 
     High findings: logged + surfaced via SessionStart hook (findings.jsonl).
-    Critical findings: also announced via Lumen voice + stored in governance KG.
+    Critical findings: also stored in governance KG for visibility across agents.
     """
     log(f"ESCALATE {finding.severity.upper()} {finding.fingerprint} {finding.pattern} {finding.file}:{finding.line} — {finding.hint}", "warning")
 
     if finding.severity != "critical":
         return
 
-    # --- Lumen voice announcement ---
-    _escalate_to_lumen(finding)
-
     # --- Governance KG discovery ---
     _escalate_to_kg(finding)
-
-
-def _escalate_to_lumen(finding: Finding) -> None:
-    """Announce a critical finding via Lumen's say() tool."""
-    message = f"Critical code issue detected: {finding.pattern} in {Path(finding.file).name} line {finding.line}. {finding.hint}"
-    for url in ANIMA_MCP_URLS:
-        try:
-            body = json.dumps({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {
-                    "name": "say",
-                    "arguments": {"text": message},
-                },
-            }).encode()
-            req = urllib.request.Request(
-                url, data=body,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                resp.read()
-            log(f"Lumen notified via {url}", "info")
-            return
-        except Exception as e:
-            log(f"Lumen say() failed at {url}: {e}", "warning")
-    log("Could not reach Lumen on any URL — voice escalation skipped", "warning")
 
 
 def _escalate_to_kg(finding: Finding) -> None:
@@ -1288,6 +1274,79 @@ def scan_file(
     return fresh
 
 
+def review_file(
+    file_path: str,
+    region: str | None = None,
+) -> list[Finding]:
+    """Reasoning-based code review — model thinks freely, no pattern library.
+
+    Findings from review mode use pattern ID 'R000' and are printed to stdout
+    but NOT persisted to findings.jsonl (they don't have pattern IDs from the
+    library, so the dedup/lifecycle machinery doesn't apply).
+    """
+    _rotate_log_if_needed()
+    skip, reason = should_skip(file_path)
+    if skip:
+        log(f"skip {file_path}: {reason}")
+        return []
+
+    log(f"review {file_path} region={region or 'head'}")
+    try:
+        code_snippet, region_start, region_end = read_file_region(file_path, region)
+    except (OSError, UnicodeDecodeError) as e:
+        log(f"failed to read {file_path}: {e}", "error")
+        return []
+
+    prompt = build_review_prompt(file_path, code_snippet)
+
+    try:
+        result = call_model(prompt, timeout=90)
+    except Exception as e:
+        log(f"model call failed: {e}", "error")
+        return []
+
+    raw_text = result["text"]
+    # Parse the JSON — review mode returns a simpler schema
+    try:
+        # Strip thinking tags if present (qwen3 sometimes wraps in <think>)
+        cleaned = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Try to extract JSON from surrounding text
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match:
+            try:
+                data = json.loads(match.group())
+            except json.JSONDecodeError:
+                log(f"review parse failed: could not extract JSON", "warning")
+                return []
+        else:
+            log(f"review parse failed: no JSON found", "warning")
+            return []
+
+    findings = []
+    for item in data.get("findings", []):
+        line = item.get("line", 0)
+        if region_start and isinstance(line, int):
+            line = line  # review mode lines are already absolute from the snippet
+        f = Finding(
+            pattern="R000",
+            file=file_path,
+            line=int(line),
+            hint=str(item.get("hint", ""))[:80],
+            severity=item.get("severity", "medium"),
+            detected_at=datetime.now(timezone.utc).isoformat(),
+            model_used=result.get("model_used", DEFAULT_MODEL),
+        )
+        findings.append(f)
+
+    log(
+        f"review complete: {len(findings)} findings, "
+        f"tokens={result.get('tokens_used')}, region=L{region_start}-L{region_end}"
+    )
+    return findings
+
+
 SELF_TEST_CODE = """async def stuck_agent_recovery_task(self):
     while self.running:
         stale_ephemerals = await self.fetch_stale_ephemerals()
@@ -1365,6 +1424,10 @@ def main() -> int:
     parser.add_argument("--file", help="file to scan")
     parser.add_argument("--region", help="line range within file, e.g. L10-L40")
     parser.add_argument(
+        "--review", action="store_true",
+        help="reasoning-based review (no pattern library, model thinks freely)",
+    )
+    parser.add_argument(
         "--self-test", action="store_true", help="scan a synthetic buggy file and verify"
     )
     parser.add_argument(
@@ -1432,6 +1495,15 @@ def main() -> int:
     if not args.file:
         parser.print_help()
         return 1
+
+    if args.review:
+        findings = review_file(args.file, args.region)
+        if findings:
+            for f in findings:
+                print(f"[{f.severity}] {f.file}:{f.line} — {f.hint}")
+        else:
+            print("No issues found.")
+        return 0
 
     fresh = scan_file(args.file, args.region)
     if fresh:

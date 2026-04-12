@@ -432,73 +432,28 @@ def test_scan_file_persist_default_is_true(watcher_module, tmp_path, monkeypatch
 
 def test_escalate_high_does_not_call_external_targets(watcher_module, monkeypatch):
     finding = _finding(watcher_module, severity="high")
-    lumen_calls = []
     kg_calls = []
 
-    monkeypatch.setattr(
-        watcher_module, "_escalate_to_lumen", lambda f: lumen_calls.append(f)
-    )
     monkeypatch.setattr(
         watcher_module, "_escalate_to_kg", lambda f: kg_calls.append(f)
     )
 
     watcher_module.escalate(finding)
 
-    assert lumen_calls == []
     assert kg_calls == []
 
 
-def test_escalate_critical_calls_lumen_and_kg(watcher_module, monkeypatch):
+def test_escalate_critical_calls_kg(watcher_module, monkeypatch):
     finding = _finding(watcher_module, severity="critical")
     calls = []
 
     monkeypatch.setattr(
-        watcher_module, "_escalate_to_lumen", lambda f: calls.append(("lumen", f))
-    )
-    monkeypatch.setattr(
-        watcher_module, "_escalate_to_kg", lambda f: calls.append(("kg", f))
+        watcher_module, "_escalate_to_kg", lambda f: calls.append(f)
     )
 
     watcher_module.escalate(finding)
 
-    assert calls == [("lumen", finding), ("kg", finding)]
-
-
-def test_escalate_to_lumen_falls_back_to_second_url(watcher_module, monkeypatch):
-    finding = _finding(watcher_module, severity="critical")
-    attempted = []
-
-    class _Resp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return b"{}"
-
-    def fake_urlopen(req, timeout=0):
-        attempted.append((req.full_url, req.data, timeout))
-        if len(attempted) == 1:
-            raise watcher_module.urllib.error.URLError("down")
-        return _Resp()
-
-    monkeypatch.setattr(
-        watcher_module, "ANIMA_MCP_URLS", ["http://first/mcp/", "http://second/mcp/"]
-    )
-    monkeypatch.setattr(watcher_module.urllib.request, "urlopen", fake_urlopen)
-
-    watcher_module._escalate_to_lumen(finding)
-
-    assert [url for url, _data, _timeout in attempted] == [
-        "http://first/mcp/",
-        "http://second/mcp/",
-    ]
-    payload = json.loads(attempted[1][1].decode())
-    assert payload["method"] == "tools/call"
-    assert payload["params"]["name"] == "say"
-    assert finding.pattern in payload["params"]["arguments"]["text"]
+    assert calls == [finding]
 
 
 def test_escalate_to_kg_writes_critical_discovery(watcher_module, monkeypatch):
@@ -1524,13 +1479,13 @@ def test_surface_pending_second_chime_picks_up_previously_hidden_mediums(
 
 
 # ---------------------------------------------------------------------------
-# Escalation: critical findings → Lumen voice + KG discovery
+# Escalation: critical findings → KG discovery
 # ---------------------------------------------------------------------------
 
 
 class TestEscalation:
-    """Verify that escalate() calls Lumen say() and KG store for critical
-    findings, and is a no-op for non-critical severities."""
+    """Verify that escalate() stores KG discoveries for critical findings
+    and is a no-op for non-critical severities."""
 
     def _make_finding(self, watcher_module, severity="critical"):
         return watcher_module.Finding(
@@ -1543,13 +1498,11 @@ class TestEscalation:
             model_used="test",
         )
 
-    def test_escalate_critical_calls_lumen_and_kg(self, watcher_module, monkeypatch):
-        """Critical findings trigger both Lumen voice and KG discovery."""
-        lumen_calls = []
+    def test_escalate_critical_stores_kg_discovery(self, watcher_module, monkeypatch):
+        """Critical findings are stored as KG discoveries."""
         kg_calls = []
 
         def fake_urlopen(req, timeout=None):
-            url = req.full_url if hasattr(req, "full_url") else str(req)
             body = json.loads(req.data.decode())
 
             class FakeResp:
@@ -1560,10 +1513,7 @@ class TestEscalation:
                 def __exit__(self, *a):
                     pass
 
-            if "8766" in url:
-                lumen_calls.append(body)
-            elif "8767" in url:
-                kg_calls.append(body)
+            kg_calls.append(body)
             return FakeResp()
 
         import urllib.request
@@ -1572,18 +1522,14 @@ class TestEscalation:
         finding = self._make_finding(watcher_module, severity="critical")
         watcher_module.escalate(finding)
 
-        assert len(lumen_calls) == 1, "should call Lumen say() once"
-        assert lumen_calls[0]["params"]["name"] == "say"
-        assert "P099" in lumen_calls[0]["params"]["arguments"]["text"]
-
         assert len(kg_calls) == 1, "should store one KG discovery"
         kg_args = kg_calls[0]["arguments"]
         assert kg_args["action"] == "store"
         assert kg_args["severity"] == "critical"
         assert "P099" in kg_args["summary"]
 
-    def test_escalate_high_skips_lumen_and_kg(self, watcher_module, monkeypatch):
-        """Non-critical findings should NOT call Lumen or KG."""
+    def test_escalate_high_skips_kg(self, watcher_module, monkeypatch):
+        """Non-critical findings should NOT call KG."""
         calls = []
 
         def fake_urlopen(req, timeout=None):
@@ -1597,36 +1543,13 @@ class TestEscalation:
         watcher_module.escalate(finding)  # should return early
         assert len(calls) == 0
 
-    def test_escalate_lumen_fallback_on_failure(self, watcher_module, monkeypatch):
-        """If first Lumen URL fails, tries next URL; KG still called."""
-        lumen_attempt_urls = []
-        kg_called = []
-
+    def test_escalate_kg_failure_is_graceful(self, watcher_module, monkeypatch):
+        """KG write failure should not crash the watcher."""
         def fake_urlopen(req, timeout=None):
-            url = req.full_url if hasattr(req, "full_url") else str(req)
-
-            class FakeResp:
-                def read(self):
-                    return b'{"success": true}'
-                def __enter__(self):
-                    return self
-                def __exit__(self, *a):
-                    pass
-
-            if "8766" in url:
-                lumen_attempt_urls.append(url)
-                if len(lumen_attempt_urls) == 1:
-                    raise ConnectionError("Tailscale down")
-                return FakeResp()
-            elif "8767" in url:
-                kg_called.append(True)
-                return FakeResp()
+            raise ConnectionError("governance down")
 
         import urllib.request
         monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
         finding = self._make_finding(watcher_module, severity="critical")
-        watcher_module.escalate(finding)
-
-        assert len(lumen_attempt_urls) == 2, "should try both Lumen URLs"
-        assert len(kg_called) == 1, "KG write should still succeed"
+        watcher_module.escalate(finding)  # should not raise
