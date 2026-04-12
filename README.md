@@ -190,12 +190,33 @@ April 2026:
 [Lumen](https://github.com/CIRWEL/anima-mcp) is an embodied agent on a Raspberry Pi: sensors feed check-ins; local drawing is modulated by coherence-related dynamics. See [anima-mcp](https://github.com/CIRWEL/anima-mcp) for hardware and art pipeline details.
 
 <p align="center">
-  <img src="docs/images/dashboard.png" width="80%" alt="UNITARES web dashboard showing fleet coherence, agent status, and system health"/>
+  <img src="docs/images/dashboard.png" width="80%" alt="UNITARES dashboard — stats overview with fleet coherence, agent count, discoveries, and system health"/>
 </p>
 
+<details>
+<summary><strong>More dashboard views</strong> (pulse, EISV charts, agents, dialectic, activity)</summary>
+
 <p align="center">
-  <em>Web dashboard — fleet coherence, agent status, calibration, anomaly detection.</em>
+  <img src="docs/images/dashboard-pulse.png" width="80%" alt="Pulse — live event feed and EISV time series"/>
 </p>
+<p align="center"><em>Pulse — live event feed, drift indicators, and EISV time series charts</em></p>
+
+<p align="center">
+  <img src="docs/images/dashboard-agents.png" width="80%" alt="Agents and Discoveries panels"/>
+</p>
+<p align="center"><em>Agents (sorted by recency, with trust tiers) and Discoveries (filterable by type and time range)</em></p>
+
+<p align="center">
+  <img src="docs/images/dashboard-dialectic.png" width="80%" alt="Dialectic sessions — recovery and review history"/>
+</p>
+<p align="center"><em>Dialectic sessions — failed, resolved, and active recovery sessions with message counts</em></p>
+
+<p align="center">
+  <img src="docs/images/dashboard-activity.png" width="80%" alt="Activity timeline — check-ins, verdicts, discoveries"/>
+</p>
+<p align="center"><em>Activity timeline — filterable event log across all agents</em></p>
+
+</details>
 
 ---
 
