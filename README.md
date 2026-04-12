@@ -4,51 +4,20 @@
   <img alt="UNITARES — Digital proprioception for AI agents" src="docs/assets/hero.svg" width="100%">
 </picture>
 
-# UNITARES
-
-### Digital proprioception for AI agents.
-
-📄 **Paper**: *UNITARES: Runtime Governance for AI Agents (v3)* — preprint snapshot of the v3 architecture and deployment state, April 2026. Public release link pending.
-
-Status: live overview. For architecture truth and code-first authority ordering, see [docs/CANONICAL_SOURCES.md](docs/CANONICAL_SOURCES.md).
-
 [![Tests](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml/badge.svg)](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 UNITARES is a runtime governance system for AI agents. It accepts check-ins over MCP and HTTP, turns observable behavior into shared state (**EISV**: energy, integrity, entropy, void), stores long-run trajectories in PostgreSQL + AGE, and returns verdicts, guidance, calibration, and recovery paths in real time.
 
-The state model is derived from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do. The core of this repo is the governance server and its test surface; the dashboard, ops scripts, and research framing are supporting layers around that core. For a concise project summary, see [CASE_STUDY.md](CASE_STUDY.md).
-
-Started at a hackathon, deployed to production within weeks, and running continuously since November 2025. The repo ships a governance server with MCP and HTTP APIs, a test suite of 5,900+ passing at 77% coverage, and sustained production check-in volume, including [Lumen](https://github.com/CIRWEL/anima-mcp) on a Raspberry Pi.
-
----
-
-## At a glance
+The state model is derived from what agents actually do — EMA-smoothed observations, not model predictions. Running continuously in production since November 2025 with 6,000+ passing tests at 77% coverage, including [Lumen](https://github.com/CIRWEL/anima-mcp), an embodied agent on a Raspberry Pi.
 
 | | |
 |--|--|
-| **Role** | Turn agent check-ins into **EISV** state (energy, integrity, entropy, void), **verdicts** (`proceed` / `guide` / `pause` / `reject`), guidance, calibration, dialectic, and a **shared knowledge graph** (PostgreSQL + Apache AGE). |
-| **Default workflow** | `onboard()` → `process_agent_update()` → `get_governance_metrics()` — details in [Getting Started](docs/guides/START_HERE.md). |
-| **Transports** | **Streamable HTTP** MCP on `/mcp/` (MCP 1.24+) is the primary transport. Legacy `/sse` remains deprecated compatibility. REST: `/v1/tools/call`; dashboard `/dashboard`; health `/health`. |
-| **Check-in pipeline** | Identity and guards → optional onboarding/resume → **per-agent lock** (concurrent clients, one updating writer per agent) → behavioral state update → verdict and response. |
-| **Tool modes** | **`GOVERNANCE_TOOL_MODE`** defaults to **`lite`**. Call **`list_tools`** on a running server for the exact mode membership; `list_tools` and `describe_tool` are always exposed. |
-| **Engineering signals** | Production deployment since Nov 2025, GitHub Actions CI, ~225 source files, ~198 top-level test files, and 5,900+ passing tests. |
-
----
-
-## Repo Boundaries
-
-If the repo feels broad, read it in layers:
-
-| Area | Primary contents | Intended role |
-|------|------------------|---------------|
-| **Core runtime** | `src/`, `tests/`, `db/`, `docs/UNIFIED_ARCHITECTURE.md`, `docs/CANONICAL_SOURCES.md` | The product itself and the source of truth for behavior |
-| **Product surface** | `dashboard/`, MCP/HTTP endpoints | Operator-facing UI and transport surface around the runtime |
-| **Local operations** | `scripts/ops/`, `docs/operations/`, launchd examples | Deployment support and host-specific maintenance, not runtime semantics |
-| **Research and framing** | Paper mention above, `CASE_STUDY.md`, `CHANGELOG.md` | Versioned explanation and project framing, not the live behavior spec |
-
-New readers should start with the core runtime row first. That is the part of UNITARES that everything else exists to support.
+| **What it does** | Turn agent check-ins into **EISV** state, **verdicts** (`proceed` / `guide` / `pause` / `reject`), calibration, and a **shared knowledge graph**. |
+| **Workflow** | `onboard()` → `process_agent_update()` → `get_governance_metrics()` — details in [Getting Started](docs/guides/START_HERE.md). |
+| **Transports** | MCP on `/mcp/` (Streamable HTTP) · REST on `/v1/tools/call` · Dashboard on `/dashboard` |
+| **Stack** | Python 3.12+ · PostgreSQL + AGE + pgvector · Redis (optional) |
 
 ---
 
@@ -216,7 +185,7 @@ April 2026:
 | Knowledge graph entries | Four figures |
 | EISV (Lumen, illustrative) | E≈0.72, I≈0.75, S≈0.20, V≈-0.04 |
 | V operating range | Active agents often within [-0.1, 0.1] |
-| Tests | 5,900+ passing · 188 files · 77% coverage |
+| Tests | 6,000+ passing · 77% coverage |
 
 [Lumen](https://github.com/CIRWEL/anima-mcp) is an embodied agent on a Raspberry Pi: sensors feed check-ins; local drawing is modulated by coherence-related dynamics. See [anima-mcp](https://github.com/CIRWEL/anima-mcp) for hardware and art pipeline details.
 
@@ -227,18 +196,6 @@ April 2026:
 <p align="center">
   <em>Web dashboard — fleet coherence, agent status, calibration, anomaly detection.</em>
 </p>
-
----
-
-## What you can build on it
-
-- **Monitoring and early warning** — Trajectories and risk signals; circuit breakers at thresholds.
-- **Inter-agent observation** — Read peer state for handoff or review without scraping outputs.
-- **Trajectory identity** — Behavioral signatures for continuity and fork detection.
-- **Outcome correlation** — `outcome_event` feeds calibration (tests, exit codes, lint). Predictive value is still an open question; instrumentation is live.
-- **Dialectic resolution** — Shared state language for structured disagreement.
-- **Knowledge persistence** — Discoveries in a versioned graph with staleness awareness.
-- **Session bridging** — `bind_session` links MCP and REST identities.
 
 ---
 
@@ -261,28 +218,7 @@ graph LR
     style UC fill:#2d2d2d,stroke:#666,color:#fff
 ```
 
-```
-src/                   Server, tool schemas, behavioral state, knowledge graph, dialectic
-  mcp_handlers/        Handlers: identity, lifecycle, knowledge, dialectic, observability, admin, CIRS, …
-dashboard/             Operator-facing web dashboard (supporting product surface)
-scripts/ops/           Local automation, launchd examples, maintenance scripts (supporting ops layer)
-tests/                 Regression surface for the core runtime
-```
-
-| Storage | Purpose | Required |
-|---------|---------|----------|
-| PostgreSQL + AGE + pgvector | State, graph, dialectic, calibration | Yes |
-| Redis | Session cache | No (graceful without) |
-
----
-
-## Open questions
-
-- **Outcome correlation** — `outcome_event` is wired; whether instability predicts real failures is still empirical.
-- **Agent differentiation** — Behavioral EISV is the primary verdict path so trajectories do not collapse to a single ODE attractor. Baselines need ~30 updates.
-- **Identity fragmentation** — Session-scoped IDs multiply across tools and CI; consolidation and trajectory re-identification are open.
-- **Domain tuning** — Defaults are general-purpose; code vs. support vs. trading may need different profiles.
-- **Horizontal scaling** — Single-node operation is the practical default today.
+**Use cases:** Fleet monitoring and early warning, inter-agent state observation, trajectory-based identity and continuity, outcome-calibrated confidence tracking, dialectic peer review, persistent knowledge graph with staleness awareness.
 
 ---
 
@@ -292,38 +228,22 @@ tests/                 Regression surface for the core runtime
 |-------|---------|
 | [Getting Started](docs/guides/START_HERE.md) | Setup, workflows, tool modes |
 | [Architecture](docs/UNIFIED_ARCHITECTURE.md) | Pipeline, verdicts, recovery, storage |
+| [Case Study](CASE_STUDY.md) | Project summary and context |
 | [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Common issues |
 | [Dashboard](dashboard/README.md) | Web UI |
 | [Database](docs/database_architecture.md) | PostgreSQL + AGE |
+| [Contributing](CONTRIBUTING.md) | Development setup, testing, style |
 | [Changelog](CHANGELOG.md) | Releases |
 
-### Canonical sources (keep README in sync)
-
-| Topic | Source of truth |
-|-------|-----------------|
-| Governance pipeline, verdict meanings | [`docs/UNIFIED_ARCHITECTURE.md`](docs/UNIFIED_ARCHITECTURE.md) |
-| Tool mode membership (`minimal` / `lite` / `full`) | [`src/tool_modes.py`](src/tool_modes.py) for mode sets; [`src/tool_schemas.py`](src/tool_schemas.py) for the full tool-definition registry |
-| Mirror and other response shaping | [`src/mcp_handlers/response_formatter.py`](src/mcp_handlers/response_formatter.py) |
-| MCP transport wiring | [`src/mcp_server.py`](src/mcp_server.py) |
-
-When in doubt, prefer those files over this README for counts and payload shapes.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and style.
-
-## Related projects
+## Related Projects
 
 - [**Lumen / anima-mcp**](https://github.com/CIRWEL/anima-mcp) — Embodied agent on Raspberry Pi
-- [**unitares-pi-plugin**](https://github.com/CIRWEL/unitares-pi-plugin) — Pi/Lumen orchestration
+- [**unitares-governance**](https://github.com/CIRWEL/unitares-governance) — Claude Code plugin
 - [**unitares-discord-bridge**](https://github.com/CIRWEL/unitares-discord-bridge) — Discord presence and governance events
+- [**eisv-lumen**](https://github.com/CIRWEL/eisv-lumen) — Governance benchmark (21K trajectories on HuggingFace)
 
 ---
 
-## Licensing
+**MIT** (server, dashboard, tooling) — see [LICENSE](LICENSE). The ODE dynamics engine ships as a compiled dependency (`unitares-core`); see [CONTRIBUTING.md](CONTRIBUTING.md#compiled-dependency).
 
-The MCP server, dashboard, and tooling in this repo are **MIT** — see [LICENSE](LICENSE). The ODE and related dynamics ship as the proprietary compiled **`unitares-core`** dependency (installed via requirements; source not in this repo). See [CONTRIBUTING.md](CONTRIBUTING.md#compiled-dependency).
-
----
-
-Built by [@CIRWEL](https://github.com/CIRWEL) | **v2.11.0**
+Built by [@CIRWEL](https://github.com/CIRWEL)
