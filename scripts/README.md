@@ -1,8 +1,10 @@
 # Scripts Directory
 
-**Last Updated:** March 2026
+**Last Updated:** 2026-04-11
 
 > **Note:** Most functionality is available via MCP tools. Scripts are for CLI-only interfaces, operations, and maintenance.
+>
+> **Status:** specialized local-ops reference. This directory supports running and maintaining a deployment; it is not the primary architecture or product entrypoint for the repo.
 
 ---
 

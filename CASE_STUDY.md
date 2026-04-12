@@ -1,6 +1,10 @@
 # UNITARES Case Study
 
+**Last Updated:** 2026-04-11
+
 Status: specialized project case study. Use this when evaluating the project scope, engineering decisions, and evidence in the repo rather than the runtime docs alone.
+
+This document is framing, not specification. For live behavior, trust `src/`, `tests/`, [README.md](README.md), [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md), and [docs/CANONICAL_SOURCES.md](docs/CANONICAL_SOURCES.md) first.
 
 ## One-Line Summary
 
@@ -19,6 +23,17 @@ This is not a toy wrapper around an API. It is a fairly complete systems project
 - CI and a large automated test suite
 
 This repo is strongest when read as a systems project: a runtime service with multiple interfaces, persistent state, operational behavior, and a broad automated test surface.
+
+## Scope Boundaries
+
+The repo is easier to evaluate when split into four layers:
+
+- **Core runtime:** `src/`, `tests/`, database integration, and canonical architecture docs.
+- **Product surface:** `dashboard/` and the public MCP/HTTP entrypoints.
+- **Local operations:** `scripts/ops/` and operator runbooks that help run this deployment.
+- **Research framing:** the paper snapshot, this case study, and other versioned narrative artifacts.
+
+That distinction matters because the repo does several real jobs, but they do not all carry the same architectural weight. The runtime is primary; ops and framing are support structure around it.
 
 ## Problem
 

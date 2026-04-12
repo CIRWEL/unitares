@@ -12,7 +12,7 @@ Status: live overview. For architecture truth and code-first authority ordering,
 
 UNITARES is a runtime governance system for AI agents. It accepts check-ins over MCP and HTTP, turns observable behavior into shared state (**EISV**: energy, integrity, entropy, void), stores long-run trajectories in PostgreSQL + AGE, and returns verdicts, guidance, calibration, and recovery paths in real time.
 
-The state model is derived from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do. The repo combines protocol/API design, stateful backend architecture, concurrency control, graph-backed storage, observability, dashboard work, and long-running maintenance. For a concise project summary, see [CASE_STUDY.md](CASE_STUDY.md).
+The state model is derived from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do. The core of this repo is the governance server and its test surface; the dashboard, ops scripts, and research framing are supporting layers around that core. For a concise project summary, see [CASE_STUDY.md](CASE_STUDY.md).
 
 Started at a hackathon, deployed to production within weeks, and running continuously since November 2025. The repo ships a governance server with MCP and HTTP APIs, a test suite of 5,900+ passing at 77% coverage, and sustained production check-in volume, including [Lumen](https://github.com/CIRWEL/anima-mcp) on a Raspberry Pi.
 
@@ -28,6 +28,21 @@ Started at a hackathon, deployed to production within weeks, and running continu
 | **Check-in pipeline** | Identity and guards → optional onboarding/resume → **per-agent lock** (concurrent clients, one updating writer per agent) → behavioral state update → verdict and response. |
 | **Tool modes** | **`GOVERNANCE_TOOL_MODE`** defaults to **`lite`**. Call **`list_tools`** on a running server for the exact mode membership; `list_tools` and `describe_tool` are always exposed. |
 | **Engineering signals** | Production deployment since Nov 2025, GitHub Actions CI, ~225 source files, ~198 top-level test files, and 5,900+ passing tests. |
+
+---
+
+## Repo Boundaries
+
+If the repo feels broad, read it in layers:
+
+| Area | Primary contents | Intended role |
+|------|------------------|---------------|
+| **Core runtime** | `src/`, `tests/`, `db/`, `docs/UNIFIED_ARCHITECTURE.md`, `docs/CANONICAL_SOURCES.md` | The product itself and the source of truth for behavior |
+| **Product surface** | `dashboard/`, MCP/HTTP endpoints | Operator-facing UI and transport surface around the runtime |
+| **Local operations** | `scripts/ops/`, `docs/operations/`, launchd examples | Deployment support and host-specific maintenance, not runtime semantics |
+| **Research and framing** | Paper mention above, `CASE_STUDY.md`, `CHANGELOG.md` | Versioned explanation and project framing, not the live behavior spec |
+
+New readers should start with the core runtime row first. That is the part of UNITARES that everything else exists to support.
 
 ---
 
@@ -243,8 +258,9 @@ graph LR
 ```
 src/                   Server, tool schemas, behavioral state, knowledge graph, dialectic
   mcp_handlers/        Handlers: identity, lifecycle, knowledge, dialectic, observability, admin, CIRS, …
-dashboard/             Web dashboard (vanilla JS + Chart.js)
-tests/                 188 files, 5,900+ passing
+dashboard/             Operator-facing web dashboard (supporting product surface)
+scripts/ops/           Local automation, launchd examples, maintenance scripts (supporting ops layer)
+tests/                 Regression surface for the core runtime
 ```
 
 | Storage | Purpose | Required |

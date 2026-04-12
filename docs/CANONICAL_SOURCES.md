@@ -1,5 +1,7 @@
 # Canonical Sources
 
+**Last Updated:** 2026-04-11
+
 Use this page to resolve architecture disputes and doc drift.
 
 Status: canonical authority map for active docs.
@@ -65,6 +67,16 @@ These are live but intentionally specialized. They should not be treated as gene
 | `docs/engineering/contract-drift-playbook.md` | specialized engineering playbook | Tool-contract and drift-prevention work |
 | `docs/engineering/validation-roadmap.md` | specialized engineering roadmap | Empirical validation ladder for groundedness, prediction, and intervention |
 | `docs/meta/MARKDOWN_PROLIFERATION_POLICY.md` | specialized policy reference | Markdown creation policy and consolidation rules |
+
+## Supporting Non-Canonical Artifacts
+
+These are useful, but they are not runtime authority:
+
+| Artifact | Status | Intended use |
+|-----|--------|--------------|
+| `CASE_STUDY.md` | specialized project framing | Evaluate project scope and evidence quickly without treating it as a behavior spec |
+| Paper / preprint snapshots | versioned research framing | Explain a dated architecture and deployment snapshot; not the live canonical system description |
+| `CHANGELOG.md` | release history | Track what changed over time; not a substitute for current runtime semantics |
 
 ## Known Stale-Risk Patterns
 
