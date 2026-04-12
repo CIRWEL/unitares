@@ -114,10 +114,23 @@ class SequentialCalibrationTracker:
         except Exception as e:
             print(f"Warning: Failed to save sequential calibration state: {e}", file=sys.stderr)
 
+    def _file_mtime(self) -> float:
+        try:
+            return self.state_file.stat().st_mtime if self.state_file.exists() else 0.0
+        except OSError:
+            return 0.0
+
+    def _reload_if_stale(self) -> None:
+        """Reload from disk if the file was updated externally (e.g. by backfill)."""
+        current_mtime = self._file_mtime()
+        if current_mtime > getattr(self, "_loaded_mtime", 0.0):
+            self.load_state()
+
     def load_state(self) -> None:
         try:
             if not self.state_file.exists():
                 self.reset()
+                self._loaded_mtime = 0.0
                 return
             with open(self.state_file, "r") as f:
                 data = json.load(f)
@@ -130,9 +143,11 @@ class SequentialCalibrationTracker:
                 restored = _empty_state()
                 restored.update(state or {})
                 self.agent_states[agent_id] = restored
+            self._loaded_mtime = self._file_mtime()
         except Exception as e:
             print(f"Warning: Failed to load sequential calibration state: {e}, resetting", file=sys.stderr)
             self.reset()
+            self._loaded_mtime = 0.0
 
     @staticmethod
     def _clamp_probability(value: float) -> float:
@@ -235,6 +250,7 @@ class SequentialCalibrationTracker:
 
     def compute_metrics(self, agent_id: Optional[str] = None) -> Dict[str, Any]:
         """Return bounded, operator-friendly metrics for the tracked e-process."""
+        self._reload_if_stale()
         if agent_id:
             state = self.agent_states.get(agent_id)
             if not state:

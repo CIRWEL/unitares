@@ -196,6 +196,15 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
                 prediction_source = prediction_source or "prev_confidence_fallback"
         except Exception:
             pass
+    # Step 4: DB fallback — query audit trail for most recent confidence
+    if _confidence is None:
+        try:
+            db_conf = await db.get_latest_confidence_before(agent_id=agent_id)
+            if db_conf is not None:
+                _confidence = db_conf
+                prediction_source = prediction_source or "audit_trail_fallback"
+        except Exception:
+            pass
 
     decision_action = arguments.get("decision_action")
     if decision_action is None and prediction_record is not None:

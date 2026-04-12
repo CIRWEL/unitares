@@ -127,6 +127,51 @@ class AuditMixin:
                 )
             return [self._row_to_audit_event(r) for r in rows]
 
+    async def get_latest_confidence_before(
+        self,
+        before_ts: Optional[datetime] = None,
+        agent_id: Optional[str] = None,
+    ) -> Optional[float]:
+        """Return the most recent non-null confidence from audit events.
+
+        Used as a fallback when outcome_event cannot resolve confidence from
+        the in-memory monitor (e.g. REST callers without MCP session context).
+
+        If agent_id is given, tries that agent first; falls back to any agent.
+        """
+        async with self.acquire() as conn:
+            ts = before_ts or datetime.now(timezone.utc)
+
+            # Try specific agent first
+            if agent_id:
+                row = await conn.fetchrow(
+                    """
+                    SELECT confidence FROM audit.events
+                    WHERE agent_id = $1
+                      AND confidence IS NOT NULL
+                      AND confidence > 0
+                      AND ts <= $2
+                    ORDER BY ts DESC LIMIT 1
+                    """,
+                    agent_id, ts,
+                )
+                if row:
+                    return float(row["confidence"])
+
+            # Fall back to any agent's most recent confidence
+            row = await conn.fetchrow(
+                """
+                SELECT confidence FROM audit.events
+                WHERE confidence IS NOT NULL
+                  AND confidence > 0
+                  AND agent_id NOT IN ('system', 'eisv-sync-task')
+                  AND ts <= $1
+                ORDER BY ts DESC LIMIT 1
+                """,
+                ts,
+            )
+            return float(row["confidence"]) if row else None
+
     def _row_to_audit_event(self, row) -> AuditEvent:
         return AuditEvent(
             ts=row["ts"],

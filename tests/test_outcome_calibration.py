@@ -408,13 +408,14 @@ class TestExplicitOutcomeEventCalibration:
 
     @pytest.mark.asyncio
     async def test_no_calibration_when_no_confidence_available(self):
-        """No calibration when neither param nor monitor has confidence."""
+        """No calibration when neither param, monitor, nor DB has confidence."""
         mock_db = MagicMock()
         mock_db.record_outcome_event = AsyncMock(return_value='oe-3')
         mock_db.get_latest_eisv_by_agent_id = AsyncMock(return_value={
             'E': 0.7, 'I': 0.75, 'S': 0.15, 'V': -0.03,
             'phi': 0.1, 'verdict': 'safe', 'coherence': 0.48, 'regime': 'CONVERGENCE',
         })
+        mock_db.get_latest_confidence_before = AsyncMock(return_value=None)
 
         mock_checker = MagicMock()
         mock_seq_tracker = MagicMock()
@@ -436,6 +437,57 @@ class TestExplicitOutcomeEventCalibration:
         assert parsed.get('outcome_id') == 'oe-3'
         mock_checker.record_prediction.assert_not_called()
         mock_seq_tracker.record_exogenous_tactical_outcome.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_confidence_fallback_from_audit_trail(self):
+        """When no monitor confidence, falls back to DB audit trail."""
+        mock_db = MagicMock()
+        mock_db.record_outcome_event = AsyncMock(return_value='oe-db')
+        mock_db.get_latest_eisv_by_agent_id = AsyncMock(return_value={
+            'E': 0.7, 'I': 0.75, 'S': 0.15, 'V': -0.03,
+            'phi': 0.1, 'verdict': 'safe', 'coherence': 0.48, 'regime': 'CONVERGENCE',
+        })
+        mock_db.get_latest_confidence_before = AsyncMock(return_value=0.65)
+
+        mock_checker = MagicMock()
+        mock_seq_tracker = MagicMock()
+
+        with patch('src.db.get_db', return_value=mock_db), \
+             patch('src.mcp_handlers.observability.outcome_events.mcp_server') as mock_server, \
+             patch('src.mcp_handlers.context.get_context_agent_id', return_value='agent-rest'), \
+             patch('src.calibration.calibration_checker', mock_checker), \
+             patch('src.sequential_calibration.sequential_calibration_tracker', mock_seq_tracker):
+
+            mock_server.monitors = {}  # No monitor — REST caller
+
+            from src.mcp_handlers.observability.outcome_events import handle_outcome_event
+            result = await handle_outcome_event({
+                'outcome_type': 'test_passed',
+                'detail': {'tests': {'passed': 10, 'failed': 0}},
+            })
+
+        parsed = parse_result(result)
+        assert parsed.get('outcome_id') == 'oe-db'
+
+        # Calibration should fire with DB-resolved confidence
+        mock_checker.record_prediction.assert_called_once_with(
+            confidence=0.65,
+            predicted_correct=True,
+            actual_correct=1.0,
+        )
+
+        # Sequential tracker should fire — test_passed is hard exogenous
+        mock_seq_tracker.record_exogenous_tactical_outcome.assert_called_once()
+        seq_kwargs = mock_seq_tracker.record_exogenous_tactical_outcome.call_args[1]
+        assert seq_kwargs['confidence'] == 0.65
+        assert seq_kwargs['outcome_correct'] is True
+        assert seq_kwargs['signal_source'] == 'tests'
+
+        # Verify detail records the source
+        _, db_kwargs = mock_db.record_outcome_event.call_args
+        assert db_kwargs['detail']['reported_confidence'] == 0.65
+        assert db_kwargs['detail']['prediction_source'] == 'audit_trail_fallback'
+        assert db_kwargs['detail']['eprocess_eligible'] is True
 
     @pytest.mark.asyncio
     async def test_test_failed_records_tactical_with_bad_outcome(self):
