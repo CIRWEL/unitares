@@ -953,8 +953,8 @@ async function loadAgents() {
         const fleetCoherenceEl = document.getElementById('fleet-coherence');
         const fleetDetailEl = document.getElementById('fleet-health-detail');
         if (fleetCoherenceEl && fleetDetailEl) {
-            // If prod-only is active, filter to production agents for fleet stats
-            const fleetAgents = (typeof AgentsModule !== 'undefined' && AgentsModule.isProdOnlyActive && AgentsModule.isProdOnlyActive())
+            // Always exclude test agents from fleet stats to prevent data corruption
+            const fleetAgents = (typeof AgentsModule !== 'undefined' && AgentsModule.getProductionAgents)
                 ? AgentsModule.getProductionAgents(allAgents)
                 : allAgents;
             const agentsWithMetrics = fleetAgents.filter(a => {

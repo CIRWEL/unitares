@@ -60,13 +60,30 @@ def cli_env(tmp_path):
     A unique agent name avoids collisions with the server's
     trajectory-verification guard when the test is rerun in the same
     governance database.
+
+    Archives the test agent on teardown to prevent proliferation.
     """
     env = os.environ.copy()
     env.pop("UNITARES_URL", None)  # force default localhost
-    env["UNITARES_AGENT"] = _unique_agent_name()
+    agent_name = _unique_agent_name()
+    env["UNITARES_AGENT"] = agent_name
     env["UNITARES_SESSION_FILE"] = str(tmp_path / "session.json")
     env["UNITARES_TIMEOUT"] = "15"
-    return env
+    yield env
+    # Cleanup: archive the test agent so it doesn't pollute the dashboard
+    try:
+        import urllib.request, json as _json
+        req = urllib.request.Request(
+            f"{DEFAULT_URL}/v1/tools/call",
+            data=_json.dumps({
+                "name": "agent",
+                "arguments": {"action": "archive", "agent_id": agent_name}
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass  # Best-effort cleanup
 
 
 def _run(env, *args, check=True):

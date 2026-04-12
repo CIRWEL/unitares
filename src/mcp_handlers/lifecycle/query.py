@@ -82,7 +82,7 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                     continue
                 if min_updates and meta.total_updates < min_updates:
                     continue
-                if not include_test_agents and _is_test_agent(agent_id):  # Filter test agents
+                if not include_test_agents and _is_test_agent(agent_id, getattr(meta, 'label', None)):
                     continue
                 if named_only is True and not getattr(meta, 'label', None):
                     continue
@@ -189,7 +189,7 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                 continue
 
             # Filter out test agents by default (unless explicitly requested)
-            if not include_test_agents and _is_test_agent(agent_id):
+            if not include_test_agents and _is_test_agent(agent_id, getattr(meta, 'label', None)):
                 continue
 
             # Filter out low-activity agents (one-shot fragmentation cleanup)

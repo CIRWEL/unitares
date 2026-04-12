@@ -25,7 +25,8 @@
      */
     function isTestAgent(agent) {
         var name = (agent.label || agent.display_name || agent.name || '').toLowerCase();
-        if (/^(exp_|val_|paper_|test_)/.test(name)) return true;
+        if (/^(exp_|val_|paper_|test_|test-|cli-pytest)/.test(name)) return true;
+        if (/\bpytest\b/.test(name) || /\btest\b/.test(name)) return true;
         var tags = agent.tags || [];
         for (var i = 0; i < tags.length; i++) {
             var t = String(tags[i]).toLowerCase();
