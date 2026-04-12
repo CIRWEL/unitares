@@ -10,9 +10,11 @@ Status: live overview. For architecture truth and code-first authority ordering,
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-UNITARES gives AI agents a shared language for inner state — four continuous variables derived from observable behavior — and a protocol to report work and read governance back. State is computed from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do.
+UNITARES is a runtime governance system for AI agents. It accepts check-ins over MCP and HTTP, turns observable behavior into shared state (**EISV**: energy, integrity, entropy, void), stores long-run trajectories in PostgreSQL + AGE, and returns verdicts, guidance, calibration, and recovery paths in real time.
 
-Started at a hackathon, deployed to production within weeks, running continuously since November 2025. The repo ships a governance server with MCP and HTTP APIs, a test suite of 5,900+ passing at 77% coverage, and sustained production check-in volume, including [Lumen](https://github.com/CIRWEL/anima-mcp) on a Raspberry Pi.
+The state model is derived from what agents actually do (EMA-smoothed observations), not from what a model predicts they should do. As a portfolio artifact, this repo demonstrates protocol/API design, stateful backend architecture, concurrency control, graph-backed storage, observability, dashboard work, and long-running maintenance. For a fast evaluation-oriented summary, see [PORTFOLIO.md](PORTFOLIO.md).
+
+Started at a hackathon, deployed to production within weeks, and running continuously since November 2025. The repo ships a governance server with MCP and HTTP APIs, a test suite of 5,900+ passing at 77% coverage, and sustained production check-in volume, including [Lumen](https://github.com/CIRWEL/anima-mcp) on a Raspberry Pi.
 
 ---
 
@@ -25,6 +27,7 @@ Started at a hackathon, deployed to production within weeks, running continuousl
 | **Transports** | **Streamable HTTP** MCP on `/mcp/` (MCP 1.24+) is the primary transport. Legacy `/sse` remains deprecated compatibility. REST: `/v1/tools/call`; dashboard `/dashboard`; health `/health`. |
 | **Check-in pipeline** | Identity and guards → optional onboarding/resume → **per-agent lock** (concurrent clients, one updating writer per agent) → behavioral state update → verdict and response. |
 | **Tool modes** | **`GOVERNANCE_TOOL_MODE`** defaults to **`lite`**. Call **`list_tools`** on a running server for the exact mode membership; `list_tools` and `describe_tool` are always exposed. |
+| **Engineering signals** | Production deployment since Nov 2025, GitHub Actions CI, ~225 source files, ~198 top-level test files, and 5,900+ passing tests. |
 
 ---
 
@@ -301,4 +304,4 @@ The MCP server, dashboard, and tooling in this repo are **MIT** — see [LICENSE
 
 ---
 
-Built by [@CIRWEL](https://github.com/CIRWEL) | **v2.10.0**
+Built by [@CIRWEL](https://github.com/CIRWEL) | **v2.11.0**
