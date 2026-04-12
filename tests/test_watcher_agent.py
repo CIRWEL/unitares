@@ -1239,6 +1239,142 @@ def test_surface_pending_does_not_silently_drop_hidden_mediums(
         )
 
 
+# --- P016 self-catch: nested-success-false in call_model_via_governance ---
+
+
+def test_call_model_via_governance_raises_on_nested_success_false(
+    watcher_module, monkeypatch
+):
+    """Regression for P016 in Watcher's own code: the governance REST
+    envelope can report outer success=true while the inner result
+    reports semantic failure. We must raise so the caller's fallback
+    path to direct Ollama actually triggers.
+
+    This is the first confirmed P016 find after adding the pattern to
+    the library, caught by self-inspection of Watcher's own call path
+    within minutes of the pattern landing.
+    """
+    import io
+    from unittest.mock import MagicMock
+
+    fake_payload = {
+        "success": True,  # outer envelope lies
+        "result": {
+            "success": False,  # inner result tells the truth
+            "error": "simulated ollama failure",
+        },
+    }
+
+    class _FakeResp:
+        def __init__(self, payload):
+            self._body = json.dumps(payload).encode()
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _fake_urlopen(req, timeout=None):
+        return _FakeResp(fake_payload)
+
+    monkeypatch.setattr(
+        watcher_module.urllib.request, "urlopen", _fake_urlopen
+    )
+
+    with pytest.raises(RuntimeError, match="inner result reported failure"):
+        watcher_module.call_model_via_governance(
+            "test prompt", "test-model", timeout=5
+        )
+
+
+def test_call_model_via_governance_accepts_nested_success_true(
+    watcher_module, monkeypatch
+):
+    """Sanity: the happy path (both envelopes true) must still succeed."""
+    fake_payload = {
+        "success": True,
+        "result": {
+            "success": True,
+            "response": "all good",
+            "model_used": "test-model",
+            "tokens_used": 42,
+        },
+    }
+
+    class _FakeResp:
+        def __init__(self, payload):
+            self._body = json.dumps(payload).encode()
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _fake_urlopen(req, timeout=None):
+        return _FakeResp(fake_payload)
+
+    monkeypatch.setattr(
+        watcher_module.urllib.request, "urlopen", _fake_urlopen
+    )
+
+    result = watcher_module.call_model_via_governance(
+        "test prompt", "test-model", timeout=5
+    )
+    assert result["text"] == "all good"
+    assert result["tokens_used"] == 42
+
+
+def test_call_model_via_governance_accepts_result_without_success_field(
+    watcher_module, monkeypatch
+):
+    """Backwards-compat: older governance responses may not include a
+    nested success field at all. Treat missing-nested-success as
+    accept, not reject. Only explicit success=false triggers the
+    P016 guard."""
+    fake_payload = {
+        "success": True,
+        "result": {
+            # no nested success field at all
+            "response": "legacy shape",
+            "model_used": "test-model",
+            "tokens_used": 10,
+        },
+    }
+
+    class _FakeResp:
+        def __init__(self, payload):
+            self._body = json.dumps(payload).encode()
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _fake_urlopen(req, timeout=None):
+        return _FakeResp(fake_payload)
+
+    monkeypatch.setattr(
+        watcher_module.urllib.request, "urlopen", _fake_urlopen
+    )
+
+    result = watcher_module.call_model_via_governance(
+        "test prompt", "test-model", timeout=5
+    )
+    assert result["text"] == "legacy shape"
+
+
 def test_surface_pending_second_chime_picks_up_previously_hidden_mediums(
     watcher_module, capsys
 ):

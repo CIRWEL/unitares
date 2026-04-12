@@ -375,9 +375,21 @@ def call_model_via_governance(prompt: str, model: str, timeout: int) -> dict[str
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode())
 
+    # P016 guard: a wrapped REST response has TWO success flags — the outer
+    # envelope (transport-level) and the inner result (semantic-level). The
+    # outer can report success while the inner reports failure. Check both
+    # layers, and raise distinctly so the caller's fallback path actually
+    # triggers. The Watcher pattern library (P016, added 2026-04-11 from
+    # the unitares-cli parse_onboard incident) flagged this exact shape in
+    # our own call path — caught by self-scanning within minutes of adding
+    # the pattern.
     if not data.get("success"):
-        raise RuntimeError(f"call_model reported failure: {data}")
+        raise RuntimeError(f"call_model outer envelope reported failure: {data}")
     result = data.get("result", {})
+    if isinstance(result, dict) and result.get("success") is False:
+        raise RuntimeError(
+            f"call_model inner result reported failure: {result}"
+        )
     return {
         "text": result.get("response", "") or "",
         "model_used": result.get("model_used", model),
