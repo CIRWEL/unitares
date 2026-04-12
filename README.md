@@ -2,7 +2,7 @@
 
 ### Digital proprioception for AI agents.
 
-📄 **Paper**: [UNITARES: Runtime Governance for AI Agents (v3)](papers/unitares-runtime-governance-v3.pdf) — preprint, April 2026
+📄 **Paper**: *UNITARES: Runtime Governance for AI Agents (v3)* — preprint snapshot of the v3 architecture and deployment state, April 2026. Public release link pending.
 
 Status: live overview. For architecture truth and code-first authority ordering, see [docs/CANONICAL_SOURCES.md](docs/CANONICAL_SOURCES.md).
 
