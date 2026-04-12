@@ -1521,3 +1521,112 @@ def test_surface_pending_second_chime_picks_up_previously_hidden_mediums(
         "critical/high queue drains"
     )
     assert "[HIGH]" not in second  # all resolved
+
+
+# ---------------------------------------------------------------------------
+# Escalation: critical findings → Lumen voice + KG discovery
+# ---------------------------------------------------------------------------
+
+
+class TestEscalation:
+    """Verify that escalate() calls Lumen say() and KG store for critical
+    findings, and is a no-op for non-critical severities."""
+
+    def _make_finding(self, watcher_module, severity="critical"):
+        return watcher_module.Finding(
+            pattern="P099",
+            file="/tmp/test.py",
+            line=42,
+            hint="test finding",
+            severity=severity,
+            detected_at="2026-04-11T12:00:00",
+            model_used="test",
+        )
+
+    def test_escalate_critical_calls_lumen_and_kg(self, watcher_module, monkeypatch):
+        """Critical findings trigger both Lumen voice and KG discovery."""
+        lumen_calls = []
+        kg_calls = []
+
+        def fake_urlopen(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            body = json.loads(req.data.decode())
+
+            class FakeResp:
+                def read(self):
+                    return b'{"success": true}'
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    pass
+
+            if "8766" in url:
+                lumen_calls.append(body)
+            elif "8767" in url:
+                kg_calls.append(body)
+            return FakeResp()
+
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+        finding = self._make_finding(watcher_module, severity="critical")
+        watcher_module.escalate(finding)
+
+        assert len(lumen_calls) == 1, "should call Lumen say() once"
+        assert lumen_calls[0]["params"]["name"] == "say"
+        assert "P099" in lumen_calls[0]["params"]["arguments"]["text"]
+
+        assert len(kg_calls) == 1, "should store one KG discovery"
+        kg_args = kg_calls[0]["arguments"]
+        assert kg_args["action"] == "store"
+        assert kg_args["severity"] == "critical"
+        assert "P099" in kg_args["summary"]
+
+    def test_escalate_high_skips_lumen_and_kg(self, watcher_module, monkeypatch):
+        """Non-critical findings should NOT call Lumen or KG."""
+        calls = []
+
+        def fake_urlopen(req, timeout=None):
+            calls.append(req)
+            raise AssertionError("should not be called for high severity")
+
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+        finding = self._make_finding(watcher_module, severity="high")
+        watcher_module.escalate(finding)  # should return early
+        assert len(calls) == 0
+
+    def test_escalate_lumen_fallback_on_failure(self, watcher_module, monkeypatch):
+        """If first Lumen URL fails, tries next URL; KG still called."""
+        lumen_attempt_urls = []
+        kg_called = []
+
+        def fake_urlopen(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+
+            class FakeResp:
+                def read(self):
+                    return b'{"success": true}'
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    pass
+
+            if "8766" in url:
+                lumen_attempt_urls.append(url)
+                if len(lumen_attempt_urls) == 1:
+                    raise ConnectionError("Tailscale down")
+                return FakeResp()
+            elif "8767" in url:
+                kg_called.append(True)
+                return FakeResp()
+
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+        finding = self._make_finding(watcher_module, severity="critical")
+        watcher_module.escalate(finding)
+
+        assert len(lumen_attempt_urls) == 2, "should try both Lumen URLs"
+        assert len(kg_called) == 1, "KG write should still succeed"
