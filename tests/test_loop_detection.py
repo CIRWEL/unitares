@@ -71,9 +71,9 @@ def _timestamps_spaced(count: int, spacing_seconds: float, start_offset_seconds:
 class TestPattern4LoweredThreshold:
     """Pattern 4 should now trigger at 10 proceed decisions instead of 15."""
 
-    def test_10_proceed_decisions_triggers(self):
-        """10 proceed decisions in the last 10 updates should trigger."""
-        timestamps = _timestamps_spaced(10, spacing_seconds=60)
+    def test_10_rapid_proceed_decisions_triggers(self):
+        """10 proceed decisions within 5 minutes should trigger."""
+        timestamps = _timestamps_spaced(10, spacing_seconds=20)  # 180s < 300s threshold
         decisions = ["proceed"] * 10
 
         meta = _make_metadata(recent_timestamps=timestamps, recent_decisions=decisions)
@@ -85,12 +85,28 @@ class TestPattern4LoweredThreshold:
             from src.agent_loop_detection import detect_loop_pattern
             is_loop, reason = detect_loop_pattern("test-agent")
 
-        assert is_loop, f"10 proceed decisions should trigger Pattern 4, got: {reason}"
+        assert is_loop, f"10 rapid proceed decisions should trigger Pattern 4, got: {reason}"
         assert "Decision loop" in reason
+
+    def test_10_slow_proceed_decisions_does_not_trigger(self):
+        """10 proceed decisions spread over hours should NOT trigger (cron agents)."""
+        timestamps = _timestamps_spaced(10, spacing_seconds=1800)  # 30min apart
+        decisions = ["proceed"] * 10
+
+        meta = _make_metadata(recent_timestamps=timestamps, recent_decisions=decisions)
+
+        with (
+            patch("src.agent_loop_detection.agent_metadata", {"test-agent": meta}),
+            patch("src.agent_process_mgmt.SERVER_START_TIME", datetime.now() - timedelta(hours=1)),
+        ):
+            from src.agent_loop_detection import detect_loop_pattern
+            is_loop, reason = detect_loop_pattern("test-agent")
+
+        assert not is_loop, f"Slow proceed decisions should NOT trigger: {reason}"
 
     def test_9_proceed_decisions_does_not_trigger(self):
         """9 proceed decisions should NOT trigger Pattern 4."""
-        timestamps = _timestamps_spaced(10, spacing_seconds=60)
+        timestamps = _timestamps_spaced(10, spacing_seconds=20)
         decisions = ["proceed"] * 9 + ["pause"]
 
         meta = _make_metadata(recent_timestamps=timestamps, recent_decisions=decisions)

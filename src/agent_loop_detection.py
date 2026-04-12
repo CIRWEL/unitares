@@ -218,7 +218,16 @@ def detect_loop_pattern(agent_id: str) -> tuple[bool, str]:
 
         proceed_count = decision_counts.get("proceed", 0) + decision_counts.get("approve", 0) + decision_counts.get("reflect", 0) + decision_counts.get("revise", 0)
         if proceed_count >= 10:
-            return True, f"Decision loop detected: {proceed_count} consecutive 'proceed' decisions (agent may be stuck in feedback loop)"
+            # Only flag if these 10 proceeds happened within a short window.
+            # Cron agents (e.g. Vigil, 30min cycle) naturally accumulate 10
+            # proceeds over hours — that's health, not a loop.
+            try:
+                window_timestamps = [datetime.fromisoformat(ts) for ts in recent_timestamps[-10:]]
+                window_span = (window_timestamps[-1] - window_timestamps[0]).total_seconds()
+                if window_span <= 300:  # 10 proceeds in 5 minutes = suspicious
+                    return True, f"Decision loop detected: {proceed_count} 'proceed' decisions in {window_span:.0f}s (agent may be stuck in feedback loop)"
+            except (ValueError, TypeError, IndexError):
+                pass  # Can't parse timestamps — skip this pattern
 
     # Pattern 5: Slow-stuck pattern - 3+ updates in 60s with 2+ rejects
     if not is_autonomous and not in_recovery_grace and len(recent_timestamps) >= 3:
