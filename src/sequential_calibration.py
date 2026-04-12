@@ -111,6 +111,7 @@ class SequentialCalibrationTracker:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.state_file, "w") as f:
                 json.dump(self._serialize(), f, indent=2)
+            self._loaded_mtime = self._file_mtime()
         except Exception as e:
             print(f"Warning: Failed to save sequential calibration state: {e}", file=sys.stderr)
 
@@ -206,6 +207,7 @@ class SequentialCalibrationTracker:
         outcome_type: Optional[str] = None,
         timestamp: Optional[str] = None,
         prediction_id: Optional[str] = None,
+        persist: bool = True,
     ) -> Dict[str, Any]:
         """Record one eligible hard exogenous tactical outcome.
 
@@ -236,7 +238,8 @@ class SequentialCalibrationTracker:
                 timestamp=ts,
             )
 
-        self.save_state()
+        if persist:
+            self.save_state()
 
         return {
             "agent_id": agent_id,

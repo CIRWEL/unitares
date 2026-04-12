@@ -137,12 +137,14 @@ class AuditMixin:
         Used as a fallback when outcome_event cannot resolve confidence from
         the in-memory monitor (e.g. REST callers without MCP session context).
 
-        If agent_id is given, tries that agent first; falls back to any agent.
+        If agent_id is given, only that agent is searched. Cross-agent fallback
+        is intentionally forbidden because it can attach another agent's
+        confidence to the wrong outcome event and poison calibration evidence.
+        Omitting agent_id queries the most recent confidence across all agents.
         """
         async with self.acquire() as conn:
             ts = before_ts or datetime.now(timezone.utc)
 
-            # Try specific agent first
             if agent_id:
                 row = await conn.fetchrow(
                     """
@@ -155,10 +157,8 @@ class AuditMixin:
                     """,
                     agent_id, ts,
                 )
-                if row:
-                    return float(row["confidence"])
+                return float(row["confidence"]) if row else None
 
-            # Fall back to any agent's most recent confidence
             row = await conn.fetchrow(
                 """
                 SELECT confidence FROM audit.events

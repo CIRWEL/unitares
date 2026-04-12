@@ -99,6 +99,7 @@ data/activity/
 # Calibration backups
 data/calibration_state.json
 data/calibration_state_backup_*.json
+data/sequential_calibration_state.json
 
 # Audit logs (may contain sensitive information)
 data/audit_log.jsonl

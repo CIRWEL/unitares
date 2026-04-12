@@ -18,12 +18,43 @@ import argparse
 import asyncio
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+
+def _truthy(value) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "t"}
+
+
+def _parse_confidence(value) -> float | None:
+    if value in (None, "", "null"):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_detail(detail):
+    if isinstance(detail, dict):
+        return detail
+    if isinstance(detail, str):
+        try:
+            return json.loads(detail)
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _normalize_timestamp(value) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
 
 
 async def backfill(apply: bool = False, verbose: bool = False) -> dict:
@@ -33,38 +64,56 @@ async def backfill(apply: bool = False, verbose: bool = False) -> dict:
     db = get_db()
     await db.init()
 
-    tracker = SequentialCalibrationTracker()
-
-    # Fetch all test outcomes that weren't e-process eligible
+    # Rebuild from the database history in timestamp order. This keeps the
+    # e-process chronology intact and makes the script idempotent: re-running
+    # --apply rewrites the tracker from source-of-truth outcomes instead of
+    # replaying the same rows into already-mutated state.
     async with db.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT agent_id, outcome_type,
-                   detail->>'reported_confidence' as reported_conf,
-                   detail->>'eprocess_eligible' as eligible,
-                   ts
+            SELECT agent_id, outcome_type, is_bad, detail, ts
             FROM audit.outcome_events
-            WHERE outcome_type IN ('test_passed', 'test_failed')
             ORDER BY ts ASC
             """
         )
 
     total = len(rows)
-    paired = 0
-    skipped_has_conf = 0
+    included_existing = 0
+    paired_missing_conf = 0
     skipped_no_match = 0
+    rebuilt_samples: list[dict] = []
 
     for row in rows:
         outcome_ts = row["ts"]
         outcome_type = row["outcome_type"]
-        reported_conf = row["reported_conf"]
-
-        # Skip if already had confidence (was already e-process eligible)
-        if reported_conf and reported_conf != "null":
-            skipped_has_conf += 1
+        detail = _coerce_detail(row.get("detail"))
+        signal_source = detail.get("hard_exogenous_signal")
+        if not signal_source and outcome_type in ("test_passed", "test_failed"):
+            signal_source = "tests"
+        if not signal_source:
             continue
 
-        # Find nearest prior confidence from audit events
+        reported_conf = _parse_confidence(detail.get("reported_confidence"))
+        if reported_conf is not None and _truthy(detail.get("eprocess_eligible")):
+            included_existing += 1
+            rebuilt_samples.append(
+                {
+                    "agent_id": row["agent_id"],
+                    "confidence": reported_conf,
+                    "outcome_correct": not row["is_bad"],
+                    "signal_source": signal_source,
+                    "decision_action": detail.get("decision_action"),
+                    "outcome_type": outcome_type,
+                    "timestamp": _normalize_timestamp(outcome_ts),
+                    "prediction_id": detail.get("prediction_id"),
+                }
+            )
+            continue
+
+        # Historical gap we can repair safely: test outcomes with no recorded confidence.
+        if outcome_type not in ("test_passed", "test_failed"):
+            continue
+
         confidence = await db.get_latest_confidence_before(
             before_ts=outcome_ts,
             agent_id=row["agent_id"],
@@ -77,7 +126,7 @@ async def backfill(apply: bool = False, verbose: bool = False) -> dict:
             continue
 
         outcome_correct = outcome_type == "test_passed"
-        paired += 1
+        paired_missing_conf += 1
 
         if verbose:
             print(
@@ -85,22 +134,42 @@ async def backfill(apply: bool = False, verbose: bool = False) -> dict:
                 f"← confidence={confidence:.3f} → correct={outcome_correct}"
             )
 
-        if apply:
-            tracker.record_exogenous_tactical_outcome(
-                confidence=confidence,
-                outcome_correct=outcome_correct,
-                agent_id=row["agent_id"],
-                signal_source="tests",
-                outcome_type=outcome_type,
-            )
+        rebuilt_samples.append(
+            {
+                "agent_id": row["agent_id"],
+                "confidence": confidence,
+                "outcome_correct": outcome_correct,
+                "signal_source": signal_source,
+                "decision_action": detail.get("decision_action"),
+                "outcome_type": outcome_type,
+                "timestamp": _normalize_timestamp(outcome_ts),
+                "prediction_id": detail.get("prediction_id"),
+            }
+        )
 
-    if apply and paired > 0:
+    if apply:
+        tracker = SequentialCalibrationTracker()
+        tracker.reset()
+        for sample in rebuilt_samples:
+            tracker.record_exogenous_tactical_outcome(
+                confidence=sample["confidence"],
+                outcome_correct=sample["outcome_correct"],
+                agent_id=sample["agent_id"],
+                signal_source=sample["signal_source"],
+                decision_action=sample["decision_action"],
+                outcome_type=sample["outcome_type"],
+                timestamp=sample["timestamp"],
+                prediction_id=sample["prediction_id"],
+                persist=False,
+            )
         tracker.save_state()
+
 
     result = {
         "total_outcomes": total,
-        "paired": paired,
-        "skipped_has_confidence": skipped_has_conf,
+        "rebuilt_samples": len(rebuilt_samples),
+        "included_existing_eligible": included_existing,
+        "paired_missing_confidence": paired_missing_conf,
         "skipped_no_match": skipped_no_match,
         "applied": apply,
     }
@@ -128,9 +197,10 @@ def main():
     result = asyncio.run(backfill(apply=args.apply, verbose=args.verbose))
 
     print(f"\nResults:")
-    print(f"  Total test outcomes:       {result['total_outcomes']}")
-    print(f"  Paired with confidence:    {result['paired']}")
-    print(f"  Skipped (already had):     {result['skipped_has_confidence']}")
+    print(f"  Total outcome rows:        {result['total_outcomes']}")
+    print(f"  Rebuilt samples:           {result['rebuilt_samples']}")
+    print(f"  Included existing:         {result['included_existing_eligible']}")
+    print(f"  Paired missing confidence: {result['paired_missing_confidence']}")
     print(f"  Skipped (no match):        {result['skipped_no_match']}")
     print(f"  Applied:                   {result['applied']}")
 
