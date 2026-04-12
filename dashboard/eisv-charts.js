@@ -445,10 +445,20 @@
         }
 
         // Trim old data from all agent histories
+        // Keep at least MIN_SPARKLINE_POINTS per agent so slow check-in agents
+        // (e.g. Vigil every 30min) still get sparklines
+        var MIN_SPARKLINE_POINTS = 20;
         var cutoff = tsMs - EISV_WINDOW_MS;
         var aids = Object.keys(agentEISVHistory);
         for (var i = 0; i < aids.length; i++) {
-            agentEISVHistory[aids[i]] = agentEISVHistory[aids[i]].filter(function (pt) { return pt.ts >= cutoff; });
+            var hist = agentEISVHistory[aids[i]];
+            if (hist.length > MIN_SPARKLINE_POINTS) {
+                agentEISVHistory[aids[i]] = hist.filter(function (pt) { return pt.ts >= cutoff; });
+                // Ensure we never trim below minimum
+                if (agentEISVHistory[aids[i]].length < MIN_SPARKLINE_POINTS) {
+                    agentEISVHistory[aids[i]] = hist.slice(-MIN_SPARKLINE_POINTS);
+                }
+            }
             if (agentEISVHistory[aids[i]].length === 0) {
                 delete agentEISVHistory[aids[i]];
                 knownAgents.delete(aids[i]);
