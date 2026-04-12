@@ -24,6 +24,25 @@ storing the task reference for later cancellation or cleanup.
 **Seen in:** `background_tasks.py` stuck_agent_recovery_task (2026-04-10 incident,
 1.1GB RSS runaway)
 
+**SAFE — DO NOT FLAG:**
+```python
+# Pattern A: task ref stored in a set with done-callback cleanup
+task = loop.create_task(some_coro())
+_background_tasks.add(task)
+task.add_done_callback(_background_tasks.discard)
+
+# Pattern B: task ref stored in a variable, later cancelled and awaited
+ws_task = asyncio.create_task(self.ws_consumer())
+# ... later in the same function ...
+ws_task.cancel()
+await ws_task
+```
+
+If the task reference is assigned to a variable or added to a collection
+(set, list, dict) in the same block, it is NOT fire-and-forget. Only flag
+when the return value of `create_task()` is completely discarded or used
+only in a bare expression statement.
+
 **Hint template:** `fire-and-forget task — store ref or use TaskGroup`
 
 ### P002 — Unbounded dict/list growth (severity: medium)
@@ -70,6 +89,22 @@ acquisitions without a paired release in a `finally:` or `async with` context.
 `except Exception: pass` or `except Exception: logger.warning(...)` without
 re-raising. Hides real bugs and makes debugging impossible.
 
+**SAFE — DO NOT FLAG:**
+```python
+# Non-critical side-effect wrapped in its own try/except
+# (broadcasting, telemetry, optional notifications)
+try:
+    await broadcaster.broadcast_event("some_event", ...)
+except Exception as e:
+    logger.debug(f"Could not broadcast: {e}")
+```
+
+If the swallowed code is an optional side-effect (broadcast, telemetry,
+metrics emission) inside its own isolated try/except block — and the
+primary logic path does NOT depend on its result — it is intentional.
+Only flag when the swallow is on the main logic path or could mask a
+failure the caller needs to know about.
+
 **Hint template:** `silent swallow — log and re-raise or narrow the except`
 
 <!-- P007 has been demoted to the EXPERIMENTAL section below.
@@ -94,7 +129,7 @@ expected state change never arrives.
 
 **Hint template:** `unbounded poll — needs max-iteration or timeout`
 
-### P010 — Missing test coverage on behavior change (severity: low)
+### P010 — Missing test coverage on behavior change (severity: medium)
 
 New behavior (a bound, cap, eviction, cleanup branch) added without a matching
 test. This is a standing rule for this project — see
@@ -209,6 +244,28 @@ starts false-positiving on legitimate single-layer responses (flat APIs that
 don't have nested envelopes), move this to experimental.
 
 **Hint template:** `nested result.success not checked — outer envelope lies`
+
+### P017 — Bare await in daemon/launchd script without timeout (severity: high)
+
+Any `await` on a network call (MCP, HTTP, WebSocket) inside a script intended
+to run under launchd or as a `--once` daemon, without wrapping in
+`asyncio.wait_for(coro, timeout=...)`. If the remote never responds, launchd's
+`StartInterval` will skip subsequent invocations while the prior instance is
+still alive — the daemon silently stops running.
+
+**Seen in:** `heartbeat_agent.py --once` parked on an MCP call for days under
+launchd (2026-04 incident). Fixed with `asyncio.wait_for(CYCLE_TIMEOUT)`.
+
+**SAFE — DO NOT FLAG:**
+```python
+await asyncio.wait_for(self._bounded_analysis_cycle(), timeout=CYCLE_TIMEOUT)
+```
+
+Only flag bare `await some_network_call()` without a surrounding
+`wait_for` or `async_timeout` in files that are entry points for
+launchd plists or `--once` CLI modes.
+
+**Hint template:** `bare await in daemon — needs asyncio.wait_for timeout`
 
 ## Experimental patterns
 
