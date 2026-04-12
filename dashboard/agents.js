@@ -815,9 +815,10 @@
     }
 
     // ========================================================================
-    // Event listeners: prod toggle, metrics toggle, show more
-    // Deferred to DOMContentLoaded because agents.js loads in <head>
-    // before the body elements exist.
+    // Event listeners
+    // Show-more, metrics-toggle, and agent card clicks are handled in
+    // dashboard.js (bottom-of-body script) where DOM is guaranteed ready.
+    // Only the prod-toggle and filter-reset bindings live here.
     // ========================================================================
 
     function _bindAgentEvents() {
@@ -831,30 +832,6 @@
                 localStorage.setItem('unitares_prod_only', newVal ? 'true' : 'false');
                 prodToggleBtn.classList.toggle('active', newVal);
                 applyAgentFilters();
-            });
-        }
-
-        // Delegated: metrics toggle + show more button
-        var agentsContainer = document.getElementById('agents-container');
-        if (agentsContainer) {
-            agentsContainer.addEventListener('click', function (e) {
-                // Metrics toggle
-                var toggle = e.target.closest('.agent-metrics-toggle');
-                if (toggle) {
-                    e.stopPropagation();
-                    var card = toggle.closest('.agent-item');
-                    if (card) card.classList.toggle('metrics-expanded');
-                    return;
-                }
-
-                // Show more pagination
-                var showMore = e.target.closest('.show-more-btn');
-                if (showMore) {
-                    e.stopPropagation();
-                    state.set({ agentPageSize: state.get('agentPageSize') + 20 });
-                    applyAgentFilters();
-                    return;
-                }
             });
         }
 

@@ -1928,6 +1928,24 @@ updateRefreshStatus();
 const agentsContainer = document.getElementById('agents-container');
 if (agentsContainer) {
     agentsContainer.addEventListener('click', event => {
+        // Show more pagination (must be checked before .agent-item fallthrough)
+        const showMore = event.target.closest('.show-more-btn');
+        if (showMore) {
+            event.stopPropagation();
+            state.set({ agentPageSize: state.get('agentPageSize') + 20 });
+            applyAgentFilters();
+            return;
+        }
+
+        // Metrics toggle
+        const metricsToggle = event.target.closest('.agent-metrics-toggle');
+        if (metricsToggle) {
+            event.stopPropagation();
+            const card = metricsToggle.closest('.agent-item');
+            if (card) card.classList.toggle('metrics-expanded');
+            return;
+        }
+
         // Handle pin button click
         const pinBtn = event.target.closest('button[data-action="pin"]');
         if (pinBtn) {
