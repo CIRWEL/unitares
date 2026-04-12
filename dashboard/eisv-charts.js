@@ -153,7 +153,8 @@
                 ode_E: avg(vals.ode_E),
                 ode_I: avg(vals.ode_I),
                 ode_S: avg(vals.ode_S),
-                ode_V: avg(vals.ode_V)
+                ode_V: avg(vals.ode_V),
+                agentCount: vals.E.length
             });
         }
         return result;
@@ -180,15 +181,17 @@
             var avgData = computeFleetAverage();
             if (avgData) {
                 avgData.forEach(function (pt) {
-                    eisvChartUpper.data.datasets[0].data.push({ x: pt.x, y: pt.E });
-                    eisvChartUpper.data.datasets[1].data.push({ x: pt.x, y: pt.I });
-                    eisvChartUpper.data.datasets[2].data.push({ x: pt.x, y: pt.coherence });
-                    if (pt.ode_E != null) eisvChartUpper.data.datasets[3].data.push({ x: pt.x, y: pt.ode_E });
-                    if (pt.ode_I != null) eisvChartUpper.data.datasets[4].data.push({ x: pt.x, y: pt.ode_I });
-                    eisvChartLower.data.datasets[0].data.push({ x: pt.x, y: pt.S });
-                    eisvChartLower.data.datasets[1].data.push({ x: pt.x, y: pt.V });
-                    if (pt.ode_S != null) eisvChartLower.data.datasets[2].data.push({ x: pt.x, y: pt.ode_S });
-                    if (pt.ode_V != null) eisvChartLower.data.datasets[3].data.push({ x: pt.x, y: pt.ode_V });
+                    var ac = pt.agentCount || 0;
+                    var fa = 'fleet avg (' + ac + ' agents)';
+                    eisvChartUpper.data.datasets[0].data.push({ x: pt.x, y: pt.E, agent: fa });
+                    eisvChartUpper.data.datasets[1].data.push({ x: pt.x, y: pt.I, agent: fa });
+                    eisvChartUpper.data.datasets[2].data.push({ x: pt.x, y: pt.coherence, agent: fa });
+                    if (pt.ode_E != null) eisvChartUpper.data.datasets[3].data.push({ x: pt.x, y: pt.ode_E, agent: fa });
+                    if (pt.ode_I != null) eisvChartUpper.data.datasets[4].data.push({ x: pt.x, y: pt.ode_I, agent: fa });
+                    eisvChartLower.data.datasets[0].data.push({ x: pt.x, y: pt.S, agent: fa });
+                    eisvChartLower.data.datasets[1].data.push({ x: pt.x, y: pt.V, agent: fa });
+                    if (pt.ode_S != null) eisvChartLower.data.datasets[2].data.push({ x: pt.x, y: pt.ode_S, agent: fa });
+                    if (pt.ode_V != null) eisvChartLower.data.datasets[3].data.push({ x: pt.x, y: pt.ode_V, agent: fa });
                 });
             }
         } else if (selectedAgentView === '__all__') {
