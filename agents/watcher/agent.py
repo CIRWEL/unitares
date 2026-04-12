@@ -17,7 +17,7 @@ Usage:
     watcher_agent.py --list-findings                # dump current findings
 
 Architecture:
-    1. Load pattern library (scripts/ops/watcher_patterns.md)
+    1. Load pattern library (agents/watcher/patterns.md)
     2. Read target file + optional region
     3. Build prompt (pattern list + code)
     4. POST to governance REST /v1/tools/call → call_model (Ollama local)
@@ -59,7 +59,10 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-PATTERNS_FILE = PROJECT_ROOT / "scripts" / "ops" / "watcher_patterns.md"
+sys.path.insert(0, str(PROJECT_ROOT))
+from agents.common.log import trim_log as _common_trim_log
+
+PATTERNS_FILE = Path(__file__).resolve().parent / "patterns.md"
 STATE_DIR = PROJECT_ROOT / "data" / "watcher"
 FINDINGS_FILE = STATE_DIR / "findings.jsonl"
 DEDUP_FILE = STATE_DIR / "dedup.json"
@@ -181,25 +184,6 @@ def log(msg: str, level: str = "info") -> None:
         sys.stderr.write(line)
 
 
-def _rotate_log_if_needed() -> None:
-    """Trim LOG_FILE to the last MAX_LOG_LINES lines if it has grown past
-    the cap. Called once per scan_file() entry — not per log() call, to
-    keep the hot path cheap. Failures are silent: we'd rather leak a few
-    log lines than crash the watcher on a log rotation error.
-    """
-    if not LOG_FILE.exists():
-        return
-    try:
-        lines = LOG_FILE.read_text().splitlines()
-    except OSError:
-        return
-    if len(lines) <= MAX_LOG_LINES:
-        return
-    tail = lines[-MAX_LOG_LINES:]
-    try:
-        LOG_FILE.write_text("\n".join(tail) + "\n")
-    except OSError:
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -894,10 +878,10 @@ def _format_findings_block(
     lines.append("")
     lines.append(f"Total unresolved: {len(findings)} (showing {len(shown)})")
     lines.append(
-        "Resolve: python3 scripts/ops/watcher_agent.py --resolve <fingerprint>"
+        "Resolve: python3 agents/watcher/agent.py --resolve <fingerprint>"
     )
     lines.append(
-        "Dismiss: python3 scripts/ops/watcher_agent.py --dismiss <fingerprint>"
+        "Dismiss: python3 agents/watcher/agent.py --dismiss <fingerprint>"
     )
     lines.append("</unitares-watcher-findings>")
     return "\n".join(lines), shown
@@ -1207,7 +1191,7 @@ def scan_file(
     harness calls this with ``persist=False`` so synthetic results don't
     pollute the real findings feed.
     """
-    _rotate_log_if_needed()
+    _common_trim_log(LOG_FILE, MAX_LOG_LINES)
     skip, reason = should_skip(file_path)
     if skip:
         log(f"skip {file_path}: {reason}")
@@ -1284,7 +1268,7 @@ def review_file(
     but NOT persisted to findings.jsonl (they don't have pattern IDs from the
     library, so the dedup/lifecycle machinery doesn't apply).
     """
-    _rotate_log_if_needed()
+    _common_trim_log(LOG_FILE, MAX_LOG_LINES)
     skip, reason = should_skip(file_path)
     if skip:
         log(f"skip {file_path}: {reason}")

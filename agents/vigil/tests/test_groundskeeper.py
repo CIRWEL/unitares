@@ -5,6 +5,7 @@ Tests the _run_groundskeeper method, CLI flags, and change detection.
 All MCP calls are mocked — no live server required.
 """
 
+import importlib.util
 import json
 import os
 import sys
@@ -15,13 +16,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Add scripts to path so we can import heartbeat_agent
-project_root = Path(__file__).parent.parent
-scripts_dir = project_root / "scripts" / "ops"
+# Load heartbeat_agent module from its new location via importlib
+project_root = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(scripts_dir))
 
-import heartbeat_agent as _hb_module
+module_path = project_root / "agents" / "vigil" / "agent.py"
+spec = importlib.util.spec_from_file_location("heartbeat_agent", module_path)
+assert spec and spec.loader
+_hb_module = importlib.util.module_from_spec(spec)
+sys.modules["heartbeat_agent"] = _hb_module
+spec.loader.exec_module(_hb_module)
+
 from heartbeat_agent import (
     HeartbeatAgent,
     _atomic_write,

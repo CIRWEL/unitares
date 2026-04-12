@@ -8,9 +8,9 @@ system. Leaves notes in the knowledge graph when something changes, creating
 continuity between ephemeral Claude Code sessions.
 
 Usage:
-    python3 scripts/ops/heartbeat_agent.py              # Health checks only (default)
-    python3 scripts/ops/heartbeat_agent.py --with-tests  # Also run test suites (~15 min)
-    python3 scripts/ops/heartbeat_agent.py --daemon      # Continuous loop
+    python3 agents/vigil/agent.py              # Health checks only (default)
+    python3 agents/vigil/agent.py --with-tests  # Also run test suites (~15 min)
+    python3 agents/vigil/agent.py --daemon      # Continuous loop
 
 What it does each cycle:
     1. Resumes persistent "Vigil" identity (same UUID across all cycles)
@@ -40,15 +40,17 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 import httpx
-from contextlib import asynccontextmanager
 from mcp.client.session import ClientSession
 
+from agents.common.config import GOV_MCP_URL
+from agents.common.log import trim_log as _trim_log
+from agents.common.mcp_client import mcp_connect
+
 # Paths
-GOVERNANCE_PROJECT = Path("/Users/cirwel/projects/governance-mcp-v1")
-ANIMA_PROJECT = Path("/Users/cirwel/projects/anima-mcp")
-SESSION_FILE = GOVERNANCE_PROJECT / ".vigil_session"
-STATE_FILE = GOVERNANCE_PROJECT / ".vigil_state"
-LOG_FILE = Path("/Users/cirwel/Library/Logs/unitares-heartbeat.log")
+ANIMA_PROJECT = Path(os.getenv("ANIMA_PROJECT", str(project_root.parent / "anima-mcp")))
+SESSION_FILE = project_root / ".vigil_session"
+STATE_FILE = project_root / ".vigil_state"
+LOG_FILE = Path.home() / "Library" / "Logs" / "unitares-heartbeat.log"
 MAX_LOG_LINES = 500
 
 # Health endpoints
@@ -114,21 +116,6 @@ def notify(title: str, message: str):
         pass
 
 
-def _mcp_connect(url: str):
-    """Auto-detect transport: /mcp -> Streamable HTTP, otherwise SSE."""
-    if "/mcp" in url:
-        from mcp.client.streamable_http import streamable_http_client
-
-        @asynccontextmanager
-        async def _connect():
-            async with httpx.AsyncClient(http2=False, timeout=30) as http_client:
-                async with streamable_http_client(url, http_client=http_client) as (read, write, _):
-                    yield read, write
-        return _connect()
-    else:
-        from mcp.client.sse import sse_client
-        return sse_client(url)
-
 
 def load_session() -> Dict[str, Optional[str]]:
     """Load saved session data (client_session_id + continuity_token).
@@ -190,16 +177,6 @@ def log(message: str):
     except Exception:
         pass
 
-
-def trim_log():
-    """Keep log file bounded."""
-    try:
-        if LOG_FILE.exists():
-            lines = LOG_FILE.read_text().splitlines()
-            if len(lines) > MAX_LOG_LINES:
-                LOG_FILE.write_text("\n".join(lines[-MAX_LOG_LINES:]) + "\n")
-    except Exception:
-        pass
 
 
 def load_state() -> Dict[str, Any]:
@@ -358,7 +335,7 @@ def run_pytest(project_dir: Path, label: str) -> Tuple[bool, int, int, str]:
 class HeartbeatAgent:
     def __init__(
         self,
-        mcp_url: str = "http://127.0.0.1:8767/mcp/",
+        mcp_url: str = GOV_MCP_URL,
         label: str = "Vigil",
         heartbeat_interval: int = 1800,
         with_tests: bool = False,
@@ -542,7 +519,7 @@ class HeartbeatAgent:
             # Trajectory verification required — need a human to bootstrap
             if result.get("recovery", {}).get("reason") == "trajectory_required":
                 log("IDENTITY BLOCKED: trajectory verification required. "
-                    "Run manually once: python3 scripts/ops/heartbeat_agent.py --once --force-new")
+                    "Run manually once: python3 agents/vigil/agent.py --once --force-new")
                 return False
 
             if result.get("success"):
@@ -665,7 +642,7 @@ class HeartbeatAgent:
         total_failed = 0
         if self.with_tests:
             loop = asyncio.get_event_loop()
-            gov_future = loop.run_in_executor(None, run_pytest, GOVERNANCE_PROJECT, "governance")
+            gov_future = loop.run_in_executor(None, run_pytest, project_root, "governance")
             anima_future = loop.run_in_executor(None, run_pytest, ANIMA_PROJECT, "anima")
 
             gov_passed, gov_n_passed, gov_n_failed, gov_summary = await gov_future
@@ -710,7 +687,7 @@ class HeartbeatAgent:
 
         # --- 5. Check in to governance + leave notes on changes ---
         try:
-            async with _mcp_connect(self.mcp_url) as (read, write):
+            async with mcp_connect(self.mcp_url) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
 
@@ -860,11 +837,11 @@ class HeartbeatAgent:
         except asyncio.TimeoutError:
             elapsed = time.time() - start
             log(f"CYCLE TIMEOUT after {elapsed:.1f}s (limit={timeout}s) — aborting")
-            trim_log()
+            _trim_log(LOG_FILE, MAX_LOG_LINES)
             raise
         elapsed = time.time() - start
         log(f"Cycle complete ({elapsed:.1f}s)")
-        trim_log()
+        _trim_log(LOG_FILE, MAX_LOG_LINES)
 
     async def run_daemon(self):
         """Run continuously with interval sleeps."""
@@ -897,7 +874,7 @@ async def main():
     parser.add_argument("--with-tests", action="store_true", help="Also run pytest suites (~15 min)")
     parser.add_argument("--no-audit", action="store_true", help="Skip KG audit/groundskeeper duties")
     parser.add_argument("--force-new", action="store_true", help="Bootstrap fresh identity (use once, then remove flag)")
-    parser.add_argument("--url", default=os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8767/mcp/"), help="MCP URL")
+    parser.add_argument("--url", default=GOV_MCP_URL, help="MCP URL")
     parser.add_argument("--label", default="Vigil", help="Agent label")
     parser.add_argument("--interval", type=int, default=1800, help="Daemon interval (seconds)")
     args = parser.parse_args()

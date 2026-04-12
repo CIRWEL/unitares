@@ -21,10 +21,10 @@ import pytest
 
 @pytest.fixture(scope="module")
 def sentinel_module():
-    """Load ``scripts/ops/sentinel_agent.py`` as a module without executing
+    """Load ``agents/sentinel/agent.py`` as a module without executing
     its ``__main__`` block."""
-    project_root = Path(__file__).resolve().parent.parent
-    module_path = project_root / "scripts" / "ops" / "sentinel_agent.py"
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    module_path = project_root / "agents" / "sentinel" / "agent.py"
     spec = importlib.util.spec_from_file_location("sentinel_agent", module_path)
     assert spec and spec.loader, "could not load sentinel_agent module"
     module = importlib.util.module_from_spec(spec)

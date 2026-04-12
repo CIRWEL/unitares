@@ -20,13 +20,15 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import sys
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-HEARTBEAT_PATH = REPO_ROOT / "scripts" / "ops" / "heartbeat_agent.py"
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+HEARTBEAT_PATH = REPO_ROOT / "agents" / "vigil" / "agent.py"
+sys.path.insert(0, str(REPO_ROOT))
 
 
 def _load_heartbeat_module() -> ModuleType:

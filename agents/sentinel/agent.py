@@ -11,9 +11,9 @@ Unlike Vigil (cron, every 30 min, janitorial), Sentinel is:
 - Interventional (can pause agents, escalate to human)
 
 Usage:
-    python3 scripts/ops/sentinel_agent.py                # Run continuously
-    python3 scripts/ops/sentinel_agent.py --sitrep       # Generate situation report and exit
-    python3 scripts/ops/sentinel_agent.py --once         # Run one analysis cycle and exit
+    python3 agents/sentinel/agent.py                # Run continuously
+    python3 agents/sentinel/agent.py --sitrep       # Generate situation report and exit
+    python3 agents/sentinel/agent.py --once         # Run one analysis cycle and exit
 
 Architecture:
     1. Resumes persistent "Sentinel" identity via MCP
@@ -41,22 +41,20 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 import httpx
-from contextlib import asynccontextmanager
 from mcp.client.session import ClientSession
+
+from agents.common.config import GOV_MCP_URL, GOV_HEALTH_URL, GOV_WS_URL
+from agents.common.log import trim_log as _trim_log
+from agents.common.mcp_client import mcp_connect
 
 # ---------------------------------------------------------------------------
 # Paths & Config
 # ---------------------------------------------------------------------------
 
-GOVERNANCE_PROJECT = Path("/Users/cirwel/projects/governance-mcp-v1")
-SESSION_FILE = GOVERNANCE_PROJECT / ".sentinel_session"
-STATE_FILE = GOVERNANCE_PROJECT / ".sentinel_state"
-LOG_FILE = Path("/Users/cirwel/Library/Logs/unitares-sentinel.log")
+SESSION_FILE = project_root / ".sentinel_session"
+STATE_FILE = project_root / ".sentinel_state"
+LOG_FILE = Path.home() / "Library" / "Logs" / "unitares-sentinel.log"
 MAX_LOG_LINES = 1000
-
-GOVERNANCE_HEALTH_URL = "http://localhost:8767/health"
-WEBSOCKET_URL = "ws://localhost:8767/ws/eisv"
-MCP_URL = "http://127.0.0.1:8767/mcp/"
 
 # Analysis cycle interval
 ANALYSIS_INTERVAL = 300  # 5 minutes
@@ -136,16 +134,6 @@ def log(message: str):
         pass
 
 
-def trim_log():
-    try:
-        if LOG_FILE.exists():
-            lines = LOG_FILE.read_text().splitlines()
-            if len(lines) > MAX_LOG_LINES:
-                LOG_FILE.write_text("\n".join(lines[-MAX_LOG_LINES:]) + "\n")
-    except Exception:
-        pass
-
-
 def load_state() -> Dict[str, Any]:
     if STATE_FILE.exists():
         try:
@@ -181,25 +169,6 @@ def save_session(client_session_id: str, continuity_token: Optional[str] = None)
         _atomic_write(SESSION_FILE, json.dumps(data))
     except Exception:
         pass
-
-
-# ---------------------------------------------------------------------------
-# MCP Connection (shared with Vigil)
-# ---------------------------------------------------------------------------
-
-def _mcp_connect(url: str):
-    if "/mcp" in url:
-        from mcp.client.streamable_http import streamable_http_client
-
-        @asynccontextmanager
-        async def _connect():
-            async with httpx.AsyncClient(http2=False, timeout=30) as http_client:
-                async with streamable_http_client(url, http_client=http_client) as (read, write, _):
-                    yield read, write
-        return _connect()
-    else:
-        from mcp.client.sse import sse_client
-        return sse_client(url)
 
 
 # ---------------------------------------------------------------------------
@@ -506,8 +475,8 @@ class SitrepGenerator:
 class SentinelAgent:
     def __init__(
         self,
-        mcp_url: str = MCP_URL,
-        ws_url: str = WEBSOCKET_URL,
+        mcp_url: str = GOV_MCP_URL,
+        ws_url: str = GOV_WS_URL,
         label: str = "Sentinel",
         analysis_interval: int = ANALYSIS_INTERVAL,
     ):
@@ -708,7 +677,7 @@ class SentinelAgent:
 
         # Check in to governance
         try:
-            async with _mcp_connect(self.mcp_url) as (read, write):
+            async with mcp_connect(self.mcp_url) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
 
@@ -798,7 +767,7 @@ class SentinelAgent:
                     await self._bounded_analysis_cycle()
                 except Exception as e:
                     log(f"Analysis cycle error: {e}")
-                trim_log()
+                _trim_log(LOG_FILE, MAX_LOG_LINES)
 
         ws_task.cancel()
         try:
@@ -850,8 +819,8 @@ async def main():
     parser.add_argument("--once", action="store_true", help="Run one analysis cycle and exit")
     parser.add_argument("--sitrep", action="store_true", help="Generate situation report and exit")
     parser.add_argument("--hours", type=float, default=6.0, help="Sitrep window (hours)")
-    parser.add_argument("--url", default=os.getenv("MCP_SERVER_URL", MCP_URL), help="MCP URL")
-    parser.add_argument("--ws-url", default=os.getenv("SENTINEL_WS_URL", WEBSOCKET_URL), help="WebSocket URL")
+    parser.add_argument("--url", default=GOV_MCP_URL, help="MCP URL")
+    parser.add_argument("--ws-url", default=GOV_WS_URL, help="WebSocket URL")
     parser.add_argument("--interval", type=int, default=ANALYSIS_INTERVAL, help="Analysis interval (seconds)")
     args = parser.parse_args()
 

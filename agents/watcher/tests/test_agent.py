@@ -36,10 +36,10 @@ import pytest
 
 @pytest.fixture(scope="module")
 def watcher_module():
-    """Load ``scripts/ops/watcher_agent.py`` as a module without executing
+    """Load ``agents/watcher/agent.py`` as a module without executing
     its ``__main__`` block."""
-    project_root = Path(__file__).resolve().parent.parent
-    module_path = project_root / "scripts" / "ops" / "watcher_agent.py"
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    module_path = project_root / "agents" / "watcher" / "agent.py"
     spec = importlib.util.spec_from_file_location("watcher_agent", module_path)
     assert spec and spec.loader, "could not load watcher_agent module"
     module = importlib.util.module_from_spec(spec)
@@ -1205,12 +1205,10 @@ def test_rotate_log_trims_to_max_lines(
     when it exceeds the cap. Without this, the Watcher's own log file
     was an unbounded P002 self-match — round three of the same pattern
     Ogler has caught in this codebase."""
-    monkeypatch.setattr(watcher_module, "MAX_LOG_LINES", 10)
     log = tmp_path / "rot.log"
-    monkeypatch.setattr(watcher_module, "LOG_FILE", log)
     log.write_text("\n".join(f"line_{i}" for i in range(50)) + "\n")
 
-    watcher_module._rotate_log_if_needed()
+    watcher_module._common_trim_log(log, 10)
 
     remaining = log.read_text().splitlines()
     assert len(remaining) == 10, f"expected 10 lines after rotation, got {len(remaining)}"
@@ -1223,14 +1221,12 @@ def test_rotate_log_noop_when_under_limit(
     watcher_module, tmp_path, monkeypatch
 ):
     """A log file smaller than MAX_LOG_LINES should not be rewritten."""
-    monkeypatch.setattr(watcher_module, "MAX_LOG_LINES", 100)
     log = tmp_path / "small.log"
-    monkeypatch.setattr(watcher_module, "LOG_FILE", log)
     content = "line_0\nline_1\nline_2\n"
     log.write_text(content)
     mtime_before = log.stat().st_mtime_ns
 
-    watcher_module._rotate_log_if_needed()
+    watcher_module._common_trim_log(log, 100)
 
     assert log.read_text() == content
     # Additionally assert the file wasn't rewritten (mtime unchanged).
@@ -1244,9 +1240,8 @@ def test_rotate_log_missing_file_is_safe(
     """A missing log file must not raise — this runs on every scan_file
     entry and fire-and-forget hooks shouldn't crash on a fresh install."""
     log = tmp_path / "nonexistent.log"
-    monkeypatch.setattr(watcher_module, "LOG_FILE", log)
     # Must not raise
-    watcher_module._rotate_log_if_needed()
+    watcher_module._common_trim_log(log, 5000)
     assert not log.exists()
 
 
