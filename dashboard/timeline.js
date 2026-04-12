@@ -109,7 +109,7 @@
         }
 
         var html = filtered.slice(0, 50).map(function (e) {
-            var timeStr = e.ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            var timeStr = DataProcessor.formatTimestamp(e.ts);
             var relative = formatRelativeTime(e.ts.getTime());
             var relStr = relative ? ' (' + relative + ')' : '';
             var typeIcon = { checkin: '\u25CF', verdict: '\u25A0', discovery: '\u2605', dialectic: '\u25B6' }[e.type] || '\u25CB';
@@ -119,7 +119,7 @@
 
             return '<div class="tl-entry ' + (e.className || '') + '" data-type="' + (e.type || '') + '">' +
                 '<span class="tl-icon">' + typeIcon + '</span>' +
-                '<span class="tl-time" title="' + escapeHtml(e.ts.toLocaleString() + relStr) + '">' + timeStr + '</span>' +
+                '<span class="tl-time" title="' + escapeHtml(timeStr + relStr) + '">' + timeStr + '</span>' +
                 agentStr + verdictBadge +
                 '<span class="tl-message">' + escapeHtml(e.message || '') + '</span>' +
             '</div>';
@@ -196,19 +196,28 @@
 
     // ========================================================================
     // Event listeners
+    // Deferred — timeline.js loads in <head> before body elements exist.
     // ========================================================================
 
-    var filterSelect = document.getElementById('timeline-filter');
-    if (filterSelect) {
-        filterSelect.addEventListener('change', function () {
-            currentFilter = this.value;
-            renderTimeline();
-        });
+    function _bindTimelineEvents() {
+        var filterSelect = document.getElementById('timeline-filter');
+        if (filterSelect) {
+            filterSelect.addEventListener('change', function () {
+                currentFilter = this.value;
+                renderTimeline();
+            });
+        }
+
+        var clearBtn = document.getElementById('timeline-clear');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', clearTimeline);
+        }
     }
 
-    var clearBtn = document.getElementById('timeline-clear');
-    if (clearBtn) {
-        clearBtn.addEventListener('click', clearTimeline);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _bindTimelineEvents);
+    } else {
+        _bindTimelineEvents();
     }
 
     // ========================================================================

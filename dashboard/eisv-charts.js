@@ -647,7 +647,7 @@
         entry.className = 'pulse-log-entry ' + severityClass;
         entry.innerHTML =
             '<span class="event-icon">' + icon + '</span>' +
-            '<span class="log-time">' + ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '</span>' +
+            '<span class="log-time">' + DataProcessor.formatTimestamp(ts) + '</span>' +
             '<span class="event-message">' + escapeHtml(event.message || event.type) + '</span>';
 
         if (event.reason) {

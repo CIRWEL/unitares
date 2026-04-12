@@ -846,8 +846,9 @@ async function loadAgents() {
             action: 'list',
             include_metrics: true,
             recent_days: 30,
-            limit: 100,
-            min_updates: 0
+            limit: 200,
+            min_updates: 0,
+            status_filter: 'all'
         });
 
         console.log('Agents loaded:', result ? (result.summary?.total || 'ok') : 'null');
@@ -1408,13 +1409,7 @@ async function loadDiscoveries(searchQuery = '') {
                     dateObj = new Date(year, month - 1, day, hour, minute, second || 0);
 
                     if (!isNaN(dateObj.getTime())) {
-                        const now = new Date();
-                        const diffMs = now - dateObj;
-                        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                        const month = monthNames[dateObj.getMonth()];
-                        const day = dateObj.getDate();
-                        const time = dateObj.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-                        dateStr = `${month} ${day}, ${time}`;
+                        dateStr = formatTimestamp(dateObj);
                     } else {
                         dateStr = isoStr.replace('T', ' ');
                     }

@@ -815,55 +815,65 @@
 
     // ========================================================================
     // Event listeners: prod toggle, metrics toggle, show more
+    // Deferred to DOMContentLoaded because agents.js loads in <head>
+    // before the body elements exist.
     // ========================================================================
 
-    // Production toggle button
-    var prodToggleBtn = document.getElementById('prod-toggle');
-    if (prodToggleBtn) {
-        if (state.get('prodOnlyActive')) prodToggleBtn.classList.add('active');
-        prodToggleBtn.addEventListener('click', function () {
-            var newVal = !state.get('prodOnlyActive');
-            state.set({ prodOnlyActive: newVal, agentPageSize: 20 });
-            localStorage.setItem('unitares_prod_only', newVal ? 'true' : 'false');
-            prodToggleBtn.classList.toggle('active', newVal);
-            applyAgentFilters();
-        });
-    }
-
-    // Delegated: metrics toggle + show more button
-    var agentsContainer = document.getElementById('agents-container');
-    if (agentsContainer) {
-        agentsContainer.addEventListener('click', function (e) {
-            // Metrics toggle
-            var toggle = e.target.closest('.agent-metrics-toggle');
-            if (toggle) {
-                e.stopPropagation();
-                var card = toggle.closest('.agent-item');
-                if (card) card.classList.toggle('metrics-expanded');
-                return;
-            }
-
-            // Show more pagination
-            var showMore = e.target.closest('.show-more-btn');
-            if (showMore) {
-                e.stopPropagation();
-                state.set({ agentPageSize: state.get('agentPageSize') + 20 });
+    function _bindAgentEvents() {
+        // Production toggle button
+        var prodToggleBtn = document.getElementById('prod-toggle');
+        if (prodToggleBtn) {
+            if (state.get('prodOnlyActive')) prodToggleBtn.classList.add('active');
+            prodToggleBtn.addEventListener('click', function () {
+                var newVal = !state.get('prodOnlyActive');
+                state.set({ prodOnlyActive: newVal, agentPageSize: 20 });
+                localStorage.setItem('unitares_prod_only', newVal ? 'true' : 'false');
+                prodToggleBtn.classList.toggle('active', newVal);
                 applyAgentFilters();
-                return;
-            }
-        });
-    }
-
-    // Reset page size on filter/search/sort changes (NOT in applyAgentFilters since that's called on 30s refresh)
-    var resetPageInputs = ['agent-search', 'agent-status-filter', 'agent-metrics-only', 'agent-sort'];
-    resetPageInputs.forEach(function (id) {
-        var el = document.getElementById(id);
-        if (el) {
-            el.addEventListener(el.tagName === 'INPUT' && el.type === 'text' ? 'input' : 'change', function () {
-                state.set({ agentPageSize: 20 });
             });
         }
-    });
+
+        // Delegated: metrics toggle + show more button
+        var agentsContainer = document.getElementById('agents-container');
+        if (agentsContainer) {
+            agentsContainer.addEventListener('click', function (e) {
+                // Metrics toggle
+                var toggle = e.target.closest('.agent-metrics-toggle');
+                if (toggle) {
+                    e.stopPropagation();
+                    var card = toggle.closest('.agent-item');
+                    if (card) card.classList.toggle('metrics-expanded');
+                    return;
+                }
+
+                // Show more pagination
+                var showMore = e.target.closest('.show-more-btn');
+                if (showMore) {
+                    e.stopPropagation();
+                    state.set({ agentPageSize: state.get('agentPageSize') + 20 });
+                    applyAgentFilters();
+                    return;
+                }
+            });
+        }
+
+        // Reset page size on filter/search/sort changes (NOT in applyAgentFilters since that's called on 30s refresh)
+        var resetPageInputs = ['agent-search', 'agent-status-filter', 'agent-metrics-only', 'agent-sort'];
+        resetPageInputs.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) {
+                el.addEventListener(el.tagName === 'INPUT' && el.type === 'text' ? 'input' : 'change', function () {
+                    state.set({ agentPageSize: 20 });
+                });
+            }
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _bindAgentEvents);
+    } else {
+        _bindAgentEvents();
+    }
 
     // ========================================================================
     // Public API

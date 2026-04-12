@@ -367,23 +367,32 @@
 
     // ========================================================================
     // Event listeners: agent cross-link
+    // Deferred — discoveries.js loads in <head> before body elements exist.
     // ========================================================================
 
-    var discContainer = document.getElementById('discoveries-container');
-    if (discContainer) {
-        discContainer.addEventListener('click', function (e) {
-            var agentLink = e.target.closest('.agent-link');
-            if (agentLink) {
-                e.stopPropagation();
-                var agentId = agentLink.getAttribute('data-agent-id');
-                if (!agentId) return;
-                var cachedAgents = state.get('cachedAgents') || [];
-                var agent = cachedAgents.find(function (a) { return a.agent_id === agentId; });
-                if (agent && typeof AgentsModule !== 'undefined' && AgentsModule.showAgentDetail) {
-                    AgentsModule.showAgentDetail(agent);
+    function _bindDiscoveryEvents() {
+        var discContainer = document.getElementById('discoveries-container');
+        if (discContainer) {
+            discContainer.addEventListener('click', function (e) {
+                var agentLink = e.target.closest('.agent-link');
+                if (agentLink) {
+                    e.stopPropagation();
+                    var agentId = agentLink.getAttribute('data-agent-id');
+                    if (!agentId) return;
+                    var cachedAgents = state.get('cachedAgents') || [];
+                    var agent = cachedAgents.find(function (a) { return a.agent_id === agentId; });
+                    if (agent && typeof AgentsModule !== 'undefined' && AgentsModule.showAgentDetail) {
+                        AgentsModule.showAgentDetail(agent);
+                    }
                 }
-            }
-        });
+            });
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _bindDiscoveryEvents);
+    } else {
+        _bindDiscoveryEvents();
     }
 
     // ========================================================================
