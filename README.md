@@ -8,6 +8,8 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
+Status: live. For architecture details, see [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md) and [docs/CANONICAL_SOURCES.md](docs/CANONICAL_SOURCES.md).
+
 UNITARES is a runtime governance system for AI agents. It accepts check-ins over MCP and HTTP, turns observable behavior into shared state (**EISV**: energy, integrity, entropy, void), stores long-run trajectories in PostgreSQL + AGE, and returns verdicts, guidance, calibration, and recovery paths in real time.
 
 The state model is derived from what agents actually do — EMA-smoothed observations, not model predictions. Running continuously in production since November 2025 with 6,000+ passing tests at 77% coverage, including [Lumen](https://github.com/CIRWEL/anima-mcp), an embodied agent on a Raspberry Pi.
