@@ -198,15 +198,16 @@
                     var pt = histories[h][p];
                     if (pt.ts >= cutoff) {
                         var x = new Date(pt.ts);
-                        eisvChartUpper.data.datasets[0].data.push({ x: x, y: pt.E });
-                        eisvChartUpper.data.datasets[1].data.push({ x: x, y: pt.I });
-                        eisvChartUpper.data.datasets[2].data.push({ x: x, y: pt.coherence });
-                        if (pt.ode_E != null) eisvChartUpper.data.datasets[3].data.push({ x: x, y: pt.ode_E });
-                        if (pt.ode_I != null) eisvChartUpper.data.datasets[4].data.push({ x: x, y: pt.ode_I });
-                        eisvChartLower.data.datasets[0].data.push({ x: x, y: pt.S });
-                        eisvChartLower.data.datasets[1].data.push({ x: x, y: pt.V });
-                        if (pt.ode_S != null) eisvChartLower.data.datasets[2].data.push({ x: x, y: pt.ode_S });
-                        if (pt.ode_V != null) eisvChartLower.data.datasets[3].data.push({ x: x, y: pt.ode_V });
+                        var n = pt.name || '';
+                        eisvChartUpper.data.datasets[0].data.push({ x: x, y: pt.E, agent: n });
+                        eisvChartUpper.data.datasets[1].data.push({ x: x, y: pt.I, agent: n });
+                        eisvChartUpper.data.datasets[2].data.push({ x: x, y: pt.coherence, agent: n });
+                        if (pt.ode_E != null) eisvChartUpper.data.datasets[3].data.push({ x: x, y: pt.ode_E, agent: n });
+                        if (pt.ode_I != null) eisvChartUpper.data.datasets[4].data.push({ x: x, y: pt.ode_I, agent: n });
+                        eisvChartLower.data.datasets[0].data.push({ x: x, y: pt.S, agent: n });
+                        eisvChartLower.data.datasets[1].data.push({ x: x, y: pt.V, agent: n });
+                        if (pt.ode_S != null) eisvChartLower.data.datasets[2].data.push({ x: x, y: pt.ode_S, agent: n });
+                        if (pt.ode_V != null) eisvChartLower.data.datasets[3].data.push({ x: x, y: pt.ode_V, agent: n });
                     }
                 }
             }
@@ -220,15 +221,16 @@
             for (var q = 0; q < hist.length; q++) {
                 if (hist[q].ts >= cutoff) {
                     var xd = new Date(hist[q].ts);
-                    eisvChartUpper.data.datasets[0].data.push({ x: xd, y: hist[q].E });
-                    eisvChartUpper.data.datasets[1].data.push({ x: xd, y: hist[q].I });
-                    eisvChartUpper.data.datasets[2].data.push({ x: xd, y: hist[q].coherence });
-                    if (hist[q].ode_E != null) eisvChartUpper.data.datasets[3].data.push({ x: xd, y: hist[q].ode_E });
-                    if (hist[q].ode_I != null) eisvChartUpper.data.datasets[4].data.push({ x: xd, y: hist[q].ode_I });
-                    eisvChartLower.data.datasets[0].data.push({ x: xd, y: hist[q].S });
-                    eisvChartLower.data.datasets[1].data.push({ x: xd, y: hist[q].V });
-                    if (hist[q].ode_S != null) eisvChartLower.data.datasets[2].data.push({ x: xd, y: hist[q].ode_S });
-                    if (hist[q].ode_V != null) eisvChartLower.data.datasets[3].data.push({ x: xd, y: hist[q].ode_V });
+                    var nm = hist[q].name || '';
+                    eisvChartUpper.data.datasets[0].data.push({ x: xd, y: hist[q].E, agent: nm });
+                    eisvChartUpper.data.datasets[1].data.push({ x: xd, y: hist[q].I, agent: nm });
+                    eisvChartUpper.data.datasets[2].data.push({ x: xd, y: hist[q].coherence, agent: nm });
+                    if (hist[q].ode_E != null) eisvChartUpper.data.datasets[3].data.push({ x: xd, y: hist[q].ode_E, agent: nm });
+                    if (hist[q].ode_I != null) eisvChartUpper.data.datasets[4].data.push({ x: xd, y: hist[q].ode_I, agent: nm });
+                    eisvChartLower.data.datasets[0].data.push({ x: xd, y: hist[q].S, agent: nm });
+                    eisvChartLower.data.datasets[1].data.push({ x: xd, y: hist[q].V, agent: nm });
+                    if (hist[q].ode_S != null) eisvChartLower.data.datasets[2].data.push({ x: xd, y: hist[q].ode_S, agent: nm });
+                    if (hist[q].ode_V != null) eisvChartLower.data.datasets[3].data.push({ x: xd, y: hist[q].ode_V, agent: nm });
                 }
             }
         }
@@ -311,7 +313,9 @@
                     borderWidth: 1,
                     callbacks: {
                         label: function (ctx) {
-                            return ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(4);
+                            var pt = ctx.raw || {};
+                            var agent = pt.agent ? ' [' + pt.agent + ']' : '';
+                            return ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(4) + agent;
                         }
                     }
                 }
@@ -469,15 +473,16 @@
         if (selectedAgentView === '__fleet__') {
             rebuildChartFromSelection();
         } else if (selectedAgentView === '__all__' || selectedAgentView === agentId) {
-            eisvChartUpper.data.datasets[0].data.push({ x: ts, y: eisv.E || 0 });
-            eisvChartUpper.data.datasets[1].data.push({ x: ts, y: eisv.I || 0 });
-            eisvChartUpper.data.datasets[2].data.push({ x: ts, y: data.coherence || 0 });
-            if (ode.E != null) eisvChartUpper.data.datasets[3].data.push({ x: ts, y: ode.E });
-            if (ode.I != null) eisvChartUpper.data.datasets[4].data.push({ x: ts, y: ode.I });
-            eisvChartLower.data.datasets[0].data.push({ x: ts, y: eisv.S || 0 });
-            eisvChartLower.data.datasets[1].data.push({ x: ts, y: eisv.V || 0 });
-            if (ode.S != null) eisvChartLower.data.datasets[2].data.push({ x: ts, y: ode.S });
-            if (ode.V != null) eisvChartLower.data.datasets[3].data.push({ x: ts, y: ode.V });
+            var _a = agentName;
+            eisvChartUpper.data.datasets[0].data.push({ x: ts, y: eisv.E || 0, agent: _a });
+            eisvChartUpper.data.datasets[1].data.push({ x: ts, y: eisv.I || 0, agent: _a });
+            eisvChartUpper.data.datasets[2].data.push({ x: ts, y: data.coherence || 0, agent: _a });
+            if (ode.E != null) eisvChartUpper.data.datasets[3].data.push({ x: ts, y: ode.E, agent: _a });
+            if (ode.I != null) eisvChartUpper.data.datasets[4].data.push({ x: ts, y: ode.I, agent: _a });
+            eisvChartLower.data.datasets[0].data.push({ x: ts, y: eisv.S || 0, agent: _a });
+            eisvChartLower.data.datasets[1].data.push({ x: ts, y: eisv.V || 0, agent: _a });
+            if (ode.S != null) eisvChartLower.data.datasets[2].data.push({ x: ts, y: ode.S, agent: _a });
+            if (ode.V != null) eisvChartLower.data.datasets[3].data.push({ x: ts, y: ode.V, agent: _a });
 
             var cutoffDate = new Date(cutoff);
             [eisvChartUpper, eisvChartLower].forEach(function (chart) {
