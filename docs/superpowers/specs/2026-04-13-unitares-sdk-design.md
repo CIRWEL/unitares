@@ -77,14 +77,14 @@ class GovernanceClient:
                        continuity_token: str | None = None,
                        **kwargs) -> IdentityResult
 
-    # Check-in
+    # Check-in (maps to server tool: process_agent_update)
     async def checkin(self, response_text: str,
                       complexity: float = 0.3,
                       confidence: float = 0.7,
-                      mode: str = "compact",
+                      response_mode: str = "compact",
                       **kwargs) -> CheckinResult
 
-    # Knowledge graph
+    # Knowledge graph (maps to server tool: knowledge with action= dispatch)
     async def leave_note(self, summary: str, tags: list[str] | None = None,
                          **kwargs) -> NoteResult
     async def search_knowledge(self, query: str, **kwargs) -> SearchResult
@@ -102,12 +102,13 @@ class GovernanceClient:
     async def self_recovery(self, action: str = "quick",
                             **kwargs) -> RecoveryResult
 
-    # Metrics
+    # Metrics (maps to server tool: get_governance_metrics)
     async def get_metrics(self, **kwargs) -> MetricsResult
 
-    # Model inference (routes through governance to Ollama)
-    async def call_model(self, prompt: str, provider: str = "ollama",
-                         model: str = "qwen3-coder-next:latest",
+    # Model inference (maps to server tool: call_model)
+    async def call_model(self, prompt: str,
+                         provider: str | None = None,
+                         model: str | None = None,
                          max_tokens: int = 1024,
                          temperature: float = 0.0,
                          **kwargs) -> ModelResult
@@ -115,6 +116,25 @@ class GovernanceClient:
     # Escape hatch
     async def call_tool(self, tool_name: str, arguments: dict) -> dict
 ```
+
+### Tool Name Mapping
+
+The SDK presents a friendly Python API but maps onto canonical server tool names. This table is the source of truth for the mapping:
+
+| SDK method | Server tool | Notes |
+|---|---|---|
+| `onboard()` | `onboard` | Direct |
+| `identity()` | `identity` | Direct |
+| `checkin()` | `process_agent_update` | SDK alias for the canonical name |
+| `leave_note()` | `leave_note` | Direct |
+| `search_knowledge()` | `knowledge` | `action="search"` |
+| `store_discovery()` | `knowledge` | `action="store"` |
+| `audit_knowledge()` | `knowledge` | `action="audit"` |
+| `cleanup_knowledge()` | `knowledge` | `action="cleanup"` |
+| `archive_orphan_agents()` | `archive_orphan_agents` | Direct |
+| `self_recovery()` | `self_recovery` | Direct |
+| `get_metrics()` | `get_governance_metrics` | SDK alias for the canonical name |
+| `call_model()` | `call_model` | Direct; `provider`/`model` default to `None` (server decides) |
 
 ### Key Behaviors
 
@@ -162,7 +182,7 @@ class SyncGovernanceClient:
 - `transport="rest"` (default): Uses `urllib.request` to `POST /v1/tools/call`. This is the safe sync path that avoids the anyio deadlock. No event loop needed. This is what watcher uses today.
 - `transport="mcp"`: Uses `asyncio.run()` around the async client. Safe in standalone processes but unsafe inside a running event loop. The SDK will raise `RuntimeError` if it detects a running loop and `transport="mcp"`.
 
-REST transport parses the two-level success envelope (`data["result"]["content"][0]["text"]` -> `json.loads`).
+REST transport parses the `/v1/tools/call` envelope: `{name, result, success}`. Core tools (`onboard`, `identity`, `process_agent_update`) already normalize `result` to a plain dict on the server side, so the SDK reads `data["result"]` directly — no `content[0].text` unwrapping needed on the REST path. The MCP path still does the `content[0].text -> json.loads` chain because MCP wraps everything in content blocks.
 
 ## Layer 3: GovernanceAgent Base Class
 
@@ -184,8 +204,8 @@ class GovernanceAgent:
         self.session_file = session_file  # defaults to PROJECT_ROOT/.<name_lower>_session
 
     # --- Subclass implements ---
-    async def run_cycle(self, client: GovernanceClient) -> str | None:
-        """One unit of work. Return summary string for full check-in, or None to skip."""
+    async def run_cycle(self, client: GovernanceClient) -> CycleResult | None:
+        """One unit of work. Return CycleResult for check-in, or None to skip."""
         raise NotImplementedError
 
     # --- Lifecycle (handled for you) ---
@@ -207,8 +227,13 @@ class GovernanceAgent:
     # Atomic file writes to session_file
     # Loads client_session_id + continuity_token on startup
     # Saves after every successful identity/onboard response
-    # Token validation: base64-decodes continuity_token, extracts aid field,
-    #   verifies against stored agent UUID before using. Discards stale tokens.
+    # Token validation: continuity tokens use a signed v1.<payload>.<sig> format
+    #   with HMAC verification and model-scoped checks. The SDK delegates token
+    #   parsing and validation to utils.parse_continuity_token(), which handles
+    #   the format, extracts the embedded agent ID (aid), and verifies it matches
+    #   the stored UUID. The SDK does NOT verify the HMAC signature (that's the
+    #   server's job) — it only checks structural validity and aid matching to
+    #   catch stale/mismatched tokens before sending them. Discards invalid tokens.
 
     # --- State persistence ---
     def load_state(self) -> dict:
@@ -221,13 +246,34 @@ class GovernanceAgent:
     # Sets self.running = False, current cycle completes before exit
 ```
 
+### CycleResult
+
+Structured return type from `run_cycle` that carries everything the base class needs for the check-in:
+
+```python
+@dataclass
+class CycleResult:
+    summary: str                           # what happened this cycle
+    complexity: float = 0.3                # 0.0–1.0, governs EISV update weight
+    confidence: float = 0.7                # 0.0–1.0, feeds calibration
+    response_mode: str = "compact"         # "compact" or "full"
+    notes: list[tuple[str, list[str]]] | None = None  # [(summary, tags), ...] to leave as KG notes
+```
+
+Agents compute complexity and confidence from live signals (e.g., vigil scales complexity by how many subsystems it touched, confidence by whether health checks succeeded). The base class passes these through to `client.checkin()`.
+
+For simple agents that don't need fine-grained control, a convenience constructor:
+```python
+CycleResult.simple("cleaned 3 stale entries")  # defaults for everything else
+```
+
 ### Check-in Logic
 
 The base class handles check-ins based on `run_cycle` return value:
 
-- `str` returned: calls `client.checkin(result, mode="full")` with complexity/confidence the subclass can override via properties or per-return metadata
+- `CycleResult` returned: calls `client.checkin(result.summary, complexity=result.complexity, confidence=result.confidence, response_mode=result.response_mode)`, then posts any `result.notes` via `client.leave_note()`
 - `None` returned: skips check-in for this cycle
-- Heartbeat timer: in `run_forever` mode, if `heartbeat_interval` seconds pass without a full check-in, the base class sends `client.checkin("heartbeat", mode="compact")` to keep the EISV trajectory alive
+- Heartbeat timer: in `run_forever` mode, if `heartbeat_interval` seconds pass without a full check-in, the base class sends `client.checkin("heartbeat", response_mode="compact")` to keep the EISV trajectory alive
 
 ### How Agents Would Look After Migration
 
@@ -238,13 +284,21 @@ class Vigil(GovernanceAgent):
         super().__init__("Vigil", session_file=PROJECT_ROOT / ".vigil_session")
         self.with_tests = with_tests
 
-    async def run_cycle(self, client: GovernanceClient) -> str | None:
+    async def run_cycle(self, client: GovernanceClient) -> CycleResult | None:
         summaries = []
+        subsystems_touched = 0
         # Health checks (governance + anima)
         # KG groundskeeping (audit + cleanup)
         # Optional test run
         # Leave notes for changes
-        return "; ".join(summaries) if summaries else None
+        if not summaries:
+            return None
+        return CycleResult(
+            summary="; ".join(summaries),
+            complexity=min(0.15 * subsystems_touched, 1.0),
+            confidence=0.85 if all_healthy else 0.5,
+            notes=[(s, ["vigil"]) for s in change_notes],
+        )
 ```
 
 **Sentinel (~1100 LOC -> ~600 LOC):**
@@ -255,11 +309,17 @@ class Sentinel(GovernanceAgent):
         self.fleet = FleetState()
         # Sentinel still manages its own WebSocket connection to /ws/eisv
 
-    async def run_cycle(self, client: GovernanceClient) -> str | None:
+    async def run_cycle(self, client: GovernanceClient) -> CycleResult | None:
         # Analyze fleet state from WebSocket feed
         # Detect anomalies, generate findings
-        # Leave notes for high-severity findings
-        return summary if findings else None
+        if not findings:
+            return None
+        return CycleResult(
+            summary=f"Sentinel analysis: {len(findings)} findings",
+            complexity=0.2 + 0.1 * len(findings),
+            confidence=0.7,
+            notes=[(f.summary, ["sentinel", f.severity]) for f in high_sev],
+        )
 ```
 
 **Watcher (no base class, uses SyncGovernanceClient directly):**
@@ -340,6 +400,22 @@ class ModelResult(_GovModel):
     response: str | None = None
 ```
 
+`CycleResult` (used by `GovernanceAgent`, not a server response model) is defined in `agent.py`:
+
+```python
+@dataclass
+class CycleResult:
+    summary: str
+    complexity: float = 0.3
+    confidence: float = 0.7
+    response_mode: str = "compact"
+    notes: list[tuple[str, list[str]]] | None = None
+
+    @classmethod
+    def simple(cls, summary: str) -> "CycleResult":
+        return cls(summary=summary)
+```
+
 Fields will be refined during implementation by inspecting actual server responses. The `extra="ignore"` config means unknown fields don't break the model — the SDK gracefully handles server-side additions.
 
 ## Error Hierarchy
@@ -384,12 +460,15 @@ def load_json_state(path: Path) -> dict:
 def save_json_state(path: Path, state: dict) -> None:
     """Save JSON state atomically."""
 
-def decode_continuity_token(token: str) -> dict | None:
-    """Base64-decode a continuity token and extract the aid field.
-    Returns None if decode fails."""
+def parse_continuity_token(token: str) -> dict | None:
+    """Parse a v1.<payload>.<sig> continuity token. Extracts the payload
+    (base64-decoded JSON with aid, model, exp, etc.). Returns None if
+    the token is malformed or not v1 format. Does NOT verify the HMAC
+    signature — that's the server's responsibility."""
 
 def validate_token_uuid(token: str, expected_uuid: str) -> bool:
-    """Decode token, extract aid, return True if it matches expected_uuid."""
+    """Parse token, extract aid, return True if it matches expected_uuid.
+    Returns False if token is unparseable or aid doesn't match."""
 ```
 
 ## Testing Strategy
