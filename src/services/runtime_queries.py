@@ -509,7 +509,9 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
             lifecycle_health = get_kg_lifecycle_health()
             kg_check["lifecycle"] = lifecycle_health
             if lifecycle_health.get("status") == "error":
-                kg_check["status"] = "warning" if kg_check["status"] == "healthy" else kg_check["status"]
+                # Surface lifecycle failure even when KG is already degraded (e.g. embeddings unavailable)
+                if kg_check["status"] in ("healthy", "degraded"):
+                    kg_check["status"] = "warning"
                 kg_check["warning"] = f"KG lifecycle cleanup is failing: {lifecycle_health.get('last_error')}"
         except Exception as e:
             kg_check["lifecycle_error"] = str(e)

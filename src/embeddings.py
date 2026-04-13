@@ -32,12 +32,20 @@ logger = get_logger(__name__)
 DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384
 
-# Check if sentence-transformers is available
+# NumPy is required for similarity / ranking even when the transformer model is mocked in tests
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    np = None  # type: ignore
+    NUMPY_AVAILABLE = False
+
+# sentence-transformers is optional (lazy-loaded for encode/embed)
 try:
     from sentence_transformers import SentenceTransformer
-    import numpy as np
     SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
+    SentenceTransformer = None  # type: ignore
     SENTENCE_TRANSFORMERS_AVAILABLE = False
     logger.warning(
         "sentence-transformers not available. Install with: "
@@ -55,19 +63,19 @@ class EmbeddingsService:
     
     def __init__(self, model_name: str = DEFAULT_MODEL):
         self.model_name = model_name
-        self._model: Optional[SentenceTransformer] = None
+        self._model: Optional[Any] = None
         self._load_lock: Optional[asyncio.Lock] = None
     
-    async def _ensure_model(self) -> SentenceTransformer:
+    async def _ensure_model(self) -> Any:
         """Lazy load model on first use."""
+        if self._model is not None:
+            return self._model
+
         if not SENTENCE_TRANSFORMERS_AVAILABLE:
             raise RuntimeError(
                 "sentence-transformers not installed. "
                 "Install with: pip install sentence-transformers"
             )
-        
-        if self._model is not None:
-            return self._model
         
         # Create lock lazily to avoid event loop binding issues
         if self._load_lock is None:
@@ -144,9 +152,9 @@ class EmbeddingsService:
         
         Since embeddings are normalized, dot product = cosine similarity.
         """
-        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+        if not NUMPY_AVAILABLE:
             raise RuntimeError("numpy not available")
-        
+
         arr1 = np.array(embedding1)
         arr2 = np.array(embedding2)
         return float(np.dot(arr1, arr2))
@@ -171,9 +179,9 @@ class EmbeddingsService:
         if not candidate_embeddings:
             return []
         
-        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+        if not NUMPY_AVAILABLE:
             raise RuntimeError("numpy not available")
-        
+
         loop = asyncio.get_running_loop()
         
         def _rank():
