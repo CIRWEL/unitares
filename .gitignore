@@ -179,6 +179,9 @@ scripts/archive/
 # Generated config
 config/generated-*.json
 
+# Git worktrees
+.worktrees/
+
 # Local-only directories
 sketch/
 wiggum/
