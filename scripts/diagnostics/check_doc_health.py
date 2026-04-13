@@ -105,10 +105,11 @@ _TOOL_ALLOWLIST = {
     "postgres", "redis", "age", "docker",  # infra
     "smoke", "pytest",  # test
     "export",  # consolidated tool (registered as action, not standalone)
+    "create_task",  # asyncio.create_task(), not an MCP tool
 }
 
 # Files/dirs where ghost tool warnings are noise (plans, specs, internal docs)
-_GHOST_SKIP_DIRS = {"plans", "superpowers", "specs"}
+_GHOST_SKIP_DIRS = {"plans", "superpowers", "specs", "handoffs"}
 
 
 def check_ghost_tools(md_files: list[Path], tool_names: set[str]) -> list[str]:
