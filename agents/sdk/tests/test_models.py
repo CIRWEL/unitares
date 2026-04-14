@@ -90,11 +90,21 @@ def test_identity_result():
     assert r.uuid == "u-123"
 
 
+def test_identity_result_accepts_session_resolution_source():
+    r = IdentityResult(
+        client_session_id="sid-1",
+        uuid="u-123",
+        session_resolution_source="continuity_token",
+    )
+    assert r.resolution_source == "continuity_token"
+
+
 # --- SearchResult ---
 
 
 def test_search_result_empty():
     r = SearchResult()
+    assert r.success is True
     assert r.results == []
 
 
@@ -106,6 +116,12 @@ def test_search_result_with_items():
         ]
     )
     assert len(r.results) == 2
+
+
+def test_search_result_failure_preserved():
+    r = SearchResult(success=False, error="boom")
+    assert r.success is False
+    assert r.error == "boom"
 
 
 # --- ModelResult ---

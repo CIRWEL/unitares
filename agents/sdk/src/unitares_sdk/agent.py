@@ -181,6 +181,8 @@ class GovernanceAgent:
                     self._save_session()
                     logger.info("%s: resumed via token", self.name)
                     return
+                except IdentityDriftError:
+                    raise
                 except Exception as e:
                     logger.warning("%s: token resume failed: %s", self.name, e)
 
@@ -191,6 +193,8 @@ class GovernanceAgent:
             self._save_session()
             logger.info("%s: resumed via name", self.name)
             return
+        except IdentityDriftError:
+            raise
         except Exception as e:
             logger.warning("%s: name resume failed: %s", self.name, e)
 

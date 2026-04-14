@@ -1,6 +1,6 @@
 """Pydantic response models for governance tool results."""
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class _GovModel(BaseModel):
@@ -26,7 +26,10 @@ class IdentityResult(_GovModel):
     client_session_id: str
     uuid: str
     continuity_token: str | None = None
-    resolution_source: str | None = None
+    resolution_source: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("resolution_source", "session_resolution_source"),
+    )
 
 
 class CheckinResult(_GovModel):
@@ -45,6 +48,8 @@ class NoteResult(_GovModel):
 
 
 class SearchResult(_GovModel):
+    success: bool = True
+    error: str | None = None
     results: list[dict] = Field(default_factory=list)
 
 

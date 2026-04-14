@@ -153,6 +153,20 @@ class TestIdentityResolution:
         assert args.kwargs.get("name") == "TestAgent"
         assert "continuity_token" not in args.kwargs
 
+    @pytest.mark.asyncio
+    async def test_identity_drift_during_resume_does_not_fall_through_to_onboard(self, tmp_path):
+        agent = SimpleAgent(session_file=tmp_path / ".test_session")
+        agent.continuity_token = _make_token("uuid-test")
+        agent.agent_uuid = "uuid-test"
+
+        client = _mock_client_connected()
+        client.identity = AsyncMock(side_effect=IdentityDriftError("uuid-test", "other-uuid"))
+
+        with pytest.raises(IdentityDriftError):
+            await agent._ensure_identity(client)
+
+        client.onboard.assert_not_called()
+
 
 # --- Session persistence ---
 

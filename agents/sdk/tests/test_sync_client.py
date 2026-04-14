@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import io
 import json
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from unitares_sdk.errors import GovernanceConnectionError, IdentityDriftError
+from unitares_sdk.errors import (
+    GovernanceConnectionError,
+    GovernanceTimeoutError,
+    IdentityDriftError,
+)
 from unitares_sdk.models import CheckinResult, ModelResult, NoteResult, OnboardResult
 from unitares_sdk.sync_client import SyncGovernanceClient
 
@@ -186,6 +190,26 @@ class TestSyncToolMapping:
         assert "provider" not in captured_args[0]
         assert "model" not in captured_args[0]
 
+    def test_checkin_failure_raises_connection_error(self):
+        client = SyncGovernanceClient(transport="rest")
+
+        def fake_call(tool_name, arguments, **kwargs):
+            return {"success": False, "error": "governance down"}
+
+        client.call_tool = fake_call
+        with pytest.raises(GovernanceConnectionError, match="governance down"):
+            client.checkin("test")
+
+    def test_search_failure_raises_connection_error(self):
+        client = SyncGovernanceClient(transport="rest")
+
+        def fake_call(tool_name, arguments, **kwargs):
+            return {"success": False, "error": "search unavailable"}
+
+        client.call_tool = fake_call
+        with pytest.raises(GovernanceConnectionError, match="search unavailable"):
+            client.search_knowledge("test")
+
 
 # --- MCP transport guard ---
 
@@ -207,4 +231,12 @@ class TestSyncConnectionError:
             timeout=1.0,
         )
         with pytest.raises(GovernanceConnectionError):
+            client.call_tool("test", {})
+
+    @patch("unitares_sdk.sync_client.urllib.request.urlopen")
+    def test_timeout_wrapped_in_urlerror_raises_timeout(self, mock_open):
+        client = SyncGovernanceClient(transport="rest", timeout=1.0)
+        mock_open.side_effect = urllib.error.URLError(TimeoutError("timed out"))
+
+        with pytest.raises(GovernanceTimeoutError, match="timed out after 1.0s"):
             client.call_tool("test", {})

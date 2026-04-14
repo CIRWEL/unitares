@@ -211,6 +211,7 @@ class TestToolMapping:
     async def test_search_knowledge_maps_to_knowledge_action_search(self):
         session = AsyncMock()
         session.call_tool = AsyncMock(return_value=make_mcp_result({
+            "success": True,
             "results": [],
         }))
         client = make_client_with_session(session)
@@ -377,6 +378,32 @@ class TestCheckinVerdict:
         result = await client.checkin("test work")
         assert result.verdict == "guide"
         assert result.guidance == "Watch entropy"
+
+    @pytest.mark.asyncio
+    async def test_checkin_failure_raises_connection_error(self):
+        session = AsyncMock()
+        session.call_tool = AsyncMock(return_value=make_mcp_result({
+            "success": False,
+            "error": "governance down",
+        }))
+        client = make_client_with_session(session)
+
+        with pytest.raises(GovernanceConnectionError, match="governance down"):
+            await client.checkin("test work")
+
+
+class TestSearchKnowledgeFailure:
+    @pytest.mark.asyncio
+    async def test_search_failure_raises_connection_error(self):
+        session = AsyncMock()
+        session.call_tool = AsyncMock(return_value=make_mcp_result({
+            "success": False,
+            "error": "search unavailable",
+        }))
+        client = make_client_with_session(session)
+
+        with pytest.raises(GovernanceConnectionError, match="search unavailable"):
+            await client.search_knowledge("test query")
 
 
 # --- Not connected ---

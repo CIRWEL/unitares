@@ -154,6 +154,7 @@ class SyncGovernanceClient:
         }
         args.update(kwargs)
         raw = self.call_tool("process_agent_update", args)
+        self._raise_for_tool_failure("process_agent_update", raw)
 
         decision = raw.get("decision", {})
         verdict = decision.get("action", raw.get("verdict", "proceed"))
@@ -187,6 +188,7 @@ class SyncGovernanceClient:
         args: dict[str, Any] = {"action": "search", "query": query}
         args.update(kwargs)
         raw = self.call_tool("knowledge", args)
+        self._raise_for_tool_failure("knowledge", raw)
         return SearchResult.model_validate(raw)
 
     def store_discovery(
@@ -292,12 +294,16 @@ class SyncGovernanceClient:
         try:
             with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
                 data = json.loads(resp.read().decode())
-        except urllib.error.URLError as e:
-            raise GovernanceConnectionError(f"REST call to {self.rest_url} failed: {e}") from e
         except TimeoutError as e:
             raise GovernanceTimeoutError(
                 f"{tool_name} timed out after {effective_timeout}s"
             ) from e
+        except urllib.error.URLError as e:
+            if isinstance(getattr(e, "reason", None), TimeoutError):
+                raise GovernanceTimeoutError(
+                    f"{tool_name} timed out after {effective_timeout}s"
+                ) from e
+            raise GovernanceConnectionError(f"REST call to {self.rest_url} failed: {e}") from e
 
         if not data.get("success", False):
             error = data.get("error", "Unknown error")
@@ -391,3 +397,9 @@ class SyncGovernanceClient:
             self.client_session_id = sid
         if token:
             self.continuity_token = token
+
+    @staticmethod
+    def _raise_for_tool_failure(tool_name: str, raw: dict) -> None:
+        if raw.get("success") is False:
+            error = raw.get("error", "Unknown error")
+            raise GovernanceConnectionError(f"Tool {tool_name} failed: {error}")

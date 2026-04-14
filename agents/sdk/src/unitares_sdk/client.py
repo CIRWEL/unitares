@@ -214,6 +214,7 @@ class GovernanceClient:
         args.update(kwargs)
 
         raw = await self.call_tool("process_agent_update", args)
+        self._raise_for_tool_failure("process_agent_update", raw)
 
         # Extract verdict for potential error raising
         decision = raw.get("decision", {})
@@ -255,6 +256,7 @@ class GovernanceClient:
         args: dict[str, Any] = {"action": "search", "query": query}
         args.update(kwargs)
         raw = await self.call_tool("knowledge", args)
+        self._raise_for_tool_failure("knowledge", raw)
         return SearchResult.model_validate(raw)
 
     async def store_discovery(
@@ -405,6 +407,12 @@ class GovernanceClient:
             or raw.get("agent_uuid")
             or raw.get("bound_identity", {}).get("uuid")
         )
+
+    @staticmethod
+    def _raise_for_tool_failure(tool_name: str, raw: dict) -> None:
+        if raw.get("success") is False:
+            error = raw.get("error", "Unknown error")
+            raise GovernanceConnectionError(f"Tool {tool_name} failed: {error}")
 
     @staticmethod
     def _parse_mcp_result(result: Any) -> dict:
