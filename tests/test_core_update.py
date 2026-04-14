@@ -386,6 +386,110 @@ class TestProcessAgentUpdate:
             assert has_eisv or has_decision or has_mirror
 
     @pytest.mark.asyncio
+    async def test_full_response_contract_preserves_stable_top_level_keys(self, mock_server, mock_monitor):
+        """Full-mode handler response should retain stable contract keys."""
+        agent_uuid = "test-uuid-contract"
+        meta = _make_metadata(status="active", total_updates=5)
+        mock_monitor._last_prediction_id = "pred-contract-1"
+        mock_server.agent_metadata = {agent_uuid: meta}
+        mock_server.get_or_create_monitor.return_value = mock_monitor
+        mock_server.monitors = {agent_uuid: mock_monitor}
+
+        p = self._common_patches(mock_server, agent_uuid=agent_uuid)
+        mock_db = MagicMock()
+        mock_db.load_agent_baseline = AsyncMock(return_value=None)
+        mock_db.record_outcome_event = AsyncMock(return_value="oe-contract-1")
+        mock_db.save_agent_baseline = AsyncMock()
+        mock_db.update_identity_metadata = AsyncMock()
+        baseline = MagicMock()
+        baseline.update = MagicMock()
+        profile = SimpleNamespace(total_updates=1, record_checkin=MagicMock())
+        tool_usage_tracker = MagicMock(
+            get_usage_stats=MagicMock(return_value={"total_calls": 0, "tools": {}, "unique_tools": 0})
+        )
+
+        with self._apply_patches(p), \
+             patch("src.mcp_handlers.context.get_session_resolution_source", return_value="explicit_client_session_id"), \
+             patch("src.mcp_handlers.context.get_trajectory_confidence", return_value=None), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=tool_usage_tracker), \
+             patch("src.agent_behavioral_baseline.ensure_baseline_loaded", new=AsyncMock(return_value=None)), \
+             patch("src.agent_behavioral_baseline.compute_anomaly_entropy", return_value=0.0), \
+             patch("src.agent_behavioral_baseline.get_agent_behavioral_baseline", return_value=baseline), \
+             patch("src.agent_behavioral_baseline.schedule_baseline_save"), \
+             patch("src.agent_profile.get_agent_profile", return_value=profile), \
+             patch("src.agent_profile.save_profile_to_postgres", new=AsyncMock()):
+
+            from src.mcp_handlers.core import handle_process_agent_update
+            result = await handle_process_agent_update({
+                "response_text": "Implemented contract fixture and completed the task.",
+                "complexity": 0.5,
+                "confidence": 0.7,
+                "response_mode": "full",
+            })
+
+            data = parse_result(result)
+
+        required_keys = {
+            "success",
+            "server_time",
+            "agent_id",
+            "status",
+            "decision",
+            "metrics",
+            "identity_assurance",
+            "prediction_id",
+            "outcome_event",
+        }
+        assert required_keys.issubset(data.keys())
+        assert data["success"] is True
+        assert data["agent_id"] == agent_uuid
+        assert data["identity_assurance"]["tier"] == "strong"
+        assert data["decision"]["action"] == "approve"
+        assert data["prediction_id"] == "pred-contract-1"
+        assert data["outcome_event"]["outcome_id"] == "oe-contract-1"
+        assert {"E", "I", "S", "V", "coherence", "risk_score"}.issubset(data["metrics"].keys())
+
+    @pytest.mark.asyncio
+    async def test_full_response_contract_preserves_archived_error_shape(self, mock_server, mock_monitor):
+        """Full-mode handler error response should keep stable archived-agent keys."""
+        agent_uuid = "test-uuid-contract-archived"
+        meta = _make_metadata(status="archived", total_updates=5)
+        meta.notes = "User requested archive after handoff"
+        mock_server.agent_metadata = {agent_uuid: meta}
+        mock_server.get_or_create_monitor.return_value = mock_monitor
+        mock_server.monitors = {agent_uuid: mock_monitor}
+
+        p = self._common_patches(mock_server, agent_uuid=agent_uuid)
+        with self._apply_patches(p):
+            from src.mcp_handlers.core import handle_process_agent_update
+            result = await handle_process_agent_update({
+                "response_text": "Trying to resume after an explicit archive.",
+                "response_mode": "full",
+            })
+
+            data = parse_result(result)
+
+        required_keys = {
+            "success",
+            "error",
+            "server_time",
+            "error_code",
+            "error_category",
+            "context",
+            "recovery",
+            "agent_signature",
+        }
+        assert required_keys.issubset(data.keys())
+        assert data["success"] is False
+        assert data["error_code"] == "AGENT_ARCHIVED"
+        assert data["error_category"] == "state_error"
+        assert "cannot be auto-resumed" in data["error"]
+        assert data["context"]["status"] == "archived"
+        assert "self_recovery" in data["recovery"]["related_tools"]
+        mock_server.lock_manager.acquire_agent_lock_async.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_lock_timeout_returns_error(self, mock_server, mock_monitor):
         """Lock timeout returns informative error."""
         agent_uuid = "test-uuid-lock"
@@ -2405,4 +2509,3 @@ class TestProcessAgentUpdateExtended:
 
             data = parse_result(result)
             assert isinstance(data, dict)
-

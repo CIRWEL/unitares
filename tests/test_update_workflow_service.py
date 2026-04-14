@@ -385,3 +385,34 @@ async def test_run_process_update_workflow_real_spine_auto_resumes_archived_agen
     harness.storage.update_agent.assert_awaited_once_with(harness.agent_id, status="active")
     metadata_cache.invalidate.assert_awaited_once_with(harness.agent_id)
     audit_logger.log_auto_resume.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_process_update_workflow_real_spine_blocks_explicitly_archived_agent():
+    """Explicitly archived agents should exit in Phase 2 before lock acquisition."""
+    harness = _make_real_spine_harness(
+        response_text="Trying to check in after an explicit archive.",
+    )
+    harness.meta.status = "archived"
+    harness.meta.notes = "User requested archive after handoff"
+    harness.meta.total_updates = 5
+
+    metadata_cache = MagicMock(invalidate=AsyncMock())
+    audit_logger = MagicMock()
+
+    with _patch_real_spine_edges(harness), \
+         patch("src.cache.get_metadata_cache", return_value=metadata_cache), \
+         patch("src.audit_log.audit_logger", audit_logger):
+        result = await run_process_update_workflow(harness.ctx)
+
+    data = parse_result(result)
+
+    assert data["success"] is False
+    assert "cannot be auto-resumed" in data["error"]
+    assert data["context"]["status"] == "archived"
+    assert harness.meta.status == "archived"
+    harness.server.lock_manager.acquire_agent_lock_async.assert_not_called()
+    harness.server.process_update_authenticated_async.assert_not_awaited()
+    harness.storage.update_agent.assert_not_called()
+    metadata_cache.invalidate.assert_not_called()
+    audit_logger.log_auto_resume.assert_not_called()
