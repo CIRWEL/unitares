@@ -1,0 +1,92 @@
+# Live Postgres + Apache AGE + Redis — not on pull requests (keeps PR CI fast).
+#
+# Triggers: nightly (schedule), manual (workflow_dispatch), pushes to default branches.
+# See CONTRIBUTING.md "Live services (nightly / main only)".
+
+name: Integration (live services)
+
+on:
+  schedule:
+    # 06:15 UTC daily
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+  push:
+    branches: [master, main, develop]
+
+concurrency:
+  group: integration-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    services:
+      postgres:
+        image: apache/age:dev_snapshot_PG17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      CI_LIVE_SERVICES: "1"
+      DB_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/governance_test
+      DB_POSTGRES_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      REDIS_URL: redis://127.0.0.1:6379/0
+      DB_BACKEND: postgres
+      DB_AGE_GRAPH: governance_graph
+      UNITARES_KNOWLEDGE_BACKEND: age
+
+    steps:
+      - name: Checkout unitares
+        uses: actions/checkout@v4
+
+      - name: Checkout unitares-core (private)
+        uses: actions/checkout@v4
+        with:
+          repository: CIRWEL/unitares-core
+          token: ${{ secrets.UNITARES_CORE_TOKEN }}
+          path: unitares-core
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install cython
+          cd unitares-core && USE_CYTHON=1 pip install . && cd ..
+          pip install -r requirements-full.txt
+
+      - name: Bootstrap governance_test database
+        run: python scripts/ci/bootstrap_governance_test_db.py
+
+      - name: Run live integration tests
+        run: |
+          python -m pytest \
+            tests/test_postgres_backend_integration.py \
+            tests/test_live_services_smoke.py \
+            -v \
+            -o addopts= \
+            --tb=short

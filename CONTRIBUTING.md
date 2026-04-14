@@ -48,6 +48,10 @@ python3 -m pytest tests/ --cov=src --cov-report=term-missing
 
 Tests use a separate `governance_test` database and mock external services. Most tests run without any live infrastructure — only a few integration tests in `test_knowledge_graph_handlers.py` require a running AGE instance.
 
+### Live services (nightly / main only)
+
+PR CI stays fast and does not start Postgres+AGE+Redis. A separate workflow **Integration (live services)** (`.github/workflows/integration-live.yml`) runs on a **schedule** (nightly), **workflow dispatch**, and **pushes to `master` / `main` / `develop`** — not on pull requests. It provisions Apache AGE + Redis, bootstraps `governance_test`, and runs tests with `CI_LIVE_SERVICES=1` (including `@pytest.mark.integration_live` smoke tests).
+
 ### Known Notes
 
 - Knowledge graph AGE tests require a live AGE connection (errors, not failures, when unavailable)

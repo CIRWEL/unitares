@@ -8,6 +8,7 @@ connectivity checks, or table cleanup. Other tests use mocks and bypass real DB.
 from __future__ import annotations
 
 import asyncio
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -17,7 +18,11 @@ except ImportError:
     asyncpg = None  # type: ignore
 
 _PROJECT_ROOT = Path(__file__).parent.parent
-TEST_DB_URL = "postgresql://postgres:postgres@localhost:5432/governance_test"
+# CI (integration-live job) sets DB_POSTGRES_URL to the service hostname:port
+TEST_DB_URL = os.environ.get(
+    "DB_POSTGRES_URL",
+    "postgresql://postgres:postgres@localhost:5432/governance_test",
+)
 _SCHEMA_READY = False
 
 

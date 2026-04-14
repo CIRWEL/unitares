@@ -55,6 +55,7 @@ addopts = [
 ]
 markers = [
     "smoke: Fast smoke tests for pre-push validation (target <60s)",
+    "integration_live: Requires live Postgres/AGE/Redis (CI_LIVE_SERVICES=1)",
 ]
 filterwarnings = [
     "ignore::ResourceWarning",
