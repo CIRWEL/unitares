@@ -7,16 +7,18 @@ UNITARES governance MCP server. Thermodynamic governance framework for AI agents
 ## Stack
 
 - Python 3.12+, asyncio
-- PostgreSQL@17 + AGE 1.7.0 (Apache Graph Extension) via Homebrew on port 5432
-- Redis (optional session cache, port 6379)
+- PostgreSQL@17 + AGE 1.7.0 (Apache Graph Extension) via Homebrew
+- Redis (optional session cache)
 - Pydantic v2 for parameter validation
-- MCP (Model Context Protocol) server on port 8767
+- MCP (Model Context Protocol) server
 
-### MCP listen defaults (security)
+## Setup
 
-- **Default bind:** `127.0.0.1` unless `UNITARES_BIND_ALL_INTERFACES=1` (then `0.0.0.0`) or `UNITARES_MCP_HOST` is set.
-- **Transport allowlists:** localhost always; add `UNITARES_MCP_ALLOWED_HOSTS` and `UNITARES_MCP_ALLOWED_ORIGINS` (comma-separated) for LAN/Cloudflare tunnel Host headers. Optional: `UNITARES_HTTP_CORS_EXTRA_ORIGINS`, `UNITARES_MCP_ALLOW_NULL_ORIGIN` (default on for `file://`).
-- LaunchAgent `scripts/ops/com.unitares.governance-mcp.plist` sets bind-all + example allowlists for this machine.
+1. Install PostgreSQL@17 with AGE extension
+2. Create a `governance` database
+3. Install dependencies: `pip install -e .`
+4. Copy `scripts/ops/com.unitares.governance-mcp.plist` to `~/Library/LaunchAgents/` and fill in paths/tokens (see template comments)
+5. Start: `python src/mcp_server.py --port 8767`
 
 ## Before Committing
 
@@ -28,18 +30,17 @@ UNITARES governance MCP server. Thermodynamic governance framework for AI agents
 
 ## Architecture Patterns
 
-- **governance_core is an external compiled package** — there is NO `governance_core/` directory in this repo. The EISV dynamics engine (ODEs, coherence, scoring, ethical drift) is in a separate private repo (`unitares-core`) and installed as a compiled `.so` wheel. Code in `src/` imports it as `from governance_core import X` — these resolve to the installed package in site-packages, not a local directory. Do not try to create or recreate `governance_core/`. Do not try to read its source — it's compiled. To work with source: `ln -sf ~/projects/unitares-core/governance_core governance_core`
+- **governance_core is an external compiled package** — there is NO `governance_core/` directory in this repo. The EISV dynamics engine is in a separate private repo and installed as a compiled `.so` wheel. Code in `src/` imports it as `from governance_core import X`. Do not try to create or recreate `governance_core/`.
 - **LazyMCPServer**: All handler modules import `lazy_mcp_server as mcp_server` from `shared.py` (single definition, no per-file copies). Tests patch `{MODULE}.mcp_server` not `get_mcp_server`.
 - **Pydantic validation**: Parameter validation uses Pydantic schemas in `src/mcp_handlers/schemas/`. Legacy `validate_and_coerce_params` is removed.
 - **Handler modules**: Each in `src/mcp_handlers/`, decorated with `@mcp_tool`.
 
 ## Database
 
-- **ONE database**: Homebrew PostgreSQL@17 on port 5432 (`postgresql://postgres:postgres@localhost:5432/governance`)
-- Requires `brew services start postgresql@17`. If governance crashes with "Connect call failed", check `pg_isready -h localhost -p 5432`.
-- Access: `psql -h localhost -U postgres -d governance`
-- Backups: `/Users/cirwel/backups/governance/` (daily pg_dump via launchd)
-- Do NOT create additional PostgreSQL instances, databases, or migration layers. One database, one location.
+- PostgreSQL@17 on port 5432 with AGE graph extension
+- Requires `brew services start postgresql@17`
+- Check connectivity: `pg_isready -h localhost -p 5432`
+- Do NOT create additional PostgreSQL instances, databases, or migration layers
 
 ## Git Rules
 
@@ -52,25 +53,11 @@ UNITARES governance MCP server. Thermodynamic governance framework for AI agents
 
 The MCP SDK's anyio task group conflicts with asyncpg/Redis async operations. MCP tool handlers that `await` DB calls can deadlock.
 
-**Mitigated (Option F — shipped):** `health_check` now reads a cached snapshot produced by `deep_health_probe_task` on the main event loop. No DB calls in the handler path. REST endpoints: `/health/live`, `/health/ready`, `/health/deep`. See `docs/handoffs/2026-04-10-option-f-spec.md`.
-
-**Remaining workarounds:** `call_pi_tool` uses sync httpx in executor thread. Any *new* MCP handler that needs DB access must either read cached data or use `run_in_executor` with a sync client — do not `await` asyncpg directly from a handler.
+**Mitigated (Option F):** `health_check` reads a cached snapshot produced by a background probe task. No DB calls in the handler path. Any *new* MCP handler that needs DB access must either read cached data or use `run_in_executor` with a sync client.
 
 ## Known Test Notes
 
 - Knowledge graph AGE tests require a live AGE connection (errors, not failures, when unavailable)
-
-## Service Management
-
-```bash
-# Restart governance-mcp
-launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
-launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
-
-# Logs
-tail -f data/logs/mcp_server.log
-tail -f data/logs/mcp_server_error.log
-```
 
 ## Minimal Agent Workflow
 

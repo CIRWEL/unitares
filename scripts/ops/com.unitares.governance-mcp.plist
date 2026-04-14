@@ -1,33 +1,45 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE: Copy to ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
+  and replace all PLACEHOLDER values with your actual paths and credentials.
+
+  Required changes:
+    - /PATH/TO/PYTHON3     -> your Python 3.12+ interpreter
+    - /PATH/TO/UNITARES    -> your unitares project checkout
+    - /YOUR/HOME           -> your home directory
+    - ALLOWED_HOSTS/ORIGINS -> your LAN IPs or remove if localhost-only
+    - UNITARES_HTTP_API_TOKEN / UNITARES_CONTINUITY_TOKEN_SECRET -> generate with:
+        python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+-->
 <plist version="1.0">
 <dict>
     <key>Label</key>
     <string>com.unitares.governance-mcp</string>
-    
+
     <key>ProgramArguments</key>
     <array>
-        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
-        <string>/Users/cirwel/projects/unitares/src/mcp_server.py</string>
+        <string>/PATH/TO/PYTHON3</string>
+        <string>/PATH/TO/UNITARES/src/mcp_server.py</string>
         <string>--port</string>
         <string>8767</string>
     </array>
-    
+
     <key>WorkingDirectory</key>
-    <string>/Users/cirwel/projects/unitares</string>
-    
+    <string>/PATH/TO/UNITARES</string>
+
     <key>RunAtLoad</key>
     <true/>
-    
+
     <key>KeepAlive</key>
     <true/>
-    
+
     <key>StandardOutPath</key>
-    <string>/Users/cirwel/projects/unitares/data/logs/mcp_server.log</string>
+    <string>/PATH/TO/UNITARES/data/logs/mcp_server.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/cirwel/projects/unitares/data/logs/mcp_server_error.log</string>
-    
+    <string>/PATH/TO/UNITARES/data/logs/mcp_server_error.log</string>
+
     <key>SoftResourceLimits</key>
     <dict>
         <key>NumberOfFiles</key>
@@ -39,11 +51,11 @@
         <key>UNITARES_BIND_ALL_INTERFACES</key>
         <string>1</string>
         <key>UNITARES_MCP_ALLOWED_HOSTS</key>
-        <string>192.168.1.151:*,192.168.1.164:*,100.96.201.46:*,gov.cirwel.org</string>
+        <string>localhost:*</string>
         <key>UNITARES_MCP_ALLOWED_ORIGINS</key>
-        <string>http://192.168.1.151:*,http://192.168.1.164:*,http://100.96.201.46:*,https://gov.cirwel.org</string>
+        <string>http://localhost:*</string>
         <key>PYTHONPATH</key>
-        <string>/Users/cirwel/projects/unitares</string>
+        <string>/PATH/TO/UNITARES</string>
         <key>DB_BACKEND</key>
         <string>postgres</string>
         <key>DB_POSTGRES_URL</key>
@@ -57,17 +69,17 @@
         <key>UNITARES_DIALECTIC_BACKEND</key>
         <string>postgres</string>
         <key>HOME</key>
-        <string>/Users/cirwel</string>
+        <string>/YOUR/HOME</string>
         <key>HF_HOME</key>
-        <string>/Users/cirwel/.cache/huggingface</string>
+        <string>/YOUR/HOME/.cache/huggingface</string>
         <key>TRANSFORMERS_OFFLINE</key>
         <string>1</string>
         <key>HF_HUB_OFFLINE</key>
         <string>1</string>
         <key>UNITARES_HTTP_API_TOKEN</key>
-        <string>hZgKpf1OFnvmScz0E7tdht9K4htTAPZQuS21jxoliZc</string>
+        <string>GENERATE_YOUR_OWN_TOKEN</string>
         <key>UNITARES_CONTINUITY_TOKEN_SECRET</key>
-        <string>DgyON-cSgseDat0w6HzDHqC1l9kL-rursKO_AxqDGZg</string>
+        <string>GENERATE_YOUR_OWN_SECRET</string>
     </dict>
 </dict>
 </plist>
