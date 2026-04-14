@@ -691,22 +691,18 @@ async def http_metrics(request):
         # Connection metrics
         CONNECTIONS_ACTIVE.set(conn_tracker.count)
 
-        # Agent metrics (from metadata file)
+        # Agent metrics (from cached metadata — no DB call in handler path)
         try:
             from src.mcp_handlers.shared import get_mcp_server
             mcp_server = get_mcp_server()
-            # Use async version to avoid race condition with PostgreSQL connection pool
-            await mcp_server.load_metadata_async()
-
-            # Count by status (waiting_input and active are separate statuses)
+            # Read already-loaded metadata dict; background tasks keep it fresh.
+            # Do NOT call load_metadata_async() here — it awaits asyncpg.
             status_counts = {"active": 0, "paused": 0, "archived": 0, "waiting_input": 0, "deleted": 0}
             for meta in mcp_server.agent_metadata.values():
                 status = getattr(meta, 'status', 'active')
-                # Map status to valid Prometheus label
                 if status in status_counts:
                     status_counts[status] += 1
                 else:
-                    # Unknown status - default to active for metrics
                     status_counts["active"] += 1
 
             for status, count in status_counts.items():
@@ -714,27 +710,10 @@ async def http_metrics(request):
         except Exception as e:
             logger.debug(f"Could not load agent metrics: {e}")
 
-        # Knowledge graph metrics
+        # Dialectic sessions (in-memory, no DB call)
         try:
-            from src.knowledge_graph import get_knowledge_graph
-            import asyncio
-            loop = asyncio.get_running_loop()
-            kg = await get_knowledge_graph()
-            stats = await kg.get_stats()
-            KNOWLEDGE_NODES_TOTAL.set(stats.get("total_discoveries", 0))
-        except Exception as e:
-            logger.debug(f"Could not load knowledge graph metrics: {e}")
-
-        # Dialectic sessions
-        try:
-            from src.dialectic_db import DialecticDB
             from src.mcp_handlers.dialectic.session import ACTIVE_SESSIONS
-            import asyncio
-            loop = asyncio.get_running_loop()
-            # Use in-memory ACTIVE_SESSIONS dict (faster than DB query)
-            # This is populated by dialectic handlers and reflects current state
-            active_count = len(ACTIVE_SESSIONS)
-            DIALECTIC_SESSIONS_ACTIVE.set(active_count)
+            DIALECTIC_SESSIONS_ACTIVE.set(len(ACTIVE_SESSIONS))
         except Exception as e:
             logger.debug(f"Could not load dialectic metrics: {e}")
 
@@ -768,11 +747,11 @@ async def http_dashboard(request):
             rf'\1="/dashboard/\2?v={_v}"',
             html,
         )
-        # Inject API token so dashboard JS can authenticate
+        # Inject API token so dashboard JS can authenticate.
+        # Always overwrite — token may have rotated since last visit.
         if http_api_token:
             token_script = (
-                f'<script>if(!localStorage.getItem("unitares_api_token"))'
-                f'{{localStorage.setItem("unitares_api_token","{http_api_token}")}}</script>'
+                f'<script>localStorage.setItem("unitares_api_token","{http_api_token}")</script>'
             )
             html = html.replace("</head>", f"{token_script}</head>", 1)
         return Response(

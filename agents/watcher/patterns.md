@@ -68,12 +68,25 @@ the cache and cause init storms over time.
 
 ### P004 — DB-touching code inside MCP tool handler (severity: high, project-specific)
 
-Any `await` on asyncpg or Redis inside an `@mcp_tool`-decorated handler. The
-anyio task group in the MCP SDK's StreamableHTTP transport deadlocks with
-asyncpg/Redis async calls. Symptom: `/v1/tools/call` hangs indefinitely for that
-tool.
+Any `await` on asyncpg or Redis inside an `@mcp_tool`-decorated handler
+(functions in `src/mcp_handlers/`). The anyio task group in the MCP SDK's
+StreamableHTTP transport deadlocks with asyncpg/Redis async calls. Symptom:
+`/v1/tools/call` hangs indefinitely for that tool.
 
-**Seen in:** `health_check` (still deadlocks), KG lifecycle, eisv_sync
+**SAFE — DO NOT FLAG:**
+```python
+# Starlette REST route handlers in src/http_api.py (http_health, http_metrics,
+# http_incidents, etc.) run in normal asyncio context, NOT inside the MCP
+# SDK's anyio task group. asyncpg calls in REST endpoints do not deadlock.
+async def http_incidents(request):
+    events = await query_audit_events_async(...)  # safe — REST handler
+```
+
+Only flag `await` on asyncpg/Redis in files under `src/mcp_handlers/` or in
+functions decorated with `@mcp_tool` / `@mcp.tool()`. Do NOT flag plain
+Starlette route handlers in `src/http_api.py`.
+
+**Seen in:** `health_check` MCP tool (fixed via Option F), KG lifecycle, eisv_sync
 
 **Hint template:** `asyncpg inside MCP handler — will deadlock, wrap in executor`
 
