@@ -2,7 +2,7 @@
 # Documentation Date Validator
 # Checks for outdated year references in documentation
 
-PROJECT_DIR="/Users/cirwel/projects/governance-mcp-v1"
+PROJECT_DIR="/Users/cirwel/projects/unitares"
 cd "$PROJECT_DIR" || exit 1
 
 CURRENT_YEAR=$(date +%Y)

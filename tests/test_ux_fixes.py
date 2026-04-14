@@ -330,7 +330,7 @@ class TestErrorSanitization:
         """Sanitization removes full file paths"""
         from src.mcp_handlers.utils import _sanitize_error_message
 
-        msg = "Error in /Users/cirwel/projects/governance-mcp-v1/src/mcp_handlers/utils.py"
+        msg = "Error in /Users/cirwel/projects/unitares/src/mcp_handlers/utils.py"
         sanitized = _sanitize_error_message(msg)
 
         assert "/Users/cirwel" not in sanitized

@@ -61,7 +61,7 @@ ANALYSIS_INTERVAL = 300  # 5 minutes
 # Hard upper bound on a single analysis cycle. Normal process_agent_update
 # completes in <10s; 45s leaves comfortable slack while preventing a hung
 # MCP call from blocking the main loop indefinitely (the anyio/asyncpg
-# deadlock documented in governance-mcp-v1 CLAUDE.md can hang call_tool
+# deadlock documented in unitares CLAUDE.md can hang call_tool
 # without raising, which previously wedged Sentinel for ~30h until
 # manual restart).
 CYCLE_TIMEOUT = 45  # seconds

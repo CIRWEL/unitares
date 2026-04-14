@@ -1,4 +1,4 @@
-# CLAUDE.md — governance-mcp-v1
+# CLAUDE.md — unitares
 
 ## Project
 

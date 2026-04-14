@@ -7,9 +7,9 @@ description: >
 last_verified: "2026-03-20"
 freshness_days: 14
 source_files:
-  - governance-mcp-v1/src/mcp_handlers/dialectic/handlers.py
-  - governance-mcp-v1/src/mcp_handlers/dialectic/session.py
-  - governance-mcp-v1/config/governance_config.py
+  - unitares/src/mcp_handlers/dialectic/handlers.py
+  - unitares/src/mcp_handlers/dialectic/session.py
+  - unitares/config/governance_config.py
 ---
 
 # Dialectic Reasoning

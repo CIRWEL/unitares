@@ -7,10 +7,10 @@ description: >
 last_verified: "2026-03-20"
 freshness_days: 14
 source_files:
-  - governance-mcp-v1/config/governance_config.py
-  - governance-mcp-v1/src/auto_ground_truth.py
-  - governance-mcp-v1/src/governance_monitor.py
-  - governance-mcp-v1/src/mcp_handlers/core.py
+  - unitares/config/governance_config.py
+  - unitares/src/auto_ground_truth.py
+  - unitares/src/governance_monitor.py
+  - unitares/src/mcp_handlers/core.py
 ---
 
 # Governance Fundamentals

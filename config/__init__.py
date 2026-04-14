@@ -1,2 +1,2 @@
-"""Configuration package for governance-mcp-v1."""
+"""Configuration package for unitares."""
 

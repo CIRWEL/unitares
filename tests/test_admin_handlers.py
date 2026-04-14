@@ -411,7 +411,7 @@ class TestGetWorkspaceHealth:
     @pytest.mark.asyncio
     async def test_workspace_health_success(self, patch_context_agent_id):
         mock_data = {
-            "workspace": "governance-mcp-v1",
+            "workspace": "unitares",
             "overall_status": "healthy",
             "checks": {}
         }

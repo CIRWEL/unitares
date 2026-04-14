@@ -1,2 +1,2 @@
-"""Scripts package for governance-mcp-v1."""
+"""Scripts package for unitares."""
 

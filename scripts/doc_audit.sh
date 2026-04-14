@@ -12,8 +12,8 @@ STALE=0
 note() { echo "  $1"; }
 warn() { echo "  STALE: $1"; STALE=$((STALE + 1)); }
 
-# --- governance-mcp-v1 ---
-echo "=== governance-mcp-v1 ==="
+# --- unitares ---
+echo "=== unitares ==="
 if [ -d "$GOV_DIR/tests" ]; then
   gov_tests=$(cd "$GOV_DIR" && python3 -m pytest tests/ --collect-only -q 2>/dev/null | tail -1 | grep -oE '[0-9]+' | head -1)
   gov_readme_tests=$(grep -oE '[0-9,]+ tests' "$GOV_DIR/README.md" | head -1 | tr -d ',')

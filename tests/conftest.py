@@ -1,5 +1,5 @@
 """
-Pytest configuration and fixtures for governance-mcp-v1 tests.
+Pytest configuration and fixtures for unitares tests.
 """
 import pytest
 import pytest_asyncio

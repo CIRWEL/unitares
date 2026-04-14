@@ -29,7 +29,7 @@ echo ""
 
 # 2. Check for stale lock files
 echo "Checking for stale lock files..."
-LOCK_DIR="/Users/cirwel/projects/governance-mcp-v1/data/locks"
+LOCK_DIR="/Users/cirwel/projects/unitares/data/locks"
 if [[ -d "$LOCK_DIR" ]]; then
     LOCK_COUNT=$(find "$LOCK_DIR" -name "*.lock" -mmin +30 2>/dev/null | wc -l | tr -d ' ')
     if [[ "$LOCK_COUNT" -gt 0 ]]; then
@@ -50,7 +50,7 @@ echo ""
 
 # 3. Check for orphaned heartbeat files
 echo "Checking heartbeat freshness..."
-HEARTBEAT_FILE="/Users/cirwel/projects/governance-mcp-v1/data/mcp_heartbeat.json"
+HEARTBEAT_FILE="/Users/cirwel/projects/unitares/data/mcp_heartbeat.json"
 if [[ -f "$HEARTBEAT_FILE" ]]; then
     AGE_MINUTES=$(( ($(date +%s) - $(stat -f %m "$HEARTBEAT_FILE")) / 60 ))
     if [[ $AGE_MINUTES -gt 10 ]]; then

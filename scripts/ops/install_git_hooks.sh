@@ -1,7 +1,7 @@
 #!/bin/bash
-# Install git hooks for governance-mcp-v1
+# Install git hooks for unitares
 
-PROJECT_DIR="/Users/cirwel/projects/governance-mcp-v1"
+PROJECT_DIR="/Users/cirwel/projects/unitares"
 cd "$PROJECT_DIR" || exit 1
 
 echo "🪝 Installing Git Hooks"
