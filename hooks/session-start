@@ -10,11 +10,57 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # ---------------------------------------------------------------------------
+# Resolve repo-local helper paths across plugin and monorepo layouts
+# ---------------------------------------------------------------------------
+DEFAULTS_FILE=""
+for candidate in \
+  "${PLUGIN_ROOT}/config/defaults.env" \
+  "${PLUGIN_ROOT}/config/client/defaults.env"
+do
+  if [[ -f "${candidate}" ]]; then
+    DEFAULTS_FILE="${candidate}"
+    break
+  fi
+done
+
+SESSION_CACHE_HELPER=""
+for candidate in \
+  "${PLUGIN_ROOT}/scripts/session_cache.py" \
+  "${PLUGIN_ROOT}/scripts/client/session_cache.py"
+do
+  if [[ -f "${candidate}" ]]; then
+    SESSION_CACHE_HELPER="${candidate}"
+    break
+  fi
+done
+
+FRESHNESS_WARNING_HELPER=""
+for candidate in \
+  "${PLUGIN_ROOT}/scripts/_freshness_warning.py" \
+  "${PLUGIN_ROOT}/scripts/client/_freshness_warning.py"
+do
+  if [[ -f "${candidate}" ]]; then
+    FRESHNESS_WARNING_HELPER="${candidate}"
+    break
+  fi
+done
+
+# ---------------------------------------------------------------------------
 # Load defaults, then let env vars override
 # ---------------------------------------------------------------------------
-if [[ -f "${PLUGIN_ROOT}/config/defaults.env" ]]; then
-  # shellcheck source=../config/defaults.env
-  source "${PLUGIN_ROOT}/config/defaults.env"
+SERVER_URL_OVERRIDE="${UNITARES_SERVER_URL-}"
+AGENT_PREFIX_OVERRIDE="${UNITARES_AGENT_PREFIX-}"
+
+if [[ -n "${DEFAULTS_FILE}" ]]; then
+  # shellcheck source=/dev/null
+  source "${DEFAULTS_FILE}"
+fi
+
+if [[ -n "${SERVER_URL_OVERRIDE}" ]]; then
+  UNITARES_SERVER_URL="${SERVER_URL_OVERRIDE}"
+fi
+if [[ -n "${AGENT_PREFIX_OVERRIDE}" ]]; then
+  UNITARES_AGENT_PREFIX="${AGENT_PREFIX_OVERRIDE}"
 fi
 
 SERVER_URL="${UNITARES_SERVER_URL:-http://localhost:8767}"
@@ -34,9 +80,16 @@ print(json.dumps(sys.argv[1])[1:-1])
 call_tool() {
   local tool_name="$1"
   local arguments="$2"
-  curl -s --max-time 10 \
-    -X POST "${SERVER_URL}/v1/tools/call" \
-    -H "Content-Type: application/json" \
+  local curl_args=(
+    -s
+    --max-time 10
+    -X POST "${SERVER_URL}/v1/tools/call"
+    -H "Content-Type: application/json"
+  )
+  if [[ -n "${UNITARES_HTTP_API_TOKEN:-}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${UNITARES_HTTP_API_TOKEN}")
+  fi
+  curl "${curl_args[@]}" \
     -d "{\"name\": \"${tool_name}\", \"arguments\": ${arguments}}" 2>/dev/null || echo ""
 }
 
@@ -103,8 +156,8 @@ fi
 # ---------------------------------------------------------------------------
 # Check skill freshness — warn if last_verified is stale
 # ---------------------------------------------------------------------------
-if [[ -n "${SKILL_CONTENT}" ]]; then
-  FRESHNESS_WARNING=$(python3 "${PLUGIN_ROOT}/scripts/_freshness_warning.py" "${SKILL_CONTENT}" 2>/dev/null || true)
+if [[ -n "${SKILL_CONTENT}" && -n "${FRESHNESS_WARNING_HELPER}" ]]; then
+  FRESHNESS_WARNING=$(python3 "${FRESHNESS_WARNING_HELPER}" "${SKILL_CONTENT}" 2>/dev/null || true)
 
   if [[ -n "${FRESHNESS_WARNING}" ]]; then
     SKILL_CONTENT="${FRESHNESS_WARNING}
@@ -204,12 +257,14 @@ cache = {
 print(json.dumps(cache))
 " "${SERVER_URL}" "${AGENT_NAME}" "${AGENT_ID}" "${CLIENT_SESSION_ID}" "${CONTINUITY_TOKEN}" "${SESSION_RESOLUTION_SOURCE}" "${CONTINUITY_TOKEN_SUPPORTED}" "${ONBOARD_PARSED}")
 
-python3 "${PLUGIN_ROOT}/scripts/session_cache.py" \
-  set session \
-  --workspace "${PWD}" \
-  --merge \
-  --stamp \
-  --json "${SESSION_CACHE_JSON}" >/dev/null 2>&1 || true
+if [[ -n "${SESSION_CACHE_HELPER}" ]]; then
+  python3 "${SESSION_CACHE_HELPER}" \
+    set session \
+    --workspace "${PWD}" \
+    --merge \
+    --stamp \
+    --json "${SESSION_CACHE_JSON}" >/dev/null 2>&1 || true
+fi
 
 # ---------------------------------------------------------------------------
 # Fetch a light read of current state

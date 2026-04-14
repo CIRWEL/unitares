@@ -17,9 +17,29 @@ set -u
 DEBOUNCE_SECS=30
 MAX_CONCURRENT=3
 LOCK_DIR="/tmp/unitares-watcher-locks"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WATCHER_AGENT="${UNITARES_WATCHER_AGENT:-${SCRIPT_DIR}/agent.py}"
+
+if [[ ! -f "${WATCHER_AGENT}" ]]; then
+    exit 0
+fi
 
 INPUT=$(cat)
-FILE_PATH=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILE_PATH=$(python3 - "$INPUT" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+raw = sys.argv[1] if len(sys.argv) > 1 else ""
+try:
+    data = json.loads(raw) if raw else {}
+except Exception:
+    data = {}
+
+tool_input = data.get("tool_input", data.get("input", data))
+file_path = tool_input.get("file_path") or tool_input.get("path") or ""
+print(file_path)
+PY
+)
 
 # Bail fast if no file path
 if [[ -z "$FILE_PATH" ]]; then
@@ -64,7 +84,7 @@ find "$LOCK_DIR" -name "*.lock" -mmin +10 -delete 2>/dev/null &
 
 # Fire and forget: detach the watcher so the hook returns instantly.
 # stdin/stdout/stderr go to /dev/null so the editor never sees the model call.
-nohup python3 /Users/cirwel/projects/governance-mcp-v1/agents/watcher/agent.py \
+nohup python3 "${WATCHER_AGENT}" \
     --file "$FILE_PATH" \
     >/dev/null 2>&1 </dev/null &
 
