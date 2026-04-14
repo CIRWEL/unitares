@@ -601,25 +601,26 @@ class SentinelAgent(GovernanceAgent):
         # Start WebSocket consumer in background
         ws_task = asyncio.create_task(self.ws_consumer())
 
-        # Initial check-in
-        await asyncio.sleep(5)  # let WS connect
-        await self._bounded_analysis_cycle()
-
-        # Periodic analysis
-        while self.running:
-            await asyncio.sleep(self.analysis_interval)
-            if self.running:
-                try:
-                    await self._bounded_analysis_cycle()
-                except Exception as e:
-                    log(f"Analysis cycle error: {e}")
-                _trim_log(LOG_FILE, MAX_LOG_LINES)
-
-        ws_task.cancel()
         try:
-            await ws_task
-        except asyncio.CancelledError:
-            pass
+            # Initial check-in
+            await asyncio.sleep(5)  # let WS connect
+            await self._bounded_analysis_cycle()
+
+            # Periodic analysis
+            while self.running:
+                await asyncio.sleep(self.analysis_interval)
+                if self.running:
+                    try:
+                        await self._bounded_analysis_cycle()
+                    except Exception as e:
+                        log(f"Analysis cycle error: {e}")
+                    _trim_log(LOG_FILE, MAX_LOG_LINES)
+        finally:
+            ws_task.cancel()
+            try:
+                await ws_task
+            except asyncio.CancelledError:
+                pass
 
         log("=== Sentinel stopped ===")
 
@@ -628,28 +629,32 @@ class SentinelAgent(GovernanceAgent):
         log("--- Sentinel single cycle ---")
         # Brief WS connection to gather some state
         ws_task = asyncio.create_task(self.ws_consumer())
-        await asyncio.sleep(10)  # collect events for 10s
-        result = await self._bounded_analysis_cycle()
-        self.running = False
-        ws_task.cancel()
         try:
-            await ws_task
-        except asyncio.CancelledError:
-            pass
+            await asyncio.sleep(10)  # collect events for 10s
+            result = await self._bounded_analysis_cycle()
+            self.running = False
+        finally:
+            ws_task.cancel()
+            try:
+                await ws_task
+            except asyncio.CancelledError:
+                pass
         log(f"Result: {result}")
 
     async def run_sitrep(self, hours: float = 6.0):
         """Generate and print a situation report."""
         # Brief WS connection
         ws_task = asyncio.create_task(self.ws_consumer())
-        await asyncio.sleep(5)
-        report = await self.sitrep.generate(hours)
-        self.running = False
-        ws_task.cancel()
         try:
-            await ws_task
-        except asyncio.CancelledError:
-            pass
+            await asyncio.sleep(5)
+            report = await self.sitrep.generate(hours)
+            self.running = False
+        finally:
+            ws_task.cancel()
+            try:
+                await ws_task
+            except asyncio.CancelledError:
+                pass
         print(report)
         log(f"Sitrep generated ({hours}h window)")
 

@@ -154,17 +154,31 @@ class TestIdentityResolution:
         assert "continuity_token" not in args.kwargs
 
     @pytest.mark.asyncio
-    async def test_identity_drift_during_resume_does_not_fall_through_to_onboard(self, tmp_path):
+    async def test_identity_drift_during_token_resume_falls_through_to_name(self, tmp_path):
+        """If token resume causes drift (e.g., server secret rotated),
+        discard the stale token and fall through to name resume."""
         agent = SimpleAgent(session_file=tmp_path / ".test_session")
         agent.continuity_token = _make_token("uuid-test")
         agent.agent_uuid = "uuid-test"
 
         client = _mock_client_connected()
-        client.identity = AsyncMock(side_effect=IdentityDriftError("uuid-test", "other-uuid"))
+        # First call (token resume) drifts; second call (name resume) succeeds
+        client.identity = AsyncMock(side_effect=[
+            IdentityDriftError("uuid-test", "other-uuid"),
+            IdentityResult(
+                client_session_id="sid-test",
+                uuid="uuid-test",
+                continuity_token=_make_token("uuid-test"),
+            ),
+        ])
 
-        with pytest.raises(IdentityDriftError):
-            await agent._ensure_identity(client)
+        await agent._ensure_identity(client)
 
+        assert client.identity.call_count == 2
+        # Second call should use name, not token
+        second_call = client.identity.call_args_list[1]
+        assert second_call.kwargs.get("name") == "TestAgent"
+        assert "continuity_token" not in second_call.kwargs
         client.onboard.assert_not_called()
 
 

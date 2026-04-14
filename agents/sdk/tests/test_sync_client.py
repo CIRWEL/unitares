@@ -95,15 +95,32 @@ class TestRESTEnvelope:
 
     @patch("unitares_sdk.sync_client.urllib.request.urlopen")
     def test_null_result(self, mock_open):
-        """Null result returns error dict."""
+        """Null result raises GovernanceConnectionError."""
         mock_open.return_value = _mock_urlopen({
             "name": "test",
             "result": None,
             "success": True,
         })
         client = SyncGovernanceClient(transport="rest")
-        raw = client.call_tool("test", {})
-        assert raw["success"] is False
+        with pytest.raises(GovernanceConnectionError, match="No result"):
+            client.call_tool("test", {})
+
+    @patch("unitares_sdk.sync_client.urllib.request.urlopen")
+    def test_mcp_is_error_flag(self, mock_open):
+        """MCP isError on inner result raises even when outer envelope succeeds."""
+        mock_open.return_value = _mock_urlopen({
+            "name": "test",
+            "result": {
+                "isError": True,
+                "content": [
+                    {"type": "text", "text": "session not found"},
+                ],
+            },
+            "success": True,
+        })
+        client = SyncGovernanceClient(transport="rest")
+        with pytest.raises(GovernanceConnectionError, match="session not found"):
+            client.call_tool("test", {})
 
 
 # --- Session injection ---

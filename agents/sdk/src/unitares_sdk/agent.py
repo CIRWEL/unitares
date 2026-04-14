@@ -181,8 +181,17 @@ class GovernanceAgent:
                     self._save_session()
                     logger.info("%s: resumed via token", self.name)
                     return
-                except IdentityDriftError:
-                    raise
+                except IdentityDriftError as e:
+                    # Token HMAC may have failed (e.g., server secret rotated),
+                    # causing server to resolve a different identity via fallback.
+                    # Discard stale token and fall through to name resume.
+                    logger.warning(
+                        "%s: token resume caused identity drift "
+                        "(expected %s, got %s) — discarding token, trying name resume",
+                        self.name, e.expected_uuid[:12], e.received_uuid[:12],
+                    )
+                    self.continuity_token = None
+                    client.agent_uuid = self.agent_uuid  # restore expected UUID
                 except Exception as e:
                     logger.warning("%s: token resume failed: %s", self.name, e)
 

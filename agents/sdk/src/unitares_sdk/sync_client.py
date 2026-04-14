@@ -93,9 +93,11 @@ class SyncGovernanceClient:
         injected_args = self._inject_session(tool_name, arguments)
 
         if self.transport == "rest":
-            return self._rest_call(tool_name, injected_args, timeout=timeout)
+            result = self._rest_call(tool_name, injected_args, timeout=timeout)
         else:
-            return self._mcp_call(tool_name, injected_args, timeout=timeout)
+            result = self._mcp_call(tool_name, injected_args, timeout=timeout)
+        self._raise_for_tool_failure(tool_name, result)
+        return result
 
     # --- Identity ---
 
@@ -311,7 +313,20 @@ class SyncGovernanceClient:
 
         result = data.get("result")
         if result is None:
-            return {"success": False, "error": f"No result from {tool_name}"}
+            raise GovernanceConnectionError(f"No result from {tool_name}")
+
+        # Check MCP-level isError flag (outer envelope success doesn't
+        # guarantee the tool itself succeeded).
+        if isinstance(result, dict) and result.get("isError"):
+            content = result.get("content", [])
+            error_text = " ".join(
+                item["text"]
+                for item in content
+                if isinstance(item, dict) and "text" in item
+            )
+            raise GovernanceConnectionError(
+                f"Tool {tool_name} returned error: {error_text or 'unknown'}"
+            )
 
         # _build_http_tool_response normalizes most core tools to a plain dict.
         # For single-content-block results, the result may still be a string.
@@ -337,7 +352,9 @@ class SyncGovernanceClient:
                 return merged if merged else result
             return result
 
-        return {"success": False, "error": f"Unexpected result type: {type(result)}"}
+        raise GovernanceConnectionError(
+            f"Unexpected result type from {tool_name}: {type(result)}"
+        )
 
     # --- MCP transport (sync wrapper) ---
 
