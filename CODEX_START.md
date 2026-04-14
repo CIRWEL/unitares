@@ -46,7 +46,7 @@ Preferred cache path:
 
 Shared helper:
 
-- `scripts/session_cache.py`
+- `scripts/client/session_cache.py`
 
 Treat this as local runtime state. It should not be used as a source of truth over the server, but it is the first place to look for:
 

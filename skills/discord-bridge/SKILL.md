@@ -62,7 +62,7 @@ Required environment variables:
 | `DISCORD_BOT_TOKEN` | Discord bot token with appropriate permissions |
 | `DISCORD_GUILD_ID` | Target Discord server ID |
 | `GOVERNANCE_MCP_URL` | Governance MCP endpoint (default: `http://localhost:8767/mcp/`) |
-| `ANIMA_MCP_URL` | Anima MCP endpoint (default: `http://100.79.215.83:8766/mcp/`) |
+| `ANIMA_MCP_URL` | Anima MCP endpoint (default: `http://<pi-tailscale-ip>:8766/mcp/` — get IP from `tailscale status`) |
 
 ## Running
 
