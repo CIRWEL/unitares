@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -14,122 +13,93 @@ from unitares_sdk.models import CheckinResult, ModelResult, NoteResult, OnboardR
 from unitares_sdk.sync_client import SyncGovernanceClient
 
 
+# --- Helpers ---
+
+
+def _mock_urlopen(response_data: dict, status: int = 200):
+    """Create a mock for urllib.request.urlopen that returns response_data as JSON."""
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(response_data).encode()
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_resp.status = status
+    return mock_resp
+
+
 # --- REST envelope parsing ---
 
 
 class TestRESTEnvelope:
-    """Test _rest_call parsing of the /v1/tools/call response format."""
-
-    def _make_client(self, handler_class) -> tuple[SyncGovernanceClient, HTTPServer]:
-        server = HTTPServer(("127.0.0.1", 0), handler_class)
-        port = server.server_address[1]
-        thread = Thread(target=server.handle_request, daemon=True)
-        thread.start()
-        client = SyncGovernanceClient(
-            rest_url=f"http://127.0.0.1:{port}/v1/tools/call",
-            transport="rest",
-            timeout=5.0,
-        )
-        return client, server
-
-    def test_dict_result(self):
+    @patch("unitares_sdk.sync_client.urllib.request.urlopen")
+    def test_dict_result(self, mock_open):
         """Core tools return result as a plain dict."""
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self):
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "name": "onboard",
-                    "result": {
-                        "success": True,
-                        "client_session_id": "sid-1",
-                        "uuid": "u-1",
-                    },
-                    "success": True,
-                }).encode())
-
-            def log_message(self, *args):
-                pass
-
-        client, server = self._make_client(Handler)
+        mock_open.return_value = _mock_urlopen({
+            "name": "onboard",
+            "result": {
+                "success": True,
+                "client_session_id": "sid-1",
+                "uuid": "u-1",
+            },
+            "success": True,
+        })
+        client = SyncGovernanceClient(transport="rest")
         raw = client.call_tool("onboard", {"name": "Test"})
         assert raw["success"] is True
         assert raw["client_session_id"] == "sid-1"
-        server.server_close()
 
-    def test_string_result(self):
+    @patch("unitares_sdk.sync_client.urllib.request.urlopen")
+    def test_string_result(self, mock_open):
         """Some tools may return a JSON string that needs parsing."""
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self):
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "name": "test",
-                    "result": '{"success": true, "data": "hello"}',
-                    "success": True,
-                }).encode())
-
-            def log_message(self, *args):
-                pass
-
-        client, server = self._make_client(Handler)
+        mock_open.return_value = _mock_urlopen({
+            "name": "test",
+            "result": '{"success": true, "data": "hello"}',
+            "success": True,
+        })
+        client = SyncGovernanceClient(transport="rest")
         raw = client.call_tool("test", {})
         assert raw["success"] is True
         assert raw["data"] == "hello"
-        server.server_close()
 
-    def test_failure_envelope(self):
+    @patch("unitares_sdk.sync_client.urllib.request.urlopen")
+    def test_failure_envelope(self, mock_open):
         """When success=false in envelope, should raise."""
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self):
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "success": False,
-                    "error": "Tool not found",
-                }).encode())
-
-            def log_message(self, *args):
-                pass
-
-        client, server = self._make_client(Handler)
+        mock_open.return_value = _mock_urlopen({
+            "success": False,
+            "error": "Tool not found",
+        })
+        client = SyncGovernanceClient(transport="rest")
         with pytest.raises(GovernanceConnectionError, match="Tool not found"):
             client.call_tool("bad_tool", {})
-        server.server_close()
 
-    def test_multi_content_result(self):
-        """Multi-content-block result (rarer, for tools that return multiple text blocks)."""
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self):
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "name": "test",
-                    "result": {
-                        "content": [
-                            {"type": "text", "text": '{"part": "one"}'},
-                            {"type": "text", "text": '{"part2": "two"}'},
-                        ]
-                    },
-                    "success": True,
-                }).encode())
-
-            def log_message(self, *args):
-                pass
-
-        client, server = self._make_client(Handler)
+    @patch("unitares_sdk.sync_client.urllib.request.urlopen")
+    def test_multi_content_result(self, mock_open):
+        """Multi-content-block result."""
+        mock_open.return_value = _mock_urlopen({
+            "name": "test",
+            "result": {
+                "content": [
+                    {"type": "text", "text": '{"part": "one"}'},
+                    {"type": "text", "text": '{"part2": "two"}'},
+                ]
+            },
+            "success": True,
+        })
+        client = SyncGovernanceClient(transport="rest")
         raw = client.call_tool("test", {})
         assert raw["part"] == "one"
         assert raw["part2"] == "two"
-        server.server_close()
+
+    @patch("unitares_sdk.sync_client.urllib.request.urlopen")
+    def test_null_result(self, mock_open):
+        """Null result returns error dict."""
+        mock_open.return_value = _mock_urlopen({
+            "name": "test",
+            "result": None,
+            "success": True,
+        })
+        client = SyncGovernanceClient(transport="rest")
+        raw = client.call_tool("test", {})
+        assert raw["success"] is False
 
 
 # --- Session injection ---
@@ -221,10 +191,7 @@ class TestSyncToolMapping:
 
 
 class TestMCPTransportGuard:
-    def test_detects_no_running_loop(self):
-        """In a plain sync context, _ensure_async_client should work
-        (but we can't actually test it without a real server)."""
-        # Just verify the transport attribute is set
+    def test_transport_attribute(self):
         client = SyncGovernanceClient(transport="mcp")
         assert client.transport == "mcp"
 
