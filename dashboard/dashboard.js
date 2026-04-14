@@ -1248,10 +1248,11 @@ async function loadAnomalies() {
 
 async function loadServerInfo() {
     try {
-        const r = await callTool('get_server_info', {});
+        const resp = await authFetch('/health');
+        const data = await resp.json();
         const el = document.getElementById('server-version');
-        if (el && r) {
-            const v = r.server_version || r.version || '';
+        if (el && data) {
+            const v = data.version || '';
             el.textContent = v ? 'v' + v : '-';
         }
     } catch (e) {
@@ -2279,7 +2280,7 @@ if (thresholdsBtn) {
         modal.classList.add('visible');
         document.body.style.overflow = 'hidden';
         try {
-            const r = await callTool('get_thresholds', {});
+            const r = await callTool('config', { action: 'get' });
             const t = r?.thresholds || {};
             const keys = ['risk_approve_threshold', 'risk_revise_threshold', 'coherence_critical_threshold', 'void_threshold_initial'];
             modalBody.innerHTML = '<div class="thresholds-form">' +
@@ -2290,7 +2291,7 @@ if (thresholdsBtn) {
                 const thresholds = {};
                 inputs.forEach(inp => { const v = parseFloat(inp.value); if (!isNaN(v)) thresholds[inp.dataset.key] = v; });
                 if (Object.keys(thresholds).length === 0) return;
-                const result = await callTool('set_thresholds', { thresholds });
+                const result = await callTool('config', { action: 'set', thresholds });
                 if (result?.success) {
                     modalBody.innerHTML = '<div class="loading">Saved.</div>';
                     setTimeout(closeModal, 800);

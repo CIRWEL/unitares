@@ -208,6 +208,16 @@ class GovernanceAgent:
             logger.warning("%s: name resume failed: %s", self.name, e)
 
         # Step 3: Fresh onboard
+        # Both token and name resume failed — old identity is unrecoverable.
+        # Clear stored UUID so onboard can create a fresh identity without
+        # triggering drift detection against the stale one.
+        if self.agent_uuid:
+            logger.info(
+                "%s: clearing stale agent_uuid %s before fresh onboard",
+                self.name, self.agent_uuid[:12],
+            )
+            self.agent_uuid = None
+            client.agent_uuid = None
         result = await client.onboard(self.name)
         self._sync_from_client(client)
         self._save_session()
