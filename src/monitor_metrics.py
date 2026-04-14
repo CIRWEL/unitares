@@ -160,23 +160,24 @@ def get_monitor_metrics(monitor: Any, include_state: bool = True) -> Dict:
         }
     }
 
-    # UNITARES v4.1 basin + convergence tracking
-    profile = get_params_profile_name()
+    # Basin classification — unified across all profiles via classify_basin()
+    from config.governance_config import classify_basin
 
+    profile = get_params_profile_name()
     I = pI  # Use behavioral-preferred I for basin analysis
+
+    # Use risk from the metrics we just built, falling back to history
+    _risk_for_basin = result.get("risk_score")
+    if _risk_for_basin is None:
+        _risk_for_basin = state.risk_history[-1] if state.risk_history else 0.0
+    basin = classify_basin(E=pE, I=I, S=pS, V=state.V,
+                           coherence=state.coherence, risk_score=_risk_for_basin)
+
     basin_warning = None
-    if profile == "v41":
-        if I < 0.45:
-            basin = "low"
-            basin_warning = "LOW basin: I well below ~0.5 boundary, elevated risk"
-        elif I < 0.55:
-            basin = "boundary"
-            basin_warning = "Near basin boundary (~I=0.5): small shocks can shift operating regime"
-        else:
-            basin = "high"
-    else:
-        # Use GovernanceState's basin interpretation for consistency with state.interpret_state()
-        basin = state._interpret_basin(pE, I) if hasattr(state, '_interpret_basin') else "unknown"
+    if basin == "low":
+        basin_warning = "LOW basin: one or more critical dimensions breached — elevated risk"
+    elif basin == "boundary":
+        basin_warning = "Near basin boundary: small shocks can shift operating regime"
 
     S = pS  # Use behavioral-preferred S for convergence tracking
     if profile == "v41":

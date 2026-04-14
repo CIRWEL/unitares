@@ -15,6 +15,106 @@ import re
 import os
 
 
+# =================================================================
+# Basin Region Definitions
+# =================================================================
+# Basins are named regions in EISV + coherence + risk state space.
+# They replace qualitative labels with well-defined geometric regions
+# that drive state-machine transitions (proceed/guide/pause/dialectic).
+#
+# Classification order: LOW checked first (any critical breach),
+# then HIGH (all dimensions healthy), then BOUNDARY (everything else).
+
+@dataclass(frozen=True)
+class BasinRegion:
+    """A named region in governance state space with explicit bounds.
+
+    HIGH is conjunctive (all bounds must hold).
+    LOW is disjunctive (any single breach triggers it) — see classify_basin().
+    BOUNDARY is the complement (neither HIGH nor LOW).
+    """
+    name: str
+    # EISV bounds
+    E_min: float = 0.0
+    I_min: float = 0.0
+    S_max: float = 1.0       # upper bound (lower S is better)
+    V_abs_max: float = 2.0   # upper bound on |V|
+    # Derived-metric bounds
+    coherence_min: float = 0.0
+    risk_max: float = 1.0    # upper bound (lower risk is better)
+
+    def contains(self, E: float, I: float, S: float, V: float,
+                 coherence: float, risk_score: float) -> bool:
+        """True if the point satisfies ALL bounds (conjunctive)."""
+        return (E >= self.E_min
+                and I >= self.I_min
+                and S <= self.S_max
+                and abs(V) <= self.V_abs_max
+                and coherence >= self.coherence_min
+                and risk_score <= self.risk_max)
+
+
+# HIGH basin: all dimensions healthy.
+# Thresholds aligned with existing config:
+#   - E >= 0.6:  above the mode threshold (0.5) with margin
+#   - I >= 0.7:  CONVERGENCE regime requires I > 0.70
+#   - S <= 0.25: CONVERGENCE regime requires S < 0.25
+#   - |V| <= 0.15: VOID_THRESHOLD_INITIAL
+#   - coherence >= 0.45: above COHERENCE_CRITICAL (0.40) with margin
+#   - risk < 0.45: RISK_APPROVE_THRESHOLD
+BASIN_HIGH = BasinRegion(
+    name="high",
+    E_min=0.6,
+    I_min=0.7,
+    S_max=0.25,
+    V_abs_max=0.15,
+    coherence_min=0.45,
+    risk_max=0.45,
+)
+
+# LOW basin: any critical dimension breached.
+# Defined as disjunctive thresholds — checked individually in classify_basin().
+# These constants are the "breach" thresholds: crossing ANY one enters LOW.
+BASIN_LOW_I_CEIL = 0.5          # I below this → low
+BASIN_LOW_COHERENCE_CEIL = 0.40 # coherence below this → low (matches COHERENCE_CRITICAL_THRESHOLD)
+BASIN_LOW_V_ABS_FLOOR = 0.30   # |V| above this → low (matches VOID_THRESHOLD_MAX)
+BASIN_LOW_RISK_FLOOR = 0.70    # risk at or above this → low (matches RISK_REVISE_THRESHOLD)
+
+# BOUNDARY basin: complement of HIGH ∪ LOW (no explicit region — it's the remainder).
+BASIN_BOUNDARY = BasinRegion(name="boundary")
+
+
+def classify_basin(E: float, I: float, S: float, V: float,
+                   coherence: float, risk_score: float) -> str:
+    """Classify current state into a basin region.
+
+    Returns "high", "low", or "boundary".
+
+    Classification order:
+      1. LOW — any single critical breach
+      2. HIGH — all dimensions within healthy bounds
+      3. BOUNDARY — everything else (transitional)
+    """
+    # Coerce None → 0.0 for defensive callers
+    if risk_score is None:
+        risk_score = 0.0
+    V_abs = abs(V)
+
+    # LOW: disjunctive — any one breach is enough
+    if (I < BASIN_LOW_I_CEIL
+            or coherence < BASIN_LOW_COHERENCE_CEIL
+            or V_abs > BASIN_LOW_V_ABS_FLOOR
+            or risk_score >= BASIN_LOW_RISK_FLOOR):
+        return "low"
+
+    # HIGH: conjunctive — all bounds must hold
+    if BASIN_HIGH.contains(E, I, S, V, coherence, risk_score):
+        return "high"
+
+    # BOUNDARY: neither high nor low
+    return "boundary"
+
+
 @dataclass
 class GovernanceConfig:
     """Complete configuration for UNITARES v1.0"""

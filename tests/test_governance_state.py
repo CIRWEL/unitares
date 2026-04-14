@@ -290,18 +290,46 @@ class TestInterpretHealth:
 # ============================================================================
 
 class TestInterpretBasin:
+    """Basin classification uses multi-dimensional bounds via classify_basin().
+
+    HIGH requires: E>=0.6, I>=0.7, S<=0.25, |V|<=0.15, coh>=0.45, risk<=0.45.
+    LOW triggers on: I<0.5, coh<0.40, |V|>0.30, or risk>=0.70.
+    BOUNDARY is the complement.
+    """
 
     def test_high(self):
         state = GovernanceState()
-        assert state._interpret_basin(0.5, 0.7) == "high"
+        # Set all dimensions to healthy values
+        state.unitaires_state = State(E=0.7, I=0.8, S=0.1, V=0.01)
+        state.coherence = 0.6
+        assert state._interpret_basin(0.7, 0.8, risk_score=0.1) == "high"
 
-    def test_low(self):
+    def test_low_due_to_I(self):
         state = GovernanceState()
+        state.unitaires_state = State(E=0.5, I=0.3, S=0.1, V=0.0)
+        state.coherence = 0.5
         assert state._interpret_basin(0.5, 0.3) == "low"
 
-    def test_transitional(self):
+    def test_low_due_to_coherence(self):
         state = GovernanceState()
-        assert state._interpret_basin(0.5, 0.5) == "transitional"
+        state.unitaires_state = State(E=0.7, I=0.8, S=0.1, V=0.0)
+        state.coherence = 0.35  # Below COHERENCE_CRITICAL_THRESHOLD
+        assert state._interpret_basin(0.7, 0.8, risk_score=0.1) == "low"
+
+    def test_boundary_moderate_state(self):
+        """State that's neither fully healthy nor critically degraded."""
+        state = GovernanceState()
+        # E too low for HIGH, but I above LOW threshold
+        state.unitaires_state = State(E=0.5, I=0.6, S=0.1, V=0.0)
+        state.coherence = 0.5
+        assert state._interpret_basin(0.5, 0.6, risk_score=0.2) == "boundary"
+
+    def test_boundary_high_entropy(self):
+        """High S pushes out of HIGH but doesn't breach LOW thresholds."""
+        state = GovernanceState()
+        state.unitaires_state = State(E=0.7, I=0.8, S=0.4, V=0.0)
+        state.coherence = 0.6
+        assert state._interpret_basin(0.7, 0.8, risk_score=0.1) == "boundary"
 
 
 # ============================================================================

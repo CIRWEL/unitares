@@ -368,7 +368,7 @@ class GovernanceState:
         health = self._interpret_health(coherence, risk_score)
         
         # --- BASIN ---
-        basin = self._interpret_basin(E, I)
+        basin = self._interpret_basin(E, I, risk_score=risk_score)
         
         # --- MODE ---
         mode, borderline = self._interpret_mode(E, I, S, prev_mode)
@@ -420,16 +420,29 @@ class GovernanceState:
             return "healthy"
         return "moderate"
     
-    def _interpret_basin(self, E: float, I: float) -> str:
-        """Determine which attractor basin the state is in."""
-        # Bistable system: high (I>0.5) or low (I<0.5) equilibrium
-        margin = 0.1
-        if I > 0.5 + margin:
-            return "high"
-        elif I < 0.5 - margin:
-            return "low"
-        else:
-            return "transitional"
+    def _interpret_basin(self, E: float, I: float,
+                         risk_score: float = None) -> str:
+        """Classify which attractor basin the state occupies.
+
+        Uses multi-dimensional bounds (E, I, S, V, coherence, risk)
+        defined in ``governance_config.classify_basin``.
+
+        Args:
+            E: Energy (kept for backward-compatible call sites).
+            I: Information integrity (kept for backward-compatible call sites).
+            risk_score: Optional risk score.  When ``None`` a simple
+                proxy is derived so the basin can still be computed
+                without a full risk pipeline.
+        """
+        from config.governance_config import classify_basin
+
+        if risk_score is None:
+            risk_score = self._estimate_risk_simple()
+
+        return classify_basin(
+            E=E, I=I, S=self.S, V=self.V,
+            coherence=self.coherence, risk_score=risk_score,
+        )
     
     def _interpret_mode(
         self, 
@@ -558,7 +571,7 @@ class GovernanceState:
                 return f"{dim}={info['value']:.2f} (borderline). Pattern may be shifting."
         
         # Priority 4: Basin-specific
-        if basin == "transitional":
+        if basin == "boundary":
             return "Near basin boundary - state may flip. Maintain consistency."
         
         if basin == "low" and health != "critical":

@@ -253,9 +253,12 @@ class TestDecisionSubAction:
 
     def test_monitor_decision_cirs_block(self):
         state = MagicMock()
+        state.E = 0.8
+        state.I = 0.8
+        state.S = 0.1
+        state.V = 0.0
         state.coherence = 0.6
         state.void_active = False
-        state.V = 0.0
         state.coherence_history = []
 
         oi_state = MagicMock()
@@ -270,9 +273,12 @@ class TestDecisionSubAction:
 
     def test_monitor_decision_risk_pause(self):
         state = MagicMock()
+        state.E = 0.8
+        state.I = 0.8
+        state.S = 0.1
+        state.V = 0.0
         state.coherence = 0.6
         state.void_active = False
-        state.V = 0.0
         state.coherence_history = []
 
         decision = monitor_make_decision(
@@ -282,9 +288,12 @@ class TestDecisionSubAction:
 
     def test_monitor_decision_caution_guide(self):
         state = MagicMock()
+        state.E = 0.8
+        state.I = 0.8
+        state.S = 0.1
+        state.V = 0.0
         state.coherence = 0.6
         state.void_active = False
-        state.V = 0.0
         state.coherence_history = []
 
         decision = monitor_make_decision(
