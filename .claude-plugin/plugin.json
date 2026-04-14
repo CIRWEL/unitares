@@ -1,0 +1,12 @@
+{
+  "name": "unitares-governance",
+  "description": "Thermodynamic governance for AI agents — auto-onboard, auto-checkin, EISV monitoring, dialectic reasoning, knowledge graph",
+  "version": "0.1.0",
+  "author": {
+    "name": "CIRWEL"
+  },
+  "homepage": "https://github.com/CIRWEL/unitares",
+  "repository": "https://github.com/CIRWEL/unitares",
+  "license": "MIT",
+  "keywords": ["governance", "eisv", "thermodynamic", "multi-agent", "dialectic", "coherence"]
+}

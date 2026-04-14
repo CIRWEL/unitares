@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# UNITARES Governance Plugin — PostToolUse hook (Edit/Write)
+# Local milestone capture: records recent edit context without auto-checking in
+# Runs async — must never block or produce output on failure
+set -uo pipefail
+
+# ---------------------------------------------------------------------------
+# Resolve plugin root and verify session cache exists
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+SESSION_PAYLOAD=$(python3 "${PLUGIN_ROOT}/scripts/session_cache.py" get session --workspace "${PWD}" 2>/dev/null || echo "{}")
+
+if [[ -z "${SESSION_PAYLOAD}" || "${SESSION_PAYLOAD}" == "{}" ]]; then
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Read hook input from stdin (Claude passes tool info as JSON)
+# ---------------------------------------------------------------------------
+HOOK_INPUT=""
+if [[ ! -t 0 ]]; then
+  HOOK_INPUT=$(cat 2>/dev/null) || true
+fi
+
+MILESTONE_PAYLOAD=$(python3 - "${HOOK_INPUT}" <<'PY' 2>/dev/null || true
+import json
+import sys
+import time
+
+raw = sys.argv[1] if len(sys.argv) > 1 else ""
+
+try:
+    data = json.loads(raw) if raw else {}
+except Exception:
+    data = {}
+
+tool_input = data.get("tool_input", data.get("input", data))
+file_path = tool_input.get("file_path", tool_input.get("path", ""))
+
+payload = {
+    "timestamp": int(time.time()),
+    "file_path": file_path,
+    "event": "edit",
+}
+print(json.dumps(payload))
+PY
+)
+
+if [[ -z "${MILESTONE_PAYLOAD}" || "${MILESTONE_PAYLOAD}" == "{}" ]]; then
+  exit 0
+fi
+
+python3 "${PLUGIN_ROOT}/scripts/session_cache.py" \
+  set milestone \
+  --workspace "${PWD}" \
+  --stamp \
+  --json "${MILESTONE_PAYLOAD}" >/dev/null 2>&1 || true
+
+exit 0
