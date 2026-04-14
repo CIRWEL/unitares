@@ -23,6 +23,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -56,10 +57,21 @@ def agent(heartbeat_module, tmp_path, monkeypatch):
     monkeypatch.setattr(heartbeat_module, "LOG_FILE", log_file)
     monkeypatch.setattr(heartbeat_module, "SESSION_FILE", session_file)
     monkeypatch.setattr(heartbeat_module, "STATE_FILE", state_file)
-    return heartbeat_module.HeartbeatAgent(
+    a = heartbeat_module.HeartbeatAgent(
         mcp_url="http://127.0.0.1:8767/mcp/",
         label="VigilTest",
     )
+    a.session_file = session_file
+    return a
+
+
+@pytest.fixture(autouse=True)
+def _mock_sdk_connection():
+    """Prevent SDK from opening real MCP connections during timeout tests."""
+    with patch("unitares_sdk.client.GovernanceClient.connect", new_callable=AsyncMock), \
+         patch("unitares_sdk.client.GovernanceClient.disconnect", new_callable=AsyncMock), \
+         patch("unitares_sdk.agent.GovernanceAgent._ensure_identity", new_callable=AsyncMock):
+        yield
 
 
 @pytest.mark.asyncio
@@ -67,7 +79,7 @@ async def test_run_once_aborts_when_cycle_hangs(agent, heartbeat_module):
     """A never-returning run_cycle must be cancelled by the timeout."""
     hang_started = asyncio.Event()
 
-    async def _hang(self):
+    async def _hang(self, client=None):
         hang_started.set()
         await asyncio.Event().wait()  # never resolves
 
@@ -90,7 +102,7 @@ async def test_run_once_completes_normally_under_timeout(agent, heartbeat_module
     """A fast run_cycle must not be affected by the timeout wrapper."""
     called = asyncio.Event()
 
-    async def _fast(self):
+    async def _fast(self, client=None):
         called.set()
 
     agent.run_cycle = _fast.__get__(agent, type(agent))
@@ -102,7 +114,7 @@ async def test_run_once_completes_normally_under_timeout(agent, heartbeat_module
 async def test_timeout_writes_readable_log_line(agent, heartbeat_module):
     """The timeout path must leave a traceable log line for operators."""
 
-    async def _hang(self):
+    async def _hang(self, client=None):
         await asyncio.Event().wait()
 
     agent.run_cycle = _hang.__get__(agent, type(agent))
@@ -125,132 +137,5 @@ def test_cycle_timeout_default_is_bounded(heartbeat_module):
     )
 
 
-# ---------------------------------------------------------------------------
-# load_state JSON hardening (watcher P012, finding cb6ecd12)
-#
-# load_state() is read with .get(k, default) everywhere, so a non-dict payload
-# (null, list, hand-edited junk, half-written file) used to crash the heartbeat
-# cycle. We now type-check the parsed JSON and fall back to {}.
-# ---------------------------------------------------------------------------
-
-
-def test_load_state_returns_empty_when_file_missing(heartbeat_module, tmp_path, monkeypatch):
-    monkeypatch.setattr(heartbeat_module, "STATE_FILE", tmp_path / "missing.json")
-    assert heartbeat_module.load_state() == {}
-
-
-def test_load_state_returns_dict_payload(heartbeat_module, tmp_path, monkeypatch):
-    state_file = tmp_path / "state.json"
-    state_file.write_text('{"total_cycles": 7, "gov_up_cycles": 5}')
-    monkeypatch.setattr(heartbeat_module, "STATE_FILE", state_file)
-    assert heartbeat_module.load_state() == {"total_cycles": 7, "gov_up_cycles": 5}
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        "null",
-        "[]",
-        '[1, 2, 3]',
-        '"just-a-string"',
-        "42",
-        "true",
-    ],
-)
-def test_load_state_rejects_non_dict_payload(heartbeat_module, tmp_path, monkeypatch, payload):
-    """Non-mapping JSON must be rejected so downstream .get() calls are safe."""
-    state_file = tmp_path / "state.json"
-    state_file.write_text(payload)
-    monkeypatch.setattr(heartbeat_module, "STATE_FILE", state_file)
-    result = heartbeat_module.load_state()
-    assert result == {}
-    # Proves callers can do .get() without crashing.
-    assert result.get("total_cycles", 0) == 0
-
-
-def test_load_state_rejects_corrupt_json(heartbeat_module, tmp_path, monkeypatch):
-    state_file = tmp_path / "state.json"
-    state_file.write_text("{not even close to json")
-    monkeypatch.setattr(heartbeat_module, "STATE_FILE", state_file)
-    assert heartbeat_module.load_state() == {}
-
-
-# ---------------------------------------------------------------------------
-# load_session JSON hardening (watcher P012, finding c26e9d5a)
-#
-# load_session used to fall through to ``{"client_session_id": str(data)}``
-# for any non-dict payload, which silently turned a list like [1, 2, 3] into
-# the literal string "[1, 2, 3]" and persisted it as a bogus session id.
-# The only legitimate non-dict shape is the legacy bare JSON string format;
-# everything else must be rejected so we start fresh rather than corrupt.
-# ---------------------------------------------------------------------------
-
-
-def test_load_session_returns_empty_when_file_missing(
-    heartbeat_module, tmp_path, monkeypatch
-):
-    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", tmp_path / "missing.json")
-    assert heartbeat_module.load_session() == {}
-
-
-def test_load_session_returns_dict_payload(heartbeat_module, tmp_path, monkeypatch):
-    session_file = tmp_path / "session.json"
-    session_file.write_text(
-        '{"client_session_id": "abc-123", "continuity_token": "tok"}'
-    )
-    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", session_file)
-    assert heartbeat_module.load_session() == {
-        "client_session_id": "abc-123",
-        "continuity_token": "tok",
-    }
-
-
-def test_load_session_migrates_legacy_bare_json_string(
-    heartbeat_module, tmp_path, monkeypatch
-):
-    """Legacy format: the whole file was just a JSON-encoded string id."""
-    session_file = tmp_path / "session.json"
-    session_file.write_text('"abc-123"')
-    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", session_file)
-    assert heartbeat_module.load_session() == {"client_session_id": "abc-123"}
-
-
-def test_load_session_migrates_legacy_plaintext(
-    heartbeat_module, tmp_path, monkeypatch
-):
-    """Even older format: plain text, not JSON at all."""
-    session_file = tmp_path / "session.json"
-    session_file.write_text("abc-123\n")
-    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", session_file)
-    assert heartbeat_module.load_session() == {"client_session_id": "abc-123"}
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        "[1, 2, 3]",
-        "[]",
-        "null",
-        "42",
-        "true",
-        "false",
-    ],
-)
-def test_load_session_rejects_non_dict_non_string_payload(
-    heartbeat_module, tmp_path, monkeypatch, payload
-):
-    """A list / number / null / bool must NOT be coerced into a bogus id."""
-    session_file = tmp_path / "session.json"
-    session_file.write_text(payload)
-    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", session_file)
-    result = heartbeat_module.load_session()
-    assert result == {}, (
-        f"payload {payload!r} should be rejected, got {result!r}"
-    )
-
-
-def test_load_session_rejects_empty_string(heartbeat_module, tmp_path, monkeypatch):
-    session_file = tmp_path / "session.json"
-    session_file.write_text('""')
-    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", session_file)
-    assert heartbeat_module.load_session() == {}
+# NOTE: load_state and load_session JSON hardening tests have moved to
+# agents/sdk/tests/test_utils.py (load_json_state covers both cases).
