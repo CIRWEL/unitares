@@ -1,10 +1,12 @@
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.mcp_handlers.updates.context import UpdateContext
 from src.services.update_workflow_service import run_process_update_workflow
-from tests.helpers import parse_result
+from tests.helpers import make_agent_meta, make_mock_server, make_monitor, parse_result
 
 
 class _DummyLock:
@@ -13,6 +15,107 @@ class _DummyLock:
 
     async def __aexit__(self, exc_type, exc, tb):
         return False
+
+
+def _make_real_spine_harness(*, response_text, storage=None):
+    import src.mcp_handlers.updates.enrichments  # noqa: F401
+
+    agent_id = "agent-real-spine"
+    session_key = "session-real-spine"
+    meta = make_agent_meta(
+        status="active",
+        total_updates=5,
+        purpose="testing",
+        active_session_key=session_key,
+    )
+    monitor = make_monitor(
+        coherence=0.52,
+        coherence_history=[0.48, 0.52],
+        E_history=[0.7, 0.71],
+        V_history=[0.0, 0.0],
+        mean_risk=0.3,
+    )
+    monitor.state.decision_history = []
+    monitor.state.regime_history = []
+    monitor.state.I_history = [0.6, 0.61]
+    monitor.state.S_history = [0.2, 0.21]
+    monitor._last_prediction_id = "pred-123"
+    monitor._consecutive_high_drift = 0
+    monitor.adaptive_governor = None
+
+    server = make_mock_server(
+        agent_metadata={agent_id: meta},
+        monitors={agent_id: monitor},
+    )
+
+    db = MagicMock()
+    db.load_agent_baseline = AsyncMock(return_value=None)
+    db.record_outcome_event = AsyncMock(return_value="outcome-123")
+    db.save_agent_baseline = AsyncMock()
+    db.update_identity_metadata = AsyncMock()
+
+    if storage is None:
+        storage = MagicMock(
+            get_agent=AsyncMock(return_value=SimpleNamespace(api_key="stored-key")),
+            record_agent_state=AsyncMock(),
+            create_agent=AsyncMock(),
+            update_agent=AsyncMock(),
+        )
+
+    baseline = MagicMock()
+    baseline.update = MagicMock()
+    profile = SimpleNamespace(total_updates=1, record_checkin=MagicMock())
+    tool_usage_tracker = MagicMock(
+        get_usage_stats=MagicMock(return_value={"total_calls": 0, "tools": {}, "unique_tools": 0})
+    )
+
+    ctx = UpdateContext(
+        arguments={
+            "response_text": response_text,
+            "complexity": 0.9,
+            "confidence": 0.93,
+            "task_type": "implementation",
+            "response_mode": "full",
+            "sensor_data": {
+                "eisv": {"E": 0.81, "I": 0.62, "S": 0.18, "V": 0.04},
+            },
+            "client_session_id": session_key,
+        },
+        mcp_server=server,
+    )
+
+    return SimpleNamespace(
+        agent_id=agent_id,
+        session_key=session_key,
+        ctx=ctx,
+        meta=meta,
+        server=server,
+        db=db,
+        storage=storage,
+        monitor=monitor,
+        baseline=baseline,
+        profile=profile,
+        tool_usage_tracker=tool_usage_tracker,
+    )
+
+
+def _patch_real_spine_edges(harness):
+    stack = ExitStack()
+    stack.enter_context(patch("src.mcp_handlers.context.get_context_agent_id", return_value=harness.agent_id))
+    stack.enter_context(patch("src.mcp_handlers.context.get_context_session_key", return_value=harness.session_key))
+    stack.enter_context(patch("src.mcp_handlers.context.get_session_resolution_source", return_value="ip_ua_fingerprint"))
+    stack.enter_context(patch("src.mcp_handlers.context.get_trajectory_confidence", return_value=None))
+    stack.enter_context(patch("src.mcp_handlers.identity.handlers.ensure_agent_persisted", new=AsyncMock(return_value=False)))
+    stack.enter_context(patch("src.mcp_handlers.updates.phases.agent_storage", harness.storage))
+    stack.enter_context(patch("src.db.get_db", return_value=harness.db))
+    stack.enter_context(patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=harness.tool_usage_tracker))
+    stack.enter_context(patch("src.agent_behavioral_baseline.ensure_baseline_loaded", new=AsyncMock(return_value=None)))
+    stack.enter_context(patch("src.agent_behavioral_baseline.compute_anomaly_entropy", return_value=0.0))
+    stack.enter_context(patch("src.agent_behavioral_baseline.get_agent_behavioral_baseline", return_value=harness.baseline))
+    stack.enter_context(patch("src.agent_behavioral_baseline.schedule_baseline_save"))
+    stack.enter_context(patch("src.agent_profile.get_agent_profile", return_value=harness.profile))
+    stack.enter_context(patch("src.agent_profile.save_profile_to_postgres", new=AsyncMock()))
+    return stack
 
 
 @pytest.mark.asyncio
@@ -190,3 +293,95 @@ async def test_post_update_effects_run_outside_lock():
     assert result == ["done"]
     assert call_order.index("lock_released") < call_order.index("post_effects_ran"), \
         f"Post-update effects ran inside the lock! Order: {call_order}"
+
+
+@pytest.mark.asyncio
+async def test_run_process_update_workflow_real_spine_with_edge_mocks():
+    """Exercise the real workflow spine while mocking only storage/DB-style edges."""
+    harness = _make_real_spine_harness(
+        response_text="Implemented the fix by creating demo_probe.py outside tests/",
+    )
+
+    with _patch_real_spine_edges(harness):
+        result = await run_process_update_workflow(harness.ctx)
+
+    data = parse_result(result)
+    call_kwargs = harness.server.process_update_authenticated_async.await_args.kwargs
+
+    assert data["success"] is True
+    assert data["agent_id"] == harness.agent_id
+    assert data["identity_assurance"]["tier"] == "weak"
+    assert data["prediction_id"] == "pred-123"
+    assert data["outcome_event"]["outcome_id"] == "outcome-123"
+    assert "tests/ directory" in data["warning"]
+    assert call_kwargs["confidence"] == pytest.approx(0.55)
+    assert call_kwargs["agent_state"]["sensor_eisv"] == {"E": 0.81, "I": 0.62, "S": 0.18, "V": 0.04}
+    assert harness.ctx.monitor is harness.monitor
+    assert harness.ctx.arguments["lite_response"] is True
+    harness.storage.record_agent_state.assert_awaited_once()
+    harness.db.record_outcome_event.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_process_update_workflow_real_spine_retries_record_state_after_create():
+    """Post-update state persistence should recover by creating the agent and retrying."""
+    attempts = {"count": 0}
+
+    async def _record_state_side_effect(**kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise ValueError("Agent not found in database")
+        return None
+
+    storage = MagicMock(
+        get_agent=AsyncMock(return_value=SimpleNamespace(api_key="stored-key")),
+        record_agent_state=AsyncMock(side_effect=_record_state_side_effect),
+        create_agent=AsyncMock(),
+        update_agent=AsyncMock(),
+    )
+    harness = _make_real_spine_harness(
+        response_text="Implemented a retry-safe persistence path.",
+        storage=storage,
+    )
+
+    with _patch_real_spine_edges(harness):
+        result = await run_process_update_workflow(harness.ctx)
+
+    data = parse_result(result)
+
+    assert data["success"] is True
+    assert data["outcome_event"]["outcome_id"] == "outcome-123"
+    harness.storage.create_agent.assert_awaited_once()
+    assert harness.storage.record_agent_state.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_run_process_update_workflow_real_spine_auto_resumes_archived_agent():
+    """Archived agents should auto-resume in Phase 2 and continue through the full workflow."""
+    harness = _make_real_spine_harness(
+        response_text="Returned from archive and implemented the fix cleanly.",
+    )
+    harness.meta.status = "archived"
+    harness.meta.archived_at = None
+    harness.meta.notes = ""
+    harness.meta.total_updates = 5
+
+    metadata_cache = MagicMock(invalidate=AsyncMock())
+    audit_logger = MagicMock()
+
+    with _patch_real_spine_edges(harness), \
+         patch("src.cache.get_metadata_cache", return_value=metadata_cache), \
+         patch("src.audit_log.audit_logger", audit_logger):
+        result = await run_process_update_workflow(harness.ctx)
+
+    data = parse_result(result)
+
+    assert data["success"] is True
+    assert data["auto_resume"]["auto_resumed"] is True
+    assert data["auto_resume"]["previous_status"] == "archived"
+    assert harness.meta.status == "active"
+    assert harness.meta.archived_at is None
+    harness.meta.add_lifecycle_event.assert_called_once_with("resumed", "Auto-resumed on engagement")
+    harness.storage.update_agent.assert_awaited_once_with(harness.agent_id, status="active")
+    metadata_cache.invalidate.assert_awaited_once_with(harness.agent_id)
+    audit_logger.log_auto_resume.assert_called_once()

@@ -433,6 +433,11 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
             identity_status=status,
         )
 
+    def _identity_success(payload: Dict[str, Any], *, agent_uuid: Optional[str] = None) -> Sequence[TextContent]:
+        response_arguments = dict(arguments)
+        response_arguments["lite_response"] = True
+        return success_response(payload, agent_id=agent_uuid, arguments=response_arguments)
+
     # PATH 2.5: Name-based identity claim (only when resume=true, before session resolution)
     # If the caller provides name= + resume=true and isn't forcing new, try to reconnect
     name = arguments.get("name")
@@ -474,7 +479,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
                 "message": f"Welcome back! Resumed identity '{label or agent_id}'",
                 "hint": "Use force_new=true to create a new identity instead"
             })
-            return success_response(payload)
+            return _identity_success(payload, agent_uuid=agent_uuid)
 
     # Extract agent UUID from continuity token for direct lookup fallback.
     # If session bindings expired, this allows rebinding without forking.
@@ -529,7 +534,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
                         "fresh": "Call identity(force_new=true) or onboard(force_new=true) for a new identity"
                     }
                 })
-                return success_response(payload)
+                return _identity_success(payload, agent_uuid=agent_uuid)
 
             logger.info(f"[IDENTITY] Resuming existing agent {agent_uuid[:8]}... (explicit resume=true)")
 
@@ -550,7 +555,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
                 "message": f"Welcome back! Resumed identity '{label or agent_id}'",
                 "hint": "Use force_new=true to create a new identity instead"
             })
-            return success_response(payload)
+            return _identity_success(payload, agent_uuid=agent_uuid)
 
     # model_type is passed through for agent_id generation, but does NOT fork session keys.
     # All identities for a session use the base session key to prevent fragmentation.

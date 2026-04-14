@@ -1074,6 +1074,7 @@ class TestHandleIdentityAdapter:
         assert data["identity_status"] == "resumed"
         assert data.get("resumed") is True
         assert data.get("resumed_by_name") is True
+        assert "agent_signature" not in data
 
     @pytest.mark.asyncio
     async def test_identity_explicit_session_beats_name_claim(self, patch_identity_deps, mock_db, mock_redis, mock_raw_redis):
@@ -1124,6 +1125,29 @@ class TestHandleIdentityAdapter:
         assert data["success"] is True
         assert data["uuid"] == test_uuid
         assert data.get("resumed") is True
+        assert "agent_signature" not in data
+
+    @pytest.mark.asyncio
+    async def test_identity_archived_session_warning_uses_lite_response(self, patch_identity_deps, mock_db, mock_redis, mock_raw_redis):
+        """Archived identity warning should not reattach a contradictory agent_signature."""
+        from src.mcp_handlers.identity.handlers import handle_identity_adapter
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="i1", metadata={}, status="archived")
+        mock_db.get_agent_label.return_value = "ArchivedAgent"
+
+        result = await handle_identity_adapter({"client_session_id": "resume-archived-test", "resume": True})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        assert data["uuid"] == test_uuid
+        assert data.get("archived") is True
+        assert data.get("resumed") is False
+        assert "agent_signature" not in data
 
     @pytest.mark.asyncio
     async def test_identity_with_model_type_new_agent(self, patch_identity_deps, mock_db, mock_redis):
