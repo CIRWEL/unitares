@@ -85,8 +85,7 @@ jobs:
       - name: Run live integration tests
         run: |
           python -m pytest \
-            tests/test_postgres_backend_integration.py \
-            tests/test_live_services_smoke.py \
+            -m integration_live \
             -v \
             -o addopts= \
             --tb=short

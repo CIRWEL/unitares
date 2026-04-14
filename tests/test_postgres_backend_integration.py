@@ -32,6 +32,7 @@ from tests.test_db_utils import TEST_DB_URL, can_connect_to_test_db
 if not can_connect_to_test_db():
     pytest.skip("governance_test database not available", allow_module_level=True)
 
+pytestmark = pytest.mark.integration_live
 
 # ============================================================================
 # Fixtures
