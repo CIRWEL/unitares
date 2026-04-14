@@ -351,6 +351,8 @@ class SitrepGenerator:
                 lines.append("")
 
         # Query audit DB for deeper history
+        # TODO: replace direct src.audit_db import with an SDK/MCP tool
+        # once an audit query endpoint exists (last direct src/ import in agents/)
         try:
             from src.audit_db import query_audit_events_async
             audit_events = await query_audit_events_async(
