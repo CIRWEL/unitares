@@ -26,10 +26,8 @@ What it does each cycle:
 import asyncio
 import json
 import os
-import signal
 import subprocess
 import sys
-import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,11 +38,13 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 import httpx
-from mcp.client.session import ClientSession
 
 from agents.common.config import GOV_MCP_URL
 from agents.common.log import trim_log as _trim_log
-from agents.common.mcp_client import mcp_connect
+from unitares_sdk.agent import CycleResult, GovernanceAgent
+from unitares_sdk.client import GovernanceClient
+from unitares_sdk.errors import GovernanceError, VerdictError
+from unitares_sdk.utils import notify
 
 # Paths
 ANIMA_PROJECT = Path(os.getenv("ANIMA_PROJECT", str(project_root.parent / "anima-mcp")))
@@ -63,102 +63,8 @@ ANIMA_HEALTH_URLS = [
 # Test timeout
 TEST_TIMEOUT = 180  # 3 minutes per suite
 
-# MCP retry on transient failures
-MCP_RETRY_DELAY = 3  # seconds
-
 # Wall-clock cap for a single heartbeat cycle.
-#
-# If run_cycle() stalls past this (e.g. MCP client parked on a dead
-# streamable-http session, or the anyio/asyncpg deadlock), the cycle is
-# aborted and the process exits so launchd's StartInterval can rotate.
-#
-# Prior to this, a hung --once invocation could stay alive for days
-# (2026-04-08 incident: PID 3985 hung ~46h, silently blocking all
-# subsequent launchd runs because StartInterval does not fire while the
-# previous instance is still running).
 CYCLE_TIMEOUT = int(os.getenv("HEARTBEAT_CYCLE_TIMEOUT", "120"))
-
-
-def _atomic_write(path: Path, data: str):
-    """Write data to file atomically via temp file + rename."""
-    fd = None
-    tmp = None
-    try:
-        fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-        os.write(fd, data.encode())
-        os.close(fd)
-        fd = None
-        os.replace(tmp, str(path))
-        tmp = None  # successfully replaced, no cleanup needed
-    except Exception:
-        if fd is not None:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-    finally:
-        if tmp and os.path.exists(tmp):
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-
-
-def notify(title: str, message: str):
-    """Send a macOS notification. Best-effort, never raises."""
-    try:
-        subprocess.Popen(
-            ["osascript", "-e",
-             f'display notification "{message}" with title "{title}"'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        pass
-
-
-
-def load_session() -> Dict[str, Optional[str]]:
-    """Load saved session data (client_session_id + continuity_token).
-
-    Accepts two on-disk shapes:
-      * a JSON object (current format)
-      * a bare JSON string (legacy format, migrated in place)
-
-    Anything else — a list, a number, null, or a non-JSON file — is
-    discarded. The previous implementation fell through to
-    ``str(data)``, which happily converted e.g. ``[1, 2, 3]`` into the
-    literal string ``"[1, 2, 3]"`` and persisted it as a bogus
-    ``client_session_id``. We'd rather start fresh than corrupt state.
-    """
-    if SESSION_FILE.exists():
-        try:
-            data = json.loads(SESSION_FILE.read_text())
-            if isinstance(data, dict):
-                return data
-            if isinstance(data, str) and data:
-                # Migrate legacy bare-string format.
-                return {"client_session_id": data}
-            # list / number / null / bool → reject, fall through to {}
-        except (json.JSONDecodeError, Exception):
-            # Try as plain text (pre-JSON legacy format)
-            try:
-                text = SESSION_FILE.read_text().strip()
-                if text and not text.startswith(("{", "[")):
-                    return {"client_session_id": text}
-            except Exception:
-                pass
-    return {}
-
-
-def save_session(client_session_id: str, continuity_token: Optional[str] = None):
-    """Save session data for cross-invocation resume (atomic write)."""
-    try:
-        data = {"client_session_id": client_session_id}
-        if continuity_token:
-            data["continuity_token"] = continuity_token
-        _atomic_write(SESSION_FILE, json.dumps(data))
-    except Exception:
-        pass
 
 
 _interactive = sys.stdout.isatty()
@@ -174,32 +80,6 @@ def log(message: str):
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(LOG_FILE, "a") as f:
             f.write(line + "\n")
-    except Exception:
-        pass
-
-
-
-def load_state() -> Dict[str, Any]:
-    """Load Vigil's cross-cycle state.
-
-    Callers access keys via ``.get(k, default)`` and assume a mapping, so we
-    type-check the parsed payload and fall back to an empty dict on anything
-    unexpected (corrupt file, hand-edited list/null, partial write survived).
-    """
-    if STATE_FILE.exists():
-        try:
-            data = json.loads(STATE_FILE.read_text())
-            if isinstance(data, dict):
-                return data
-        except Exception:
-            pass
-    return {}
-
-
-def save_state(state: Dict[str, Any]):
-    """Save Vigil's cross-cycle state (atomic write)."""
-    try:
-        _atomic_write(STATE_FILE, json.dumps(state, default=str))
     except Exception:
         pass
 
@@ -267,7 +147,6 @@ def detect_changes(prev: Dict[str, Any], current: Dict[str, Any]) -> List[Dict[s
 
 def check_http_health(url: str, timeout: float = 5.0) -> Tuple[bool, str]:
     """Check an HTTP health endpoint. Returns (healthy, detail_with_latency)."""
-    import time
     start = time.monotonic()
     try:
         resp = httpx.get(url, timeout=timeout)
@@ -292,7 +171,6 @@ def _get_anima_urls(prev_state: Dict[str, Any]) -> List[str]:
     """Return anima health URLs, trying last-successful URL first."""
     last_ok = prev_state.get("lumen_last_ok_url")
     if last_ok and last_ok in ANIMA_HEALTH_URLS:
-        # Put the last-successful URL first, then the rest
         return [last_ok] + [u for u in ANIMA_HEALTH_URLS if u != last_ok]
     return list(ANIMA_HEALTH_URLS)
 
@@ -308,14 +186,12 @@ def run_pytest(project_dir: Path, label: str) -> Tuple[bool, int, int, str]:
             timeout=TEST_TIMEOUT,
         )
         output = result.stdout + result.stderr
-        # Parse pytest output for counts
-        # Look for line like "5625 passed" or "3 failed, 5622 passed"
+        import re
         n_passed = 0
         n_failed = 0
         for line in output.splitlines():
             line_lower = line.lower()
             if "passed" in line_lower or "failed" in line_lower:
-                import re
                 passed_match = re.search(r"(\d+)\s+passed", line_lower)
                 failed_match = re.search(r"(\d+)\s+failed", line_lower)
                 if passed_match:
@@ -332,7 +208,7 @@ def run_pytest(project_dir: Path, label: str) -> Tuple[bool, int, int, str]:
         return False, 0, 0, f"{label}: ERROR ({e})"
 
 
-class HeartbeatAgent:
+class HeartbeatAgent(GovernanceAgent):
     def __init__(
         self,
         mcp_url: str = GOV_MCP_URL,
@@ -342,200 +218,23 @@ class HeartbeatAgent:
         with_audit: bool = True,
         force_new: bool = False,
     ):
-        self.mcp_url = mcp_url
-        self.label = label
+        super().__init__(
+            name=label,
+            mcp_url=mcp_url,
+            session_file=SESSION_FILE,
+            state_dir=STATE_FILE.parent,
+            timeout=30.0,
+        )
         self.heartbeat_interval = heartbeat_interval
         self.with_tests = with_tests
         self.with_audit = with_audit
         self.force_new = force_new
-        self.client_session_id: Optional[str] = None
-        self.agent_uuid: Optional[str] = None  # Expected UUID, set by _capture_identity
-        self.running = True
+        # Vigil-specific cycle data (populated during run_cycle, used in post-checkin)
+        self._cycle_state: Dict[str, Any] = {}
+        self._cycle_prev_state: Dict[str, Any] = {}
 
-    def _inject_session(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Inject client_session_id and continuity_token for identity continuity.
-
-        Skip injection for onboard and identity calls — identity uses name-claim
-        path for resumption, and injecting client_session_id sets
-        explicit_resume_binding=True which bypasses the name-claim fallback.
-        """
-        if tool_name in ("onboard", "identity"):
-            return arguments
-        arguments = dict(arguments)
-        if self.client_session_id and "client_session_id" not in arguments:
-            arguments["client_session_id"] = self.client_session_id
-        # Also inject continuity_token so PATH 2.8 can rebind after server restart
-        saved = load_session()
-        token = saved.get("continuity_token")
-        if token and "continuity_token" not in arguments:
-            arguments["continuity_token"] = token
-        return arguments
-
-    async def call_tool(self, session: ClientSession, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Call an MCP tool and parse JSON response. Retries once on transient failure."""
-        last_error = None
-        for attempt in range(2):
-            try:
-                result = await session.call_tool(tool_name, self._inject_session(tool_name, arguments))
-                final_result: Dict[str, Any] = {}
-                json_parsed = False
-                raw_texts: List[str] = []
-
-                for content in result.content:
-                    if hasattr(content, "text"):
-                        text = content.text
-                        raw_texts.append(text)
-                        try:
-                            data = json.loads(text)
-                            if isinstance(data, dict):
-                                final_result.update(data)
-                                json_parsed = True
-                        except json.JSONDecodeError:
-                            continue
-
-                if json_parsed:
-                    return final_result
-                if raw_texts:
-                    return {"text": "\n".join(raw_texts), "raw": True}
-                return {"success": False, "error": "No content in response"}
-            except (httpx.ConnectError, httpx.TimeoutException, ConnectionError, OSError) as e:
-                last_error = e
-                if attempt == 0:
-                    log(f"MCP transient error on {tool_name}, retrying in {MCP_RETRY_DELAY}s: {e}")
-                    await asyncio.sleep(MCP_RETRY_DELAY)
-                    continue
-            except Exception as e:
-                return {"success": False, "error": str(e)}
-        return {"success": False, "error": f"retry exhausted: {last_error}"}
-
-    def _extract_session_id(self, result: Dict[str, Any]) -> Optional[str]:
-        """Extract client_session_id from various response shapes."""
-        return (
-            result.get("client_session_id")
-            or result.get("session_continuity", {}).get("client_session_id")
-            or result.get("identity_summary", {}).get("client_session_id", {}).get("value")
-        )
-
-    def _extract_continuity_token(self, result: Dict[str, Any]) -> Optional[str]:
-        """Extract continuity_token for trajectory-verified resume."""
-        return (
-            result.get("continuity_token")
-            or result.get("session_continuity", {}).get("continuity_token")
-            or result.get("identity_summary", {}).get("continuity_token", {}).get("value")
-            or result.get("quick_reference", {}).get("for_strong_resume")
-        )
-
-    def _capture_identity(self, result: Dict[str, Any], source: str = "") -> bool:
-        """Extract and save session ID + continuity token from a successful identity response."""
-        sid = self._extract_session_id(result)
-        token = self._extract_continuity_token(result)
-        resolved_uuid = result.get("uuid") or result.get("agent_uuid") or result.get("bound_identity", {}).get("uuid")
-
-        # Identity drift detection: if we already have an expected UUID and this
-        # one doesn't match, something went wrong — alert instead of silently switching.
-        if self.agent_uuid and resolved_uuid and resolved_uuid != self.agent_uuid:
-            log(f"IDENTITY DRIFT: expected {self.agent_uuid[:12]}... but got {resolved_uuid[:12]}...")
-            notify("Vigil", f"Identity drift detected! Expected {self.agent_uuid[:8]}...")
-            return False
-
-        if resolved_uuid:
-            self.agent_uuid = resolved_uuid
-        if sid:
-            self.client_session_id = sid
-            save_session(sid, token)
-
-        # Prefer self.label over auto-generated agent_id (e.g. "Vigil_7d9966bb")
-        raw_name = result.get("display_name") or result.get("label")
-        agent_name = raw_name if (raw_name and "_" not in raw_name) else self.label
-        suffix = f" ({source})" if source else ""
-        log(f"Identity: {agent_name}{suffix}")
-        return True
-
-    async def ensure_identity(self, session: ClientSession) -> bool:
-        """Resume persistent Vigil identity using saved continuity token."""
-        try:
-            # Explicit bootstrap: create fresh identity and save token
-            if self.force_new:
-                log("Bootstrapping fresh identity (--force-new)")
-                result = await self.call_tool(session, "onboard", {
-                    "name": self.label,
-                    "force_new": True,
-                })
-                if result.get("success"):
-                    return self._capture_identity(result, "bootstrap")
-                log(f"Bootstrap failed: {result}")
-                return False
-
-            saved = load_session()
-            if saved.get("client_session_id"):
-                self.client_session_id = saved["client_session_id"]
-
-            # Validate saved token before trusting it — decode and check the
-            # embedded agent UUID matches what we expect. Catches token corruption
-            # and the session-overwrite bug where another agent's token replaced ours.
-            token = saved.get("continuity_token")
-            if token:
-                try:
-                    import base64 as _b64
-                    parts = token.split(".")
-                    if len(parts) == 3 and parts[0] == "v1":
-                        payload = json.loads(_b64.urlsafe_b64decode(parts[1] + "==").decode())
-                        token_aid = payload.get("aid")
-                        if self.agent_uuid and token_aid and token_aid != self.agent_uuid:
-                            log(f"TOKEN MISMATCH: token has {token_aid[:12]}... but expected {self.agent_uuid[:12]}... — discarding stale token")
-                            notify("Vigil", f"Stale token detected (wrong agent UUID)")
-                            token = None
-                        elif token_aid:
-                            # First run or no prior UUID — trust the token and set expectation
-                            self.agent_uuid = token_aid
-                except Exception:
-                    pass  # Token decode failed — let the server validate it
-
-            # If we have a continuity token, use it for strong resume.
-            # Don't pass name — it triggers name-claim path which requires trajectory_signature.
-            # Session-key resolution via token is sufficient to find the identity.
-            if token:
-                result = await self.call_tool(session, "identity", {
-                    "resume": True,
-                    "continuity_token": token,
-                })
-                if result.get("success"):
-                    return self._capture_identity(result, "token")
-                log(f"Token resume failed: {result.get('error', result)}")
-
-            # Resume by name (works if no trajectory verification needed)
-            result = await self.call_tool(session, "identity", {
-                "name": self.label,
-                "resume": True,
-            })
-
-            # Handle options prompt
-            if result.get("options"):
-                result = await self.call_tool(session, "identity", {
-                    "name": self.label,
-                    "resume": True,
-                })
-
-            # Trajectory verification required — need a human to bootstrap
-            if result.get("recovery", {}).get("reason") == "trajectory_required":
-                log("IDENTITY BLOCKED: trajectory verification required. "
-                    "Run manually once: python3 agents/vigil/agent.py --once --force-new")
-                return False
-
-            if result.get("success"):
-                return self._capture_identity(result)
-
-            log(f"Identity failed: {result}")
-            return False
-        except Exception as e:
-            log(f"Identity error: {e}")
-            return False
-
-    async def _run_groundskeeper(self, session: ClientSession) -> Dict[str, Any]:
-        """Run groundskeeper duties: KG audit, stale cleanup, orphan archival.
-
-        Returns a summary dict with audit results and actions taken.
-        """
+    async def _run_groundskeeper(self, client: GovernanceClient) -> Dict[str, Any]:
+        """KG audit + lifecycle cleanup + orphan archival."""
         summary: Dict[str, Any] = {
             "audit_run": False,
             "stale_found": 0,
@@ -545,63 +244,52 @@ class HeartbeatAgent:
         }
 
         try:
-            # 1. Run KG audit
-            audit_result = await self.call_tool(session, "knowledge", {
-                "action": "audit",
-                "scope": "open",
-                "top_n": "10",
-                "use_model": "true",
-            })
-
-            if audit_result.get("success") or "audit" in audit_result:
+            audit_result = await client.audit_knowledge(scope="open", top_n=10)
+            if audit_result.success:
                 summary["audit_run"] = True
-                audit_data = audit_result.get("audit", {})
-                buckets = audit_data.get("buckets", {})
-                summary["stale_found"] = buckets.get("stale", 0) + buckets.get("candidate_for_archive", 0)
+                # Parse audit data from the results
+                for item in audit_result.results:
+                    if isinstance(item, dict):
+                        buckets = item.get("buckets", {})
+                        summary["stale_found"] = buckets.get("stale", 0) + buckets.get("candidate_for_archive", 0)
 
-                # 2. If archive candidates exist, trigger lifecycle cleanup
-                if buckets.get("candidate_for_archive", 0) > 0:
-                    cleanup_result = await self.call_tool(session, "knowledge", {
-                        "action": "cleanup",
-                        "dry_run": "false",
-                    })
-                    if cleanup_result.get("success") or "cleanup_result" in cleanup_result:
-                        cleanup_data = cleanup_result.get("cleanup_result", {})
-                        summary["archived"] = (
-                            cleanup_data.get("ephemeral_archived", 0)
-                            + cleanup_data.get("discoveries_archived", 0)
-                        )
+                if summary["stale_found"] > 0:
+                    cleanup_result = await client.cleanup_knowledge(dry_run=False)
+                    if cleanup_result.success:
+                        summary["archived"] = cleanup_result.cleaned
             else:
-                summary["errors"].append(f"Audit: {audit_result.get('error', 'unknown')}")
+                summary["errors"].append("Audit failed")
 
-            # 3. Trigger orphan agent cleanup
-            orphan_result = await self.call_tool(session, "archive_orphan_agents", {})
-            if orphan_result.get("success"):
-                summary["orphans_archived"] = orphan_result.get("archived_count", 0)
+            orphan_result = await client.archive_orphan_agents()
+            if orphan_result.success:
+                summary["orphans_archived"] = orphan_result.archived
 
         except Exception as e:
             summary["errors"].append(str(e))
 
-        # 4. Leave summary note in KG
         if summary["audit_run"]:
             note_text = (
                 f"Groundskeeper: {summary['stale_found']} stale, "
                 f"{summary['archived']} archived, "
                 f"{summary['orphans_archived']} orphans cleaned"
             )
-            await self.call_tool(session, "leave_note", {
-                "summary": note_text,
-                "tags": ["vigil", "groundskeeper", "audit"],
-            })
+            try:
+                await client.leave_note(
+                    summary=note_text,
+                    tags=["vigil", "groundskeeper", "audit"],
+                )
+            except Exception:
+                pass
             log(f"GROUNDSKEEPER: {note_text}")
 
         return summary
 
-    async def run_cycle(self) -> str:
-        """Run one heartbeat cycle. Returns summary string."""
+    async def run_cycle(self, client: GovernanceClient) -> CycleResult | None:
+        """Run one heartbeat cycle."""
         findings: List[str] = []
         issues = 0
-        prev_state = load_state()
+        prev_state = self.load_state()
+        self._cycle_prev_state = prev_state
 
         # --- 1. Governance health ---
         gov_healthy, gov_detail = check_http_health(GOVERNANCE_HEALTH_URL)
@@ -657,12 +345,17 @@ class HeartbeatAgent:
             if not anima_passed:
                 issues += 1
 
-        # --- 4. Compute complexity/confidence from actual signals ---
-        # Complexity: how much work this cycle involved
-        # - Base: health checks only = 0.15
-        # - Tests add 0.3 (significant computation)
-        # - Groundskeeper adds 0.15
-        # - Issues add 0.1 each (diagnosing problems is harder)
+        # --- 4. Groundskeeper duties (optional) ---
+        groundskeeper_summary: Dict[str, Any] = {}
+        if self.with_audit:
+            groundskeeper_summary = await self._run_groundskeeper(client)
+            if groundskeeper_summary.get("stale_found", 0) > 0:
+                findings.append(
+                    f"KG: {groundskeeper_summary['stale_found']} stale, "
+                    f"{groundskeeper_summary['archived']} archived"
+                )
+
+        # --- 5. Compute complexity/confidence from actual signals ---
         complexity = 0.15
         if self.with_tests:
             complexity += 0.3
@@ -671,169 +364,176 @@ class HeartbeatAgent:
         complexity += min(0.3, issues * 0.1)
         complexity = min(1.0, complexity)
 
-        # Confidence: how certain are we about what we found
-        # - Start high (health checks are deterministic)
-        # - Reduce for each issue (something unexpected)
-        # - Reduce for flaky signals (Lumen down streak = intermittent)
         confidence = 0.90
         confidence -= issues * 0.12
         if lumen_down_streak == 1:
-            confidence -= 0.05  # First miss could be transient
+            confidence -= 0.05
         if total_failed > 0:
-            confidence -= 0.10  # Test failures are concerning
+            confidence -= 0.10
         confidence = max(0.3, min(0.95, confidence))
 
         summary = " | ".join(findings)
+        test_info = f" Tests: {total_passed} passed, {total_failed} failed." if self.with_tests else ""
+        gk_info = ""
+        if groundskeeper_summary.get("audit_run"):
+            gk_info = (
+                f" Groundskeeper: {groundskeeper_summary['stale_found']} stale, "
+                f"{groundskeeper_summary['archived']} archived."
+            )
+        checkin_text = f"Heartbeat cycle: {summary}.{test_info}{gk_info} Issues: {issues}"
 
-        # --- 5. Check in to governance + leave notes on changes ---
+        # --- 6. Detect changes for notes ---
+        # Build cycle state (pre-checkin; coherence/verdict filled in post-checkin)
+        total_cycles = prev_state.get("total_cycles", 0) + 1
+        gov_up_cycles = prev_state.get("gov_up_cycles", 0) + (1 if gov_healthy else 0)
+        lumen_up_cycles = prev_state.get("lumen_up_cycles", 0) + (1 if anima_healthy else 0)
+
+        self._cycle_state = {
+            "governance_healthy": gov_healthy,
+            "governance_detail": gov_detail,
+            "lumen_healthy": anima_healthy,
+            "lumen_detail": anima_detail,
+            "lumen_down_streak": lumen_down_streak,
+            "lumen_last_ok_url": anima_ok_url,
+            "groundskeeper_stale": groundskeeper_summary.get("stale_found", 0),
+            "groundskeeper_archived": groundskeeper_summary.get("archived", 0),
+            "total_cycles": total_cycles,
+            "gov_up_cycles": gov_up_cycles,
+            "lumen_up_cycles": lumen_up_cycles,
+            "cycle_time": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Change notes (health transitions, coherence drift, etc.)
+        changes = detect_changes(prev_state, self._cycle_state)
+        note_tuples = [(c["summary"], c["tags"]) for c in changes]
+
+        return CycleResult(
+            summary=checkin_text,
+            complexity=complexity,
+            confidence=confidence,
+            response_mode="compact",
+            notes=note_tuples,
+        )
+
+    async def _handle_cycle_result(
+        self, client: GovernanceClient, result: CycleResult | None
+    ) -> None:
+        """Override base: add post-checkin EISV tracking and self-recovery."""
+        if result is None:
+            return
+
+        # Check in
         try:
-            async with mcp_connect(self.mcp_url) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-
-                    if not await self.ensure_identity(session):
-                        log("SKIP: identity failed")
-                        return f"SKIP (identity failed) | {summary}"
-
-                    # --- Groundskeeper duties (optional) ---
-                    groundskeeper_summary: Dict[str, Any] = {}
-                    if self.with_audit:
-                        groundskeeper_summary = await self._run_groundskeeper(session)
-                        if groundskeeper_summary.get("stale_found", 0) > 0:
-                            findings.append(
-                                f"KG: {groundskeeper_summary['stale_found']} stale, "
-                                f"{groundskeeper_summary['archived']} archived"
-                            )
-                            summary = " | ".join(findings)
-
-                    test_info = f" Tests: {total_passed} passed, {total_failed} failed." if self.with_tests else ""
-                    gk_info = ""
-                    if groundskeeper_summary.get("audit_run"):
-                        gk_info = (
-                            f" Groundskeeper: {groundskeeper_summary['stale_found']} stale, "
-                            f"{groundskeeper_summary['archived']} archived."
-                        )
-                    checkin_text = (
-                        f"Heartbeat cycle: {summary}.{test_info}{gk_info} "
-                        f"Issues: {issues}"
+            checkin_result = await client.checkin(
+                response_text=result.summary,
+                complexity=result.complexity,
+                confidence=result.confidence,
+                response_mode=result.response_mode,
+            )
+            self._last_checkin_time = time.monotonic()
+        except VerdictError as e:
+            if e.verdict == "pause":
+                log("Paused — attempting self-recovery")
+                try:
+                    await client.self_recovery(action="quick")
+                    log("Self-recovery succeeded, retrying check-in")
+                    checkin_result = await client.checkin(
+                        response_text=result.summary,
+                        complexity=result.complexity,
+                        confidence=result.confidence,
+                        response_mode=result.response_mode,
                     )
+                    self._last_checkin_time = time.monotonic()
+                except Exception as retry_err:
+                    log(f"Self-recovery retry failed: {retry_err}")
+                    self.save_state(self._cycle_state)
+                    raise
+            else:
+                self.save_state(self._cycle_state)
+                raise
 
-                    result = await self.call_tool(session, "process_agent_update", {
-                        "response_text": checkin_text,
-                        "complexity": complexity,
-                        "confidence": confidence,
-                        "response_mode": "compact",
-                    })
+        # Post notes
+        if result.notes:
+            for summary, tags in result.notes:
+                try:
+                    await client.leave_note(summary=summary, tags=tags)
+                    log(f"NOTE: {summary}")
+                except Exception:
+                    log(f"NOTE FAILED: {summary}")
 
-                    # Self-recovery: if paused, attempt quick resume
-                    if not result.get("success") and "paused" in str(result.get("error", "")):
-                        log("Paused — attempting self-recovery")
-                        recovery = await self.call_tool(session, "self_recovery", {
-                            "action": "quick",
-                        })
-                        if recovery.get("success"):
-                            log("Self-recovery succeeded, retrying check-in")
-                            result = await self.call_tool(session, "process_agent_update", {
-                                "response_text": checkin_text,
-                                "complexity": complexity,
-                                "confidence": confidence,
-                                "response_mode": "compact",
-                            })
+        # Extract EISV for state tracking
+        coherence = checkin_result.coherence
+        verdict = checkin_result.verdict
+        metrics = checkin_result.metrics or {}
 
-                    # Extract EISV for state tracking
-                    metrics = result.get("metrics", {}) if result.get("success") else {}
-                    coherence = metrics.get("coherence")
-                    verdict = result.get("decision", {}).get("action")
+        self._cycle_state["coherence"] = coherence
+        self._cycle_state["verdict"] = verdict
 
-                    # --- Self-verification: did the check-in land on the right agent? ---
-                    response_agent = (
-                        result.get("agent_signature", {}).get("uuid")
-                        or result.get("resolved_agent_id")
+        # Detect coherence/verdict changes that depend on post-checkin data
+        late_changes = detect_changes(self._cycle_prev_state, self._cycle_state)
+        for change in late_changes:
+            # Only post changes not already in notes
+            if not any(n[0] == change["summary"] for n in (result.notes or [])):
+                try:
+                    await client.leave_note(
+                        summary=change["summary"], tags=change["tags"]
                     )
-                    if self.agent_uuid and response_agent and response_agent != self.agent_uuid:
-                        log(
-                            f"CHECK-IN MISDIRECTED: sent to {response_agent[:12]}... "
-                            f"but expected {self.agent_uuid[:12]}... — identity may need refresh"
-                        )
-                        notify("Vigil", f"Check-in went to wrong agent! Run --force-new")
+                    log(f"NOTE: {change['summary']}")
+                except Exception:
+                    pass
 
-                    # --- Uptime tracking ---
-                    total_cycles = prev_state.get("total_cycles", 0) + 1
-                    gov_up_cycles = prev_state.get("gov_up_cycles", 0) + (1 if gov_healthy else 0)
-                    lumen_up_cycles = prev_state.get("lumen_up_cycles", 0) + (1 if anima_healthy else 0)
+        # Save state
+        self.save_state(self._cycle_state)
 
-                    # Build current state for change detection
-                    current_state: Dict[str, Any] = {
-                        "governance_healthy": gov_healthy,
-                        "governance_detail": gov_detail,
-                        "lumen_healthy": anima_healthy,
-                        "lumen_detail": anima_detail,
-                        "lumen_down_streak": lumen_down_streak,
-                        "lumen_last_ok_url": anima_ok_url,
-                        "coherence": coherence,
-                        "verdict": verdict,
-                        "cycle_time": datetime.now(timezone.utc).isoformat(),
-                        "groundskeeper_stale": groundskeeper_summary.get("stale_found", 0),
-                        "groundskeeper_archived": groundskeeper_summary.get("archived", 0),
-                        "total_cycles": total_cycles,
-                        "gov_up_cycles": gov_up_cycles,
-                        "lumen_up_cycles": lumen_up_cycles,
-                    }
+        # Log one-line summary
+        if checkin_result.success:
+            try:
+                eisv = (
+                    f"E={float(metrics['E']):.3f} "
+                    f"I={float(metrics['I']):.3f} "
+                    f"S={float(metrics['S']):.3f} "
+                    f"V={float(metrics['V']):.3f}"
+                )
+            except (KeyError, TypeError, ValueError):
+                eisv = "EISV=?"
+            total_cycles = self._cycle_state.get("total_cycles", 0)
+            gov_up = self._cycle_state.get("gov_up_cycles", 0)
+            lumen_up = self._cycle_state.get("lumen_up_cycles", 0)
+            uptime = f" | uptime: gov={gov_up/total_cycles:.0%} lumen={lumen_up/total_cycles:.0%}" if total_cycles > 0 else ""
+            log(f"{verdict or '?'} | {eisv} | {result.summary}{uptime}")
 
-                    # Detect changes and leave notes
-                    changes = detect_changes(prev_state, current_state)
-                    for change in changes:
-                        note_result = await self.call_tool(session, "leave_note", {
-                            "summary": change["summary"],
-                            "tags": change["tags"],
-                        })
-                        if note_result.get("success"):
-                            log(f"NOTE: {change['summary']}")
-                        else:
-                            log(f"NOTE FAILED: {change['summary']}")
+    # --- State persistence (use .vigil_state, not the SDK default) ---
 
-                    # Save state for next cycle
-                    save_state(current_state)
+    def load_state(self) -> dict:
+        """Load Vigil's cross-cycle state."""
+        if STATE_FILE.exists():
+            try:
+                data = json.loads(STATE_FILE.read_text())
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                pass
+        return {}
 
-                    if result.get("success"):
-                        try:
-                            eisv = (
-                                f"E={float(metrics['E']):.3f} "
-                                f"I={float(metrics['I']):.3f} "
-                                f"S={float(metrics['S']):.3f} "
-                                f"V={float(metrics['V']):.3f}"
-                            )
-                        except (KeyError, TypeError, ValueError):
-                            eisv = "EISV=?"
-                        decision = verdict or "?"
-                        uptime_pct = f" | uptime: gov={gov_up_cycles/total_cycles:.0%} lumen={lumen_up_cycles/total_cycles:.0%}" if total_cycles > 0 else ""
-                        one_line = f"{decision} | {eisv} | {summary}{uptime_pct}"
-                        log(one_line)
-                        return one_line
-                    else:
-                        error = result.get("error", "unknown")
-                        log(f"Check-in failed: {error} | {summary}")
-                        return f"CHECK-IN FAILED ({error}) | {summary}"
-        except Exception as e:
-            log(f"MCP error: {e} | {summary}")
-            return f"MCP ERROR ({e}) | {summary}"
+    def save_state(self, state: dict) -> None:
+        """Save Vigil's cross-cycle state."""
+        from unitares_sdk.utils import atomic_write
+        try:
+            atomic_write(STATE_FILE, json.dumps(state, default=str))
+        except Exception:
+            pass
+
+    # --- Lifecycle overrides ---
 
     async def run_once(self, timeout: float = CYCLE_TIMEOUT):
-        """Run a single heartbeat cycle with a wall-clock timeout.
-
-        If run_cycle() stalls past ``timeout`` seconds, the cycle is aborted
-        via ``asyncio.wait_for``. This is the safety net against a hung MCP
-        client (dead streamable-http session, anyio/asyncpg deadlock) —
-        without it a ``--once`` invocation can stay alive indefinitely and
-        block every subsequent launchd ``StartInterval`` rotation.
-
-        Raises ``asyncio.TimeoutError`` on timeout so callers can choose
-        whether to rotate (``--once``) or continue (``--daemon``).
-        """
+        """Run a single heartbeat cycle with a wall-clock timeout."""
         log("--- Heartbeat cycle start ---")
         start = time.time()
         try:
-            await asyncio.wait_for(self.run_cycle(), timeout=timeout)
+            await asyncio.wait_for(
+                super().run_once(),
+                timeout=timeout,
+            )
         except asyncio.TimeoutError:
             elapsed = time.time() - start
             log(f"CYCLE TIMEOUT after {elapsed:.1f}s (limit={timeout}s) — aborting")
@@ -846,22 +546,10 @@ class HeartbeatAgent:
     async def run_daemon(self):
         """Run continuously with interval sleeps."""
         log(f"Heartbeat daemon starting (interval={self.heartbeat_interval}s)")
-
-        def signal_handler(signum, frame):
-            log(f"Signal {signum}, shutting down")
-            self.running = False
-
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-
-        while self.running:
-            try:
-                await self.run_once()
-            except Exception as e:
-                log(f"Cycle error: {e}")
-            if self.running:
-                await asyncio.sleep(self.heartbeat_interval)
-
+        await self.run_forever(
+            interval=self.heartbeat_interval,
+            heartbeat_interval=self.heartbeat_interval,
+        )
         log("Heartbeat daemon stopped")
 
 
@@ -894,8 +582,6 @@ async def main():
         try:
             await agent.run_once()
         except asyncio.TimeoutError:
-            # Already logged in run_once; exit non-zero so launchd rotates
-            # to a fresh invocation rather than blocking on a hung socket.
             sys.exit(1)
 
 

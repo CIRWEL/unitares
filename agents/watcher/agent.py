@@ -352,54 +352,27 @@ def call_model_via_governance(prompt: str, model: str, timeout: int) -> dict[str
         - If the governance server is down, the caller should catch the exception
           and fall back to Ollama direct.
     """
-    body = json.dumps(
-        {
-            "name": "call_model",
-            "arguments": {
-                "prompt": prompt,
-                "provider": "ollama",
-                "model": model,
-                # max_tokens: Qwen3-Coder-Next uses ~40 tokens per finding.
-                # A rich scan with ~15 findings is ~600 tokens. 1024 gives
-                # 2.5× headroom without the 2048-era waste from when
-                # gemma4 was emitting its "reasoning" in the content field.
-                "max_tokens": 1024,
-                # temperature: 0.0, NOT 0.1. A detector workload is not
-                # creative writing — we want the same input to produce
-                # the same output. Ogler caught this on 2026-04-11.
-                "temperature": 0.0,
-            },
-        }
-    ).encode()
+    from unitares_sdk import SyncGovernanceClient
+    from unitares_sdk.errors import GovernanceError
 
-    req = urllib.request.Request(
-        GOV_REST_URL,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode())
-
-    # P016 guard: a wrapped REST response has TWO success flags — the outer
-    # envelope (transport-level) and the inner result (semantic-level). The
-    # outer can report success while the inner reports failure. Check both
-    # layers, and raise distinctly so the caller's fallback path actually
-    # triggers. The Watcher pattern library (P016, added 2026-04-11 from
-    # the unitares-cli parse_onboard incident) flagged this exact shape in
-    # our own call path — caught by self-scanning within minutes of adding
-    # the pattern.
-    if not data.get("success"):
-        raise RuntimeError(f"call_model outer envelope reported failure: {data}")
-    result = data.get("result", {})
-    if isinstance(result, dict) and result.get("success") is False:
-        raise RuntimeError(
-            f"call_model inner result reported failure: {result}"
+    client = SyncGovernanceClient(rest_url=GOV_REST_URL, transport="rest", timeout=timeout)
+    try:
+        result = client.call_model(
+            prompt=prompt,
+            provider="ollama",
+            model=model,
+            max_tokens=1024,
+            temperature=0.0,
         )
+    except GovernanceError as e:
+        raise RuntimeError(str(e)) from e
+
+    if not result.success:
+        raise RuntimeError(f"call_model reported failure: {result}")
     return {
-        "text": result.get("response", "") or "",
-        "model_used": result.get("model_used", model),
-        "tokens_used": result.get("tokens_used", 0),
+        "text": result.response or "",
+        "model_used": model,
+        "tokens_used": 0,
     }
 
 
@@ -1041,6 +1014,8 @@ def escalate(finding: Finding) -> None:
 
 def _escalate_to_kg(finding: Finding) -> None:
     """Store a critical finding as a discovery in the governance knowledge graph."""
+    from unitares_sdk import SyncGovernanceClient
+
     summary = f"[Watcher] {finding.pattern}: {finding.hint} ({Path(finding.file).name}:{finding.line})"
     details = (
         f"Pattern: {finding.pattern}\n"
@@ -1048,25 +1023,15 @@ def _escalate_to_kg(finding: Finding) -> None:
         f"Hint: {finding.hint}\n"
         f"Fingerprint: {finding.fingerprint}"
     )
-    body = json.dumps({
-        "name": "knowledge",
-        "arguments": {
-            "action": "store",
-            "discovery_type": "bug_found",
-            "severity": "critical",
-            "summary": summary,
-            "details": details,
-            "tags": ["watcher", finding.pattern, "critical"],
-        },
-    }).encode()
     try:
-        req = urllib.request.Request(
-            GOV_REST_URL, data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
+        client = SyncGovernanceClient(rest_url=GOV_REST_URL, transport="rest", timeout=5)
+        client.store_discovery(
+            summary=summary,
+            discovery_type="bug_found",
+            severity="critical",
+            tags=["watcher", finding.pattern, "critical"],
+            details=details,
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            resp.read()
         log(f"KG discovery stored for {finding.fingerprint}", "info")
     except Exception as e:
         log(f"KG discovery write failed: {e}", "warning")

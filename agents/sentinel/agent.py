@@ -16,7 +16,7 @@ Usage:
     python3 agents/sentinel/agent.py --once         # Run one analysis cycle and exit
 
 Architecture:
-    1. Resumes persistent "Sentinel" identity via MCP
+    1. Resumes persistent "Sentinel" identity via SDK GovernanceAgent
     2. Connects to /ws/eisv WebSocket for real-time event stream
     3. Maintains rolling EISV windows per agent (fleet state)
     4. Every 5 minutes: analyzes fleet, detects anomalies, checks in to governance
@@ -29,7 +29,6 @@ import json
 import os
 import signal
 import sys
-import tempfile
 import time
 from collections import deque
 from datetime import datetime, timezone, timedelta
@@ -40,12 +39,12 @@ from typing import Any, Dict, List, Optional, Tuple
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-import httpx
-from mcp.client.session import ClientSession
-
-from agents.common.config import GOV_MCP_URL, GOV_HEALTH_URL, GOV_WS_URL
+from agents.common.config import GOV_MCP_URL, GOV_WS_URL
 from agents.common.log import trim_log as _trim_log
-from agents.common.mcp_client import mcp_connect
+from unitares_sdk.agent import CycleResult, GovernanceAgent
+from unitares_sdk.client import GovernanceClient
+from unitares_sdk.errors import GovernanceError, VerdictError
+from unitares_sdk.utils import notify
 
 # ---------------------------------------------------------------------------
 # Paths & Config
@@ -79,44 +78,8 @@ EVENT_WINDOW_SIZE = 500   # recent events for correlation
 
 
 # ---------------------------------------------------------------------------
-# Utilities (shared patterns with Vigil)
+# Logging
 # ---------------------------------------------------------------------------
-
-def _atomic_write(path: Path, data: str):
-    fd = None
-    tmp = None
-    try:
-        fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-        os.write(fd, data.encode())
-        os.close(fd)
-        fd = None
-        os.replace(tmp, str(path))
-        tmp = None
-    except Exception:
-        if fd is not None:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-    finally:
-        if tmp and os.path.exists(tmp):
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-
-
-def notify(title: str, message: str):
-    import subprocess
-    try:
-        subprocess.Popen(
-            ["osascript", "-e",
-             f'display notification "{message}" with title "{title}"'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        pass
-
 
 _interactive = sys.stdout.isatty()
 
@@ -130,43 +93,6 @@ def log(message: str):
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(LOG_FILE, "a") as f:
             f.write(line + "\n")
-    except Exception:
-        pass
-
-
-def load_state() -> Dict[str, Any]:
-    if STATE_FILE.exists():
-        try:
-            return json.loads(STATE_FILE.read_text())
-        except Exception:
-            pass
-    return {}
-
-
-def save_state(state: Dict[str, Any]):
-    try:
-        _atomic_write(STATE_FILE, json.dumps(state, default=str))
-    except Exception:
-        pass
-
-
-def load_session() -> Dict[str, Optional[str]]:
-    if SESSION_FILE.exists():
-        try:
-            data = json.loads(SESSION_FILE.read_text())
-            if isinstance(data, dict):
-                return data
-        except Exception:
-            pass
-    return {}
-
-
-def save_session(client_session_id: str, continuity_token: Optional[str] = None):
-    try:
-        data = {"client_session_id": client_session_id}
-        if continuity_token:
-            data["continuity_token"] = continuity_token
-        _atomic_write(SESSION_FILE, json.dumps(data))
     except Exception:
         pass
 
@@ -472,7 +398,7 @@ class SitrepGenerator:
 # Sentinel Agent
 # ---------------------------------------------------------------------------
 
-class SentinelAgent:
+class SentinelAgent(GovernanceAgent):
     def __init__(
         self,
         mcp_url: str = GOV_MCP_URL,
@@ -480,141 +406,43 @@ class SentinelAgent:
         label: str = "Sentinel",
         analysis_interval: int = ANALYSIS_INTERVAL,
     ):
-        self.mcp_url = mcp_url
+        super().__init__(
+            name=label,
+            mcp_url=mcp_url,
+            session_file=SESSION_FILE,
+            state_dir=STATE_FILE.parent,
+            timeout=30.0,
+        )
         self.ws_url = ws_url
-        self.label = label
         self.analysis_interval = analysis_interval
-        self.client_session_id: Optional[str] = None
-        self.agent_uuid: Optional[str] = None
         self.fleet = FleetState()
         self.sitrep = SitrepGenerator(self.fleet)
-        self.running = True
         self._ws_connected = False
         self._cycle_count = 0
         self._findings_total = 0
 
-    # --- MCP helpers (same pattern as Vigil) ---
+    # --- State persistence (use .sentinel_state, not the SDK default) ---
 
-    def _inject_session(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        if tool_name in ("onboard", "identity"):
-            return arguments
-        arguments = dict(arguments)
-        if self.client_session_id and "client_session_id" not in arguments:
-            arguments["client_session_id"] = self.client_session_id
-        saved = load_session()
-        token = saved.get("continuity_token")
-        if token and "continuity_token" not in arguments:
-            arguments["continuity_token"] = token
-        return arguments
-
-    async def call_tool(self, session: ClientSession, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        last_error = None
-        for attempt in range(2):
+    def load_state(self) -> dict:
+        """Load Sentinel's cross-cycle state."""
+        if STATE_FILE.exists():
             try:
-                result = await session.call_tool(tool_name, self._inject_session(tool_name, arguments))
-                final_result: Dict[str, Any] = {}
-                raw_texts: List[str] = []
-                json_parsed = False
+                data = json.loads(STATE_FILE.read_text())
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                pass
+        return {}
 
-                for content in result.content:
-                    if hasattr(content, "text"):
-                        text = content.text
-                        raw_texts.append(text)
-                        try:
-                            data = json.loads(text)
-                            if isinstance(data, dict):
-                                final_result.update(data)
-                                json_parsed = True
-                        except json.JSONDecodeError:
-                            continue
-
-                if json_parsed:
-                    return final_result
-                if raw_texts:
-                    return {"text": "\n".join(raw_texts), "raw": True}
-                return {"success": False, "error": "No content in response"}
-            except (httpx.ConnectError, httpx.TimeoutException, ConnectionError, OSError) as e:
-                last_error = e
-                if attempt == 0:
-                    log(f"MCP transient error on {tool_name}, retrying: {e}")
-                    await asyncio.sleep(3)
-                    continue
-            except Exception as e:
-                return {"success": False, "error": str(e)}
-        return {"success": False, "error": f"retry exhausted: {last_error}"}
-
-    def _extract_session_id(self, result: Dict[str, Any]) -> Optional[str]:
-        return (
-            result.get("client_session_id")
-            or result.get("session_continuity", {}).get("client_session_id")
-            or result.get("identity_summary", {}).get("client_session_id", {}).get("value")
-        )
-
-    def _extract_continuity_token(self, result: Dict[str, Any]) -> Optional[str]:
-        return (
-            result.get("continuity_token")
-            or result.get("session_continuity", {}).get("continuity_token")
-            or result.get("identity_summary", {}).get("continuity_token", {}).get("value")
-            or result.get("quick_reference", {}).get("for_strong_resume")
-        )
-
-    def _capture_identity(self, result: Dict[str, Any], source: str = "") -> bool:
-        sid = self._extract_session_id(result)
-        token = self._extract_continuity_token(result)
-        resolved_uuid = result.get("uuid") or result.get("agent_uuid") or result.get("bound_identity", {}).get("uuid")
-
-        if self.agent_uuid and resolved_uuid and resolved_uuid != self.agent_uuid:
-            log(f"IDENTITY DRIFT: expected {self.agent_uuid[:12]}... got {resolved_uuid[:12]}...")
-            notify("Sentinel", f"Identity drift detected!")
-            return False
-
-        if resolved_uuid:
-            self.agent_uuid = resolved_uuid
-        if sid:
-            self.client_session_id = sid
-            save_session(sid, token)
-
-        suffix = f" ({source})" if source else ""
-        log(f"Identity: {self.label}{suffix}")
-        return True
-
-    async def ensure_identity(self, session: ClientSession) -> bool:
+    def save_state(self, state: dict) -> None:
+        """Save Sentinel's cross-cycle state."""
+        from unitares_sdk.utils import atomic_write
         try:
-            saved = load_session()
-            if saved.get("client_session_id"):
-                self.client_session_id = saved["client_session_id"]
+            atomic_write(STATE_FILE, json.dumps(state, default=str))
+        except Exception:
+            pass
 
-            token = saved.get("continuity_token")
-            if token:
-                result = await self.call_tool(session, "identity", {
-                    "resume": True,
-                    "continuity_token": token,
-                })
-                if result.get("success"):
-                    return self._capture_identity(result, "token")
-                log(f"Token resume failed: {result.get('error', result)}")
-
-            result = await self.call_tool(session, "identity", {
-                "name": self.label,
-                "resume": True,
-            })
-            if result.get("success"):
-                return self._capture_identity(result, "name")
-
-            # Fresh onboard
-            result = await self.call_tool(session, "onboard", {
-                "name": self.label,
-            })
-            if result.get("success"):
-                return self._capture_identity(result, "onboard")
-
-            log(f"Identity failed: {result}")
-            return False
-        except Exception as e:
-            log(f"Identity error: {e}")
-            return False
-
-    # --- WebSocket consumer ---
+    # --- WebSocket consumer (local — SDK doesn't own /ws/eisv) ---
 
     async def ws_consumer(self):
         """Connect to WebSocket and feed events into fleet state."""
@@ -639,10 +467,10 @@ class SentinelAgent:
                     log(f"WebSocket disconnected: {e}")
                     await asyncio.sleep(10)  # reconnect delay
 
-    # --- Analysis cycle ---
+    # --- Analysis cycle (SDK pattern: return CycleResult) ---
 
-    async def run_analysis_cycle(self) -> str:
-        """Run one analysis cycle: detect anomalies, check in to governance."""
+    async def run_cycle(self, client: GovernanceClient = None) -> CycleResult | None:
+        """Run one analysis cycle: detect anomalies, build check-in summary."""
         self._cycle_count += 1
         findings = self.fleet.analyze(self_agent_id=self.agent_uuid or "")
         fleet = self.fleet.fleet_summary()
@@ -675,68 +503,84 @@ class SentinelAgent:
 
         summary = " | ".join(parts)
 
-        # Check in to governance
+        # Build notes for high-severity fleet findings
+        note_tuples: list[tuple[str, list[str]]] = []
+        for f in fleet_findings:
+            if f["severity"] == "high":
+                note_tuples.append((
+                    f"[Sentinel] {f['summary']}",
+                    ["sentinel", f["type"], f["severity"]],
+                ))
+
+        return CycleResult(
+            summary=f"Sentinel analysis: {summary}",
+            complexity=complexity,
+            confidence=confidence,
+            response_mode="compact",
+            notes=note_tuples if note_tuples else None,
+        )
+
+    async def _handle_cycle_result(
+        self, client: GovernanceClient, result: CycleResult | None
+    ) -> None:
+        """Override base: add EISV logging after check-in."""
+        if result is None:
+            return
+
+        # Check in via SDK client
         try:
-            async with mcp_connect(self.mcp_url) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-
-                    if not await self.ensure_identity(session):
-                        log("SKIP: identity failed")
-                        return f"SKIP (identity) | {summary}"
-
-                    result = await self.call_tool(session, "process_agent_update", {
-                        "response_text": f"Sentinel analysis: {summary}",
-                        "complexity": complexity,
-                        "confidence": confidence,
-                        "response_mode": "compact",
-                    })
-
-                    # Leave KG notes for significant fleet findings (not self-observations)
-                    for f in fleet_findings:
-                        if f["severity"] == "high":
-                            await self.call_tool(session, "leave_note", {
-                                "summary": f"[Sentinel] {f['summary']}",
-                                "tags": ["sentinel", f["type"], f["severity"]],
-                            })
-
-                    if result.get("success"):
-                        metrics = result.get("metrics", {})
-                        try:
-                            eisv = (
-                                f"E={float(metrics['E']):.3f} "
-                                f"I={float(metrics['I']):.3f} "
-                                f"S={float(metrics['S']):.3f} "
-                                f"V={float(metrics['V']):.3f}"
-                            )
-                        except (KeyError, TypeError, ValueError):
-                            eisv = "EISV=?"
-                        verdict = result.get("decision", {}).get("action", "?")
-                        one_line = f"{verdict} | {eisv} | {summary}"
-                        log(one_line)
-                        return one_line
-                    else:
-                        error = result.get("error", "unknown")
-                        log(f"Check-in failed: {error}")
-                        return f"CHECK-IN FAILED | {summary}"
+            checkin_result = await client.checkin(
+                response_text=result.summary,
+                complexity=result.complexity,
+                confidence=result.confidence,
+                response_mode=result.response_mode,
+            )
+            self._last_checkin_time = time.monotonic()
+        except VerdictError:
+            raise
         except Exception as e:
-            log(f"MCP error: {e}")
-            return f"MCP ERROR | {summary}"
+            log(f"Check-in failed: {e}")
+            return
+
+        # Post notes
+        if result.notes:
+            for summary_text, tags in result.notes:
+                try:
+                    await client.leave_note(summary=summary_text, tags=tags)
+                except Exception:
+                    log(f"NOTE FAILED: {summary_text}")
+
+        # Log one-line summary with EISV
+        if checkin_result.success:
+            metrics = checkin_result.metrics or {}
+            try:
+                eisv = (
+                    f"E={float(metrics['E']):.3f} "
+                    f"I={float(metrics['I']):.3f} "
+                    f"S={float(metrics['S']):.3f} "
+                    f"V={float(metrics['V']):.3f}"
+                )
+            except (KeyError, TypeError, ValueError):
+                eisv = "EISV=?"
+            verdict = checkin_result.verdict
+            log(f"{verdict} | {eisv} | {result.summary}")
+        else:
+            log(f"CHECK-IN FAILED | {result.summary}")
 
     # --- Main loops ---
 
     async def _bounded_analysis_cycle(self) -> str:
         """Run one analysis cycle with a hard timeout.
 
-        Wraps ``run_analysis_cycle`` in ``asyncio.wait_for`` so a hung
-        MCP call (e.g. from the governance-side anyio/asyncpg deadlock)
-        can never block the main loop forever. A timeout is logged and
-        the next cycle will run at its normal cadence.
+        Wraps the full SDK run_once (connect -> identity -> run_cycle ->
+        checkin -> disconnect) in asyncio.wait_for so a hung MCP call
+        can never block the main loop forever.
         """
         try:
-            return await asyncio.wait_for(
-                self.run_analysis_cycle(), timeout=CYCLE_TIMEOUT
+            result = await asyncio.wait_for(
+                super().run_once(), timeout=CYCLE_TIMEOUT
             )
+            return f"cycle {self._cycle_count} complete"
         except asyncio.TimeoutError:
             log(f"Analysis cycle exceeded {CYCLE_TIMEOUT}s — skipping")
             return f"TIMEOUT after {CYCLE_TIMEOUT}s"
@@ -777,13 +621,13 @@ class SentinelAgent:
 
         log("=== Sentinel stopped ===")
 
-    async def run_once(self):
+    async def run_once_mode(self):
         """Run one analysis cycle and exit."""
         log("--- Sentinel single cycle ---")
         # Brief WS connection to gather some state
         ws_task = asyncio.create_task(self.ws_consumer())
         await asyncio.sleep(10)  # collect events for 10s
-        result = await self.run_analysis_cycle()
+        result = await self._bounded_analysis_cycle()
         self.running = False
         ws_task.cancel()
         try:
@@ -833,7 +677,7 @@ async def main():
     if args.sitrep:
         await agent.run_sitrep(args.hours)
     elif args.once:
-        await agent.run_once()
+        await agent.run_once_mode()
     else:
         await agent.run_continuous()
 

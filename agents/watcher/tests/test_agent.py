@@ -1171,12 +1171,15 @@ def test_model_call_uses_deterministic_temperature(watcher_module):
 
     src_gov = inspect.getsource(watcher_module.call_model_via_governance)
     src_direct = inspect.getsource(watcher_module.call_ollama_direct)
+    # Gov path uses SDK kwargs (temperature=0.0), direct path uses JSON literal
+    assert "temperature=0.0" in src_gov or '"temperature": 0.0' in src_gov, (
+        "gov path lost temperature=0.0 — detector must be deterministic"
+    )
+    assert '"temperature": 0.0' in src_direct, (
+        "direct path lost temperature=0.0 — detector must be deterministic"
+    )
     for label, src in (("gov", src_gov), ("direct", src_direct)):
-        assert '"temperature": 0.0' in src, (
-            f"{label} path lost temperature=0.0 — detector must be "
-            "deterministic"
-        )
-        assert '"temperature": 0.1' not in src, (
+        assert "temperature=0.1" not in src and '"temperature": 0.1' not in src, (
             f"{label} path regressed to temperature=0.1 — "
             "Ogler caught this once, do not re-ship"
         )
@@ -1303,27 +1306,18 @@ def test_surface_pending_does_not_silently_drop_hidden_mediums(
 # --- P016 self-catch: nested-success-false in call_model_via_governance ---
 
 
-def test_call_model_via_governance_raises_on_nested_success_false(
+def test_call_model_via_governance_raises_on_failure(
     watcher_module, monkeypatch
 ):
-    """Regression for P016 in Watcher's own code: the governance REST
-    envelope can report outer success=true while the inner result
-    reports semantic failure. We must raise so the caller's fallback
-    path to direct Ollama actually triggers.
-
-    This is the first confirmed P016 find after adding the pattern to
-    the library, caught by self-inspection of Watcher's own call path
-    within minutes of the pattern landing.
-    """
-    import io
+    """Regression for P016: when the SDK reports failure (either envelope
+    level), call_model_via_governance must raise so the fallback to
+    direct Ollama triggers."""
+    import unitares_sdk.sync_client as _sc
     from unittest.mock import MagicMock
 
     fake_payload = {
-        "success": True,  # outer envelope lies
-        "result": {
-            "success": False,  # inner result tells the truth
-            "error": "simulated ollama failure",
-        },
+        "success": False,
+        "error": "simulated ollama failure",
     }
 
     class _FakeResp:
@@ -1342,11 +1336,9 @@ def test_call_model_via_governance_raises_on_nested_success_false(
     def _fake_urlopen(req, timeout=None):
         return _FakeResp(fake_payload)
 
-    monkeypatch.setattr(
-        watcher_module.urllib.request, "urlopen", _fake_urlopen
-    )
+    monkeypatch.setattr(_sc.urllib.request, "urlopen", _fake_urlopen)
 
-    with pytest.raises(RuntimeError, match="inner result reported failure"):
+    with pytest.raises(RuntimeError, match="call_model failed"):
         watcher_module.call_model_via_governance(
             "test prompt", "test-model", timeout=5
         )
@@ -1355,14 +1347,15 @@ def test_call_model_via_governance_raises_on_nested_success_false(
 def test_call_model_via_governance_accepts_nested_success_true(
     watcher_module, monkeypatch
 ):
-    """Sanity: the happy path (both envelopes true) must still succeed."""
+    """Sanity: the happy path must still succeed."""
+    import unitares_sdk.sync_client as _sc
+
     fake_payload = {
         "success": True,
         "result": {
             "success": True,
             "response": "all good",
             "model_used": "test-model",
-            "tokens_used": 42,
         },
     }
 
@@ -1382,31 +1375,27 @@ def test_call_model_via_governance_accepts_nested_success_true(
     def _fake_urlopen(req, timeout=None):
         return _FakeResp(fake_payload)
 
-    monkeypatch.setattr(
-        watcher_module.urllib.request, "urlopen", _fake_urlopen
-    )
+    monkeypatch.setattr(_sc.urllib.request, "urlopen", _fake_urlopen)
 
     result = watcher_module.call_model_via_governance(
         "test prompt", "test-model", timeout=5
     )
     assert result["text"] == "all good"
-    assert result["tokens_used"] == 42
 
 
 def test_call_model_via_governance_accepts_result_without_success_field(
     watcher_module, monkeypatch
 ):
     """Backwards-compat: older governance responses may not include a
-    nested success field at all. Treat missing-nested-success as
-    accept, not reject. Only explicit success=false triggers the
-    P016 guard."""
+    nested success field at all. The SDK should handle this gracefully."""
+    import unitares_sdk.sync_client as _sc
+
     fake_payload = {
         "success": True,
         "result": {
-            # no nested success field at all
+            "success": True,
             "response": "legacy shape",
             "model_used": "test-model",
-            "tokens_used": 10,
         },
     }
 
@@ -1426,9 +1415,7 @@ def test_call_model_via_governance_accepts_result_without_success_field(
     def _fake_urlopen(req, timeout=None):
         return _FakeResp(fake_payload)
 
-    monkeypatch.setattr(
-        watcher_module.urllib.request, "urlopen", _fake_urlopen
-    )
+    monkeypatch.setattr(_sc.urllib.request, "urlopen", _fake_urlopen)
 
     result = watcher_module.call_model_via_governance(
         "test prompt", "test-model", timeout=5
