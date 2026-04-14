@@ -261,9 +261,10 @@ graph LR
 ## Related Projects
 
 - [**Lumen / anima-mcp**](https://github.com/CIRWEL/anima-mcp) — Embodied agent on Raspberry Pi
-- [**unitares-governance**](https://github.com/CIRWEL/unitares-governance) — Claude Code plugin
 - [**unitares-discord-bridge**](https://github.com/CIRWEL/unitares-discord-bridge) — Discord presence and governance events
 - [**eisv-lumen**](https://github.com/CIRWEL/eisv-lumen) — Governance benchmark (21K trajectories on HuggingFace)
+
+Client integrations (Claude Code plugin, Codex adapter, hooks, skills, commands) are included in this repo under `.claude-plugin/`, `.codex-plugin/`, `hooks/`, `skills/`, and `commands/`.
 
 ---
 
