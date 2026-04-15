@@ -25,9 +25,20 @@ from ..support.coerce import safe_float, resolve_agent_uuid
 from src.logging_utils import get_logger
 from config.governance_config import GovernanceConfig
 
-from .helpers import _invalidate_agent_cache
+from .helpers import _invalidate_agent_cache, _archive_one_agent, _is_test_agent
 
 logger = get_logger(__name__)
+
+
+# Map agent_id -> registered restartable task name in src/background_tasks.py.
+# When the dashboard's unstick button is pressed for one of these agents, we
+# don't just flip a status flag — we cancel the wedged asyncio Task and spawn
+# a fresh one via its factory. Without this mapping, "unstick" was theater:
+# meta.status = "active" + Postgres write, but the underlying hung await
+# stayed hung. See dogfood finding 2026-04-14.
+_SYSTEM_AGENT_RESTARTABLE_TASKS: Dict[str, str] = {
+    "eisv-sync-task": "eisv_sync",
+}
 
 
 @mcp_tool("resume_agent", timeout=15.0, register=False)
@@ -88,7 +99,34 @@ async def handle_resume_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
     except Exception as e:
         logger.warning(f"PostgreSQL update_agent failed: {e}", exc_info=True)
 
-    return success_response({
+    # For system-task agents (eisv-sync-task, etc), the flag flip above is not
+    # sufficient — those agents map to background asyncio Tasks that may be
+    # stuck in a hung await. The flag flip alone leaves the wedged task in
+    # place. Cancel-and-respawn the registered restartable task so the unstick
+    # button actually unsticks. Best-effort: failure here logs but does not
+    # fail the resume (the flag flip already succeeded).
+    task_restart_info = None
+    restartable_name = _SYSTEM_AGENT_RESTARTABLE_TASKS.get(agent_id)
+    if is_stuck_unstick and restartable_name is not None:
+        try:
+            from src.background_tasks import cancel_and_respawn_task
+            task_restart_info = cancel_and_respawn_task(restartable_name)
+            logger.info(
+                f"Unstick {agent_id}: task '{restartable_name}' restart "
+                f"result={task_restart_info}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Unstick {agent_id}: cancel_and_respawn_task('{restartable_name}') "
+                f"failed: {e}", exc_info=True
+            )
+            task_restart_info = {
+                "restarted": False,
+                "previous_state": "unknown",
+                "reason": f"exception during cancel_and_respawn: {e}",
+            }
+
+    response_payload = {
         "success": True,
         "message": f"Agent '{agent_id}' resumed successfully",
         "agent_id": agent_id,
@@ -96,7 +134,10 @@ async def handle_resume_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
         "previous_status": previous_status,
         "reason": reason,
         "resumed_at": datetime.now(timezone.utc).isoformat()
-    })
+    }
+    if task_restart_info is not None:
+        response_payload["task_restart"] = task_restart_info
+    return success_response(response_payload)
 
 @mcp_tool("mark_response_complete", timeout=5.0, register=False)
 async def handle_mark_response_complete(arguments: Dict[str, Any]) -> Sequence[TextContent]:

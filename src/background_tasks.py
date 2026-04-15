@@ -245,15 +245,15 @@ async def periodic_orphan_cleanup(interval_hours: float = 2.0):
         try:
             from src.agent_lifecycle import auto_archive_orphan_agents
 
-            archived = await auto_archive_orphan_agents(
+            results = await auto_archive_orphan_agents(
                 zero_update_hours=4.0,
                 low_update_hours=12.0,
                 unlabeled_hours=24.0,
                 ephemeral_hours=6.0,
                 ephemeral_max_updates=5,
             )
-            if archived > 0:
-                logger.info(f"[ORPHAN_CLEANUP] Archived {archived} orphan/ephemeral agents")
+            if results:
+                logger.info(f"[ORPHAN_CLEANUP] Archived {len(results)} orphan/ephemeral agents")
         except Exception as e:
             logger.warning(f"[ORPHAN_CLEANUP] Error: {e}", exc_info=True)
 
@@ -806,6 +806,92 @@ def _supervised_create_task(coro, *, name: str | None = None) -> asyncio.Task:
     return task
 
 
+# ---------------------------------------------------------------------------
+# Restartable named tasks
+# ---------------------------------------------------------------------------
+#
+# Some background tasks (eisv_sync, etc) can hang on remote calls or DB pool
+# acquisition. The dashboard's "unstick" button used to flip a status flag in
+# Postgres without touching the asyncio Task itself — purely cosmetic. To make
+# unstick actually unstick, we keep a registry of (name -> factory, current
+# task) so the resume handler can cancel the wedged task and respawn a fresh
+# one via the original factory.
+#
+# Only register tasks here that are safely re-entrant: each new spawn must
+# start cleanly without depending on state left behind by the cancelled run.
+
+from typing import Awaitable, Callable
+
+_RESTARTABLE_TASK_FACTORIES: dict[str, Callable[[], Awaitable]] = {}
+_RESTARTABLE_TASKS: dict[str, asyncio.Task] = {}
+
+
+def _spawn_restartable_task(
+    name: str, factory: Callable[[], Awaitable]
+) -> asyncio.Task:
+    """Spawn a supervised task and register it as restartable by ``name``.
+
+    The factory is called with no arguments and must return a fresh coroutine
+    each invocation (so the task can be respawned). Replaces any prior task
+    registered under the same name.
+    """
+    task = _supervised_create_task(factory(), name=name)
+    _RESTARTABLE_TASK_FACTORIES[name] = factory
+    _RESTARTABLE_TASKS[name] = task
+    return task
+
+
+def cancel_and_respawn_task(name: str) -> dict:
+    """Cancel the named restartable task and spawn a fresh one.
+
+    Returns a small dict describing what happened so the caller can include
+    it in operator-facing responses:
+      - ``restarted: bool`` — whether a new task was actually spawned
+      - ``previous_state``: "running" | "done" | "cancelled" | "unknown"
+      - ``reason``: human-readable explanation when restarted is False
+
+    This is the real "unstick" primitive — unlike a status-flag flip, this
+    cancels the underlying asyncio Task and replaces it with a fresh one
+    via the registered factory.
+    """
+    factory = _RESTARTABLE_TASK_FACTORIES.get(name)
+    if factory is None:
+        return {
+            "restarted": False,
+            "previous_state": "unknown",
+            "reason": f"no restartable task registered under name '{name}'",
+        }
+
+    prior = _RESTARTABLE_TASKS.get(name)
+    previous_state = "unknown"
+    if prior is not None:
+        if prior.done():
+            previous_state = "cancelled" if prior.cancelled() else "done"
+        else:
+            previous_state = "running"
+            prior.cancel()
+            # Don't await cancellation — the cancel is scheduled on the loop.
+            # Spawning the replacement immediately is intentional: we don't
+            # want a window where the registry has no live task for this name.
+
+    new_task = _supervised_create_task(factory(), name=name)
+    _RESTARTABLE_TASKS[name] = new_task
+    logger.info(
+        f"[RESTART] Cancelled and respawned task '{name}' "
+        f"(previous_state={previous_state})"
+    )
+    return {
+        "restarted": True,
+        "previous_state": previous_state,
+        "reason": None,
+    }
+
+
+def list_restartable_tasks() -> list[str]:
+    """Return the names of all currently registered restartable tasks."""
+    return sorted(_RESTARTABLE_TASK_FACTORIES.keys())
+
+
 async def stop_all_background_tasks() -> None:
     """Cancel and await all supervised background tasks before teardown."""
     tasks = [task for task in list(_supervised_tasks) if not task.done()]
@@ -851,8 +937,13 @@ def start_all_background_tasks(connection_tracker, set_ready):
 
     try:
         from src.mcp_handlers.observability.pi_orchestration import eisv_sync_task
-        _supervised_create_task(eisv_sync_task(interval_minutes=5.0), name="eisv_sync")
-        logger.info("[EISV_SYNC] Started periodic Pi EISV sync")
+        # Registered as restartable so the dashboard's unstick button can
+        # actually cancel-and-respawn this task when it wedges (vs the prior
+        # behavior of just flipping a Postgres status flag).
+        _spawn_restartable_task(
+            "eisv_sync", lambda: eisv_sync_task(interval_minutes=5.0)
+        )
+        logger.info("[EISV_SYNC] Started periodic Pi EISV sync (restartable)")
     except Exception as e:
         logger.warning(f"[EISV_SYNC] Could not start: {e}")
 

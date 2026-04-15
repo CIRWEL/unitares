@@ -1233,11 +1233,29 @@ async def eisv_sync_task(interval_minutes: float = 5.0):
     except Exception as e:
         logger.warning(f"[EISV_SYNC] Could not seed eisv-sync-task metadata (non-fatal): {e}", exc_info=True)
 
+    # Per-cycle deadline for sync_eisv_once. Without this the task can park
+    # forever if the Pi httpx call hangs below the timeout layer or if the
+    # governance update blocks on pool acquisition. PI_MCP_TIMEOUT alone is
+    # ~30s per URL with up to 3 retries, so 60s covers the realistic worst
+    # case while still letting launchd/operators notice a wedged cycle.
+    # Same shape as deep_health_probe_task's wait_for guard.
+    EISV_SYNC_CYCLE_TIMEOUT = 60.0
+
     while True:
         try:
             await asyncio.sleep(interval_minutes * 60)
 
-            result = await sync_eisv_once(update_governance=True)
+            try:
+                result = await asyncio.wait_for(
+                    sync_eisv_once(update_governance=True),
+                    timeout=EISV_SYNC_CYCLE_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"[EISV_SYNC] Sync exceeded {EISV_SYNC_CYCLE_TIMEOUT}s — "
+                    "skipping cycle (Pi unreachable or governance blocked)"
+                )
+                continue
 
             if result.get("success"):
                 eisv = result.get("eisv", {})

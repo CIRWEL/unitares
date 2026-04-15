@@ -1413,3 +1413,48 @@ class TestEisvSyncTask:
 
             await eisv_sync_task(interval_minutes=0.001)
             assert call_count[0] >= 1
+
+    @pytest.mark.asyncio
+    async def test_continues_after_sync_timeout(self, _mock_audit_logger):
+        """If sync_eisv_once hangs past the per-cycle deadline, the task must
+        log the timeout and continue the loop instead of parking forever.
+
+        Regression for the 2026-04-14 dogfood finding: bare ``await
+        sync_eisv_once(...)`` with no ``asyncio.wait_for`` wrapper meant a
+        hung Pi httpx call or stuck DB pool acquisition would wedge the
+        whole sync task indefinitely. Same shape as the
+        heartbeat-hung-launchd incident.
+
+        Test approach: patch ``asyncio.wait_for`` *inside the orchestration
+        module* to raise ``TimeoutError`` immediately. If the loop swallows
+        the TimeoutError and runs another cycle, the fix is wired correctly.
+        If the loop crashes or never runs another cycle, the regression is
+        back."""
+        # Force every wait_for call to raise TimeoutError without actually
+        # awaiting the inner coroutine — but close the coroutine so it
+        # doesn't leak as "never awaited".
+        async def instant_timeout(coro, timeout):
+            coro.close()
+            raise asyncio.TimeoutError()
+
+        # We track invocations on the patched mock directly. AsyncMock so
+        # the eisv_sync_task code can call sync_eisv_once(...) and get back
+        # a coroutine (which instant_timeout then closes).
+        with patch("src.mcp_handlers.observability.pi_orchestration.sync_eisv_once", new_callable=AsyncMock) as mock_sync, \
+             patch("src.mcp_handlers.observability.pi_orchestration.asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
+             patch("src.mcp_handlers.observability.pi_orchestration.asyncio.wait_for", side_effect=instant_timeout):
+
+            # Two cycles: first triggers timeout, second triggers timeout,
+            # third sleep raises CancelledError to exit the loop. If the
+            # task fails to continue after the first timeout, mock_sync
+            # call_count will be 1 instead of 2.
+            mock_sleep.side_effect = [None, None, asyncio.CancelledError()]
+
+            await eisv_sync_task(interval_minutes=0.001)
+
+            # sync_eisv_once was invoked twice (once per cycle that survived
+            # the TimeoutError), proving the loop continues past timeouts.
+            assert mock_sync.call_count == 2, (
+                f"loop did not continue after TimeoutError — sync_eisv_once "
+                f"called {mock_sync.call_count} times, expected 2"
+            )
