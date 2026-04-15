@@ -50,7 +50,7 @@ Tests use a separate `governance_test` database and mock external services. Most
 
 ### Live services (nightly / main only)
 
-PR CI stays fast and does not start Postgres+AGE+Redis. A separate workflow **Integration (live services)** (`.github/workflows/integration-live.yml`) runs on a **schedule** (nightly), **workflow dispatch**, and **pushes to `master` / `main` / `develop`** — not on pull requests. It provisions Apache AGE + Redis, bootstraps `governance_test`, sets `CI_LIVE_SERVICES=1`, and runs **`pytest -m integration_live`** (Postgres backend integration + live-service smoke tests). Add `@pytest.mark.integration_live` (or module-level `pytestmark`) for any new test that should run in that job.
+PR CI stays fast and does not start Postgres+AGE+Redis. A separate workflow **Integration (live services)** (`.github/workflows/integration-live.yml`) runs on a **schedule** (nightly), **workflow dispatch**, and **pushes to `master` / `main` / `develop`** — not on pull requests. It provisions Apache AGE + Redis, bootstraps `governance_test`, sets `CI_LIVE_SERVICES=1`, and runs **`pytest -m integration_live`** (Postgres backend integration + live-service smoke tests). Those tests also skip unless `CI_LIVE_SERVICES=1` (see `tests.test_db_utils.live_integration_enabled`), so local runs match the job. Add `@pytest.mark.integration_live` (or module-level `pytestmark`) for any new test that should run in that job, and use the same opt-in check if it needs live services.
 
 ### Known Notes
 

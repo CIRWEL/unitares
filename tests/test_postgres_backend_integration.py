@@ -2,8 +2,7 @@
 Integration tests for src/db/postgres_backend.py
 
 Runs against a real PostgreSQL database (governance_test).
-Requires: PostgreSQL running on localhost:5432 with governance_test database.
-Skip all if database is unavailable.
+Requires CI_LIVE_SERVICES=1 and a reachable governance_test (see tests.test_db_utils).
 """
 
 import asyncio
@@ -27,7 +26,17 @@ try:
 except ImportError:
     pytest.skip("asyncpg not installed", allow_module_level=True)
 
-from tests.test_db_utils import TEST_DB_URL, can_connect_to_test_db
+from tests.test_db_utils import (
+    TEST_DB_URL,
+    can_connect_to_test_db,
+    live_integration_enabled,
+)
+
+if not live_integration_enabled():
+    pytest.skip(
+        "Set CI_LIVE_SERVICES=1 to run live DB integration tests",
+        allow_module_level=True,
+    )
 
 if not can_connect_to_test_db():
     pytest.skip("governance_test database not available", allow_module_level=True)

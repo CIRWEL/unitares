@@ -1,6 +1,7 @@
 """
 Pytest configuration and fixtures for governance-mcp-v1 tests.
 """
+import os
 import sys
 from pathlib import Path
 
@@ -348,16 +349,19 @@ async def live_postgres_backend():
         TEST_DB_URL,
         can_connect_to_test_db,
         ensure_test_database_schema,
+        live_integration_enabled,
         TRUNCATE_SQL,
         CALIBRATION_RESET_SQL,
     )
+
+    if not live_integration_enabled():
+        pytest.skip("Set CI_LIVE_SERVICES=1 for live Postgres integration tests")
 
     if not can_connect_to_test_db():
         pytest.skip("governance_test database not available")
 
     await ensure_test_database_schema()
 
-    import os
     os.environ["DB_POSTGRES_URL"] = TEST_DB_URL
     os.environ["DB_POSTGRES_MIN_CONN"] = "1"
     os.environ["DB_POSTGRES_MAX_CONN"] = "3"

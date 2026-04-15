@@ -26,6 +26,11 @@ TEST_DB_URL = os.environ.get(
 _SCHEMA_READY = False
 
 
+def live_integration_enabled() -> bool:
+    """True when opt-in env is set for @pytest.mark.integration_live tests."""
+    return os.environ.get("CI_LIVE_SERVICES") == "1"
+
+
 def can_connect_to_test_db() -> bool:
     """
     Check if governance_test database is reachable.
@@ -161,3 +166,10 @@ def test_truncate_sql_includes_all_tables():
     """TRUNCATE_SQL should reference all tables in TRUNCATE_TABLES."""
     for table in TRUNCATE_TABLES:
         assert table in TRUNCATE_SQL, f"Missing {table} in TRUNCATE_SQL"
+
+
+def test_live_integration_enabled_only_when_env_set(monkeypatch):
+    monkeypatch.delenv("CI_LIVE_SERVICES", raising=False)
+    assert live_integration_enabled() is False
+    monkeypatch.setenv("CI_LIVE_SERVICES", "1")
+    assert live_integration_enabled() is True

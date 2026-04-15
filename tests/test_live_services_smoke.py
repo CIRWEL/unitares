@@ -2,7 +2,7 @@
 Optional live-service smoke tests (Postgres + AGE + Redis).
 
 Runs only when `CI_LIVE_SERVICES=1` (set by `.github/workflows/integration-live.yml`).
-PR workflows do not set this; use nightly / main-branch integration job for confidence.
+Same opt-in as `test_postgres_backend_integration.py`. PR workflows do not set this.
 """
 
 from __future__ import annotations
@@ -11,13 +11,15 @@ import os
 
 import pytest
 
-pytestmark = [
-    pytest.mark.integration_live,
-    pytest.mark.skipif(
-        os.environ.get("CI_LIVE_SERVICES") != "1",
-        reason="Set CI_LIVE_SERVICES=1 for live Postgres/AGE/Redis checks",
-    ),
-]
+from tests.test_db_utils import live_integration_enabled
+
+if not live_integration_enabled():
+    pytest.skip(
+        "Set CI_LIVE_SERVICES=1 for live Postgres/AGE/Redis checks",
+        allow_module_level=True,
+    )
+
+pytestmark = pytest.mark.integration_live
 
 
 @pytest.mark.asyncio
