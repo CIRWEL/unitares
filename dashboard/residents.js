@@ -23,10 +23,6 @@
     'use strict';
 
     var REFRESH_INTERVAL_MS = 60 * 1000; // periodic re-fetch fallback (covers broadcaster restarts)
-    var SPARKLINE_WIDTH = 220;
-    var SPARKLINE_HEIGHT = 44;
-    var SPARKLINE_PADDING = 4;
-    var MAX_HISTORY_POINTS = 60;
 
     // residents indexed by agent_id (filled by /v1/residents response).
     // Agents without an agent_id (haven't checked in yet) are keyed by label.
@@ -80,96 +76,13 @@
     }
 
     // ---------------------------------------------------------------------
-    // SVG sparkline
-    // ---------------------------------------------------------------------
-
-    function renderSparkline(history) {
-        var w = SPARKLINE_WIDTH, h = SPARKLINE_HEIGHT, pad = SPARKLINE_PADDING;
-        var innerW = w - pad * 2;
-        var innerH = h - pad * 2;
-
-        if (!history || history.length === 0) {
-            return '<svg class="resident-sparkline" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
-                '<line x1="' + pad + '" y1="' + (h / 2) + '" x2="' + (w - pad) + '" y2="' + (h / 2) + '" class="spark-axis-empty" stroke-dasharray="3 3"/>' +
-                '<text x="' + (w / 2) + '" y="' + (h / 2 + 4) + '" class="spark-empty-label" text-anchor="middle">no data</text>' +
-                '</svg>';
-        }
-
-        // Time-normalize over the visible window (last 60 min).
-        var lastTs = history[history.length - 1].ts;
-        var firstTs = history[0].ts;
-        var tsRange = Math.max(1, lastTs - firstTs);
-
-        // Coherence is in [0, 1]; stretch a tiny floor so very-flat lines aren't invisible.
-        var minY = 0;
-        var maxY = 1;
-
-        function px(point) {
-            var x = pad + ((point.ts - firstTs) / tsRange) * innerW;
-            var y = pad + (1 - (point.coherence - minY) / (maxY - minY)) * innerH;
-            return [x, y];
-        }
-
-        // Build the line path.
-        var pathD = '';
-        var areaD = '';
-        for (var i = 0; i < history.length; i++) {
-            var p = px(history[i]);
-            if (i === 0) {
-                pathD = 'M ' + p[0] + ' ' + p[1];
-                areaD = 'M ' + p[0] + ' ' + (h - pad);
-                areaD += ' L ' + p[0] + ' ' + p[1];
-            } else {
-                pathD += ' L ' + p[0] + ' ' + p[1];
-                areaD += ' L ' + p[0] + ' ' + p[1];
-            }
-        }
-        var lastP = px(history[history.length - 1]);
-        areaD += ' L ' + lastP[0] + ' ' + (h - pad) + ' Z';
-
-        // Risk-shaded background bands (light tint where risk > 0.5).
-        var riskBands = '';
-        var inHotBand = false;
-        var hotStart = null;
-        for (var j = 0; j < history.length; j++) {
-            var hot = (history[j].risk != null && history[j].risk > 0.5);
-            if (hot && !inHotBand) {
-                hotStart = px(history[j])[0];
-                inHotBand = true;
-            } else if (!hot && inHotBand) {
-                var hotEnd = px(history[j])[0];
-                riskBands += '<rect x="' + hotStart + '" y="' + pad + '" width="' + (hotEnd - hotStart) + '" height="' + innerH + '" class="spark-risk-band"/>';
-                inHotBand = false;
-            }
-        }
-        if (inHotBand) {
-            var endP = px(history[history.length - 1]);
-            riskBands += '<rect x="' + hotStart + '" y="' + pad + '" width="' + (endP[0] - hotStart) + '" height="' + innerH + '" class="spark-risk-band"/>';
-        }
-
-        // Last-point dot, with verdict color.
-        var lastVerdict = history[history.length - 1].verdict;
-        var dotClass = verdictColour(lastVerdict);
-
-        return '<svg class="resident-sparkline" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
-            riskBands +
-            '<path d="' + areaD + '" class="spark-area"/>' +
-            '<path d="' + pathD + '" class="spark-line"/>' +
-            '<circle cx="' + lastP[0] + '" cy="' + lastP[1] + '" r="3" class="spark-dot ' + dotClass + '"/>' +
-            '</svg>';
-    }
-
-    // ---------------------------------------------------------------------
-    // Card rendering
+    // Pill rendering (compact status strip — see renderCard)
     // ---------------------------------------------------------------------
 
     function renderCard(resident, nowMs) {
         var status = statusForCard(resident, nowMs);
-        var verdictPill = resident.verdict
-            ? '<span class="resident-verdict ' + verdictColour(resident.verdict) + '">' + escapeHtml(resident.verdict) + '</span>'
-            : '<span class="resident-verdict verdict-neutral">no verdict</span>';
 
-        // Compute live silence (since cards may render between server polls).
+        // Compute live silence (since items re-render between server polls).
         var liveSilence = resident.silence_seconds;
         if (resident.last_checkin_at) {
             try {
@@ -177,87 +90,52 @@
             } catch (e) { /* keep server value */ }
         }
 
-        var eisvHtml = '';
-        if (resident.eisv) {
-            var fmt = function (v) { return v == null ? '—' : Number(v).toFixed(2); };
-            eisvHtml =
-                '<div class="resident-eisv">' +
-                '<span title="Energy">E ' + fmt(resident.eisv.E) + '</span>' +
-                '<span title="Information Integrity">I ' + fmt(resident.eisv.I) + '</span>' +
-                '<span title="Entropy">S ' + fmt(resident.eisv.S) + '</span>' +
-                '<span title="Void">V ' + fmt(resident.eisv.V) + '</span>' +
-                '</div>';
-        } else {
-            eisvHtml = '<div class="resident-eisv resident-eisv-empty">no EISV yet</div>';
-        }
+        // The pill is the unique value-add: name + status dot + live silence
+        // + a warning indicator when past threshold. EISV, verdict, writes,
+        // and trajectories are all shown in the Agents + Activity sections
+        // below, so we deliberately don't repeat them here.
+        var silenceTxt = fmtSilence(liveSilence);
+        var overThreshold = liveSilence != null &&
+            resident.silence_threshold_seconds != null &&
+            liveSilence > resident.silence_threshold_seconds;
+        var silenceHtml = '<span class="resident-pill-silence' +
+            (overThreshold ? ' over-threshold' : '') +
+            '" title="time since last check-in (threshold: ' +
+            escapeHtml(fmtSilence(resident.silence_threshold_seconds)) + ')">' +
+            escapeHtml(silenceTxt) + '</span>';
 
-        var coherenceVal = resident.coherence != null
-            ? '<span class="resident-coherence">C ' + Number(resident.coherence).toFixed(3) + '</span>'
-            : '';
+        var title = resident.label + ' · ' + status +
+            (liveSilence != null ? ' · silent ' + silenceTxt : '') +
+            (resident.total_updates ? ' · ' + resident.total_updates + ' check-ins' : '');
 
-        var writesHtml = '';
-        var writes = (resident.recent_writes || []).slice(0, 3);
-        if (writes.length === 0) {
-            writesHtml = '<div class="resident-writes-empty">no recent writes</div>';
-        } else {
-            writesHtml = '<ul class="resident-writes">' + writes.map(function (w) {
-                var summary = (w.summary || '').slice(0, 80);
-                if ((w.summary || '').length > 80) summary += '…';
-                var sevClass = w.severity === 'critical' ? 'sev-critical'
-                    : w.severity === 'high' ? 'sev-high'
-                    : w.severity === 'medium' ? 'sev-medium'
-                    : 'sev-low';
-                return '<li class="' + sevClass + '" title="' + escapeHtml(w.summary || '') + '">' +
-                    '<span class="resident-write-type">' + escapeHtml(w.type || 'note') + '</span>' +
-                    '<span class="resident-write-summary">' + escapeHtml(summary) + '</span>' +
-                    '</li>';
-            }).join('') + '</ul>';
-        }
-
-        return '<article class="resident-card status-' + status + '" data-agent="' + escapeHtml(resident.label) + '">' +
-            '<header class="resident-header">' +
-                '<span class="resident-dot status-' + status + '" title="' + status + '"></span>' +
-                '<h3 class="resident-name">' + escapeHtml(resident.label) + '</h3>' +
-                verdictPill +
-            '</header>' +
-            '<div class="resident-meta">' +
-                '<span class="resident-silence" title="time since last check-in">' +
-                    '<span class="resident-silence-label">silence</span> ' +
-                    '<span class="resident-silence-value">' + escapeHtml(fmtSilence(liveSilence)) + '</span>' +
-                '</span>' +
-                coherenceVal +
-                '<span class="resident-updates" title="total check-ins">' +
-                    escapeHtml(String(resident.total_updates || 0)) + ' upd' +
-                '</span>' +
-            '</div>' +
-            '<div class="resident-spark-row">' + renderSparkline(resident.history) + '</div>' +
-            eisvHtml +
-            writesHtml +
-        '</article>';
+        return '<span class="resident-pill status-' + status + '"' +
+            ' data-agent="' + escapeHtml(resident.label) + '"' +
+            ' title="' + escapeHtml(title) + '">' +
+            '<span class="resident-pill-dot status-' + status + '"></span>' +
+            '<span class="resident-pill-name">' + escapeHtml(resident.label) + '</span>' +
+            silenceHtml +
+        '</span>';
     }
 
     function renderAll() {
-        var grid = document.getElementById('residents-grid');
-        if (!grid) return;
+        var container = document.getElementById('residents-grid');
+        if (!container) return;
         var src = document.getElementById('residents-source-label');
         if (src) {
-            src.textContent = sourceLabel
-                ? 'source: ' + sourceLabel
-                : '';
+            src.textContent = sourceLabel ? sourceLabel : '';
         }
         if (orderedLabels.length === 0) {
-            grid.innerHTML = '<div class="residents-empty">' +
-                'No residents configured. Set <code>UNITARES_RESIDENT_AGENTS</code> ' +
-                'in your governance plist or mark agents with <code>resident=True</code> in metadata.' +
-                '</div>';
+            container.innerHTML = '<span class="residents-strip-empty">' +
+                'No residents configured — set <code>UNITARES_RESIDENT_AGENTS</code>' +
+                '</span>';
             return;
         }
         var nowMs = Date.now();
-        var cards = orderedLabels.map(function (label) {
+        var pills = orderedLabels.map(function (label) {
             var r = residentsByLabel[label];
             return r ? renderCard(r, nowMs) : '';
         });
-        grid.innerHTML = cards.join('');
+        container.innerHTML = pills.join('');
     }
 
     // ---------------------------------------------------------------------
@@ -311,23 +189,6 @@
     // Live WS update — feed eisv_update / knowledge_write to the right card
     // ---------------------------------------------------------------------
 
-    // Broadcaster eisv_update payloads are nested: { eisv: {E,I,S,V}, coherence,
-    // metrics: {risk_score, verdict}, decision: {action} }. Surface them flat.
-    function flattenEisv(data) {
-        var eisv = data.eisv || {};
-        var metrics = data.metrics || {};
-        var decision = data.decision || {};
-        return {
-            E: eisv.E,
-            I: eisv.I,
-            S: eisv.S,
-            V: eisv.V,
-            coherence: data.coherence != null ? data.coherence : metrics.coherence,
-            risk: metrics.risk_score != null ? metrics.risk_score : data.risk,
-            verdict: decision.action || metrics.verdict,
-        };
-    }
-
     function onEISVUpdate(data) {
         if (!data || data.type !== 'eisv_update') return;
         var aid = data.agent_id;
@@ -338,24 +199,9 @@
             fetchResidents();
             return;
         }
-        var f = flattenEisv(data);
-        // Append to history (cap MAX_HISTORY_POINTS).
-        var now = Date.now() / 1000;
-        if (f.coherence != null) {
-            resident.history = (resident.history || []).concat([{
-                ts: now,
-                coherence: Number(f.coherence),
-                risk: f.risk != null ? Number(f.risk) : null,
-                verdict: f.verdict,
-            }]);
-            if (resident.history.length > MAX_HISTORY_POINTS) {
-                resident.history = resident.history.slice(-MAX_HISTORY_POINTS);
-            }
-        }
-        if (f.coherence != null) resident.coherence = Number(f.coherence);
-        if (f.risk != null) resident.risk_score = Number(f.risk);
-        if (f.verdict) resident.verdict = f.verdict;
-        if (f.E != null) resident.eisv = { E: f.E, I: f.I, S: f.S, V: f.V };
+        // Only thing the strip cares about on a check-in: reset silence and
+        // bump status back to healthy. EISV / verdict / writes are shown in
+        // the Agents + Activity panels below — don't duplicate them here.
         resident.last_checkin_at = data.timestamp || new Date().toISOString();
         resident.total_updates = (resident.total_updates || 0) + 1;
         renderAll();

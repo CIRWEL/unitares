@@ -80,18 +80,17 @@
     </nav>
 
     <main>
-        <!-- Resident Fleet — always-on agents, distinct from ephemeral Claude sessions -->
-        <section class="panel" id="residents-section">
-            <div class="panel-header">
-                <h2>Resident Fleet</h2>
-                <div class="panel-controls">
-                    <span class="residents-source" id="residents-source-label"></span>
-                    <span id="residents-status" class="ws-label"></span>
-                </div>
+        <!-- Resident Fleet — compact status strip. Answers "is the always-on
+             fleet alive?" at a glance. Detailed per-agent state lives in the
+             Agents section below; this strip is distinct from that, not a
+             subset of it: it surfaces silence detection and resident-specific
+             identity that the general Agents list does not. -->
+        <section class="residents-strip" id="residents-section" aria-label="Resident Fleet">
+            <span class="residents-strip-label">residents</span>
+            <div class="residents-strip-items" id="residents-grid">
+                <span class="residents-strip-loading">loading…</span>
             </div>
-            <div class="residents-grid" id="residents-grid">
-                <div class="residents-empty">Loading residents…</div>
-            </div>
+            <span class="residents-source" id="residents-source-label"></span>
         </section>
 
         <!-- Quick Status Hero -->
