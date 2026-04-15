@@ -194,76 +194,112 @@ ENDJSON
 fi
 
 # ---------------------------------------------------------------------------
-# Server reachable — onboard agent
+# Server reachable — onboard agent via Python helper
+#
+# The helper owns cache-read → onboard → trajectory_required retry → cache-write.
+# On failure it leaves the existing cache untouched so a good prior session
+# cannot be clobbered by a transient error.
 # ---------------------------------------------------------------------------
-ONBOARD_RAW=$(call_tool "onboard" "{\"name\": \"${AGENT_NAME}\", \"model_type\": \"claude-code\"}")
+ONBOARD_HELPER=""
+for candidate in \
+  "${PLUGIN_ROOT}/scripts/onboard_helper.py" \
+  "${PLUGIN_ROOT}/scripts/client/onboard_helper.py"
+do
+  if [[ -f "${candidate}" ]]; then
+    ONBOARD_HELPER="${candidate}"
+    break
+  fi
+done
 
-# Parse onboard response
-ONBOARD_PARSED=$(parse_tool_response "${ONBOARD_RAW}")
+if [[ -z "${ONBOARD_HELPER}" ]]; then
+  CONTEXT="UNITARES Governance: ONLINE but onboard_helper.py missing from plugin.
+Check plugin installation integrity."
+  ESCAPED_CONTEXT="$(escape_for_json "${CONTEXT}")"
+  cat <<ENDJSON
+{
+  "additional_context": "${ESCAPED_CONTEXT}",
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "${ESCAPED_CONTEXT}"
+  }
+}
+ENDJSON
+  exit 0
+fi
 
-# Extract key continuity fields
-AGENT_INFO=$(python3 -c "
+ONBOARD_RESULT=$(UNITARES_SERVER_URL="${SERVER_URL}" python3 "${ONBOARD_HELPER}" \
+    --server-url "${SERVER_URL}" \
+    --name "${AGENT_NAME}" \
+    --model-type "claude-code" \
+    --workspace "${PWD}" 2>/dev/null)
+
+ONBOARD_STATUS=$(python3 -c "
+import json, sys
+try:
+    print(json.loads(sys.argv[1]).get('status', 'unknown'))
+except Exception:
+    print('unknown')
+" "${ONBOARD_RESULT}")
+
+if [[ "${ONBOARD_STATUS}" != "ok" ]]; then
+  # Onboard failed; surface context so the operator can recover manually.
+  ONBOARD_ERROR=$(python3 -c "
 import json, sys
 try:
     data = json.loads(sys.argv[1])
-    agent_id = data.get('resolved_agent_id', '') or data.get('agent_id', '')
-    if not agent_id:
-        sig = data.get('agent_signature', {})
-        agent_id = sig.get('agent_id', '') or sig.get('uuid', '')
-    session_id = data.get('client_session_id', '')
-    continuity_token = data.get('continuity_token', '')
-    resolution_source = data.get('session_resolution_source', '')
-    continuity_token_supported = data.get('continuity_token_supported', '')
-    print(json.dumps({
-        'agent_id': agent_id,
-        'client_session_id': session_id,
-        'continuity_token': continuity_token,
-        'session_resolution_source': resolution_source,
-        'continuity_token_supported': continuity_token_supported
-    }))
+    err = data.get('error', 'unknown error')
+    reason = data.get('recovery_reason', '')
+    used_force = data.get('used_force_new', False)
+    parts = [err]
+    if reason:
+        parts.append(f'recovery: {reason}')
+    if used_force:
+        parts.append('retried with force_new=true')
+    print(' | '.join(parts))
 except Exception:
-    print(json.dumps({
-        'agent_id': '',
-        'client_session_id': '',
-        'continuity_token': '',
-        'session_resolution_source': '',
-        'continuity_token_supported': ''
-    }))
-" "${ONBOARD_PARSED}")
+    print('unknown error')
+" "${ONBOARD_RESULT}")
 
-AGENT_ID=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['agent_id'])" "${AGENT_INFO}")
-CLIENT_SESSION_ID=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['client_session_id'])" "${AGENT_INFO}")
-CONTINUITY_TOKEN=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['continuity_token'])" "${AGENT_INFO}")
-SESSION_RESOLUTION_SOURCE=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['session_resolution_source'])" "${AGENT_INFO}")
-CONTINUITY_TOKEN_SUPPORTED=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['continuity_token_supported'])" "${AGENT_INFO}")
+  CONTEXT="UNITARES Governance: ONLINE but onboard failed
+Reason: ${ONBOARD_ERROR}
 
-# ---------------------------------------------------------------------------
-# Cache session to .unitares/session.json via shared helper
-# ---------------------------------------------------------------------------
-SESSION_CACHE_JSON=$(python3 -c "
-import json, sys
-parsed = json.loads(sys.argv[8]) if sys.argv[8] else {}
-cache = {
-    'server_url': sys.argv[1],
-    'agent_name': sys.argv[2],
-    'agent_id': sys.argv[3],
-    'client_session_id': sys.argv[4],
-    'continuity_token': sys.argv[5],
-    'session_resolution_source': sys.argv[6],
-    'continuity_token_supported': sys.argv[7],
-    'uuid': parsed.get('uuid'),
-    'display_name': parsed.get('display_name'),
+Run /governance-start to attempt a manual onboard, or check server logs."
+  if [[ -n "${SKILL_CONTENT}" ]]; then
+    CONTEXT="${CONTEXT}
+
+--- Governance Fundamentals (reference) ---
+${SKILL_CONTENT}"
+  fi
+
+  ESCAPED_CONTEXT="$(escape_for_json "${CONTEXT}")"
+  cat <<ENDJSON
+{
+  "additional_context": "${ESCAPED_CONTEXT}",
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "${ESCAPED_CONTEXT}"
+  }
 }
-print(json.dumps(cache))
-" "${SERVER_URL}" "${AGENT_NAME}" "${AGENT_ID}" "${CLIENT_SESSION_ID}" "${CONTINUITY_TOKEN}" "${SESSION_RESOLUTION_SOURCE}" "${CONTINUITY_TOKEN_SUPPORTED}" "${ONBOARD_PARSED}")
+ENDJSON
+  exit 0
+fi
 
+# Onboard succeeded — extract fields for the rest of the script.
+AGENT_ID=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('agent_id',''))" "${ONBOARD_RESULT}")
+CLIENT_SESSION_ID=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('client_session_id',''))" "${ONBOARD_RESULT}")
+CONTINUITY_TOKEN=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('continuity_token',''))" "${ONBOARD_RESULT}")
+SESSION_RESOLUTION_SOURCE=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('session_resolution_source',''))" "${ONBOARD_RESULT}")
+CONTINUITY_TOKEN_SUPPORTED=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('continuity_token_supported',''))" "${ONBOARD_RESULT}")
+USED_FORCE_NEW=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('used_force_new',False))" "${ONBOARD_RESULT}")
+
+# Stamp updated_at on the cache the helper wrote (keeps the existing invariant).
 if [[ -n "${SESSION_CACHE_HELPER}" ]]; then
   python3 "${SESSION_CACHE_HELPER}" \
     set session \
     --workspace "${PWD}" \
     --merge \
     --stamp \
-    --json "${SESSION_CACHE_JSON}" >/dev/null 2>&1 || true
+    --json "{}" >/dev/null 2>&1 || true
 fi
 
 # ---------------------------------------------------------------------------
@@ -317,6 +353,11 @@ fi
 if [[ "${CONTINUITY_TOKEN_SUPPORTED}" == "True" || "${CONTINUITY_TOKEN_SUPPORTED}" == "true" ]]; then
   CONTEXT="${CONTEXT}
 Continuity token: supported"
+fi
+
+if [[ "${USED_FORCE_NEW}" == "True" ]]; then
+  CONTEXT="${CONTEXT}
+NOTE: prior identity for '${AGENT_NAME}' required trajectory_signature; a new identity was created via force_new=true. Prior history is not attached."
 fi
 
 CONTEXT="${CONTEXT}
