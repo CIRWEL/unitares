@@ -1,0 +1,82 @@
+version: 1
+kind: unitares_violation_taxonomy
+header: >
+  Interpretive overlay on existing UNITARES governance mechanisms.
+  Classes describe violation types already surfaced by Watcher, Sentinel,
+  and broadcast events. Detection logic and thresholds remain in code.
+  Empirically tuned — not derived from first principles.
+
+  Listed surfaces reflect current known integration points and may be
+  incomplete. The taxonomy is canonical for class vocabulary, not a
+  guarantee that all related surfaces are enumerated.
+
+classes:
+  - id: CON
+    status: active
+    name: Continuity
+    description: >
+      Unexplained discontinuity in governed state or identity trajectory.
+    surfaces:
+      watcher_patterns: []
+      sentinel_findings: [coordinated_degradation]
+      broadcast_events: [identity_assurance_change, identity_drift]
+
+  - id: INT
+    status: active
+    name: Integrity
+    description: >
+      Loss of coherence, assurance, or validated coupling between
+      claims, state, and evidence.
+    surfaces:
+      watcher_patterns: [P010, P011, P012, P016]
+      sentinel_findings: []
+      broadcast_events: [knowledge_confidence_clamped]
+
+  - id: ENT
+    status: active
+    name: Entropy
+    description: >
+      Unbounded growth, resource exhaustion, or systemic destabilization
+      through uncontrolled state dispersion.
+    surfaces:
+      watcher_patterns: [P001, P002, P003, P009]
+      sentinel_findings: [entropy_outlier, verdict_shift]
+      broadcast_events: []
+
+  - id: REC
+    status: active
+    name: Recoverability
+    description: >
+      Resource leak, deadlock, or structural failure that prevents
+      clean recovery or re-entry to governed state.
+    surfaces:
+      watcher_patterns: [P004, P005, P017]
+      sentinel_findings: []
+      broadcast_events: [circuit_breaker_trip]
+
+  - id: BEH
+    status: active
+    name: Behavioral Consistency
+    description: >
+      Observable behavior that diverges from expected governed patterns
+      at the agent or fleet level.
+    surfaces:
+      watcher_patterns: []
+      sentinel_findings: [correlated_events]
+      broadcast_events: [lifecycle_silent, lifecycle_silent_critical]
+    interpretation_notes: >
+      correlated_events has partial overlap with ENT when the burst
+      reflects systemic destabilization rather than behavioral divergence.
+      Classified here because Sentinel's detection keys on cross-agent
+      behavioral patterns, not entropy measurement.
+
+  - id: VOI
+    status: active
+    name: Void Compliance
+    description: >
+      Action taken despite insufficient validation, hidden failure state,
+      or unresolved uncertainty.
+    surfaces:
+      watcher_patterns: [P006, P008, P013, P014, P015]
+      sentinel_findings: []
+      broadcast_events: []
