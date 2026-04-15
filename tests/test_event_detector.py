@@ -99,3 +99,86 @@ class TestPredictDriftCrossing:
         # ewma_current and ewma_slope should be rounded to 6 decimal places
         assert len(str(result["ewma_current"]).split(".")[-1]) <= 6
         assert len(str(result["ewma_slope"]).split(".")[-1]) <= 6
+
+
+from src.event_detector import GovernanceEventDetector
+
+
+class TestRecordEvent:
+    def test_records_event_with_id_and_returns_it(self):
+        detector = GovernanceEventDetector(max_stored_events=10)
+        stored = detector.record_event({
+            "type": "sentinel_finding",
+            "severity": "high",
+            "message": "fleet coherence dipped",
+            "agent_id": "sentinel",
+            "agent_name": "Sentinel",
+            "fingerprint": "abc123",
+        })
+        assert stored is not None
+        assert stored["event_id"] == 1
+        assert stored["type"] == "sentinel_finding"
+        events = detector.get_recent_events(limit=10)
+        assert len(events) == 1
+
+    def test_duplicate_fingerprint_within_window_is_dropped(self):
+        detector = GovernanceEventDetector(max_stored_events=10)
+        first = detector.record_event({
+            "type": "sentinel_finding", "severity": "high",
+            "message": "m1", "agent_id": "a", "agent_name": "n",
+            "fingerprint": "same",
+        })
+        second = detector.record_event({
+            "type": "sentinel_finding", "severity": "high",
+            "message": "m2", "agent_id": "a", "agent_name": "n",
+            "fingerprint": "same",
+        })
+        assert first is not None
+        assert second is None
+        assert len(detector.get_recent_events(limit=10)) == 1
+
+    def test_different_fingerprints_both_stored(self):
+        detector = GovernanceEventDetector(max_stored_events=10)
+        a = detector.record_event({"type": "t", "severity": "info", "message": "m",
+                                    "agent_id": "x", "agent_name": "n", "fingerprint": "fp1"})
+        b = detector.record_event({"type": "t", "severity": "info", "message": "m",
+                                    "agent_id": "x", "agent_name": "n", "fingerprint": "fp2"})
+        assert a is not None and b is not None
+        assert len(detector.get_recent_events(limit=10)) == 2
+
+    def test_missing_fingerprint_is_rejected(self):
+        detector = GovernanceEventDetector(max_stored_events=10)
+        stored = detector.record_event({
+            "type": "t", "severity": "info", "message": "m",
+            "agent_id": "x", "agent_name": "n",
+        })
+        assert stored is None
+
+    def test_dedup_expires_after_window(self, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+        detector = GovernanceEventDetector(max_stored_events=10)
+        t0 = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+        class FakeDatetime:
+            @staticmethod
+            def now(tz=None):
+                return FakeDatetime._current
+            _current = t0
+
+        monkeypatch.setattr("src.event_detector.datetime", FakeDatetime)
+        FakeDatetime._current = t0
+        detector.record_event({"type": "t", "severity": "info", "message": "m",
+                                "agent_id": "x", "agent_name": "n", "fingerprint": "fp"})
+        # Jump past the 30-minute dedup window
+        FakeDatetime._current = t0 + timedelta(minutes=31)
+        second = detector.record_event({"type": "t", "severity": "info", "message": "m",
+                                         "agent_id": "x", "agent_name": "n", "fingerprint": "fp"})
+        assert second is not None
+        assert len(detector.get_recent_events(limit=10)) == 2
+
+    def test_stamps_timestamp_if_missing(self):
+        detector = GovernanceEventDetector(max_stored_events=10)
+        stored = detector.record_event({"type": "t", "severity": "info", "message": "m",
+                                          "agent_id": "x", "agent_name": "n", "fingerprint": "fp"})
+        assert "timestamp" in stored
+        assert stored["timestamp"].endswith("+00:00") or stored["timestamp"].endswith("Z")

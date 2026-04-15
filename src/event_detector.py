@@ -11,7 +11,7 @@ Tracks previous state per agent and detects meaningful transitions:
 
 import logging
 from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,7 @@ def predict_drift_crossing(
 class GovernanceEventDetector:
     """Detects governance events by comparing current state to previous state."""
 
-    def __init__(self, max_stored_events: int = 100):
+    def __init__(self, max_stored_events: int = 500):
         # Previous state per agent: {agent_id: {action, risk, drift, ...}}
         self._prev_state: Dict[str, Dict[str, Any]] = {}
         # Recent events for API retrieval (ring buffer)
@@ -175,6 +175,10 @@ class GovernanceEventDetector:
         self._max_stored_events = max_stored_events
         # Monotonically increasing event ID counter
         self._event_counter: int = 0
+        # Fingerprint-based dedup for externally recorded findings.
+        # Key: fingerprint string. Value: datetime of last emit.
+        self._recent_fingerprints: Dict[str, datetime] = {}
+        self._dedup_window_seconds: int = 1800  # 30 minutes
 
     def detect_events(
         self,
@@ -348,6 +352,45 @@ class GovernanceEventDetector:
                 self._recent_events = self._recent_events[-self._max_stored_events:]
 
         return events
+
+    def record_event(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Append an externally-sourced event (e.g. a finding) to the ring buffer.
+
+        Requires a caller-supplied ``fingerprint`` string. Duplicate fingerprints
+        seen inside ``_dedup_window_seconds`` are dropped (returns None) so
+        periodic re-emitters like Sentinel do not flood Discord.
+
+        Stamps ``event_id`` and ``timestamp`` in-place and returns the stored dict.
+        """
+        fingerprint = event.get("fingerprint")
+        if not fingerprint or not isinstance(fingerprint, str):
+            return None
+
+        now = datetime.now(timezone.utc)
+        last_seen = self._recent_fingerprints.get(fingerprint)
+        if last_seen is not None:
+            age_seconds = (now - last_seen).total_seconds()
+            if age_seconds < self._dedup_window_seconds:
+                return None
+
+        # Sweep fingerprints older than 2x window so the dict does not grow forever
+        cutoff = now - timedelta(seconds=2 * self._dedup_window_seconds)
+        self._recent_fingerprints = {
+            fp: ts for fp, ts in self._recent_fingerprints.items() if ts > cutoff
+        }
+        self._recent_fingerprints[fingerprint] = now
+
+        if "timestamp" not in event:
+            event["timestamp"] = now.isoformat()
+
+        self._event_counter += 1
+        event["event_id"] = self._event_counter
+        self._recent_events.append(event)
+        if len(self._recent_events) > self._max_stored_events:
+            self._recent_events = self._recent_events[-self._max_stored_events:]
+
+        return event
 
     def check_idle_agents(self, idle_threshold_minutes: float = 5.0) -> List[Dict[str, Any]]:
         """
