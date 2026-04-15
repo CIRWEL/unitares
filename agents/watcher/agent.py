@@ -140,6 +140,7 @@ class Finding:
     line_content_hash: str = ""
     fingerprint: str = ""
     status: str = "open"  # open | surfaced | confirmed | dismissed | aged_out
+    violation_class: str = ""  # CON | INT | ENT | REC | BEH | VOI
 
     def __post_init__(self) -> None:
         if not self.fingerprint:
@@ -277,6 +278,23 @@ def load_pattern_severities() -> dict[str, str]:
     for m in pat.finditer(text):
         severities[m.group(1)] = m.group(2).strip().lower()
     return severities
+
+
+def load_pattern_violation_classes() -> dict[str, str]:
+    """Map pattern id -> violation class from patterns.md headers."""
+    import re
+
+    classes: dict[str, str] = {}
+    if not PATTERNS_FILE.exists():
+        return classes
+    text = PATTERNS_FILE.read_text()
+    pat = re.compile(
+        r"^###\s+((?:EXP-)?P\d{3})\b.*?violation_class:\s*([A-Z]+)",
+        re.MULTILINE,
+    )
+    for m in pat.finditer(text):
+        classes[m.group(1)] = m.group(2).strip()
+    return classes
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +508,7 @@ def parse_findings(
         return []
 
     library_severities = load_pattern_severities()
+    library_violation_classes = load_pattern_violation_classes()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     findings: list[tuple[Finding, str]] = []
     for rf in raw_findings:
@@ -525,6 +544,7 @@ def parse_findings(
                     severity=severity,
                     detected_at=now,
                     model_used=model_used,
+                    violation_class=library_violation_classes.get(pattern, ""),
                 ),
                 evidence,
             )
@@ -844,13 +864,15 @@ def _format_findings_block(
     for f in shown:
         sev = str(f.get("severity", "?")).upper()
         pat = f.get("pattern", "?")
+        vcls = f.get("violation_class", "")
         file = f.get("file", "?")
         line_no = f.get("line", "?")
         hint = f.get("hint", "")
         fp = str(f.get("fingerprint", ""))[:8]
         status = f.get("status", "open")
         marker = "" if status == "open" else f" ({status})"
-        lines.append(f"  [{sev}] {pat} {file}:{line_no} — {hint}  (#{fp}){marker}")
+        cls_tag = f"[{vcls}] " if vcls else ""
+        lines.append(f"  [{sev}] {cls_tag}{pat} {file}:{line_no} — {hint}  (#{fp}){marker}")
     lines.append("")
     lines.append(f"Total unresolved: {len(findings)} (showing {len(shown)})")
     lines.append(

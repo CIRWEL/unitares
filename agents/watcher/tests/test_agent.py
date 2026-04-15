@@ -1694,3 +1694,22 @@ def test_p016_kept_for_dict_envelope_parse(watcher_module):
             src_line=src_line,
             file="/Users/cirwel/projects/unitares/scripts/unitares",
         ), f"P016 should fire on dict-envelope parse: {src_line!r}"
+
+
+# ---------------------------------------------------------------------------
+# violation_class loading
+# ---------------------------------------------------------------------------
+
+
+def test_load_pattern_violation_classes():
+    from agents.watcher.agent import load_pattern_violation_classes
+    classes = load_pattern_violation_classes()
+    assert classes["P001"] == "ENT"
+    assert classes["P004"] == "REC"
+    assert classes["P011"] == "INT"
+    assert classes["P006"] == "VOI"
+    # Every pattern with a severity should also have a violation class
+    from agents.watcher.agent import load_pattern_severities
+    sevs = load_pattern_severities()
+    for pid in sevs:
+        assert pid in classes, f"Pattern {pid} has severity but no violation_class"
