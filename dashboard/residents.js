@@ -264,9 +264,29 @@
     // Data fetch
     // ---------------------------------------------------------------------
 
+    function getAuthToken() {
+        try {
+            return localStorage.getItem('unitares_api_token') ||
+                new URLSearchParams(window.location.search).get('token');
+        } catch (e) {
+            return null;
+        }
+    }
+
     async function fetchResidents() {
         try {
-            var resp = await fetch('/v1/residents', { credentials: 'same-origin' });
+            // Attach the bearer token if present — bare fetch() returns 401
+            // when the dashboard server is configured with UNITARES_HTTP_API_TOKEN.
+            // Trusted-network bypass kicks in for curl from localhost but not
+            // for browser fetches because the request reaches the server with
+            // a hostname/origin that doesn't match the trusted set.
+            var token = getAuthToken();
+            var headers = {};
+            if (token) headers['Authorization'] = 'Bearer ' + token;
+            var resp = await fetch('/v1/residents', {
+                credentials: 'same-origin',
+                headers: headers,
+            });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             var data = await resp.json();
             if (!data || data.success === false) throw new Error(data && data.error || 'unknown');
