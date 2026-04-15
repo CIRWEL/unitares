@@ -521,8 +521,30 @@ async def handle_archive_old_test_agents(arguments: Dict[str, Any]) -> Sequence[
     cutoff_time = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
 
     for agent_id, meta in list(mcp_server.agent_metadata.items()):
-        # Filter: only test/demo agents unless include_all
-        is_test = (agent_id.startswith("test_") or agent_id.startswith("demo_") or "test" in agent_id.lower())
+        # Filter: only test/demo agents unless include_all.
+        #
+        # Check both agent_id (auto-generated structured ID) AND the display
+        # label, because clients like tests/test_unitares_cli_script.py set
+        # test names on the label (e.g. "cli-pytest-1776...") while agent_id
+        # stays as the model-generated "Claude_20260414". Without the label
+        # check those test stragglers leak through and Vigil never sweeps
+        # them, producing the `cli-pytest-*` pile the operator flagged on
+        # 2026-04-14.
+        label = (getattr(meta, "label", None) or getattr(meta, "display_name", None) or "").lower()
+        is_test_id = (
+            agent_id.startswith("test_")
+            or agent_id.startswith("demo_")
+            or "test" in agent_id.lower()
+        )
+        is_test_label = (
+            label.startswith("test_")
+            or label.startswith("test-")
+            or label.startswith("demo_")
+            or label.startswith("demo-")
+            or "pytest" in label
+            or "test" in label
+        )
+        is_test = is_test_id or is_test_label
         if not include_all and not is_test:
             continue
 

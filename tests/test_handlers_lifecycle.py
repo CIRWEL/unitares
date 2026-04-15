@@ -529,6 +529,54 @@ class TestArchiveOldTestAgents:
             assert "test_ping_1" in archived_ids
 
     @pytest.mark.asyncio
+    async def test_archive_matches_on_label_not_just_agent_id(self, mock_mcp_server):
+        """
+        Test agents from tests/test_unitares_cli_script.py have auto-generated
+        agent_ids like "Claude_20260414" but labels like "cli-pytest-...".
+        Operator flagged 2026-04-14 that these accumulate because the filter
+        was agent_id-only. Filter must match label/display_name too.
+        """
+        recent = datetime.now(timezone.utc).isoformat()
+        mock_mcp_server.agent_metadata = {
+            # pytest-label agent — should archive
+            "Claude_20260414_a": make_agent_meta(
+                status="active", label="cli-pytest-1776222514065-984b2ebb",
+                last_update=recent, total_updates=1,
+            ),
+            # test- label — should archive
+            "Claude_20260414_b": make_agent_meta(
+                status="active", label="test-probe-resume-fixture",
+                last_update=recent, total_updates=2,
+            ),
+            # dogfood / genuine work — must NOT archive
+            "Claude_20260414_c": make_agent_meta(
+                status="active", label="dogfood-kg-contributor",
+                last_update=recent, total_updates=1,
+            ),
+            # production without a label — must NOT archive
+            "Claude_Opus_20260414": make_agent_meta(
+                status="active", label=None, last_update=recent, total_updates=1,
+            ),
+        }
+
+        with patch_lifecycle_server(mock_mcp_server), \
+             patch("src.mcp_handlers.lifecycle.handlers.agent_storage") as mock_storage:
+            mock_storage.archive_agent = AsyncMock()
+            import src.mcp_handlers.lifecycle.mutation as _lm; _lm.agent_storage = mock_storage
+            import src.mcp_handlers.lifecycle.operations as _lo; _lo.agent_storage = mock_storage
+
+            from src.mcp_handlers.lifecycle.handlers import handle_archive_old_test_agents
+            result = await handle_archive_old_test_agents({})
+            data = json.loads(result[0].text)
+
+        archived_ids = {a["id"] for a in data["archived_agents"]}
+        assert archived_ids == {"Claude_20260414_a", "Claude_20260414_b"}, (
+            f"expected label-based matches only, got {archived_ids}"
+        )
+        assert "Claude_20260414_c" not in archived_ids, "dogfood label must not match"
+        assert "Claude_Opus_20260414" not in archived_ids, "no-label production must not match"
+
+    @pytest.mark.asyncio
     async def test_archive_skips_already_archived(self, mock_mcp_server):
         mock_mcp_server.agent_metadata = {
             "test_archived": make_agent_meta(status="archived", total_updates=1),
