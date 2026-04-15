@@ -627,6 +627,7 @@ _PERSISTENT_AGENT_INTERVALS = {
 
 _silence_alerted: set[str] = set()
 _silence_critical_alerted: set[str] = set()
+_silence_server_start: datetime | None = None  # set on first iteration
 
 
 def _get_expected_interval(meta) -> int | None:
@@ -661,11 +662,19 @@ def _parse_last_update_aware(last_update: str) -> datetime | None:
 
 async def _silence_check_iteration() -> None:
     """Single pass of silence detection. Extracted for testability."""
+    global _silence_server_start
     from src.agent_metadata_model import agent_metadata
     from src.broadcaster import broadcaster_instance
     from src.audit_db import append_audit_event_async
 
     now = datetime.now(timezone.utc)
+
+    # Record server start time on first call.  Only alert about silence
+    # that accumulated *while this process was running* — pre-existing
+    # staleness from Mac sleep / prior shutdown is not actionable.
+    if _silence_server_start is None:
+        _silence_server_start = now
+
     for agent_id, meta in list(agent_metadata.items()):
         if meta.status != "active":
             continue
@@ -678,7 +687,11 @@ async def _silence_check_iteration() -> None:
         last = _parse_last_update_aware(meta.last_update)
         if last is None:
             continue
-        silence_seconds = (now - last).total_seconds()
+
+        # Cap silence to time since this server started — don't alert
+        # for gaps that occurred before we were running.
+        effective_last = max(last, _silence_server_start)
+        silence_seconds = (now - effective_last).total_seconds()
 
         silence_minutes = silence_seconds / 60
 

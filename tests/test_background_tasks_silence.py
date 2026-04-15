@@ -24,6 +24,9 @@ def isolated_silence_state(monkeypatch):
     agent_metadata.clear()
     background_tasks._silence_alerted.clear()
     background_tasks._silence_critical_alerted.clear()
+    # Pretend the server started 48h ago so pre-existing staleness cap
+    # doesn't mask genuinely stale agents in tests.
+    background_tasks._silence_server_start = datetime.now(timezone.utc) - timedelta(hours=48)
 
     broadcaster = AsyncMock()
     audit = AsyncMock()
@@ -40,6 +43,7 @@ def isolated_silence_state(monkeypatch):
     agent_metadata.clear()
     background_tasks._silence_alerted.clear()
     background_tasks._silence_critical_alerted.clear()
+    background_tasks._silence_server_start = None
 
 
 def _make_meta(agent_id: str, label: str, last_update: str) -> AgentMetadata:
@@ -198,3 +202,29 @@ async def test_repeat_iteration_does_not_refire(isolated_silence_state):
 
     # Only one broadcast, despite two iterations.
     broadcaster.broadcast_event.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pre_existing_staleness_ignored_on_fresh_start(isolated_silence_state):
+    """Agent stale from before server started should not trigger alerts.
+
+    Regression test: when Mac sleeps and governance restarts, agents
+    appear 6+ hours stale from the loaded last_activity_at.  The silence
+    detector should only count time since the server process started.
+    """
+    broadcaster, _ = isolated_silence_state
+
+    # Simulate fresh server start (just now)
+    background_tasks._silence_server_start = datetime.now(timezone.utc)
+
+    # Agent last checked in 6 hours ago (before this server started)
+    stale = datetime.now(timezone.utc) - timedelta(hours=6)
+    agent_metadata["lumen-uuid"] = _make_meta(
+        "lumen-uuid", "Lumen", stale.isoformat()
+    )
+
+    await background_tasks._silence_check_iteration()
+
+    # Should NOT fire — the staleness predates this server process
+    broadcaster.broadcast_event.assert_not_awaited()
+    assert "lumen-uuid" not in background_tasks._silence_critical_alerted
