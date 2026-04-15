@@ -1656,3 +1656,41 @@ def test_p001_dropped_on_comment_line(watcher_module):
         line=10,
         src_line="# avoid create_task(x) here — it leaks",
     )
+
+
+def test_p016_dropped_on_typed_attribute_access(watcher_module):
+    """P016 is the double-envelope dict-parsing bug. Pure attribute access
+    on a typed pydantic model — `if audit_result.success:` — is by
+    construction flat and cannot have a hidden nested success. Caught when
+    qwen3-coder-next flagged 4 SDK-typed call sites in
+    agents/vigil/agent.py:292,308,318,324 on 2026-04-14."""
+    for src_line in (
+        "if audit_result.success:",
+        "if cleanup_result.success:",
+        "if not getattr(result, 'success', False):",  # `getattr` not subscript
+    ):
+        assert not _verify_finding(
+            watcher_module,
+            pattern="P016",
+            line=42,
+            src_line=src_line,
+            file="/Users/cirwel/projects/unitares/agents/vigil/agent.py",
+        ), f"P016 should be dropped for typed attribute access: {src_line!r}"
+
+
+def test_p016_kept_for_dict_envelope_parse(watcher_module):
+    """Positive case: the original incident shape — dict subscript or
+    `.get("success")` on a raw response — must survive verification.
+    This is the parse_onboard bug from scripts/unitares (commit 718ccd3)."""
+    for src_line in (
+        'if data.get("success"):',
+        'if response["success"]:',
+        "if data.get('success') and not data.get('result', {}).get('success'):",
+    ):
+        assert _verify_finding(
+            watcher_module,
+            pattern="P016",
+            line=42,
+            src_line=src_line,
+            file="/Users/cirwel/projects/unitares/scripts/unitares",
+        ), f"P016 should fire on dict-envelope parse: {src_line!r}"

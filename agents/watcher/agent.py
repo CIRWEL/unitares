@@ -1070,6 +1070,14 @@ _PATTERN_REQUIRED_TOKENS: dict[str, tuple[str, ...]] = {
     "P005": (".acquire(", ".cursor(", ".connect(", ".lock("),
     "P008": ("shell=True", "os.system(", "subprocess.run(", "subprocess.call("),
     "P012": ("json.loads(", "yaml.load(", "yaml.safe_load("),
+    # P016 is about double-envelope dict parsing (`data["success"]`,
+    # `data.get("success")`). Pure attribute access on a typed pydantic model
+    # (`result.success`, `audit_result.success`) is by construction flat — the
+    # schema makes the shape explicit. Requiring a quoted "success" literal
+    # drops the typed-attribute false positives while keeping the real shape.
+    # Caught when qwen3-coder-next flagged 4 SDK-typed call sites in
+    # agents/vigil/agent.py:292,308,318,324 on 2026-04-14.
+    "P016": ('"success"', "'success'"),
 }
 
 # File-path substrings that MUST be present in finding.file for the pattern
@@ -1083,6 +1091,14 @@ _PATTERN_FILE_PATH_CONSTRAINTS: dict[str, tuple[str, ...]] = {
 # Regex: `name = ...create_task(...)` on one line. If this matches the P001
 # flagged line, the task reference is stored — not fire-and-forget.
 _P001_TASK_ASSIGNMENT = re.compile(r"\b[a-zA-Z_]\w*\s*=\s*[^=].*create_task\(")
+
+# Regex: `getattr(<obj>, "success", ...)` — defensive typed-attribute access.
+# By construction this targets a flat object's attribute and cannot mask a
+# nested envelope. The quoted "success" satisfies the required-token check,
+# so an extra drop rule is needed to handle this shape.
+_P016_GETATTR_SUCCESS = re.compile(
+    r"""\bgetattr\s*\([^,]+,\s*['"]success['"]"""
+)
 
 
 def _has_preceding_persist_call(
@@ -1149,6 +1165,16 @@ def _verify_finding_against_source(
         log(
             f"drop P001 {finding.file}:{finding.line} — task ref assigned on flagged line "
             f"(not fire-and-forget): {src_line.strip()[:80]}",
+            "warning",
+        )
+        return False
+    # P016 specifically: `getattr(<obj>, "success", ...)` is defensive typed-
+    # attribute access on a flat object — the quoted "success" string is just
+    # the attribute name, not a dict key probing a nested envelope.
+    if finding.pattern == "P016" and _P016_GETATTR_SUCCESS.search(src_line):
+        log(
+            f"drop P016 {finding.file}:{finding.line} — getattr-style typed "
+            f"attribute access (no nested envelope): {src_line.strip()[:80]}",
             "warning",
         )
         return False

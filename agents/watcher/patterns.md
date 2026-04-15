@@ -262,11 +262,33 @@ commit now guard against re-introduction
 (`test_parse_onboard_detects_nested_success_false`,
 `test_onboard_with_force_creates_fresh_identity`).
 
+**SAFE — DO NOT FLAG:**
+```python
+# Typed pydantic model returned by the SDK — by construction flat
+audit_result = await client.audit_knowledge(scope="open")
+if audit_result.success:           # attribute access on typed model — flat
+    summary["audit_run"] = True
+```
+
+The SDK's `call_tool` flattens any envelope (`_parse_mcp_result` +
+`_raise_for_tool_failure`) before `model_validate`. Attribute access on a
+typed result has no nested success layer to miss. The structural verifier
+now requires a quoted `"success"` literal on the flagged line — see
+`_PATTERN_REQUIRED_TOKENS["P016"]` in `agent.py`. This drops typed-attribute
+false positives while keeping `data["success"]` / `data.get("success")`.
+
+False-positive sweep 2026-04-14: flagged four SDK-typed call sites in
+`agents/vigil/agent.py:292,308,318,324` (`result.success`,
+`audit_result.success`, `cleanup_result.success`, `orphan_result.success`).
+All four are typed pydantic models from `agents.sdk` — no nested envelope
+exists. Required-token constraint added to prevent recurrence.
+
 **Why this is in the active library and not experimental:** the shape is
 reasonably lexical — the model can spot a conditional on one success flag
 that ignores a nested success flag in the same response object. If Qwen3
-starts false-positiving on legitimate single-layer responses (flat APIs that
-don't have nested envelopes), move this to experimental.
+starts false-positiving on legitimate single-layer dict responses (flat
+APIs that genuinely use `data.get("success")` once), move this to
+experimental.
 
 **Hint template:** `nested result.success not checked — outer envelope lies`
 
