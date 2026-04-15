@@ -43,10 +43,17 @@ process_agent_update(
 
 ### When to Check In
 
+A Stop hook fires a lightweight check-in automatically at the end of each
+response turn, so the baseline cadence is one check-in per turn. In addition
+to that automatic signal, you should check in explicitly when any of these
+apply — do not wait silently past them:
+
 - After completing a meaningful unit of work
 - Before and after high-complexity tasks
 - When you feel uncertain or notice drift
-- **Not** after every single tool call — use judgment
+- At minimum once every 10 minutes of active work, or after ~5 tool calls
+  inside a single long turn — whichever comes first
+- **Not** after every single tool call — use judgment between these bounds
 
 ### What You Get Back
 
