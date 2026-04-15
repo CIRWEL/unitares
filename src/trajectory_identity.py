@@ -557,32 +557,21 @@ async def update_current_signature(
         metadata["trust_tier"] = trust_tier
         result["trust_tier"] = trust_tier
 
-        # Broadcast on trust tier change (with cooldown to avoid oscillation noise)
-        new_tier = trust_tier.get("tier", 0)
-        if new_tier != old_tier:
-            last_broadcast = metadata.get("_trust_tier_broadcast_at")
-            cooldown_ok = True
-            if last_broadcast:
-                try:
-                    elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(last_broadcast)).total_seconds()
-                    cooldown_ok = elapsed > 600  # 10-minute cooldown
-                except (ValueError, TypeError):
-                    pass
-            if cooldown_ok:
-                metadata["_trust_tier_broadcast_at"] = datetime.now(timezone.utc).isoformat()
-                try:
-                    from src.broadcaster import broadcaster_instance
-                    await broadcaster_instance.broadcast_event(
-                        "identity_assurance_change",
-                        agent_id=agent_id,
-                        payload={
-                            "old_tier": old_tier,
-                            "new_tier": new_tier,
-                            "tier_name": trust_tier.get("name", "unknown"),
-                        },
-                    )
-                except Exception as e:
-                    logger.debug(f"Trust tier change broadcast failed: {e}")
+        # Broadcast on trust tier change
+        if trust_tier.get("tier", 0) != old_tier:
+            try:
+                from src.broadcaster import broadcaster_instance
+                await broadcaster_instance.broadcast_event(
+                    "identity_assurance_change",
+                    agent_id=agent_id,
+                    payload={
+                        "old_tier": old_tier,
+                        "new_tier": trust_tier["tier"],
+                        "tier_name": trust_tier.get("name", "unknown"),
+                    },
+                )
+            except Exception as e:
+                logger.debug(f"Trust tier change broadcast failed: {e}")
 
         # Save updated metadata
         await db.update_identity_metadata(agent_id, metadata)
@@ -600,6 +589,10 @@ def compute_trust_tier(metadata: Dict[str, Any]) -> Dict[str, Any]:
 
     Pure function: takes metadata dict, returns tier assessment.
     No DB access, no side effects.
+
+    Uses hysteresis to prevent oscillation at tier boundaries: promoting
+    requires meeting the full threshold, but demoting requires dropping
+    below a lower margin (5% below the promotion threshold).
 
     Tiers:
         0 (unknown):     No trajectory data
@@ -636,11 +629,22 @@ def compute_trust_tier(metadata: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
 
+    # Current tier for hysteresis — if already at a tier, require a
+    # larger drop to demote (prevents oscillation at boundaries).
+    prev_tier = metadata.get("trust_tier", {})
+    current_tier = prev_tier.get("tier", 0) if isinstance(prev_tier, dict) else 0
+
+    # Hysteresis margins: demotion thresholds are 5% below promotion thresholds
+    conf_3 = 0.70 if current_tier < 3 else 0.65   # promote at 0.70, demote at 0.65
+    lin_3 = 0.80 if current_tier < 3 else 0.75
+    conf_2 = 0.50 if current_tier < 2 else 0.45
+    lin_2 = 0.70 if current_tier < 2 else 0.65
+
     # Tier 3: verified (200+ obs, confidence >= 0.7, lineage > 0.8)
     if (observation_count >= 200
-            and identity_confidence >= 0.7
+            and identity_confidence >= conf_3
             and lineage_similarity is not None
-            and lineage_similarity > 0.8):
+            and lineage_similarity > lin_3):
         return {
             "tier": 3,
             "name": "verified",
@@ -653,8 +657,8 @@ def compute_trust_tier(metadata: Dict[str, Any]) -> Dict[str, Any]:
 
     # Tier 2: established (50+ obs, confidence >= 0.5, lineage > 0.7)
     if (observation_count >= 50
-            and identity_confidence >= 0.5
-            and (lineage_similarity is None or lineage_similarity > 0.7)):
+            and identity_confidence >= conf_2
+            and (lineage_similarity is None or lineage_similarity > lin_2)):
         return {
             "tier": 2,
             "name": "established",
