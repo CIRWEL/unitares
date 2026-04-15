@@ -1560,3 +1560,99 @@ class TestEscalation:
 
         finding = self._make_finding(watcher_module, severity="critical")
         watcher_module.escalate(finding)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# _verify_finding_against_source — regression tests for false-positive drops
+#
+# Background: on 2026-04-14 the watcher flagged P004 (asyncpg-in-MCP-handler)
+# on five lines of src/http_api.py, including an `async def` line and
+# unrelated arithmetic. Root cause: P004 had no required-token entry and no
+# file-path constraint, so any line in any file could survive verification.
+# Separately, P001 (fire-and-forget task leak) could still flag
+# `task = loop.create_task(...)` even though the pattern library explicitly
+# calls assigned-to-a-name tasks "NOT fire-and-forget".
+# ---------------------------------------------------------------------------
+
+
+def _verify_finding(watcher_module, pattern, line, src_line, file="/Users/cirwel/projects/unitares/src/mcp_handlers/x.py", evidence=""):
+    """Helper: run _verify_finding_against_source with a 1-line snippet."""
+    f = watcher_module.Finding(
+        pattern=pattern, file=file, line=line, hint="t",
+        severity="high", detected_at="2026-04-14T00:00:00Z", model_used="t",
+    )
+    return watcher_module._verify_finding_against_source(
+        f, evidence, {line: src_line}
+    )
+
+
+def test_p004_dropped_outside_mcp_handlers_directory(watcher_module):
+    """P004 is the asyncpg-in-MCP-handler deadlock pattern. It MUST NOT fire
+    on files outside src/mcp_handlers/ (e.g. Starlette REST handlers in
+    src/http_api.py), which is exactly what happened on 2026-04-14."""
+    assert not _verify_finding(
+        watcher_module,
+        pattern="P004",
+        line=736,
+        src_line="async def http_dashboard(request):",
+        file="/Users/cirwel/projects/unitares/src/http_api.py",
+    )
+
+
+def test_p004_dropped_when_flagged_line_has_no_asyncpg_marker(watcher_module):
+    """Even inside src/mcp_handlers/, P004 requires a literal asyncpg/Redis
+    call on the flagged line. `bucket = max(1, min(bucket, 30))` cannot be
+    an asyncpg deadlock source and must be dropped."""
+    assert not _verify_finding(
+        watcher_module,
+        pattern="P004",
+        line=907,
+        src_line="bucket = max(1, min(bucket, 30))",
+    )
+
+
+def test_p004_kept_for_real_asyncpg_call_inside_mcp_handler(watcher_module):
+    """Positive case: a real `await conn.fetch(...)` inside src/mcp_handlers/
+    MUST survive verification — that's the whole point of P004."""
+    assert _verify_finding(
+        watcher_module,
+        pattern="P004",
+        line=42,
+        src_line="rows = await conn.fetchrow(query)",
+        file="/Users/cirwel/projects/unitares/src/mcp_handlers/identity/handlers.py",
+    )
+
+
+def test_p001_dropped_when_task_reference_is_assigned(watcher_module):
+    """The pattern library explicitly says that assigning create_task() to a
+    named variable means the task is stored — NOT fire-and-forget. The
+    verifier must honor that, otherwise legitimate
+    `task = loop.create_task(...); _background_tasks.add(task)` patterns
+    get flagged."""
+    assert not _verify_finding(
+        watcher_module,
+        pattern="P001",
+        line=10,
+        src_line="task = loop.create_task(broadcaster.broadcast_event())",
+    )
+
+
+def test_p001_kept_for_true_fire_and_forget(watcher_module):
+    """Positive case: a bare `asyncio.create_task(bad())` with no assignment
+    is the real fire-and-forget pattern and must survive."""
+    assert _verify_finding(
+        watcher_module,
+        pattern="P001",
+        line=10,
+        src_line="asyncio.create_task(bad())",
+    )
+
+
+def test_p001_dropped_on_comment_line(watcher_module):
+    """A comment mentioning create_task must never be flagged."""
+    assert not _verify_finding(
+        watcher_module,
+        pattern="P001",
+        line=10,
+        src_line="# avoid create_task(x) here — it leaks",
+    )

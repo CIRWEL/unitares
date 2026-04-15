@@ -43,6 +43,10 @@ If the task reference is assigned to a variable or added to a collection
 when the return value of `create_task()` is completely discarded or used
 only in a bare expression statement.
 
+The structural verifier drops any P001 finding whose flagged line matches
+`name = ...create_task(...)` — the assignment is sufficient evidence that
+the ref is stored. See `_P001_TASK_ASSIGNMENT` in `agent.py`.
+
 **Hint template:** `fire-and-forget task — store ref or use TaskGroup`
 
 ### P002 — Unbounded dict/list growth (severity: medium)
@@ -86,7 +90,15 @@ Only flag `await` on asyncpg/Redis in files under `src/mcp_handlers/` or in
 functions decorated with `@mcp_tool` / `@mcp.tool()`. Do NOT flag plain
 Starlette route handlers in `src/http_api.py`.
 
-**Seen in:** `health_check` MCP tool (fixed via Option F), KG lifecycle, eisv_sync
+The structural verifier now enforces both constraints post-hoc: P004 findings
+outside `src/mcp_handlers/` are dropped, and the flagged line must contain a
+literal asyncpg/Redis call marker (`asyncpg`, `pool.acquire`, `conn.fetch`,
+`await redis`, etc.). See `_PATTERN_FILE_PATH_CONSTRAINTS` and
+`_PATTERN_REQUIRED_TOKENS["P004"]` in `agent.py`.
+
+**Seen in:** `health_check` MCP tool (fixed via Option F), KG lifecycle, eisv_sync.
+False-positive sweep 2026-04-14 (flagged `async def http_dashboard` and
+unrelated arithmetic in `src/http_api.py`) motivated the verifier constraints.
 
 **Hint template:** `asyncpg inside MCP handler — will deadlock, wrap in executor`
 

@@ -1055,6 +1055,13 @@ _PERSIST_VERB_PATTERN = re.compile(
 _PATTERN_REQUIRED_TOKENS: dict[str, tuple[str, ...]] = {
     "P001": ("create_task(",),
     "P003": ("UNITARESMonitor(",),
+    # P004 needs a literal asyncpg/Redis call marker on the flagged line.
+    # Without this, qwen3-coder-next associates the pattern with a nearby
+    # `async def http_dashboard(...)` or unrelated arithmetic. Caught when
+    # it flagged http_api.py:736 and :907 on 2026-04-14.
+    "P004": ("asyncpg", "pool.acquire", "conn.fetch", "conn.execute",
+             "db.fetch", "db.execute", "await redis", "redis.get(",
+             "redis.set(", "load_metadata_async(", "archive_agent("),
     # P005 needs a literal acquire/cursor call on the flagged line.
     # Without this, the model sometimes associates a P005 "resource leak"
     # finding with the method DEFINITION (async def __aexit__, etc.)
@@ -1064,6 +1071,18 @@ _PATTERN_REQUIRED_TOKENS: dict[str, tuple[str, ...]] = {
     "P008": ("shell=True", "os.system(", "subprocess.run(", "subprocess.call("),
     "P012": ("json.loads(", "yaml.load(", "yaml.safe_load("),
 }
+
+# File-path substrings that MUST be present in finding.file for the pattern
+# to apply. P004 (asyncpg-in-MCP-handler) is only relevant to code under
+# src/mcp_handlers/ — the pattern library explicitly excludes Starlette REST
+# routes in src/http_api.py, which run outside the MCP anyio task group.
+_PATTERN_FILE_PATH_CONSTRAINTS: dict[str, tuple[str, ...]] = {
+    "P004": ("/src/mcp_handlers/",),
+}
+
+# Regex: `name = ...create_task(...)` on one line. If this matches the P001
+# flagged line, the task reference is stored — not fire-and-forget.
+_P001_TASK_ASSIGNMENT = re.compile(r"\b[a-zA-Z_]\w*\s*=\s*[^=].*create_task\(")
 
 
 def _has_preceding_persist_call(
@@ -1088,6 +1107,16 @@ def _verify_finding_against_source(
 
     Returns True if the finding survives verification.
     """
+    # File-path constraint: some patterns only apply under certain paths
+    # (e.g. P004 only applies to files under src/mcp_handlers/).
+    path_constraints = _PATTERN_FILE_PATH_CONSTRAINTS.get(finding.pattern)
+    if path_constraints and not any(seg in finding.file for seg in path_constraints):
+        log(
+            f"drop {finding.pattern} {finding.file}:{finding.line} — file outside "
+            f"required path segments {path_constraints!r}",
+            "warning",
+        )
+        return False
     src_line = snippet_lines_by_num.get(finding.line, "")
     if not src_line:
         log(
@@ -1109,6 +1138,17 @@ def _verify_finding_against_source(
         log(
             f"drop {finding.pattern} {finding.file}:{finding.line} — required token "
             f"{required_tokens!r} not on line: {src_line.strip()[:80]}",
+            "warning",
+        )
+        return False
+    # P001 specifically: if the flagged line assigns create_task() to a name,
+    # the task reference is stored somewhere (even if not in a set); the
+    # pattern's own library note says "assigned to a variable or added to a
+    # collection in the same block → NOT fire-and-forget".
+    if finding.pattern == "P001" and _P001_TASK_ASSIGNMENT.search(src_line):
+        log(
+            f"drop P001 {finding.file}:{finding.line} — task ref assigned on flagged line "
+            f"(not fire-and-forget): {src_line.strip()[:80]}",
             "warning",
         )
         return False
