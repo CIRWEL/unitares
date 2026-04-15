@@ -143,7 +143,6 @@ def make_decision(
 
     # --- Priority 5: LOW basin → pause (structural degradation) ---
     if basin == "low":
-        # Determine severity: is it a critical breach or just entering low?
         try:
             reject_threshold = config.RISK_REJECT_THRESHOLD
         except AttributeError:
@@ -151,20 +150,11 @@ def make_decision(
         effective_reject = get_effective_threshold("risk_reject_threshold", default=reject_threshold)
         is_critical = risk_score >= effective_reject or state.coherence < config.COHERENCE_CRITICAL_THRESHOLD
 
-        # Check for sustained low basin (suggest dialectic)
-        recent_decisions = state.decision_history[-5:] if state.decision_history else []
-        sustained_pause = sum(1 for d in recent_decisions if d in ("pause", "reject")) >= 3
-        guidance = (
-            'Sustained degraded state — consider requesting a dialectic review.'
-            if sustained_pause else
-            'State has entered the low basin. Simplify approach or take a break.'
-        )
-
         return {
             'action': 'pause',
             'sub_action': 'basin_pause',
             'reason': f'Low basin (I={state.I:.2f}, coherence={state.coherence:.2f}, risk={risk_score:.2f})',
-            'guidance': guidance,
+            'guidance': 'State has entered the low basin. Simplify approach or take a break.',
             'critical': is_critical,
             'basin': basin,
             'margin': margin_info['margin'],
