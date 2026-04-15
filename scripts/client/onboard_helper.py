@@ -29,6 +29,11 @@ DEFAULT_SERVER_URL = "http://localhost:8767"
 DEFAULT_TIMEOUT = 10.0
 CACHE_DIR = ".unitares"
 CACHE_FILE = "session.json"
+# Session identity is MACHINE-level, not workspace-level. A single agent
+# identity persists across every workspace, git worktree, and Discord thread
+# on the same machine. If callers want a workspace-specific identity, they
+# can override via UNITARES_SESSION_CACHE_PATH.
+DEFAULT_CACHE_ROOT_ENV = "HOME"
 
 
 # --- IO primitives (separable for tests) -----------------------------------
@@ -51,8 +56,12 @@ def _post_json(url: str, payload: dict, timeout: float, token: str | None) -> di
         return {}
 
 
-def _read_cache(workspace: Path) -> dict:
-    path = workspace / CACHE_DIR / CACHE_FILE
+def _cache_path(cache_root: Path) -> Path:
+    return cache_root / CACHE_DIR / CACHE_FILE
+
+
+def _read_cache(cache_root: Path) -> dict:
+    path = _cache_path(cache_root)
     if not path.exists():
         return {}
     try:
@@ -62,10 +71,19 @@ def _read_cache(workspace: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _write_cache(workspace: Path, payload: dict) -> None:
-    path = workspace / CACHE_DIR / CACHE_FILE
+def _write_cache(cache_root: Path, payload: dict) -> None:
+    path = _cache_path(cache_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def default_cache_root() -> Path:
+    """Return the machine-level identity cache root (``$HOME`` by default)."""
+    override = os.environ.get("UNITARES_SESSION_CACHE_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+    home = os.environ.get(DEFAULT_CACHE_ROOT_ENV) or os.path.expanduser("~")
+    return Path(home).expanduser().resolve()
 
 
 # --- Response unwrap -------------------------------------------------------
