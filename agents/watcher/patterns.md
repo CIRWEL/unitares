@@ -16,7 +16,7 @@ too many false positives. The Watcher reloads this file on every run.
 
 ## Patterns
 
-### P001 — Fire-and-forget task leak (severity: high)
+### P001 — Fire-and-forget task leak (severity: high, violation_class: ENT)
 
 Creating `asyncio.create_task(...)` inside a loop or per-event handler without
 storing the task reference for later cancellation or cleanup.
@@ -49,7 +49,7 @@ the ref is stored. See `_P001_TASK_ASSIGNMENT` in `agent.py`.
 
 **Hint template:** `fire-and-forget task — store ref or use TaskGroup`
 
-### P002 — Unbounded dict/list growth (severity: medium)
+### P002 — Unbounded dict/list growth (severity: medium, violation_class: ENT)
 
 `dict[key] = value` or `list.append(x)` inside a loop or per-event handler
 without a cap, LRU eviction, or periodic sweep.
@@ -59,7 +59,7 @@ without a cap, LRU eviction, or periodic sweep.
 
 **Hint template:** `unbounded growth — needs cap or eviction`
 
-### P003 — Transient monitor pattern (severity: high, project-specific)
+### P003 — Transient monitor pattern (severity: high, project-specific, violation_class: ENT)
 
 Creating a `UNITARESMonitor(agent_id)` instance outside of
 `mcp_server.get_or_create_monitor()`. The cached factory inserts into
@@ -70,7 +70,7 @@ the cache and cause init storms over time.
 
 **Hint template:** `transient monitor — use get_or_create_monitor`
 
-### P004 — DB-touching code inside MCP tool handler (severity: high, project-specific)
+### P004 — DB-touching code inside MCP tool handler (severity: high, project-specific, violation_class: REC)
 
 Any `await` on asyncpg or Redis inside an `@mcp_tool`-decorated handler
 (functions in `src/mcp_handlers/`). The anyio task group in the MCP SDK's
@@ -102,14 +102,14 @@ unrelated arithmetic in `src/http_api.py`) motivated the verifier constraints.
 
 **Hint template:** `asyncpg inside MCP handler — will deadlock, wrap in executor`
 
-### P005 — Acquire without paired release (severity: high)
+### P005 — Acquire without paired release (severity: high, violation_class: REC)
 
 `pool.acquire()`, `lock.acquire()`, `connection.cursor()`, or similar resource
 acquisitions without a paired release in a `finally:` or `async with` context.
 
 **Hint template:** `acquired resource not released on all paths`
 
-### P006 — Silent exception swallow (severity: medium)
+### P006 — Silent exception swallow (severity: medium, violation_class: VOI)
 
 `except Exception: pass` or `except Exception: logger.warning(...)` without
 re-raising. Hides real bugs and makes debugging impossible.
@@ -139,14 +139,14 @@ failure the caller needs to know about.
      experimental section for the original definition. -->
 
 
-### P008 — Unchecked shell input (severity: critical)
+### P008 — Unchecked shell input (severity: critical, violation_class: VOI)
 
 `subprocess.run(..., shell=True)` or `os.system(...)` with any string that
 includes user/external input without `shlex.quote` or a list-form invocation.
 
 **Hint template:** `shell injection — use shlex.quote or list-form subprocess`
 
-### P009 — Runaway polling without iteration cap (severity: medium)
+### P009 — Runaway polling without iteration cap (severity: medium, violation_class: ENT)
 
 `while True:` or `while condition:` loops that poll for state with `sleep`
 without a max-iteration guard or timeout. Can hang agents indefinitely if the
@@ -154,7 +154,7 @@ expected state change never arrives.
 
 **Hint template:** `unbounded poll — needs max-iteration or timeout`
 
-### P010 — Missing test coverage on behavior change (severity: medium)
+### P010 — Missing test coverage on behavior change (severity: medium, violation_class: INT)
 
 New behavior (a bound, cap, eviction, cleanup branch) added without a matching
 test. This is a standing rule for this project — see
@@ -162,7 +162,7 @@ test. This is a standing rule for this project — see
 
 **Hint template:** `behavior change needs test in same commit`
 
-### P011 — mutate-then-persist in memory (severity: high, project-specific)
+### P011 — mutate-then-persist in memory (severity: high, project-specific, violation_class: INT)
 
 Mutating in-memory state BEFORE (or WITHOUT) the corresponding DB persistence
 call. The temporal ordering matters: **persist must come first**, then mutate.
@@ -195,7 +195,7 @@ the post-fix code is the GOOD example above.
 
 **Hint template:** `mutation before persistence — will be clobbered on next load`
 
-### P012 — json.loads / yaml.load on untrusted input (severity: medium)
+### P012 — json.loads / yaml.load on untrusted input (severity: medium, violation_class: INT)
 
 Parsing JSON or YAML from external sources (HTTP bodies, files, MCP tool args)
 without schema validation. Pydantic v2 schemas in `src/mcp_handlers/schemas/`
@@ -203,7 +203,7 @@ are the project-standard way.
 
 **Hint template:** `unvalidated parse — add pydantic schema`
 
-### P013 — --no-verify / --amend after hook failure (severity: critical, process)
+### P013 — --no-verify / --amend after hook failure (severity: critical, process, violation_class: VOI)
 
 Not a code pattern but a process one. Never bypass pre-commit hooks with
 `--no-verify`, and never `git commit --amend` after a pre-commit hook failure
@@ -212,7 +212,7 @@ commit and risk losing work). Fix the underlying issue and create a NEW commit.
 
 **Hint template:** `bypass/amend after hook fail — fix root cause, new commit`
 
-### P014 — Force push / reset --hard on shared branches (severity: critical, process)
+### P014 — Force push / reset --hard on shared branches (severity: critical, process, violation_class: VOI)
 
 `git push --force`, `git reset --hard origin/X`, `git branch -D` without
 explicit user approval. See the 2026-02-25 incident: another Claude session
@@ -220,7 +220,7 @@ force-pushed master and lost ~80 commits on the remote.
 
 **Hint template:** `destructive git op — requires explicit user approval`
 
-### P015 — Docker commands against retired containers (severity: medium, project-specific)
+### P015 — Docker commands against retired containers (severity: medium, project-specific, violation_class: VOI)
 
 Any `docker exec postgres-age` or `docker-compose` command targeting the retired
 `postgres-age` container. The canonical database is Homebrew PostgreSQL@17 on
@@ -229,7 +229,7 @@ fail or hit stale data.
 
 **Hint template:** `docker postgres-age retired — use homebrew psql on 5432`
 
-### P016 — Nested-success-false swallowed in envelope parsing (severity: high)
+### P016 — Nested-success-false swallowed in envelope parsing (severity: high, violation_class: INT)
 
 Parsing a wrapped response that has BOTH an outer envelope success flag and a
 nested inner success flag, but only checking ONE layer. The outer envelope can
@@ -292,7 +292,7 @@ experimental.
 
 **Hint template:** `nested result.success not checked — outer envelope lies`
 
-### P017 — Bare await in daemon/launchd script without timeout (severity: high)
+### P017 — Bare await in daemon/launchd script without timeout (severity: high, violation_class: REC)
 
 Any `await` on a network call (MCP, HTTP, WebSocket) inside a script intended
 to run under launchd or as a `--once` daemon, without wrapping in
@@ -322,7 +322,7 @@ the knowledge isn't lost. Re-promote them once we have either (a) a structural
 verifier in `watcher_agent.py` or (b) a larger model with stronger temporal
 reasoning.
 
-### EXP-P007 — Path acquired from one pool, released to another (high)
+### EXP-P007 — Path acquired from one pool, released to another (high, violation_class: REC)
 
 Using `postgres_backend.py` pool helpers where `acquired_pool` is not tracked
 and the connection gets released to a different pool than it was acquired from.
