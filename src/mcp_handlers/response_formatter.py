@@ -180,12 +180,17 @@ def _format_mirror(response_data: dict, saved_trust_tier: Optional[str], meta: A
         cal = learning_ctx.get("calibration", {})
         if isinstance(cal, dict) and cal.get("insight"):
             insight = cal["insight"]
+            # These figures come from calibration_checker.bin_stats, a module-
+            # level singleton aggregated across ALL agents. The dashboard
+            # labels this "Fleet-wide" (src/static/dashboard.js); the mirror
+            # must match so agents don't mistake fleet trends for personal
+            # history. See 2026-04-14 dogfood finding.
             if "INVERTED" in insight.upper():
-                mirror_signals.insert(0, "Your confidence tends to be inverted (high conf -> lower accuracy)")
+                mirror_signals.insert(0, "Fleet confidence trending inverted (high conf -> lower accuracy across the fleet)")
             elif cal.get("total_decisions", 0) >= 10:
                 mirror_signals.append(
-                    f"Calibration: {cal.get('overall_accuracy', 0):.0%} accuracy over "
-                    f"{cal['total_decisions']} decisions "
+                    f"Fleet calibration: {cal.get('overall_accuracy', 0):.0%} accuracy over "
+                    f"{cal['total_decisions']} fleet-wide decisions "
                     f"(high-conf: {cal.get('high_confidence_accuracy', '?')}, "
                     f"low-conf: {cal.get('low_confidence_accuracy', '?')})"
                 )

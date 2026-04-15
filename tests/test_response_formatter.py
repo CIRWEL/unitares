@@ -498,6 +498,13 @@ class TestFormatMirror:
         }
         result = _format_mirror(data, saved_trust_tier=None)
         assert any("inverted" in s.lower() for s in result["mirror"])
+        # Must be labeled as a fleet-wide trend, not the caller's personal
+        # confidence — the underlying data is from a module-level singleton
+        # aggregated across all agents. Previously the string was "Your
+        # confidence tends to be inverted ..." which misled fresh agents
+        # into thinking they had accumulated history.
+        assert any("fleet" in s.lower() for s in result["mirror"]), \
+            "INVERTED calibration signal must be labeled fleet-wide"
 
     def test_calibration_insight_normal(self):
         data = _sample_response()
@@ -510,6 +517,11 @@ class TestFormatMirror:
         }
         result = _format_mirror(data, saved_trust_tier=None)
         assert any("82%" in s for s in result["mirror"])
+        # Same scope concern as the inverted case — the 20 decisions are
+        # fleet-wide, not per-agent. Label must match the dashboard, which
+        # renders the same singleton under a "Fleet-wide" header.
+        assert any("fleet" in s.lower() for s in result["mirror"]), \
+            "Calibration accuracy signal must be labeled fleet-wide"
 
     def test_complexity_divergence_question(self):
         data = _sample_response()

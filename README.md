@@ -50,7 +50,7 @@ process_agent_update({
   "verdict": "proceed",
   "_mode": "mirror",
   "mirror": [
-    "Calibration: 72% accuracy over 12 decisions (high-conf: 0.8, low-conf: 0.5)",
+    "Fleet calibration: 72% accuracy over 12 fleet-wide decisions (high-conf: 0.8, low-conf: 0.5)",
     "Complexity divergence: you reported 0.60 but system derives 0.45 (divergence=0.15)"
   ],
   "question": "What's driving your sense of difficulty?",
