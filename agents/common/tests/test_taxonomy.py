@@ -108,3 +108,75 @@ def test_get_taxonomy_caches():
     t1 = get_taxonomy()
     t2 = get_taxonomy()
     assert t1 is t2
+
+
+# ---------------------------------------------------------------------------
+# CI consistency: orphan detection and bidirectional coverage
+# ---------------------------------------------------------------------------
+
+
+def test_all_watcher_patterns_are_classified():
+    """Every pattern ID in patterns.md must appear in the taxonomy.
+
+    Orphan detection: if someone adds P018 without classifying it, this fails.
+    """
+    from agents.watcher.agent import load_pattern_severities
+
+    sevs = load_pattern_severities()
+    missing = [pid for pid in sevs if class_for_watcher_pattern(pid) is None]
+    assert not missing, f"Watcher patterns not in taxonomy: {missing}"
+
+
+def test_all_sentinel_findings_are_classified():
+    """Every finding type Sentinel can emit must appear in the taxonomy."""
+    # Authoritative list of finding types emitted by FleetState.analyze()
+    sentinel_types = [
+        "coordinated_degradation",
+        "entropy_outlier",
+        "verdict_shift",
+        "correlated_events",
+    ]
+    missing = [ft for ft in sentinel_types if class_for_sentinel_finding(ft) is None]
+    assert not missing, f"Sentinel findings not in taxonomy: {missing}"
+
+
+def test_taxonomy_surfaces_exist_in_codebase():
+    """Surface IDs in the YAML should reference real patterns/findings.
+
+    Catches stale references (e.g. a removed pattern still listed).
+    """
+    from agents.watcher.agent import load_pattern_severities
+
+    tax = load_taxonomy()
+    watcher_patterns = set(load_pattern_severities().keys())
+
+    for cls in tax["classes"]:
+        for pid in cls["surfaces"].get("watcher_patterns", []):
+            assert pid in watcher_patterns, (
+                f"Taxonomy references {pid} in class {cls['id']} "
+                f"but it's not in patterns.md"
+            )
+
+
+def test_coverage_summary(capsys):
+    """Print coverage summary for CI output."""
+    from agents.watcher.agent import load_pattern_severities
+
+    tax = load_taxonomy()
+    watcher_sevs = load_pattern_severities()
+    watcher_mapped = sum(
+        len(c["surfaces"].get("watcher_patterns", []))
+        for c in tax["classes"]
+    )
+    sentinel_mapped = sum(
+        len(c["surfaces"].get("sentinel_findings", []))
+        for c in tax["classes"]
+    )
+    broadcast_mapped = sum(
+        len(c["surfaces"].get("broadcast_events", []))
+        for c in tax["classes"]
+    )
+
+    print(f"\nWatcher patterns covered: {watcher_mapped}/{len(watcher_sevs)}")
+    print(f"Sentinel findings covered: {sentinel_mapped}")
+    print(f"Broadcast events covered: {broadcast_mapped}")
