@@ -885,6 +885,103 @@ class TestBatchStoreAdditional:
 
 
 # ============================================================================
+# Broadcaster integration — knowledge_write must fire for leave_note and store
+# ============================================================================
+# Before this coverage existed, Vigil and Sentinel notes landed in the KG but
+# never reached the dashboard timeline or the Discord bridge WS subscriber
+# because no code emitted a knowledge_write broadcaster event. Macs got a
+# transient notify() and the KG got a new row, but neither live surface saw
+# anything. These tests pin the broadcast so that path cannot silently regress
+# again.
+
+
+class TestKnowledgeWriteBroadcast:
+
+    @pytest.mark.asyncio
+    async def test_leave_note_emits_knowledge_write(self, patch_common, registered_agent):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_leave_note
+
+        with patch(
+            "src.mcp_handlers.knowledge.handlers.broadcaster_instance.broadcast_event",
+            new_callable=AsyncMock,
+        ) as bc:
+            result = await handle_leave_note({
+                "agent_id": registered_agent,
+                "summary": "Governance recovered after brief outage",
+                "tags": ["vigil", "recovery", "governance"],
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        bc.assert_awaited()
+        call = bc.await_args
+        assert call.args[0] == "knowledge_write"
+        assert call.kwargs["agent_id"] == registered_agent
+        payload = call.kwargs["payload"]
+        assert payload["discovery_type"] == "note"
+        assert "Governance recovered" in payload["summary"]
+        assert "vigil" in payload["tags"]
+
+    @pytest.mark.asyncio
+    async def test_store_knowledge_graph_emits_knowledge_write(
+        self, patch_common, registered_agent,
+    ):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+
+        with patch(
+            "src.mcp_handlers.knowledge.handlers.broadcaster_instance.broadcast_event",
+            new_callable=AsyncMock,
+        ) as bc:
+            result = await handle_store_knowledge_graph({
+                "agent_id": registered_agent,
+                "summary": "[Sentinel] coordinated coherence drop across 3 agents",
+                "discovery_type": "observation",
+                "severity": "medium",
+                "tags": ["sentinel", "coordinated_coherence_drop"],
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        # Two events may fire if confidence gets clamped; find the write event.
+        write_calls = [
+            c for c in bc.await_args_list
+            if c.args and c.args[0] == "knowledge_write"
+        ]
+        assert write_calls, "expected knowledge_write to be emitted"
+        payload = write_calls[0].kwargs["payload"]
+        assert payload["discovery_type"] == "observation"
+        assert payload["severity"] == "medium"
+        assert "sentinel" in payload["tags"]
+
+    @pytest.mark.asyncio
+    async def test_broadcast_failure_does_not_break_write(
+        self, patch_common, registered_agent,
+    ):
+        """A dead broadcaster must never fail the KG write path.
+
+        This is load-bearing: the broadcaster is a secondary concern and
+        must not become a new failure mode for the primary KG path.
+        """
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_leave_note
+
+        with patch(
+            "src.mcp_handlers.knowledge.handlers.broadcaster_instance.broadcast_event",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("broadcaster dead"),
+        ):
+            result = await handle_leave_note({
+                "agent_id": registered_agent,
+                "summary": "note that should persist even with dead broadcaster",
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+
+
+# ============================================================================
 # Archived filtering in search
 # ============================================================================
 

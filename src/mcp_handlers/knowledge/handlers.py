@@ -76,6 +76,39 @@ async def _clamp_confidence_to_coherence(discovery, agent_id: str) -> bool:
     return False
 
 
+async def _broadcast_knowledge_write(discovery, agent_id: str) -> None:
+    """Emit a ``knowledge_write`` event to the broadcaster (best-effort).
+
+    Dashboard timeline and the bridge's WS subscriber both key off this
+    event class to render KG writes in real time. Before this helper
+    existed, Vigil and Sentinel notes landed in the KG but never reached
+    either live surface — they were only visible via a full discovery
+    fetch or ``/kg search``. Alerts disappeared from user view as soon
+    as the macOS notification faded.
+
+    Best-effort: any broadcaster failure is swallowed so a dead WS
+    listener cannot break the KG write path.
+    """
+    try:
+        tags = list(getattr(discovery, "tags", None) or [])
+        summary = getattr(discovery, "summary", None) or ""
+        if len(summary) > 500:
+            summary = summary[:497] + "..."
+        await broadcaster_instance.broadcast_event(
+            "knowledge_write",
+            agent_id=agent_id,
+            payload={
+                "discovery_id": getattr(discovery, "id", None),
+                "discovery_type": getattr(discovery, "type", None) or "note",
+                "severity": getattr(discovery, "severity", None) or "low",
+                "summary": summary,
+                "tags": tags,
+            },
+        )
+    except Exception as exc:
+        logger.debug("knowledge_write broadcast skipped: %s", exc)
+
+
 def _compute_staleness_warning(discovery, current_server_version: str) -> Optional[str]:
     """Flag open entries that are likely stale (>60 days old or 2+ minor versions behind)."""
     warning_parts = []
@@ -568,6 +601,7 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
         
         # Add to graph (fast, non-blocking)
         await graph.add_discovery(discovery)
+        await _broadcast_knowledge_write(discovery, agent_id)
 
         # v2.5.3: Resolve UUID to display name for human-readable output
         agent_display = arguments.get("_agent_display") or _resolve_agent_display(agent_id)
@@ -1818,6 +1852,7 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             note.related_to = [s.id for s in similar]
         
         await graph.add_discovery(note)
+        await _broadcast_knowledge_write(note, agent_id)
 
         # v2.5.3: Include agent display info
         agent_display = arguments.get("_agent_display") or _resolve_agent_display(agent_id)
