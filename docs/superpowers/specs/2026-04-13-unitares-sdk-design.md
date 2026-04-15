@@ -1,7 +1,7 @@
 # unitares_sdk — Agent SDK for UNITARES Governance
 
 **Date:** 2026-04-13
-**Status:** Draft
+**Status:** Shipped 2026-04-13; operational notes added 2026-04-14
 **Scope:** Phase 1 of UNITARES refactoring — extract agent-facing modules into a standalone, pip-installable SDK
 
 ## Problem
@@ -490,6 +490,50 @@ def validate_token_uuid(token: str, expected_uuid: str) -> bool:
 
 Each migration is a separate commit. Agents keep working throughout — the SDK is additive until the final cleanup.
 
+## Deployment & Operational Constraints
+
+Added 2026-04-14 after the Watcher silent-failure incident.
+
+### Install surface
+
+The SDK lives at `agents/sdk/` and is installed as an editable package:
+
+```bash
+pip install -e agents/sdk
+```
+
+In production this is installed once into `/Library/Frameworks/Python.framework/Versions/3.14` — the Python the launchd plists use. No other Python on the machine has it unless installed separately.
+
+### Pinning Python paths in launchers
+
+Any launcher that invokes an SDK-consuming agent must pin the absolute Python path rather than relying on `python3` from PATH. `PATH` lookup can resolve to a Python that doesn't have the SDK installed (e.g. Homebrew python@3.14, a venv python, `/usr/bin/python3`), which will surface as `ModuleNotFoundError: unitares_sdk` at import time.
+
+- Launchd plists: already use `/Library/Frameworks/Python.framework/Versions/3.14/bin/python3` explicitly.
+- Claude Code hooks (`~/.claude/hooks/watcher-*.sh`): same absolute path, for the same reason.
+- Any future launcher added outside this repo should follow the same convention.
+
+### anyio-dodge for hook-context callers
+
+Agents invoked from Claude Code hooks (currently: Watcher) must not call SDK methods that touch the governance DB from the MCP handler path — `checkin` / `process_agent_update` / `onboard` / anything that ends in `acquire_pool`. The MCP SDK's anyio task group conflicts with asyncpg/Redis and deadlocks.
+
+Watcher deliberately uses `SyncGovernanceClient.call_model` only, because `call_model` routes through the REST `/v1/tools/call` endpoint (sync path, no anyio task group). Critical discoveries are written via `store_discovery` which also avoids the deadlock path.
+
+Future agents running in hook context should:
+- Prefer REST endpoints over MCP tool calls when possible.
+- Skip `checkin` entirely, or defer it to a background job that runs outside the hook.
+- Wrap SDK calls in a try/except that catches `ImportError` as well as network errors — the fallback path should not assume the SDK is importable.
+
+### Extraction status
+
+The SDK is structurally ready for extraction (zero imports from `src/`, self-contained dependencies) but has not been extracted. It still lives in-repo and is referenced by relative path. Next steps before extraction:
+
+- Publish to a private package index (or use a git tag + `pip install git+...`).
+- Add a CI job that verifies the SDK installs cleanly into a fresh Python with no access to the repo.
+- Move `agents/common/config.py` constants (endpoint URLs) into the SDK so extraction doesn't require a second package.
+
 ## Open Questions
 
-None. All design decisions are resolved. Implementation will surface any remaining gaps — the Pydantic model fields will be refined against actual server responses during development.
+All original design decisions resolved. Operational questions surfaced post-ship:
+
+- Should the SDK be published to a private PyPI index to close the "only one Python has it" gap, or is the current editable-install pattern sufficient given all consumers are on this machine?
+- Is the anyio-dodge a SDK concern (a `HookSafeClient` variant that only exposes REST-safe methods) or an agent concern (each agent picks the right methods)?
