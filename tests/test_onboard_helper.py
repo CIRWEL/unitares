@@ -147,7 +147,6 @@ class TestRunOnboard:
         result, poster, cache_path = self._call(tmp_path, [_success_response()])
 
         assert result["status"] == "ok"
-        assert result["used_force_new"] is False
         assert result["uuid"] == "uuid-ok"
 
         assert len(poster.calls) == 1
@@ -181,20 +180,19 @@ class TestRunOnboard:
         assert sent_args["client_session_id"] == "agent-only"
         assert "continuity_token" not in sent_args
 
-    def test_trajectory_required_retries_with_force_new(self, tmp_path: Path) -> None:
-        responses = [_trajectory_required_response(), _success_response()]
-        result, poster, cache_path = self._call(tmp_path, responses)
+    def test_trajectory_required_surfaces_error_without_retry(self, tmp_path: Path) -> None:
+        """Per 718ccd3: never auto-force_new. Surface the error instead."""
+        result, poster, cache_path = self._call(
+            tmp_path, [_trajectory_required_response()]
+        )
 
-        assert result["status"] == "ok"
-        assert result["used_force_new"] is True
-        assert len(poster.calls) == 2
-
-        retry_args = poster.calls[1][1]["arguments"]
-        assert retry_args["force_new"] is True
-        assert retry_args["name"] == "acme"
-
-        written = json.loads(cache_path.read_text())
-        assert written["uuid"] == "uuid-ok"
+        assert result["status"] == "trajectory_required"
+        assert "trajectory" in result["error"].lower()
+        assert result["recovery_reason"] == "trajectory_required"
+        # Must NOT have retried — only one call
+        assert len(poster.calls) == 1
+        # Must NOT have written cache
+        assert not cache_path.exists()
 
     def test_non_trajectory_failure_does_not_retry(self, tmp_path: Path) -> None:
         failure = {
@@ -208,7 +206,6 @@ class TestRunOnboard:
         result, poster, cache_path = self._call(tmp_path, [failure])
 
         assert result["status"] == "onboard_failed"
-        assert result["used_force_new"] is False
         assert len(poster.calls) == 1
         assert not cache_path.exists()
 
@@ -219,12 +216,12 @@ class TestRunOnboard:
             "client_session_id": "agent-prev",
             "continuity_token": "v1.prev",
         }
-        responses = [_trajectory_required_response(), _trajectory_required_response()]
+        responses = [_trajectory_required_response()]
         result, _, cache_path = self._call(
             tmp_path, responses, initial_cache=initial
         )
 
-        assert result["status"] == "onboard_failed"
+        assert result["status"] == "trajectory_required"
         preserved = json.loads(cache_path.read_text())
         assert preserved == initial, "cache must not be overwritten on failure"
 
@@ -242,3 +239,29 @@ class TestRunOnboard:
         result, _, cache_path = self._call(tmp_path, [weird])
         assert result["status"] == "onboard_failed"
         assert not cache_path.exists()
+
+    def test_explicit_force_new_skips_cache_and_sends_flag(self, tmp_path: Path) -> None:
+        """force_new=True is only set by explicit operator opt-in (--force-new)."""
+        initial = {
+            "continuity_token": "v1.cached-token",
+            "client_session_id": "agent-cached",
+        }
+        cache_dir = tmp_path / ".unitares"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / "session.json").write_text(json.dumps(initial))
+
+        poster = FakePoster([_success_response()])
+        result = run_onboard(
+            server_url="http://fake",
+            agent_name="acme",
+            model_type="claude-code",
+            workspace=tmp_path,
+            force_new=True,
+            post_json=poster,
+        )
+        assert result["status"] == "ok"
+        sent_args = poster.calls[0][1]["arguments"]
+        assert sent_args["force_new"] is True
+        # When force_new is set, cached token should NOT be sent
+        assert "continuity_token" not in sent_args
+        assert "client_session_id" not in sent_args

@@ -290,7 +290,7 @@ CLIENT_SESSION_ID=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).g
 CONTINUITY_TOKEN=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('continuity_token',''))" "${ONBOARD_RESULT}")
 SESSION_RESOLUTION_SOURCE=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('session_resolution_source',''))" "${ONBOARD_RESULT}")
 CONTINUITY_TOKEN_SUPPORTED=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('continuity_token_supported',''))" "${ONBOARD_RESULT}")
-USED_FORCE_NEW=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('used_force_new',False))" "${ONBOARD_RESULT}")
+# used_force_new removed — force_new is never automatic (per 718ccd3 invariant)
 
 # Stamp updated_at on the cache the helper wrote (keeps the existing invariant).
 if [[ -n "${SESSION_CACHE_HELPER}" ]]; then
@@ -355,10 +355,8 @@ if [[ "${CONTINUITY_TOKEN_SUPPORTED}" == "True" || "${CONTINUITY_TOKEN_SUPPORTED
 Continuity token: supported"
 fi
 
-if [[ "${USED_FORCE_NEW}" == "True" ]]; then
-  CONTEXT="${CONTEXT}
-NOTE: prior identity for '${AGENT_NAME}' required trajectory_signature; a new identity was created via force_new=true. Prior history is not attached."
-fi
+# No force_new NOTE — force_new is never automatic. Trajectory failures
+# are surfaced as onboard_failed with clear recovery guidance.
 
 CONTEXT="${CONTEXT}
 

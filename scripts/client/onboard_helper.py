@@ -6,9 +6,13 @@ Owns the flow:
 1. Read existing ``.unitares/session.json`` cache (if any).
 2. Call ``onboard`` — preferring ``continuity_token`` from cache, then
    ``client_session_id``.
-3. If the server reports ``trajectory_required`` (identity exists but lacks a
-   verifiable signal), retry once with ``force_new=true``.
-4. Only write the cache when onboard succeeded and produced a usable uuid.
+3. If the server reports ``trajectory_required`` (identity exists but lacks
+   a verifiable signal), return status=``trajectory_required`` with the
+   server's recovery hint. We do NOT auto-retry with ``force_new=true``;
+   that is an explicit operator decision, not an automatic one (see commit
+   718ccd3 and the identity "never silently substitute" invariant).
+4. ``force_new=true`` is set only when the caller passed ``--force-new``.
+5. Only write the cache when onboard succeeded and produced a usable uuid.
 
 Emits a JSON line on stdout with the resolved fields for the shell hook to
 consume. Never raises — always returns a dict on stdout.
@@ -123,6 +127,7 @@ def run_onboard(
     agent_name: str,
     model_type: str,
     workspace: Path,
+    force_new: bool = False,
     auth_token: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     post_json: Callable[[str, dict, float, str | None], dict] = _post_json,
@@ -134,31 +139,29 @@ def run_onboard(
     cache = read_cache(workspace)
 
     arguments: dict[str, Any] = {"name": agent_name, "model_type": model_type}
-    cached_token = (cache.get("continuity_token") or "").strip()
-    cached_session = (cache.get("client_session_id") or "").strip()
-    if cached_token:
-        arguments["continuity_token"] = cached_token
-    elif cached_session:
-        arguments["client_session_id"] = cached_session
+    if force_new:
+        arguments["force_new"] = True
+    else:
+        cached_token = (cache.get("continuity_token") or "").strip()
+        cached_session = (cache.get("client_session_id") or "").strip()
+        if cached_token:
+            arguments["continuity_token"] = cached_token
+        elif cached_session:
+            arguments["client_session_id"] = cached_session
 
     raw = post_json(url, {"name": "onboard", "arguments": arguments}, timeout, auth_token)
     parsed = unwrap_tool_response(raw)
 
-    used_force_new = False
-    if not is_successful_onboard(parsed) and trajectory_required(parsed):
-        # Cache is stale or missing — identity exists server-side and refuses
-        # to hand it back without a signature. Fall back to a new identity.
-        retry_args = {"name": agent_name, "model_type": model_type, "force_new": True}
-        raw = post_json(url, {"name": "onboard", "arguments": retry_args}, timeout, auth_token)
-        parsed = unwrap_tool_response(raw)
-        used_force_new = True
-
     if not is_successful_onboard(parsed):
+        # Per 718ccd3: never auto-force_new. Surface the error so the operator
+        # can decide (run `/governance-start --force` or clear the cache).
+        # Clobbering trajectory with force_new silently substitutes identity.
+        recovery = parsed.get("recovery") or {}
         return {
-            "status": "onboard_failed",
+            "status": "trajectory_required" if trajectory_required(parsed) else "onboard_failed",
             "error": parsed.get("error", "onboard returned no uuid"),
-            "recovery_reason": (parsed.get("recovery") or {}).get("reason", ""),
-            "used_force_new": used_force_new,
+            "recovery_reason": recovery.get("reason", ""),
+            "recovery_hint": recovery.get("hint", ""),
         }
 
     # Build fresh cache payload — never preserve stale fields.
@@ -177,7 +180,6 @@ def run_onboard(
 
     return {
         "status": "ok",
-        "used_force_new": used_force_new,
         "uuid": new_cache["uuid"],
         "agent_id": new_cache["agent_id"],
         "client_session_id": new_cache["client_session_id"],
@@ -196,6 +198,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--name", required=True, help="Agent display name")
     parser.add_argument("--model-type", default="claude-code")
     parser.add_argument("--workspace", default=os.getcwd())
+    parser.add_argument("--force-new", action="store_true",
+                        help="Explicit opt-in to create a fresh identity (never automatic)")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     args = parser.parse_args(argv)
 
@@ -206,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         agent_name=args.name,
         model_type=args.model_type,
         workspace=workspace,
+        force_new=args.force_new,
         auth_token=auth_token,
         timeout=args.timeout,
     )
