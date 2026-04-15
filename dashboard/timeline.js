@@ -112,7 +112,17 @@
             var timeStr = DataProcessor.formatTimestamp(e.ts);
             var relative = formatRelativeTime(e.ts.getTime());
             var relStr = relative ? ' (' + relative + ')' : '';
-            var typeIcon = { checkin: '\u25CF', verdict: '\u25A0', discovery: '\u2605', dialectic: '\u25B6' }[e.type] || '\u25CB';
+            var typeIcon = {
+                checkin: '\u25CF',        // ●
+                verdict: '\u25A0',        // ■
+                discovery: '\u2605',      // ★
+                dialectic: '\u25B6',      // ▶
+                lifecycle: '\u2691',      // ⚑  — agent status changes
+                identity: '\u25C6',       // ◆  — identity/continuity events
+                knowledge: '\u270E',      // ✎  — KG writes, confidence clamps
+                circuit_breaker: '\u26A1',// ⚡ — circuit-breaker trip/reset
+                event: '\u25CB'           // ○ — unknown fallback
+            }[e.type] || '\u25CB';
             var agentStr = e.agent ? '<span class="tl-agent">' + escapeHtml(e.agent) + '</span>' : '';
             var verdictIcon = e.verdict && VERDICT_ICONS[e.verdict] ? VERDICT_ICONS[e.verdict] + ' ' : '';
             var verdictBadge = e.verdict ? '<span class="tl-verdict ' + (VERDICT_CLASSES[e.verdict] || '') + '">' + verdictIcon + escapeHtml(e.verdict) + '</span>' : '';
@@ -163,6 +173,75 @@
                 });
             });
         }
+    }
+
+    // Called from WebSocket handler for every non-eisv_update broadcaster event.
+    // Before this was added, lifecycle_*, identity_*, knowledge_*, and
+    // circuit_breaker_* events arrived over the wire and were silently dropped
+    // by the WS handler. This function classifies them into a timeline entry
+    // type + human-readable message + optional verdict so they render in the
+    // activity feed alongside check-ins.
+    function onGovernanceEvent(data) {
+        if (!data || !data.type) return;
+        if (data.type === 'eisv_update') return; // handled by onEISVUpdate
+
+        var agent = data.agent_label || data.agent_name ||
+            (data.agent_id ? String(data.agent_id).substring(0, 12) : 'system');
+        var ts = data.timestamp ? new Date(data.timestamp) : new Date();
+        var t = data.type;
+
+        var category = 'event';
+        var message = t.replace(/_/g, ' ');
+        var verdict = null;
+
+        if (t.indexOf('lifecycle_') === 0) {
+            category = 'lifecycle';
+            var phase = t.slice('lifecycle_'.length);
+            message = phase.replace(/_/g, ' ');
+            if (phase === 'paused' || phase === 'stuck_detected' ||
+                phase === 'silent_critical') {
+                verdict = 'pause';
+            } else if (phase === 'loop_detected') {
+                verdict = 'caution';
+            } else if (phase === 'resumed') {
+                verdict = 'proceed';
+            }
+            if (data.reason) message += ' — ' + data.reason;
+        } else if (t.indexOf('identity_') === 0) {
+            category = 'identity';
+            message = t.slice('identity_'.length).replace(/_/g, ' ');
+            if (t === 'identity_drift') verdict = 'caution';
+            if (data.detail) message += ' — ' + data.detail;
+        } else if (t.indexOf('knowledge_') === 0) {
+            category = 'knowledge';
+            if (t === 'knowledge_write') {
+                var summary = data.summary || '';
+                if (summary.length > 80) summary = summary.substring(0, 77) + '...';
+                message = 'wrote ' + (data.discovery_type || 'discovery') +
+                    (summary ? ': ' + summary : '');
+                if (data.tags && data.tags.length) {
+                    message += ' [' + data.tags.slice(0, 3).join(', ') + ']';
+                }
+            } else if (t === 'knowledge_confidence_clamped') {
+                message = 'confidence clamped' +
+                    (data.summary ? ': ' + data.summary : '');
+                verdict = 'caution';
+            }
+        } else if (t.indexOf('circuit_breaker_') === 0) {
+            category = 'circuit_breaker';
+            var action = t === 'circuit_breaker_trip' ? 'tripped' : 'reset';
+            message = 'breaker ' + action +
+                (data.reason ? ' — ' + data.reason : '');
+            verdict = action === 'tripped' ? 'pause' : 'proceed';
+        }
+
+        addTimelineEntry({
+            ts: ts,
+            type: category,
+            agent: agent,
+            message: message,
+            verdict: verdict
+        });
     }
 
     // Called from loadDiscoveries/loadDialecticSessions to seed recent items
@@ -229,6 +308,7 @@
         updateWSStatusLabel: updateWSStatusLabel,
         addTimelineEntry: addTimelineEntry,
         onEISVUpdate: onEISVUpdate,
+        onGovernanceEvent: onGovernanceEvent,
         addDiscoveryEvent: addDiscoveryEvent,
         addDialecticEvent: addDialecticEvent,
         clearTimeline: clearTimeline,

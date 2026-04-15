@@ -851,6 +851,11 @@
                     if (typeof TimelineModule !== 'undefined' && TimelineModule.onEISVUpdate) {
                         TimelineModule.onEISVUpdate(data);
                     }
+                } else if (data.type && typeof TimelineModule !== 'undefined'
+                           && TimelineModule.onGovernanceEvent) {
+                    // lifecycle_*, identity_*, knowledge_*, circuit_breaker_*
+                    // were silently dropped before this branch existed.
+                    TimelineModule.onGovernanceEvent(data);
                 }
             },
             function (status) {
