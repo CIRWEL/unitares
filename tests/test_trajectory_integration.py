@@ -349,6 +349,87 @@ class TestUpdateCurrentSignature:
             assert result["lineage_similarity"] < 0.6
 
 
+    @pytest.mark.asyncio
+    async def test_reseed_preserves_trust_tier_no_spurious_broadcast(self):
+        """Reseed path must not lose trust_tier, causing broadcast on every check-in.
+
+        Regression test: store_genesis_signature writes metadata without trust_tier,
+        then update_current_signature re-reads from DB losing the tier.  This made
+        old_tier=0 on every call, so the tier-change broadcast fired every time.
+        """
+        from src.trajectory_identity import update_current_signature, TrajectorySignature
+
+        current_sig = TrajectorySignature(
+            attractor={"center": [0.5, 0.5, 0.5, 0.5]},
+            beliefs={"values": [0.5, 0.5, 0.5]},
+            recovery={"tau_estimate": 10.0},
+            stability_score=0.6,
+            observation_count=30,
+            identity_confidence=0.8,
+        )
+
+        existing_trust_tier = {"tier": 1, "name": "emerging",
+                               "observation_count": 20, "identity_confidence": 0.6,
+                               "lineage_similarity": None, "reason": "test"}
+
+        # Metadata before the call: has genesis, trust_tier at 1
+        pre_metadata = {
+            "trajectory_genesis": {
+                "attractor": {"center": [0.4, 0.4, 0.4, 0.4]},
+                "beliefs": {"values": [0.4, 0.4, 0.4]},
+                "recovery": {"tau_estimate": 8.0},
+                "stability_score": 0.4,
+                "observation_count": 10,
+                "identity_confidence": 0.4,
+            },
+            "trust_tier": existing_trust_tier,
+        }
+
+        # After reseed, DB returns metadata WITHOUT trust_tier (the bug scenario)
+        post_reseed_metadata = {
+            "trajectory_genesis": current_sig.to_dict(),
+            "trajectory_genesis_at": "2026-04-15T00:00:00+00:00",
+            # trust_tier is MISSING — this is what store_genesis_signature wrote
+        }
+
+        call_count = [0]
+
+        async def get_identity_side_effect(agent_id):
+            call_count[0] += 1
+            mock = MagicMock()
+            if call_count[0] == 1:
+                mock.metadata = dict(pre_metadata)  # first read: has trust_tier
+            else:
+                mock.metadata = dict(post_reseed_metadata)  # after reseed: no trust_tier
+            return mock
+
+        with patch('src.db.get_db') as mock_db, \
+             patch('src.trajectory_identity.store_genesis_signature', new_callable=AsyncMock) as mock_store, \
+             patch('src.broadcaster.broadcaster_instance') as mock_bc:
+
+            mock_db_instance = AsyncMock()
+            mock_db_instance.get_identity = AsyncMock(side_effect=get_identity_side_effect)
+            mock_db_instance.update_identity_metadata = AsyncMock()
+            mock_db.return_value = mock_db_instance
+
+            mock_store.return_value = True  # reseed happens
+
+            result = await update_current_signature("test-uuid", current_sig)
+
+            assert result.get("genesis_reseeded") is True
+
+            # The trust tier should still be "emerging" (tier 1) — compute_trust_tier
+            # may recompute it but the OLD tier should also be 1, so no broadcast.
+            # The key assertion: broadcast_event should NOT have been called with
+            # identity_assurance_change (tier didn't actually change from 1).
+            for call in mock_bc.broadcast_event.call_args_list:
+                if call.args and call.args[0] == "identity_assurance_change":
+                    payload = call.kwargs.get("payload", {})
+                    # If it did fire, old and new must differ
+                    assert payload.get("old_tier") != payload.get("new_tier"), \
+                        f"Spurious broadcast: old_tier={payload.get('old_tier')} == new_tier={payload.get('new_tier')}"
+
+
 class TestGetTrajectoryStatus:
     """Tests for get_trajectory_status function."""
 

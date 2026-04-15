@@ -506,15 +506,20 @@ async def update_current_signature(
                     result["lineage_similarity"] = 1.0
                     result["is_anomaly"] = False
                     result.pop("warning", None)
-                    # Refresh metadata after reseed, preserving trajectory_current
-                    # (store_genesis_signature only writes genesis, not current)
-                    current_sig = metadata.get("trajectory_current")
-                    updated_at = metadata.get("trajectory_updated_at")
+                    # Refresh metadata after reseed, preserving fields that
+                    # store_genesis_signature doesn't know about (trajectory_current,
+                    # trust_tier).  Without this, the re-read loses trust_tier and
+                    # the tier-change broadcast fires on every check-in.
+                    prev_current = metadata.get("trajectory_current")
+                    prev_updated_at = metadata.get("trajectory_updated_at")
+                    prev_trust_tier = metadata.get("trust_tier")
                     identity = await db.get_identity(agent_id)
                     metadata = identity.metadata or {}
-                    if current_sig:
-                        metadata["trajectory_current"] = current_sig
-                        metadata["trajectory_updated_at"] = updated_at
+                    if prev_current:
+                        metadata["trajectory_current"] = prev_current
+                        metadata["trajectory_updated_at"] = prev_updated_at
+                    if prev_trust_tier is not None:
+                        metadata["trust_tier"] = prev_trust_tier
 
             # Drift alert: emit audit event + broadcast if anomaly persists after reseed
             if result.get("is_anomaly"):
