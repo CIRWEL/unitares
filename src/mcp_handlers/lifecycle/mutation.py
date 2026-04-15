@@ -201,22 +201,17 @@ async def handle_archive_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
     reason = arguments.get("reason", "Manual archive")
     keep_in_memory = arguments.get("keep_in_memory", False)
 
-    meta.status = "archived"
-    meta.archived_at = datetime.now(timezone.utc).isoformat()
-    meta.add_lifecycle_event("archived", reason)
+    # Persist-first: write to Postgres before mutating in-memory state
+    from .helpers import _archive_one_agent
+    monitors = None if keep_in_memory else mcp_server.monitors
+    ok = await _archive_one_agent(agent_uuid, meta, reason, monitors=monitors)
+    if not ok:
+        return [error_response(
+            f"Failed to persist archival for '{agent_id}' — database write failed",
+            error_code="ARCHIVE_PERSIST_FAILED",
+        )]
 
-    # Optionally unload from memory
-    if not keep_in_memory and agent_id in mcp_server.monitors:
-        del mcp_server.monitors[agent_id]
-
-    # PostgreSQL: Archive agent (single source of truth)
-    try:
-        await agent_storage.archive_agent(agent_id)
-        logger.debug(f"PostgreSQL: Archived agent {agent_id}")
-
-        await _invalidate_agent_cache(agent_id)
-    except Exception as e:
-        logger.warning(f"PostgreSQL archive_agent failed: {e}", exc_info=True)
+    await _invalidate_agent_cache(agent_id)
 
     # Audit trail for archive operation
     try:

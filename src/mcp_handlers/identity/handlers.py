@@ -1318,7 +1318,14 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     # Fire-and-forget: auto-archive ephemeral agents (0 updates, older than 2 hours)
     import asyncio
-    asyncio.create_task(_auto_archive_ephemeral_agents())
+    from src.agent_lifecycle import auto_archive_orphan_agents
+    asyncio.create_task(auto_archive_orphan_agents(
+        zero_update_hours=2.0,
+        low_update_hours=2.0,
+        unlabeled_hours=4.0,
+        ephemeral_hours=2.0,
+        ephemeral_max_updates=0,
+    ))
 
     # Use lite_response to skip redundant signature
     arguments["lite_response"] = True
@@ -1430,43 +1437,6 @@ async def handle_get_trajectory_status(arguments: Dict[str, Any]) -> Sequence[Te
     except Exception as e:
         logger.error(f"[TRAJECTORY] Status check failed: {e}")
         return error_response(f"Trajectory status check failed: {e}")
-
-async def _auto_archive_ephemeral_agents():
-    """Fire-and-forget: archive agents with 0 updates older than 2 hours."""
-    try:
-        cutoff = datetime.now() - timedelta(hours=2)
-        archived = 0
-        db = get_db()
-        for agent_id, meta in list(mcp_server.agent_metadata.items()):
-            if meta.status != "active":
-                continue
-            if meta.total_updates > 0:
-                continue
-            # Check age via last_update or created_at
-            last = meta.last_update
-            if not last:
-                continue
-            try:
-                last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
-                # Strip tzinfo to compare consistently with naive local timestamps
-                if last_dt.tzinfo is not None:
-                    last_dt = last_dt.replace(tzinfo=None)
-                if last_dt >= cutoff:
-                    continue
-            except Exception:
-                continue
-            # Archive it
-            try:
-                await db.update_agent_fields(agent_id, status="archived")
-                meta.status = "archived"
-                archived += 1
-            except Exception:
-                pass
-        if archived:
-            logger.info(f"[AUTO_ARCHIVE] Archived {archived} ephemeral agent(s) (0 updates, >2h old)")
-    except Exception as e:
-        logger.debug(f"[AUTO_ARCHIVE] Cleanup failed (non-fatal): {e}")
-
 
 async def _create_spawned_edge_bg(
     child_id: str, parent_id: str, reason: str | None

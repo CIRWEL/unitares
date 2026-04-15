@@ -293,7 +293,8 @@ def patch_agent_storage():
     shared = MagicMock()
     with patch("src.mcp_handlers.lifecycle.handlers.agent_storage", shared), \
          patch("src.mcp_handlers.lifecycle.mutation.agent_storage", shared), \
-         patch("src.mcp_handlers.lifecycle.operations.agent_storage", shared):
+         patch("src.mcp_handlers.lifecycle.operations.agent_storage", shared), \
+         patch("src.mcp_handlers.lifecycle.helpers.agent_storage", shared):
         yield shared
 
 
