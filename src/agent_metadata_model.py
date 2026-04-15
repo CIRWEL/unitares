@@ -34,21 +34,45 @@ from src.logging_utils import get_logger
 logger = get_logger(__name__)
 
 
-def _emit_lifecycle_event(agent_id: str, event: str, reason: str | None, timestamp: str):
+def _emit_lifecycle_event(
+    agent_id: str,
+    event: str,
+    reason: str | None,
+    timestamp: str,
+    label: str = "",
+):
     """Broadcast a lifecycle event via the event bus. Fire-and-forget."""
     try:
         import asyncio
         from src.broadcaster import broadcaster_instance
 
+        # Test-agent lifecycle is housekeeping, not governance-relevant.
+        # Still audit, but don't broadcast (avoids flooding Discord).
+        _reason = reason or ""
+        _label = label.lower()
+        _is_test = (
+            _label.startswith("cli-pytest")
+            or _label.startswith("test_")
+            or _label.startswith("test-")
+            or _label.startswith("demo_")
+            or "pytest" in _label
+        )
+        skip_broadcast = (
+            _is_test
+            or (event == "archived"
+                and ("Auto-archived" in _reason or "Orphan cleanup" in _reason))
+        )
+
         async def _emit():
-            try:
-                await broadcaster_instance.broadcast_event(
-                    event_type=f"lifecycle_{event}",
-                    agent_id=agent_id,
-                    payload={"reason": reason},
-                )
-            except Exception as e:
-                logger.debug(f"Lifecycle broadcast failed: {e}")
+            if not skip_broadcast:
+                try:
+                    await broadcaster_instance.broadcast_event(
+                        event_type=f"lifecycle_{event}",
+                        agent_id=agent_id,
+                        payload={"reason": reason},
+                    )
+                except Exception as e:
+                    logger.debug(f"Lifecycle broadcast failed: {e}")
 
             # Also write to audit DB (best-effort)
             try:
@@ -173,7 +197,8 @@ class AgentMetadata:
         if len(self.lifecycle_events) > self.MAX_LIFECYCLE_EVENTS:
             self.lifecycle_events = self.lifecycle_events[-self.MAX_LIFECYCLE_EVENTS:]
         # Fire-and-forget broadcast + audit for sentinel consumption
-        _emit_lifecycle_event(self.agent_id, event, reason, ts)
+        label = getattr(self, "label", None) or ""
+        _emit_lifecycle_event(self.agent_id, event, reason, ts, label=label)
 
     def validate_consistency(self) -> tuple[bool, list[str]]:
         """
