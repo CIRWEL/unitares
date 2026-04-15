@@ -411,7 +411,10 @@ def call_ollama_direct(prompt: str, model: str, timeout: int) -> dict[str, Any]:
 def call_model(prompt: str, model: str = DEFAULT_MODEL, timeout: int = DEFAULT_TIMEOUT) -> dict[str, Any]:
     try:
         return call_model_via_governance(prompt, model, timeout)
-    except (urllib.error.URLError, RuntimeError, TimeoutError, json.JSONDecodeError) as e:
+    except (urllib.error.URLError, RuntimeError, TimeoutError, json.JSONDecodeError, ImportError) as e:
+        # ImportError covers the case where unitares_sdk is not installed in the
+        # Python that launched the hook (e.g. Homebrew python3 vs system framework
+        # python). Without this the silent-fail path skips the Ollama fallback.
         log(f"governance call_model failed ({e}); falling back to ollama direct", "warning")
         return call_ollama_direct(prompt, model, timeout)
 

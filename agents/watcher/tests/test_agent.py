@@ -1423,6 +1423,31 @@ def test_call_model_via_governance_accepts_result_without_success_field(
     assert result["text"] == "legacy shape"
 
 
+def test_call_model_falls_back_to_ollama_when_sdk_import_fails(
+    watcher_module, monkeypatch
+):
+    """Regression: when the Python launching the hook lacks unitares_sdk
+    (e.g. Homebrew python3 vs system framework python), the governance
+    route raises ImportError. call_model must catch it and fall back to
+    Ollama direct instead of returning [] silently."""
+
+    def _raise_import_error(*args, **kwargs):
+        raise ImportError("No module named 'unitares_sdk'")
+
+    def _fake_ollama(prompt, model, timeout):
+        return {"text": "ok", "model_used": model, "tokens_used": 42}
+
+    monkeypatch.setattr(
+        watcher_module, "call_model_via_governance", _raise_import_error
+    )
+    monkeypatch.setattr(watcher_module, "call_ollama_direct", _fake_ollama)
+
+    result = watcher_module.call_model("test prompt", "test-model", timeout=5)
+
+    assert result["text"] == "ok"
+    assert result["tokens_used"] == 42
+
+
 def test_surface_pending_second_chime_picks_up_previously_hidden_mediums(
     watcher_module, capsys
 ):
