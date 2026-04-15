@@ -300,11 +300,10 @@ class GovernanceEventDetector:
                             "timestamp": now
                         })
 
-        # Trajectory adjustment (always report if non-zero, as it's contextually important)
+        # Trajectory adjustment — only on meaningful shifts, not per-tick noise
         if risk_adjustment != 0:
-            # Only report if this is a new adjustment or significantly different
             prev_adj = prev.get("risk_adjustment", 0) if prev else 0
-            if abs(risk_adjustment - prev_adj) > 0.01:  # Changed by more than 1%
+            if abs(risk_adjustment - prev_adj) > 0.05:  # Changed by more than 5%
                 sign = "+" if risk_adjustment > 0 else ""
                 severity = "warning" if risk_adjustment > 0.1 else "info"
                 events.append({
