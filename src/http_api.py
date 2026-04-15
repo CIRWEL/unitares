@@ -868,6 +868,60 @@ async def http_events(request):
         }, status_code=500)
 
 
+# Allowed severity values for externally posted findings
+_FINDING_SEVERITIES = frozenset({"info", "low", "medium", "warning", "high", "critical"})
+# Only accept *_finding event types via this endpoint (prevents spoofing
+# reserved dashboard event types like verdict_change / risk_threshold)
+_FINDING_TYPE_SUFFIX = "_finding"
+# Required top-level fields on the posted JSON
+_FINDING_REQUIRED_FIELDS = ("type", "severity", "message", "agent_id", "agent_name", "fingerprint")
+
+
+async def http_record_finding(request):
+    """POST /api/findings — ingest an external finding into the event ring buffer."""
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    if not _check_http_auth(request, http_api_token=http_api_token):
+        return _http_unauthorized()
+    try:
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse({"success": False, "error": "Invalid JSON"}, status_code=400)
+
+        if not isinstance(payload, dict):
+            return JSONResponse({"success": False, "error": "Body must be a JSON object"}, status_code=400)
+
+        missing = [f for f in _FINDING_REQUIRED_FIELDS if not payload.get(f)]
+        if missing:
+            return JSONResponse(
+                {"success": False, "error": f"Missing required fields: {missing}"},
+                status_code=400,
+            )
+
+        if not str(payload["type"]).endswith(_FINDING_TYPE_SUFFIX):
+            return JSONResponse(
+                {"success": False, "error": f"type must end in {_FINDING_TYPE_SUFFIX}"},
+                status_code=400,
+            )
+
+        if payload["severity"] not in _FINDING_SEVERITIES:
+            return JSONResponse(
+                {"success": False, "error": f"severity must be one of {sorted(_FINDING_SEVERITIES)}"},
+                status_code=400,
+            )
+
+        from src.event_detector import event_detector
+        stored = event_detector.record_event(payload)
+        return JSONResponse({
+            "success": True,
+            "deduped": stored is None,
+            "event": stored,
+        })
+    except Exception as e:
+        logger.error(f"Error recording finding: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
 # Incident history endpoint (anomalies + stuck agents from audit log)
 async def http_incidents(request):
     """Return historical anomaly and stuck-agent incidents from the audit trail."""
@@ -1400,6 +1454,7 @@ def register_http_routes(
     app.routes.append(Route("/metrics", http_metrics, methods=["GET"]))
     app.routes.append(Route("/v1/eisv/latest", http_eisv_latest, methods=["GET"]))
     app.routes.append(Route("/api/events", http_events, methods=["GET"]))
+    app.routes.append(Route("/api/findings", http_record_finding, methods=["POST"]))
     app.routes.append(Route("/api/activity", http_activity, methods=["GET"]))
     app.routes.append(Route("/api/incidents", http_incidents, methods=["GET"]))
     app.routes.append(Route("/v1/residents", http_residents, methods=["GET"]))
