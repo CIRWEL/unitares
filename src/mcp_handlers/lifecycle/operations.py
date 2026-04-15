@@ -25,7 +25,7 @@ from ..support.coerce import safe_float, resolve_agent_uuid
 from src.logging_utils import get_logger
 from config.governance_config import GovernanceConfig
 
-from .helpers import _invalidate_agent_cache, _archive_one_agent, _is_test_agent
+from .helpers import _invalidate_agent_cache, _is_test_agent
 
 logger = get_logger(__name__)
 
