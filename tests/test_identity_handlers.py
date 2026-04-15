@@ -1342,6 +1342,82 @@ class TestHandleIdentityAdapter:
 
         assert data["success"] is True
 
+    @pytest.mark.asyncio
+    async def test_identity_persists_newly_created_agent(self, patch_identity_deps, mock_db, mock_redis):
+        """
+        When identity() creates a new agent, it MUST persist it before returning.
+
+        Otherwise the continuity_token we emit references a UUID that only
+        exists in-memory, and PATH 2.8 rebind fails with `agent not active`
+        the next time the caller tries to resume. That failure mode produced
+        the ghost identity proliferation that earlier fixes (718ccd3,
+        d4d4370) were still papering over.
+
+        Regression test for the "identity() is lazy" bug caught in dogfood
+        on 2026-04-14.
+        """
+        from src.mcp_handlers.identity import handlers as identity_handlers
+
+        # Fresh session — no prior identity. resolve_session_identity will
+        # reach PATH 3 and mint a new UUID in-memory.
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.get_identity.return_value = None
+        mock_db.get_agent.return_value = None
+
+        # Spy on ensure_agent_persisted so we can assert the handler calls it.
+        spy = AsyncMock(return_value=True)
+        with patch.object(identity_handlers, "ensure_agent_persisted", spy):
+            result = await identity_handlers.handle_identity_adapter({
+                "client_session_id": "test-fresh-identity-persist",
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["identity_status"] == "created"
+        # The emitted token must reference an agent that was persisted.
+        assert spy.await_count == 1, "ensure_agent_persisted must be called once for a fresh identity"
+        call_args = spy.await_args
+        persisted_uuid = call_args.args[0] if call_args.args else call_args.kwargs.get("agent_uuid")
+        assert persisted_uuid == data["uuid"], (
+            "persistence must happen for the same UUID returned to the caller — "
+            "otherwise the continuity_token is a promise we can't keep"
+        )
+
+    @pytest.mark.asyncio
+    async def test_identity_does_not_re_persist_existing_agent(self, patch_identity_deps, mock_db, mock_redis):
+        """
+        identity() for an already-persisted agent must not redundantly call
+        ensure_agent_persisted — the agent is already in PG, and re-upsert
+        would churn last_update timestamps without cause.
+        """
+        from src.mcp_handlers.identity import handlers as identity_handlers
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": test_uuid,
+            "display_agent_id": "Preexisting",
+            "label": "Preexisting",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1",
+            metadata={"public_agent_id": "Preexisting"},
+        )
+        mock_db.get_agent_label.return_value = "Preexisting"
+        mock_db.get_agent_status = AsyncMock(return_value="active")
+
+        spy = AsyncMock(return_value=False)
+        with patch.object(identity_handlers, "ensure_agent_persisted", spy):
+            result = await identity_handlers.handle_identity_adapter({
+                "client_session_id": "preexisting-session",
+                "resume": True,
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["uuid"] == test_uuid
+        assert spy.await_count == 0, "must not re-persist an already-resumed identity"
+
 
 # ============================================================================
 # handle_onboard_v2 - full flow (lines 1480-1857)

@@ -572,6 +572,44 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     except Exception as e:
         logger.debug(f"Could not update context in identity: {e}")
 
+    # Persist newly-created identities before minting a continuity token.
+    #
+    # Previously identity() was "lazy": new agents only existed in-memory until
+    # the caller also passed name=. But we still issued a continuity_token
+    # referencing the in-memory UUID. The token looked durable, but any later
+    # rebind via PATH 2.8 hit `agent not active` because the UUID was never
+    # written to core.agents. Callers were left holding dead tokens, which
+    # manifested as ghost identity proliferation (cf. d4d4370, 718ccd3).
+    #
+    # Fix: when identity() creates a fresh agent (result.created is True),
+    # write it to PostgreSQL before returning so the token's promise is real.
+    if result.get("created") and not result.get("persisted"):
+        try:
+            # predecessor_uuid may be set by resolve_session_identity when it
+            # decides this identity is a successor to a prior agent in the
+            # same session — carry it through so parent_agent_id/spawn_reason
+            # get recorded on the new row.
+            _parent = result.get("predecessor_uuid") or result.get("parent_agent_id")
+            _spawn = result.get("spawn_reason") or ("new_session" if _parent else None)
+            newly_persisted = await ensure_agent_persisted(
+                agent_uuid,
+                session_key,
+                parent_agent_id=_parent,
+                spawn_reason=_spawn,
+            )
+            if newly_persisted:
+                logger.info(
+                    f"[IDENTITY] Persisted fresh identity {agent_uuid[:8]}... "
+                    f"(parent={_parent[:8] + '...' if _parent else 'none'})"
+                )
+                result["persisted"] = True
+        except Exception as e:
+            # Persistence failure is visible but not fatal — caller still gets
+            # the identity in the response; the token just won't rebind later.
+            logger.warning(
+                f"[IDENTITY] Failed to persist fresh identity {agent_uuid[:8]}...: {e}"
+            )
+
     # Get public/structured identity handles from runtime metadata.
     public_agent_id = result.get("public_agent_id") or agent_id
     structured_id = None
