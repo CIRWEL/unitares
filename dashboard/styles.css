@@ -4923,6 +4923,42 @@ body {
     font-weight: 600;
 }
 
+/* Event-driven agents (e.g. Watcher) — don't check in on a schedule, so a
+   silence reading is meaningless. Show a neutral label instead. */
+.resident-pill.status-event-driven {
+    border-color: rgba(157, 78, 221, 0.3);
+}
+.resident-pill-dot.status-event-driven {
+    background: var(--accent-purple);
+}
+.resident-pill-eventdriven {
+    color: var(--accent-purple);
+    font-size: 0.85em;
+    letter-spacing: 0.04em;
+    opacity: 0.85;
+}
+
+/* Recent-alerts count badge — shows writes.length from /v1/residents. */
+.resident-pill-alerts {
+    display: inline-block;
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--accent-cyan);
+    color: #0a0a0f;
+    font-size: 0.75em;
+    font-weight: 700;
+    text-align: center;
+    cursor: help;
+}
+.resident-pill-alerts.sev-high {
+    background: var(--accent-yellow);
+}
+.resident-pill-alerts.sev-critical {
+    background: var(--accent-orange);
+    color: #ffffff;
+}
+
 
 /* ===========================================================================
  * Violation class badges on timeline entries

@@ -79,8 +79,19 @@
     // Pill rendering (compact status strip — see renderCard)
     // ---------------------------------------------------------------------
 
+    // An agent with a very long silence threshold (>12h) and no check-in
+    // history is operating as event-driven — it never calls process_agent_update
+    // by design. Treating it as "unknown" makes operators worry; surface it
+    // distinctly instead. The threshold boundary is a heuristic, not a contract.
+    function isEventDriven(resident) {
+        if (resident.last_checkin_at) return false;
+        var th = resident.silence_threshold_seconds;
+        return th != null && th >= 12 * 3600;
+    }
+
     function renderCard(resident, nowMs) {
-        var status = statusForCard(resident, nowMs);
+        var eventDriven = isEventDriven(resident);
+        var status = eventDriven ? 'event-driven' : statusForCard(resident, nowMs);
 
         // Compute live silence (since items re-render between server polls).
         var liveSilence = resident.silence_seconds;
@@ -91,29 +102,53 @@
         }
 
         // The pill is the unique value-add: name + status dot + live silence
-        // + a warning indicator when past threshold. EISV, verdict, writes,
-        // and trajectories are all shown in the Agents + Activity sections
-        // below, so we deliberately don't repeat them here.
-        var silenceTxt = fmtSilence(liveSilence);
-        var overThreshold = liveSilence != null &&
-            resident.silence_threshold_seconds != null &&
-            liveSilence > resident.silence_threshold_seconds;
-        var silenceHtml = '<span class="resident-pill-silence' +
-            (overThreshold ? ' over-threshold' : '') +
-            '" title="time since last check-in (threshold: ' +
-            escapeHtml(fmtSilence(resident.silence_threshold_seconds)) + ')">' +
-            escapeHtml(silenceTxt) + '</span>';
+        // + optional recent-alerts badge + warning when past threshold. EISV,
+        // verdict, full write detail live in the Agents + Activity sections.
+        var rightHtml;
+        if (eventDriven) {
+            rightHtml = '<span class="resident-pill-eventdriven" title="Event-driven — does not check in to governance on a schedule. See Activity for findings.">event-driven</span>';
+        } else {
+            var silenceTxt = fmtSilence(liveSilence);
+            var overThreshold = liveSilence != null &&
+                resident.silence_threshold_seconds != null &&
+                liveSilence > resident.silence_threshold_seconds;
+            rightHtml = '<span class="resident-pill-silence' +
+                (overThreshold ? ' over-threshold' : '') +
+                '" title="time since last check-in (threshold: ' +
+                escapeHtml(fmtSilence(resident.silence_threshold_seconds)) + ')">' +
+                escapeHtml(silenceTxt) + '</span>';
+        }
 
-        var title = resident.label + ' · ' + status +
-            (liveSilence != null ? ' · silent ' + silenceTxt : '') +
-            (resident.total_updates ? ' · ' + resident.total_updates + ' check-ins' : '');
+        // Recent-alerts count — the residents endpoint returns up to 5 recent
+        // writes per agent. Surface the count so operators can see at a glance
+        // whether a resident is actively writing to the KG.
+        var writes = resident.recent_writes || [];
+        var alertsHtml = '';
+        if (writes.length > 0) {
+            // Find the most severe among recent writes to pick a colour.
+            var hasCritical = writes.some(function (w) { return w.severity === 'critical'; });
+            var hasHigh = writes.some(function (w) { return w.severity === 'high'; });
+            var sevClass = hasCritical ? 'sev-critical' : hasHigh ? 'sev-high' : 'sev-normal';
+            var preview = writes.slice(0, 3).map(function (w) {
+                return (w.type || 'note') + ': ' + (w.summary || '').slice(0, 60);
+            }).join('\n');
+            alertsHtml = '<span class="resident-pill-alerts ' + sevClass + '"' +
+                ' title="' + escapeHtml('recent KG writes:\n' + preview) + '">' +
+                writes.length + '</span>';
+        }
+
+        var title = resident.label + ' · ' + (eventDriven ? 'event-driven' : status) +
+            (!eventDriven && liveSilence != null ? ' · silent ' + fmtSilence(liveSilence) : '') +
+            (resident.total_updates ? ' · ' + resident.total_updates + ' check-ins' : '') +
+            (writes.length ? ' · ' + writes.length + ' recent writes' : '');
 
         return '<span class="resident-pill status-' + status + '"' +
             ' data-agent="' + escapeHtml(resident.label) + '"' +
             ' title="' + escapeHtml(title) + '">' +
             '<span class="resident-pill-dot status-' + status + '"></span>' +
             '<span class="resident-pill-name">' + escapeHtml(resident.label) + '</span>' +
-            silenceHtml +
+            alertsHtml +
+            rightHtml +
         '</span>';
     }
 
