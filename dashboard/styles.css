@@ -5060,3 +5060,29 @@ body {
     font-style: italic;
     padding: 4px 6px;
 }
+
+/* ===========================================================================
+ * Violation class badges on timeline entries
+ * ===========================================================================*/
+
+.tl-class {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin: 0 4px;
+    border: 1px solid currentColor;
+    letter-spacing: 0.05em;
+    vertical-align: middle;
+    cursor: help;
+    text-transform: uppercase;
+}
+/* Class colours — semantic per-class hue. Subdued so they coexist with
+   verdict pills and don't dominate the timeline visually. */
+.tl-class-CON { color: #c4a2ff; }   /* Continuity      — purple */
+.tl-class-INT { color: #5fd3f5; }   /* Integrity       — cyan */
+.tl-class-ENT { color: #ff9970; }   /* Entropy         — warm orange */
+.tl-class-REC { color: #ff6e6e; }   /* Recoverability  — red */
+.tl-class-BEH { color: #ffe082; }   /* Behavioral      — amber */
+.tl-class-VOI { color: #9aa0af; }   /* Void Compliance — neutral */

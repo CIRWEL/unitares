@@ -16,8 +16,63 @@
     var formatRelativeTime = typeof DataProcessor !== 'undefined' ? DataProcessor.formatRelativeTime : function () { return ''; };
 
     var MAX_TIMELINE_ITEMS = 100;
-    var timelineEntries = []; // {ts, type, agent, message, verdict, className}
+    var timelineEntries = []; // {ts, type, agent, message, verdict, className, violationClass}
     var currentFilter = 'important';
+
+    // Violation taxonomy reverse-lookup index — populated from /v1/taxonomy.
+    // Maps surface id (Watcher pattern, Sentinel finding type, broadcast event
+    // type) → class id (CON / INT / ENT / REC / BEH / VOI). Empty until the
+    // first fetch resolves; entries without a mapping just don't show a badge.
+    var taxonomyReverse = {
+        watcher_patterns: {},
+        sentinel_findings: {},
+        broadcast_events: {}
+    };
+    var taxonomyClassMeta = {}; // id -> { id, name, description }
+    var taxonomyLoaded = false;
+
+    function classFor(kind, surfaceId) {
+        if (!surfaceId) return null;
+        var bucket = taxonomyReverse[kind];
+        return (bucket && bucket[surfaceId]) || null;
+    }
+
+    function classBadgeHtml(classId) {
+        if (!classId) return '';
+        var meta = taxonomyClassMeta[classId];
+        var title = meta ? (meta.name + ' — ' + (meta.description || '').replace(/\s+/g, ' ').trim()) : classId;
+        return '<span class="tl-class tl-class-' + classId + '" title="' + escapeHtml(title) + '">' + escapeHtml(classId) + '</span>';
+    }
+
+    function getAuthToken() {
+        try {
+            return localStorage.getItem('unitares_api_token') ||
+                new URLSearchParams(window.location.search).get('token');
+        } catch (e) { return null; }
+    }
+
+    async function loadTaxonomy() {
+        try {
+            var token = getAuthToken();
+            var headers = {};
+            if (token) headers['Authorization'] = 'Bearer ' + token;
+            var resp = await fetch('/v1/taxonomy', {
+                credentials: 'same-origin',
+                headers: headers
+            });
+            if (!resp.ok) return;
+            var data = await resp.json();
+            if (!data || data.success === false) return;
+            taxonomyReverse = data.reverse || taxonomyReverse;
+            (data.classes || []).forEach(function (c) {
+                taxonomyClassMeta[c.id] = c;
+            });
+            taxonomyLoaded = true;
+        } catch (e) {
+            // non-fatal — class badges just won't render until next attempt
+        }
+    }
+    loadTaxonomy();
 
     // ========================================================================
     // Skeleton loader initialization
@@ -99,6 +154,9 @@
             filtered = timelineEntries;
         } else if (currentFilter === 'important') {
             filtered = timelineEntries.filter(isImportantEntry);
+        } else if (currentFilter.indexOf('class:') === 0) {
+            var wantedClass = currentFilter.slice('class:'.length);
+            filtered = timelineEntries.filter(function (e) { return e.violationClass === wantedClass; });
         } else {
             filtered = timelineEntries.filter(function (e) { return e.type === currentFilter; });
         }
@@ -127,10 +185,11 @@
             var verdictIcon = e.verdict && VERDICT_ICONS[e.verdict] ? VERDICT_ICONS[e.verdict] + ' ' : '';
             var verdictBadge = e.verdict ? '<span class="tl-verdict ' + (VERDICT_CLASSES[e.verdict] || '') + '">' + verdictIcon + escapeHtml(e.verdict) + '</span>' : '';
 
-            return '<div class="tl-entry ' + (e.className || '') + '" data-type="' + (e.type || '') + '">' +
+            var classBadge = classBadgeHtml(e.violationClass);
+            return '<div class="tl-entry ' + (e.className || '') + '" data-type="' + (e.type || '') + '" data-class="' + (e.violationClass || '') + '">' +
                 '<span class="tl-icon">' + typeIcon + '</span>' +
                 '<span class="tl-time" title="' + escapeHtml(timeStr + relStr) + '">' + timeStr + '</span>' +
-                agentStr + verdictBadge +
+                agentStr + verdictBadge + classBadge +
                 '<span class="tl-message">' + escapeHtml(e.message || '') + '</span>' +
             '</div>';
         }).join('');
@@ -194,6 +253,8 @@
         var message = t.replace(/_/g, ' ');
         var verdict = null;
 
+        var violationClass = classFor('broadcast_events', t);
+
         if (t.indexOf('lifecycle_') === 0) {
             category = 'lifecycle';
             var phase = t.slice('lifecycle_'.length);
@@ -235,12 +296,20 @@
             verdict = action === 'tripped' ? 'pause' : 'proceed';
         }
 
+        // For knowledge_write events, prefer the explicit violation_class on
+        // the payload (Watcher emits it now per agents/common/taxonomy.py).
+        // Falls back to event-type lookup for other classes.
+        if (t === 'knowledge_write' && data.violation_class) {
+            violationClass = data.violation_class;
+        }
+
         addTimelineEntry({
             ts: ts,
             type: category,
             agent: agent,
             message: message,
-            verdict: verdict
+            verdict: verdict,
+            violationClass: violationClass
         });
     }
 

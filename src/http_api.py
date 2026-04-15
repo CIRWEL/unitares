@@ -1213,6 +1213,75 @@ async def http_residents(request):
 
 
 # ---------------------------------------------------------------------------
+# Violation taxonomy endpoint — surface vocabulary for dashboards/bridges
+# ---------------------------------------------------------------------------
+
+
+async def http_taxonomy(request):
+    """Return the violation taxonomy + reverse-lookup index as JSON.
+
+    Lets the dashboard (and any other consumer) classify Watcher findings,
+    Sentinel findings, and broadcast events into violation classes
+    (CON / INT / ENT / REC / BEH / VOI) without having to ship its own copy
+    of the YAML.
+
+    Response shape::
+
+        {
+            "success": true,
+            "version": 1,
+            "classes": [{ "id": "INT", "name": "Integrity", ... }, ...],
+            "reverse": {
+                "watcher_patterns": {"P010": "INT", "P011": "INT", ...},
+                "sentinel_findings": {"coordinated_degradation": "CON", ...},
+                "broadcast_events": {"identity_drift": "CON", ...}
+            }
+        }
+
+    Best-effort: if the taxonomy file is missing or malformed, returns a
+    success=false response with an empty taxonomy rather than 500. The
+    dashboard renders fine without classification — class badges just
+    don't appear.
+    """
+    if not _check_http_auth(request, http_api_token=os.getenv("UNITARES_HTTP_API_TOKEN")):
+        return _http_unauthorized()
+
+    try:
+        from agents.common import taxonomy as taxonomy_mod
+        data = taxonomy_mod.load_taxonomy()
+        # Build reverse index (taxonomy.py keeps it private; reconstruct here
+        # so we don't depend on its internal _get_reverse implementation).
+        reverse: dict = {
+            "watcher_patterns": {},
+            "sentinel_findings": {},
+            "broadcast_events": {},
+        }
+        for cls in data.get("classes", []):
+            cid = cls["id"]
+            for kind in reverse:
+                for sid in cls.get("surfaces", {}).get(kind, []):
+                    reverse[kind][sid] = cid
+        return JSONResponse({
+            "success": True,
+            "version": data.get("version"),
+            "classes": data.get("classes", []),
+            "reverse": reverse,
+        })
+    except Exception as exc:
+        logger.warning("http_taxonomy failed: %s", exc)
+        return JSONResponse({
+            "success": False,
+            "error": str(exc),
+            "classes": [],
+            "reverse": {
+                "watcher_patterns": {},
+                "sentinel_findings": {},
+                "broadcast_events": {},
+            },
+        })
+
+
+# ---------------------------------------------------------------------------
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
 
@@ -1334,5 +1403,6 @@ def register_http_routes(
     app.routes.append(Route("/api/activity", http_activity, methods=["GET"]))
     app.routes.append(Route("/api/incidents", http_incidents, methods=["GET"]))
     app.routes.append(Route("/v1/residents", http_residents, methods=["GET"]))
+    app.routes.append(Route("/v1/taxonomy", http_taxonomy, methods=["GET"]))
     app.routes.append(WebSocketRoute("/ws/eisv", websocket_eisv_stream))
     app.routes.append(Route("/debug/memory", http_debug_memory, methods=["GET"]))
