@@ -208,6 +208,47 @@ def run_pytest(project_dir: Path, label: str) -> Tuple[bool, int, int, str]:
         return False, 0, 0, f"{label}: ERROR ({e})"
 
 
+# Sentinel findings that trigger a groundskeeper pass even when --no-audit is set.
+# These are fleet-level symptoms that a KG audit can help surface or remediate.
+_SENTINEL_AUDIT_TRIGGERS = frozenset({
+    "verdict_distribution_shift",
+    "correlated_governance_events",
+})
+
+
+def _filter_sentinel_findings(
+    results: List[Dict[str, Any]], since_iso: Optional[str]
+) -> List[Dict[str, Any]]:
+    """Filter raw search_knowledge results down to recent Sentinel high-severity notes.
+
+    Sentinel writes notes tagged ``["sentinel", <finding_type>, "high"]``. We
+    want only those, only created after ``since_iso`` (Vigil's last cycle time),
+    and annotated with the extracted finding type.
+    """
+    out: List[Dict[str, Any]] = []
+    for d in results:
+        if not isinstance(d, dict):
+            continue
+        tags = d.get("tags") or []
+        if "sentinel" not in tags or "high" not in tags:
+            continue
+        created_at = d.get("created_at")
+        if since_iso and created_at and created_at <= since_iso:
+            continue
+        # Finding type is the tag that isn't "sentinel", "high", or a meta tag.
+        finding_type = next(
+            (t for t in tags if t not in ("sentinel", "high", "note")),
+            "unknown",
+        )
+        out.append({
+            "summary": d.get("summary", ""),
+            "type": finding_type,
+            "created_at": created_at,
+            "id": d.get("id"),
+        })
+    return out
+
+
 class HeartbeatAgent(GovernanceAgent):
     def __init__(
         self,
@@ -232,6 +273,25 @@ class HeartbeatAgent(GovernanceAgent):
         # Vigil-specific cycle data (populated during run_cycle, used in post-checkin)
         self._cycle_state: Dict[str, Any] = {}
         self._cycle_prev_state: Dict[str, Any] = {}
+
+    async def _read_sentinel_findings(
+        self, client: GovernanceClient, since_iso: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        """Query KG for recent high-severity Sentinel notes newer than ``since_iso``.
+
+        Returns empty list on any failure — coordination is best-effort, a
+        broken search must not poison the cycle.
+        """
+        try:
+            result = await client.search_knowledge(
+                query="", tags=["sentinel"], limit=10,
+            )
+        except Exception as e:
+            log(f"sentinel-read failed ({e}); continuing cycle")
+            return []
+        if not getattr(result, "success", False):
+            return []
+        return _filter_sentinel_findings(result.results or [], since_iso)
 
     async def _run_groundskeeper(self, client: GovernanceClient) -> Dict[str, Any]:
         """KG audit + lifecycle cleanup + orphan archival."""
@@ -325,6 +385,21 @@ class HeartbeatAgent(GovernanceAgent):
         if lumen_down_streak == 3:
             notify("Vigil", "Lumen unreachable for 3 consecutive cycles (1.5h)")
 
+        # --- 2.5. Read Sentinel findings since last cycle, route to action ---
+        # First actual coordination arc: Sentinel observes fleet-level anomalies
+        # and writes them to the KG as high-severity notes. Vigil reads them and
+        # either runs an audit or references them in its check-in so the chain
+        # shows up in the governance audit trail.
+        sentinel_findings = await self._read_sentinel_findings(
+            client, prev_state.get("cycle_time")
+        )
+        sentinel_force_audit = any(
+            f["type"] in _SENTINEL_AUDIT_TRIGGERS for f in sentinel_findings
+        )
+        for f in sentinel_findings:
+            findings.append(f"Sentinel/{f['type']}: {f['summary']}")
+            log(f"SENTINEL-COORD: read '{f['type']}' finding")
+
         # --- 3. Run tests (optional, ~15 min) ---
         total_passed = 0
         total_failed = 0
@@ -346,21 +421,29 @@ class HeartbeatAgent(GovernanceAgent):
                 issues += 1
 
         # --- 4. Groundskeeper duties (optional) ---
+        # Forced on when a Sentinel finding indicates KG-remediable symptoms
+        # (verdict churn, correlated governance events). Per-cycle override
+        # only — does not mutate self.with_audit.
+        effective_audit = self.with_audit or sentinel_force_audit
         groundskeeper_summary: Dict[str, Any] = {}
-        if self.with_audit:
+        if effective_audit:
             groundskeeper_summary = await self._run_groundskeeper(client)
             if groundskeeper_summary.get("stale_found", 0) > 0:
                 findings.append(
                     f"KG: {groundskeeper_summary['stale_found']} stale, "
                     f"{groundskeeper_summary['archived']} archived"
                 )
+            if sentinel_force_audit and not self.with_audit:
+                findings.append("Groundskeeper forced by Sentinel coordination")
 
         # --- 5. Compute complexity/confidence from actual signals ---
         complexity = 0.15
         if self.with_tests:
             complexity += 0.3
-        if self.with_audit:
+        if effective_audit:
             complexity += 0.15
+        if sentinel_findings:
+            complexity += min(0.15, 0.05 * len(sentinel_findings))
         complexity += min(0.3, issues * 0.1)
         complexity = min(1.0, complexity)
 
