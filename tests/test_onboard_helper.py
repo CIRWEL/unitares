@@ -265,3 +265,110 @@ class TestRunOnboard:
         # When force_new is set, cached token should NOT be sent
         assert "continuity_token" not in sent_args
         assert "client_session_id" not in sent_args
+
+
+# --- per-process slot isolation --------------------------------------------
+
+class TestSlotIsolation:
+    """Slot key (typically Claude Code session_id) isolates parallel processes
+    so they don't collide on a single per-workspace cache file. Resolves the
+    "multiple Claude agents sharing UUID" symptom flagged 2026-04-14.
+    """
+
+    def _call(
+        self,
+        tmp_path: Path,
+        responses: list[dict],
+        *,
+        slot: str | None,
+        initial_files: dict[str, dict] | None = None,
+    ) -> tuple[dict, FakePoster, Path]:
+        cache_dir = tmp_path / ".unitares"
+        if initial_files:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            for filename, payload in initial_files.items():
+                (cache_dir / filename).write_text(json.dumps(payload))
+        poster = FakePoster(responses)
+        result = run_onboard(
+            server_url="http://fake",
+            agent_name="acme",
+            model_type="claude-code",
+            workspace=tmp_path,
+            slot=slot,
+            post_json=poster,
+        )
+        from scripts.client.onboard_helper import _slot_filename
+        return result, poster, cache_dir / _slot_filename(slot)
+
+    def test_slot_writes_to_distinct_file(self, tmp_path: Path) -> None:
+        result, _, cache_path = self._call(
+            tmp_path, [_success_response(uuid="u-A", session_id="agent-A")],
+            slot="claude-session-aaa",
+        )
+        assert result["status"] == "ok"
+        assert cache_path.name == "session-claude-session-aaa.json"
+        assert cache_path.exists()
+        # Default cache file must NOT be touched.
+        assert not (tmp_path / ".unitares" / "session.json").exists()
+
+    def test_two_slots_do_not_collide(self, tmp_path: Path) -> None:
+        # Process A
+        result_a, _, path_a = self._call(
+            tmp_path, [_success_response(uuid="u-A", session_id="agent-A")],
+            slot="aaa",
+        )
+        # Process B starts in same workspace, different slot — must not see A's cache
+        result_b, poster_b, path_b = self._call(
+            tmp_path, [_success_response(uuid="u-B", session_id="agent-B")],
+            slot="bbb",
+        )
+        assert result_a["uuid"] == "u-A"
+        assert result_b["uuid"] == "u-B"
+        assert path_a != path_b
+        # Process B onboarded fresh — it didn't pick up A's continuity token.
+        sent_args_b = poster_b.calls[0][1]["arguments"]
+        assert "continuity_token" not in sent_args_b
+        assert "client_session_id" not in sent_args_b
+
+    def test_slot_falls_back_to_legacy_cache_if_no_slot_file_yet(self, tmp_path: Path) -> None:
+        # A pre-existing unslotted cache (from before this change) should still
+        # provide continuity to a slotted run on first start. Slotted writes
+        # then own that slot going forward.
+        legacy = {
+            "continuity_token": "v1.legacy-token",
+            "client_session_id": "agent-legacy",
+        }
+        result, poster, cache_path = self._call(
+            tmp_path, [_success_response(uuid="u-resumed", session_id="agent-resumed")],
+            slot="first-run",
+            initial_files={"session.json": legacy},
+        )
+        assert result["status"] == "ok"
+        sent_args = poster.calls[0][1]["arguments"]
+        # Resumed via legacy cache
+        assert sent_args["continuity_token"] == "v1.legacy-token"
+        # New write went to the slotted file, not back to session.json
+        assert cache_path.name == "session-first-run.json"
+        # Legacy file is untouched
+        legacy_path = tmp_path / ".unitares" / "session.json"
+        assert legacy_path.exists()
+        assert json.loads(legacy_path.read_text()) == legacy
+
+    def test_unsanitized_slot_filename_chars_are_replaced(self, tmp_path: Path) -> None:
+        # Slot keys come from external input (Claude Code session_id) — must
+        # not allow path traversal via "../" or weird chars.
+        from scripts.client.onboard_helper import _slot_filename
+        assert _slot_filename("normal-id-123") == "session-normal-id-123.json"
+        assert _slot_filename("../../etc/passwd") == "session-______etc_passwd.json"
+        assert "/" not in _slot_filename("a/b/c")
+        # Cap length so attackers can't fill the disk with a giant filename.
+        long = "x" * 500
+        assert len(_slot_filename(long)) <= len("session-.json") + 64
+
+    def test_no_slot_uses_legacy_path_unchanged(self, tmp_path: Path) -> None:
+        # Backward-compat: when slot is None, the cache path is the original
+        # session.json — same as the pre-slotted behavior.
+        from scripts.client.onboard_helper import _slot_filename
+        assert _slot_filename(None) == "session.json"
+        assert _slot_filename("") == "session.json"
+

@@ -35,6 +35,23 @@ CACHE_DIR = ".unitares"
 CACHE_FILE = "session.json"
 
 
+def _slot_filename(slot: str | None) -> str:
+    """Return the cache filename, optionally namespaced by a slot key.
+
+    Without a slot, returns the legacy shared "session.json". With a slot
+    (typically the Claude Code session_id from the hook input JSON), returns
+    "session-<safe-slot>.json". This lets N parallel ``claude`` processes in
+    the SAME workspace each maintain their own identity rather than racing
+    on a single cache file. See KG note 2026-04-14: "multiple claude agents
+    sharing UUID" — that was per-workspace cache + multiple processes.
+    """
+    if not slot:
+        return CACHE_FILE
+    safe = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in slot)
+    safe = safe[:64]  # keep file names sane
+    return f"session-{safe}.json"
+
+
 # --- IO primitives (separable for tests) -----------------------------------
 
 def _post_json(url: str, payload: dict, timeout: float, token: str | None) -> dict:
@@ -55,19 +72,31 @@ def _post_json(url: str, payload: dict, timeout: float, token: str | None) -> di
         return {}
 
 
-def _read_cache(workspace: Path) -> dict:
-    path = workspace / CACHE_DIR / CACHE_FILE
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return data if isinstance(data, dict) else {}
+def _read_cache(workspace: Path, slot: str | None = None) -> dict:
+    """Read the cache for this slot, falling back to the legacy unslotted file.
+
+    Fallback exists so existing single-process flows (no slot supplied) keep
+    working unchanged, and so a slotted hook can still pick up continuity
+    state written by an earlier unslotted run.
+    """
+    primary = workspace / CACHE_DIR / _slot_filename(slot)
+    candidates = [primary]
+    if slot:
+        candidates.append(workspace / CACHE_DIR / CACHE_FILE)
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(data, dict) and data:
+            return data
+    return {}
 
 
-def _write_cache(workspace: Path, payload: dict) -> None:
-    path = workspace / CACHE_DIR / CACHE_FILE
+def _write_cache(workspace: Path, payload: dict, slot: str | None = None) -> None:
+    path = workspace / CACHE_DIR / _slot_filename(slot)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -127,16 +156,23 @@ def run_onboard(
     agent_name: str,
     model_type: str,
     workspace: Path,
+    slot: str | None = None,
     force_new: bool = False,
     auth_token: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     post_json: Callable[[str, dict, float, str | None], dict] = _post_json,
-    read_cache: Callable[[Path], dict] = _read_cache,
-    write_cache: Callable[[Path, dict], None] = _write_cache,
+    read_cache: Callable[..., dict] = _read_cache,
+    write_cache: Callable[..., None] = _write_cache,
 ) -> dict:
-    """Run the onboard flow. Returns a dict with status info."""
+    """Run the onboard flow. Returns a dict with status info.
+
+    ``slot`` namespaces the cache file so multiple processes in the same
+    workspace can each own their own identity (typically the Claude Code
+    session_id from hook input). When omitted, falls back to the legacy
+    shared session.json — preserves single-process behavior.
+    """
     url = f"{server_url.rstrip('/')}/v1/tools/call"
-    cache = read_cache(workspace)
+    cache = read_cache(workspace, slot)
 
     arguments: dict[str, Any] = {"name": agent_name, "model_type": model_type}
     if force_new:
@@ -168,6 +204,7 @@ def run_onboard(
     new_cache = {
         "server_url": server_url,
         "agent_name": agent_name,
+        "slot": slot or "",
         "uuid": parsed.get("uuid"),
         "agent_id": parsed.get("agent_id") or parsed.get("resolved_agent_id") or "",
         "client_session_id": parsed.get("client_session_id", ""),
@@ -176,7 +213,7 @@ def run_onboard(
         "continuity_token_supported": parsed.get("continuity_token_supported", False),
         "display_name": parsed.get("display_name", ""),
     }
-    write_cache(workspace, new_cache)
+    write_cache(workspace, new_cache, slot)
 
     return {
         "status": "ok",
@@ -200,16 +237,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workspace", default=os.getcwd())
     parser.add_argument("--force-new", action="store_true",
                         help="Explicit opt-in to create a fresh identity (never automatic)")
+    parser.add_argument(
+        "--slot",
+        default=os.environ.get("UNITARES_SESSION_SLOT", ""),
+        help="Per-process slot key (typically Claude Code session_id) so "
+             "parallel processes in the same workspace don't collide on "
+             "the same cache file.",
+    )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     args = parser.parse_args(argv)
 
     auth_token = os.environ.get("UNITARES_HTTP_API_TOKEN") or None
     workspace = Path(args.workspace).expanduser().resolve()
+    slot = (args.slot or "").strip() or None
     result = run_onboard(
         server_url=args.server_url,
         agent_name=args.name,
         model_type=args.model_type,
         workspace=workspace,
+        slot=slot,
         force_new=args.force_new,
         auth_token=auth_token,
         timeout=args.timeout,

@@ -145,6 +145,28 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Read hook input — Claude Code passes session metadata as JSON on stdin.
+# We use session_id as the cache slot key so N parallel claude processes in
+# the same workspace each get their own identity rather than racing on a
+# single .unitares/session.json (operator-flagged "multiple Claude agents
+# sharing UUID" on 2026-04-14).
+# ---------------------------------------------------------------------------
+HOOK_INPUT=""
+if [[ ! -t 0 ]]; then
+  HOOK_INPUT=$(cat 2>/dev/null) || true
+fi
+SESSION_SLOT=""
+if [[ -n "${HOOK_INPUT}" ]]; then
+  SESSION_SLOT=$(printf '%s' "${HOOK_INPUT}" | python3 -c "
+import json, sys
+try:
+    print(json.load(sys.stdin).get('session_id') or '')
+except Exception:
+    print('')
+" 2>/dev/null || true)
+fi
+
+# ---------------------------------------------------------------------------
 # Load a short reference snippet (available regardless of server status)
 # ---------------------------------------------------------------------------
 SKILL_CONTENT=""
@@ -231,7 +253,8 @@ ONBOARD_RESULT=$(UNITARES_SERVER_URL="${SERVER_URL}" python3 "${ONBOARD_HELPER}"
     --server-url "${SERVER_URL}" \
     --name "${AGENT_NAME}" \
     --model-type "claude-code" \
-    --workspace "${PWD}" 2>/dev/null)
+    --workspace "${PWD}" \
+    --slot "${SESSION_SLOT}" 2>/dev/null)
 
 ONBOARD_STATUS=$(python3 -c "
 import json, sys
