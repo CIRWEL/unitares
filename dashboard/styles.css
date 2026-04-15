@@ -4816,6 +4816,20 @@ body {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.75em;
     flex-wrap: wrap;
+    /* Match the 1400px centered column used by .main-content, .stats-grid,
+       and .live-chart-panel — without this the strip stretches to full
+       viewport width and juts out past the other panels on wide screens. */
+    max-width: 1400px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* Activity timeline sits outside .main-content, so .panel's default
+   (no max-width) makes it stretch full viewport. Match the 1400px column. */
+#activity-timeline-section {
+    max-width: 1400px;
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .residents-strip-label {
