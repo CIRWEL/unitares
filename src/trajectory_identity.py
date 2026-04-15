@@ -557,21 +557,32 @@ async def update_current_signature(
         metadata["trust_tier"] = trust_tier
         result["trust_tier"] = trust_tier
 
-        # Broadcast on trust tier change
-        if trust_tier.get("tier", 0) != old_tier:
-            try:
-                from src.broadcaster import broadcaster_instance
-                await broadcaster_instance.broadcast_event(
-                    "identity_assurance_change",
-                    agent_id=agent_id,
-                    payload={
-                        "old_tier": old_tier,
-                        "new_tier": trust_tier["tier"],
-                        "tier_name": trust_tier.get("name", "unknown"),
-                    },
-                )
-            except Exception as e:
-                logger.debug(f"Trust tier change broadcast failed: {e}")
+        # Broadcast on trust tier change (with cooldown to avoid oscillation noise)
+        new_tier = trust_tier.get("tier", 0)
+        if new_tier != old_tier:
+            last_broadcast = metadata.get("_trust_tier_broadcast_at")
+            cooldown_ok = True
+            if last_broadcast:
+                try:
+                    elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(last_broadcast)).total_seconds()
+                    cooldown_ok = elapsed > 600  # 10-minute cooldown
+                except (ValueError, TypeError):
+                    pass
+            if cooldown_ok:
+                metadata["_trust_tier_broadcast_at"] = datetime.now(timezone.utc).isoformat()
+                try:
+                    from src.broadcaster import broadcaster_instance
+                    await broadcaster_instance.broadcast_event(
+                        "identity_assurance_change",
+                        agent_id=agent_id,
+                        payload={
+                            "old_tier": old_tier,
+                            "new_tier": new_tier,
+                            "tier_name": trust_tier.get("name", "unknown"),
+                        },
+                    )
+                except Exception as e:
+                    logger.debug(f"Trust tier change broadcast failed: {e}")
 
         # Save updated metadata
         await db.update_identity_metadata(agent_id, metadata)
