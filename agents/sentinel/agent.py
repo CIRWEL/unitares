@@ -193,6 +193,7 @@ class FleetState:
             agents_str = ", ".join(f"{name or aid[:8]}(-{drop:.2f})" for aid, name, drop in degraded)
             findings.append({
                 "type": "coordinated_degradation",
+                "violation_class": "CON",
                 "severity": "high",
                 "summary": f"Coordinated coherence drop: {agents_str}",
                 "agents": [aid for aid, _, _ in degraded],
@@ -221,6 +222,7 @@ class FleetState:
                             is_self = (aid == self_agent_id)
                             findings.append({
                                 "type": "entropy_outlier",
+                                "violation_class": "ENT",
                                 "severity": "info" if is_self else "medium",
                                 "summary": f"{name or aid[:8]} entropy outlier (z={z:.1f}, S={s:.3f})",
                                 "agents": [aid],
@@ -242,6 +244,7 @@ class FleetState:
             if pause_rate >= 0.20:
                 findings.append({
                     "type": "verdict_shift",
+                    "violation_class": "ENT",
                     "severity": "high",
                     "summary": f"Pause rate {pause_rate:.0%} in last {FLEET_COORDINATED_WINDOW // 60}min ({pause_count}/{len(recent_verdicts)})",
                     "details": {"pause_rate": round(pause_rate, 3), "pause_count": pause_count},
@@ -258,6 +261,7 @@ class FleetState:
             if len(event_types) >= 2:
                 findings.append({
                     "type": "correlated_events",
+                    "violation_class": "BEH",
                     "severity": "medium",
                     "summary": f"{len(recent_typed)} governance events in {FLEET_COORDINATED_WINDOW // 60}min: {', '.join(sorted(event_types))}",
                     "details": {"event_types": sorted(event_types), "count": len(recent_typed)},
@@ -489,8 +493,10 @@ class SentinelAgent(GovernanceAgent):
         if fleet_findings:
             self._findings_total += len(fleet_findings)
             for f in fleet_findings:
-                parts.append(f"[{f['severity'].upper()}] {f['summary']}")
-                log(f"FINDING: [{f['severity']}] {f['summary']}")
+                vcls = f.get("violation_class", "")
+                cls_tag = f"[{vcls}] " if vcls else ""
+                parts.append(f"[{f['severity'].upper()}] {cls_tag}{f['summary']}")
+                log(f"FINDING: [{f['severity']}] {cls_tag}{f['summary']}")
                 if f["severity"] == "high":
                     notify("Sentinel", f["summary"])
 
@@ -509,9 +515,11 @@ class SentinelAgent(GovernanceAgent):
         note_tuples: list[tuple[str, list[str]]] = []
         for f in fleet_findings:
             if f["severity"] == "high":
+                vcls = f.get("violation_class", "")
+                cls_tag = f"[{vcls}] " if vcls else ""
                 note_tuples.append((
-                    f"[Sentinel] {f['summary']}",
-                    ["sentinel", f["type"], f["severity"]],
+                    f"[Sentinel] {cls_tag}{f['summary']}",
+                    ["sentinel", f["type"], f["severity"]] + ([vcls.lower()] if vcls else []),
                 ))
 
         return CycleResult(
