@@ -146,7 +146,7 @@ class TestReadSentinelFindings:
         assert len(out) == 1
         assert out[0]["type"] == "coordinated_coherence_drop"
         client.search_knowledge.assert_awaited_once_with(
-            query="", tags=["sentinel"], limit=10,
+            query="sentinel", tags=["sentinel"], limit=10, semantic=False,
         )
 
     @pytest.mark.asyncio

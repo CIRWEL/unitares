@@ -280,12 +280,19 @@ class HeartbeatAgent(GovernanceAgent):
         """Query KG for recent high-severity Sentinel notes newer than ``since_iso``.
 
         Returns empty list on any failure — coordination is best-effort, a
-        broken search must not poison the cycle.
+        broken search must not poison the cycle. Bounded to 15s so a hung MCP
+        call can't eat the full cycle timeout.
         """
         try:
-            result = await client.search_knowledge(
-                query="", tags=["sentinel"], limit=10,
+            result = await asyncio.wait_for(
+                client.search_knowledge(
+                    query="sentinel", tags=["sentinel"], limit=10, semantic=False,
+                ),
+                timeout=15.0,
             )
+        except asyncio.TimeoutError:
+            log("sentinel-read timed out after 15s; continuing cycle")
+            return []
         except Exception as e:
             log(f"sentinel-read failed ({e}); continuing cycle")
             return []
