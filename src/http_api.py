@@ -15,9 +15,9 @@ import json
 import os
 import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Optional
 
 _startup_ts = time.time()
 
@@ -793,6 +793,7 @@ async def http_dashboard_static(request):
         "utils.js", "state.js", "colors.js", "components.js",
         "visualizations.js", "agents.js", "discoveries.js",
         "dialectic.js", "eisv-charts.js", "timeline.js",
+        "residents.js",
         "styles.css", "dashboard.js",
         "phase.js",
     ]
@@ -924,6 +925,294 @@ async def http_activity(request):
 
 
 # ---------------------------------------------------------------------------
+# Residents endpoint — per-operator configurable "always-on agents" view
+# ---------------------------------------------------------------------------
+
+
+# Default silence thresholds in seconds — agents that go longer than this without
+# a check-in are flagged as "silent" on the dashboard. Only used for agents the
+# operator hasn't configured explicitly.
+_DEFAULT_RESIDENT_SILENCE_SECONDS: Dict[str, int] = {
+    # Long cron cadence agents get generous thresholds.
+    "vigil": 40 * 60,      # 30-min cron + buffer
+    "sentinel": 15 * 60,   # 5-min continuous + 10min tolerance
+    "lumen": 10 * 60,      # continuous poll
+    # Event-driven agents may be quiet for a long time and still be healthy.
+    "watcher": 24 * 3600,
+}
+
+
+def _resolve_resident_labels(mcp_server_obj) -> list[str]:
+    """Figure out which agent labels to treat as residents.
+
+    Precedence (operator choice wins):
+    1. ``UNITARES_RESIDENT_AGENTS`` env var — comma-separated labels
+    2. Agent metadata with a ``resident`` attribute set to True
+    3. Empty list — dashboard will show a "no residents configured" state
+    """
+    env_value = os.getenv("UNITARES_RESIDENT_AGENTS", "").strip()
+    if env_value:
+        return [lbl.strip() for lbl in env_value.split(",") if lbl.strip()]
+
+    labels: list[str] = []
+    for meta in getattr(mcp_server_obj, "agent_metadata", {}).values():
+        if getattr(meta, "resident", False):
+            label = getattr(meta, "label", None) or getattr(meta, "display_name", None)
+            if label:
+                labels.append(label)
+    return labels
+
+
+def _latest_eisv_for_agent(agent_id: str) -> Optional[dict]:
+    """Find the most recent eisv_update event for a given agent_id in the broadcaster history."""
+    for event in reversed(broadcaster_instance.event_history):
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") != "eisv_update":
+            # Broadcaster puts eisv_updates in event_history too; non-eisv events are skipped.
+            continue
+        if event.get("agent_id") == agent_id:
+            return event
+    return None
+
+
+def _extract_eisv_fields(event: dict) -> dict:
+    """Pull the data-shape we expose to the dashboard from a raw broadcaster event.
+
+    The broadcaster stores eisv updates with nested ``eisv`` and ``metrics``
+    dicts. Surface them flat so the JSON payload is convenient for the
+    frontend without re-mapping.
+    """
+    eisv = event.get("eisv") or {}
+    metrics = event.get("metrics") or {}
+    decision = event.get("decision") or {}
+    return {
+        "E": eisv.get("E"),
+        "I": eisv.get("I"),
+        "S": eisv.get("S"),
+        "V": eisv.get("V"),
+        "coherence": event.get("coherence") if event.get("coherence") is not None else metrics.get("coherence"),
+        "risk_score": metrics.get("risk_score") if metrics.get("risk_score") is not None else event.get("risk"),
+        # Verdict can come from decision.action (governance dynamics) or
+        # metrics.verdict (behavioral classifier — "safe", "caution", etc.).
+        "verdict": decision.get("action") or metrics.get("verdict"),
+        "agent_name": event.get("agent_name"),
+        "timestamp": event.get("timestamp"),
+    }
+
+
+def _coherence_history_for_agent(agent_id: str, window_minutes: int = 60) -> list[dict]:
+    """Collect coherence (plus risk, verdict) data points for a sparkline.
+
+    Pulls from the broadcaster's 2000-entry event ring buffer — this covers
+    roughly 6 hours of moderate activity. Each point has ts, coherence, risk.
+    """
+    cutoff = time.time() - window_minutes * 60
+    points: list[dict] = []
+    for event in broadcaster_instance.event_history:
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") != "eisv_update":
+            continue
+        if event.get("agent_id") != agent_id:
+            continue
+        ts_str = event.get("timestamp")
+        try:
+            ts = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00")).timestamp()
+        except (ValueError, TypeError):
+            continue
+        if ts < cutoff:
+            continue
+        flat = _extract_eisv_fields(event)
+        if flat["coherence"] is None:
+            continue
+        points.append({
+            "ts": ts,
+            "coherence": float(flat["coherence"]),
+            "risk": float(flat["risk_score"]) if flat["risk_score"] is not None else None,
+            "verdict": flat["verdict"],
+        })
+    return points
+
+
+async def _recent_writes_for_agent(agent_id: str, limit: int = 5) -> list[dict]:
+    """Pull recent KG writes authored by this agent, newest first.
+
+    Uses the shared graph query rather than re-reading the broadcaster history,
+    so this survives broadcaster restarts and covers more than the last 6h.
+    """
+    try:
+        from src.knowledge_graph import get_knowledge_graph
+        graph = await get_knowledge_graph()
+        discoveries = await graph.query(agent_id=agent_id, limit=limit)
+        out = []
+        for d in (discoveries or [])[:limit]:
+            out.append({
+                "id": getattr(d, "id", None),
+                "type": getattr(d, "type", None) or "note",
+                "severity": getattr(d, "severity", None) or "low",
+                "summary": (getattr(d, "summary", None) or "")[:200],
+                "tags": list(getattr(d, "tags", None) or []),
+                "timestamp": getattr(d, "timestamp", None),
+            })
+        return out
+    except Exception as exc:
+        logger.debug("_recent_writes_for_agent(%s) failed: %s", agent_id, exc)
+        return []
+
+
+async def http_residents(request):
+    """Per-resident fleet view for the dashboard.
+
+    Response shape::
+
+        {
+            "success": true,
+            "configured": ["Vigil", "Sentinel", ...],
+            "residents": [
+                {
+                    "label": "Vigil",
+                    "agent_id": "...",
+                    "status": "healthy" | "silent" | "paused" | "unknown",
+                    "silence_seconds": 142,
+                    "silence_threshold_seconds": 2400,
+                    "last_checkin_at": "2026-04-14T...",
+                    "eisv": {"E": ..., "I": ..., "S": ..., "V": ...},
+                    "coherence": 0.48,
+                    "risk_score": 0.12,
+                    "verdict": "proceed",
+                    "history": [{"ts": ..., "coherence": ..., "risk": ...}, ...],
+                    "recent_writes": [{"summary": ..., "tags": ..., ...}, ...],
+                    "total_updates": 467
+                },
+                ...
+            ],
+            "source": "env" | "metadata" | "none"
+        }
+    """
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    if not _check_http_auth(request, http_api_token=http_api_token):
+        return _http_unauthorized()
+
+    try:
+        from src.mcp_handlers.shared import lazy_mcp_server
+        mcp_server_obj = lazy_mcp_server
+
+        labels = _resolve_resident_labels(mcp_server_obj)
+        source = (
+            "env"
+            if os.getenv("UNITARES_RESIDENT_AGENTS", "").strip()
+            else ("metadata" if labels else "none")
+        )
+
+        # Index agent_metadata by label for O(1) lookup. When the same label
+        # appears multiple times (e.g. archived + active duplicates created
+        # across server restarts), prefer the most-active live record so the
+        # dashboard tracks the agent that's actually running.
+        label_to_meta = {}
+        for agent_id, meta in list(getattr(mcp_server_obj, "agent_metadata", {}).items()):
+            label = getattr(meta, "label", None)
+            if not label:
+                continue
+            existing = label_to_meta.get(label)
+            if existing is None:
+                label_to_meta[label] = (agent_id, meta)
+                continue
+            existing_meta = existing[1]
+            # Prefer active over archived/paused.
+            existing_status = getattr(existing_meta, "status", None)
+            new_status = getattr(meta, "status", None)
+            existing_active = existing_status == "active"
+            new_active = new_status == "active"
+            if new_active and not existing_active:
+                label_to_meta[label] = (agent_id, meta)
+                continue
+            if existing_active and not new_active:
+                continue
+            # Both same activity tier — prefer the one with more updates.
+            if (getattr(meta, "total_updates", 0) or 0) > \
+               (getattr(existing_meta, "total_updates", 0) or 0):
+                label_to_meta[label] = (agent_id, meta)
+
+        residents: list[dict] = []
+        now_ts = time.time()
+        for label in labels:
+            entry = label_to_meta.get(label)
+            agent_id = entry[0] if entry else None
+            meta = entry[1] if entry else None
+
+            latest = _latest_eisv_for_agent(agent_id) if agent_id else None
+            history = _coherence_history_for_agent(agent_id) if agent_id else []
+            recent_writes = await _recent_writes_for_agent(agent_id) if agent_id else []
+
+            # Compute silence in seconds — prefer the latest eisv event timestamp,
+            # fall back to metadata's last_update.
+            last_checkin_str = None
+            if latest and latest.get("timestamp"):
+                last_checkin_str = latest.get("timestamp")
+            elif meta and getattr(meta, "last_update", None):
+                last_checkin_str = meta.last_update
+
+            silence_seconds: Optional[float] = None
+            if last_checkin_str:
+                try:
+                    last_dt = datetime.fromisoformat(str(last_checkin_str).replace("Z", "+00:00"))
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    silence_seconds = max(0.0, now_ts - last_dt.timestamp())
+                except (ValueError, TypeError):
+                    pass
+
+            silence_threshold = _DEFAULT_RESIDENT_SILENCE_SECONDS.get(label.lower(), 30 * 60)
+
+            # Status: paused > silent > healthy > unknown.
+            status = "unknown"
+            if meta:
+                if getattr(meta, "status", None) in ("paused", "archived"):
+                    status = getattr(meta, "status")
+                elif silence_seconds is not None and silence_seconds > silence_threshold:
+                    status = "silent"
+                elif latest is not None or silence_seconds is not None:
+                    status = "healthy"
+
+            flat = _extract_eisv_fields(latest) if latest else None
+            residents.append({
+                "label": label,
+                "agent_id": agent_id,
+                "status": status,
+                "silence_seconds": round(silence_seconds, 1) if silence_seconds is not None else None,
+                "silence_threshold_seconds": silence_threshold,
+                "last_checkin_at": last_checkin_str,
+                "eisv": {
+                    "E": flat["E"],
+                    "I": flat["I"],
+                    "S": flat["S"],
+                    "V": flat["V"],
+                } if flat else None,
+                "coherence": flat["coherence"] if flat else None,
+                "risk_score": flat["risk_score"] if flat else None,
+                "verdict": flat["verdict"] if flat else None,
+                "history": history,
+                "recent_writes": recent_writes,
+                "total_updates": getattr(meta, "total_updates", 0) if meta else 0,
+            })
+
+        return JSONResponse({
+            "success": True,
+            "configured": labels,
+            "residents": residents,
+            "source": source,
+        })
+    except Exception as exc:
+        logger.error("http_residents error: %s", exc)
+        return JSONResponse({
+            "success": False,
+            "error": str(exc),
+            "residents": [],
+        }, status_code=500)
+
+
+# ---------------------------------------------------------------------------
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
 
@@ -1044,5 +1333,6 @@ def register_http_routes(
     app.routes.append(Route("/api/events", http_events, methods=["GET"]))
     app.routes.append(Route("/api/activity", http_activity, methods=["GET"]))
     app.routes.append(Route("/api/incidents", http_incidents, methods=["GET"]))
+    app.routes.append(Route("/v1/residents", http_residents, methods=["GET"]))
     app.routes.append(WebSocketRoute("/ws/eisv", websocket_eisv_stream))
     app.routes.append(Route("/debug/memory", http_debug_memory, methods=["GET"]))

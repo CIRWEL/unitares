@@ -851,11 +851,18 @@
                     if (typeof TimelineModule !== 'undefined' && TimelineModule.onEISVUpdate) {
                         TimelineModule.onEISVUpdate(data);
                     }
+                    // Feed residents panel — only acts if agent is a resident.
+                    if (typeof ResidentsModule !== 'undefined' && ResidentsModule.onEISVUpdate) {
+                        ResidentsModule.onEISVUpdate(data);
+                    }
                 } else if (data.type && typeof TimelineModule !== 'undefined'
                            && TimelineModule.onGovernanceEvent) {
                     // lifecycle_*, identity_*, knowledge_*, circuit_breaker_*
                     // were silently dropped before this branch existed.
                     TimelineModule.onGovernanceEvent(data);
+                    if (typeof ResidentsModule !== 'undefined' && ResidentsModule.onGovernanceEvent) {
+                        ResidentsModule.onGovernanceEvent(data);
+                    }
                 }
             },
             function (status) {

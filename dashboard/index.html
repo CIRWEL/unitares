@@ -29,6 +29,7 @@
     <script src="/dashboard/dialectic.js"></script>
     <script src="/dashboard/eisv-charts.js"></script>
     <script src="/dashboard/timeline.js"></script>
+    <script src="/dashboard/residents.js"></script>
 </head>
 
 <body>
@@ -79,6 +80,20 @@
     </nav>
 
     <main>
+        <!-- Resident Fleet — always-on agents, distinct from ephemeral Claude sessions -->
+        <section class="panel" id="residents-section">
+            <div class="panel-header">
+                <h2>Resident Fleet</h2>
+                <div class="panel-controls">
+                    <span class="residents-source" id="residents-source-label"></span>
+                    <span id="residents-status" class="ws-label"></span>
+                </div>
+            </div>
+            <div class="residents-grid" id="residents-grid">
+                <div class="residents-empty">Loading residents…</div>
+            </div>
+        </section>
+
         <!-- Quick Status Hero -->
         <div class="quick-status" id="quick-status">
             <span class="quick-status-dot healthy" id="qs-dot"></span>
