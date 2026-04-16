@@ -71,10 +71,25 @@ async def handle_resume_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
 
     reason = arguments.get("reason", "Resumed from dashboard")
     previous_status = meta.status
+    event_name = "resumed" if not is_stuck_unstick else "unstuck"
+    event_entry = {
+        "event": event_name,
+        "reason": reason,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
     # Persist FIRST so in-memory state can't diverge from DB on persist failure.
+    # Runtime state (paused_at, lifecycle_events) must be persisted alongside
+    # status or it gets clobbered on the next load_metadata_async(force=True).
     try:
         await agent_storage.update_agent(agent_uuid, status="active")
+        await agent_storage.persist_runtime_state(
+            agent_uuid,
+            paused_at=None,
+            loop_detected_at=None,
+            loop_cooldown_until=None,
+            append_lifecycle_event=event_entry,
+        )
         logger.debug(f"PostgreSQL: {'Unstuck' if is_stuck_unstick else 'Resumed'} agent {agent_id}")
         await _invalidate_agent_cache(agent_id)
     except Exception as e:
@@ -82,7 +97,7 @@ async def handle_resume_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
         return [error_response(
             f"Failed to resume agent '{agent_id}': persistence error",
             error_code="PERSIST_FAILED",
-            error_category="internal_error",
+            error_category="system_error",
             details={"agent_id": agent_id, "cause": str(e)},
         )]
 
@@ -91,7 +106,7 @@ async def handle_resume_agent(arguments: Dict[str, Any]) -> Sequence[TextContent
     meta.paused_at = None
     from .self_recovery import clear_loop_detector_state
     clear_loop_detector_state(meta)
-    meta.add_lifecycle_event("resumed" if not is_stuck_unstick else "unstuck", reason)
+    meta.add_lifecycle_event(event_name, reason)
 
     response_payload = {
         "success": True,
@@ -128,25 +143,40 @@ async def handle_mark_response_complete(arguments: Dict[str, Any]) -> Sequence[T
         )
 
     meta = mcp_server.agent_metadata.get(agent_uuid)
+    summary = arguments.get("summary", "")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    event_details = summary if summary else "Response completed, waiting for input"
+    event_entry = {
+        "event": "response_completed",
+        "reason": event_details,
+        "timestamp": now_iso,
+    }
 
     # Persist FIRST so in-memory state can't diverge from DB on persist failure.
+    # Runtime state (last_response_at, response_completed, lifecycle_events)
+    # must be persisted alongside status or it gets clobbered on force-reload.
     try:
         await agent_storage.update_agent(agent_uuid, status="waiting_input")
+        await agent_storage.persist_runtime_state(
+            agent_uuid,
+            last_response_at=now_iso,
+            response_completed=True,
+            append_lifecycle_event=event_entry,
+        )
     except Exception as e:
         logger.warning(f"PostgreSQL status update failed: {e}", exc_info=True)
         return [error_response(
             f"Failed to mark response complete for '{agent_id}': persistence error",
             error_code="PERSIST_FAILED",
-            error_category="internal_error",
+            error_category="system_error",
             details={"agent_id": agent_id, "cause": str(e)},
         )]
 
     # Persist succeeded — now mutate in-memory state.
     meta.status = "waiting_input"
-    meta.last_response_at = datetime.now(timezone.utc).isoformat()
+    meta.last_response_at = now_iso
     meta.response_completed = True
-    summary = arguments.get("summary", "")
-    meta.add_lifecycle_event("response_completed", summary if summary else "Response completed, waiting for input")
+    meta.add_lifecycle_event("response_completed", event_details)
 
     # MAINTENANCE PROMPT: Surface open discoveries from this session
     # Behavioral nudge: Remind agent to resolve discoveries before ending session
@@ -281,8 +311,15 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
 
     # Mark recovery attempt before safety checks so loop detector grants a 120s
     # grace period even if this review attempt fails (agent not yet safe to resume).
+    # Persist first — agent_loop_detection reads meta.recovery_attempt_at, and any
+    # force-reload in the interim would clobber an in-memory-only mutation.
     from datetime import timezone as _tz
-    meta.recovery_attempt_at = datetime.now(_tz.utc).isoformat()
+    recovery_ts = datetime.now(_tz.utc).isoformat()
+    try:
+        await agent_storage.persist_runtime_state(agent_uuid, recovery_attempt_at=recovery_ts)
+    except Exception as e:
+        logger.warning(f"persist_runtime_state(recovery_attempt_at) failed: {e}")
+    meta.recovery_attempt_at = recovery_ts
 
     monitor = mcp_server.get_or_create_monitor(agent_uuid)
     metrics = monitor.get_metrics()
@@ -348,15 +385,30 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
 
     # 9. Resume if safe, or provide guidance
     if all_safe:
+        resume_reason = f"Self-recovery: {reflection[:50]}... Conditions: {proposed_conditions}"
+        event_entry = {
+            "event": "resumed",
+            "reason": resume_reason,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
         # Persist FIRST so in-memory state can't diverge from DB on persist failure.
+        # Runtime state (paused_at, lifecycle_events) must be persisted alongside
+        # status or it gets clobbered on force-reload.
         try:
             await agent_storage.update_agent(agent_uuid, status="active")
+            await agent_storage.persist_runtime_state(
+                agent_uuid,
+                paused_at=None,
+                loop_detected_at=None,
+                loop_cooldown_until=None,
+                append_lifecycle_event=event_entry,
+            )
         except Exception as e:
             logger.warning(f"PostgreSQL status update failed: {e}", exc_info=True)
             return [error_response(
                 f"Failed to resume '{agent_id}' after self-recovery: persistence error",
                 error_code="PERSIST_FAILED",
-                error_category="internal_error",
+                error_category="system_error",
                 details={"agent_id": agent_id, "cause": str(e), "reflection_logged": reflection_logged},
             )]
 
@@ -365,10 +417,7 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
         meta.status = "active"
         meta.paused_at = None
         clear_loop_detector_state(meta)
-        meta.add_lifecycle_event(
-            "resumed",
-            f"Self-recovery: {reflection[:50]}... Conditions: {proposed_conditions}"
-        )
+        meta.add_lifecycle_event("resumed", resume_reason)
 
         return success_response({
             "success": True,

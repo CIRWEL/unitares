@@ -432,6 +432,7 @@ class TestUpdateAgentMetadata:
              patch("src.mcp_handlers.identity.shared.require_write_permission", return_value=(True, None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_update_agent_metadata
             result = await handle_update_agent_metadata({
                 "agent_id": "agent-1", "tags": ["new-tag"],
@@ -451,6 +452,7 @@ class TestUpdateAgentMetadata:
              patch("src.mcp_handlers.identity.shared.require_write_permission", return_value=(True, None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_update_agent_metadata
             result = await handle_update_agent_metadata({
                 "agent_id": "agent-1", "notes": "new notes",
@@ -470,6 +472,7 @@ class TestUpdateAgentMetadata:
              patch("src.mcp_handlers.identity.shared.require_write_permission", return_value=(True, None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_update_agent_metadata
             result = await handle_update_agent_metadata({
                 "agent_id": "agent-1", "notes": "appended", "append_notes": True,
@@ -489,6 +492,7 @@ class TestUpdateAgentMetadata:
              patch("src.mcp_handlers.identity.shared.require_write_permission", return_value=(True, None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_update_agent_metadata
             result = await handle_update_agent_metadata({
                 "agent_id": "agent-1", "purpose": "Code review agent",
@@ -508,6 +512,7 @@ class TestUpdateAgentMetadata:
              patch("src.mcp_handlers.identity.shared.require_write_permission", return_value=(True, None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_update_agent_metadata
             result = await handle_update_agent_metadata({
                 "agent_id": "agent-1", "purpose": None,
@@ -526,6 +531,7 @@ class TestUpdateAgentMetadata:
              patch("src.mcp_handlers.identity.shared.require_write_permission", return_value=(True, None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_update_agent_metadata
             result = await handle_update_agent_metadata({
                 "agent_id": "agent-1", "preferences": {"verbosity": "minimal"},
@@ -544,6 +550,7 @@ class TestUpdateAgentMetadata:
              patch("src.mcp_handlers.identity.shared.require_write_permission", return_value=(True, None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_update_agent_metadata
             result = await handle_update_agent_metadata({
                 "agent_id": "agent-1", "preferences": {"verbosity": "INVALID"},
@@ -596,6 +603,7 @@ class TestUpdateAgentMetadata:
              patch("src.mcp_handlers.identity.shared.require_write_permission", return_value=(True, None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_update_agent_metadata
             result = await handle_update_agent_metadata({
                 "agent_id": "agent-1",
@@ -616,6 +624,7 @@ class TestUpdateAgentMetadata:
              patch("src.mcp_handlers.identity.shared.require_write_permission", return_value=(True, None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_update_agent_metadata
             result = await handle_update_agent_metadata({
                 "agent_id": "agent-1", "status": "active",
@@ -635,6 +644,7 @@ class TestUpdateAgentMetadata:
              patch("src.mcp_handlers.identity.shared.require_write_permission", return_value=(True, None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_update_agent_metadata
             result = await handle_update_agent_metadata({
                 "agent_id": "agent-1", "status": "active",
@@ -653,6 +663,7 @@ class TestUpdateAgentMetadata:
              patch("src.mcp_handlers.identity.shared.require_write_permission", return_value=(True, None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_update_agent_metadata
             result = await handle_update_agent_metadata({
                 "agent_id": "agent-1", "status": "paused",
@@ -1195,6 +1206,7 @@ class TestMarkResponseComplete:
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
              patch("src.knowledge_graph.get_knowledge_graph", new_callable=AsyncMock, side_effect=Exception("no graph")):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
             result = await handle_mark_response_complete({"agent_id": "agent-1"})
             data = _parse(result)
@@ -1212,6 +1224,7 @@ class TestMarkResponseComplete:
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
              patch("src.knowledge_graph.get_knowledge_graph", new_callable=AsyncMock, side_effect=Exception("no graph")):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
             result = await handle_mark_response_complete({
                 "agent_id": "agent-1", "summary": "Done with refactoring",
@@ -1256,6 +1269,7 @@ class TestMarkResponseComplete:
              patch_agent_storage() as mock_storage, \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock(side_effect=RuntimeError("DB offline"))
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
             result = await handle_mark_response_complete({"agent_id": "agent-1"})
 
@@ -1284,6 +1298,7 @@ class TestResumeAgent:
         with patch_lifecycle_server(server, require_registered=("agent-1", None)), \
              patch_agent_storage() as mock_storage:
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.operations import handle_resume_agent
             result = await handle_resume_agent({"agent_id": "agent-1"})
 
@@ -1302,6 +1317,7 @@ class TestResumeAgent:
         with patch_lifecycle_server(server, require_registered=("agent-1", None)), \
              patch_agent_storage() as mock_storage:
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.operations import handle_resume_agent
             result = await handle_resume_agent({"agent_id": "agent-1"})
 
@@ -1319,6 +1335,7 @@ class TestResumeAgent:
         with patch_lifecycle_server(server, require_registered=("agent-1", None)), \
              patch_agent_storage() as mock_storage:
             mock_storage.update_agent = AsyncMock(side_effect=RuntimeError("DB offline"))
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.operations import handle_resume_agent
             result = await handle_resume_agent({"agent_id": "agent-1"})
 
@@ -1968,6 +1985,7 @@ class TestUpdateAgentMetadataEdgeCases:
              patch("src.mcp_handlers.identity.shared.require_write_permission", return_value=(True, None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_update_agent_metadata
             result = await handle_update_agent_metadata({
                 "agent_id": "agent-1", "purpose": "   ",  # Whitespace only
@@ -2281,6 +2299,7 @@ class TestMarkResponseCompleteEdgeCases:
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
              patch("src.knowledge_graph.get_knowledge_graph", new_callable=AsyncMock, return_value=mock_graph):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
             result = await handle_mark_response_complete({"agent_id": "agent-1"})
             data = _parse(result)

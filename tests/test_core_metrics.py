@@ -984,6 +984,7 @@ class TestMarkResponseComplete:
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
              patch("src.mcp_handlers.lifecycle.handlers.agent_storage", MagicMock(
                  update_agent=AsyncMock(),
+                 persist_runtime_state=AsyncMock(),
              )):
 
             from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
@@ -1005,6 +1006,7 @@ class TestMarkResponseComplete:
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
              patch("src.mcp_handlers.lifecycle.handlers.agent_storage", MagicMock(
                  update_agent=AsyncMock(),
+                 persist_runtime_state=AsyncMock(),
              )):
 
             from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
@@ -1017,25 +1019,34 @@ class TestMarkResponseComplete:
             )
 
     @pytest.mark.asyncio
-    async def test_postgres_failure_does_not_crash(self, mock_server):
-        """PostgreSQL failure is handled gracefully."""
+    async def test_postgres_failure_returns_error_without_mutating_meta(self, mock_server):
+        """On persist failure, return PERSIST_FAILED and keep in-memory meta unchanged.
+
+        Prevents the mutation-before-persistence divergence Watcher P011 flagged:
+        if the in-memory mutation ran but the DB write failed, the next metadata
+        load would clobber the in-memory status back to its persisted value.
+        """
         meta = _make_metadata()
+        original_status = meta.status
         mock_server.agent_metadata = {"agent-1": meta}
 
         failing_storage = MagicMock()
         failing_storage.update_agent = AsyncMock(side_effect=Exception("PG down"))
+        failing_storage.persist_runtime_state = AsyncMock()
 
         with patch_lifecycle_server(mock_server, require_registered=("agent-1", None)), \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
-             patch("src.mcp_handlers.lifecycle.handlers.agent_storage", failing_storage):
+             patch("src.mcp_handlers.lifecycle.handlers.agent_storage", failing_storage), \
+             patch("src.mcp_handlers.lifecycle.operations.agent_storage", failing_storage), \
+             patch("src.mcp_handlers.lifecycle.mutation.agent_storage", failing_storage):
 
             from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
-            import src.mcp_handlers.lifecycle.operations as _lo; _lo.agent_storage = __import__("sys").modules["src.mcp_handlers.lifecycle.handlers"].agent_storage
-            import src.mcp_handlers.lifecycle.mutation as _lm; _lm.agent_storage = __import__("sys").modules["src.mcp_handlers.lifecycle.handlers"].agent_storage
             result = await handle_mark_response_complete({})
             data = _parse(result)
-            # Should still succeed (PG failure is non-blocking)
-            assert data.get("status") == "waiting_input"
+            assert "PERSIST_FAILED" in result[0].text
+            assert data.get("status") != "waiting_input"  # error, not status update
+            assert meta.status == original_status  # in-memory unchanged
+            meta.add_lifecycle_event.assert_not_called()
 
 
 # ============================================================================

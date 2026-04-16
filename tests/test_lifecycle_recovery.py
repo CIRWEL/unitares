@@ -46,6 +46,7 @@ class TestDirectResumeIfSafe:
              patch("src.mcp_handlers.lifecycle.handlers.agent_storage") as mock_storage, \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             import src.mcp_handlers.lifecycle.mutation as _lm; _lm.agent_storage = mock_storage
             import src.mcp_handlers.lifecycle.operations as _lo; _lo.agent_storage = mock_storage
             from src.mcp_handlers.lifecycle.handlers import handle_direct_resume_if_safe
@@ -153,6 +154,7 @@ class TestSelfRecoveryReview:
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
              patch("src.mcp_handlers.lifecycle.stuck.GovernanceConfig") as mock_config:
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             import src.mcp_handlers.lifecycle.mutation as _lm; _lm.agent_storage = mock_storage
             import src.mcp_handlers.lifecycle.operations as _lo; _lo.agent_storage = mock_storage
             mock_config.compute_proprioceptive_margin.return_value = {"margin": "comfortable"}
@@ -201,6 +203,7 @@ class TestSelfRecoveryReview:
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
              patch("src.mcp_handlers.lifecycle.stuck.GovernanceConfig") as mock_config:
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             import src.mcp_handlers.lifecycle.mutation as _lm; _lm.agent_storage = mock_storage
             import src.mcp_handlers.lifecycle.operations as _lo; _lo.agent_storage = mock_storage
             mock_config.compute_proprioceptive_margin.return_value = {"margin": "critical"}
@@ -277,6 +280,7 @@ class TestSelfRecoveryReview:
              patch("src.mcp_handlers.knowledge.handlers.store_discovery_internal",
                    new_callable=AsyncMock):
             mock_storage.update_agent = AsyncMock(side_effect=RuntimeError("DB offline"))
+            mock_storage.persist_runtime_state = AsyncMock()
             mock_config.compute_proprioceptive_margin.return_value = {"margin": "comfortable"}
             from src.mcp_handlers.lifecycle.handlers import handle_self_recovery_review
             result = await handle_self_recovery_review({
@@ -578,6 +582,7 @@ class TestDirectResumeEdgeCases:
              patch("src.mcp_handlers.lifecycle.handlers.agent_storage") as mock_storage, \
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
             mock_storage.update_agent = AsyncMock(side_effect=RuntimeError("PG down"))
+            mock_storage.persist_runtime_state = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_direct_resume_if_safe
             result = await handle_direct_resume_if_safe({"agent_id": "agent-1"})
             data = _parse(result)
@@ -620,6 +625,7 @@ class TestSelfRecoveryReviewEdgeCases:
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
              patch("src.mcp_handlers.lifecycle.stuck.GovernanceConfig") as mock_config:
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             import src.mcp_handlers.lifecycle.mutation as _lm; _lm.agent_storage = mock_storage
             import src.mcp_handlers.lifecycle.operations as _lo; _lo.agent_storage = mock_storage
             mock_config.compute_proprioceptive_margin.return_value = {"margin": "critical"}
@@ -645,6 +651,7 @@ class TestSelfRecoveryReviewEdgeCases:
              patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
              patch("src.mcp_handlers.lifecycle.stuck.GovernanceConfig") as mock_config:
             mock_storage.update_agent = AsyncMock(side_effect=RuntimeError("PG down"))
+            mock_storage.persist_runtime_state = AsyncMock()
             mock_config.compute_proprioceptive_margin.return_value = {"margin": "comfortable"}
             from src.mcp_handlers.lifecycle.handlers import handle_self_recovery_review
             result = await handle_self_recovery_review({
@@ -906,6 +913,7 @@ class TestDetectStuckAgentsAutoRecover:
              ]), \
              patch("src.mcp_handlers.lifecycle.handlers.agent_storage") as mock_storage:
             mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
             import src.mcp_handlers.lifecycle.mutation as _lm; _lm.agent_storage = mock_storage
             import src.mcp_handlers.lifecycle.operations as _lo; _lo.agent_storage = mock_storage
             # Mock the leave_note to prevent KG errors

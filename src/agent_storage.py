@@ -304,6 +304,71 @@ async def update_agent(
     return True
 
 
+_RUNTIME_STATE_UNSET = object()
+
+
+async def persist_runtime_state(
+    agent_id: str,
+    *,
+    paused_at: Any = _RUNTIME_STATE_UNSET,
+    last_response_at: Any = _RUNTIME_STATE_UNSET,
+    response_completed: Any = _RUNTIME_STATE_UNSET,
+    recovery_attempt_at: Any = _RUNTIME_STATE_UNSET,
+    loop_detected_at: Any = _RUNTIME_STATE_UNSET,
+    loop_cooldown_until: Any = _RUNTIME_STATE_UNSET,
+    append_lifecycle_event: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Persist transient runtime state to the identity metadata JSON blob.
+
+    These fields have no dedicated columns in core.agents. Without this
+    helper, handlers that mutate them only in memory (meta.paused_at = None,
+    meta.response_completed = True, meta.recovery_attempt_at, ...) lose
+    the mutation on the next load_metadata_async(force=True) (Watcher P011).
+
+    Fields left as the _UNSET sentinel are not written, so callers can
+    target exactly the mutated subset. append_lifecycle_event is merged
+    into the lifecycle_events list via a read-modify-write (JSONB append
+    semantics do not support bounded trailing-window on the server side).
+    """
+    await _ensure_db_ready()
+    db = get_db()
+
+    updates: Dict[str, Any] = {}
+    for name, value in (
+        ("paused_at", paused_at),
+        ("last_response_at", last_response_at),
+        ("response_completed", response_completed),
+        ("recovery_attempt_at", recovery_attempt_at),
+        ("loop_detected_at", loop_detected_at),
+        ("loop_cooldown_until", loop_cooldown_until),
+    ):
+        if value is not _RUNTIME_STATE_UNSET:
+            updates[name] = value
+
+    if append_lifecycle_event is not None:
+        identity = None
+        try:
+            identity = await db.get_identity(agent_id)
+        except Exception as e:
+            logger.debug(f"persist_runtime_state: get_identity failed for {agent_id}: {e}")
+        existing_events: List[Dict[str, Any]] = []
+        if identity is not None and getattr(identity, "metadata", None):
+            existing_events = list(identity.metadata.get("lifecycle_events") or [])
+        existing_events.append(append_lifecycle_event)
+        # Bounded window — mirrors AgentMetadata.MAX_LIFECYCLE_EVENTS semantics.
+        try:
+            from src.agent_metadata_model import AgentMetadata
+            max_events = AgentMetadata.MAX_LIFECYCLE_EVENTS
+        except Exception:
+            max_events = 50
+        updates["lifecycle_events"] = existing_events[-max_events:]
+
+    if not updates:
+        return True
+
+    return await db.update_identity_metadata(agent_id, updates, merge=True)
+
+
 async def archive_agent(
     agent_id: str,
     *,
