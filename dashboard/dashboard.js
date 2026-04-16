@@ -1483,14 +1483,8 @@ async function loadDiscoveries(searchQuery = '') {
         previousStats.discoveries = totalDiscoveries;
 
         updateDiscoveryLegend(cachedDiscoveries);
-        // Seed activity timeline with recent discoveries (last 24h)
-        if (typeof TimelineModule !== 'undefined' && TimelineModule.addDiscoveryEvent) {
-            const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-            cachedDiscoveries
-                .filter(d => d._timestampMs && d._timestampMs > oneDayAgo)
-                .slice(0, 10)
-                .forEach(d => TimelineModule.addDiscoveryEvent(d));
-        }
+        // Discoveries have their own panel — don't cross-seed into the activity
+        // timeline. Live discovery_write events still arrive via WebSocket.
         // Re-apply local filters (type/time) to the new search results
         applyDiscoveryFilters();
         return true;
@@ -1594,10 +1588,8 @@ async function loadDialecticSessions() {
             previousStats.dialecticSessions = sessions.length;
         }
 
-        // Seed activity timeline with recent dialectic sessions
-        if (typeof TimelineModule !== 'undefined' && TimelineModule.addDialecticEvent) {
-            sessions.slice(0, 5).forEach(s => TimelineModule.addDialecticEvent(s));
-        }
+        // Dialectic sessions have their own panel — don't cross-seed into the
+        // activity timeline. Stale sessions were resurfacing as "activity".
 
         // Apply current filter (respects user's active filter selection)
         applyDialecticFilters();

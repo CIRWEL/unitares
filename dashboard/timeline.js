@@ -263,6 +263,7 @@
     function onGovernanceEvent(data) {
         if (!data || !data.type) return;
         if (data.type === 'eisv_update') return; // handled by onEISVUpdate
+        if (data.type === 'cross_device_call') return; // internal plumbing, not a governance event
 
         var agent = data.agent_label || data.agent_name ||
             (data.agent_id ? String(data.agent_id).substring(0, 12) : 'system');
@@ -333,29 +334,9 @@
         });
     }
 
-    // Called from loadDiscoveries/loadDialecticSessions to seed recent items
-    function addDiscoveryEvent(discovery) {
-        var agent = discovery.by || discovery.agent_id || discovery._agent_id || 'unknown';
-        var summary = discovery.summary || 'New discovery';
-        var type = discovery.type || discovery.discovery_type || 'note';
-        addTimelineEntry({
-            ts: discovery._timestampMs ? new Date(discovery._timestampMs) : new Date(),
-            type: 'discovery',
-            agent: typeof agent === 'string' && agent.length > 20 ? agent.substring(0, 12) : agent,
-            message: type + ': ' + (summary.length > 60 ? summary.substring(0, 57) + '...' : summary)
-        });
-    }
-
-    function addDialecticEvent(session) {
-        var phase = session.phase || session.status || 'unknown';
-        var topic = session.topic || session.reason || 'session';
-        addTimelineEntry({
-            ts: session.created_at ? new Date(session.created_at) : new Date(),
-            type: 'dialectic',
-            agent: session.initiator_label || (session.initiator_id ? session.initiator_id.substring(0, 12) : ''),
-            message: phase + ': ' + (topic.length > 50 ? topic.substring(0, 47) + '...' : topic)
-        });
-    }
+    // Discovery and dialectic seeding removed — those sections have their own
+    // panels. Live events (knowledge_write, etc.) still arrive via WebSocket
+    // through onGovernanceEvent.
 
     function clearTimeline() {
         timelineEntries.length = 0;
@@ -399,8 +380,6 @@
         addTimelineEntry: addTimelineEntry,
         onEISVUpdate: onEISVUpdate,
         onGovernanceEvent: onGovernanceEvent,
-        addDiscoveryEvent: addDiscoveryEvent,
-        addDialecticEvent: addDialecticEvent,
         clearTimeline: clearTimeline,
         renderTimeline: renderTimeline
     };

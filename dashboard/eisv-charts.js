@@ -689,11 +689,6 @@
                 if (data.success && data.events && data.events.length > 0) {
                     data.events.slice().reverse().forEach(function (event) {
                         addEventEntry(event);
-                        // Also seed the activity timeline so governance events
-                        // survive server restarts (backed by audit.events now)
-                        if (typeof TimelineModule !== 'undefined' && TimelineModule.onGovernanceEvent) {
-                            TimelineModule.onGovernanceEvent(event);
-                        }
                     });
                 }
             })

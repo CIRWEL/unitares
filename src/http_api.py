@@ -787,9 +787,13 @@ async def http_dashboard(request):
     dashboard_path = Path(__file__).parent.parent / "dashboard" / "index.html"
     if dashboard_path.exists():
         html = dashboard_path.read_text()
-        # Cache-bust: append ?v=<startup_ts> to local script/css refs
+        # Cache-bust: append ?v=<max_mtime> so edits are picked up without restart
         import re as _re
-        _v = str(int(_startup_ts))
+        _dash_dir = dashboard_path.parent
+        _v = str(int(max(
+            (f.stat().st_mtime for f in _dash_dir.iterdir() if f.is_file()),
+            default=_startup_ts,
+        )))
         html = _re.sub(
             r'(src|href)="/dashboard/([^"]+)"',
             rf'\1="/dashboard/\2?v={_v}"',
