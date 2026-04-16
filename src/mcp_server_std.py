@@ -498,15 +498,15 @@ async def main():
             logger.warning(f"Could not load metadata in background: {e}", exc_info=True)
 
         try:
-            orphans_archived = await auto_archive_orphan_agents(
+            orphan_results = await auto_archive_orphan_agents(
                 zero_update_hours=4.0,
                 low_update_hours=12.0,
                 unlabeled_hours=24.0,
                 ephemeral_hours=6.0,
                 ephemeral_max_updates=5,
             )
-            if orphans_archived > 0:
-                logger.info(f"Auto-archived {orphans_archived} orphan/ephemeral agents")
+            if orphan_results:
+                logger.info(f"Auto-archived {len(orphan_results)} orphan/ephemeral agents")
         except Exception as e:
             logger.warning(f"Could not auto-archive agents: {e}", exc_info=True)
 

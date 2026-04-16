@@ -25,7 +25,7 @@ from ..support.coerce import safe_float, resolve_agent_uuid
 from src.logging_utils import get_logger
 from config.governance_config import GovernanceConfig
 
-from .helpers import _invalidate_agent_cache, _is_test_agent
+from .helpers import _invalidate_agent_cache, _archive_one_agent, _is_test_agent
 
 logger = get_logger(__name__)
 
@@ -539,107 +539,61 @@ async def handle_archive_old_test_agents(arguments: Dict[str, Any]) -> Sequence[
 
     Use include_all=true to clean up any agent inactive for max_age_days (default: 3 days)
     """
-    max_age_hours = arguments.get("max_age_hours", 6)  # Default: 6 hours for test agents
-    max_age_days = arguments.get("max_age_days")  # Backward compatibility: convert days to hours
-    include_all = arguments.get("include_all", False)  # NEW: archive ALL stale agents, not just test
-    dry_run = arguments.get("dry_run", False)  # NEW: preview without archiving
+    from src.agent_lifecycle import _agent_age_hours
 
-    # If include_all, use longer default (3 days)
+    max_age_hours = arguments.get("max_age_hours", 6)
+    max_age_days = arguments.get("max_age_days")
+    include_all = arguments.get("include_all", False)
+    dry_run = arguments.get("dry_run", False)
+
     if include_all and max_age_days is None and "max_age_hours" not in arguments:
         max_age_days = 3
-
-    # Convert days to hours if provided (backward compatibility)
     if max_age_days is not None:
         max_age_hours = max_age_days * 24
-
     if max_age_hours < 0.1:
         return [error_response("max_age_hours must be at least 0.1 (6 minutes)")]
 
-    # Reload metadata from PostgreSQL (async)
     await mcp_server.load_metadata_async(force=True)
 
     archived_agents = []
-    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
 
     for agent_id, meta in list(mcp_server.agent_metadata.items()):
-        # Filter: only test/demo agents unless include_all.
-        #
-        # Check both agent_id (auto-generated structured ID) AND the display
-        # label, because clients like tests/test_unitares_cli_script.py set
-        # test names on the label (e.g. "cli-pytest-1776...") while agent_id
-        # stays as the model-generated "Claude_20260414". Without the label
-        # check those test stragglers leak through and Vigil never sweeps
-        # them, producing the `cli-pytest-*` pile the operator flagged on
-        # 2026-04-14.
-        label = (getattr(meta, "label", None) or getattr(meta, "display_name", None) or "").lower()
-        is_test_id = (
-            agent_id.startswith("test_")
-            or agent_id.startswith("demo_")
-            or "test" in agent_id.lower()
-        )
-        is_test_label = (
-            label.startswith("test_")
-            or label.startswith("test-")
-            or label.startswith("demo_")
-            or label.startswith("demo-")
-            or "pytest" in label
-            or "test" in label
-        )
-        is_test = is_test_id or is_test_label
+        if meta.status in ("archived", "deleted"):
+            continue
+
+        label = getattr(meta, "label", None) or getattr(meta, "display_name", None) or ""
+        is_test = _is_test_agent(agent_id, label)
         if not include_all and not is_test:
             continue
 
-        # Skip if already archived/deleted
-        if meta.status in ["archived", "deleted"]:
-            continue
-
-        # Archive immediately if very low update count (1-2 updates = just a ping/test)
+        # Immediate archive: test/ping agents with very low update count
         if meta.total_updates <= 2 and is_test:
+            reason = f"Auto-archived: test/ping agent with {meta.total_updates} update(s)"
             if not dry_run:
-                meta.status = "archived"
-                meta.archived_at = datetime.now(timezone.utc).isoformat()
-                meta.add_lifecycle_event("archived", f"Auto-archived: test/ping agent with {meta.total_updates} update(s)")
-                # Unload from memory
-                if agent_id in mcp_server.monitors:
-                    del mcp_server.monitors[agent_id]
-                # PostgreSQL: Archive agent
-                try:
-                    await agent_storage.archive_agent(agent_id)
-                except Exception as e:
-                    logger.debug(f"PostgreSQL archive failed for {agent_id}: {e}")
+                if not await _archive_one_agent(
+                    agent_id, meta, reason, monitors=mcp_server.monitors,
+                ):
+                    continue
             archived_agents.append({"id": agent_id, "reason": "low_updates", "updates": meta.total_updates})
             continue
 
-        # Check age for agents with more updates
-        try:
-            last_update_dt = datetime.fromisoformat(meta.last_update.replace('Z', '+00:00'))
-            if last_update_dt.tzinfo is None:
-                last_update_dt = last_update_dt.replace(tzinfo=timezone.utc)
-        except Exception:
+        # Age-based archive
+        age_h = _agent_age_hours(meta)
+        if age_h is None or age_h < max_age_hours:
             continue
-
-        if last_update_dt < cutoff_time:
-            age_hours = (datetime.now(timezone.utc) - last_update_dt).total_seconds() / 3600
-            age_days = age_hours / 24
-            if not dry_run:
-                meta.status = "archived"
-                meta.archived_at = datetime.now(timezone.utc).isoformat()
-                meta.add_lifecycle_event("archived", f"Inactive for {age_hours:.1f} hours (threshold: {max_age_hours} hours)")
-                # Unload from memory
-                if agent_id in mcp_server.monitors:
-                    del mcp_server.monitors[agent_id]
-                # PostgreSQL: Archive agent
-                try:
-                    await agent_storage.archive_agent(agent_id)
-                except Exception as e:
-                    logger.debug(f"PostgreSQL archive failed for {agent_id}: {e}")
-            archived_agents.append({"id": agent_id, "reason": "stale", "days_inactive": round(age_days, 1)})
+        reason = f"Inactive for {age_h:.1f} hours (threshold: {max_age_hours} hours)"
+        if not dry_run:
+            if not await _archive_one_agent(
+                agent_id, meta, reason, monitors=mcp_server.monitors,
+            ):
+                continue
+        archived_agents.append({"id": agent_id, "reason": "stale", "days_inactive": round(age_h / 24, 1)})
 
     return success_response({
         "success": True,
         "dry_run": dry_run,
         "archived_count": len(archived_agents),
-        "archived_agents": archived_agents[:20],  # Limit output
+        "archived_agents": archived_agents[:20],
         "total_would_archive": len(archived_agents),
         "max_age_days": max_age_hours / 24,
         "include_all": include_all,
@@ -650,112 +604,47 @@ async def handle_archive_old_test_agents(arguments: Dict[str, Any]) -> Sequence[
 async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """Aggressively archive orphan agents to prevent proliferation.
 
-    Targets UUID-named agents without labels that have low/no updates.
-    Much more aggressive than archive_old_test_agents.
+    Thin wrapper around the canonical orphan heuristic engine in
+    ``agent_lifecycle.auto_archive_orphan_agents``.
 
     Parameters:
     - max_age_hours: Maximum inactivity before evaluation (default: 6h). Scales internal tiers.
     - max_updates: Skip agents with more updates than this (default: 3).
-
-    Preserves:
-    - Agents with labels/display names
-    - Agents with "pioneer" tag
-    - Recently active agents
+    - dry_run: Preview without archiving (default: true).
     """
-    import re
-    UUID_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+    from src.agent_lifecycle import auto_archive_orphan_agents
 
     max_age_hours = float(arguments.get("max_age_hours", 6))
     max_updates = int(arguments.get("max_updates", 3))
     dry_run = arguments.get("dry_run", True)
 
-    # Derive tier thresholds from max_age_hours, capped to sensible minimums
-    zero_update_hours = min(max(max_age_hours / 6, 0.5), max_age_hours)   # ~1h at default 6
-    low_update_hours = min(max(max_age_hours / 2, 1.0), max_age_hours)    # ~3h at default 6
-    unlabeled_hours = max_age_hours                                        # 6h at default 6
+    zero_update_hours = min(max(max_age_hours / 6, 0.5), max_age_hours)
+    low_update_hours = min(max(max_age_hours / 2, 1.0), max_age_hours)
+    unlabeled_hours = max_age_hours
 
-    # Reload metadata from PostgreSQL (async)
     await mcp_server.load_metadata_async(force=True)
 
-    archived_agents = []
-    current_time = datetime.now(timezone.utc)
+    results = await auto_archive_orphan_agents(
+        zero_update_hours=zero_update_hours,
+        low_update_hours=low_update_hours,
+        unlabeled_hours=unlabeled_hours,
+        dry_run=dry_run,
+        _metadata=mcp_server.agent_metadata,
+        _monitors=mcp_server.monitors,
+    )
 
-    for agent_id, meta in list(mcp_server.agent_metadata.items()):
-        # Skip if already archived or deleted
-        if meta.status in ["archived", "deleted"]:
-            continue
+    filtered = [r for r in results if r.get("updates", 0) <= max_updates]
 
-        # Never archive pioneers
-        if "pioneer" in (meta.tags or []):
-            continue
-
-        # Check if agent has a meaningful label
-        has_label = bool(getattr(meta, 'label', None) or getattr(meta, 'display_name', None))
-        is_uuid_named = bool(UUID_PATTERN.match(agent_id))
-
-        # Calculate age
-        try:
-            last_update_str = meta.last_update or meta.created_at
-            last_update_dt = datetime.fromisoformat(
-                last_update_str.replace('Z', '+00:00') if 'Z' in last_update_str else last_update_str
-            )
-            if last_update_dt.tzinfo is None:
-                last_update_dt = last_update_dt.replace(tzinfo=timezone.utc)
-            age_delta = current_time - last_update_dt
-            age_hours = age_delta.total_seconds() / 3600
-        except (ValueError, TypeError, AttributeError):
-            continue
-
-        updates = getattr(meta, 'total_updates', 0) or 0
-
-        # Skip agents with more updates than max_updates threshold
-        if updates > max_updates:
-            continue
-
-        should_archive = False
-        reason = ""
-
-        # Rule 1: UUID-named, 0 updates, older than zero_update_hours
-        if is_uuid_named and updates == 0 and age_hours >= zero_update_hours:
-            should_archive = True
-            reason = f"orphan UUID, 0 updates, {age_hours:.1f}h"
-
-        # Rule 2: Unlabeled, 0-1 updates, older than low_update_hours
-        elif not has_label and updates <= 1 and age_hours >= low_update_hours:
-            should_archive = True
-            reason = f"unlabeled, {updates} updates, {age_hours:.1f}h"
-
-        # Rule 3: UUID-named + unlabeled, low updates but old
-        elif is_uuid_named and not has_label and updates >= 2 and age_hours >= unlabeled_hours:
-            should_archive = True
-            reason = f"stale UUID, {updates} updates, {age_hours:.1f}h"
-
-        if should_archive:
-            if not dry_run:
-                meta.status = "archived"
-                meta.archived_at = current_time.isoformat()
-                meta.add_lifecycle_event("archived", f"Orphan cleanup: {reason}")
-                # Unload from memory
-                if agent_id in mcp_server.monitors:
-                    del mcp_server.monitors[agent_id]
-                # PostgreSQL: Archive agent
-                try:
-                    await agent_storage.archive_agent(agent_id)
-                except Exception as e:
-                    logger.debug(f"PostgreSQL archive failed for {agent_id}: {e}")
-            archived_agents.append({
-                "id": agent_id[:12] + "...",
-                "reason": reason,
-                "updates": updates,
-                "label": getattr(meta, 'label', None)
-            })
+    for r in filtered:
+        if len(r.get("id", "")) > 12:
+            r["id"] = r["id"][:12] + "..."
 
     return success_response({
         "success": True,
         "dry_run": dry_run,
-        "archived_count": len(archived_agents),
-        "archived_agents": archived_agents[:30],  # Limit output
-        "total_would_archive": len(archived_agents),
+        "archived_count": len(filtered),
+        "archived_agents": filtered[:30],
+        "total_would_archive": len(filtered),
         "thresholds": {
             "max_age_hours": max_age_hours,
             "max_updates": max_updates,

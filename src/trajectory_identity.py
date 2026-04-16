@@ -590,6 +590,10 @@ def compute_trust_tier(metadata: Dict[str, Any]) -> Dict[str, Any]:
     Pure function: takes metadata dict, returns tier assessment.
     No DB access, no side effects.
 
+    Uses hysteresis to prevent oscillation at tier boundaries: promoting
+    requires meeting the full threshold, but demoting requires dropping
+    below a lower margin (5% below the promotion threshold).
+
     Tiers:
         0 (unknown):     No trajectory data
         1 (emerging):    Has genesis, < 50 observations OR confidence < 0.5
@@ -625,11 +629,22 @@ def compute_trust_tier(metadata: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
 
+    # Current tier for hysteresis — if already at a tier, require a
+    # larger drop to demote (prevents oscillation at boundaries).
+    prev_tier = metadata.get("trust_tier", {})
+    current_tier = prev_tier.get("tier", 0) if isinstance(prev_tier, dict) else 0
+
+    # Hysteresis margins: demotion thresholds are 5% below promotion thresholds
+    conf_3 = 0.70 if current_tier < 3 else 0.65   # promote at 0.70, demote at 0.65
+    lin_3 = 0.80 if current_tier < 3 else 0.75
+    conf_2 = 0.50 if current_tier < 2 else 0.45
+    lin_2 = 0.70 if current_tier < 2 else 0.65
+
     # Tier 3: verified (200+ obs, confidence >= 0.7, lineage > 0.8)
     if (observation_count >= 200
-            and identity_confidence >= 0.7
+            and identity_confidence >= conf_3
             and lineage_similarity is not None
-            and lineage_similarity > 0.8):
+            and lineage_similarity > lin_3):
         return {
             "tier": 3,
             "name": "verified",
@@ -642,8 +657,8 @@ def compute_trust_tier(metadata: Dict[str, Any]) -> Dict[str, Any]:
 
     # Tier 2: established (50+ obs, confidence >= 0.5, lineage > 0.7)
     if (observation_count >= 50
-            and identity_confidence >= 0.5
-            and (lineage_similarity is None or lineage_similarity > 0.7)):
+            and identity_confidence >= conf_2
+            and (lineage_similarity is None or lineage_similarity > lin_2)):
         return {
             "tier": 2,
             "name": "established",

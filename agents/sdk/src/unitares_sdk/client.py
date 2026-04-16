@@ -159,9 +159,16 @@ class GovernanceClient:
         model_type: str = "resident_agent",
         client_hint: str = "resident",
         force_new: bool = False,
+        parent_agent_id: str | None = None,
+        spawn_reason: str | None = None,
         **kwargs: Any,
     ) -> OnboardResult:
-        """Register with governance. Maps to server tool: onboard."""
+        """Register with governance. Maps to server tool: onboard.
+
+        parent_agent_id/spawn_reason: opt-in lineage tracking. When provided,
+        the server persists a parent link in core.identities so spawned agents
+        are distinguishable from root agents with otherwise-similar signals.
+        """
         args: dict[str, Any] = {
             "name": name,
             "model_type": model_type,
@@ -169,6 +176,10 @@ class GovernanceClient:
         }
         if force_new:
             args["force_new"] = True
+        if parent_agent_id is not None:
+            args["parent_agent_id"] = parent_agent_id
+        if spawn_reason is not None:
+            args["spawn_reason"] = spawn_reason
         args.update(kwargs)
 
         raw = await self.call_tool("onboard", args)
@@ -180,14 +191,25 @@ class GovernanceClient:
         name: str | None = None,
         resume: bool = True,
         continuity_token: str | None = None,
+        parent_agent_id: str | None = None,
+        spawn_reason: str | None = None,
         **kwargs: Any,
     ) -> IdentityResult:
-        """Resume or query identity. Maps to server tool: identity."""
+        """Resume or query identity. Maps to server tool: identity.
+
+        parent_agent_id/spawn_reason: applied only when this call results in
+        identity creation (e.g. name-resume miss falling through to create).
+        Ignored on successful resume.
+        """
         args: dict[str, Any] = {"resume": resume}
         if name is not None:
             args["name"] = name
         if continuity_token is not None:
             args["continuity_token"] = continuity_token
+        if parent_agent_id is not None:
+            args["parent_agent_id"] = parent_agent_id
+        if spawn_reason is not None:
+            args["spawn_reason"] = spawn_reason
         args.update(kwargs)
 
         raw = await self.call_tool("identity", args)

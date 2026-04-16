@@ -1934,8 +1934,9 @@ class TestArchiveAgentEdgeCases:
         return make_mock_server()
 
     @pytest.mark.asyncio
-    async def test_archive_postgres_failure_still_succeeds(self, server):
-        """Lines 831-834: PostgreSQL archive failure is logged but doesn't block."""
+    async def test_archive_postgres_failure_returns_error(self, server):
+        """Persist-first: if DB write fails, archival returns an error and
+        in-memory state is NOT mutated (prevents P011 desync)."""
         meta = make_agent_meta(status="active")
         server.agent_metadata = {"agent-1": meta}
 
@@ -1946,8 +1947,9 @@ class TestArchiveAgentEdgeCases:
             from src.mcp_handlers.lifecycle.handlers import handle_archive_agent
             result = await handle_archive_agent({"agent_id": "agent-1"})
             data = _parse(result)
-            assert data["success"] is True
-            assert meta.status == "archived"
+            assert data.get("error_code") == "ARCHIVE_PERSIST_FAILED"
+            # In-memory state must NOT be mutated when DB write fails
+            assert meta.status == "active"
 
 
 # ============================================================================
@@ -2044,7 +2046,7 @@ class TestArchiveOldTestAgentsEdgeCases:
 
         with patch_lifecycle_server(server), \
              patch_agent_storage() as mock_storage:
-            mock_storage.archive_agent = AsyncMock(side_effect=RuntimeError("PG down"))
+            mock_storage.archive_agent = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_archive_old_test_agents
             result = await handle_archive_old_test_agents({"dry_run": False})
             data = _parse(result)
@@ -2061,7 +2063,7 @@ class TestArchiveOldTestAgentsEdgeCases:
 
         with patch_lifecycle_server(server), \
              patch_agent_storage() as mock_storage:
-            mock_storage.archive_agent = AsyncMock(side_effect=RuntimeError("PG down"))
+            mock_storage.archive_agent = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_archive_old_test_agents
             result = await handle_archive_old_test_agents({"dry_run": False})
             data = _parse(result)
@@ -2165,7 +2167,8 @@ class TestArchiveOrphanAgentsEdgeCases:
             from src.mcp_handlers.lifecycle.handlers import handle_archive_orphan_agents
             result = await handle_archive_orphan_agents({"dry_run": False})
             data = _parse(result)
-            assert data["archived_count"] >= 1
+            # Persist-first: PG failure means archival is skipped
+            assert data["archived_count"] == 0
 
 
 # ============================================================================

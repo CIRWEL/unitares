@@ -132,6 +132,39 @@ class TestIdentityResolution:
         client.onboard.assert_called_once_with("TestAgent")
 
     @pytest.mark.asyncio
+    async def test_onboard_forwards_parent_agent_id(self, tmp_path):
+        """When configured, parent_agent_id + spawn_reason reach the onboard call."""
+        agent = SimpleAgent(
+            session_file=tmp_path / ".test_session",
+            parent_agent_id="parent-uuid-123",
+            spawn_reason="subagent",
+        )
+
+        client = _mock_client_connected()
+        client.identity = AsyncMock(side_effect=Exception("not found"))
+        await agent._ensure_identity(client)
+
+        client.onboard.assert_called_once_with(
+            "TestAgent",
+            parent_agent_id="parent-uuid-123",
+            spawn_reason="subagent",
+        )
+
+    @pytest.mark.asyncio
+    async def test_onboard_omits_lineage_when_unset(self, tmp_path):
+        """Default (no parent) must preserve backward-compatible onboard call shape."""
+        agent = SimpleAgent(session_file=tmp_path / ".test_session")
+
+        client = _mock_client_connected()
+        client.identity = AsyncMock(side_effect=Exception("not found"))
+        await agent._ensure_identity(client)
+
+        # No parent_agent_id / spawn_reason kwargs when agent didn't set them
+        call_kwargs = client.onboard.call_args.kwargs
+        assert "parent_agent_id" not in call_kwargs
+        assert "spawn_reason" not in call_kwargs
+
+    @pytest.mark.asyncio
     async def test_stale_token_discarded(self, tmp_path):
         """If token's aid doesn't match agent_uuid, discard it."""
         agent = SimpleAgent(session_file=tmp_path / ".test_session")

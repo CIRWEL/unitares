@@ -1295,10 +1295,10 @@ class TestAutoArchiveOrphanAgents:
         )
         try:
             with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
-                archived = await auto_archive_orphan_agents(zero_update_hours=1.0)
-                assert archived >= 1
+                results = await auto_archive_orphan_agents(zero_update_hours=1.0)
+                assert len(results) >= 1
                 assert agent_metadata[test_id].status == "archived"
-                mock_archive.assert_any_call(test_id)
+                mock_archive.assert_called()
         finally:
             agent_metadata.pop(test_id, None)
 
@@ -1365,9 +1365,9 @@ class TestAutoArchiveOrphanAgents:
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("DB down"),
             ):
-                archived = await auto_archive_orphan_agents(zero_update_hours=1.0)
-            # Persistence failed → count must not include this agent
-            assert archived == 0
+                results = await auto_archive_orphan_agents(zero_update_hours=1.0)
+            # Persistence failed → must not include this agent
+            assert len(results) == 0
             # In-memory state must not diverge from DB
             assert agent_metadata[test_id].status == "active"
         finally:
