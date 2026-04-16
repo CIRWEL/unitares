@@ -50,7 +50,7 @@ class GovernanceAgent:
 
     Handles:
     - MCP connection lifecycle (per-cycle connect/disconnect)
-    - Identity resolution (token resume -> name resume -> fresh onboard)
+    - Identity resolution (UUID from file -> server lookup, or fresh onboard)
     - Session persistence (atomic file writes)
     - Check-in after each cycle
     - Heartbeat when idle
