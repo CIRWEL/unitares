@@ -74,6 +74,8 @@ class GovernanceAgent:
         session_file: Path | None = None,
         notify_on_error: bool = True,
         timeout: float = 30.0,
+        parent_agent_id: str | None = None,
+        spawn_reason: str | None = None,
     ):
         self.name = name
         self.mcp_url = mcp_url
@@ -85,6 +87,11 @@ class GovernanceAgent:
         default_root = Path(__file__).resolve().parent.parent.parent.parent.parent
         self.state_dir = state_dir or default_root / "data" / name_lower
         self.session_file = session_file or default_root / f".{name_lower}_session"
+
+        # Opt-in lineage: when set, forwarded to the server on fresh onboard
+        # so spawned agents are distinguishable from unrelated siblings.
+        self.parent_agent_id = parent_agent_id
+        self.spawn_reason = spawn_reason
 
         # Runtime state
         self.running = True
@@ -218,7 +225,12 @@ class GovernanceAgent:
             )
             self.agent_uuid = None
             client.agent_uuid = None
-        result = await client.onboard(self.name)
+        onboard_kwargs: dict[str, Any] = {}
+        if self.parent_agent_id is not None:
+            onboard_kwargs["parent_agent_id"] = self.parent_agent_id
+        if self.spawn_reason is not None:
+            onboard_kwargs["spawn_reason"] = self.spawn_reason
+        result = await client.onboard(self.name, **onboard_kwargs)
         self._sync_from_client(client)
         self._save_session()
         logger.info("%s: onboarded fresh", self.name)

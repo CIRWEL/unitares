@@ -276,6 +276,62 @@ class TestKwargsPassthrough:
         args = session.call_tool.call_args[0][1]
         assert args["custom_field"] == "custom_value"
 
+    @pytest.mark.asyncio
+    async def test_onboard_forwards_parent_agent_id_and_spawn_reason(self):
+        """Typed lineage params reach server args dict when provided."""
+        session = AsyncMock()
+        session.call_tool = AsyncMock(return_value=make_mcp_result({
+            "success": True,
+            "client_session_id": "sid-1",
+            "uuid": "u-1",
+        }))
+        client = make_client_with_session(session)
+
+        await client.onboard(
+            "Test",
+            parent_agent_id="parent-uuid-abc",
+            spawn_reason="subagent",
+        )
+        args = session.call_tool.call_args[0][1]
+        assert args["parent_agent_id"] == "parent-uuid-abc"
+        assert args["spawn_reason"] == "subagent"
+
+    @pytest.mark.asyncio
+    async def test_onboard_omits_lineage_when_none(self):
+        """Default None values must not appear in server args (backward compat)."""
+        session = AsyncMock()
+        session.call_tool = AsyncMock(return_value=make_mcp_result({
+            "success": True,
+            "client_session_id": "sid-1",
+            "uuid": "u-1",
+        }))
+        client = make_client_with_session(session)
+
+        await client.onboard("Test")
+        args = session.call_tool.call_args[0][1]
+        assert "parent_agent_id" not in args
+        assert "spawn_reason" not in args
+
+    @pytest.mark.asyncio
+    async def test_identity_forwards_parent_agent_id_and_spawn_reason(self):
+        """Typed lineage params also flow through identity() for creation fallthrough."""
+        session = AsyncMock()
+        session.call_tool = AsyncMock(return_value=make_mcp_result({
+            "success": True,
+            "client_session_id": "sid-1",
+            "uuid": "u-1",
+        }))
+        client = make_client_with_session(session)
+
+        await client.identity(
+            name="Test",
+            parent_agent_id="parent-uuid-xyz",
+            spawn_reason="compaction",
+        )
+        args = session.call_tool.call_args[0][1]
+        assert args["parent_agent_id"] == "parent-uuid-xyz"
+        assert args["spawn_reason"] == "compaction"
+
 
 # --- Timeout and retry ---
 
