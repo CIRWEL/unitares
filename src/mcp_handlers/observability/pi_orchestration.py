@@ -587,13 +587,8 @@ async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent
 
     eisv_source = "pi (neural-weighted)" if context.get("eisv") else "mac (fallback)"
     result = {
-        "operation": "sync_to_governance" if update_governance else "read_mapping",
-        "note": (
-            "Synced: anima→EISV pushed to governance state."
-            if update_governance else
-            "Read-only: computed EISV from anima state but did NOT update governance. "
-            "Pass update_governance=true to push to governance."
-        ),
+        "operation": "sync_to_buffer",
+        "note": "Synced: anima→EISV written to sensor buffer.",
         "anima": anima,
         "eisv": eisv,
         "eisv_source": eisv_source,
@@ -605,51 +600,10 @@ async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent
         }
     }
 
-    # Optionally update governance state with sensor-derived check-in
-    if update_governance:
-        try:
-            import numpy as np
-            # mcp_server already imported at module level via shared.py lazy proxy
-
-            # Derive complexity and confidence from anima readings:
-            # - Low stability → high complexity (turbulent state is harder to work in)
-            # - Clarity maps directly to confidence (clear sensors = reliable reading)
-            stability = anima.get("stability", 0.5)
-            clarity = anima.get("clarity", 0.5)
-            sensor_complexity = round(1.0 - stability, 3)
-            sensor_confidence = round(clarity, 3)
-
-            sensor_state = {
-                "parameters": np.array([]),
-                "ethical_drift": np.array([0.0]),
-                "response_text": (
-                    f"EISV sync from Pi anima sensors — "
-                    f"warmth={anima.get('warmth', 0):.2f}, "
-                    f"clarity={clarity:.2f}, "
-                    f"stability={stability:.2f}, "
-                    f"presence={anima.get('presence', 0):.2f}"
-                ),
-                "complexity": sensor_complexity,
-                "sensor_eisv": eisv,  # Feed sensor-derived EISV to behavioral track
-            }
-
-            gov_result = await mcp_server.process_update_authenticated_async(
-                agent_id=agent_id,
-                api_key=None,
-                agent_state=sensor_state,
-                auto_save=True,
-                confidence=sensor_confidence,
-                session_bound=True,
-            )
-
-            result["governance_updated"] = True
-            result["governance_verdict"] = gov_result.get("decision", {}).get("action", "unknown")
-            result["governance_risk"] = gov_result.get("metrics", {}).get("risk_score")
-            result["governance_coherence"] = gov_result.get("metrics", {}).get("coherence")
-        except Exception as e:
-            logger.warning(f"[pi_sync_eisv] Governance update failed: {e}", exc_info=True)
-            result["governance_updated"] = False
-            result["governance_error"] = str(e)
+    # Write to shared buffer — Lumen's check-ins pick this up via phases.py
+    from src.sensor_buffer import update_sensor_eisv
+    update_sensor_eisv(eisv, anima)
+    result["buffer_updated"] = True
 
     return success_response(result)
 
@@ -1064,21 +1018,21 @@ async def handle_pi_restart_service(arguments: Dict[str, Any]) -> Sequence[TextC
 # Periodic EISV Sync Task (Background)
 # ============================================================
 
-async def sync_eisv_once(update_governance: bool = False) -> Dict[str, Any]:
+async def sync_eisv_once() -> Dict[str, Any]:
     """
     Perform a single EISV sync from Pi to Mac.
 
-    Args:
-        update_governance: Whether to update governance state with synced values.
-            When True, feeds sensor-derived EISV into both the behavioral track
-            (via sensor_eisv) and triggers an ODE step with sensor anchoring.
+    Reads anima state from Pi, maps it to EISV, and writes the result to
+    the shared sensor buffer (src.sensor_buffer). Lumen's check-ins read
+    from the buffer via phases.py — no agent identity or governance calls
+    are involved.
 
     Returns:
         Dict with sync results or error
     """
     try:
         # Get anima state from Pi (includes pre-computed EISV when available)
-        result = await call_pi_tool("get_lumen_context", {"include": ["anima"]}, agent_id="eisv-sync-task")
+        result = await call_pi_tool("get_lumen_context", {"include": ["anima"]}, agent_id="sensor-sync")
 
         error_msg = _extract_error_message(result)
         if error_msg:
@@ -1094,13 +1048,13 @@ async def sync_eisv_once(update_governance: bool = False) -> Dict[str, Any]:
 
         # Log the sync
         audit_logger.log_eisv_sync(
-            agent_id="eisv-sync-task",
+            agent_id="sensor-sync",
             source_device="pi",
             target_device="mac",
             anima_state=anima,
             eisv_mapped=eisv,
             sync_direction="pi_to_mac",
-            details={"periodic": True, "update_governance": update_governance}
+            details={"periodic": True}
         )
 
         sync_result = {
@@ -1110,41 +1064,10 @@ async def sync_eisv_once(update_governance: bool = False) -> Dict[str, Any]:
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")
         }
 
-        # Push sensor-derived EISV into governance (behavioral track + ODE anchoring)
-        if update_governance:
-            try:
-                import numpy as np
-                stability = anima.get("stability", 0.5)
-                clarity = anima.get("clarity", 0.5)
-
-                sensor_state = {
-                    "parameters": np.array([]),
-                    "ethical_drift": np.array([0.0]),
-                    "response_text": (
-                        f"Periodic EISV sync from Pi sensors — "
-                        f"warmth={anima.get('warmth', 0):.2f}, "
-                        f"clarity={clarity:.2f}, "
-                        f"stability={stability:.2f}, "
-                        f"presence={anima.get('presence', 0):.2f}"
-                    ),
-                    "complexity": round(1.0 - stability, 3),
-                    "sensor_eisv": eisv,  # Feed sensor-derived EISV to behavioral track
-                }
-
-                gov_result = await mcp_server.process_update_authenticated_async(
-                    agent_id="eisv-sync-task",
-                    api_key=None,
-                    agent_state=sensor_state,
-                    auto_save=True,
-                    confidence=round(clarity, 3),
-                    session_bound=True,
-                )
-                sync_result["governance_updated"] = True
-                sync_result["governance_verdict"] = gov_result.get("decision", {}).get("action", "unknown")
-            except Exception as e:
-                logger.warning(f"[EISV_SYNC] Governance update failed: {e}")
-                sync_result["governance_updated"] = False
-                sync_result["governance_error"] = str(e)
+        # Write to shared buffer — Lumen's check-ins pick this up via phases.py
+        from src.sensor_buffer import update_sensor_eisv
+        update_sensor_eisv(eisv, anima)
+        sync_result["buffer_updated"] = True
 
         return sync_result
 
@@ -1157,88 +1080,21 @@ async def eisv_sync_task(interval_minutes: float = 5.0):
     Background task that periodically syncs EISV from Pi to Mac.
 
     Runs every interval_minutes, reads sensor-derived EISV from Pi,
-    and pushes it into the governance behavioral track. This keeps
-    Lumen's governance state anchored to physical sensor reality
-    rather than drifting with the ODE attractor.
+    and writes it to the shared sensor buffer (src.sensor_buffer). Lumen's
+    check-ins pick up the buffer values via phases.py. No agent identity or
+    governance calls are involved.
 
     Args:
         interval_minutes: Sync interval (default: 5 minutes)
     """
-    logger.info(f"[EISV_SYNC] Starting periodic sync (interval: {interval_minutes} min, governance: enabled)")
-
-    # Ensure the eisv-sync-task agent is persisted to Postgres. Without
-    # this, the agent lives only in the in-memory dict
-    # (get_or_create_metadata writes only to memory, never to Postgres).
-    # The circuit-breaker pause path inside process_update_authenticated_async
-    # triggers _auto_initiate_dialectic_recovery, which calls
-    # load_metadata_async(force=True); that force-reload runs
-    # agent_metadata.clear() and re-populates from Postgres. If Postgres
-    # doesn't have eisv-sync-task, it drops out of the dict, and the next
-    # sync cycle's get_or_create_monitor → get_or_create_metadata creates
-    # it fresh (logging "Created new agent 'eisv-sync-task'" again, along
-    # with a fresh API key). That is the dashboard flicker.
-    #
-    # The circuit breaker itself fires because sensor readings have I >> E,
-    # so V = accumulated (I − E) crosses the void threshold after a few
-    # cycles and GovernanceConfig.make_decision returns pause
-    # unconditionally when void_active is true. That's a separate bug
-    # (the breaker should exempt "system"-tagged agents or sensor-anchoring
-    # updates). Persisting to Postgres stops the flicker; the breaker will
-    # still pause the agent periodically until that second fix lands, but
-    # the agent record survives the force-reload so no new record is
-    # created on each sync.
-    #
-    # NOTE: an earlier version of this comment claimed
-    # process_update_authenticated_async does not increment total_updates.
-    # That was wrong — it does, via db.increment_update_count at
-    # agent_loop_detection.py:431. The counter appears stuck at 0 because
-    # the record keeps being recreated, not because updates aren't logged.
-    try:
-        from src.agent_storage import create_agent, agent_exists
-        from src.agent_metadata_persistence import get_or_create_metadata
-
-        persisted = await agent_exists("eisv-sync-task")
-        if not persisted:
-            try:
-                await create_agent(
-                    agent_id="eisv-sync-task",
-                    api_key="",  # system agent, session-bound, no auth required
-                    status="active",
-                    tags=["pioneer", "system"],
-                    purpose="Periodic Pi sensor EISV sync to governance behavioral track",
-                )
-                logger.info("[EISV_SYNC] Persisted eisv-sync-task to Postgres (was in-memory-only)")
-            except ValueError:
-                # Raced with another creator — fine, it exists now.
-                pass
-
-        # Seed in-memory metadata with label + tags so the dashboard
-        # renders a friendly label and Tier-2 auto-archive doesn't match
-        # on "unlabeled". Belt-and-suspenders alongside SYSTEM_AGENT_IDS
-        # in agent_lifecycle.auto_archive_orphan_agents.
-        meta = get_or_create_metadata("eisv-sync-task")
-        if meta is not None:
-            changed = False
-            if not getattr(meta, "label", None):
-                meta.label = "Lumen EISV Sync"
-                changed = True
-            tags = list(meta.tags or [])
-            for required in ("pioneer", "system"):
-                if required not in tags:
-                    tags.append(required)
-                    changed = True
-            meta.tags = tags
-            if changed:
-                logger.info("[EISV_SYNC] Tagged eisv-sync-task (label, pioneer, system)")
-    except Exception as e:
-        logger.warning(f"[EISV_SYNC] Could not seed eisv-sync-task metadata (non-fatal): {e}", exc_info=True)
+    logger.info(f"[EISV_SYNC] Starting periodic sync (interval: {interval_minutes} min)")
 
     # Per-cycle deadline for sync_eisv_once. Without this the task can park
-    # forever if the Pi httpx call hangs below the timeout layer or if the
-    # governance update blocks on pool acquisition. PI_MCP_TIMEOUT alone is
-    # ~30s per URL with up to 3 retries, so 60s covers the realistic worst
-    # case while still letting launchd/operators notice a wedged cycle.
-    # Same shape as deep_health_probe_task's wait_for guard.
+    # forever if the Pi httpx call hangs below the timeout layer.
+    # PI_MCP_TIMEOUT alone is ~30s per URL with up to 3 retries, so 60s
+    # covers the realistic worst case while still letting launchd/operators
+    # notice a wedged cycle. Same shape as deep_health_probe_task's
+    # wait_for guard.
     EISV_SYNC_CYCLE_TIMEOUT = 60.0
 
     while True:
@@ -1247,21 +1103,20 @@ async def eisv_sync_task(interval_minutes: float = 5.0):
 
             try:
                 result = await asyncio.wait_for(
-                    sync_eisv_once(update_governance=True),
+                    sync_eisv_once(),
                     timeout=EISV_SYNC_CYCLE_TIMEOUT,
                 )
             except asyncio.TimeoutError:
                 logger.warning(
                     f"[EISV_SYNC] Sync exceeded {EISV_SYNC_CYCLE_TIMEOUT}s — "
-                    "skipping cycle (Pi unreachable or governance blocked)"
+                    "skipping cycle (Pi unreachable)"
                 )
                 continue
 
             if result.get("success"):
                 eisv = result.get("eisv", {})
-                gov = "gov=yes" if result.get("governance_updated") else "gov=no"
                 logger.info(
-                    f"[EISV_SYNC] Synced ({gov}): E={eisv.get('E', 0):.3f} "
+                    f"[EISV_SYNC] Synced: E={eisv.get('E', 0):.3f} "
                     f"I={eisv.get('I', 0):.3f} S={eisv.get('S', 0):.3f} V={eisv.get('V', 0):.3f}"
                 )
             else:

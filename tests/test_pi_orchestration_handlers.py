@@ -685,8 +685,13 @@ class TestHandlePiSyncEisv:
         assert "Anima state unavailable" in data["error"]
 
     @pytest.mark.asyncio
-    async def test_update_governance_success(self, mock_call_pi_tool, _mock_audit_logger):
-        """When update_governance=True and governance update succeeds."""
+    async def test_writes_to_buffer(self, mock_call_pi_tool, _mock_audit_logger):
+        """handle_pi_sync_eisv writes EISV to sensor buffer."""
+        import src.sensor_buffer as sb
+        sb._buffer["eisv"] = None
+        sb._buffer["anima"] = None
+        sb._buffer["timestamp"] = None
+
         mock_call_pi_tool.return_value = {
             "anima": {
                 "warmth": 0.8,
@@ -696,42 +701,39 @@ class TestHandlePiSyncEisv:
             }
         }
 
-        mock_gov_result = {
-            "decision": {"action": "continue"},
-            "metrics": {"risk_score": 0.1, "coherence": 0.9},
-        }
+        result = await handle_pi_sync_eisv({})
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["buffer_updated"] is True
+        assert data["operation"] == "sync_to_buffer"
 
-        with patch("src.agent_state.process_update_authenticated_async",
-                    create=True, new_callable=AsyncMock,
-                    return_value=mock_gov_result):
-            result = await handle_pi_sync_eisv({"update_governance": True})
-            data = parse_result(result)
-            assert data["success"] is True
-            assert data["governance_updated"] is True
-            assert data["governance_verdict"] == "continue"
-            assert data["governance_risk"] == 0.1
-            assert data["governance_coherence"] == 0.9
+        reading = sb.get_latest_sensor_eisv()
+        assert reading is not None
+        assert reading["eisv"]["E"] == pytest.approx(0.8)
 
     @pytest.mark.asyncio
-    async def test_update_governance_failure(self, mock_call_pi_tool, _mock_audit_logger):
-        """When update_governance=True but governance update fails."""
+    async def test_update_governance_arg_ignored(self, mock_call_pi_tool, _mock_audit_logger):
+        """The update_governance argument is accepted but ignored; buffer is always updated."""
+        import src.sensor_buffer as sb
+        sb._buffer["eisv"] = None
+        sb._buffer["anima"] = None
+        sb._buffer["timestamp"] = None
+
         mock_call_pi_tool.return_value = {
             "anima": {
-                "warmth": 0.8,
-                "clarity": 0.7,
-                "stability": 0.6,
+                "warmth": 0.5,
+                "clarity": 0.5,
+                "stability": 0.5,
                 "presence": 0.5,
             }
         }
 
-        with patch("src.agent_state.process_update_authenticated_async",
-                    create=True, new_callable=AsyncMock,
-                    side_effect=RuntimeError("db down")):
-            result = await handle_pi_sync_eisv({"update_governance": True})
-            data = parse_result(result)
-            assert data["success"] is True
-            assert data["governance_updated"] is False
-            assert "db down" in data["governance_error"]
+        result = await handle_pi_sync_eisv({"update_governance": True})
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["buffer_updated"] is True
+        # No governance_updated key in the new response
+        assert "governance_updated" not in data
 
 
 class TestHandlePiDisplay:
@@ -1298,10 +1300,15 @@ class TestHandlePiRestartService:
 # ============================================================================
 
 class TestSyncEisvOnce:
-    """Tests for sync_eisv_once (lines 1047-1083)."""
+    """Tests for sync_eisv_once."""
 
     @pytest.mark.asyncio
     async def test_success(self, _mock_audit_logger):
+        import src.sensor_buffer as sb
+        sb._buffer["eisv"] = None
+        sb._buffer["anima"] = None
+        sb._buffer["timestamp"] = None
+
         anima_data = {
             "anima": {
                 "warmth": 0.8,
@@ -1319,6 +1326,7 @@ class TestSyncEisvOnce:
             assert "anima" in result
             assert "eisv" in result
             assert "timestamp" in result
+            assert result["buffer_updated"] is True
 
     @pytest.mark.asyncio
     async def test_error_from_pi(self, _mock_audit_logger):
@@ -1359,16 +1367,43 @@ class TestSyncEisvOnce:
             assert result["success"] is True
             assert result["eisv"]["E"] == 0.9
 
+    @pytest.mark.asyncio
+    async def test_sync_eisv_once_writes_to_buffer(self, monkeypatch):
+        """sync_eisv_once writes to sensor_buffer, not to governance."""
+        import src.sensor_buffer as sb
+        # Reset buffer
+        sb._buffer["eisv"] = None
+        sb._buffer["anima"] = None
+        sb._buffer["timestamp"] = None
+
+        fake_anima = {"warmth": 0.6, "clarity": 0.7, "stability": 0.8, "presence": 0.5}
+        async def fake_call_pi_tool(tool, args, **kw):
+            return {"anima": fake_anima, "eisv": {"E": 0.6, "I": 0.7, "S": 0.2, "V": -0.1}}
+
+        monkeypatch.setattr(
+            "src.mcp_handlers.observability.pi_orchestration.call_pi_tool",
+            fake_call_pi_tool,
+        )
+
+        from src.mcp_handlers.observability.pi_orchestration import sync_eisv_once
+        result = await sync_eisv_once()
+        assert result["success"] is True
+        assert result["buffer_updated"] is True
+
+        reading = sb.get_latest_sensor_eisv()
+        assert reading is not None
+        assert reading["eisv"]["E"] == 0.6
+
 
 class TestEisvSyncTask:
-    """Tests for eisv_sync_task (lines 1096-1117)."""
+    """Tests for eisv_sync_task."""
 
     @pytest.mark.asyncio
     async def test_runs_and_can_be_cancelled(self, _mock_audit_logger):
         """The background task runs, syncs, and stops on CancelledError."""
         call_count = [0]
 
-        async def mock_sync_once(update_governance=False):
+        async def mock_sync_once():
             call_count[0] += 1
             return {"success": True, "eisv": {"E": 0.5, "I": 0.5, "S": 0.5, "V": 0.5}}
 
@@ -1385,7 +1420,7 @@ class TestEisvSyncTask:
         """The task continues running even when sync fails."""
         call_count = [0]
 
-        async def mock_sync_once(update_governance=False):
+        async def mock_sync_once():
             call_count[0] += 1
             return {"success": False, "error": "Pi down"}
 
@@ -1402,7 +1437,7 @@ class TestEisvSyncTask:
         """The task continues running even on unexpected exceptions."""
         call_count = [0]
 
-        async def mock_sync_once(update_governance=False):
+        async def mock_sync_once():
             call_count[0] += 1
             raise ValueError("unexpected error")
 

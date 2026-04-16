@@ -77,7 +77,7 @@ data/agents_archived/
 data/archives/
 data/backups/
 data/analysis/
-data/test_files/
+tests/fixtures/
 data/exports/
 data/mcp_server_sse*.log
 
@@ -127,6 +127,7 @@ data/telemetry/
 .coverage
 coverage.xml
 htmlcov/
+site/
 .tox/
 *.pyc
 *.lock
@@ -148,8 +149,6 @@ scripts/ops/*.plist
 docs/INTERNAL_CONFIG.md
 docs/archive/
 docs/handoffs/
-docs/plans/
-docs/superpowers/
 *.local.md
 
 # Agent guides (generated onboarding docs, not project documentation)
