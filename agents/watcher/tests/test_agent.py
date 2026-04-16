@@ -1713,3 +1713,67 @@ def test_load_pattern_violation_classes():
     sevs = load_pattern_severities()
     for pid in sevs:
         assert pid in classes, f"Pattern {pid} has severity but no violation_class"
+
+
+# ---------------------------------------------------------------------------
+# Task 6: Watcher mirrors high/critical findings to the governance event stream
+# ---------------------------------------------------------------------------
+
+
+class TestWatcherPostsFindings:
+    def test_high_severity_finding_posts_to_event_stream(self, tmp_path, monkeypatch):
+        """After persisting a new high-severity finding to jsonl, Watcher posts to /api/findings."""
+        from agents.watcher import agent as watcher
+
+        monkeypatch.setattr(watcher, "FINDINGS_FILE", tmp_path / "findings.jsonl")
+        monkeypatch.setattr(watcher, "DEDUP_FILE", tmp_path / "dedup.json")
+
+        calls = []
+
+        def fake_post(**kwargs):
+            calls.append(kwargs)
+            return True
+
+        monkeypatch.setattr(watcher, "post_finding", fake_post)
+
+        finding = watcher.Finding(
+            pattern="P011",
+            file="/tmp/foo.py",
+            line=42,
+            hint="mutation before persistence",
+            severity="high",
+            detected_at="2026-04-15T12:00:00Z",
+            model_used="qwen3-coder-next:latest",
+            line_content_hash="deadbeef",
+            violation_class="INT",
+        )
+        watcher.persist_finding(finding)
+
+        assert len(calls) == 1
+        kwargs = calls[0]
+        assert kwargs["event_type"] == "watcher_finding"
+        assert kwargs["severity"] == "high"
+        assert "P011" in kwargs["message"]
+        assert kwargs["fingerprint"] == finding.fingerprint
+        assert kwargs["extra"]["file"] == "/tmp/foo.py"
+        assert kwargs["extra"]["line"] == 42
+
+    def test_low_severity_finding_does_not_post(self, tmp_path, monkeypatch):
+        """Low/medium stay local to jsonl — only high/critical hit the stream."""
+        from agents.watcher import agent as watcher
+
+        monkeypatch.setattr(watcher, "FINDINGS_FILE", tmp_path / "findings.jsonl")
+        monkeypatch.setattr(watcher, "DEDUP_FILE", tmp_path / "dedup.json")
+
+        calls = []
+        monkeypatch.setattr(watcher, "post_finding",
+                            lambda **kw: calls.append(kw) or True)
+
+        finding = watcher.Finding(
+            pattern="P002", file="/tmp/foo.py", line=10, hint="unbounded append",
+            severity="medium", detected_at="2026-04-15T12:00:00Z",
+            model_used="qwen3-coder-next:latest",
+            line_content_hash="cafebabe", violation_class="ENT",
+        )
+        watcher.persist_finding(finding)
+        assert calls == []

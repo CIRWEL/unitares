@@ -61,6 +61,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 from agents.common.log import trim_log as _common_trim_log
+from agents.common.findings import post_finding
 
 PATTERNS_FILE = Path(__file__).resolve().parent / "patterns.md"
 STATE_DIR = PROJECT_ROOT / "data" / "watcher"
@@ -635,12 +636,42 @@ def persist_findings(new_findings: list[Finding]) -> list[Finding]:
         # next scan.
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         if fresh:
-            with FINDINGS_FILE.open("a") as fh:
-                for f in fresh:
-                    fh.write(json.dumps(asdict(f)) + "\n")
+            for f in fresh:
+                persist_finding(f)
         save_dedup(dedup)
 
     return fresh
+
+
+def persist_finding(finding: Finding) -> None:
+    """Append a new finding to findings.jsonl and, for high/critical severity,
+    mirror it into the governance event stream so the Discord bridge surfaces it.
+
+    Low/medium stays local — the SessionStart hook handles surfacing those
+    to the in-editor Claude session.
+
+    The caller is responsible for the dedup gate; this function does NOT
+    check dedup itself.
+    """
+    FINDINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with FINDINGS_FILE.open("a") as f:
+        f.write(json.dumps(asdict(finding)) + "\n")
+
+    if finding.severity in ("high", "critical"):
+        post_finding(
+            event_type="watcher_finding",
+            severity=finding.severity,
+            message=f"[{finding.pattern}] {finding.file}:{finding.line} — {finding.hint}",
+            agent_id="watcher",
+            agent_name="Watcher",
+            fingerprint=finding.fingerprint,
+            extra={
+                "pattern": finding.pattern,
+                "file": finding.file,
+                "line": finding.line,
+                "violation_class": finding.violation_class,
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
