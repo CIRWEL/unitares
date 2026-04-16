@@ -1,7 +1,5 @@
 """Vigil posts findings on governance-down and Lumen-unreachable transitions."""
 
-from unittest.mock import patch
-
 
 def test_gov_down_transition_posts_finding():
     """First cycle that sees governance unhealthy must post a vigil_finding."""
