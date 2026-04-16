@@ -2088,3 +2088,126 @@ class TestWatcherCheckin:
         assert watcher_module.compute_checkin_confidence(4, 1) == pytest.approx(0.8)  # 5 total
         assert watcher_module.compute_checkin_confidence(0, 5) == pytest.approx(0.0)  # all dismissed
         assert watcher_module.compute_checkin_confidence(5, 0) == pytest.approx(1.0)  # all confirmed
+
+
+class TestResolutionAuditTrail:
+    """--resolve/--dismiss posts watcher_resolution governance events."""
+
+    def _write_findings(self, watcher_module, findings: list[dict]):
+        watcher_module.FINDINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with watcher_module.FINDINGS_FILE.open("w") as f:
+            for finding in findings:
+                f.write(json.dumps(finding) + "\n")
+
+    def test_resolve_posts_governance_event(self, watcher_module, monkeypatch):
+        """--resolve posts a watcher_resolution event with action=confirmed."""
+        self._write_findings(watcher_module, [
+            {"fingerprint": "ff27c1b200000000", "status": "open", "severity": "high",
+             "pattern": "P004", "file": "/tmp/x.py", "line": 97,
+             "hint": "asyncpg deadlock", "violation_class": "REC",
+             "timestamp": datetime.now(timezone.utc).isoformat()},
+        ])
+        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+            "agent_uuid": "uuid-watcher",
+            "client_session_id": "s1",
+            "continuity_token": "t1",
+        })
+
+        posted = {}
+        monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: posted.update(kw) or True)
+
+        watcher_module.update_finding_status("ff27c1b2", "confirmed", resolver_agent_id="uuid-agent-X")
+
+        assert posted["event_type"] == "watcher_resolution"
+        assert posted["extra"]["action"] == "confirmed"
+        assert posted["extra"]["resolved_by"] == "uuid-agent-X"
+        assert posted["extra"]["pattern"] == "P004"
+        assert posted["agent_id"] == "uuid-watcher"
+
+    def test_dismiss_posts_governance_event(self, watcher_module, monkeypatch):
+        """--dismiss posts a watcher_resolution event with action=dismissed."""
+        self._write_findings(watcher_module, [
+            {"fingerprint": "8266dfb800000000", "status": "surfaced", "severity": "high",
+             "pattern": "P004", "file": "/tmp/y.py", "line": 114,
+             "hint": "asyncpg deadlock", "violation_class": "REC",
+             "timestamp": datetime.now(timezone.utc).isoformat()},
+        ])
+        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+            "agent_uuid": "uuid-watcher",
+            "client_session_id": "s1",
+            "continuity_token": "t1",
+        })
+
+        posted = {}
+        monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: posted.update(kw) or True)
+
+        watcher_module.update_finding_status("8266dfb8", "dismissed", resolver_agent_id="uuid-agent-Y")
+
+        assert posted["event_type"] == "watcher_resolution"
+        assert posted["extra"]["action"] == "dismissed"
+        assert posted["extra"]["resolved_by"] == "uuid-agent-Y"
+
+    def test_resolve_without_agent_id(self, watcher_module, monkeypatch):
+        """--resolve without --agent-id sets resolved_by to None."""
+        self._write_findings(watcher_module, [
+            {"fingerprint": "abcd123400000000", "status": "open", "severity": "medium",
+             "pattern": "P002", "file": "/tmp/z.py", "line": 50,
+             "hint": "unbounded growth", "violation_class": "ENT",
+             "timestamp": datetime.now(timezone.utc).isoformat()},
+        ])
+        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+            "agent_uuid": "uuid-watcher",
+            "client_session_id": "s1",
+            "continuity_token": "t1",
+        })
+
+        posted = {}
+        monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: posted.update(kw) or True)
+
+        watcher_module.update_finding_status("abcd1234", "confirmed")
+
+        assert posted["extra"]["resolved_by"] is None
+
+    def test_resolve_skips_event_when_no_identity(self, watcher_module, monkeypatch):
+        """No identity → local status update works, governance event skipped."""
+        self._write_findings(watcher_module, [
+            {"fingerprint": "dead000000000000", "status": "open", "severity": "low",
+             "pattern": "P001", "file": "/tmp/a.py", "line": 1,
+             "hint": "test", "violation_class": "CON",
+             "timestamp": datetime.now(timezone.utc).isoformat()},
+        ])
+        monkeypatch.setattr(watcher_module, "_watcher_identity", None)
+
+        posted = {}
+        monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: posted.update(kw) or True)
+
+        result = watcher_module.update_finding_status("dead0000", "confirmed")
+
+        assert result == 0  # local update succeeded
+        assert not posted  # no governance event
+
+    def test_governance_event_failure_doesnt_break_local_update(self, watcher_module, monkeypatch):
+        """post_finding failure doesn't prevent the local status update."""
+        self._write_findings(watcher_module, [
+            {"fingerprint": "beef000000000000", "status": "open", "severity": "high",
+             "pattern": "P004", "file": "/tmp/b.py", "line": 10,
+             "hint": "test", "violation_class": "REC",
+             "timestamp": datetime.now(timezone.utc).isoformat()},
+        ])
+        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+            "agent_uuid": "uuid-watcher",
+            "client_session_id": "s1",
+            "continuity_token": "t1",
+        })
+
+        def exploding_post(**kw):
+            raise RuntimeError("governance exploded")
+
+        monkeypatch.setattr(watcher_module, "post_finding", exploding_post)
+
+        result = watcher_module.update_finding_status("beef0000", "confirmed")
+        assert result == 0  # local update still worked
+
+        # Verify the local status was actually updated
+        findings = watcher_module._iter_findings_raw()
+        assert findings[0]["status"] == "confirmed"

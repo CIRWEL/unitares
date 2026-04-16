@@ -906,7 +906,7 @@ def match_fingerprint(prefix: str, findings: list[dict[str, Any]]) -> tuple[list
     return matches, None
 
 
-def update_finding_status(fingerprint_prefix: str, new_status: str) -> int:
+def update_finding_status(fingerprint_prefix: str, new_status: str, resolver_agent_id: str | None = None) -> int:
     """Mark a finding as ``new_status`` by fingerprint prefix.
 
     Returns exit code:
@@ -952,7 +952,39 @@ def update_finding_status(fingerprint_prefix: str, new_status: str) -> int:
         f"ok: {target_fp[:16]} → {new_status} "
         f"({matches[0].get('pattern','?')} at {matches[0].get('file','?')}:{matches[0].get('line','?')})"
     )
+
+    # --- Post resolution event to governance ---
+    if new_status in ("confirmed", "dismissed"):
+        _post_resolution_event(matches[0], new_status, resolver_agent_id)
+
     return 0
+
+
+def _post_resolution_event(finding: dict, action: str, resolver_agent_id: str | None) -> None:
+    """Post a watcher_resolution event to the governance event stream."""
+    identity = get_watcher_identity()
+    if identity is None:
+        return
+
+    try:
+        post_finding(
+            event_type="watcher_resolution",
+            severity=finding.get("severity", "unknown"),
+            message=f"[{action}] {finding.get('pattern', '?')} {finding.get('file', '?')}:{finding.get('line', '?')} — {finding.get('hint', '')}",
+            agent_id=identity["agent_uuid"],
+            agent_name="Watcher",
+            fingerprint=finding.get("fingerprint", ""),
+            extra={
+                "action": action,
+                "pattern": finding.get("pattern", ""),
+                "file": finding.get("file", ""),
+                "line": finding.get("line", 0),
+                "violation_class": finding.get("violation_class", ""),
+                "resolved_by": resolver_agent_id,
+            },
+        )
+    except Exception as e:
+        log(f"resolution event failed: {e}", "warning")
 
 
 def sweep_stale_findings() -> int:
@@ -1699,6 +1731,11 @@ def main() -> int:
         help="drop findings whose target file no longer exists on disk",
     )
     parser.add_argument(
+        "--agent-id",
+        metavar="UUID",
+        help="governance UUID of the agent resolving/dismissing (for audit trail)",
+    )
+    parser.add_argument(
         "--compact",
         action="store_true",
         help="drop resolved/dismissed/aged_out findings older than the TTL",
@@ -1733,9 +1770,9 @@ def main() -> int:
     if args.list_findings:
         return list_findings(only_open=args.only_open)
     if args.resolve:
-        return update_finding_status(args.resolve, "confirmed")
+        return update_finding_status(args.resolve, "confirmed", resolver_agent_id=args.agent_id)
     if args.dismiss:
-        return update_finding_status(args.dismiss, "dismissed")
+        return update_finding_status(args.dismiss, "dismissed", resolver_agent_id=args.agent_id)
     if args.sweep_stale:
         return sweep_stale_findings()
     if args.compact:
