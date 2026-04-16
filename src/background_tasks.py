@@ -634,7 +634,9 @@ _silence_server_start: datetime | None = None  # set on first iteration
 # When the proxy has checked in recently, a missing direct check-in is
 # a path issue (circuit breaker, threading) not a real outage.
 _SILENCE_PROXY_AGENTS: dict[str, str] = {
-    "Lumen": "eisv-sync-task",  # Mac-side EISV sync proves Pi is reachable
+    # eisv-sync-task removed — it no longer checks in as an agent.
+    # The background sensor sync still proves Pi is reachable, but it
+    # writes to the sensor_buffer, not to agent metadata.
 }
 
 
