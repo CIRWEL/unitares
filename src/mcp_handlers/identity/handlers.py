@@ -52,6 +52,7 @@ from .persistence import (
     _get_redis,
     _cache_session,
     _agent_exists_in_postgres,
+    _get_agent_status,
     _get_agent_label,
     _get_agent_id_from_metadata,
     _find_agent_by_label,
