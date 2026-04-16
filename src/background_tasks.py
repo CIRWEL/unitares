@@ -629,6 +629,14 @@ _silence_alerted: set[str] = set()
 _silence_critical_alerted: set[str] = set()
 _silence_server_start: datetime | None = None  # set on first iteration
 
+# Proxy agents whose recent activity proves another agent is alive.
+# Maps agent label → label of the proxy agent that calls the same host.
+# When the proxy has checked in recently, a missing direct check-in is
+# a path issue (circuit breaker, threading) not a real outage.
+_SILENCE_PROXY_AGENTS: dict[str, str] = {
+    "Lumen": "eisv-sync-task",  # Mac-side EISV sync proves Pi is reachable
+}
+
 
 def _get_expected_interval(meta) -> int | None:
     """Return expected check-in interval for persistent agents, None for ephemeral."""
@@ -658,6 +666,34 @@ def _parse_last_update_aware(last_update: str) -> datetime | None:
     else:
         parsed = parsed.astimezone(timezone.utc)
     return parsed
+
+
+def _proxy_alive(label: str, now: datetime, threshold_seconds: float) -> bool:
+    """Return True if a proxy agent has checked in recently.
+
+    Used to distinguish 'agent truly unreachable' from 'check-in path
+    broken but host is alive'. The proxy must have updated within
+    *threshold_seconds* of *now*.
+    """
+    from src.agent_metadata_model import agent_metadata
+
+    proxy_key = _SILENCE_PROXY_AGENTS.get(label)
+    if not proxy_key:
+        return False
+    # The proxy may be keyed by agent_id or by label depending on how
+    # it was registered. Search both.
+    for _aid, _meta in agent_metadata.items():
+        match = (_aid == proxy_key) or (getattr(_meta, 'label', None) == proxy_key)
+        if not match:
+            continue
+        if _meta.status != "active":
+            continue
+        proxy_last = _parse_last_update_aware(_meta.last_update or "")
+        if proxy_last is None:
+            continue
+        if (now - proxy_last).total_seconds() <= threshold_seconds:
+            return True
+    return False
 
 
 async def _silence_check_iteration() -> None:
@@ -696,21 +732,43 @@ async def _silence_check_iteration() -> None:
         silence_minutes = silence_seconds / 60
 
         if silence_seconds >= interval * 5 and agent_id not in _silence_critical_alerted:
-            _silence_critical_alerted.add(agent_id)
-            _silence_alerted.add(agent_id)  # prevent downgrade WARNING after CRITICAL
-            logger.error(
-                f"[SILENCE] CRITICAL: {meta.label or agent_id[:12]} silent for {silence_minutes:.0f}m "
-                f"(expected every {interval // 60}m)"
-            )
-            await broadcaster_instance.broadcast_event(
-                "lifecycle_silent_critical",
-                agent_id=agent_id,
-                payload={
-                    "silence_duration_minutes": round(silence_minutes, 1),
-                    "expected_interval_minutes": interval // 60,
-                    "label": meta.label,
-                },
-            )
+            # Before firing CRITICAL, check if a proxy agent proves the
+            # host is alive. Use 2× the agent's expected interval as the
+            # proxy freshness threshold (generous, since the proxy may
+            # run on a different cadence).
+            if _proxy_alive(meta.label, now, threshold_seconds=interval * 2):
+                if agent_id not in _silence_alerted:
+                    _silence_alerted.add(agent_id)
+                    logger.warning(
+                        f"[SILENCE] {meta.label or agent_id[:12]} check-in path silent for {silence_minutes:.0f}m "
+                        f"(expected every {interval // 60}m) — proxy alive, suppressing CRITICAL"
+                    )
+                    await broadcaster_instance.broadcast_event(
+                        "lifecycle_silent",
+                        agent_id=agent_id,
+                        payload={
+                            "silence_duration_minutes": round(silence_minutes, 1),
+                            "expected_interval_minutes": interval // 60,
+                            "label": meta.label,
+                            "proxy_alive": True,
+                        },
+                    )
+            else:
+                _silence_critical_alerted.add(agent_id)
+                _silence_alerted.add(agent_id)  # prevent downgrade WARNING after CRITICAL
+                logger.error(
+                    f"[SILENCE] CRITICAL: {meta.label or agent_id[:12]} silent for {silence_minutes:.0f}m "
+                    f"(expected every {interval // 60}m)"
+                )
+                await broadcaster_instance.broadcast_event(
+                    "lifecycle_silent_critical",
+                    agent_id=agent_id,
+                    payload={
+                        "silence_duration_minutes": round(silence_minutes, 1),
+                        "expected_interval_minutes": interval // 60,
+                        "label": meta.label,
+                    },
+                )
         elif silence_seconds >= interval * 2 and agent_id not in _silence_alerted:
             _silence_alerted.add(agent_id)
             logger.warning(
