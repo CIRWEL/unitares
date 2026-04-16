@@ -95,10 +95,9 @@ def _mock_client_connected():
 
 class TestIdentityResolution:
     @pytest.mark.asyncio
-    async def test_token_resume_first(self, tmp_path):
-        """Should try token resume first."""
+    async def test_uuid_resume_fast_path(self, tmp_path):
+        """When agent_uuid is stored, should call identity(agent_uuid=...) directly."""
         agent = SimpleAgent(session_file=tmp_path / ".test_session")
-        agent.continuity_token = _make_token("uuid-test")
         agent.agent_uuid = "uuid-test"
 
         client = _mock_client_connected()
@@ -106,30 +105,34 @@ class TestIdentityResolution:
 
         client.identity.assert_called_once()
         args = client.identity.call_args
-        assert args.kwargs.get("continuity_token") == agent.continuity_token
+        assert args.kwargs.get("agent_uuid") == "uuid-test"
+        assert args.kwargs.get("resume") is True
+        client.onboard.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_name_resume_fallback(self, tmp_path):
-        """If no token, should try name resume."""
+    async def test_uuid_lookup_failure_raises(self, tmp_path):
+        """If UUID lookup fails, must raise — never silently create a ghost."""
+        agent = SimpleAgent(session_file=tmp_path / ".test_session")
+        agent.agent_uuid = "uuid-dead"
+
+        client = _mock_client_connected()
+        client.identity = AsyncMock(side_effect=Exception("uuid_not_found"))
+        with pytest.raises(Exception, match="uuid_not_found"):
+            await agent._ensure_identity(client)
+
+        # Must NOT fall through to onboard
+        client.onboard.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fresh_onboard_when_no_uuid(self, tmp_path):
+        """If no stored UUID, should onboard fresh."""
         agent = SimpleAgent(session_file=tmp_path / ".test_session")
 
         client = _mock_client_connected()
-        await agent._ensure_identity(client)
-
-        client.identity.assert_called_once()
-        args = client.identity.call_args
-        assert args.kwargs.get("name") == "TestAgent"
-
-    @pytest.mark.asyncio
-    async def test_onboard_fallback(self, tmp_path):
-        """If name resume fails, should onboard fresh."""
-        agent = SimpleAgent(session_file=tmp_path / ".test_session")
-
-        client = _mock_client_connected()
-        client.identity = AsyncMock(side_effect=Exception("not found"))
         await agent._ensure_identity(client)
 
         client.onboard.assert_called_once_with("TestAgent")
+        client.identity.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_onboard_forwards_parent_agent_id(self, tmp_path):
@@ -141,7 +144,6 @@ class TestIdentityResolution:
         )
 
         client = _mock_client_connected()
-        client.identity = AsyncMock(side_effect=Exception("not found"))
         await agent._ensure_identity(client)
 
         client.onboard.assert_called_once_with(
@@ -156,63 +158,12 @@ class TestIdentityResolution:
         agent = SimpleAgent(session_file=tmp_path / ".test_session")
 
         client = _mock_client_connected()
-        client.identity = AsyncMock(side_effect=Exception("not found"))
         await agent._ensure_identity(client)
 
         # No parent_agent_id / spawn_reason kwargs when agent didn't set them
         call_kwargs = client.onboard.call_args.kwargs
         assert "parent_agent_id" not in call_kwargs
         assert "spawn_reason" not in call_kwargs
-
-    @pytest.mark.asyncio
-    async def test_stale_token_discarded(self, tmp_path):
-        """If token's aid doesn't match agent_uuid, discard it."""
-        agent = SimpleAgent(session_file=tmp_path / ".test_session")
-        agent.continuity_token = _make_token("wrong-uuid")
-        agent.agent_uuid = "correct-uuid"
-
-        # Mock must return the same UUID the agent expects
-        client = _mock_client_connected()
-        client.agent_uuid = "correct-uuid"
-        client.identity = AsyncMock(return_value=IdentityResult(
-            client_session_id="sid-test",
-            uuid="correct-uuid",
-            continuity_token=_make_token("correct-uuid"),
-        ))
-        await agent._ensure_identity(client)
-
-        # Token was discarded, so identity should be called with name (not token)
-        args = client.identity.call_args
-        assert args.kwargs.get("name") == "TestAgent"
-        assert "continuity_token" not in args.kwargs
-
-    @pytest.mark.asyncio
-    async def test_identity_drift_during_token_resume_falls_through_to_name(self, tmp_path):
-        """If token resume causes drift (e.g., server secret rotated),
-        discard the stale token and fall through to name resume."""
-        agent = SimpleAgent(session_file=tmp_path / ".test_session")
-        agent.continuity_token = _make_token("uuid-test")
-        agent.agent_uuid = "uuid-test"
-
-        client = _mock_client_connected()
-        # First call (token resume) drifts; second call (name resume) succeeds
-        client.identity = AsyncMock(side_effect=[
-            IdentityDriftError("uuid-test", "other-uuid"),
-            IdentityResult(
-                client_session_id="sid-test",
-                uuid="uuid-test",
-                continuity_token=_make_token("uuid-test"),
-            ),
-        ])
-
-        await agent._ensure_identity(client)
-
-        assert client.identity.call_count == 2
-        # Second call should use name, not token
-        second_call = client.identity.call_args_list[1]
-        assert second_call.kwargs.get("name") == "TestAgent"
-        assert "continuity_token" not in second_call.kwargs
-        client.onboard.assert_not_called()
 
 
 # --- Session persistence ---

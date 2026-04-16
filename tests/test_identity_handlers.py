@@ -2787,3 +2787,113 @@ class TestOnboardPinAndPrefixExceptions:
         data = parse_result(result)
 
         assert data["success"] is True
+
+
+# ============================================================================
+# identity(agent_uuid=...) direct UUID lookup (PATH 0)
+# ============================================================================
+
+class TestIdentityAgentUuidDirectLookup:
+
+    @pytest.fixture
+    def patch_uuid_deps(self, mock_db, mock_redis, mock_raw_redis):
+        """Patch deps for agent_uuid direct lookup tests."""
+        async def _get_raw():
+            return mock_raw_redis
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {}
+
+        with patch("src.mcp_handlers.identity.persistence._redis_cache", None), \
+             patch("src.cache.get_session_cache", return_value=mock_redis), \
+             patch("src.mcp_handlers.identity.handlers.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity.resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+             patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_session_key", return_value=None), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+             patch("src.mcp_handlers.context.update_context_agent_id"), \
+             patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server):
+            yield mock_server
+
+    @pytest.mark.asyncio
+    async def test_agent_uuid_resumes_active_agent(self, patch_uuid_deps, mock_db, mock_redis):
+        """identity(agent_uuid=...) should resume an active agent directly."""
+        from src.mcp_handlers.identity.handlers import handle_identity_adapter
+
+        test_uuid = str(uuid.uuid4())
+
+        with patch("src.mcp_handlers.identity.handlers._agent_exists_in_postgres", new_callable=AsyncMock, return_value=True), \
+             patch("src.mcp_handlers.identity.handlers._get_agent_status", new_callable=AsyncMock, return_value="active"), \
+             patch("src.mcp_handlers.identity.handlers._get_agent_id_from_metadata", new_callable=AsyncMock, return_value="Claude_20260415"), \
+             patch("src.mcp_handlers.identity.handlers._get_agent_label", new_callable=AsyncMock, return_value="Vigil"), \
+             patch("src.mcp_handlers.identity.handlers._cache_session", new_callable=AsyncMock):
+            result = await handle_identity_adapter({
+                "client_session_id": "uuid-direct-test",
+                "agent_uuid": test_uuid,
+                "resume": True,
+            })
+        data = parse_result(result)
+
+        assert data["success"] is True
+        assert data["uuid"] == test_uuid
+        assert data.get("resumed") is True
+        assert data.get("resumed_by_uuid") is True
+
+    @pytest.mark.asyncio
+    async def test_agent_uuid_not_found_returns_error(self, patch_uuid_deps, mock_db, mock_redis):
+        """identity(agent_uuid=...) should fail if UUID not in DB."""
+        from src.mcp_handlers.identity.handlers import handle_identity_adapter
+
+        test_uuid = str(uuid.uuid4())
+
+        with patch("src.mcp_handlers.identity.handlers._agent_exists_in_postgres", new_callable=AsyncMock, return_value=False):
+            result = await handle_identity_adapter({
+                "client_session_id": "uuid-missing-test",
+                "agent_uuid": test_uuid,
+                "resume": True,
+            })
+        data = parse_result(result)
+
+        assert data["success"] is False
+        assert "not found" in data.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_agent_uuid_not_active_returns_error(self, patch_uuid_deps, mock_db, mock_redis):
+        """identity(agent_uuid=...) should fail if agent exists but is archived."""
+        from src.mcp_handlers.identity.handlers import handle_identity_adapter
+
+        test_uuid = str(uuid.uuid4())
+
+        with patch("src.mcp_handlers.identity.handlers._agent_exists_in_postgres", new_callable=AsyncMock, return_value=True), \
+             patch("src.mcp_handlers.identity.handlers._get_agent_status", new_callable=AsyncMock, return_value="archived"):
+            result = await handle_identity_adapter({
+                "client_session_id": "uuid-archived-test",
+                "agent_uuid": test_uuid,
+                "resume": True,
+            })
+        data = parse_result(result)
+
+        assert data["success"] is False
+        assert "not active" in data.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_agent_uuid_ignored_when_resume_false(self, patch_uuid_deps, mock_db, mock_redis):
+        """agent_uuid should be ignored when resume=false (follows normal flow)."""
+        from src.mcp_handlers.identity.handlers import handle_identity_adapter
+
+        test_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+
+        result = await handle_identity_adapter({
+            "client_session_id": "uuid-no-resume",
+            "agent_uuid": test_uuid,
+            "resume": False,
+        })
+        data = parse_result(result)
+
+        # Should create a new identity, not resume the provided UUID
+        assert data["success"] is True
+        assert data["uuid"] != test_uuid

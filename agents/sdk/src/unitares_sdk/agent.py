@@ -20,9 +20,7 @@ from unitares_sdk.errors import (
 from unitares_sdk.utils import (
     load_json_state,
     notify,
-    parse_continuity_token,
     save_json_state,
-    validate_token_uuid,
 )
 
 logger = logging.getLogger(__name__)
