@@ -930,6 +930,43 @@ class TestHandleDetectAnomalies:
         data = parse_result(result)
         assert data["success"] is True
 
+    @pytest.mark.asyncio
+    async def test_dedup_suppresses_repeated_audit_writes(self):
+        """Calling detect_anomalies twice with the same condition should write to audit only once."""
+        id1 = "aaaaaaaa-bbbb-cccc-dddd-111111111111"
+        server = _build_mock_server(agent_ids=[id1])
+
+        anomaly_data = {
+            "anomalies": [
+                {"type": "risk_spike", "severity": "medium", "description": "Risk spiked"},
+            ]
+        }
+
+        with patch(_PATCH_SERVER, server), \
+             patch(_PATCH_CTX, return_value=None), \
+             patch(
+                 "src.pattern_analysis.analyze_agent_patterns",
+                 return_value=anomaly_data,
+             ), \
+             patch("src.audit_log.audit_logger") as mock_audit:
+            from src.mcp_handlers.observability.handlers import handle_detect_anomalies
+
+            # First call — anomaly is new, should write audit entry
+            result1 = await handle_detect_anomalies({})
+            data1 = parse_result(result1)
+            assert data1["success"] is True
+            assert data1["summary"]["total_anomalies"] == 1
+            first_audit_count = mock_audit._write_entry.call_count
+
+            # Second call — same fingerprint within dedup window, no new audit write
+            result2 = await handle_detect_anomalies({})
+            data2 = parse_result(result2)
+            assert data2["success"] is True
+            # Response still shows all current anomalies
+            assert data2["summary"]["total_anomalies"] == 1
+            # Audit write count should not have increased
+            assert mock_audit._write_entry.call_count == first_audit_count
+
 
 # ---------------------------------------------------------------------------
 # handle_aggregate_metrics

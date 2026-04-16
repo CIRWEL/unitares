@@ -601,8 +601,30 @@ async def handle_detect_anomalies(arguments: Dict[str, Any]) -> Sequence[TextCon
         logger.error(f"Error in detect_anomalies: {e}", exc_info=True)
         return [error_response(f"Error detecting anomalies: {str(e)}")]
     
-    # Log anomalies to audit trail (if any detected)
+    # Dedup anomalies via event_detector before writing to audit trail.
+    # Without this, repeated calls (e.g. dashboard polling) write duplicate
+    # audit entries for the same persisting condition (e.g. risk_spike).
+    new_anomalies = []
     if all_anomalies:
+        import hashlib
+        from src.event_detector import event_detector
+
+        for a in all_anomalies:
+            fp = hashlib.sha256(
+                f"detect_anomalies|{a.get('type')}|{a.get('agent_id')}".encode()
+            ).hexdigest()[:16]
+            stored = event_detector.record_event({
+                "fingerprint": fp,
+                "type": a.get("type"),
+                "severity": a.get("severity"),
+                "agent_id": a.get("agent_id"),
+                "description": a.get("description", ""),
+                "source": "detect_anomalies",
+            })
+            if stored is not None:
+                new_anomalies.append(a)
+
+    if new_anomalies:
         from src.audit_log import audit_logger, AuditEntry
         from datetime import datetime
         audit_logger._write_entry(AuditEntry(
@@ -611,8 +633,8 @@ async def handle_detect_anomalies(arguments: Dict[str, Any]) -> Sequence[TextCon
             event_type="anomaly_detected",
             confidence=1.0,
             details={
-                "count": len(all_anomalies),
-                "anomalies": [{"agent_id": a.get("agent_id"), "type": a.get("type"), "severity": a.get("severity"), "description": a.get("description", "")} for a in all_anomalies[:10]],
+                "count": len(new_anomalies),
+                "anomalies": [{"agent_id": a.get("agent_id"), "type": a.get("type"), "severity": a.get("severity"), "description": a.get("description", "")} for a in new_anomalies[:10]],
             }
         ))
 
