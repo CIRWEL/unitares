@@ -2211,3 +2211,82 @@ class TestResolutionAuditTrail:
         # Verify the local status was actually updated
         findings = watcher_module._iter_findings_raw()
         assert findings[0]["status"] == "confirmed"
+
+
+# ---------------------------------------------------------------------------
+# Task 6: Full lifecycle integration test
+# ---------------------------------------------------------------------------
+
+
+class TestWatcherLifecycleIntegration:
+    """End-to-end: identity → scan → surface + check-in → resolve with audit."""
+
+    def test_full_lifecycle(self, watcher_module, tmp_path, monkeypatch):
+        """Identity → persist finding → surface (triggers check-in) → resolve (posts event)."""
+        session_file = tmp_path / ".watcher_session"
+        monkeypatch.setattr(watcher_module, "SESSION_FILE", session_file)
+
+        # Track all governance interactions
+        gov_calls = []
+
+        class FakeClient:
+            client_session_id = "sess-int"
+            continuity_token = "tok-int"
+            agent_uuid = "uuid-watcher-int"
+
+            def onboard(self, name, **kwargs):
+                gov_calls.append(("onboard", name))
+                return type("R", (), {"success": True})()
+
+            def identity(self, **kwargs):
+                raise RuntimeError("no prior session")
+
+            def checkin(self, **kwargs):
+                gov_calls.append(("checkin", kwargs.get("response_text", "")))
+                return type("R", (), {
+                    "success": True, "verdict": "proceed",
+                    "guidance": None, "coherence": 0.5, "metrics": {},
+                })()
+
+        monkeypatch.setattr(watcher_module, "_make_identity_client", lambda: FakeClient())
+
+        # 1. Resolve identity (fresh onboard)
+        watcher_module.resolve_identity(FakeClient())
+        assert watcher_module.get_watcher_identity()["agent_uuid"] == "uuid-watcher-int"
+        assert ("onboard", "Watcher") in gov_calls
+
+        # 2. Simulate a finding being persisted
+        watcher_module.FINDINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        finding = {
+            "fingerprint": "integ00000000000",
+            "status": "open",
+            "severity": "high",
+            "pattern": "P004",
+            "file": str(tmp_path / "test_code.py"),
+            "line": 42,
+            "hint": "asyncpg in handler",
+            "violation_class": "REC",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        with watcher_module.FINDINGS_FILE.open("w") as f:
+            f.write(json.dumps(finding) + "\n")
+
+        # 3. Surface pending (triggers check-in)
+        watcher_module.surface_pending()
+        checkin_calls = [c for c in gov_calls if c[0] == "checkin"]
+        assert len(checkin_calls) == 1
+        assert "1 unresolved" in checkin_calls[0][1]
+
+        # 4. Resolve finding (posts audit event)
+        posted_events = []
+        monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: posted_events.append(kw) or True)
+
+        result = watcher_module.update_finding_status("integ000", "confirmed", resolver_agent_id="uuid-agent-resolver")
+        assert result == 0
+        assert len(posted_events) == 1
+        assert posted_events[0]["event_type"] == "watcher_resolution"
+        assert posted_events[0]["extra"]["resolved_by"] == "uuid-agent-resolver"
+
+        # Verify local status also updated
+        findings = watcher_module._iter_findings_raw()
+        assert findings[0]["status"] == "confirmed"

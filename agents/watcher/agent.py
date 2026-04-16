@@ -30,8 +30,8 @@ Architecture:
 
 Design notes:
     - Never blocks the editor. The PostToolUse hook forks this script and exits.
-    - No agent_id passed to call_model → skips the governance DB path → no
-      anyio deadlock (see anyio-deadlock.md).
+    - Persistent governance identity via SyncGovernanceClient (REST transport).
+      Checks in after surface_pending; resolution events posted on --resolve/--dismiss.
     - Graceful degradation: if governance REST is down, falls back to calling
       Ollama directly at localhost:11434.
     - Findings are append-only; lifecycle (resolved/dismissed/aged-out) happens
@@ -538,7 +538,7 @@ def call_model_via_governance(prompt: str, model: str, timeout: int) -> dict[str
     """Call the governance REST /v1/tools/call endpoint with call_model.
 
     Notes:
-        - No `agent_id` passed → skips the governance DB path → no anyio deadlock.
+        - Uses REST /v1/tools/call transport (no anyio deadlock).
         - If the governance server is down, the caller should catch the exception
           and fall back to Ollama direct.
     """
@@ -1110,10 +1110,10 @@ def _format_findings_block(
     lines.append("")
     lines.append(f"Total unresolved: {len(findings)} (showing {len(shown)})")
     lines.append(
-        "Resolve: python3 agents/watcher/agent.py --resolve <fingerprint>"
+        "Resolve: python3 agents/watcher/agent.py --resolve <fingerprint> --agent-id <your-uuid>"
     )
     lines.append(
-        "Dismiss: python3 agents/watcher/agent.py --dismiss <fingerprint>"
+        "Dismiss: python3 agents/watcher/agent.py --dismiss <fingerprint> --agent-id <your-uuid>"
     )
     lines.append("</unitares-watcher-findings>")
     return "\n".join(lines), shown
