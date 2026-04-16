@@ -6,33 +6,26 @@ Status: thin entrypoint kept for compatibility. README is the primary overview; 
 
 Use this unless you have a specific reason not to:
 
-1. Call `onboard()`
-2. Save `client_session_id` or `continuity_token`
-3. Call `process_agent_update()`
-4. Call `get_governance_metrics()`
+1. Call `onboard()` on first run — save `uuid` from response
+2. On subsequent runs: `identity(agent_uuid=<saved uuid>, resume=true)`
+3. Call `process_agent_update()` after meaningful work
+4. Call `get_governance_metrics()` for state
 
 ```python
-session = onboard()
+# First run:
+result = onboard()
+save_to_file(result["uuid"])
 
-process_agent_update(
-    client_session_id=session["client_session_id"],
-    response_text="What you did",
-    complexity=0.5,
-    response_mode="mirror",
-)
+# Every subsequent run:
+identity(agent_uuid=saved_uuid, resume=True)
 
-get_governance_metrics(
-    client_session_id=session["client_session_id"],
-)
+# After work:
+process_agent_update(response_text="What you did", complexity=0.5)
 ```
 
-## Continuity Rule
+## Identity Rule
 
-- Best: `continuity_token`
-- Good: `client_session_id`
-- Weak fallback: transport-only continuity
-
-If the response says `continuity_token_supported=true`, prefer `continuity_token` for resume.
+UUID is the ground truth. Store it, pass it on every `identity()` call. No tokens or session IDs needed.
 
 ## What To Trust
 
