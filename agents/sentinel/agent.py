@@ -45,6 +45,7 @@ from unitares_sdk.agent import CycleResult, GovernanceAgent
 from unitares_sdk.client import GovernanceClient
 from unitares_sdk.errors import GovernanceError, VerdictError
 from unitares_sdk.utils import notify
+from agents.common.findings import post_finding, compute_fingerprint
 
 # ---------------------------------------------------------------------------
 # Paths & Config
@@ -499,6 +500,28 @@ class SentinelAgent(GovernanceAgent):
                 log(f"FINDING: [{f['severity']}] {cls_tag}{f['summary']}")
                 if f["severity"] == "high":
                     notify("Sentinel", f["summary"])
+
+                # Emit to governance event stream (Phase 1 of findings pipeline).
+                # Fingerprint keys on finding type + violation class + agent so
+                # the same fleet condition re-detected next cycle deduplicates.
+                fp = compute_fingerprint([
+                    "sentinel",
+                    f.get("type", ""),
+                    f.get("violation_class", ""),
+                    self.agent_uuid or "",
+                ])
+                post_finding(
+                    event_type="sentinel_finding",
+                    severity=f["severity"],
+                    message=f["summary"],
+                    agent_id=self.agent_uuid or "sentinel",
+                    agent_name="Sentinel",
+                    fingerprint=fp,
+                    extra={
+                        "violation_class": vcls,
+                        "finding_type": f.get("type", ""),
+                    },
+                )
 
         # Self-observations: log but don't count toward complexity
         for f in self_findings:
