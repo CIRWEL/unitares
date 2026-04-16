@@ -45,6 +45,7 @@ from unitares_sdk.agent import CycleResult, GovernanceAgent
 from unitares_sdk.client import GovernanceClient
 from unitares_sdk.errors import GovernanceError, VerdictError
 from unitares_sdk.utils import notify
+from agents.common.findings import post_finding, compute_fingerprint
 
 # Paths
 ANIMA_PROJECT = Path(os.getenv("ANIMA_PROJECT", str(project_root.parent / "anima-mcp")))
@@ -386,11 +387,29 @@ class HeartbeatAgent(GovernanceAgent):
         if not anima_healthy:
             lumen_down_streak = prev_state.get("lumen_down_streak", 0) + 1
 
-        # --- macOS notifications for critical events ---
+        # --- macOS notifications for critical events + event-stream emit ---
         if not gov_healthy and prev_state.get("governance_healthy", True):
             notify("Vigil", f"Governance is down: {gov_detail}")
+            post_finding(
+                event_type="vigil_finding",
+                severity="critical",
+                message=f"Governance is down: {gov_detail}",
+                agent_id="vigil",
+                agent_name="Vigil",
+                fingerprint=compute_fingerprint(["vigil", "governance_down"]),
+                extra={"finding_type": "governance_down"},
+            )
         if lumen_down_streak == 3:
             notify("Vigil", "Lumen unreachable for 3 consecutive cycles (1.5h)")
+            post_finding(
+                event_type="vigil_finding",
+                severity="critical",
+                message="Lumen unreachable for 3 consecutive cycles (1.5h)",
+                agent_id="vigil",
+                agent_name="Vigil",
+                fingerprint=compute_fingerprint(["vigil", "lumen_unreachable"]),
+                extra={"finding_type": "lumen_unreachable"},
+            )
 
         # --- 2.5. Read Sentinel findings since last cycle, route to action ---
         # First actual coordination arc: Sentinel observes fleet-level anomalies
