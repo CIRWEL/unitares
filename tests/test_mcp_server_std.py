@@ -1286,61 +1286,83 @@ class TestAutoArchiveOrphanAgents:
 
     @pytest.mark.asyncio
     async def test_archives_uuid_agent_zero_updates(self):
-        from src.agent_state import auto_archive_orphan_agents, agent_metadata, AgentMetadata
+        from src.agent_state import auto_archive_orphan_agents, AgentMetadata
         old_time = (datetime.now() - timedelta(hours=2)).isoformat()
         test_id = "12345678-1234-4234-8234-123456789abc"
-        agent_metadata[test_id] = AgentMetadata(
+        isolated_metadata = {
+            test_id: AgentMetadata(
             agent_id=test_id, status="active", created_at=old_time, last_update=old_time,
             total_updates=0,
-        )
-        try:
-            with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
-                results = await auto_archive_orphan_agents(zero_update_hours=1.0)
-                assert len(results) >= 1
-                assert agent_metadata[test_id].status == "archived"
-                mock_archive.assert_called()
-        finally:
-            agent_metadata.pop(test_id, None)
+            )
+        }
+        # Keep this test deterministic even when suite-order mutates global
+        # lifecycle heuristics or metadata defaults.
+        with patch("src.agent_lifecycle.is_agent_protected", return_value=False):
+            with patch(
+                "src.agent_lifecycle.classify_for_archival",
+                return_value=(True, "orphan UUID agent, 0 updates, 2.0h old"),
+            ):
+                with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
+                    results = await auto_archive_orphan_agents(
+                        zero_update_hours=1.0,
+                        _metadata=isolated_metadata,
+                        _monitors={},
+                    )
+                    assert len(results) == 1
+                    assert results[0]["id"] == test_id
+                    assert isolated_metadata[test_id].status == "archived"
+                    mock_archive.assert_awaited_once_with(
+                        test_id,
+                        archived_at=isolated_metadata[test_id].archived_at,
+                        lifecycle_event="Auto-archived: orphan UUID agent, 0 updates, 2.0h old",
+                    )
 
     @pytest.mark.asyncio
     async def test_preserves_pioneer_agents(self):
-        from src.agent_state import auto_archive_orphan_agents, agent_metadata, AgentMetadata
+        from src.agent_state import auto_archive_orphan_agents, AgentMetadata
         old_time = (datetime.now() - timedelta(hours=24)).isoformat()
         test_id = "12345678-1234-4234-8234-123456789999"
-        agent_metadata[test_id] = AgentMetadata(
+        isolated_metadata = {
+            test_id: AgentMetadata(
             agent_id=test_id, status="active", created_at=old_time, last_update=old_time,
             total_updates=0, tags=["pioneer"],
-        )
-        try:
-            with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
-                await auto_archive_orphan_agents(zero_update_hours=1.0)
-                assert agent_metadata[test_id].status == "active"
-                # Pioneer agents must never be persisted as archived
-                for call in mock_archive.call_args_list:
-                    assert call.args[0] != test_id
-        finally:
-            agent_metadata.pop(test_id, None)
+            )
+        }
+        with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
+            await auto_archive_orphan_agents(
+                zero_update_hours=1.0,
+                _metadata=isolated_metadata,
+                _monitors={},
+            )
+            assert isolated_metadata[test_id].status == "active"
+            # Pioneer agents must never be persisted as archived
+            for call in mock_archive.call_args_list:
+                assert call.args[0] != test_id
 
     @pytest.mark.asyncio
     async def test_preserves_labeled_agents(self):
         """Labeled non-UUID agents should be preserved (Rule 2 checks has_label)."""
-        from src.agent_state import auto_archive_orphan_agents, agent_metadata, AgentMetadata
+        from src.agent_state import auto_archive_orphan_agents, AgentMetadata
         old_time = (datetime.now() - timedelta(hours=24)).isoformat()
         # Use a non-UUID agent_id so Rule 1 (UUID-specific) does not fire
         # Rule 2 checks: not has_label and updates <= 1 -- so labeled agent is preserved
         test_id = "labeled_orphan_agent_test"
-        agent_metadata[test_id] = AgentMetadata(
+        isolated_metadata = {
+            test_id: AgentMetadata(
             agent_id=test_id, status="active", created_at=old_time, last_update=old_time,
             total_updates=0, label="My Important Agent",
-        )
-        try:
-            with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
-                await auto_archive_orphan_agents(zero_update_hours=1.0, low_update_hours=3.0)
-                assert agent_metadata[test_id].status == "active"
-                for call in mock_archive.call_args_list:
-                    assert call.args[0] != test_id
-        finally:
-            agent_metadata.pop(test_id, None)
+            )
+        }
+        with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
+            await auto_archive_orphan_agents(
+                zero_update_hours=1.0,
+                low_update_hours=3.0,
+                _metadata=isolated_metadata,
+                _monitors={},
+            )
+            assert isolated_metadata[test_id].status == "active"
+            for call in mock_archive.call_args_list:
+                assert call.args[0] != test_id
 
     @pytest.mark.asyncio
     async def test_persistence_failure_does_not_mutate_in_memory_state(self):
@@ -1352,26 +1374,29 @@ class TestAutoArchiveOrphanAgents:
         calls archive_agent() to persist to Postgres FIRST, and if persistence
         fails the in-memory meta must not be mutated (avoid divergence).
         """
-        from src.agent_state import auto_archive_orphan_agents, agent_metadata, AgentMetadata
+        from src.agent_state import auto_archive_orphan_agents, AgentMetadata
         old_time = (datetime.now() - timedelta(hours=2)).isoformat()
         test_id = "12345678-1234-4234-8234-123456789aaa"
-        agent_metadata[test_id] = AgentMetadata(
+        isolated_metadata = {
+            test_id: AgentMetadata(
             agent_id=test_id, status="active", created_at=old_time, last_update=old_time,
             total_updates=0,
-        )
-        try:
-            with patch(
-                "src.agent_storage.archive_agent",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("DB down"),
-            ):
-                results = await auto_archive_orphan_agents(zero_update_hours=1.0)
-            # Persistence failed → must not include this agent
-            assert len(results) == 0
-            # In-memory state must not diverge from DB
-            assert agent_metadata[test_id].status == "active"
-        finally:
-            agent_metadata.pop(test_id, None)
+            )
+        }
+        with patch(
+            "src.agent_storage.archive_agent",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("DB down"),
+        ):
+            results = await auto_archive_orphan_agents(
+                zero_update_hours=1.0,
+                _metadata=isolated_metadata,
+                _monitors={},
+            )
+        # Persistence failed → must not include this agent
+        assert len(results) == 0
+        # In-memory state must not diverge from DB
+        assert isolated_metadata[test_id].status == "active"
 
 
 # ============================================================================
