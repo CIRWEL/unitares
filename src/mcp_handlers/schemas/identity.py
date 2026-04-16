@@ -6,6 +6,10 @@ class IdentityParams(AgentIdentityMixin):
     """
     Who am I? Auto-creates identity if first call.
     """
+    agent_uuid: Optional[str] = Field(
+        default=None,
+        description="Resume a known identity by UUID directly. Skips session/name resolution. Returns error if not found."
+    )
     name: Optional[str] = Field(
         default=None,
         description="Optional display name to set"

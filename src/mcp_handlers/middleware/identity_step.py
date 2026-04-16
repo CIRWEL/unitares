@@ -181,10 +181,12 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
     transport_key = _transport_cache_key(signals)
     ctx._transport_key = transport_key
 
+    _has_agent_uuid = bool(arguments and arguments.get("agent_uuid"))
     if (transport_key
         and not force_new
         and not client_session_id
-        and not continuity_token):
+        and not continuity_token
+        and not _has_agent_uuid):
         cached = _transport_identity_cache.get(transport_key)
         # On miss, try Redis (survives restarts)
         if not cached:
