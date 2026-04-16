@@ -1244,6 +1244,89 @@ class TestMarkResponseComplete:
             text = result[0].text
             assert "auth" in text.lower()
 
+    @pytest.mark.asyncio
+    async def test_persist_failure_does_not_mutate_meta(self, server):
+        """If update_agent raises, in-memory meta must NOT change (prevents clobber-on-load)."""
+        meta = make_agent_meta(status="active")
+        meta.last_response_at = None
+        meta.response_completed = False
+        server.agent_metadata = {"agent-1": meta}
+
+        with patch_lifecycle_server(server, require_registered=("agent-1", None)), \
+             patch_agent_storage() as mock_storage, \
+             patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
+            mock_storage.update_agent = AsyncMock(side_effect=RuntimeError("DB offline"))
+            from src.mcp_handlers.lifecycle.handlers import handle_mark_response_complete
+            result = await handle_mark_response_complete({"agent_id": "agent-1"})
+
+            assert "PERSIST_FAILED" in result[0].text
+            assert meta.status == "active"  # unchanged
+            assert meta.last_response_at is None  # unchanged
+            assert meta.response_completed is False  # unchanged
+            meta.add_lifecycle_event.assert_not_called()
+
+
+# ============================================================================
+# handle_resume_agent (dashboard resume path)
+# ============================================================================
+
+class TestResumeAgent:
+
+    @pytest.fixture
+    def server(self):
+        return make_mock_server()
+
+    @pytest.mark.asyncio
+    async def test_resume_paused_agent(self, server):
+        meta = make_agent_meta(status="paused", paused_at="2026-01-01T00:00:00+00:00")
+        server.agent_metadata = {"agent-1": meta}
+
+        with patch_lifecycle_server(server, require_registered=("agent-1", None)), \
+             patch_agent_storage() as mock_storage:
+            mock_storage.update_agent = AsyncMock()
+            from src.mcp_handlers.lifecycle.operations import handle_resume_agent
+            result = await handle_resume_agent({"agent_id": "agent-1"})
+
+            data = _parse(result)
+            assert data["success"] is True
+            assert data["lifecycle_status"] == "active"
+            assert meta.status == "active"
+            assert meta.paused_at is None
+            meta.add_lifecycle_event.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_resumable_agent(self, server):
+        meta = make_agent_meta(status="active")
+        server.agent_metadata = {"agent-1": meta}
+
+        with patch_lifecycle_server(server, require_registered=("agent-1", None)), \
+             patch_agent_storage() as mock_storage:
+            mock_storage.update_agent = AsyncMock()
+            from src.mcp_handlers.lifecycle.operations import handle_resume_agent
+            result = await handle_resume_agent({"agent_id": "agent-1"})
+
+            assert "AGENT_NOT_RESUMABLE" in result[0].text
+            # No mutation, no persist call
+            mock_storage.update_agent.assert_not_called()
+            meta.add_lifecycle_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_persist_failure_does_not_mutate_meta(self, server):
+        """If update_agent raises, in-memory meta must NOT change."""
+        meta = make_agent_meta(status="paused", paused_at="2026-01-01T00:00:00+00:00")
+        server.agent_metadata = {"agent-1": meta}
+
+        with patch_lifecycle_server(server, require_registered=("agent-1", None)), \
+             patch_agent_storage() as mock_storage:
+            mock_storage.update_agent = AsyncMock(side_effect=RuntimeError("DB offline"))
+            from src.mcp_handlers.lifecycle.operations import handle_resume_agent
+            result = await handle_resume_agent({"agent_id": "agent-1"})
+
+            assert "PERSIST_FAILED" in result[0].text
+            assert meta.status == "paused"  # unchanged
+            assert meta.paused_at == "2026-01-01T00:00:00+00:00"  # unchanged
+            meta.add_lifecycle_event.assert_not_called()
+
 
 # ============================================================================
 # handle_direct_resume_if_safe

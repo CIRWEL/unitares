@@ -22,6 +22,7 @@ sys.path.insert(0, str(project_root))
 from tests.helpers import (
     patch_lifecycle_server, parse_result as _parse,
     make_agent_meta, make_mock_server, make_monitor,
+    patch_agent_storage,
 )
 
 
@@ -261,6 +262,31 @@ class TestSelfRecoveryReview:
             })
             text = result[0].text
             assert "not found" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_recovery_persist_failure_does_not_mutate_meta(self, server):
+        """If update_agent raises in the safe branch, meta must NOT be mutated to active."""
+        meta = make_agent_meta(status="paused", paused_at="2026-01-01T00:00:00+00:00")
+        server.agent_metadata = {"agent-1": meta}
+        server.get_or_create_monitor.return_value = make_monitor(coherence=0.8, I=0.3, S=0.5)
+
+        with patch_lifecycle_server(server, require_registered=("agent-1", None)), \
+             patch_agent_storage() as mock_storage, \
+             patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True), \
+             patch("src.mcp_handlers.lifecycle.stuck.GovernanceConfig") as mock_config, \
+             patch("src.mcp_handlers.knowledge.handlers.store_discovery_internal",
+                   new_callable=AsyncMock):
+            mock_storage.update_agent = AsyncMock(side_effect=RuntimeError("DB offline"))
+            mock_config.compute_proprioceptive_margin.return_value = {"margin": "comfortable"}
+            from src.mcp_handlers.lifecycle.handlers import handle_self_recovery_review
+            result = await handle_self_recovery_review({
+                "agent_id": "agent-1",
+                "reflection": "I reflected deeply on what went wrong and need to try again",
+            })
+
+            assert "PERSIST_FAILED" in result[0].text
+            assert meta.status == "paused"  # unchanged
+            assert meta.paused_at == "2026-01-01T00:00:00+00:00"  # unchanged
 
 
 # ============================================================================
