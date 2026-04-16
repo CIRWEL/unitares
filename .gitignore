@@ -155,6 +155,9 @@ docs/superpowers/
 # Agent guides (generated onboarding docs, not project documentation)
 .agent-guides/
 
+# Local session state (written by gov-session-cache hook)
+.unitares/
+
 # Archived scripts
 scripts/archive/
 

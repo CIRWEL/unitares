@@ -172,7 +172,14 @@ def _is_trusted_network(request) -> bool:
 
 
 def _http_unauthorized():
-    return JSONResponse({"success": False, "error": "Unauthorized"}, status_code=401)
+    return JSONResponse(
+        {
+            "success": False,
+            "error": "Unauthorized",
+            "hint": "Set UNITARES_HTTP_API_TOKEN in your environment and pass it as: Authorization: Bearer <token>",
+        },
+        status_code=401,
+    )
 
 
 def _check_http_auth(request, *, http_api_token: str | None) -> bool:

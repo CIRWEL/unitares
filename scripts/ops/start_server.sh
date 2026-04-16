@@ -52,6 +52,14 @@ if ! "$PYTHON" -c "import mcp, uvicorn, starlette" 2>/dev/null; then
     echo "Install full (HTTP):"
     echo "  pip install -r requirements-full.txt"
     echo ""
+    # Check if the specific blocker is the private package
+    if ! "$PYTHON" -c "import governance_core" 2>/dev/null; then
+        echo "Note: unitares-core (governance_core) is a private package not on PyPI."
+        echo "  Install from wheel:  pip install /path/to/unitares_core-*.whl"
+        echo "  Or use remote mode:  export UNITARES_HTTP_API_TOKEN=<token>"
+        echo "                       curl -H 'Authorization: Bearer <token>' https://gov.cirwel.org/v1/tools"
+        echo ""
+    fi
     exit 1
 fi
 

@@ -13,6 +13,12 @@ mcp>=1.26.0,<2.0.0
 # Governance system core math
 numpy>=1.24.0,<3.0.0
 
-# EISV dynamics engine (compiled, private repo)
+# EISV dynamics engine (compiled, private repo).
+# Not on PyPI — install from the private wheel or symlink:
+#   pip install /path/to/unitares_core-*.whl
+#   ln -sf ~/projects/unitares-core/governance_core governance_core
+# If you don't have unitares-core, use remote mode instead:
+#   export UNITARES_HTTP_API_TOKEN=<token>
+#   curl -H 'Authorization: Bearer <token>' https://gov.cirwel.org/v1/tools
 unitares-core>=2.3.0
 

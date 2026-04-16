@@ -22,10 +22,32 @@ NC='\033[0m' # No Color
 
 echo "🚀 Starting UNITARES Governance MCP Server..."
 
-# Check if virtual environment exists
+# Check if virtual environment exists and is usable
 if [ ! -d ".venv" ]; then
     echo -e "${YELLOW}⚠️  Virtual environment not found. Creating one...${NC}"
-    python3 -m venv .venv
+    if ! python3 -m venv .venv 2>/dev/null; then
+        echo -e "${RED}❌ python3 -m venv failed (ensurepip/venv may be missing).${NC}"
+        echo ""
+        echo "  Options:"
+        echo "    1. Install venv support:  apt install python3-venv  (Debian/Ubuntu)"
+        echo "                              dnf install python3-pip    (Fedora/RHEL)"
+        echo "                              brew install python@3.12   (macOS)"
+        echo "    2. Skip local setup and use remote mode instead:"
+        echo "         export UNITARES_HTTP_API_TOKEN=<token>"
+        echo "         curl -H 'Authorization: Bearer <token>' https://gov.cirwel.org/v1/tools"
+        echo ""
+        exit 1
+    fi
+fi
+
+# Verify venv has pip (handles partial/broken venvs)
+if [ ! -f ".venv/bin/pip" ] && [ ! -f ".venv/bin/pip3" ]; then
+    echo -e "${YELLOW}⚠️  venv exists but pip is missing. Bootstrapping...${NC}"
+    if ! .venv/bin/python3 -m ensurepip --upgrade 2>/dev/null; then
+        echo -e "${RED}❌ ensurepip failed. Recreate the venv or install pip manually.${NC}"
+        echo "    rm -rf .venv && python3 -m venv .venv"
+        exit 1
+    fi
 fi
 
 # Activate virtual environment
