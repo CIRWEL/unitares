@@ -132,35 +132,41 @@ class TestCircuitBreaker:
     def test_half_open_after_timeout(self):
         """Open circuit transitions to half-open after timeout."""
         cb = CircuitBreaker(threshold=1, timeout=0.1)
-        cb.record_failure()
-        assert cb.state == CircuitBreaker.OPEN
+        with patch("src.cache.redis_client.time.time") as mock_time:
+            mock_time.return_value = 100.0
+            cb.record_failure()
+            assert cb.state == CircuitBreaker.OPEN
 
-        # Wait past timeout
-        time.sleep(0.15)
-        assert cb.state == CircuitBreaker.HALF_OPEN
-        assert cb.is_available() is True
+            # Advance synthetic time past timeout
+            mock_time.return_value = 100.15
+            assert cb.state == CircuitBreaker.HALF_OPEN
+            assert cb.is_available() is True
 
     def test_half_open_success_closes(self):
         """Success in half-open state closes the circuit."""
         cb = CircuitBreaker(threshold=1, timeout=0.1)
-        cb.record_failure()
-        time.sleep(0.15)
-        assert cb.state == CircuitBreaker.HALF_OPEN
+        with patch("src.cache.redis_client.time.time") as mock_time:
+            mock_time.return_value = 200.0
+            cb.record_failure()
+            mock_time.return_value = 200.15
+            assert cb.state == CircuitBreaker.HALF_OPEN
 
-        cb.record_success()
-        assert cb.state == CircuitBreaker.CLOSED
-        assert cb._failure_count == 0
+            cb.record_success()
+            assert cb.state == CircuitBreaker.CLOSED
+            assert cb._failure_count == 0
 
     def test_half_open_failure_reopens(self):
         """Failure in half-open state reopens the circuit."""
         cb = CircuitBreaker(threshold=1, timeout=0.1)
-        cb.record_failure()
-        time.sleep(0.15)
-        # Access state to trigger transition to half-open
-        assert cb.state == CircuitBreaker.HALF_OPEN
+        with patch("src.cache.redis_client.time.time") as mock_time:
+            mock_time.return_value = 300.0
+            cb.record_failure()
+            mock_time.return_value = 300.15
+            # Access state to trigger transition to half-open
+            assert cb.state == CircuitBreaker.HALF_OPEN
 
-        cb.record_failure()
-        assert cb.state == CircuitBreaker.OPEN
+            cb.record_failure()
+            assert cb.state == CircuitBreaker.OPEN
 
     def test_reset(self):
         """Reset returns circuit to closed state."""

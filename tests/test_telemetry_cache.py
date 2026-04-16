@@ -6,7 +6,6 @@ Pure in-memory operations, no I/O needed.
 
 import pytest
 import sys
-import time
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -100,15 +99,17 @@ class TestGetSet:
         cache = TelemetryCache()
         data = {"count": 5}
         cache.set("skip_rate", data, ttl_seconds=0)
-        # Wait just a moment for expiration
-        time.sleep(0.01)
+        # Force expiration deterministically without wall-clock sleep.
+        key = cache._make_key("skip_rate")
+        cache.cache[key]["expires_at"] = datetime.now() - timedelta(seconds=1)
         result = cache.get("skip_rate")
         assert result is None
 
     def test_expired_entry_removed(self):
         cache = TelemetryCache()
         cache.set("skip_rate", {"data": 1}, ttl_seconds=0)
-        time.sleep(0.01)
+        key = cache._make_key("skip_rate")
+        cache.cache[key]["expires_at"] = datetime.now() - timedelta(seconds=1)
         cache.get("skip_rate")  # Triggers cleanup
         assert len(cache.cache) == 0
 
@@ -207,7 +208,8 @@ class TestStats:
     def test_stats_with_expired(self):
         cache = TelemetryCache()
         cache.set("a", {"data": 1}, ttl_seconds=0)
-        time.sleep(0.01)
+        key = cache._make_key("a")
+        cache.cache[key]["expires_at"] = datetime.now() - timedelta(seconds=1)
         s = cache.stats()
         assert s["expired_entries"] == 1
 
@@ -243,7 +245,8 @@ class TestSweep:
         cache = TelemetryCache()
         cache.set("a", {"data": 1}, ttl_seconds=0)
         cache.set("b", {"data": 2}, ttl_seconds=3600)
-        time.sleep(0.01)
+        expired_key = cache._make_key("a")
+        cache.cache[expired_key]["expires_at"] = datetime.now() - timedelta(seconds=1)
         removed = cache.sweep()
         assert removed >= 1
         assert len(cache.cache) == 1
@@ -285,7 +288,10 @@ class TestSweep:
         for i in range(5):
             cache.set(f"old_{i}", {"i": i}, ttl_seconds=0)
         cache._sweep_counter = 0
-        time.sleep(0.01)
+        # Mark all old entries expired deterministically.
+        for i in range(5):
+            old_key = cache._make_key(f"old_{i}")
+            cache.cache[old_key]["expires_at"] = datetime.now() - timedelta(seconds=1)
         # Set counter to 49 so next write triggers sweep
         cache._sweep_counter = 49
         cache.set("trigger", {"data": "new"}, ttl_seconds=3600)

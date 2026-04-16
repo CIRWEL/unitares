@@ -71,8 +71,8 @@ class TestCircuitBreaker:
             cb.record_failure()
         assert cb.state == CircuitBreaker.OPEN
 
-        # Wait for timeout
-        time.sleep(0.15)
+        # Simulate timeout passage deterministically (no wall-clock sleep)
+        cb._last_failure_time = time.time() - 0.15
 
         # Should transition to half-open
         assert cb.state == CircuitBreaker.HALF_OPEN
@@ -85,7 +85,7 @@ class TestCircuitBreaker:
         # Open -> half-open
         for _ in range(3):
             cb.record_failure()
-        time.sleep(0.15)
+        cb._last_failure_time = time.time() - 0.15
         assert cb.state == CircuitBreaker.HALF_OPEN
 
         # Success closes it
@@ -99,7 +99,7 @@ class TestCircuitBreaker:
         # Open -> half-open
         for _ in range(3):
             cb.record_failure()
-        time.sleep(0.15)
+        cb._last_failure_time = time.time() - 0.15
         assert cb.state == CircuitBreaker.HALF_OPEN
 
         # Failure reopens it
