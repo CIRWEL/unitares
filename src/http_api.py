@@ -257,6 +257,35 @@ async def _resolve_http_bound_agent(tool_name: str, arguments: dict, signals) ->
         update_context_agent_id(explicit_agent_id)
         return explicit_agent_id
 
+    # Sticky transport cache: the MCP middleware path (identity_step.py) consults
+    # this cache before calling resolve_session_identity, which prevents identity
+    # fragmentation for repeat callers from the same IP:UA fingerprint. The REST
+    # path previously bypassed this cache entirely — every call went through
+    # PATH 3 creation, producing mcp_YYYYMMDD ghost identities at a rate of
+    # hundreds per day (see identity-ghost-proliferation investigation 2026-04-15).
+    # Mirror the same check here so REST gets the same ghost protection.
+    force_new = bool(arguments.get("force_new"))
+    client_session_id = arguments.get("client_session_id")
+    continuity_token = arguments.get("continuity_token")
+    transport_key = None
+    if not force_new and not client_session_id and not continuity_token:
+        try:
+            import time as _time
+            from src.mcp_handlers.middleware.identity_step import (
+                _TRANSPORT_CACHE_TTL,
+                _transport_cache_key,
+                _transport_identity_cache,
+            )
+            transport_key = _transport_cache_key(signals)
+            if transport_key:
+                cached = _transport_identity_cache.get(transport_key)
+                if cached and (_time.monotonic() - cached.bound_at) < _TRANSPORT_CACHE_TTL:
+                    update_context_agent_id(cached.agent_uuid)
+                    arguments["agent_id"] = cached.agent_uuid
+                    return cached.agent_uuid
+        except Exception as e:
+            logger.debug("[STICKY-REST] cache check failed: %s", e)
+
     session_key = await derive_session_key(signals, arguments)
     resolved = await resolve_session_identity(
         session_key,
@@ -270,6 +299,18 @@ async def _resolve_http_bound_agent(tool_name: str, arguments: dict, signals) ->
         if agent_uuid:
             update_context_agent_id(agent_uuid)
             arguments["agent_id"] = agent_uuid
+            # Populate sticky cache so subsequent REST calls from the same
+            # fingerprint hit the cache path above and skip resolution entirely.
+            if transport_key:
+                try:
+                    from src.mcp_handlers.middleware.identity_step import (
+                        update_transport_binding,
+                    )
+                    update_transport_binding(
+                        transport_key, agent_uuid, session_key, source="rest"
+                    )
+                except Exception as e:
+                    logger.debug("[STICKY-REST] cache update failed: %s", e)
             return agent_uuid
     return None
 

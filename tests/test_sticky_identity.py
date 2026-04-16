@@ -401,3 +401,123 @@ class TestDispatchContextTransportKey:
     def test_settable(self):
         ctx = DispatchContext(_transport_key="sticky:fp1")
         assert ctx._transport_key == "sticky:fp1"
+
+
+# ============================================================================
+# 5. REST path (_resolve_http_bound_agent) sticky cache integration
+# ============================================================================
+
+class TestStickyRESTPath:
+    """REST /v1/tools/call previously bypassed the sticky cache and minted a
+    fresh identity per call — source of the Apr 12-14 ~860-ghost spike.
+    These tests pin the fix: REST now consults and populates the same cache.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rest_cache_hit_skips_resolution(self):
+        """Cached fingerprint → REST returns cached UUID without calling resolve_session_identity."""
+        from src.http_api import _resolve_http_bound_agent
+
+        update_transport_binding("sticky:1.2.3.4:ua1", "uuid-cached-rest", "sk-cached", "rest")
+        signals = FakeSignals(ip_ua_fingerprint="1.2.3.4:ua1")
+        arguments: dict = {}
+
+        with patch(
+            "src.mcp_handlers.identity.handlers.resolve_session_identity",
+            new_callable=AsyncMock,
+        ) as mock_resolve:
+            result = await _resolve_http_bound_agent("call_model", arguments, signals)
+
+        assert result == "uuid-cached-rest"
+        assert arguments["agent_id"] == "uuid-cached-rest"
+        mock_resolve.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rest_cache_populated_on_miss(self):
+        """First REST call for a fingerprint populates the cache so next call hits it."""
+        from src.http_api import _resolve_http_bound_agent
+
+        signals = FakeSignals(ip_ua_fingerprint="5.6.7.8:ua2")
+        arguments: dict = {}
+
+        mock_identity = {
+            "agent_uuid": "uuid-rest-new",
+            "created": False,  # existing agent found in Redis/PG
+            "source": "postgres",
+        }
+
+        with patch(
+            "src.mcp_handlers.identity.handlers.derive_session_key",
+            new_callable=AsyncMock,
+            return_value="sk-rest-new",
+        ):
+            with patch(
+                "src.mcp_handlers.identity.handlers.resolve_session_identity",
+                new_callable=AsyncMock,
+                return_value=mock_identity,
+            ):
+                result = await _resolve_http_bound_agent("call_model", arguments, signals)
+
+        assert result == "uuid-rest-new"
+        # Cache now populated for this fingerprint
+        assert "sticky:5.6.7.8:ua2" in _transport_identity_cache
+        binding = _transport_identity_cache["sticky:5.6.7.8:ua2"]
+        assert binding.agent_uuid == "uuid-rest-new"
+        assert binding.source == "rest"
+
+    @pytest.mark.asyncio
+    async def test_rest_skip_tools_bypass_cache(self):
+        """Identity-establishing tools (onboard, identity, etc.) skip the whole path."""
+        from src.http_api import _resolve_http_bound_agent
+
+        update_transport_binding("sticky:9.9.9.9:ua3", "uuid-should-not-see", "sk", "rest")
+        signals = FakeSignals(ip_ua_fingerprint="9.9.9.9:ua3")
+
+        # Skip tools return None immediately, no cache consultation
+        result = await _resolve_http_bound_agent("onboard", {}, signals)
+        assert result is None
+
+        result = await _resolve_http_bound_agent("identity", {}, signals)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_rest_explicit_agent_id_takes_precedence(self):
+        """Explicit agent_id UUID wins over cache."""
+        from src.http_api import _resolve_http_bound_agent
+
+        update_transport_binding("sticky:11.22.33.44:ua4", "uuid-cached", "sk", "rest")
+        signals = FakeSignals(ip_ua_fingerprint="11.22.33.44:ua4")
+        explicit_uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"  # valid UUID shape
+
+        result = await _resolve_http_bound_agent(
+            "call_model", {"agent_id": explicit_uuid}, signals
+        )
+        assert result == explicit_uuid
+
+    @pytest.mark.asyncio
+    async def test_rest_client_session_id_bypasses_cache(self):
+        """Explicit client_session_id bypasses cache (mirrors MCP middleware behavior)."""
+        from src.http_api import _resolve_http_bound_agent
+
+        update_transport_binding("sticky:77.77.77.77:ua5", "uuid-cached", "sk", "rest")
+        signals = FakeSignals(ip_ua_fingerprint="77.77.77.77:ua5")
+
+        mock_identity = {"agent_uuid": "uuid-explicit-session", "created": False}
+        with patch(
+            "src.mcp_handlers.identity.handlers.derive_session_key",
+            new_callable=AsyncMock,
+            return_value="sk-explicit",
+        ):
+            with patch(
+                "src.mcp_handlers.identity.handlers.resolve_session_identity",
+                new_callable=AsyncMock,
+                return_value=mock_identity,
+            ):
+                result = await _resolve_http_bound_agent(
+                    "call_model",
+                    {"client_session_id": "my-session"},
+                    signals,
+                )
+
+        # Uses resolved identity, not cached
+        assert result == "uuid-explicit-session"
