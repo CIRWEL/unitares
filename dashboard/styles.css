@@ -4879,9 +4879,11 @@ body {
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border-color);
     transition: border-color 0.2s ease, background 0.2s ease;
-    cursor: help;
+    cursor: pointer;
+    user-select: none;
 }
-.resident-pill:hover { background: rgba(255, 255, 255, 0.05); }
+.resident-pill:hover { background: rgba(255, 255, 255, 0.07); border-color: var(--border-highlight); }
+.resident-pill:active { transform: scale(0.97); }
 .resident-pill.status-silent { border-color: rgba(255, 234, 0, 0.4); }
 .resident-pill.status-paused,
 .resident-pill.status-archived { border-color: rgba(255, 61, 0, 0.45); }
@@ -4985,3 +4987,13 @@ body {
 .tl-class-REC { color: #ff6e6e; }   /* Recoverability  — red */
 .tl-class-BEH { color: #ffe082; }   /* Behavioral      — amber */
 .tl-class-VOI { color: #9aa0af; }   /* Void Compliance — neutral */
+
+/* Highlight flash when a resident pill scrolls to the matching agent card */
+@keyframes residentHighlight {
+    0% { box-shadow: 0 0 0 0 rgba(0, 240, 255, 0.5); }
+    30% { box-shadow: 0 0 0 6px rgba(0, 240, 255, 0.3); }
+    100% { box-shadow: 0 0 0 0 rgba(0, 240, 255, 0); }
+}
+.resident-highlight {
+    animation: residentHighlight 1.5s ease-out;
+}

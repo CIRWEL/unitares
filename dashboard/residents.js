@@ -275,9 +275,44 @@
     // ---------------------------------------------------------------------
     function startSilenceTicker() {
         setInterval(function () {
-            // Cheap re-render of just the silence + status dot — full renderAll is fine.
             if (orderedLabels.length > 0) renderAll();
         }, 1000);
+    }
+
+    // ---------------------------------------------------------------------
+    // Click-to-scroll: pill → agent card in the Agents section below.
+    // ---------------------------------------------------------------------
+    function bindPillClicks() {
+        var grid = document.getElementById('residents-grid');
+        if (!grid) return;
+        grid.addEventListener('click', function (e) {
+            var pill = e.target.closest('.resident-pill');
+            if (!pill) return;
+            var label = pill.getAttribute('data-agent');
+            if (!label) return;
+            scrollToAgentCard(label);
+        });
+    }
+
+    function scrollToAgentCard(label) {
+        var container = document.getElementById('agents-container');
+        if (!container) return;
+        var items = container.querySelectorAll('.agent-item');
+        var target = null;
+        var needle = label.toLowerCase();
+        for (var i = 0; i < items.length; i++) {
+            var nameEl = items[i].querySelector('.agent-name');
+            if (nameEl && nameEl.textContent.toLowerCase().indexOf(needle) !== -1) {
+                target = items[i];
+                break;
+            }
+        }
+        if (!target) return;
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.classList.add('resident-highlight');
+        setTimeout(function () {
+            target.classList.remove('resident-highlight');
+        }, 1500);
     }
 
     // ---------------------------------------------------------------------
@@ -288,6 +323,7 @@
         fetchResidents();
         setInterval(fetchResidents, REFRESH_INTERVAL_MS);
         startSilenceTicker();
+        bindPillClicks();
     }
 
     if (document.readyState === 'loading') {
