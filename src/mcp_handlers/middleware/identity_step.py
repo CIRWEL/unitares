@@ -260,6 +260,33 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
             logger.debug(f"[DISPATCH] Using X-Agent-Id as name claim: {x_agent_id_header}")
     trajectory_sig = arguments.get("trajectory_signature") if arguments else None
 
+    # PATH 0 passthrough: when caller supplies agent_uuid, skip session
+    # resolution entirely. The identity/onboard handler will verify the UUID
+    # exists; the middleware just needs to bind the session to it so context
+    # is set correctly. This prevents ghost creation for resident agents.
+    _direct_uuid = arguments.get("agent_uuid") if arguments else None
+    if _direct_uuid and name in ("identity", "onboard"):
+        from ..context import set_session_context
+        client_hint = arguments.get("client_hint") if arguments else None
+        context_token = set_session_context(
+            session_key=session_key,
+            client_session_id=client_session_id,
+            agent_id=_direct_uuid,
+            client_hint=client_hint,
+        )
+        ctx.session_key = session_key
+        ctx.client_session_id = client_session_id
+        ctx.bound_agent_id = _direct_uuid
+        ctx.context_token = context_token
+        ctx.client_hint = client_hint
+        ctx.identity_result = {"agent_uuid": _direct_uuid, "source": "agent_uuid_passthrough"}
+        ctx._transport_key = transport_key
+        # Populate sticky cache so subsequent tool calls reuse this UUID
+        if transport_key:
+            update_transport_binding(transport_key, _direct_uuid, session_key, "agent_uuid_passthrough")
+        logger.info(f"[DISPATCH] PATH 0 passthrough: agent_uuid={_direct_uuid[:8]}... (skipped resolution)")
+        return name, arguments, ctx
+
     # Extract agent UUID from continuity token for PATH 2.8 direct lookup
     _token_agent_uuid = None
     if arguments and arguments.get("continuity_token"):

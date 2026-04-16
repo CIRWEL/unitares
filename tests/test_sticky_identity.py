@@ -250,6 +250,72 @@ class TestStickyResolveIdentity:
                         assert out_ctx.bound_agent_id == "uuid-explicit"
 
     @pytest.mark.asyncio
+    async def test_agent_uuid_passthrough_skips_resolution(self):
+        """agent_uuid in arguments bypasses resolve_session_identity entirely."""
+        signals = FakeSignals(ip_ua_fingerprint="192.168.1.1:path0test")
+        ctx = DispatchContext()
+
+        with patch("src.mcp_handlers.context.get_session_signals", return_value=signals):
+            with patch("src.mcp_handlers.middleware.identity_step._load_binding_from_redis", new_callable=AsyncMock, return_value=None):
+                with patch("src.mcp_handlers.identity.handlers.derive_session_key", new_callable=AsyncMock, return_value="sk-derived"):
+                    with patch("src.mcp_handlers.identity.handlers.resolve_session_identity", new_callable=AsyncMock) as mock_resolve:
+                        with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+                            result = await resolve_identity(
+                                "identity",
+                                {"agent_uuid": "e55caaf1-43a7-4fbb-a8fa-c69a9a8f50e4", "resume": True},
+                                ctx,
+                            )
+                            _, _, out_ctx = result
+                            assert out_ctx.bound_agent_id == "e55caaf1-43a7-4fbb-a8fa-c69a9a8f50e4"
+                            assert out_ctx.identity_result["source"] == "agent_uuid_passthrough"
+                            # resolve_session_identity should NOT have been called
+                            mock_resolve.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_agent_uuid_passthrough_populates_sticky_cache(self):
+        """agent_uuid passthrough should populate the sticky cache for future calls."""
+        signals = FakeSignals(ip_ua_fingerprint="192.168.1.1:path0cache")
+        ctx = DispatchContext()
+
+        with patch("src.mcp_handlers.context.get_session_signals", return_value=signals):
+            with patch("src.mcp_handlers.middleware.identity_step._load_binding_from_redis", new_callable=AsyncMock, return_value=None):
+                with patch("src.mcp_handlers.identity.handlers.derive_session_key", new_callable=AsyncMock, return_value="sk-derived"):
+                    with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+                        await resolve_identity(
+                            "identity",
+                            {"agent_uuid": "e55caaf1-43a7-4fbb-a8fa-c69a9a8f50e4"},
+                            ctx,
+                        )
+
+        # Sticky cache should have the UUID
+        cache_key = "sticky:192.168.1.1:path0cache"
+        assert cache_key in _transport_identity_cache
+        assert _transport_identity_cache[cache_key].agent_uuid == "e55caaf1-43a7-4fbb-a8fa-c69a9a8f50e4"
+
+    @pytest.mark.asyncio
+    async def test_agent_uuid_passthrough_only_for_identity_tools(self):
+        """agent_uuid passthrough should NOT fire for non-identity tools."""
+        signals = FakeSignals(ip_ua_fingerprint="192.168.1.1:path0other")
+        ctx = DispatchContext()
+
+        mock_identity = {"agent_uuid": "uuid-resolved", "source": "redis"}
+
+        with patch("src.mcp_handlers.context.get_session_signals", return_value=signals):
+            with patch("src.mcp_handlers.middleware.identity_step._load_binding_from_redis", new_callable=AsyncMock, return_value=None):
+                with patch("src.mcp_handlers.identity.handlers.derive_session_key", new_callable=AsyncMock, return_value="sk-derived"):
+                    with patch("src.mcp_handlers.identity.handlers.resolve_session_identity", new_callable=AsyncMock, return_value=mock_identity) as mock_resolve:
+                        with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+                            result = await resolve_identity(
+                                "process_agent_update",
+                                {"agent_uuid": "e55caaf1-43a7-4fbb-a8fa-c69a9a8f50e4"},
+                                ctx,
+                            )
+                            _, _, out_ctx = result
+                            # Should have gone through normal resolution, not passthrough
+                            mock_resolve.assert_called_once()
+                            assert out_ctx.bound_agent_id == "uuid-resolved"
+
+    @pytest.mark.asyncio
     async def test_cache_bypass_on_continuity_token(self):
         """Explicit continuity_token bypasses the cache."""
         update_transport_binding("sticky:192.168.1.1:abc", "uuid-cached", "sk-cached", "redis")
