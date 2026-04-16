@@ -62,6 +62,20 @@ def _isolate_watcher_state(tmp_path, monkeypatch, watcher_module):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _mock_post_finding_by_default(monkeypatch, watcher_module):
+    """Default to no-op post_finding so tests don't hit the network.
+
+    Patches both the importlib-loaded watcher_module (used by most tests)
+    and the agents.watcher.agent import (used by TestWatcherPostsFindings).
+    Tests that need to assert on the call can override via monkeypatch —
+    the later setattr wins.
+    """
+    from agents.watcher import agent as watcher
+    monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: True)
+    monkeypatch.setattr(watcher, "post_finding", lambda **kw: True)
+
+
 # ---------------------------------------------------------------------------
 # hash_line_content
 # ---------------------------------------------------------------------------
@@ -1757,6 +1771,7 @@ class TestWatcherPostsFindings:
         assert kwargs["fingerprint"] == finding.fingerprint
         assert kwargs["extra"]["file"] == "/tmp/foo.py"
         assert kwargs["extra"]["line"] == 42
+        assert (tmp_path / "findings.jsonl").read_text().count("\n") == 1
 
     def test_low_severity_finding_does_not_post(self, tmp_path, monkeypatch):
         """Low/medium stay local to jsonl — only high/critical hit the stream."""
@@ -1777,3 +1792,31 @@ class TestWatcherPostsFindings:
         )
         watcher.persist_finding(finding)
         assert calls == []
+        assert (tmp_path / "findings.jsonl").read_text().count("\n") == 1
+
+    def test_persist_findings_delegates_posting_per_high_severity_finding(self, tmp_path, monkeypatch):
+        """Batch persist_findings calls post_finding for each new high-severity finding."""
+        from agents.watcher import agent as watcher
+
+        monkeypatch.setattr(watcher, "FINDINGS_FILE", tmp_path / "findings.jsonl")
+        monkeypatch.setattr(watcher, "DEDUP_FILE", tmp_path / "dedup.json")
+
+        calls = []
+        monkeypatch.setattr(watcher, "post_finding",
+                            lambda **kw: calls.append(kw) or True)
+
+        f1 = watcher.Finding(
+            pattern="P011", file="/tmp/a.py", line=1, hint="h1",
+            severity="high", detected_at="2026-04-15T12:00:00Z",
+            model_used="m", line_content_hash="aaaa", violation_class="INT",
+        )
+        f2 = watcher.Finding(
+            pattern="P017", file="/tmp/b.py", line=2, hint="h2",
+            severity="critical", detected_at="2026-04-15T12:00:00Z",
+            model_used="m", line_content_hash="bbbb", violation_class="BEH",
+        )
+        watcher.persist_findings([f1, f2])
+
+        assert len(calls) == 2
+        assert {c["severity"] for c in calls} == {"high", "critical"}
+        assert {c["extra"]["file"] for c in calls} == {"/tmp/a.py", "/tmp/b.py"}
