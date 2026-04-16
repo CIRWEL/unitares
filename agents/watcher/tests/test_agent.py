@@ -2045,11 +2045,7 @@ class TestWatcherCheckin:
         assert result == 0
 
     def test_checkin_idle_heartbeat(self, watcher_module, monkeypatch):
-        """No active findings → idle heartbeat with low complexity.
-
-        surface_pending short-circuits before _do_checkin when there are no
-        open findings, so we test _do_checkin directly.
-        """
+        """No active findings → idle heartbeat with low complexity."""
         monkeypatch.setattr(watcher_module, "_watcher_identity", {
             "agent_uuid": "uuid-w", "client_session_id": "s1", "continuity_token": "t1",
         })
@@ -2088,6 +2084,36 @@ class TestWatcherCheckin:
         assert watcher_module.compute_checkin_confidence(4, 1) == pytest.approx(0.8)  # 5 total
         assert watcher_module.compute_checkin_confidence(0, 5) == pytest.approx(0.0)  # all dismissed
         assert watcher_module.compute_checkin_confidence(5, 0) == pytest.approx(1.0)  # all confirmed
+
+    def test_surface_pending_checks_in_even_with_no_open_findings(
+        self, watcher_module, monkeypatch
+    ):
+        """surface_pending() must call _do_checkin even when there are no open
+        findings to surface. Previously the early return skipped the check-in,
+        causing Watcher to go silent between finding bursts."""
+        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+            "agent_uuid": "uuid-w", "client_session_id": "s1", "continuity_token": "t1",
+        })
+
+        checkin_called = []
+
+        class FakeClient:
+            client_session_id = "s1"
+            continuity_token = "t1"
+            agent_uuid = "uuid-w"
+
+            def checkin(self, **kwargs):
+                checkin_called.append(kwargs)
+                return type("R", (), {"success": True, "verdict": "proceed",
+                                      "guidance": None, "coherence": 0.5,
+                                      "metrics": {}})()
+
+        monkeypatch.setattr(watcher_module, "_make_identity_client", lambda: FakeClient())
+
+        # No findings seeded → no open findings
+        rc = watcher_module.surface_pending()
+        assert rc == 0
+        assert len(checkin_called) == 1
 
 
 class TestResolutionAuditTrail:

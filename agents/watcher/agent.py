@@ -1168,6 +1168,10 @@ def surface_pending() -> int:
             "dismiss any false positives with --dismiss <fingerprint>."
         ),
     )
+    # Always check in to governance, even when there's nothing new to surface.
+    # Otherwise Watcher goes silent between finding bursts.
+    _do_checkin()
+
     if block is None:
         return 0
 
@@ -1190,8 +1194,6 @@ def surface_pending() -> int:
             f"({len(open_findings) - len(surfaced_fps)} left pending for next chime)"
         )
 
-    # --- Check in to governance ---
-    _do_checkin()
     return 0
 
 
