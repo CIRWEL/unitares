@@ -1294,7 +1294,7 @@ class TestAutoArchiveOrphanAgents:
             total_updates=0,
         )
         try:
-            with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
+            with patch("src.mcp_handlers.lifecycle.helpers.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
                 results = await auto_archive_orphan_agents(zero_update_hours=1.0)
                 assert len(results) >= 1
                 assert agent_metadata[test_id].status == "archived"
@@ -1312,7 +1312,7 @@ class TestAutoArchiveOrphanAgents:
             total_updates=0, tags=["pioneer"],
         )
         try:
-            with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
+            with patch("src.mcp_handlers.lifecycle.helpers.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
                 await auto_archive_orphan_agents(zero_update_hours=1.0)
                 assert agent_metadata[test_id].status == "active"
                 # Pioneer agents must never be persisted as archived
@@ -1334,7 +1334,7 @@ class TestAutoArchiveOrphanAgents:
             total_updates=0, label="My Important Agent",
         )
         try:
-            with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
+            with patch("src.mcp_handlers.lifecycle.helpers.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
                 await auto_archive_orphan_agents(zero_update_hours=1.0, low_update_hours=3.0)
                 assert agent_metadata[test_id].status == "active"
                 for call in mock_archive.call_args_list:
@@ -1361,7 +1361,7 @@ class TestAutoArchiveOrphanAgents:
         )
         try:
             with patch(
-                "src.agent_storage.archive_agent",
+                "src.mcp_handlers.lifecycle.helpers.agent_storage.archive_agent",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("DB down"),
             ):

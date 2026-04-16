@@ -1431,7 +1431,7 @@ class TestHandleOnboardV2:
         async def _get_raw():
             return mock_raw_redis
 
-        def _discard_task(coro):
+        def _discard_task(coro, **kwargs):
             try:
                 coro.close()
             except Exception:
@@ -2642,7 +2642,7 @@ class TestOnboardStructuredIdFallback:
         async def _get_raw():
             return mock_raw_redis
 
-        def _discard_task(coro):
+        def _discard_task(coro, **kwargs):
             try:
                 coro.close()
             except Exception:

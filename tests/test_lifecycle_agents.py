@@ -1805,26 +1805,17 @@ class TestGetAgentMetadataEdgeCases:
             assert data["current_state"]["coherence"] == 0.9
 
     @pytest.mark.asyncio
-    async def test_get_metadata_label_lookup_after_reload(self, server):
-        """Lines 553, 557-561: label lookup that fails initially but works after metadata reload."""
-        meta = make_agent_meta(label="FoundAfterReload", total_updates=10)
+    async def test_get_metadata_label_lookup_in_memory(self, server):
+        """Label lookup resolves against in-memory cache (reload path removed for anyio deadlock fix)."""
+        meta = make_agent_meta(label="FoundInMemory", total_updates=10)
 
-        # First call: agent_metadata empty. After reload: populated
-        call_count = [0]
-        original_metadata = {}
-
-        async def mock_reload(*args, **kwargs):
-            call_count[0] += 1
-            server.agent_metadata = {"uuid-456": meta}
-
-        server.agent_metadata = {}  # Empty initially
-        server.load_metadata_async = mock_reload
+        server.agent_metadata = {"uuid-456": meta}
         server.monitors = {}
 
         with patch_lifecycle_server(server), \
              patch("src.cache.get_metadata_cache", side_effect=Exception("no cache")):
             from src.mcp_handlers.lifecycle.handlers import handle_get_agent_metadata
-            result = await handle_get_agent_metadata({"target_agent": "FoundAfterReload"})
+            result = await handle_get_agent_metadata({"target_agent": "FoundInMemory"})
             data = _parse(result)
             assert data["status"] == "active"
 

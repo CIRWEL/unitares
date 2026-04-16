@@ -1,5 +1,7 @@
 """Tests for POST /api/findings — external finding ingestion."""
 
+import os
+
 import pytest
 from starlette.applications import Starlette
 from starlette.routing import Route
@@ -18,6 +20,12 @@ def clear_events():
     event_detector.clear_events()
     event_detector._recent_fingerprints.clear()
     event_detector._event_counter = 0
+
+
+@pytest.fixture(autouse=True)
+def _no_http_api_token(monkeypatch):
+    """Unset token so _check_http_auth falls through to the no-token path."""
+    monkeypatch.delenv("UNITARES_HTTP_API_TOKEN", raising=False)
 
 
 @pytest.fixture

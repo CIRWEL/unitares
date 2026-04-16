@@ -1340,29 +1340,25 @@ class TestGetAgentMetadataAdditional:
         return make_mock_server()
 
     @pytest.mark.asyncio
-    async def test_target_uuid_found_after_reload(self, server):
-        """Line 553: target_agent UUID found in agent_metadata after reload."""
+    async def test_target_uuid_found_in_memory(self, server):
+        """UUID lookup resolves against in-memory cache (reload path removed for anyio deadlock fix)."""
         meta = make_agent_meta(label="Agent", total_updates=10)
 
-        async def mock_reload(*args, **kwargs):
-            server.agent_metadata = {"uuid-after-reload": meta}
-
-        server.agent_metadata = {}  # Empty initially
-        server.load_metadata_async = mock_reload
+        server.agent_metadata = {"uuid-in-memory": meta}
         server.monitors = {}
 
         with patch_lifecycle_server(server), \
              patch("src.cache.get_metadata_cache", side_effect=Exception("no cache")):
             from src.mcp_handlers.lifecycle.handlers import handle_get_agent_metadata
-            result = await handle_get_agent_metadata({"target_agent": "uuid-after-reload"})
+            result = await handle_get_agent_metadata({"target_agent": "uuid-in-memory"})
             data = _parse(result)
             assert data["status"] == "active"
 
     @pytest.mark.asyncio
-    async def test_metadata_reload_failure(self, server):
-        """Lines 560-561: metadata reload throws exception, proceeds to 'not found'."""
+    async def test_target_not_found_returns_error(self, server):
+        """Agent not in memory or cache returns a not-found error (no reload attempted)."""
         server.agent_metadata = {}
-        server.load_metadata_async = AsyncMock(side_effect=RuntimeError("DB down"))
+        server.monitors = {}
 
         with patch_lifecycle_server(server), \
              patch("src.cache.get_metadata_cache", side_effect=Exception("no cache")):

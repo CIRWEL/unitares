@@ -1980,3 +1980,107 @@ class TestMainIdentityWiring:
         monkeypatch.setattr("sys.argv", ["watcher", "--file", "/dev/null"])
         watcher_module.main()
         assert scan_called["called"]
+
+
+class TestWatcherCheckin:
+    """Check-in appended to surface_pending()."""
+
+    def _write_findings(self, watcher_module, findings: list[dict]):
+        """Helper: write findings to the isolated findings.jsonl."""
+        watcher_module.FINDINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with watcher_module.FINDINGS_FILE.open("w") as f:
+            for finding in findings:
+                f.write(json.dumps(finding) + "\n")
+
+    def test_checkin_posts_summary_after_surface(self, watcher_module, monkeypatch):
+        """surface_pending() calls checkin with a summary of current findings."""
+        self._write_findings(watcher_module, [
+            {"fingerprint": "aaa1", "status": "open", "severity": "high",
+             "pattern": "P001", "file": "/tmp/x.py", "line": 10, "hint": "bad",
+             "timestamp": datetime.now(timezone.utc).isoformat()},
+            {"fingerprint": "bbb2", "status": "confirmed", "severity": "medium",
+             "pattern": "P002", "file": "/tmp/y.py", "line": 20, "hint": "ok",
+             "timestamp": datetime.now(timezone.utc).isoformat()},
+        ])
+
+        # Set up identity so check-in proceeds
+        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+            "agent_uuid": "uuid-w", "client_session_id": "s1", "continuity_token": "t1",
+        })
+
+        checkin_args = {}
+
+        class FakeClient:
+            client_session_id = "s1"
+            continuity_token = "t1"
+            agent_uuid = "uuid-w"
+
+            def checkin(self, **kwargs):
+                checkin_args.update(kwargs)
+                return type("R", (), {"success": True, "verdict": "proceed",
+                                      "guidance": None, "coherence": 0.5,
+                                      "metrics": {}})()
+
+        monkeypatch.setattr(watcher_module, "_make_identity_client", lambda: FakeClient())
+
+        watcher_module.surface_pending()
+
+        assert "response_text" in checkin_args
+        assert "1 confirmed" in checkin_args["response_text"]
+        assert checkin_args["complexity"] > 0  # has open findings
+        assert checkin_args["response_mode"] == "compact"
+
+    def test_checkin_skipped_when_no_identity(self, watcher_module, monkeypatch):
+        """No identity → surface works, check-in silently skipped."""
+        monkeypatch.setattr(watcher_module, "_watcher_identity", None)
+
+        self._write_findings(watcher_module, [
+            {"fingerprint": "ccc3", "status": "open", "severity": "low",
+             "pattern": "P003", "file": "/tmp/z.py", "line": 5, "hint": "meh",
+             "timestamp": datetime.now(timezone.utc).isoformat()},
+        ])
+
+        # surface_pending should complete without error
+        result = watcher_module.surface_pending()
+        assert result == 0
+
+    def test_checkin_idle_heartbeat(self, watcher_module, monkeypatch):
+        """No findings at all → idle heartbeat with low complexity."""
+        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+            "agent_uuid": "uuid-w", "client_session_id": "s1", "continuity_token": "t1",
+        })
+
+        checkin_args = {}
+
+        class FakeClient:
+            client_session_id = "s1"
+            continuity_token = "t1"
+            agent_uuid = "uuid-w"
+
+            def checkin(self, **kwargs):
+                checkin_args.update(kwargs)
+                return type("R", (), {"success": True, "verdict": "proceed",
+                                      "guidance": None, "coherence": 0.5,
+                                      "metrics": {}})()
+
+        monkeypatch.setattr(watcher_module, "_make_identity_client", lambda: FakeClient())
+
+        watcher_module.surface_pending()
+
+        assert "idle" in checkin_args["response_text"].lower()
+        assert checkin_args["complexity"] <= 0.1
+
+    def test_complexity_scales_with_open_findings(self, watcher_module):
+        """complexity = 0.1 at 0 findings, 0.6 at 10+, linear between."""
+        assert watcher_module.compute_checkin_complexity(0) == pytest.approx(0.1)
+        assert watcher_module.compute_checkin_complexity(5) == pytest.approx(0.35)
+        assert watcher_module.compute_checkin_complexity(10) == pytest.approx(0.6)
+        assert watcher_module.compute_checkin_complexity(20) == pytest.approx(0.6)  # capped
+
+    def test_confidence_from_resolution_ratio(self, watcher_module):
+        """confidence = confirmed / (confirmed + dismissed), default 0.7 during warmup."""
+        assert watcher_module.compute_checkin_confidence(0, 0) == pytest.approx(0.7)  # warmup
+        assert watcher_module.compute_checkin_confidence(3, 1) == pytest.approx(0.7)  # < 5 total
+        assert watcher_module.compute_checkin_confidence(4, 1) == pytest.approx(0.8)  # 5 total
+        assert watcher_module.compute_checkin_confidence(0, 5) == pytest.approx(0.0)  # all dismissed
+        assert watcher_module.compute_checkin_confidence(5, 0) == pytest.approx(1.0)  # all confirmed
