@@ -35,7 +35,11 @@ async def cleanup_test_agents():
     if _created_agent_ids:
         try:
             import asyncpg
-            conn = await asyncpg.connect('postgresql://postgres:postgres@localhost:5432/governance')
+            # Bounded connect: without timeout, a down/black-holed Postgres can stall teardown.
+            conn = await asyncpg.connect(
+                "postgresql://postgres:postgres@localhost:5432/governance",
+                timeout=3,
+            )
             await conn.execute(
                 "DELETE FROM core.agents WHERE id = ANY($1::varchar[])",
                 _created_agent_ids
