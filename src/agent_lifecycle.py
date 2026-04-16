@@ -79,7 +79,7 @@ _UUID_PATTERN = re.compile(
 )
 _EPHEMERAL_LABEL = re.compile(r'^claude_\w+_\d{8}', re.I)
 _PROTECTED_TIERS = frozenset({"verified", "established", "trusted"})
-_SYSTEM_AGENT_IDS = frozenset({"eisv-sync-task"})
+_SYSTEM_AGENT_IDS: frozenset[str] = frozenset()
 
 
 def is_agent_protected(agent_id: str, meta: AgentMetadata) -> bool:

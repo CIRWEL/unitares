@@ -1012,13 +1012,8 @@ def start_all_background_tasks(connection_tracker, set_ready):
 
     try:
         from src.mcp_handlers.observability.pi_orchestration import eisv_sync_task
-        # Registered as restartable so the dashboard's unstick button can
-        # actually cancel-and-respawn this task when it wedges (vs the prior
-        # behavior of just flipping a Postgres status flag).
-        _spawn_restartable_task(
-            "eisv_sync", lambda: eisv_sync_task(interval_minutes=5.0)
-        )
-        logger.info("[EISV_SYNC] Started periodic Pi EISV sync (restartable)")
+        _supervised_create_task(eisv_sync_task(interval_minutes=5.0), name="eisv_sync")
+        logger.info("[EISV_SYNC] Started periodic Pi sensor sync")
     except Exception as e:
         logger.warning(f"[EISV_SYNC] Could not start: {e}")
 
