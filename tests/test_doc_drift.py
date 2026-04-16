@@ -110,10 +110,10 @@ class TestGovernanceFundamentalsClaims:
         # E and I: [0, 1]
         assert "| **E** (Energy) | [0, 1]" in content
         assert "| **I** (Information Integrity) | [0, 1]" in content
-        # S: [0, 2]
-        assert "| **S** (Entropy) | [0, 2]" in content
-        # V: [-2, 2]
-        assert "| **V** (Void) | [-2, 2]" in content
+        # S: [0, 1]
+        assert "| **S** (Entropy) | [0, 1]" in content
+        # V: [-1, 1]
+        assert "| **V** (Void) | [-1, 1]" in content
 
     def test_target_coherence_value(self):
         """Config TARGET_COHERENCE should be 0.50."""

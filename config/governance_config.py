@@ -38,7 +38,7 @@ class BasinRegion:
     E_min: float = 0.0
     I_min: float = 0.0
     S_max: float = 1.0       # upper bound (lower S is better)
-    V_abs_max: float = 2.0   # upper bound on |V|
+    V_abs_max: float = 1.0   # upper bound on |V|
     # Derived-metric bounds
     coherence_min: float = 0.0
     risk_max: float = 1.0    # upper bound (lower risk is better)

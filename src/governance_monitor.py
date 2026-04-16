@@ -398,8 +398,8 @@ class UNITARESMonitor:
                 sensor_eisv = State(
                     E=float(np.clip(raw_sensor_eisv.get('E', 0.5), 0.0, 1.0)),
                     I=float(np.clip(raw_sensor_eisv.get('I', 0.5), 0.0, 1.0)),
-                    S=float(np.clip(raw_sensor_eisv.get('S', 0.2), 0.001, 2.0)),
-                    V=float(np.clip(raw_sensor_eisv.get('V', 0.0), -2.0, 2.0)),
+                    S=float(np.clip(raw_sensor_eisv.get('S', 0.2), 0.001, 1.0)),
+                    V=float(np.clip(raw_sensor_eisv.get('V', 0.0), -1.0, 1.0)),
                 )
             except (TypeError, ValueError, KeyError):
                 sensor_eisv = None
@@ -591,8 +591,8 @@ class UNITARESMonitor:
                 if not (0.0 <= self.state.S <= 1.0):
                     self.state.unitaires_state.S = np.clip(self.state.S, 0.0, 1.0)
                     logger.info(f"Auto-fixed S to {self.state.S}")
-                if not (-2.0 <= self.state.V <= 2.0):
-                    self.state.unitaires_state.V = np.clip(self.state.V, -2.0, 2.0)
+                if not (-1.0 <= self.state.V <= 1.0):
+                    self.state.unitaires_state.V = np.clip(self.state.V, -1.0, 1.0)
                     logger.info(f"Auto-fixed V to {self.state.V}")
                 if not (0.0 <= self.state.coherence <= 1.0):
                     self.state.coherence = np.clip(self.state.coherence, 0.0, 1.0)

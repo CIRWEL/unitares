@@ -138,8 +138,8 @@ Agents emit text and tool results; they rarely expose a stable notion of interna
 |----------|-------|----------------|
 | **E** (Energy) | [0, 1] | Productive capacity |
 | **I** (Integrity) | [0, 1] | Information coherence |
-| **S** (Entropy) | [0, 2] | Disorder and uncertainty |
-| **V** (Void) | [-2, 2] | Accumulated E-I imbalance |
+| **S** (Entropy) | [0, 1] | Disorder and uncertainty |
+| **V** (Void) | [-1, 1] | Accumulated E-I imbalance |
 
 **Behavioral EISV (primary, verdict-driving)** — Implemented in `src/behavioral_state.py` and `src/behavioral_assessment.py`: EMA-smoothed observations per dimension, no ODE and no universal attractor. After **~30** updates, per-agent **Welford** baselines enable self-relative scoring (z-score vs *your* operating point). Earlier check-ins use bootstrap behavior; absolute safety floors still apply.
 

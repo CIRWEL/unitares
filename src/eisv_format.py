@@ -33,16 +33,15 @@ class EISVMetrics(NamedTuple):
     V: float  # Accumulated E-I imbalance (positive: E>I, negative: I>E)
 
     def validate(self) -> None:
-        """Validate metric ranges against ODE bounds (parameters.py)."""
+        """Validate metric ranges."""
         if not (0.0 <= self.E <= 1.0):
             raise ValueError(f"E must be in [0, 1], got {self.E}")
         if not (0.0 <= self.I <= 1.0):
             raise ValueError(f"I must be in [0, 1], got {self.I}")
-        if not (0.0 <= self.S <= 2.0):
-            raise ValueError(f"S must be in [0, 2], got {self.S}")
-        # V bounded by ODE clip: [-2, 2] per parameters.py
-        if not (-2.0 <= self.V <= 2.0):
-            raise ValueError(f"V must be in [-2, 2], got {self.V}")
+        if not (0.0 <= self.S <= 1.0):
+            raise ValueError(f"S must be in [0, 1], got {self.S}")
+        if not (-1.0 <= self.V <= 1.0):
+            raise ValueError(f"V must be in [-1, 1], got {self.V}")
 
 
 @dataclass

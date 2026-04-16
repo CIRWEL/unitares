@@ -48,7 +48,7 @@ class TestEISVMetrics:
         assert complete.V == -0.07
 
     def test_validates_ranges(self):
-        """E, I in [0,1], S in [0,2], V in [-2,2] per ODE bounds."""
+        """E, I in [0,1], S in [0,1], V in [-1,1] per behavioral bounds."""
         # Invalid E
         with pytest.raises(ValueError, match="E must be in"):
             invalid = EISVMetrics(E=1.5, I=1.0, S=0.03, V=-0.07)
@@ -59,20 +59,14 @@ class TestEISVMetrics:
             invalid = EISVMetrics(E=0.8, I=-0.5, S=0.03, V=-0.07)
             invalid.validate()
 
-        # S up to 2.0 is valid (S_max=2.0 in parameters.py)
-        valid_high_s = EISVMetrics(E=0.8, I=1.0, S=1.5, V=0.0)
-        valid_high_s.validate()  # Should not raise
-
+        # S capped at 1.0 (behavioral sensor produces [0, 1])
         with pytest.raises(ValueError, match="S must be in"):
-            invalid = EISVMetrics(E=0.8, I=1.0, S=2.5, V=0.0)
+            invalid = EISVMetrics(E=0.8, I=1.0, S=1.5, V=0.0)
             invalid.validate()
 
-        # V bounded to [-2, 2] per ODE clip bounds
-        valid_v = EISVMetrics(E=0.8, I=1.0, S=0.03, V=-1.5)
-        valid_v.validate()  # Should not raise
-
+        # V bounded to [-1, 1] (behavioral V = EMA(E-I), both in [0,1])
         with pytest.raises(ValueError, match="V must be in"):
-            invalid = EISVMetrics(E=0.8, I=1.0, S=0.03, V=-100)
+            invalid = EISVMetrics(E=0.8, I=1.0, S=0.03, V=-1.5)
             invalid.validate()
 
 

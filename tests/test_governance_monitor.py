@@ -67,7 +67,7 @@ class TestInit:
         assert 0.0 <= monitor.state.I <= 1.0
         assert 0.0 <= monitor.state.S <= 1.0
         # V can be negative
-        assert -2.0 <= monitor.state.V <= 2.0
+        assert -1.0 <= monitor.state.V <= 1.0
 
     def test_empty_histories(self, monitor):
         """All history lists should be empty on fresh init."""
@@ -886,12 +886,12 @@ class TestUpdateDynamics:
         assert monitor.state.S >= 0.001
 
     def test_v_bounds(self, monitor):
-        """V should be clamped to [-2, 2] after dynamics."""
+        """V should be clamped to [-1, 1] after dynamics."""
         # Use extreme ethical drift to push V
         for _ in range(20):
             agent_state = {'ethical_drift': [1.0, 1.0, 1.0], 'complexity': 1.0}
             monitor.update_dynamics(agent_state)
-        assert -2.0 <= monitor.state.V <= 2.0
+        assert -1.0 <= monitor.state.V <= 1.0
 
     def test_history_appended(self, monitor):
         """Each dynamics update should append to histories."""

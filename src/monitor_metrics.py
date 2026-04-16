@@ -271,13 +271,13 @@ def get_eisv_labels() -> Dict:
             'label': 'Entropy',
             'description': 'Entropy (disorder/uncertainty)',
             'user_friendly': 'How scattered or fragmented things are',
-            'range': '[0.0, 2.0]'
+            'range': '[0.0, 1.0]'
         },
         'V': {
             'label': 'Void Integral',
             'description': 'Void integral (E-I imbalance accumulation)',
             'user_friendly': 'Accumulated strain from energy-integrity mismatch',
-            'range': '(-inf, +inf)'
+            'range': '[-1.0, 1.0]'
         }
     }
 

@@ -1,7 +1,8 @@
 """
-Tests for V (Viability) bounds validation in GovernanceState.
+Tests for V (Void) bounds validation in GovernanceState.
 
-V bounds: [-2, 2] matching the ODE's built-in range.
+V bounds: [-1, 1] matching the behavioral layer (primary EISV source).
+The ODE layer uses wider [-2, 2] bounds but is diagnostic-only.
 Negative V is physically meaningful: I > E (consolidation/information-dominant state).
 """
 
@@ -16,7 +17,7 @@ from src.governance_state import GovernanceState
 
 
 class TestVBoundsValidation:
-    """Test that V validation accepts [-2, 2] range."""
+    """Test that V validation accepts [-1, 1] range."""
 
     def test_v_zero_is_valid(self):
         state = GovernanceState()
@@ -41,51 +42,38 @@ class TestVBoundsValidation:
         assert len(v_errors) == 0
 
     def test_v_at_lower_bound(self):
-        """V = -2.0 is the valid lower bound."""
+        """V = -1.0 is the valid lower bound."""
         state = GovernanceState()
-        state.unitaires_state.V = -2.0
+        state.unitaires_state.V = -1.0
         is_valid, errors = state.validate()
         v_errors = [e for e in errors if "V out of bounds" in e]
         assert len(v_errors) == 0
 
     def test_v_at_upper_bound(self):
-        """V = 2.0 is the valid upper bound."""
-        state = GovernanceState()
-        state.unitaires_state.V = 2.0
-        is_valid, errors = state.validate()
-        v_errors = [e for e in errors if "V out of bounds" in e]
-        assert len(v_errors) == 0
-
-    def test_v_at_old_bounds_still_valid(self):
-        """V = 1.0 and V = -1.0 should still be valid (within wider range)."""
+        """V = 1.0 is the valid upper bound."""
         state = GovernanceState()
         state.unitaires_state.V = 1.0
         is_valid, errors = state.validate()
         v_errors = [e for e in errors if "V out of bounds" in e]
         assert len(v_errors) == 0
 
-        state.unitaires_state.V = -1.0
-        is_valid, errors = state.validate()
-        v_errors = [e for e in errors if "V out of bounds" in e]
-        assert len(v_errors) == 0
-
     def test_v_below_lower_bound(self):
-        """V = -2.1 should produce a validation error."""
+        """V = -1.1 should produce a validation error."""
         state = GovernanceState()
-        state.unitaires_state.V = -2.1
+        state.unitaires_state.V = -1.1
         is_valid, errors = state.validate()
         v_errors = [e for e in errors if "V out of bounds" in e]
         assert len(v_errors) == 1
-        assert "expected [-2, 2]" in v_errors[0]
+        assert "expected [-1, 1]" in v_errors[0]
 
     def test_v_above_upper_bound(self):
-        """V = 2.1 should produce a validation error."""
+        """V = 1.1 should produce a validation error."""
         state = GovernanceState()
-        state.unitaires_state.V = 2.1
+        state.unitaires_state.V = 1.1
         is_valid, errors = state.validate()
         v_errors = [e for e in errors if "V out of bounds" in e]
         assert len(v_errors) == 1
-        assert "expected [-2, 2]" in v_errors[0]
+        assert "expected [-1, 1]" in v_errors[0]
 
     def test_v_far_below_bound(self):
         state = GovernanceState()
@@ -103,10 +91,10 @@ class TestVBoundsValidation:
 
 
 class TestVAutoFix:
-    """Test that V auto-fix clips to [-2, 2] in governance_monitor."""
+    """Test that V auto-fix clips within bounds in governance_monitor."""
 
     def test_v_clipped_after_dynamics(self):
-        """V should be clipped to [-2, 2] after dynamics update."""
+        """V should be clipped to valid range after dynamics update."""
         from src.governance_monitor import UNITARESMonitor
 
         monitor = UNITARESMonitor("test-v-autofix", load_state=False)
@@ -115,7 +103,7 @@ class TestVAutoFix:
         # Run dynamics which should trigger auto-fix
         agent_state = {"complexity": 0.5}
         monitor.update_dynamics(agent_state)
-        assert -2.0 <= monitor.state.V <= 2.0
+        assert -1.0 <= monitor.state.V <= 1.0
 
     def test_v_negative_preserved_when_valid(self):
         """Negative V within bounds should NOT be clipped to 0."""
@@ -127,4 +115,4 @@ class TestVAutoFix:
         agent_state = {"complexity": 0.5}
         monitor.update_dynamics(agent_state)
         # V may change due to dynamics, but should stay in bounds
-        assert -2.0 <= monitor.state.V <= 2.0
+        assert -1.0 <= monitor.state.V <= 1.0

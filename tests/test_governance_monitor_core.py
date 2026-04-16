@@ -309,8 +309,7 @@ class TestEISVBounds:
             assert 0.0 <= metrics["E"] <= 1.0, f"E out of bounds: {metrics['E']}"
             assert 0.0 <= metrics["I"] <= 1.0, f"I out of bounds: {metrics['I']}"
             assert 0.0 <= metrics["S"] <= 1.0, f"S out of bounds: {metrics['S']}"
-            # V can be slightly outside [-1, 1] due to dynamics
-            assert -2.0 <= metrics["V"] <= 2.0, f"V out of bounds: {metrics['V']}"
+            assert -1.0 <= metrics["V"] <= 1.0, f"V out of bounds: {metrics['V']}"
 
 
 class TestGainModulation:
