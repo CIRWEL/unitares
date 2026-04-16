@@ -76,10 +76,9 @@ Add a command in `unitares-governance/commands/` for session start, for example:
 
 - `/governance-start`
   - call `onboard()`
-  - surface `client_session_id`
-  - surface `continuity_token` when supported
+  - surface `agent_uuid` (primary stored identity)
   - explain whether identity was `created` or `resumed`
-  - store continuity state in a local neutral cache
+  - store `agent_uuid` in a local neutral cache for `identity(agent_uuid=..., resume=true)`
 
 This removes the need for Codex users to remember the raw onboarding sequence.
 

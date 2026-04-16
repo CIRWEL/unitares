@@ -29,11 +29,11 @@ async def handle_my_new_tool(arguments: Dict[str, Any]) -> Sequence[TextContent]
     return success_response({"result": "..."})
 ```
 
-**Step 3 (optional): Add to session injection list** if it needs `client_session_id`:
+**Step 3 (optional): Add to session injection list** if it needs `client_session_id` (legacy/external client compatibility — identity is primarily UUID-based via `agent_uuid`):
 In `src/mcp_server.py`, add to `TOOLS_NEEDING_SESSION_INJECTION`:
 ```python
 TOOLS_NEEDING_SESSION_INJECTION = {
-    "my_new_tool",  # Add here if tool needs session identity
+    "my_new_tool",  # Add here if tool needs session identity (legacy path)
     ...
 }
 ```
@@ -174,12 +174,12 @@ Use `register=False` for handlers that are:
 
 ## Session Injection
 
-Some tools need the session's `client_session_id` injected automatically.
+Identity is primarily UUID-based (`agent_uuid` from `onboard()`). Session injection of `client_session_id` is a legacy/external client compatibility mechanism.
 
 **When to add a tool to `TOOLS_NEEDING_SESSION_INJECTION`:**
-- Tool uses identity/authentication
-- Tool stores data associated with an agent
-- Tool needs to know "who is calling"
+- Tool needs caller identity for external/non-UUID clients
+- Tool stores data associated with an agent (prefer UUID lookup when available)
+- Tool needs to know "who is calling" and cannot receive `agent_uuid` directly
 
 ---
 

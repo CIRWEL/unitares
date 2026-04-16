@@ -62,7 +62,7 @@ process_agent_update({
 
 **Verdict field:** Responses expose `verdict` from `decision.action`. Governance actions are **`proceed` / `guide` / `pause` / `reject`** ([Architecture](docs/UNIFIED_ARCHITECTURE.md)). If `action` is absent, formatters fall back to **`continue`** — see `response_formatter.py`.
 
-The `onboard()` response includes templates for the next calls. See [Getting Started](docs/guides/START_HERE.md) for continuity (`client_session_id`, `continuity_token`) and alternative entry paths.
+The `onboard()` response includes `agent_uuid` — store it and pass it to `identity(agent_uuid=..., resume=true)` on subsequent connections. See [Getting Started](docs/guides/START_HERE.md) for alternative entry paths.
 
 ### Installation
 
@@ -126,7 +126,7 @@ Agents self-identify through `onboard()`; no hardcoded agent-name header is requ
 
 **Security:** The server binds to `127.0.0.1` by default. For LAN or remote access, set `UNITARES_BIND_ALL_INTERFACES=1` and configure `UNITARES_MCP_ALLOWED_HOSTS` and `UNITARES_MCP_ALLOWED_ORIGINS` (comma-separated). See [scripts/ops/](scripts/ops/) for an example plist.
 
-> **For AI agents:** Prefer `continuity_token` when `continuity_token_supported=true`. Use `bind_session()` only when bridging MCP and REST. See [docs/guides/START_HERE.md](docs/guides/START_HERE.md) and [docs/operations/OPERATOR_RUNBOOK.md](docs/operations/OPERATOR_RUNBOOK.md).
+> **For AI agents:** Resident agents: save `agent_uuid` from `onboard()`, pass it to `identity(agent_uuid=..., resume=true)`. No token management needed. See [docs/guides/START_HERE.md](docs/guides/START_HERE.md) and [docs/operations/OPERATOR_RUNBOOK.md](docs/operations/OPERATOR_RUNBOOK.md).
 
 ---
 
