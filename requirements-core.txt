@@ -13,6 +13,10 @@ mcp>=1.26.0,<2.0.0
 # Governance system core math
 numpy>=1.24.0,<3.0.0
 
-# EISV dynamics engine (compiled, private repo)
+# EISV dynamics engine (compiled, private repo; not published on PyPI).
+# If pip reports "No matching distribution found for unitares-core", install
+# from your private wheel/source path first, then retry:
+#   pip install /path/to/unitares-core-*.whl
+# or use hosted/remote UNITARES mode when local core artifacts are unavailable.
 unitares-core>=2.3.0
 

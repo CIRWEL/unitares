@@ -42,9 +42,25 @@ if ! command -v "$PYTHON" &> /dev/null; then
     exit 1
 fi
 
+_check_import_error=$("$PYTHON" - <<'PY'
+import importlib
+missing = []
+for mod in ("mcp", "uvicorn", "starlette"):
+    try:
+        importlib.import_module(mod)
+    except Exception:
+        missing.append(mod)
+if missing:
+    print("missing:" + ",".join(missing))
+else:
+    print("ok")
+PY
+)
+
 # Dependencies: do NOT auto-install at runtime (avoids surprise failures / permission issues)
-if ! "$PYTHON" -c "import mcp, uvicorn, starlette" 2>/dev/null; then
+if [[ "$_check_import_error" != "ok" ]]; then
     echo "Error: missing dependencies for HTTP server."
+    echo "Details: ${_check_import_error}"
     echo ""
     echo "Install minimal (stdio only):"
     echo "  pip install -r requirements-core.txt"
@@ -52,6 +68,13 @@ if ! "$PYTHON" -c "import mcp, uvicorn, starlette" 2>/dev/null; then
     echo "Install full (HTTP):"
     echo "  pip install -r requirements-full.txt"
     echo ""
+    if [[ "$_check_import_error" == *"missing:mcp"* ]]; then
+        echo "If install fails on the private core dependency:"
+        echo "  Missing import is governance_core (from unitares-core, private package)."
+        echo "  Install your unitares-core wheel/source first, then reinstall requirements."
+        echo "  Fallback: use a hosted UNITARES endpoint (remote mode) instead of local server startup."
+        echo ""
+    fi
     exit 1
 fi
 

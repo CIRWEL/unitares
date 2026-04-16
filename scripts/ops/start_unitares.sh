@@ -22,14 +22,65 @@ NC='\033[0m' # No Color
 
 echo "🚀 Starting UNITARES Governance MCP Server..."
 
+print_remote_mode_hint() {
+    echo ""
+    echo -e "${YELLOW}Remote mode fallback:${NC}"
+    echo "  If local bootstrap is unavailable, connect to your hosted UNITARES endpoint"
+    echo "  and set UNITARES_SERVER_URL to that base URL in your client."
+}
+
+print_venv_install_hint() {
+    local os_id=""
+    if [ -f /etc/os-release ]; then
+        os_id="$(. /etc/os-release && echo "${ID:-}")"
+    fi
+    case "$os_id" in
+        ubuntu|debian)
+            echo "  sudo apt install python3-venv"
+            ;;
+        fedora|rhel|centos)
+            echo "  sudo dnf install python3-venv"
+            ;;
+        arch)
+            echo "  sudo pacman -S python"
+            ;;
+        *)
+            echo "  Install your distro's Python venv package (python3-venv)."
+            ;;
+    esac
+}
+
 # Check if virtual environment exists
 if [ ! -d ".venv" ]; then
     echo -e "${YELLOW}⚠️  Virtual environment not found. Creating one...${NC}"
-    python3 -m venv .venv
+    if ! python3 -m venv .venv; then
+        echo -e "${RED}❌ Failed to create virtual environment (.venv).${NC}"
+        echo "This usually means ensurepip/python3-venv is missing."
+        echo ""
+        echo "Install support package:"
+        print_venv_install_hint
+        print_remote_mode_hint
+        exit 1
+    fi
 fi
 
 # Activate virtual environment
 source .venv/bin/activate
+
+# Validate pip in venv (partial venvs can have python without pip)
+if ! python3 -m pip --version > /dev/null 2>&1; then
+    echo -e "${YELLOW}⚠️  Detected partial/broken virtual environment (pip missing).${NC}"
+    echo "Attempting pip bootstrap via ensurepip..."
+    if ! python3 -m ensurepip --upgrade > /dev/null 2>&1; then
+        echo -e "${RED}❌ Could not bootstrap pip in .venv.${NC}"
+        echo "Recreate the environment after installing venv support:"
+        print_venv_install_hint
+        echo "Then run:"
+        echo "  rm -rf .venv && scripts/ops/start_unitares.sh"
+        print_remote_mode_hint
+        exit 1
+    fi
+fi
 
 wait_for_exit() {
     local pattern="$1"
