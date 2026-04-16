@@ -27,8 +27,8 @@ Every agent has four dimensions, updated through check-ins:
 |-----------|-------|---------|
 | **E** (Energy) | [0, 1] | Productive capacity |
 | **I** (Information Integrity) | [0, 1] | Signal fidelity |
-| **S** (Entropy) | inspect live output | Semantic uncertainty (lower is better) |
-| **V** (Void) | inspect live output | Accumulated E-I imbalance |
+| **S** (Entropy) | [0, 1] | Semantic uncertainty (lower is better) |
+| **V** (Void) | [-1, 1] | Accumulated E-I imbalance |
 
 ### How They Couple
 

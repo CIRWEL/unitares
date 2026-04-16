@@ -1122,9 +1122,10 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
             # Create SPAWNED edge in AGE graph (non-blocking)
             if _parent_agent_id:
-                import asyncio
-                asyncio.create_task(
-                    _create_spawned_edge_bg(agent_uuid, _parent_agent_id, _spawn_reason)
+                from src.background_tasks import create_tracked_task
+                create_tracked_task(
+                    _create_spawned_edge_bg(agent_uuid, _parent_agent_id, _spawn_reason),
+                    name="spawned_edge",
                 )
 
             # Cache with the adjusted session_key (may include model suffix)
@@ -1347,16 +1348,16 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     logger.info(f"[ONBOARD] Agent {agent_uuid[:8]}... onboarded (is_new={is_new}, label={agent_label})")
 
-    # Fire-and-forget: auto-archive ephemeral agents (0 updates, older than 2 hours)
-    import asyncio
+    # Auto-archive ephemeral agents (0 updates, older than 2 hours)
+    from src.background_tasks import create_tracked_task
     from src.agent_lifecycle import auto_archive_orphan_agents
-    asyncio.create_task(auto_archive_orphan_agents(
+    create_tracked_task(auto_archive_orphan_agents(
         zero_update_hours=2.0,
         low_update_hours=2.0,
         unlabeled_hours=4.0,
         ephemeral_hours=2.0,
         ephemeral_max_updates=0,
-    ))
+    ), name="auto_archive_orphans")
 
     # Use lite_response to skip redundant signature
     arguments["lite_response"] = True

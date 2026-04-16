@@ -88,8 +88,9 @@ def _emit_lifecycle_event(
 
         # Schedule onto the running event loop if available
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_emit())
+            asyncio.get_running_loop()  # raises RuntimeError if no loop
+            from src.background_tasks import create_tracked_task
+            create_tracked_task(_emit(), name="lifecycle_broadcast")
         except RuntimeError:
             pass  # No event loop — skip broadcast (e.g. during tests)
     except Exception:

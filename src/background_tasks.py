@@ -877,6 +877,10 @@ def _supervised_create_task(coro, *, name: str | None = None) -> asyncio.Task:
     return task
 
 
+# Public alias for use outside background_tasks (handlers, models, etc.)
+create_tracked_task = _supervised_create_task
+
+
 # ---------------------------------------------------------------------------
 # Restartable named tasks
 # ---------------------------------------------------------------------------
