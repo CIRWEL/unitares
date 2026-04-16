@@ -93,6 +93,93 @@ FINDINGS_TTL_DAYS = 14
 # against the Watcher's own pattern library — unbounded append forever.
 MAX_LOG_LINES = 5000
 
+# ---------------------------------------------------------------------------
+# Identity — persistent governance presence
+# ---------------------------------------------------------------------------
+
+SESSION_FILE = PROJECT_ROOT / ".watcher_session"
+
+_watcher_identity: dict[str, str] | None = None
+
+
+def _load_session() -> dict[str, str]:
+    """Load .watcher_session if it exists."""
+    if SESSION_FILE.exists():
+        try:
+            return json.loads(SESSION_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_session(client_session_id: str, continuity_token: str, agent_uuid: str) -> None:
+    """Persist identity state to .watcher_session."""
+    data = {
+        "client_session_id": client_session_id,
+        "continuity_token": continuity_token,
+        "agent_uuid": agent_uuid,
+    }
+    try:
+        SESSION_FILE.write_text(json.dumps(data))
+    except OSError as e:
+        log(f"failed to save session: {e}", "warning")
+
+
+def resolve_identity(client) -> None:
+    """Three-step identity resolution: token → name → fresh onboard.
+
+    Sets module-level _watcher_identity on success, leaves it None on failure.
+    Mirrors the GovernanceAgent._ensure_identity pattern but synchronous.
+    """
+    global _watcher_identity
+    saved = _load_session()
+
+    # Step 1: Token resume (strong)
+    if saved.get("continuity_token"):
+        try:
+            client.identity(continuity_token=saved["continuity_token"], resume=True)
+            _sync_identity(client)
+            return
+        except Exception as e:
+            log(f"token resume failed: {e}", "warning")
+
+    # Step 2: Name resume (weak)
+    try:
+        client.identity(name="Watcher", resume=True)
+        _sync_identity(client)
+        return
+    except Exception as e:
+        log(f"name resume failed: {e}", "warning")
+
+    # Step 3: Fresh onboard
+    try:
+        client.onboard("Watcher", spawn_reason="resident_observer")
+        _sync_identity(client)
+    except Exception as e:
+        log(f"onboard failed — identity unavailable: {e}", "warning")
+        _watcher_identity = None
+
+
+def _sync_identity(client) -> None:
+    """Capture identity from client after successful resolution."""
+    global _watcher_identity
+    _watcher_identity = {
+        "client_session_id": client.client_session_id or "",
+        "continuity_token": client.continuity_token or "",
+        "agent_uuid": client.agent_uuid or "",
+    }
+    _save_session(
+        _watcher_identity["client_session_id"],
+        _watcher_identity["continuity_token"],
+        _watcher_identity["agent_uuid"],
+    )
+
+
+def get_watcher_identity() -> dict[str, str] | None:
+    """Return resolved identity or None if governance is unavailable."""
+    return _watcher_identity
+
+
 # Paths we never scan — too much churn, not worth the noise
 SKIP_PATH_FRAGMENTS = (
     "/.git/",

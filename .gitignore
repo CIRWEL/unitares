@@ -175,9 +175,13 @@ scripts/archive/
 .vigil_state
 .sentinel_session
 .sentinel_state
+.watcher_session
 
 # Generated config
 config/generated-*.json
+
+# Test cache (tree-hash pytest results)
+.test-cache/
 
 # Git worktrees
 .worktrees/

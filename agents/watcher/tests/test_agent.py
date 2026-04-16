@@ -1820,3 +1820,115 @@ class TestWatcherPostsFindings:
         assert len(calls) == 2
         assert {c["severity"] for c in calls} == {"high", "critical"}
         assert {c["extra"]["file"] for c in calls} == {"/tmp/a.py", "/tmp/b.py"}
+
+
+# ---------------------------------------------------------------------------
+# Identity resolution
+# ---------------------------------------------------------------------------
+
+
+SESSION_FILE_NAME = ".watcher_session"
+
+
+class TestWatcherIdentity:
+    """Watcher identity resolution: token resume → name resume → fresh onboard."""
+
+    def test_fresh_onboard_when_no_session_file(self, watcher_module, tmp_path, monkeypatch):
+        """First-ever invocation: no .watcher_session → fresh onboard."""
+        session_file = tmp_path / SESSION_FILE_NAME
+        monkeypatch.setattr(watcher_module, "SESSION_FILE", session_file)
+
+        onboard_called = {}
+
+        class FakeClient:
+            client_session_id = "sess-123"
+            continuity_token = "tok-abc"
+            agent_uuid = "uuid-watcher-001"
+
+            def onboard(self, name, **kwargs):
+                onboard_called["name"] = name
+                onboard_called["kwargs"] = kwargs
+                return type("R", (), {"success": True})()
+
+        watcher_module.resolve_identity(FakeClient())
+        identity = watcher_module.get_watcher_identity()
+
+        assert onboard_called["name"] == "Watcher"
+        assert onboard_called["kwargs"].get("spawn_reason") == "resident_observer"
+        assert identity["agent_uuid"] == "uuid-watcher-001"
+        assert session_file.exists()
+
+    def test_token_resume_when_session_exists(self, watcher_module, tmp_path, monkeypatch):
+        """Session file with continuity_token → token resume, no onboard."""
+        session_file = tmp_path / SESSION_FILE_NAME
+        session_file.write_text(json.dumps({
+            "client_session_id": "old-sess",
+            "continuity_token": "old-tok",
+            "agent_uuid": "uuid-watcher-001",
+        }))
+        monkeypatch.setattr(watcher_module, "SESSION_FILE", session_file)
+
+        identity_called = {}
+        onboard_called = {}
+
+        class FakeClient:
+            client_session_id = "new-sess"
+            continuity_token = "new-tok"
+            agent_uuid = "uuid-watcher-001"
+
+            def identity(self, **kwargs):
+                identity_called.update(kwargs)
+                return type("R", (), {"success": True})()
+
+            def onboard(self, name, **kwargs):
+                onboard_called["name"] = name
+
+        watcher_module.resolve_identity(FakeClient())
+        assert identity_called.get("continuity_token") == "old-tok"
+        assert identity_called.get("resume") is True
+        assert not onboard_called  # should NOT have fallen through to onboard
+
+    def test_name_resume_when_token_fails(self, watcher_module, tmp_path, monkeypatch):
+        """Token resume fails → fall back to name resume."""
+        session_file = tmp_path / SESSION_FILE_NAME
+        session_file.write_text(json.dumps({
+            "continuity_token": "stale-tok",
+            "agent_uuid": "uuid-old",
+        }))
+        monkeypatch.setattr(watcher_module, "SESSION_FILE", session_file)
+
+        calls = []
+
+        class FakeClient:
+            client_session_id = "new-sess"
+            continuity_token = "new-tok"
+            agent_uuid = "uuid-watcher-001"
+
+            def identity(self, **kwargs):
+                calls.append(("identity", kwargs))
+                if kwargs.get("continuity_token"):
+                    raise RuntimeError("token expired")
+                return type("R", (), {"success": True})()
+
+            def onboard(self, name, **kwargs):
+                calls.append(("onboard", name))
+
+        watcher_module.resolve_identity(FakeClient())
+        assert calls[0] == ("identity", {"continuity_token": "stale-tok", "resume": True})
+        assert calls[1] == ("identity", {"name": "Watcher", "resume": True})
+        assert len(calls) == 2  # no onboard needed
+
+    def test_governance_down_leaves_identity_none(self, watcher_module, tmp_path, monkeypatch):
+        """If governance is unreachable, identity is None — scanning still works."""
+        session_file = tmp_path / SESSION_FILE_NAME
+        monkeypatch.setattr(watcher_module, "SESSION_FILE", session_file)
+
+        class FakeClient:
+            def onboard(self, *a, **kw):
+                raise ConnectionError("governance down")
+
+            def identity(self, **kw):
+                raise ConnectionError("governance down")
+
+        watcher_module.resolve_identity(FakeClient())
+        assert watcher_module.get_watcher_identity() is None
