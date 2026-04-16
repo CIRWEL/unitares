@@ -34,12 +34,12 @@ if [ -n "$NEW_MARKDOWN_FILES" ]; then
     for file in $NEW_MARKDOWN_FILES; do
         # Skip approved files
         if [[ "$file" == "README.md" ]] || \
-           [[ "$file" == "CHANGELOG.md" ]] || \
+           [[ "$file" == "docs/CHANGELOG.md" ]] || \
            [[ "$file" == "docs/guides/START_HERE.md" ]] || \
            [[ "$file" == "docs/README.md" ]] || \
            [[ "$file" == "docs/QUICK_REFERENCE.md" ]] || \
            [[ "$file" == "docs/DOC_MAP.md" ]] || \
-           [[ "$file" == docs/meta/MARKDOWN_*.md ]] || \
+           [[ "$file" == docs/MARKDOWN_*.md ]] || \
            [[ "$file" == docs/guides/*.md ]] || \
            [[ "$file" == docs/architecture/*.md ]] || \
            [[ "$file" == "tools/README.md" ]]; then  # Auto-generated docs are OK
@@ -67,7 +67,7 @@ if [ -n "$NEW_MARKDOWN_FILES" ]; then
     if [ $VIOLATIONS -gt 0 ]; then
         echo ""
         echo "❌ Markdown proliferation policy violation!"
-        echo "   See: docs/meta/MARKDOWN_PROLIFERATION_POLICY.md"
+        echo "   See: docs/MARKDOWN_PROLIFERATION_POLICY.md"
         echo ""
         echo "   Options:"
         echo "   1. Consolidate into existing doc"

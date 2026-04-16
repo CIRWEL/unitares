@@ -6,8 +6,8 @@ Automatically updates tool count references in documentation files.
 Run this after adding/removing tools to keep docs in sync.
 
 Usage:
-    python3 scripts/update_docs_tool_count.py --check  # Check for mismatches
-    python3 scripts/update_docs_tool_count.py --update # Update all docs
+    python3 scripts/diagnostics/update_docs_tool_count.py --check  # Check for mismatches
+    python3 scripts/diagnostics/update_docs_tool_count.py --update # Update all docs
 """
 
 import re

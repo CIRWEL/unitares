@@ -11,7 +11,7 @@ def main():
     print(f"Running Python {sys.version}")
 
     # Check .python-version if it exists
-    python_version_file = os.path.join(os.path.dirname(__file__), "..", ".python-version")
+    python_version_file = os.path.join(os.path.dirname(__file__), "..", "..", ".python-version")
     if os.path.exists(python_version_file):
         with open(python_version_file) as f:
             expected = f.read().strip()

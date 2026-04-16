@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-DB_PATH = Path(__file__).parent.parent / "data" / "governance.db"
+DB_PATH = Path(__file__).parent.parent.parent / "data" / "governance.db"
 
 
 def load_eisv_histories(conn, min_updates=15, max_updates=5000):

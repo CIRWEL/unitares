@@ -2,17 +2,17 @@
 Validate that documentation tool counts match actual registered tools.
 
 Usage:
-    python scripts/update_docs_tool_count.py --check  # Validate (CI mode)
-    python scripts/update_docs_tool_count.py           # Print current count
+    python scripts/dev/update_docs_tool_count.py --check  # Validate (CI mode)
+    python scripts/dev/update_docs_tool_count.py           # Print current count
 """
 import sys
 import os
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
 def main():
-    from scripts.count_tools import count_tools
+    from scripts.analysis.count_tools import count_tools
     _, total = count_tools()
 
     if "--check" in sys.argv:

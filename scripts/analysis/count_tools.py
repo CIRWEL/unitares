@@ -2,9 +2,9 @@
 Count registered MCP tools for CI reporting.
 
 Usage:
-    python scripts/count_tools.py              # Print total count
-    python scripts/count_tools.py --json       # Print as JSON
-    python scripts/count_tools.py --by-module  # Breakdown by module
+    python scripts/analysis/count_tools.py              # Print total count
+    python scripts/analysis/count_tools.py --json       # Print as JSON
+    python scripts/analysis/count_tools.py --by-module  # Breakdown by module
 """
 import sys
 import os
@@ -12,7 +12,7 @@ import json
 import re
 from collections import defaultdict
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
 def count_tools():

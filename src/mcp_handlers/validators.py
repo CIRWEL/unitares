@@ -56,7 +56,7 @@ def validate_file_path_policy(file_path: str) -> Tuple[Optional[str], Optional[T
     if basename.endswith('.md'):
         APPROVED_FILES = {
             'README.md',
-            'CHANGELOG.md',
+            'docs/CHANGELOG.md',
             'docs/CANONICAL_SOURCES.md',
             'docs/UNIFIED_ARCHITECTURE.md',
             'docs/CIRCUIT_BREAKER_DIALECTIC.md',
@@ -68,9 +68,9 @@ def validate_file_path_policy(file_path: str) -> Tuple[Optional[str], Optional[T
             'docs/operations/DEFINITIVE_PORTS.md',
             'docs/operations/OPERATOR_RUNBOOK.md',
             'docs/dev/TOOL_REGISTRATION.md',
-            'docs/engineering/contract-drift-playbook.md',
-            'docs/engineering/validation-roadmap.md',
-            'docs/meta/MARKDOWN_PROLIFERATION_POLICY.md',
+            'docs/operations/contract-drift-playbook.md',
+            'docs/plans/validation-roadmap.md',
+            'docs/MARKDOWN_PROLIFERATION_POLICY.md',
             'scripts/README.md',
             'data/README.md',
             'tools/README.md',

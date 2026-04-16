@@ -8,8 +8,8 @@ Run this when a model change invalidates existing stored data
 Most changes (bug fixes, new tools, docs) do NOT require an epoch bump.
 
 Usage:
-    python3 scripts/bump_epoch.py --reason "changed EISV coupling model"
-    python3 scripts/bump_epoch.py --reason "restructured calibration" --dry-run
+    python3 scripts/dev/bump_epoch.py --reason "changed EISV coupling model"
+    python3 scripts/dev/bump_epoch.py --reason "restructured calibration" --dry-run
 """
 
 import argparse
@@ -18,7 +18,7 @@ import sys
 import os
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 
 async def bump_epoch(reason: str, dry_run: bool = False):
@@ -38,7 +38,7 @@ async def bump_epoch(reason: str, dry_run: bool = False):
 
     # 1. Update the config file
     config_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         "config", "governance_config.py",
     )
     with open(config_path, "r") as f:

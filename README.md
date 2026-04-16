@@ -192,29 +192,29 @@ April 2026:
 [Lumen](https://github.com/CIRWEL/anima-mcp) is an embodied agent on a Raspberry Pi: sensors feed check-ins; local drawing is modulated by coherence-related dynamics. See [anima-mcp](https://github.com/CIRWEL/anima-mcp) for hardware and art pipeline details.
 
 <p align="center">
-  <img src="docs/images/dashboard.png" width="80%" alt="UNITARES dashboard — stats overview with fleet coherence, agent count, discoveries, and system health"/>
+  <img src="docs/assets/dashboard.png" width="80%" alt="UNITARES dashboard — stats overview with fleet coherence, agent count, discoveries, and system health"/>
 </p>
 
 <details>
 <summary><strong>More dashboard views</strong> (pulse, EISV charts, agents, dialectic, activity)</summary>
 
 <p align="center">
-  <img src="docs/images/dashboard-pulse.png" width="80%" alt="Pulse — live event feed and EISV time series"/>
+  <img src="docs/assets/dashboard-pulse.png" width="80%" alt="Pulse — live event feed and EISV time series"/>
 </p>
 <p align="center"><em>Pulse — live event feed, drift indicators, and EISV time series charts</em></p>
 
 <p align="center">
-  <img src="docs/images/dashboard-agents.png" width="80%" alt="Agents and Discoveries panels"/>
+  <img src="docs/assets/dashboard-agents.png" width="80%" alt="Agents and Discoveries panels"/>
 </p>
 <p align="center"><em>Agents (sorted by recency, with trust tiers) and Discoveries (filterable by type and time range)</em></p>
 
 <p align="center">
-  <img src="docs/images/dashboard-dialectic.png" width="80%" alt="Dialectic sessions — recovery and review history"/>
+  <img src="docs/assets/dashboard-dialectic.png" width="80%" alt="Dialectic sessions — recovery and review history"/>
 </p>
 <p align="center"><em>Dialectic sessions — failed, resolved, and active recovery sessions with message counts</em></p>
 
 <p align="center">
-  <img src="docs/images/dashboard-activity.png" width="80%" alt="Activity timeline — check-ins, verdicts, discoveries"/>
+  <img src="docs/assets/dashboard-activity.png" width="80%" alt="Activity timeline — check-ins, verdicts, discoveries"/>
 </p>
 <p align="center"><em>Activity timeline — filterable event log across all agents</em></p>
 
@@ -251,12 +251,12 @@ graph LR
 |-------|---------|
 | [Getting Started](docs/guides/START_HERE.md) | Setup, workflows, tool modes |
 | [Architecture](docs/UNIFIED_ARCHITECTURE.md) | Pipeline, verdicts, recovery, storage |
-| [Case Study](CASE_STUDY.md) | Project summary and context |
+| [Case Study](docs/CASE_STUDY.md) | Project summary and context |
 | [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Common issues |
 | [Dashboard](dashboard/README.md) | Web UI |
 | [Database](docs/database_architecture.md) | PostgreSQL + AGE |
 | [Contributing](CONTRIBUTING.md) | Development setup, testing, style |
-| [Changelog](CHANGELOG.md) | Releases |
+| [Changelog](docs/CHANGELOG.md) | Releases |
 
 ## Related Projects
 

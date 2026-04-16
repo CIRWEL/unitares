@@ -91,7 +91,7 @@ def test_directory_structure():
         "data/archive/agents",
         "data/archive/exports",
         "data/archive/sessions",
-        "data/test_files"
+        "tests/fixtures"
     ]
     
     all_exist = True

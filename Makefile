@@ -11,11 +11,11 @@ version: ## Show current version
 	@cat VERSION
 
 version-check: ## Check all version references are in sync
-	@python3 scripts/version_manager.py --check
+	@python3 scripts/dev/version_manager.py --check
 
 version-bump: ## Bump version (usage: make version-bump PART=patch)
-	@python3 scripts/version_manager.py --bump $(PART)
-	@python3 scripts/version_manager.py --update
+	@python3 scripts/dev/version_manager.py --bump $(PART)
+	@python3 scripts/dev/version_manager.py --update
 	@echo "Don't forget to commit and restart the server"
 
 # ── Testing ──────────────────────────────────────────────
@@ -56,9 +56,9 @@ docs: ## Generate tool documentation from @mcp_tool decorators
 	@python3 scripts/generate_tool_docs.py
 
 validate: ## Run CI validation checks locally
-	@python3 scripts/check_ci_python_version_sync.py
-	@python3 scripts/update_docs_tool_count.py --check
-	@python3 scripts/version_manager.py --check
+	@python3 scripts/dev/check_ci_python_version_sync.py
+	@python3 scripts/dev/update_docs_tool_count.py --check
+	@python3 scripts/dev/version_manager.py --check
 	@echo "All checks passed"
 
 # ── Hooks ────────────────────────────────────────────────

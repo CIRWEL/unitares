@@ -34,7 +34,7 @@ jobs:
 
     - name: Validate CI/Python version sync
       run: |
-        python scripts/check_ci_python_version_sync.py
+        python scripts/dev/check_ci_python_version_sync.py
 
     - name: Check doc drift
       run: |
@@ -78,7 +78,7 @@ jobs:
 
     - name: Validate CI/Python version sync
       run: |
-        python scripts/check_ci_python_version_sync.py
+        python scripts/dev/check_ci_python_version_sync.py
 
     - name: Check doc drift
       run: |
@@ -98,4 +98,4 @@ jobs:
     - name: Run tool count validation
       continue-on-error: true
       run: |
-        python scripts/count_tools.py --json
+        python scripts/analysis/count_tools.py --json

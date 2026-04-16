@@ -24,7 +24,7 @@ sys.path.insert(0, str(project_root))
 # Approved markdown files (from policy) - updated 2026-04-04
 APPROVED_FILES = {
     'README.md',
-    'CHANGELOG.md',
+    'docs/CHANGELOG.md',
     'docs/CANONICAL_SOURCES.md',
     'docs/UNIFIED_ARCHITECTURE.md',
     'docs/CIRCUIT_BREAKER_DIALECTIC.md',
@@ -36,9 +36,9 @@ APPROVED_FILES = {
     'docs/operations/DEFINITIVE_PORTS.md',
     'docs/operations/OPERATOR_RUNBOOK.md',
     'docs/dev/TOOL_REGISTRATION.md',
-    'docs/engineering/contract-drift-playbook.md',
-    'docs/engineering/validation-roadmap.md',
-    'docs/meta/MARKDOWN_PROLIFERATION_POLICY.md',
+    'docs/operations/contract-drift-playbook.md',
+    'docs/plans/validation-roadmap.md',
+    'docs/MARKDOWN_PROLIFERATION_POLICY.md',
     'scripts/README.md',
     'data/README.md',
     'tools/README.md',

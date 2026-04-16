@@ -2,13 +2,13 @@
 Version management utility for CI validation.
 
 Usage:
-    python scripts/version_manager.py          # Print current version
-    python scripts/version_manager.py --check  # Validate version consistency
+    python scripts/dev/version_manager.py          # Print current version
+    python scripts/dev/version_manager.py --check  # Validate version consistency
 """
 import sys
 import os
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def get_version():
     version_file = os.path.join(PROJECT_ROOT, "VERSION")

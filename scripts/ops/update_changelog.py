@@ -231,7 +231,7 @@ class ChangelogGenerator:
 
     def update_changelog(self, dry_run: bool = False):
         """Update CHANGELOG.md with new commits."""
-        changelog_path = self.repo_path / "CHANGELOG.md"
+        changelog_path = self.repo_path / "docs" / "CHANGELOG.md"
 
         # Get commits since last tag/version
         commit_lines = self.parser.get_commits_since_tag()

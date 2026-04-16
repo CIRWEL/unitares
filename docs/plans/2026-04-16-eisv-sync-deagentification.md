@@ -477,7 +477,7 @@ Run: `python -m pytest tests/test_governance_monitor.py tests/test_lifecycle_rec
 
 - [ ] **Step 6: Run full test suite**
 
-Run: `./scripts/test-cache.sh --fresh`
+Run: `./scripts/dev/test-cache.sh --fresh`
 Expected: All tests pass (minus known skips)
 
 - [ ] **Step 7: Commit**

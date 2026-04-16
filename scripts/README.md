@@ -8,17 +8,14 @@
 
 ---
 
-## Root Scripts
-
-Utility scripts that live directly in `scripts/`:
+## `dev/` — Development & CI Scripts
 
 | Script | Description |
 |--------|-------------|
-| `backup_governance.sh` | Backup governance database (auto-starts container, retries, status JSON, optional macOS alert on failure) |
-| `check_governance_backup_health.sh` | Exit non-zero if backups are older than `MAX_AGE_SEC` (default 26h); for cron/monitoring |
 | `bump_epoch.py` | Bump governance epoch |
 | `check_ci_python_version_sync.py` | Verify CI Python version matches project |
-| `count_tools.py` | Count registered MCP tools |
+| `doc_audit.sh` | Check all three UNITARES repos for stale docs |
+| `test-cache.sh` | Tree-hash pytest cache (skips if tests already passed against this exact working tree) |
 | `update_docs_tool_count.py` | Update tool counts in documentation |
 | `version_manager.py` | Version management utilities |
 
@@ -47,6 +44,13 @@ The bulk of operational scripts live in `scripts/ops/`.
 | `stop_unitares.sh` | Stop the governance MCP server |
 | `start_server.sh` | Alternative server start |
 | `start_with_deps.sh` | Start server with all dependencies |
+
+### Backup
+
+| Script | Description |
+|--------|-------------|
+| `backup_governance.sh` | Backup governance database (auto-starts container, retries, status JSON, optional macOS alert on failure) |
+| `check_governance_backup_health.sh` | Exit non-zero if backups are older than `MAX_AGE_SEC` (default 26h); for cron/monitoring |
 
 ### Health & Monitoring
 
@@ -88,7 +92,10 @@ they contain machine-specific paths and may contain secrets. Keep local copies i
 AGE (Apache Graph Extension) utilities — bootstrap SQL, export scripts, sample Cypher queries.
 
 ### `analysis/`
-Analysis and reporting scripts, including outcome / calibration reporting and offline dataset export for validation studies.
+Analysis and reporting scripts, including outcome / calibration reporting, tool counting, EISV PCA analysis, and offline dataset export for validation studies.
+
+### `client/`
+Client-side utilities including the Ollama MCP bridge and session/freshness helpers.
 
 ### `diagnostics/`
 Diagnostic scripts for debugging server and agent issues.
@@ -113,7 +120,7 @@ Archived scripts organized by type — completed migrations, deprecated CLI tool
 ## Adding New Scripts
 
 1. **Is it operational?** Put it in `ops/`
-2. **Is it a dev/CI utility?** Put it in root `scripts/`
+2. **Is it a dev/CI utility?** Put it in `dev/`
 3. **Is it a test?** Put it in `tests/`
 4. **Is it one-off?** Plan to archive after use
 5. **Document it** in this README

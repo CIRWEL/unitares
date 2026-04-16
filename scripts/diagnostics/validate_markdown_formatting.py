@@ -28,7 +28,7 @@ sys.path.insert(0, str(project_root))
 # Approved files (exempt from strict checks)
 APPROVED_FILES = {
     'README.md',
-    'CHANGELOG.md',
+    'docs/CHANGELOG.md',
     'docs/guides/START_HERE.md',
     'docs/CANONICAL_SOURCES.md',
     'docs/UNIFIED_ARCHITECTURE.md',
@@ -86,7 +86,7 @@ class MarkdownValidator:
             
             # Check for date metadata (should use **Last Updated:**)
             has_date_metadata = any(pattern.search(content) for pattern in DATE_METADATA_PATTERNS)
-            if not has_date_metadata and filepath.name not in {'README.md', 'CHANGELOG.md'}:
+            if not has_date_metadata and filepath.name not in {'README.md'} and str(filepath) != 'docs/CHANGELOG.md':
                 # Check first 20 lines for date metadata
                 header_section = '\n'.join(lines[:20])
                 if not any(pattern.search(header_section) for pattern in DATE_METADATA_PATTERNS):
@@ -248,7 +248,7 @@ def main():
         print("  - Use relative links: [text](docs/path.md)")
         print("  - Add language tags to code blocks: ```python")
         print("  - Remove agent attribution from headers (tracked in git)")
-        print("\n  See: docs/meta/MARKDOWN_STANDARDIZATION.md")
+        print("\n  See: docs/MARKDOWN_PROLIFERATION_POLICY.md")
     
     if args.strict and total_issues > 0:
         return 1

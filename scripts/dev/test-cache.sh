@@ -6,14 +6,14 @@
 # the cached summary and exits 0 without re-running pytest.
 #
 # Usage:
-#   ./scripts/test-cache.sh              # default: pytest tests/ agents/ -q --tb=short -x
-#   ./scripts/test-cache.sh --fresh      # ignore cache, force run
-#   ./scripts/test-cache.sh -- -k "test_foo"  # extra pytest args after --
+#   ./scripts/dev/test-cache.sh              # default: pytest tests/ agents/ -q --tb=short -x
+#   ./scripts/dev/test-cache.sh --fresh      # ignore cache, force run
+#   ./scripts/dev/test-cache.sh -- -k "test_foo"  # extra pytest args after --
 
 set -euo pipefail
 
 CACHE_DIR=".test-cache"
-PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # --- parse args ---

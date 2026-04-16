@@ -44,12 +44,12 @@ class SemanticDriftValidator:
         'docs/migrations/',  # All migration docs are historical
         'docs/sessions/',    # Historical session logs
         'docs/fixes/',       # Historical bug fix records
-        'docs/meta/DEPRECATION_REMOVAL_PLAN.md',  # About the deprecation itself
+        'docs/DEPRECATION_REMOVAL_PLAN.md',  # About the deprecation itself
         'docs/guides/BRIDGE_SYNC_AUTOMATION.md',  # Documents the migration itself
         'docs/analysis/SYSTEM_AUDIT_20251208.md',  # Audit report mentions both terms
         'scripts/validate_all.py',  # Contains deprecated terms in config by design
         'scripts/sync_bridge_with_mcp.py',  # Syncs deprecated → current terms
-        'CHANGELOG.md',
+        'docs/CHANGELOG.md',
         'docs/archive/',
     }
 

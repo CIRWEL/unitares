@@ -22,7 +22,7 @@ SKIP_DIRS = {".git", ".venv", "venv", ".pytest_cache", "node_modules",
              ".agent-guides", "plans", "superpowers"}
 
 # Files to skip (historical records — dead refs are expected)
-SKIP_FILES = {"CHANGELOG.md"}
+SKIP_FILES = {"docs/CHANGELOG.md", "CHANGELOG.md"}
 
 # --- Check 1: Dead file references ---
 

@@ -6,10 +6,10 @@ Manages version number across all files in the project.
 Prevents version drift by using VERSION file as authority.
 
 Usage:
-    python3 scripts/version_manager.py                # Show current version
-    python3 scripts/version_manager.py --check        # Check for mismatches
-    python3 scripts/version_manager.py --bump minor   # Bump version (major|minor|patch)
-    python3 scripts/version_manager.py --update       # Update all version references
+    python3 scripts/ops/version_manager.py                # Show current version
+    python3 scripts/ops/version_manager.py --check        # Check for mismatches
+    python3 scripts/ops/version_manager.py --bump minor   # Bump version (major|minor|patch)
+    python3 scripts/ops/version_manager.py --update       # Update all version references
 """
 
 import re
@@ -135,7 +135,7 @@ def main():
     if args.bump:
         new_version = bump_version(args.bump)
         print(f"✅ Version bumped: {current_version} → {new_version}")
-        print(f"   Don't forget to run: python3 scripts/version_manager.py --update")
+        print(f"   Don't forget to run: python3 scripts/ops/version_manager.py --update")
         sys.exit(0)
 
     if args.check or not args.update:

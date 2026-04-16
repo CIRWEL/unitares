@@ -6,9 +6,9 @@ This script counts MCP tools by scanning @mcp_tool decorators.
 Use this as the authoritative tool count instead of hardcoding numbers.
 
 Usage:
-    python3 scripts/count_tools.py              # Display count
-    python3 scripts/count_tools.py --json       # JSON output
-    python3 scripts/count_tools.py --by-module  # Breakdown by module
+    python3 scripts/diagnostics/count_tools.py              # Display count
+    python3 scripts/diagnostics/count_tools.py --json       # JSON output
+    python3 scripts/diagnostics/count_tools.py --by-module  # Breakdown by module
 """
 
 import os

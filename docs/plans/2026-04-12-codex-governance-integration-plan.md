@@ -216,7 +216,7 @@ Codex-side integration will feel better if the runtime keeps improving these cal
 
 That work is tracked separately in:
 
-- `docs/engineering/2026-04-12-codex-dogfood-ux-tightening.md`
+- `docs/plans/2026-04-12-codex-dogfood-ux-tightening.md`
 
 ## What not to do
 

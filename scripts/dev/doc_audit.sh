@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # doc_audit.sh — Check all three UNITARES repos for stale docs.
-# Run manually: bash scripts/doc_audit.sh
+# Run manually: bash scripts/dev/doc_audit.sh
 
 set -euo pipefail
 
-GOV_DIR="${GOV_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+GOV_DIR="${GOV_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 EISV_DIR="${EISV_DIR:-$GOV_DIR/../eisv-lumen}"
 ANIMA_DIR="${ANIMA_DIR:-$GOV_DIR/../anima-mcp}"
 
