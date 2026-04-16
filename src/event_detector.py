@@ -522,13 +522,6 @@ class GovernanceEventDetector:
         # Return newest first, limited
         return list(reversed(events))[:limit]
 
-    def remove_agent(self, agent_id: str) -> bool:
-        """Remove an agent's tracking state (e.g. on archival).
-
-        Returns True if the agent was tracked, False otherwise.
-        """
-        return self._prev_state.pop(agent_id, None) is not None
-
     def clear_events(self):
         """Clear stored events (for testing)."""
         self._recent_events.clear()

@@ -159,81 +159,34 @@ class GovernanceAgent:
     # --- Identity resolution ---
 
     async def _ensure_identity(self, client: GovernanceClient) -> None:
-        """Three-step identity resolution: token -> name -> onboard."""
+        """Identity resolution: UUID lookup (fast) or fresh onboard."""
         self._load_session()
 
-        # Step 1: Token resume (strong)
-        if self.continuity_token:
-            if self.agent_uuid and not validate_token_uuid(
-                self.continuity_token, self.agent_uuid
-            ):
-                logger.warning(
-                    "%s: stale token detected (wrong agent UUID) — discarding",
-                    self.name,
-                )
-                if self.notify_on_error:
-                    notify(self.name, "Stale token detected (wrong agent UUID)")
-                self.continuity_token = None
-            else:
-                # If no UUID yet, extract from token to set expectation
-                payload = parse_continuity_token(self.continuity_token)
-                if payload and payload.get("aid") and not self.agent_uuid:
-                    self.agent_uuid = payload["aid"]
-
-                try:
-                    result = await client.identity(
-                        continuity_token=self.continuity_token, resume=True
-                    )
-                    self._sync_from_client(client)
-                    self._save_session()
-                    logger.info("%s: resumed via token", self.name)
-                    return
-                except IdentityDriftError as e:
-                    # Token HMAC may have failed (e.g., server secret rotated),
-                    # causing server to resolve a different identity via fallback.
-                    # Discard stale token and fall through to name resume.
-                    logger.warning(
-                        "%s: token resume caused identity drift "
-                        "(expected %s, got %s) — discarding token, trying name resume",
-                        self.name, e.expected_uuid[:12], e.received_uuid[:12],
-                    )
-                    self.continuity_token = None
-                    client.agent_uuid = self.agent_uuid  # restore expected UUID
-                except Exception as e:
-                    logger.warning("%s: token resume failed: %s", self.name, e)
-
-        # Step 2: Name resume (weak)
-        try:
-            result = await client.identity(name=self.name, resume=True)
-            self._sync_from_client(client)
-            self._save_session()
-            logger.info("%s: resumed via name", self.name)
-            return
-        except IdentityDriftError:
-            raise
-        except Exception as e:
-            logger.warning("%s: name resume failed: %s", self.name, e)
-
-        # Step 3: Fresh onboard
-        # Both token and name resume failed — old identity is unrecoverable.
-        # Clear stored UUID so onboard can create a fresh identity without
-        # triggering drift detection against the stale one.
+        # Fast path: we know who we are — just tell the server
         if self.agent_uuid:
-            logger.info(
-                "%s: clearing stale agent_uuid %s before fresh onboard",
-                self.name, self.agent_uuid[:12],
-            )
-            self.agent_uuid = None
-            client.agent_uuid = None
+            try:
+                await client.identity(agent_uuid=self.agent_uuid, resume=True)
+                self._sync_from_client(client)
+                self._save_session()
+                logger.info("%s: resumed via UUID %s", self.name, self.agent_uuid[:12])
+                return
+            except Exception as e:
+                logger.error(
+                    "%s: UUID lookup failed for %s: %s — refusing to create ghost",
+                    self.name, self.agent_uuid[:12], e,
+                )
+                raise
+
+        # First run — onboard, get a UUID, save it
         onboard_kwargs: dict[str, Any] = {}
         if self.parent_agent_id is not None:
             onboard_kwargs["parent_agent_id"] = self.parent_agent_id
         if self.spawn_reason is not None:
             onboard_kwargs["spawn_reason"] = self.spawn_reason
-        result = await client.onboard(self.name, **onboard_kwargs)
+        await client.onboard(self.name, **onboard_kwargs)
         self._sync_from_client(client)
         self._save_session()
-        logger.info("%s: onboarded fresh", self.name)
+        logger.info("%s: onboarded fresh (UUID %s)", self.name, self.agent_uuid[:12] if self.agent_uuid else "?")
 
     # --- Check-in handling ---
 

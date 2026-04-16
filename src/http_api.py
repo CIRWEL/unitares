@@ -902,6 +902,40 @@ async def http_events(request):
             since=since
         )
 
+        # Supplement from PostgreSQL when in-memory buffer is thin
+        # (e.g. right after a restart)
+        if len(events) < limit:
+            try:
+                from src.audit_db import query_audit_events_async
+                from datetime import datetime, timedelta, timezone
+                start_time = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+                db_events = await query_audit_events_async(
+                    agent_id=agent_id,
+                    event_type=event_type,
+                    start_time=start_time,
+                    limit=limit,
+                    order="desc",
+                )
+                # Merge: use in-memory event_ids to deduplicate
+                mem_ids = {e.get("event_id") for e in events if e.get("event_id")}
+                for de in db_events:
+                    if de.get("event_id") not in mem_ids:
+                        # Reshape audit row → dashboard event shape
+                        payload = de.get("details", {})
+                        events.append({
+                            "type": payload.get("type", de.get("event_type", "")),
+                            "severity": payload.get("severity", "info"),
+                            "message": payload.get("message", de.get("event_type", "")),
+                            "agent_id": de.get("agent_id"),
+                            "agent_name": payload.get("agent_name", ""),
+                            "timestamp": de.get("timestamp"),
+                            "event_id": de.get("event_id"),
+                        })
+                events.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+                events = events[:limit]
+            except Exception as db_err:
+                logger.debug(f"Audit DB supplement failed (non-fatal): {db_err}")
+
         return JSONResponse({
             "success": True,
             "events": events,

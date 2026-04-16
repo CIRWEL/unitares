@@ -304,7 +304,12 @@ async def update_agent(
     return True
 
 
-async def archive_agent(agent_id: str) -> bool:
+async def archive_agent(
+    agent_id: str,
+    *,
+    archived_at: str | None = None,
+    lifecycle_event: str | None = None,
+) -> bool:
     """
     Archive an agent.
 
@@ -314,10 +319,14 @@ async def archive_agent(agent_id: str) -> bool:
     await _ensure_db_ready()
     db = get_db()
 
+    disabled_at = (
+        datetime.fromisoformat(archived_at) if archived_at
+        else datetime.now(timezone.utc)
+    )
     await db.update_identity_status(
         agent_id=agent_id,
         status="archived",
-        disabled_at=datetime.now(timezone.utc),
+        disabled_at=disabled_at,
     )
 
     if hasattr(db, "update_agent_fields"):

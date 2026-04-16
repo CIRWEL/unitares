@@ -386,6 +386,9 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     Optional: Pass model_type='...' to create distinct identity per model.
     Optional: Pass resume=false to force a new identity (with predecessor link).
     Optional: Pass force_new=true to create new identity with no predecessor link.
+    Optional: Pass agent_uuid='...' to resume a known identity by UUID directly.
+              Requires resume=true (default). Skips session/name resolution entirely.
+              Returns error if UUID not found or not active — never creates a ghost.
     Defaults to resuming existing identity if one exists for this session.
     """
     arguments = arguments or {}
@@ -437,6 +440,43 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         response_arguments = dict(arguments)
         response_arguments["lite_response"] = True
         return success_response(payload, agent_id=agent_uuid, arguments=response_arguments)
+
+    # PATH 0: Direct UUID lookup (resident agents with stored UUID)
+    # Skips all session/name resolution — just verify the UUID exists and is active.
+    _direct_uuid = arguments.get("agent_uuid")
+    if _direct_uuid and resume:
+        exists = await _agent_exists_in_postgres(_direct_uuid)
+        if not exists:
+            return error_response(
+                f"Agent UUID {_direct_uuid[:12]}... not found",
+                recovery={"reason": "uuid_not_found", "agent_uuid": _direct_uuid},
+            )
+        status = await _get_agent_status(_direct_uuid)
+        if status != "active":
+            return error_response(
+                f"Agent UUID {_direct_uuid[:12]}... is not active (status={status})",
+                recovery={"reason": "uuid_not_found", "agent_uuid": _direct_uuid, "status": status},
+            )
+        agent_id = await _get_agent_id_from_metadata(_direct_uuid) or _direct_uuid
+        label = await _get_agent_label(_direct_uuid)
+        await _cache_session(base_session_key, _direct_uuid, display_agent_id=agent_id)
+        try:
+            from ..context import update_context_agent_id
+            update_context_agent_id(_direct_uuid)
+        except Exception:
+            pass
+        payload = _identity_diag_payload(
+            agent_uuid=_direct_uuid,
+            agent_id=agent_id,
+            label=label,
+            status="resumed",
+        )
+        payload.update({
+            "resumed": True,
+            "resumed_by_uuid": True,
+            "message": f"Welcome back! Resumed identity '{label or agent_id}' via UUID",
+        })
+        return _identity_success(payload, agent_uuid=_direct_uuid)
 
     # PATH 2.5: Name-based identity claim (only when resume=true, before session resolution)
     # If the caller provides name= + resume=true and isn't forcing new, try to reconnect

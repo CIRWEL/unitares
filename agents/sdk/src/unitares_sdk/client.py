@@ -193,9 +193,13 @@ class GovernanceClient:
         continuity_token: str | None = None,
         parent_agent_id: str | None = None,
         spawn_reason: str | None = None,
+        agent_uuid: str | None = None,
         **kwargs: Any,
     ) -> IdentityResult:
         """Resume or query identity. Maps to server tool: identity.
+
+        agent_uuid: pass a known UUID for direct server-side lookup.
+        Skips session/name resolution entirely. Requires resume=True.
 
         parent_agent_id/spawn_reason: applied only when this call results in
         identity creation (e.g. name-resume miss falling through to create).
@@ -210,6 +214,8 @@ class GovernanceClient:
             args["parent_agent_id"] = parent_agent_id
         if spawn_reason is not None:
             args["spawn_reason"] = spawn_reason
+        if agent_uuid is not None:
+            args["agent_uuid"] = agent_uuid
         args.update(kwargs)
 
         raw = await self.call_tool("identity", args)

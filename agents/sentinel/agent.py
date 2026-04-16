@@ -459,7 +459,10 @@ class SentinelAgent(GovernanceAgent):
 
         while self.running:
             try:
-                async with websockets.connect(self.ws_url) as ws:
+                async with websockets.connect(
+                    self.ws_url,
+                    ping_interval=None,  # loopback — TCP detects drops
+                ) as ws:
                     self._ws_connected = True
                     log(f"WebSocket connected to {self.ws_url}")
                     async for message in ws:
