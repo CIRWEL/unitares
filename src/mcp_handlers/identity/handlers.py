@@ -460,10 +460,16 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
             )
         agent_id = await _get_agent_id_from_metadata(_direct_uuid) or _direct_uuid
         label = await _get_agent_label(_direct_uuid)
+        # Update label if requested
+        requested_name = arguments.get("name")
+        if requested_name and requested_name != label:
+            if await set_agent_label(_direct_uuid, requested_name, session_key=base_session_key):
+                label = requested_name
         await _cache_session(base_session_key, _direct_uuid, display_agent_id=agent_id)
         try:
-            from ..context import update_context_agent_id
+            from ..context import update_context_agent_id, set_session_resolution_source
             update_context_agent_id(_direct_uuid)
+            set_session_resolution_source("agent_uuid_direct")
         except Exception:
             pass
         payload = _identity_diag_payload(
