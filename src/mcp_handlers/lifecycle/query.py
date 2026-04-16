@@ -76,8 +76,24 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
 
             agents = []
             total_all = 0  # Count all agents before filtering
+            ghost_count = 0
+            ephemeral_count = 0
             for agent_id, meta in list(mcp_server.agent_metadata.items()):
                 total_all += 1
+                # Ghost: no label, no purpose, zero check-ins — session-binding artifact
+                has_label = bool(getattr(meta, 'label', None))
+                has_purpose = bool(getattr(meta, 'purpose', None))
+                is_ghost = (
+                    meta.total_updates < 1
+                    and not has_label
+                    and not has_purpose
+                )
+                if is_ghost:
+                    ghost_count += 1
+                elif meta.total_updates <= 2 and not has_label:
+                    # Short-lived but did some work — legitimate ephemeral
+                    ephemeral_count += 1
+
                 if status_filter != "all" and meta.status != status_filter:
                     continue
                 if min_updates and meta.total_updates < min_updates:
@@ -87,8 +103,8 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                 if named_only is True and not getattr(meta, 'label', None):
                     continue
                 if named_only is None:
-                    # Auto mode: skip unlabeled agents with 0 updates (ghosts)
-                    if not getattr(meta, 'label', None) and meta.total_updates < 1:
+                    # Auto mode: skip ghost agents (lazy_creation + no updates + no label)
+                    if is_ghost:
                         continue
 
                 # Apply recency filter
@@ -102,11 +118,14 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                     except Exception:
                         pass  # Keep agents with unparseable dates
 
+                label = getattr(meta, 'label', None)
+                public_id = getattr(meta, 'public_agent_id', None) or getattr(meta, 'structured_id', None)
                 agents.append({
                     "id": agent_id,
-                    "label": getattr(meta, 'label', None),
+                    # display_name (user-chosen) takes precedence; agent_id is fallback
+                    "label": label or public_id,
                     "status": meta.status,
-                    "purpose": getattr(meta, 'purpose', None),  # Added for social awareness
+                    "purpose": getattr(meta, 'purpose', None),
                     "updates": meta.total_updates,
                     "last": meta.last_update[:10] if meta.last_update else None,
                     "last_update": meta.last_update,
@@ -126,9 +145,11 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
             if caller_uuid and not caller_in_list:
                 caller_meta = mcp_server.agent_metadata.get(caller_uuid)
                 if caller_meta:
+                    caller_label = getattr(caller_meta, 'label', None)
+                    caller_public = getattr(caller_meta, 'public_agent_id', None) or getattr(caller_meta, 'structured_id', None)
                     agents.append({
                         "id": caller_uuid,
-                        "label": getattr(caller_meta, 'label', None),
+                        "label": caller_label or caller_public,
                         "status": caller_meta.status,
                         "purpose": getattr(caller_meta, 'purpose', None),
                         "updates": caller_meta.total_updates,
@@ -149,6 +170,11 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                 "shown": min(len(agents), int(limit)) if limit else len(agents),
                 "matching": len(agents),  # How many matched filters
                 "total_all": total_all,  # Total agents in system
+                "identity_health": {
+                    "ghosts": ghost_count,
+                    "ephemeral": ephemeral_count,
+                    "real": total_all - ghost_count,
+                },
             }
 
             # Add helpful hints
@@ -552,23 +578,9 @@ async def handle_get_agent_metadata(arguments: Sequence[TextContent]) -> list:
                     agent_id = uuid_key
                     break
 
-            # If not found in cache, reload metadata and try again (might be new agent)
-            if not agent_id:
-                try:
-                    # Reload metadata to get latest agents
-                    await mcp_server.load_metadata_async()
-                    # Try UUID lookup again after reload
-                    if target_agent in mcp_server.agent_metadata:
-                        agent_id = target_agent
-                    else:
-                        # Try label lookup again after reload
-                        for uuid_key, m in list(mcp_server.agent_metadata.items()):
-                            if getattr(m, 'label', None) == target_agent:
-                                agent_id = uuid_key
-                                break
-                except Exception as e:
-                    logger.debug(f"Metadata reload failed: {e}")
-
+            # In-memory metadata is kept current by onboard/process_agent_update.
+            # Do NOT reload from DB here — asyncpg awaits inside MCP handlers
+            # deadlock under the anyio task group (same bug as list_agents had).
             if not agent_id:
                 # Provide helpful error message
                 return [error_response(
@@ -579,7 +591,7 @@ async def handle_get_agent_metadata(arguments: Sequence[TextContent]) -> list:
                         "note": "If you just set a label with identity(name='...'), it may take a moment to persist. Try again in a few seconds."
                     },
                     details={
-                        "searched_in": "in-memory cache and PostgreSQL",
+                        "searched_in": "in-memory cache (Redis + live metadata)",
                         "suggestion": "Use UUID from list_agents() output, or wait a moment if you just set a label"
                     }
                 )]

@@ -46,10 +46,15 @@ def compute_agent_signature(
             structured_id = getattr(meta, 'structured_id', None)
 
         signature = {"uuid": agent_uuid}
-        if public_agent_id or structured_id:
-            signature["agent_id"] = public_agent_id or structured_id
+        # display_name (user-chosen) takes precedence over agent_id (auto-generated)
+        auto_id = public_agent_id or structured_id
         if display_label:
+            signature["agent_id"] = display_label
+            if auto_id:
+                signature["structured_agent_id"] = auto_id
             signature["display_name"] = display_label
+        elif auto_id:
+            signature["agent_id"] = auto_id
         return signature
 
     except Exception as e:

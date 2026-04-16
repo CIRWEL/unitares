@@ -169,9 +169,12 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
 
     meta = server.agent_metadata.get(agent_id)
     public_agent_id, display_name = _resolve_agent_identity_view(agent_id, meta)
-    standardized_metrics["agent_id"] = public_agent_id
+    # display_name (user-chosen) takes precedence over agent_id (auto-generated)
+    standardized_metrics["agent_id"] = display_name or public_agent_id
     if public_agent_id != agent_id:
         standardized_metrics["agent_uuid"] = agent_id
+    if display_name and public_agent_id != display_name:
+        standardized_metrics["structured_agent_id"] = public_agent_id
     if display_name:
         standardized_metrics["display_name"] = display_name
     standardized_metrics.update(_build_eisv_semantics(metrics, monitor))
@@ -240,7 +243,7 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
     if verbosity == "standard":
         state = standardized_metrics.get("state", {})
         standard_metrics = {
-            "agent_id": public_agent_id,
+            "agent_id": display_name or public_agent_id,
             "display_name": display_name,
             "E": metrics.get("E"),
             "I": metrics.get("I"),
@@ -304,7 +307,7 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
             void_display = 0.0 if void_raw == 0 else void_raw
 
         lite_metrics = {
-            "agent_id": public_agent_id,
+            "agent_id": display_name or public_agent_id,
             "display_name": display_name,
             "status": status_display,
             "purpose": getattr(meta, "purpose", None),
