@@ -37,7 +37,7 @@ import argparse
 import time
 from pathlib import Path
 from typing import Any, Dict, Set, Optional
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 import json
 import traceback
@@ -669,6 +669,22 @@ async def main():
         logger.info(continuity_message)
     else:
         logger.warning(continuity_message)
+
+    # Seed event detector with known agents so restarts don't fire false agent_new
+    try:
+        from src.event_detector import event_detector
+        identities = await db.list_identities(status="active", limit=200)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        recent = [
+            (ident.agent_id, ident.metadata.get("label") or ident.agent_id[:12])
+            for ident in identities
+            if ident.last_activity_at and ident.last_activity_at > cutoff
+        ]
+        seeded = event_detector.seed_known_agents(recent)
+        if seeded:
+            logger.info("Event detector seeded with %d known agent(s)", seeded)
+    except Exception as e:
+        logger.warning("Could not seed event detector: %s", e)
 
     # Give audit logger a reference to the event loop for executor-thread writes
     from src.audit_log import AuditLogger

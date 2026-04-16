@@ -24,6 +24,8 @@ What it does each cycle:
 """
 
 import asyncio
+
+import anyio
 import json
 import os
 import subprocess
@@ -635,15 +637,18 @@ class HeartbeatAgent(GovernanceAgent):
     # --- Lifecycle overrides ---
 
     async def run_once(self, timeout: float = CYCLE_TIMEOUT):
-        """Run a single heartbeat cycle with a wall-clock timeout."""
+        """Run a single heartbeat cycle with a wall-clock timeout.
+
+        Uses anyio.fail_after (not asyncio.wait_for) because the MCP SDK
+        uses anyio task groups internally — asyncio's cancellation mechanism
+        violates anyio's cancel scope ownership and causes RuntimeError.
+        """
         log("--- Heartbeat cycle start ---")
         start = time.time()
         try:
-            await asyncio.wait_for(
-                super().run_once(),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
+            with anyio.fail_after(timeout):
+                await super().run_once()
+        except TimeoutError:
             elapsed = time.time() - start
             log(f"CYCLE TIMEOUT after {elapsed:.1f}s (limit={timeout}s) — aborting")
             _trim_log(LOG_FILE, MAX_LOG_LINES)

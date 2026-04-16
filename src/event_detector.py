@@ -180,6 +180,32 @@ class GovernanceEventDetector:
         self._recent_fingerprints: Dict[str, datetime] = {}
         self._dedup_window_seconds: int = 1800  # 30 minutes
 
+    def seed_known_agents(self, agents: list[tuple[str, str]]) -> int:
+        """Pre-populate _prev_state so known agents don't fire agent_new after restart.
+
+        Args:
+            agents: list of (agent_id, agent_name) tuples from the database.
+
+        Returns:
+            Number of agents seeded.
+        """
+        seeded = 0
+        for agent_id, agent_name in agents:
+            if agent_id not in self._prev_state:
+                self._prev_state[agent_id] = {
+                    "action": "proceed",
+                    "risk": 0.0,
+                    "risk_adjustment": 0.0,
+                    "drift": [0, 0, 0],
+                    "drift_history": {axis: [] for axis in DRIFT_AXES},
+                    "drift_trends": {},
+                    "verdict": "proceed",
+                    "last_seen": datetime.now(timezone.utc).isoformat(),
+                    "agent_name": agent_name,
+                }
+                seeded += 1
+        return seeded
+
     def detect_events(
         self,
         agent_id: str,
@@ -495,6 +521,13 @@ class GovernanceEventDetector:
 
         # Return newest first, limited
         return list(reversed(events))[:limit]
+
+    def remove_agent(self, agent_id: str) -> bool:
+        """Remove an agent's tracking state (e.g. on archival).
+
+        Returns True if the agent was tracked, False otherwise.
+        """
+        return self._prev_state.pop(agent_id, None) is not None
 
     def clear_events(self):
         """Clear stored events (for testing)."""

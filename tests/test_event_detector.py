@@ -104,6 +104,56 @@ class TestPredictDriftCrossing:
 from src.event_detector import GovernanceEventDetector
 
 
+class TestSeedKnownAgents:
+    def test_seeded_agents_do_not_fire_agent_new(self):
+        detector = GovernanceEventDetector()
+        seeded = detector.seed_known_agents([
+            ("uuid-vigil", "Vigil"),
+            ("uuid-sentinel", "Sentinel"),
+        ])
+        assert seeded == 2
+
+        # First detect_events for a *different* agent to populate _prev_state
+        detector.detect_events(
+            agent_id="uuid-other", agent_name="Other",
+            action="proceed", risk=0.0, risk_raw=0.0,
+            risk_adjustment=0.0, risk_reason="", drift=[0, 0, 0], verdict="proceed",
+        )
+
+        # Now Vigil checks in — should NOT fire agent_new
+        events = detector.detect_events(
+            agent_id="uuid-vigil", agent_name="Vigil",
+            action="proceed", risk=0.1, risk_raw=0.1,
+            risk_adjustment=0.0, risk_reason="", drift=[0, 0, 0], verdict="proceed",
+        )
+        assert not any(e["type"] == "agent_new" for e in events)
+
+    def test_unseeded_agent_fires_agent_new(self):
+        detector = GovernanceEventDetector()
+        detector.seed_known_agents([("uuid-vigil", "Vigil")])
+
+        # Unknown agent after seeding — should fire agent_new
+        events = detector.detect_events(
+            agent_id="uuid-unknown", agent_name="Unknown",
+            action="proceed", risk=0.0, risk_raw=0.0,
+            risk_adjustment=0.0, risk_reason="", drift=[0, 0, 0], verdict="proceed",
+        )
+        assert any(e["type"] == "agent_new" for e in events)
+
+    def test_seed_does_not_overwrite_existing(self):
+        detector = GovernanceEventDetector()
+        # Agent already seen via detect_events
+        detector.detect_events(
+            agent_id="uuid-vigil", agent_name="Vigil",
+            action="proceed", risk=0.5, risk_raw=0.5,
+            risk_adjustment=0.0, risk_reason="", drift=[0.1, 0, 0], verdict="proceed",
+        )
+        # Seeding should not clobber existing state
+        seeded = detector.seed_known_agents([("uuid-vigil", "Vigil")])
+        assert seeded == 0
+        assert detector._prev_state["uuid-vigil"]["risk"] == 0.5
+
+
 class TestRecordEvent:
     def test_records_event_with_id_and_returns_it(self):
         detector = GovernanceEventDetector(max_stored_events=10)

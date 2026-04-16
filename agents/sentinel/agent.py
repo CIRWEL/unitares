@@ -30,6 +30,8 @@ import os
 import signal
 import sys
 import time
+
+import anyio
 from collections import deque
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -605,16 +607,15 @@ class SentinelAgent(GovernanceAgent):
     async def _bounded_analysis_cycle(self) -> str:
         """Run one analysis cycle with a hard timeout.
 
-        Wraps the full SDK run_once (connect -> identity -> run_cycle ->
-        checkin -> disconnect) in asyncio.wait_for so a hung MCP call
-        can never block the main loop forever.
+        Uses anyio.fail_after (not asyncio.wait_for) because the MCP SDK
+        uses anyio task groups internally — asyncio's cancellation mechanism
+        violates anyio's cancel scope ownership and causes RuntimeError.
         """
         try:
-            result = await asyncio.wait_for(
-                super().run_once(), timeout=CYCLE_TIMEOUT
-            )
+            with anyio.fail_after(CYCLE_TIMEOUT):
+                await super().run_once()
             return f"cycle {self._cycle_count} complete"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log(f"Analysis cycle exceeded {CYCLE_TIMEOUT}s — skipping")
             return f"TIMEOUT after {CYCLE_TIMEOUT}s"
 

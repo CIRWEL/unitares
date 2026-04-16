@@ -17,7 +17,7 @@
 
     var MAX_TIMELINE_ITEMS = 100;
     var timelineEntries = []; // {ts, type, agent, message, verdict, className, violationClass}
-    var currentFilter = 'important';
+    var currentFilter = 'all';
 
     // Violation taxonomy reverse-lookup index — populated from /v1/taxonomy.
     // Maps surface id (Watcher pattern, Sentinel finding type, broadcast event
@@ -142,6 +142,11 @@
         timelineEntries.unshift(entry);
         if (timelineEntries.length > MAX_TIMELINE_ITEMS) {
             timelineEntries.length = MAX_TIMELINE_ITEMS;
+            // Rebuild seenKeys from surviving entries so it doesn't grow forever
+            seenKeys = {};
+            for (var i = 0; i < timelineEntries.length; i++) {
+                seenKeys[entryKey(timelineEntries[i])] = true;
+            }
         }
 
         renderTimeline();
