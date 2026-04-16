@@ -123,10 +123,21 @@
         pause: 'tl-bad', reject: 'tl-bad'
     };
 
+    function entryKey(e) {
+        return e.type + '|' + (+e.ts) + '|' + (e.agent || '');
+    }
+
+    var seenKeys = {};
+
     function addTimelineEntry(entry) {
         // entry: {ts: Date, type: string, agent: string, message: string, verdict?: string}
         entry.ts = entry.ts || new Date();
         entry.className = entry.verdict ? (VERDICT_CLASSES[entry.verdict] || '') : '';
+
+        // Deduplicate seeded entries (discoveries/dialectic re-seed every refresh)
+        var key = entryKey(entry);
+        if (seenKeys[key]) return;
+        seenKeys[key] = true;
 
         timelineEntries.unshift(entry);
         if (timelineEntries.length > MAX_TIMELINE_ITEMS) {
@@ -160,6 +171,10 @@
         } else {
             filtered = timelineEntries.filter(function (e) { return e.type === currentFilter; });
         }
+
+        // Sort by timestamp descending — entries arrive from multiple sources
+        // (WS, discovery seeding, dialectic seeding) in arbitrary order.
+        filtered.sort(function (a, b) { return b.ts - a.ts; });
 
         if (filtered.length === 0) {
             container.innerHTML = '<div class="timeline-empty">No events' + (currentFilter !== 'all' ? ' matching filter' : '') + '</div>';
@@ -339,6 +354,7 @@
 
     function clearTimeline() {
         timelineEntries.length = 0;
+        seenKeys = {};
         renderTimeline();
     }
 
