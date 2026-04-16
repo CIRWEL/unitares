@@ -245,6 +245,10 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
         standard_metrics = {
             "agent_id": display_name or public_agent_id,
             "display_name": display_name,
+        }
+        if display_name and public_agent_id != display_name:
+            standard_metrics["structured_agent_id"] = public_agent_id
+        standard_metrics.update({
             "E": metrics.get("E"),
             "I": metrics.get("I"),
             "S": metrics.get("S"),
@@ -257,7 +261,7 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
             "mode": state.get("mode"),
             "summary": standardized_metrics.get("summary"),
             "guidance": state.get("guidance"),
-        }
+        })
         if public_agent_id != agent_id:
             standard_metrics["agent_uuid"] = agent_id
         if reflection:
@@ -309,17 +313,21 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
         lite_metrics = {
             "agent_id": display_name or public_agent_id,
             "display_name": display_name,
+        }
+        if display_name and public_agent_id != display_name:
+            lite_metrics["structured_agent_id"] = public_agent_id
+        lite_metrics.update({
             "status": status_display,
             "purpose": getattr(meta, "purpose", None),
             "summary": standardized_metrics.get("summary", "unknown"),
             "primary_eisv_source": standardized_metrics.get("primary_eisv_source"),
             "E": {"value": metrics.get("E"), "range": "[0, 1]", "note": "Energy capacity"},
             "I": {"value": metrics.get("I"), "range": "[0, 1]", "note": "Information integrity"},
-            "S": {"value": metrics.get("S"), "range": "[0, 1]", "ideal": "<0.2", "note": "Entropy (lower=better)"},
-            "V": {"value": void_display, "range": "[-1, 1]", "ideal": "near 0", "note": "Void (E-I imbalance, settles toward 0)"},
+            "S": {"value": metrics.get("S"), "range": "[0, 2]", "ideal": "<0.2", "note": "Entropy (lower=better)"},
+            "V": {"value": void_display, "range": "[-2, 2]", "ideal": "near 0", "note": "Void (E-I imbalance, settles toward 0)"},
             "coherence": {"value": coherence, "range": "[0, 1]", "status": coherence_status},
             "risk_score": {"value": risk_score, "threshold": 0.5, "status": risk_status},
-        }
+        })
         if public_agent_id != agent_id:
             lite_metrics["agent_uuid"] = agent_id
         if "state" in standardized_metrics:

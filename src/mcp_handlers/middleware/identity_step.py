@@ -60,7 +60,7 @@ def _transport_cache_key(signals) -> Optional[str]:
 
 
 def update_transport_binding(key: str, agent_uuid: str, session_key: str, source: str) -> None:
-    """Set or update a sticky transport binding."""
+    """Set or update a sticky transport binding (in-memory + Redis)."""
     _transport_identity_cache[key] = TransportBinding(
         agent_uuid=agent_uuid,
         session_key=session_key,
@@ -68,11 +68,87 @@ def update_transport_binding(key: str, agent_uuid: str, session_key: str, source
         source=source,
     )
     _evict_stale_entries()
+    # Persist to Redis so bindings survive server restarts
+    _persist_binding_to_redis(key, agent_uuid, session_key, source)
+
+
+def _persist_binding_to_redis(key: str, agent_uuid: str, session_key: str, source: str) -> None:
+    """Best-effort fire-and-forget write of transport binding to Redis."""
+    try:
+        asyncio.get_running_loop()  # raises RuntimeError if no loop
+        from src.background_tasks import create_tracked_task
+        create_tracked_task(
+            _persist_binding_to_redis_async(key, agent_uuid, session_key, source),
+            name="redis_persist_binding",
+        )
+    except RuntimeError:
+        pass  # No event loop — skip Redis persist
+
+
+async def _persist_binding_to_redis_async(key: str, agent_uuid: str, session_key: str, source: str) -> None:
+    """Write transport binding to Redis."""
+    try:
+        from src.cache.redis_client import get_redis
+        import json
+        redis = await get_redis()
+        if not redis:
+            return
+        redis_key = f"transport_binding:{key}"
+        await redis.setex(redis_key, _TRANSPORT_CACHE_TTL, json.dumps({
+            "agent_uuid": agent_uuid,
+            "session_key": session_key,
+            "source": source,
+        }))
+    except Exception as e:
+        logger.debug(f"[STICKY] Redis persist failed: {e}")
+
+
+async def _load_binding_from_redis(key: str) -> Optional[TransportBinding]:
+    """Try to recover a transport binding from Redis after restart."""
+    try:
+        from src.cache.redis_client import get_redis
+        import json
+        redis = await get_redis()
+        if not redis:
+            return None
+        data = await redis.get(f"transport_binding:{key}")
+        if not data:
+            return None
+        parsed = json.loads(data)
+        binding = TransportBinding(
+            agent_uuid=parsed["agent_uuid"],
+            session_key=parsed["session_key"],
+            bound_at=_time.monotonic(),  # Treat as fresh since Redis TTL handles expiry
+            source=parsed.get("source", "redis_recovery"),
+        )
+        # Warm the in-memory cache
+        _transport_identity_cache[key] = binding
+        logger.debug(f"[STICKY] Redis recovery for {key}: agent={binding.agent_uuid[:8]}...")
+        return binding
+    except Exception as e:
+        logger.debug(f"[STICKY] Redis recovery failed: {e}")
+        return None
 
 
 def invalidate_transport_binding(key: str) -> None:
     """Remove a sticky transport binding (e.g. on force_new)."""
     _transport_identity_cache.pop(key, None)
+    try:
+        asyncio.get_running_loop()
+        from src.background_tasks import create_tracked_task
+        create_tracked_task(_invalidate_binding_redis_async(key), name="redis_invalidate_binding")
+    except RuntimeError:
+        pass
+
+
+async def _invalidate_binding_redis_async(key: str) -> None:
+    try:
+        from src.cache.redis_client import get_redis
+        redis = await get_redis()
+        if redis:
+            await redis.delete(f"transport_binding:{key}")
+    except Exception:
+        pass
 
 
 def _evict_stale_entries() -> None:
@@ -110,6 +186,9 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
         and not client_session_id
         and not continuity_token):
         cached = _transport_identity_cache.get(transport_key)
+        # On miss, try Redis (survives restarts)
+        if not cached:
+            cached = await _load_binding_from_redis(transport_key)
         if cached and (_time.monotonic() - cached.bound_at) < _TRANSPORT_CACHE_TTL:
             logger.debug(
                 f"[STICKY] Cache hit for {transport_key}: agent={cached.agent_uuid[:8]}... "

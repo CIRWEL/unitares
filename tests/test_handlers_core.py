@@ -305,8 +305,10 @@ class TestGetGovernanceMetrics:
             result = await handle_get_governance_metrics({"lite": True})
 
             data = json.loads(result[0].text)
-            assert data["agent_id"] == "Gpt_5_Codex_20260404"
+            # display_name (label) takes precedence over public_agent_id
+            assert data["agent_id"] == "Dogfood Agent"
             assert data["agent_uuid"] == "agent-1"
+            assert data["structured_agent_id"] == "Gpt_5_Codex_20260404"
             assert data["display_name"] == "Dogfood Agent"
             assert data["primary_eisv_source"] == "ode_fallback"
             assert "status" in data
@@ -341,8 +343,10 @@ class TestGetGovernanceMetrics:
             data = json.loads(result[0].text)
             # Full mode should have summary; reflection is now conditional
             assert "summary" in data
-            assert data["agent_id"] == "Gpt_5_Codex_20260404"
+            # display_name (label) takes precedence over public_agent_id
+            assert data["agent_id"] == "Dogfood Agent"
             assert data["agent_uuid"] == "agent-1"
+            assert data["structured_agent_id"] == "Gpt_5_Codex_20260404"
             assert data["display_name"] == "Dogfood Agent"
             assert data["primary_eisv_source"] == "ode_fallback"
             assert data["primary_eisv"]["E"] == 0.7

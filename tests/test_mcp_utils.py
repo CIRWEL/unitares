@@ -168,7 +168,9 @@ class TestComputeAgentSignature:
         mock_srv.return_value = _mock_server({"ctx-456": _meta(label="Ctx", structured_id="S1")})
         sig = compute_agent_signature()
         assert sig["uuid"] == "ctx-456"
-        assert sig["agent_id"] == "S1"
+        # display_name (label) takes precedence over structured_id
+        assert sig["agent_id"] == "Ctx"
+        assert sig["structured_agent_id"] == "S1"
         assert sig["display_name"] == "Ctx"
 
     @patch("src.mcp_handlers.context.get_context_agent_id")

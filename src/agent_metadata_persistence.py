@@ -121,6 +121,7 @@ async def _load_metadata_from_postgres_async() -> dict:
             health_status=agent.health_status or "unknown",
             api_key=agent.metadata.get("api_key", ""),
             agent_uuid=agent.metadata.get("agent_uuid"),
+            public_agent_id=agent.metadata.get("public_agent_id"),
             label=agent.metadata.get("label"),
             structured_id=agent.metadata.get("structured_id"),
             preferences=agent.metadata.get("preferences", {}),

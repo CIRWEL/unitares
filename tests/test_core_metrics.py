@@ -390,7 +390,8 @@ class TestGetGovernanceMetrics:
             result = await handle_get_governance_metrics({})  # lite=True by default
 
             data = _parse(result)
-            assert data["agent_id"] == "agent-1"
+            # display_name takes precedence over auto-generated agent_id
+            assert data["agent_id"] == "TestAgent"
             assert "status" in data
             assert "E" in data
             assert "I" in data
