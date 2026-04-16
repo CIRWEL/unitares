@@ -233,64 +233,9 @@ async def test_pre_existing_staleness_ignored_on_fresh_start(isolated_silence_st
 # ---------------------------------------------------------------------------
 # Proxy-alive suppression tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_proxy_alive_suppresses_critical(isolated_silence_state):
-    """When eisv-sync-task has recently synced, Lumen's CRITICAL is downgraded.
-
-    The EISV sync proves the Pi is reachable — a missing direct check-in
-    is a path issue (circuit breaker, threading) not a real outage.
-    """
-    broadcaster, _ = isolated_silence_state
-
-    # Lumen hasn't checked in for 2 hours
-    stale = datetime.now(timezone.utc) - timedelta(hours=2)
-    agent_metadata["lumen-uuid"] = _make_meta(
-        "lumen-uuid", "Lumen", stale.isoformat()
-    )
-
-    # But eisv-sync-task updated 2 minutes ago
-    fresh_sync = datetime.now(timezone.utc) - timedelta(minutes=2)
-    agent_metadata["eisv-sync-task"] = _make_meta(
-        "eisv-sync-task", "eisv-sync-task", fresh_sync.isoformat()
-    )
-
-    await background_tasks._silence_check_iteration()
-
-    # Should fire lifecycle_silent (downgraded), NOT lifecycle_silent_critical
-    broadcaster.broadcast_event.assert_awaited_once()
-    call = broadcaster.broadcast_event.await_args
-    assert call.args[0] == "lifecycle_silent"
-    assert call.kwargs["payload"]["proxy_alive"] is True
-    # Should NOT be in the critical set
-    assert "lumen-uuid" not in background_tasks._silence_critical_alerted
-    # But should be in the regular alerted set (no duplicate on next iteration)
-    assert "lumen-uuid" in background_tasks._silence_alerted
-
-
-@pytest.mark.asyncio
-async def test_stale_proxy_does_not_suppress(isolated_silence_state):
-    """If the proxy is also stale, fire CRITICAL as normal."""
-    broadcaster, _ = isolated_silence_state
-
-    stale = datetime.now(timezone.utc) - timedelta(hours=2)
-    agent_metadata["lumen-uuid"] = _make_meta(
-        "lumen-uuid", "Lumen", stale.isoformat()
-    )
-
-    # eisv-sync-task is also stale (30 min ago, threshold for Lumen is 2×300s = 10min)
-    stale_sync = datetime.now(timezone.utc) - timedelta(minutes=30)
-    agent_metadata["eisv-sync-task"] = _make_meta(
-        "eisv-sync-task", "eisv-sync-task", stale_sync.isoformat()
-    )
-
-    await background_tasks._silence_check_iteration()
-
-    broadcaster.broadcast_event.assert_awaited_once()
-    call = broadcaster.broadcast_event.await_args
-    assert call.args[0] == "lifecycle_silent_critical"
-    assert "lumen-uuid" in background_tasks._silence_critical_alerted
+# eisv-sync-task proxy tests removed — the proxy mapping is now empty after
+# de-agentification. The proxy mechanism stays for future use but has no
+# active entries.
 
 
 @pytest.mark.asyncio
@@ -310,30 +255,5 @@ async def test_no_proxy_agent_fires_critical_normally(isolated_silence_state):
     assert call.args[0] == "lifecycle_silent_critical"
 
 
-@pytest.mark.asyncio
-async def test_proxy_alive_recovery_clears_alert(isolated_silence_state):
-    """When Lumen recovers (checks in), alert state resets — next silence
-    can again be suppressed by proxy."""
-    broadcaster, _ = isolated_silence_state
 
-    # Initially stale with alive proxy → suppressed
-    stale = datetime.now(timezone.utc) - timedelta(hours=2)
-    fresh_sync = datetime.now(timezone.utc) - timedelta(minutes=2)
-    agent_metadata["lumen-uuid"] = _make_meta(
-        "lumen-uuid", "Lumen", stale.isoformat()
-    )
-    agent_metadata["eisv-sync-task"] = _make_meta(
-        "eisv-sync-task", "eisv-sync-task", fresh_sync.isoformat()
-    )
-
-    await background_tasks._silence_check_iteration()
-    assert "lumen-uuid" in background_tasks._silence_alerted
-
-    # Lumen recovers
-    fresh = datetime.now(timezone.utc) - timedelta(seconds=30)
-    agent_metadata["lumen-uuid"].last_update = fresh.isoformat()
-
-    await background_tasks._silence_check_iteration()
-    # Recovery clears both sets
-    assert "lumen-uuid" not in background_tasks._silence_alerted
-    assert "lumen-uuid" not in background_tasks._silence_critical_alerted
+# test_proxy_alive_recovery_clears_alert removed — depended on eisv-sync-task proxy

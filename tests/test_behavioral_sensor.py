@@ -423,6 +423,12 @@ class TestBehavioralSensorInjection:
     async def test_compute_behavioral_raises_no_sensor_injected(self):
         """If compute_behavioral_sensor_eisv itself raises, update succeeds without sensor."""
         from src.mcp_handlers.updates.phases import execute_locked_update
+        import src.sensor_buffer as sb
+        # Clear buffer so the buffer fallback doesn't inject stale data
+        sb._buffer["eisv"] = None
+        sb._buffer["anima"] = None
+        sb._buffer["timestamp"] = None
+
         monitor = self._make_mock_monitor(n=10)
         ctx = self._make_ctx(monitor)
 
