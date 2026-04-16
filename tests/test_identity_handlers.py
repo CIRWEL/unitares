@@ -1681,6 +1681,42 @@ class TestHandleOnboardV2:
         assert data["is_new"] is False
 
     @pytest.mark.asyncio
+    async def test_onboard_token_takes_precedence_over_name_claim(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
+        """continuity_token resume succeeds even when name claim would reject."""
+        from src.mcp_handlers.identity.handlers import handle_onboard_v2
+
+        token_uuid = str(uuid.uuid4())
+        # The name "ProtectedAgent" would reject (has trajectory) — but token
+        # for a different UUID should bypass the name claim entirely.
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i-token", metadata={"agent_id": "Claude_20260415"}
+        )
+        mock_db.get_agent_label.return_value = None
+        mock_db.get_agent_status.return_value = "active"
+
+        with patch("src.mcp_handlers.identity.session.extract_token_agent_uuid", return_value=token_uuid), \
+             patch("src.mcp_handlers.identity.resolution._agent_exists_in_postgres", new_callable=AsyncMock, return_value=True), \
+             patch("src.mcp_handlers.identity.resolution._get_agent_status", new_callable=AsyncMock, return_value="active"), \
+             patch("src.mcp_handlers.identity.resolution._get_agent_id_from_metadata", new_callable=AsyncMock, return_value=token_uuid), \
+             patch("src.mcp_handlers.identity.resolution._get_agent_label", new_callable=AsyncMock, return_value=None), \
+             patch("src.mcp_handlers.identity.resolution._cache_session", new_callable=AsyncMock), \
+             patch("src.mcp_handlers.identity.handlers.extract_token_agent_uuid", return_value=token_uuid):
+            result = await handle_onboard_v2({
+                "client_session_id": "onboard-token-priority",
+                "name": "ProtectedAgent",
+                "resume": True,
+                "continuity_token": "v1.fake-token.sig",
+            })
+        data = parse_result(result)
+
+        assert data["success"] is True
+        assert data["uuid"] == token_uuid
+        assert data.get("is_new") is False  # Resumed via token, not created
+
+    @pytest.mark.asyncio
     async def test_onboard_force_new(self, patch_onboard_deps, mock_db, mock_redis):
         """onboard(force_new=true) creates fresh identity."""
         from src.mcp_handlers.identity.handlers import handle_onboard_v2

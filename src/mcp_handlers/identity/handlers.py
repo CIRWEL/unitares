@@ -933,6 +933,12 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     # Agents can pass resume=false for a new identity, or force_new=true for a clean break.
     resume = coerce_bool(arguments.get("resume"), default=True)
 
+    # Extract agent UUID from continuity token for direct lookup fallback (PATH 2.8).
+    # Token is a cryptographic proof of identity — stronger than name claim.
+    _token_agent_uuid = None
+    if arguments.get("continuity_token"):
+        _token_agent_uuid = extract_token_agent_uuid(str(arguments["continuity_token"]))
+
     # STEP 1: Check if an identity already exists for this session (base key)
     # When resume=True (default): reuse existing identity
     # When resume=False: create new identity with predecessor link
@@ -940,9 +946,28 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     created_fresh_identity = False  # Track if we got a fresh identity to persist
     _was_archived = False  # Track if agent was auto-unarchived
     if not force_new:
-        # Name-based reconnection ONLY if resume=True is explicitly passed
-        # This prevents accidental identity collision when multiple sessions use same name
-        if name and resume:
+        # Token-based resume takes precedence over name claim.
+        # A continuity_token is a signed identity anchor — if the client has one,
+        # use resolve_session_identity (which includes PATH 2.8 token rebind)
+        # BEFORE attempting name-based matching, which can reject when the name
+        # collides with a trajectory-protected identity the client isn't claiming.
+        if _token_agent_uuid and resume:
+            existing_identity = await resolve_session_identity(
+                base_session_key, persist=False, resume=resume,
+                token_agent_uuid=_token_agent_uuid,
+            )
+            # Token-based resume failed — agent not found or not active
+            if existing_identity.get("resume_failed"):
+                return error_response(
+                    existing_identity.get("message", "Could not resume identity"),
+                    recovery={
+                        "reason": "resume_failed",
+                        "token_agent_uuid": existing_identity.get("token_agent_uuid"),
+                        "hint": "Call onboard(force_new=true) to create a new identity.",
+                    }
+                )
+        elif name and resume:
+            # Name-based reconnection — only when no token is available
             trajectory_sig = arguments.get("trajectory_signature")
             existing_by_name = await resolve_by_name_claim(name, base_session_key, trajectory_signature=trajectory_sig)
             if existing_by_name:
@@ -961,9 +986,15 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                 label = existing_by_name.get("label")
                 logger.info(f"[ONBOARD] Resumed '{name}' via name claim -> {agent_uuid[:8]}...")
             else:
-                existing_identity = await resolve_session_identity(base_session_key, persist=False, resume=resume)
+                existing_identity = await resolve_session_identity(
+                    base_session_key, persist=False, resume=resume,
+                    token_agent_uuid=_token_agent_uuid,
+                )
         else:
-            existing_identity = await resolve_session_identity(base_session_key, persist=False, resume=resume)
+            existing_identity = await resolve_session_identity(
+                base_session_key, persist=False, resume=resume,
+                token_agent_uuid=_token_agent_uuid,
+            )
         if not existing_identity.get("created"):
             if existing_identity.get("archived"):
                 # ARCHIVED AGENT — auto-unarchive with same UUID (only when resume=True)

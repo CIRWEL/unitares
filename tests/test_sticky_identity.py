@@ -98,9 +98,14 @@ class TestTransportCacheKey:
         signals = FakeSignals()
         assert _transport_cache_key(signals) is None
 
-    def test_mcp_session_id_uses_fingerprint_as_anchor(self):
-        """mcp_session_id may be volatile — uses fingerprint as stable cache key."""
+    def test_mcp_session_id_included_in_key(self):
+        """mcp_session_id differentiates parallel MCP sessions from same host."""
         signals = FakeSignals(mcp_session_id="mcp-123", ip_ua_fingerprint="192.168.1.1:abc")
+        assert _transport_cache_key(signals) == "sticky:192.168.1.1:abc:mcp-123"
+
+    def test_no_mcp_session_id_uses_fingerprint_only(self):
+        """Without mcp_session_id, falls back to fingerprint-only key."""
+        signals = FakeSignals(ip_ua_fingerprint="192.168.1.1:abc")
         assert _transport_cache_key(signals) == "sticky:192.168.1.1:abc"
 
 
@@ -271,7 +276,7 @@ class TestStickyResolveIdentity:
 
     @pytest.mark.asyncio
     async def test_mcp_session_id_uses_sticky_cache(self):
-        """mcp_session_id may be volatile — sticky cache anchors on fingerprint."""
+        """mcp_session_id is included in sticky cache key to isolate parallel sessions."""
         signals = FakeSignals(mcp_session_id="mcp-volatile-123", ip_ua_fingerprint="192.168.1.1:abc")
         ctx = DispatchContext()
 
@@ -280,16 +285,16 @@ class TestStickyResolveIdentity:
             "source": "redis",
         }
 
+        expected_key = "sticky:192.168.1.1:abc:mcp-volatile-123"
         with patch("src.mcp_handlers.context.get_session_signals", return_value=signals):
             with patch("src.mcp_handlers.identity.handlers.derive_session_key", new_callable=AsyncMock, return_value="mcp:mcp-volatile-123"):
                 with patch("src.mcp_handlers.identity.handlers.resolve_session_identity", new_callable=AsyncMock, return_value=mock_identity):
                     with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
                         result = await resolve_identity("some_tool", {}, ctx)
                         _, _, out_ctx = result
-                        # SHOULD populate the cache (fingerprint is the stable anchor)
-                        assert out_ctx._transport_key == "sticky:192.168.1.1:abc"
-                        assert "sticky:192.168.1.1:abc" in _transport_identity_cache
-                        binding = _transport_identity_cache["sticky:192.168.1.1:abc"]
+                        assert out_ctx._transport_key == expected_key
+                        assert expected_key in _transport_identity_cache
+                        binding = _transport_identity_cache[expected_key]
                         assert binding.agent_uuid == "uuid-mcp"
 
     @pytest.mark.asyncio
@@ -348,16 +353,15 @@ class TestStickyResolveIdentity:
                         assert binding.session_key == "sk-resolved"
 
     @pytest.mark.asyncio
-    async def test_volatile_mcp_session_id_stabilized_by_cache(self):
-        """Two calls with DIFFERENT mcp_session_id but SAME fingerprint resolve to same agent.
+    async def test_different_mcp_session_ids_get_separate_cache_keys(self):
+        """Two calls with DIFFERENT mcp_session_id get different cache entries.
 
-        This is the Claude Desktop scenario: each message sends a new mcp-session-id,
-        but the UA fingerprint is stable. The sticky cache should anchor identity on
-        the fingerprint after the first call.
+        Prevents parallel Claude Code sessions from converging to one UUID.
+        Each MCP session ID produces a distinct sticky cache key.
         """
         fingerprint = "10.0.0.1:claude_ua"
 
-        # --- Call 1: first mcp_session_id, resolves to uuid-first ---
+        # --- Call 1: first mcp_session_id ---
         signals_1 = FakeSignals(mcp_session_id="mcp-aaa-111", ip_ua_fingerprint=fingerprint)
         ctx_1 = DispatchContext()
         mock_identity_1 = {"agent_uuid": "uuid-first", "source": "created"}
@@ -371,20 +375,48 @@ class TestStickyResolveIdentity:
                         assert out_1.bound_agent_id == "uuid-first"
 
         # --- Call 2: DIFFERENT mcp_session_id, same fingerprint ---
-        # Should hit sticky cache and get uuid-first (not resolve to a new agent)
+        # Should NOT hit the first call's cache — different mcp_session_id = different key
         signals_2 = FakeSignals(mcp_session_id="mcp-bbb-222", ip_ua_fingerprint=fingerprint)
+        ctx_2 = DispatchContext()
+        mock_identity_2 = {"agent_uuid": "uuid-second", "source": "created"}
+
+        with patch("src.mcp_handlers.context.get_session_signals", return_value=signals_2):
+            with patch("src.mcp_handlers.identity.handlers.derive_session_key", new_callable=AsyncMock, return_value="mcp:mcp-bbb-222"):
+                with patch("src.mcp_handlers.identity.handlers.resolve_session_identity", new_callable=AsyncMock, return_value=mock_identity_2):
+                    with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+                        result_2 = await resolve_identity("tool_b", {}, ctx_2)
+                        _, _, out_2 = result_2
+                        assert out_2.bound_agent_id == "uuid-second", (
+                            f"Different mcp_session_id should get different identity, got {out_2.bound_agent_id}"
+                        )
+                        assert out_2._transport_key == f"sticky:{fingerprint}:mcp-bbb-222"
+
+    @pytest.mark.asyncio
+    async def test_same_mcp_session_id_hits_cache(self):
+        """Same mcp_session_id on repeat call hits sticky cache (no re-resolution)."""
+        fingerprint = "10.0.0.1:claude_ua"
+        mcp_sid = "mcp-stable-999"
+
+        # --- Call 1: populates cache ---
+        signals_1 = FakeSignals(mcp_session_id=mcp_sid, ip_ua_fingerprint=fingerprint)
+        ctx_1 = DispatchContext()
+        mock_identity = {"agent_uuid": "uuid-cached", "source": "created"}
+
+        with patch("src.mcp_handlers.context.get_session_signals", return_value=signals_1):
+            with patch("src.mcp_handlers.identity.handlers.derive_session_key", new_callable=AsyncMock, return_value="mcp:stable"):
+                with patch("src.mcp_handlers.identity.handlers.resolve_session_identity", new_callable=AsyncMock, return_value=mock_identity):
+                    with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+                        await resolve_identity("tool_a", {}, ctx_1)
+
+        # --- Call 2: same session ID → cache hit ---
+        signals_2 = FakeSignals(mcp_session_id=mcp_sid, ip_ua_fingerprint=fingerprint)
         ctx_2 = DispatchContext()
 
         with patch("src.mcp_handlers.context.get_session_signals", return_value=signals_2):
             with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
-                # derive_session_key and resolve_session_identity should NOT be called
-                # because the sticky cache should handle this
                 result_2 = await resolve_identity("tool_b", {}, ctx_2)
                 _, _, out_2 = result_2
-                assert out_2.bound_agent_id == "uuid-first", (
-                    f"Expected sticky cache to stabilize identity, got {out_2.bound_agent_id}"
-                )
-                assert out_2._transport_key == f"sticky:{fingerprint}"
+                assert out_2.bound_agent_id == "uuid-cached"
 
 
 # ============================================================================

@@ -36,9 +36,9 @@ _transport_identity_cache: Dict[str, TransportBinding] = {}
 def _transport_cache_key(signals) -> Optional[str]:
     """Compute sticky cache key from transport signals.
 
-    Uses IP:UA fingerprint as the stable anchor for caching. This covers:
-    - The fingerprint fallback path (no mcp_session_id)
-    - Volatile mcp_session_id paths (Claude Desktop changes it per request)
+    Uses IP:UA fingerprint as the stable anchor, combined with MCP session ID
+    when available. This prevents multiple MCP sessions from the same host
+    (e.g. parallel Claude Code processes) from collapsing onto one identity.
 
     Returns None only for explicitly stable headers (x_session_id, x_client_id,
     oauth_client_id) where caching adds no value.
@@ -48,12 +48,15 @@ def _transport_cache_key(signals) -> Optional[str]:
     # Truly stable paths — client controls the session ID, no caching needed
     if signals.x_session_id or signals.x_client_id or signals.oauth_client_id:
         return None
-    # For mcp_session_id OR fingerprint-only: use fingerprint as stable anchor.
-    # mcp_session_id may be volatile (Claude Desktop sends a new one per request),
-    # so we anchor on the UA fingerprint which is stable across requests.
-    if signals.ip_ua_fingerprint:
-        return f"sticky:{signals.ip_ua_fingerprint}"
-    return None
+    if not signals.ip_ua_fingerprint:
+        return None
+    # Include mcp_session_id in the key when present so parallel MCP sessions
+    # from the same IP:UA (e.g. multiple Claude Code processes on localhost)
+    # each get their own cached identity instead of converging to one UUID.
+    if signals.mcp_session_id:
+        return f"sticky:{signals.ip_ua_fingerprint}:{signals.mcp_session_id}"
+    # Fingerprint-only for REST callers and non-MCP transports.
+    return f"sticky:{signals.ip_ua_fingerprint}"
 
 
 def update_transport_binding(key: str, agent_uuid: str, session_key: str, source: str) -> None:
