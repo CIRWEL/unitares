@@ -186,6 +186,84 @@ def _make_identity_client():
     return SyncGovernanceClient(rest_url=GOV_REST_URL, transport="rest", timeout=5)
 
 
+# ---------------------------------------------------------------------------
+# Check-in — periodic EISV signal to governance
+# ---------------------------------------------------------------------------
+
+
+def compute_checkin_complexity(active_count: int) -> float:
+    """Map active finding count to complexity: 0→0.1, 10+→0.6, linear between."""
+    return min(0.6, 0.1 + active_count * 0.05)
+
+
+def compute_checkin_confidence(confirmed: int, dismissed: int) -> float:
+    """Confirmed / (confirmed + dismissed), with warmup default of 0.7."""
+    total = confirmed + dismissed
+    if total < 5:
+        return 0.7
+    return confirmed / total
+
+
+def _build_checkin_summary() -> tuple[str, float, float]:
+    """Build check-in response_text, complexity, and confidence from findings.jsonl."""
+    findings = _iter_findings_raw()
+    if not findings:
+        return "Watcher idle", 0.05, 0.9
+
+    by_status: dict[str, int] = {}
+    by_severity: dict[str, int] = {}
+    for f in findings:
+        status = f.get("status", "open")
+        by_status[status] = by_status.get(status, 0) + 1
+        if status in ("open", "surfaced"):
+            sev = f.get("severity", "unknown")
+            by_severity[sev] = by_severity.get(sev, 0) + 1
+
+    active = by_status.get("open", 0) + by_status.get("surfaced", 0)
+    confirmed = by_status.get("confirmed", 0)
+    dismissed = by_status.get("dismissed", 0)
+
+    sev_parts = ", ".join(f"{n} {s}" for s, n in sorted(by_severity.items()) if n > 0)
+    summary_parts = []
+    if active:
+        summary_parts.append(f"{active} unresolved ({sev_parts})" if sev_parts else f"{active} unresolved")
+    if confirmed:
+        summary_parts.append(f"{confirmed} confirmed")
+    if dismissed:
+        summary_parts.append(f"{dismissed} dismissed")
+    summary = f"Watcher: {', '.join(summary_parts)}" if summary_parts else "Watcher idle"
+
+    complexity = compute_checkin_complexity(active)
+    confidence = compute_checkin_confidence(confirmed, dismissed)
+    return summary, complexity, confidence
+
+
+def _do_checkin() -> None:
+    """Post a check-in to governance. Called at the end of surface_pending()."""
+    identity = get_watcher_identity()
+    if identity is None:
+        return
+
+    summary, complexity, confidence = _build_checkin_summary()
+
+    try:
+        client = _make_identity_client()
+        # Restore identity state so the client can inject session args
+        client.client_session_id = identity["client_session_id"]
+        client.continuity_token = identity["continuity_token"]
+        client.agent_uuid = identity["agent_uuid"]
+
+        client.checkin(
+            response_text=summary,
+            complexity=complexity,
+            confidence=confidence,
+            response_mode="compact",
+        )
+        log(f"check-in: {summary}")
+    except Exception as e:
+        log(f"check-in failed: {e}", "warning")
+
+
 # Paths we never scan — too much churn, not worth the noise
 SKIP_PATH_FRAGMENTS = (
     "/.git/",
@@ -1079,6 +1157,9 @@ def surface_pending() -> int:
             f"surface_pending: marked {len(surfaced_fps)} open → surfaced "
             f"({len(open_findings) - len(surfaced_fps)} left pending for next chime)"
         )
+
+    # --- Check in to governance ---
+    _do_checkin()
     return 0
 
 

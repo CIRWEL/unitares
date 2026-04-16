@@ -2045,7 +2045,11 @@ class TestWatcherCheckin:
         assert result == 0
 
     def test_checkin_idle_heartbeat(self, watcher_module, monkeypatch):
-        """No findings at all → idle heartbeat with low complexity."""
+        """No active findings → idle heartbeat with low complexity.
+
+        surface_pending short-circuits before _do_checkin when there are no
+        open findings, so we test _do_checkin directly.
+        """
         monkeypatch.setattr(watcher_module, "_watcher_identity", {
             "agent_uuid": "uuid-w", "client_session_id": "s1", "continuity_token": "t1",
         })
@@ -2065,7 +2069,7 @@ class TestWatcherCheckin:
 
         monkeypatch.setattr(watcher_module, "_make_identity_client", lambda: FakeClient())
 
-        watcher_module.surface_pending()
+        watcher_module._do_checkin()
 
         assert "idle" in checkin_args["response_text"].lower()
         assert checkin_args["complexity"] <= 0.1
