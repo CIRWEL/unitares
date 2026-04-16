@@ -180,6 +180,12 @@ def get_watcher_identity() -> dict[str, str] | None:
     return _watcher_identity
 
 
+def _make_identity_client():
+    """Create a SyncGovernanceClient for identity resolution."""
+    from unitares_sdk import SyncGovernanceClient
+    return SyncGovernanceClient(rest_url=GOV_REST_URL, transport="rest", timeout=5)
+
+
 # Paths we never scan — too much churn, not worth the noise
 SKIP_PATH_FRAGMENTS = (
     "/.git/",
@@ -1633,6 +1639,13 @@ def main() -> int:
         help="print open findings as a chime block and transition them to surfaced",
     )
     args = parser.parse_args()
+
+    # --- Identity resolution (best-effort) ---
+    try:
+        client = _make_identity_client()
+        resolve_identity(client)
+    except Exception as e:
+        log(f"identity resolution skipped: {e}", "warning")
 
     if args.self_test:
         return self_test()

@@ -1932,3 +1932,51 @@ class TestWatcherIdentity:
 
         watcher_module.resolve_identity(FakeClient())
         assert watcher_module.get_watcher_identity() is None
+
+
+class TestMainIdentityWiring:
+    """main() calls resolve_identity before dispatching subcommands."""
+
+    def test_main_resolves_identity_before_scan(self, watcher_module, tmp_path, monkeypatch):
+        """--file path triggers identity resolution before scanning."""
+        resolved = {"called": False}
+
+        def mock_resolve(client):
+            resolved["called"] = True
+
+        monkeypatch.setattr(watcher_module, "resolve_identity", mock_resolve)
+        # Make scan_file a no-op so we don't need a real file
+        monkeypatch.setattr(watcher_module, "scan_file", lambda *a, **kw: [])
+        # Prevent SyncGovernanceClient from connecting
+        monkeypatch.setattr(
+            watcher_module, "_make_identity_client",
+            lambda: type("C", (), {
+                "onboard": lambda *a, **kw: None,
+                "identity": lambda **kw: None,
+                "client_session_id": None,
+                "continuity_token": None,
+                "agent_uuid": None,
+            })(),
+        )
+
+        monkeypatch.setattr("sys.argv", ["watcher", "--file", "/dev/null"])
+        watcher_module.main()
+        assert resolved["called"]
+
+    def test_main_proceeds_when_governance_down(self, watcher_module, tmp_path, monkeypatch):
+        """Governance failure during identity doesn't prevent scan."""
+        scan_called = {"called": False}
+
+        def mock_scan(*a, **kw):
+            scan_called["called"] = True
+            return []
+
+        monkeypatch.setattr(watcher_module, "scan_file", mock_scan)
+        monkeypatch.setattr(
+            watcher_module, "_make_identity_client",
+            lambda: (_ for _ in ()).throw(ConnectionError("down")),
+        )
+
+        monkeypatch.setattr("sys.argv", ["watcher", "--file", "/dev/null"])
+        watcher_module.main()
+        assert scan_called["called"]
