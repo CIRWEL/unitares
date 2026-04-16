@@ -127,13 +127,11 @@ class GovernanceClient:
 
         for attempt in range(2):
             try:
-                result = await asyncio.wait_for(
-                    self._session.call_tool(tool_name, injected_args),
-                    timeout=effective_timeout,
-                )
+                with anyio.fail_after(effective_timeout):
+                    result = await self._session.call_tool(tool_name, injected_args)
                 return self._parse_mcp_result(result)
 
-            except asyncio.TimeoutError as e:
+            except TimeoutError:
                 last_error = GovernanceTimeoutError(
                     f"{tool_name} timed out after {effective_timeout}s"
                 )
