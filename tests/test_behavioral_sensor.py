@@ -63,7 +63,7 @@ class TestBehavioralSensor:
 
     def test_bounds_with_extreme_inputs(self):
         """Extreme input values still produce bounded outputs."""
-        h = make_histories(n=10, E=1.0, I=0.0, S=2.0, V=2.0)
+        h = make_histories(n=10, E=1.0, I=0.0, S=1.0, V=1.0)
         h["coherence_history"] = [0.99, 0.01] * 5
         h["decision_history"] = ["reject"] * 10
         result = compute_behavioral_sensor_eisv(

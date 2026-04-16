@@ -1074,8 +1074,8 @@ class TestEstimateRisk:
         # Force extreme history change
         monitor.state.E_history.append(0.0)
         monitor.state.I_history.append(0.0)
-        monitor.state.S_history.append(2.0)
-        monitor.state.V_history.append(2.0)
+        monitor.state.S_history.append(1.0)
+        monitor.state.V_history.append(1.0)
         score_result = {'phi': 0.5, 'verdict': 'safe'}
         risk = monitor.estimate_risk({'response_text': 'Test'}, score_result=score_result)
         assert 0.0 <= risk <= 1.0

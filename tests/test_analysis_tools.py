@@ -117,8 +117,8 @@ class TestBasinEstimation:
         for s in traj:
             assert 0.0 <= s.E <= 1.0
             assert 0.0 <= s.I <= 1.0
-            assert 0.0 <= s.S <= 2.0
-            assert -2.0 <= s.V <= 2.0
+            assert 0.0 <= s.S <= 1.0
+            assert -1.0 <= s.V <= 1.0
 
     def test_integrate_trajectory_length(self, active_params, equilibrium):
         """Trajectory should have n_steps + 1 states."""

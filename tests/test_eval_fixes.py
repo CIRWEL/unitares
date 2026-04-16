@@ -96,7 +96,7 @@ class TestConfidenceVariance:
 
         # Extreme states
         test_cases = [
-            self._make_state(E=0.0, I=0.0, S=2.0, V=2.0, coherence=0.0),
+            self._make_state(E=0.0, I=0.0, S=1.0, V=1.0, coherence=0.0),
             self._make_state(E=1.0, I=1.0, S=0.0, V=0.0, coherence=1.0),
             self._make_state(E=0.5, I=0.5, S=0.5, V=0.5, coherence=0.5),
         ]

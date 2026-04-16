@@ -262,7 +262,7 @@ class TestDeviationSignal:
         """Penalty never > 0.25."""
         # Extreme shift
         state = _mock_state_with_history(
-            coherence=0.0, I=0.0, S=2.0, V=2.0,
+            coherence=0.0, I=0.0, S=1.0, V=1.0,
             E_history=[0.9 + 0.001 * i for i in range(20)],
             I_history=[0.9 + 0.001 * i for i in range(20)],
             S_history=[0.01 + 0.001 * i for i in range(20)],
