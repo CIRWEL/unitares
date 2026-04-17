@@ -47,7 +47,7 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
             recovery={
                 "action": "Provide target_agent_id (UUID or label) of the agent to observe",
                 "related_tools": ["list_agents"],
-                "example": "observe(action='agent', target_agent_id='Lumen')"
+                "example": "observe(action='agent', target_agent_id='<agent-label>')"
             }
         )]
     # Resolve label to UUID if needed

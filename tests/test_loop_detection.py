@@ -194,6 +194,28 @@ class TestPattern7SlowProceedLoop:
             assert "Decision loop" not in reason
             assert "Slow proceed loop" not in reason
 
+    def test_embodied_only_agents_skip_pattern7(self):
+        """Agents tagged only `embodied` (no `autonomous`, no legacy `anima`) still skip pattern 7."""
+        timestamps = _timestamps_spaced(10, spacing_seconds=30)
+        decisions = ["proceed"] * 10
+
+        meta = _make_metadata(
+            recent_timestamps=timestamps,
+            recent_decisions=decisions,
+            tags=["embodied"],
+        )
+
+        with (
+            patch("src.agent_loop_detection.agent_metadata", {"test-agent": meta}),
+            patch("src.agent_process_mgmt.SERVER_START_TIME", datetime.now() - timedelta(hours=1)),
+        ):
+            from src.agent_loop_detection import detect_loop_pattern
+            is_loop, reason = detect_loop_pattern("test-agent")
+
+        if is_loop:
+            assert "Decision loop" not in reason
+            assert "Slow proceed loop" not in reason
+
 
 # ---------------------------------------------------------------------------
 # _safety_net_resume
