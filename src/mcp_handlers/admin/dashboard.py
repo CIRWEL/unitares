@@ -40,7 +40,8 @@ async def handle_dashboard(arguments: ToolArgumentsDict) -> Sequence[TextContent
                 "verdict": verdict,
             }
 
-        # Filter: recent_days=1 by default (show today's agents + Lumen)
+        # Filter: recent_days=1 by default. Agents tagged ``pinned`` are
+        # always included regardless of recency (see is_pinned below).
         recent_days = int(arguments.get("recent_days", 1))
         min_updates = int(arguments.get("min_updates", 1))
         limit = int(arguments.get("limit", 15))
