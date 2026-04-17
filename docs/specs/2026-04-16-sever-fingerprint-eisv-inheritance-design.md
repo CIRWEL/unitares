@@ -89,7 +89,7 @@ if not _parent_agent_id and existing_identity.get("predecessor_uuid"):
         _spawn_reason = "new_session"
 ```
 
-After Change 2, no current resolver path sets `predecessor_uuid` in `existing_identity`, so this block is fully dormant — it never fires in practice. Keep it in place as defensive scaffolding: if a future resolution path is added that legitimately sets `predecessor_uuid` (e.g., an explicit-forking API that routes through the resolver), the wiring is already in place. No functional harm to leaving it; deleting it is also acceptable — implementer's call.
+**Delete this block.** After Change 2, no current resolver path sets `predecessor_uuid` in `existing_identity`, so this block is unreachable. Keeping dead code as "future-proofing" rots — the 5 lines can be re-added when an explicit-forking API that routes through the resolver actually exists. Removing it keeps the identity honesty story single-sourced (only explicit caller args set `_parent_agent_id`).
 
 ### Change 3: Response shape honesty
 
@@ -196,6 +196,7 @@ response: { predecessor: { uuid: "A-uuid", note: "Lineage record only; no state 
    - Onboard A, capture `continuity_token`.
    - Call any tool with the token.
    - Assert: identity resolves to A (no new UUID created). This guards against regressions in the explicit continuity path.
+   - *Coverage gap confirmed*: existing tests (`test_identity_session.py::test_priority_1_continuity_token`, `test_sticky_identity.py::test_cache_bypass_on_continuity_token`) cover token *parsing* and *cache-bypass* in isolation with mocks, but no end-to-end round-trip asserting UUID preservation. This test fills that gap.
 
 ### Existing tests to update
 
@@ -226,8 +227,8 @@ Existing production agents keep whatever `parent_agent_id` they have in the DB (
 
 ## Risks
 
-**R1: Anima/Lumen (anima-mcp) may depend on inherited state.**
-Recon flagged this as unknown. Mitigation: before merging, run the integration test suite against a live anima-mcp session and verify no behavioral regression. If Lumen does rely on state inheritance, that's a separate design question (should Lumen be a single continuing agent across restarts? If so, it should use `continuity_token`, not fingerprint).
+**R1: Anima/Lumen (anima-mcp) may depend on inherited state. — RESOLVED, no impact.**
+Audit of `/Users/cirwel/projects/anima-mcp` confirmed Lumen uses explicit UUID continuity: it loads `creature_id` from its local SQLite (`anima.db` identity table, `lifecycle.py:64-72`) on every wake and passes it as `client_session_id=f"lumen-{creature_id}"` in all UNITARES calls (`unitares_bridge.py:411`). Lumen never reads `result["predecessor"]`, never depends on transplanted EISV state (its trajectory/calibration are bootstrapped from local history in `lifecycle.py:189-203` and `~/.anima/calibration_drift.json`), and never participates in fingerprint-based resolution because the explicit session_id always takes priority. Zero behavioral change for Lumen after this spec lands.
 
 **R2: Bridge / hook behavior on fresh workspaces.**
 On a brand-new workspace where no `.unitares/session.json` exists, hooks will onboard fresh. Previously, fingerprint could accidentally link them to a prior workstation agent. Under this spec, they start cleanly. This is the intended behavior and matches the governance-lifecycle skill's documented guidance (*"Strong continuity is better than implicit continuity"*).
@@ -237,4 +238,4 @@ Any external consumer hard-coding the assumption that `result["predecessor"]` is
 
 ## Open Questions
 
-None that block this spec. The anima-mcp audit (R1) is a pre-merge verification step, not a design question.
+None. The anima-mcp audit (R1) was completed during spec drafting and confirmed no impact.
