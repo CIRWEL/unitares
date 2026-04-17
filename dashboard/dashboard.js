@@ -1010,9 +1010,11 @@ async function loadAgents() {
             const tierLabels = ['T0', 'T1', 'T2', 'T3'];
             const tierNames = ['Unknown', 'Emerging', 'Established', 'Verified'];
             const tierColors = ['var(--text-secondary)', 'var(--accent-orange)', 'var(--green)', 'var(--accent-cyan, #06b6d4)'];
+            const activeTier = state.get('agentTierFilter');
             trustBarsEl.innerHTML = tierLabels.map((label, idx) => {
                 const pct = (tierCounts[idx] / maxCount) * 100;
-                return `<div class="trust-bar-row" title="${tierNames[idx]}: ${tierCounts[idx]} agents">
+                const activeCls = activeTier === idx ? ' trust-bar-row-active' : '';
+                return `<div class="trust-bar-row${activeCls}" role="button" tabindex="0" data-tier="${idx}" title="${tierNames[idx]}: ${tierCounts[idx]} agents — click to filter">
                     <span class="trust-bar-label">${label}</span>
                     <div class="trust-bar-track"><div class="trust-bar-fill" style="width:${pct}%;background:${tierColors[idx]}"></div></div>
                     <span class="trust-bar-count">${tierCounts[idx]}</span>
@@ -2258,6 +2260,98 @@ if (anomaliesCard) {
         }
     });
 }
+
+// ============================================================================
+// Stat-card navigation — display-only cards jump to their owning section
+// and apply a sensible default filter. Cards with their own modal/expand
+// behavior (Stuck, Calibration, Anomalies) are untouched.
+// ============================================================================
+(function initStatCardNav() {
+    const nav = document.getElementById('section-nav');
+    const navOffset = () => (nav ? nav.offsetHeight + 12 : 0);
+
+    function scrollToSection(id) {
+        const target = document.getElementById(id);
+        if (!target) return;
+        const pos = target.getBoundingClientRect().top + window.scrollY - navOffset();
+        window.scrollTo({ top: pos, behavior: 'smooth' });
+    }
+
+    function wire(cardId, sectionId, applyPreset) {
+        const card = document.getElementById(cardId);
+        if (!card) return;
+        card.classList.add('stat-card-nav');
+        card.setAttribute('role', 'button');
+        card.setAttribute('tabindex', '0');
+        const existingTitle = card.getAttribute('title');
+        if (!existingTitle) card.setAttribute('title', 'Click to open section');
+        const go = (e) => {
+            // Don't hijack clicks on the help-icon popover
+            if (e && e.target && e.target.closest('.help-icon-placeholder')) return;
+            scrollToSection(sectionId);
+            if (applyPreset) { try { applyPreset(); } catch (err) { /* best-effort */ } }
+        };
+        card.addEventListener('click', go);
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(e); }
+        });
+    }
+
+    function setSelectValue(id, value) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.value === value) return;
+        el.value = value;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    wire('fleet-coherence-card', 'eisv-chart-panel');
+
+    wire('agents-count-card', 'agents-section', () => {
+        setSelectValue('agent-status-filter', 'active');
+        // Expand filters row so the user sees what's applied
+        const row = document.getElementById('agent-filters-row');
+        if (row && row.classList.contains('collapsed')) row.classList.remove('collapsed');
+    });
+
+    wire('discoveries-count-card', 'discoveries-section', () => {
+        setSelectValue('discovery-time-filter', '24h');
+    });
+
+    wire('dialectic-count-card', 'dialectic-section', () => {
+        setSelectValue('dialectic-status-filter', 'substantive');
+    });
+
+    // Trust tier bars — click a tier to filter Agents by that tier.
+    // Click the already-active tier to clear.
+    const trustCard = document.getElementById('trust-tier-card');
+    if (trustCard) {
+        const toggleTier = (tierNum) => {
+            const current = state.get('agentTierFilter');
+            const next = current === tierNum ? null : tierNum;
+            state.set({ agentTierFilter: next });
+            if (typeof applyAgentFilters === 'function') applyAgentFilters();
+            scrollToSection('agents-section');
+        };
+        trustCard.addEventListener('click', (e) => {
+            const row = e.target.closest('.trust-bar-row');
+            if (!row) return;
+            const tierNum = parseInt(row.dataset.tier, 10);
+            if (isNaN(tierNum)) return;
+            e.stopPropagation();
+            toggleTier(tierNum);
+        });
+        trustCard.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const row = e.target.closest('.trust-bar-row');
+            if (!row) return;
+            const tierNum = parseInt(row.dataset.tier, 10);
+            if (isNaN(tierNum)) return;
+            e.preventDefault();
+            toggleTier(tierNum);
+        });
+    }
+})();
 
 // Thresholds button
 const thresholdsBtn = document.getElementById('thresholds-btn');

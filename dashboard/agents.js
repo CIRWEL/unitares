@@ -439,6 +439,8 @@
         var sortBy = sortInput ? sortInput.value : 'recent';
 
         var cachedAgents = state.get('cachedAgents');
+        var tierFilter = state.get('agentTierFilter');
+        var tierNameToNum = { unknown: 0, emerging: 1, established: 2, verified: 3 };
         var filteredAgents = cachedAgents.filter(function (agent) {
             // Production filter
             if (state.get('prodOnlyActive') && isTestAgent(agent)) return false;
@@ -446,6 +448,14 @@
             var agentStatus = getAgentStatus(agent);
             if (statusFilter !== 'all' && agentStatus !== statusFilter) return false;
             if (metricsOnly && !agentHasMetrics(agent)) return false;
+
+            if (tierFilter !== null && tierFilter !== undefined) {
+                var raw = agent.trust_tier;
+                var tierNum = raw !== null && raw !== undefined
+                    ? (typeof raw === 'number' ? raw : (tierNameToNum[String(raw).toLowerCase()] || 0))
+                    : 0;
+                if (tierNum !== tierFilter) return false;
+            }
 
             if (searchTerm) {
                 var displayName = getAgentDisplayName(agent);
@@ -496,6 +506,7 @@
         if (statusFilterInput) statusFilterInput.value = 'all';
         if (metricsOnlyInput) metricsOnlyInput.checked = false;
         if (sortInput) sortInput.value = 'recent';
+        state.set({ agentTierFilter: null });
         applyAgentFilters();
     }
 

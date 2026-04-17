@@ -1556,6 +1556,33 @@ body {
     text-align: right;
 }
 
+/* Clickable trust tier rows */
+.trust-bar-row[data-tier] {
+    cursor: pointer;
+    padding: 2px 4px;
+    margin: 0 -4px;
+    border-radius: 4px;
+    transition: background 0.15s ease;
+}
+.trust-bar-row[data-tier]:hover,
+.trust-bar-row[data-tier]:focus-visible {
+    background: rgba(255, 255, 255, 0.04);
+    outline: none;
+}
+.trust-bar-row-active {
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: inset 2px 0 0 var(--stat-accent, var(--accent-cyan));
+}
+
+/* Navigation affordance on display-only stat cards */
+.stat-card-nav {
+    cursor: pointer;
+}
+.stat-card-nav:focus-visible {
+    outline: 2px solid var(--stat-accent, var(--accent-cyan));
+    outline-offset: 2px;
+}
+
 /* Health & verdict mini-badges on agent cards */
 .health-badge-mini, .verdict-badge-mini {
     font-size: 0.65em;

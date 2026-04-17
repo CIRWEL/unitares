@@ -74,7 +74,8 @@
         pinnedAgentName: null,
         prodOnlyActive: typeof localStorage !== 'undefined' && localStorage.getItem('unitares_prod_only') === 'true',
         showODE: typeof localStorage !== 'undefined' && localStorage.getItem('unitares_show_ode') !== 'false',
-        agentPageSize: 20
+        agentPageSize: 20,
+        agentTierFilter: null
     });
 
     // Restore pinned agent from localStorage
