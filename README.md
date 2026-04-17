@@ -14,7 +14,7 @@ Agent observability today means grepping logs and inferring condition from outpu
 
 Check-ins over MCP or HTTP become four continuous state variables — **EISV** (energy, integrity, entropy, void) — alongside verdicts, guidance, calibration, and recovery paths returned in real time. Long-run trajectories are stored in PostgreSQL + AGE. The state model is derived from what agents actually do: EMA-smoothed observations, not model predictions.
 
-Running continuously in production since November 2025 with 6,000+ passing tests at 77% coverage, including [Lumen](https://github.com/CIRWEL/anima-mcp), an embodied agent on a Raspberry Pi.
+Running continuously in production since November 2025 with 6,200+ passing tests at 77% coverage, including [Lumen](https://github.com/CIRWEL/anima-mcp), an embodied agent on a Raspberry Pi.
 
 | | |
 |--|--|
@@ -22,6 +22,77 @@ Running continuously in production since November 2025 with 6,000+ passing tests
 | **Workflow** | `onboard()` → `process_agent_update()` → `get_governance_metrics()` — details in [Getting Started](docs/guides/START_HERE.md). |
 | **Transports** | MCP on `/mcp/` (Streamable HTTP) · REST on `/v1/tools/call` · Dashboard on `/dashboard` |
 | **Stack** | Python 3.12+ · PostgreSQL + AGE + pgvector · Redis (optional) |
+
+---
+
+## What makes it different
+
+Most tooling scores **outputs** (correct, safe, useful). UNITARES emphasizes **state legibility**: a shared representation of condition that humans, services, and other agents can read without reverse-engineering logs.
+
+| Layer | What it does | Examples |
+|-------|----------------|----------|
+| Output validation | Judges results after the fact | Guardrails, evals |
+| Behavioral constraint | Limits what can be done | Sandboxes, permissions |
+| **State legibility** | Makes inner state readable | **UNITARES** |
+
+**Self-relative assessment.** After warmup, scoring uses deviation from *your* baseline, not only global thresholds.
+
+**Ethical drift from observables.** Calibration deviation, complexity divergence, coherence deviation, and stability deviation define a drift signal that feeds entropy dynamics — no hand-labeled “ethics” oracle.
+
+**Trajectory as identity.** Long-run EISV patterns support continuity and anomaly questions (“still the same agent?”).
+
+**Response modes.** Including `mirror` for actionable calibration and graph hints without raw vector overload — plus `minimal`, `compact`, `standard`, `full`, `auto`.
+
+**Dialectic.** Thesis → antithesis → synthesis with peer agents when available; **LLM-assisted** dialectic when alone.
+
+---
+
+## Production snapshot
+
+As of April 2026:
+
+| Metric | Value |
+|--------|-------|
+| Agents onboarded | 2,574 total |
+| Unique agents active (last 7 days) | 2,226 — mostly ephemeral CLI sessions, plus resident agents like Lumen |
+| Governance events processed | 94,000+ (≈51K in the last 7 days) |
+| Knowledge graph discoveries | 578 |
+| EISV (Lumen, illustrative) | E≈0.72, I≈0.75, S≈0.20, V≈-0.04 |
+| V operating range | Active agents often within [-0.1, 0.1] |
+| Tests | 6,200+ passing · 77% coverage |
+
+[Lumen](https://github.com/CIRWEL/anima-mcp) is an embodied agent on a Raspberry Pi: sensors feed check-ins; local drawing is modulated by coherence-related dynamics. See [anima-mcp](https://github.com/CIRWEL/anima-mcp) for hardware and art pipeline details.
+
+<p align="center">
+  <img src="docs/assets/dashboard.png" width="80%" alt="UNITARES dashboard — stats overview with fleet coherence, agent count, discoveries, and system health"/>
+</p>
+
+<details>
+<summary><strong>More dashboard views</strong> (pulse, EISV charts, agents, dialectic, activity)</summary>
+
+<p align="center">
+  <img src="docs/assets/dashboard-pulse.png" width="80%" alt="Pulse — live event feed and EISV time series"/>
+</p>
+<p align="center"><em>Pulse — live event feed, drift indicators, and EISV time series charts</em></p>
+
+<p align="center">
+  <img src="docs/assets/dashboard-agents.png" width="80%" alt="Agents and Discoveries panels"/>
+</p>
+<p align="center"><em>Agents (sorted by recency, with trust tiers) and Discoveries (filterable by type and time range)</em></p>
+
+<p align="center">
+  <img src="docs/assets/dashboard-dialectic.png" width="80%" alt="Dialectic sessions — recovery and review history"/>
+</p>
+<p align="center"><em>Dialectic sessions — failed, resolved, and active recovery sessions with message counts</em></p>
+
+<p align="center">
+  <img src="docs/assets/dashboard-activity.png" width="80%" alt="Activity timeline — check-ins, verdicts, discoveries"/>
+</p>
+<p align="center"><em>Activity timeline — filterable event log across all agents</em></p>
+
+</details>
+
+> **Integrating an agent?** Jump to [Quick Start](#quick-start).
 
 ---
 
@@ -156,74 +227,6 @@ dI/dt = -k·S + β_I·C(V) - γ_I·I   Integrity boosted by coherence, reduced b
 dS/dt = -μ·S + λ₁·‖Δη‖² - λ₂·C   Entropy decays, rises with drift, damped by coherence
 dV/dt = κ(E - I) - δ·V             Void accumulates E-I mismatch, decays toward zero
 ```
-
-</details>
-
----
-
-## What makes it different
-
-Most tooling scores **outputs** (correct, safe, useful). UNITARES emphasizes **state legibility**: a shared representation of condition that humans, services, and other agents can read without reverse-engineering logs.
-
-| Layer | What it does | Examples |
-|-------|----------------|----------|
-| Output validation | Judges results after the fact | Guardrails, evals |
-| Behavioral constraint | Limits what can be done | Sandboxes, permissions |
-| **State legibility** | Makes inner state readable | **UNITARES** |
-
-**Self-relative assessment.** After warmup, scoring uses deviation from *your* baseline, not only global thresholds.
-
-**Ethical drift from observables.** Calibration deviation, complexity divergence, coherence deviation, and stability deviation define a drift signal that feeds entropy dynamics — no hand-labeled “ethics” oracle.
-
-**Trajectory as identity.** Long-run EISV patterns support continuity and anomaly questions (“still the same agent?”).
-
-**Response modes.** Including `mirror` for actionable calibration and graph hints without raw vector overload — plus `minimal`, `compact`, `standard`, `full`, `auto`.
-
-**Dialectic.** Thesis → antithesis → synthesis with peer agents when available; **LLM-assisted** dialectic when alone.
-
----
-
-## Production snapshot
-
-April 2026:
-
-| Metric | Value |
-|--------|-------|
-| Agents created / active (7-day) | Four-figure total / dozens active |
-| Check-ins processed | Six figures |
-| Knowledge graph entries | Four figures |
-| EISV (Lumen, illustrative) | E≈0.72, I≈0.75, S≈0.20, V≈-0.04 |
-| V operating range | Active agents often within [-0.1, 0.1] |
-| Tests | 6,000+ passing · 77% coverage |
-
-[Lumen](https://github.com/CIRWEL/anima-mcp) is an embodied agent on a Raspberry Pi: sensors feed check-ins; local drawing is modulated by coherence-related dynamics. See [anima-mcp](https://github.com/CIRWEL/anima-mcp) for hardware and art pipeline details.
-
-<p align="center">
-  <img src="docs/assets/dashboard.png" width="80%" alt="UNITARES dashboard — stats overview with fleet coherence, agent count, discoveries, and system health"/>
-</p>
-
-<details>
-<summary><strong>More dashboard views</strong> (pulse, EISV charts, agents, dialectic, activity)</summary>
-
-<p align="center">
-  <img src="docs/assets/dashboard-pulse.png" width="80%" alt="Pulse — live event feed and EISV time series"/>
-</p>
-<p align="center"><em>Pulse — live event feed, drift indicators, and EISV time series charts</em></p>
-
-<p align="center">
-  <img src="docs/assets/dashboard-agents.png" width="80%" alt="Agents and Discoveries panels"/>
-</p>
-<p align="center"><em>Agents (sorted by recency, with trust tiers) and Discoveries (filterable by type and time range)</em></p>
-
-<p align="center">
-  <img src="docs/assets/dashboard-dialectic.png" width="80%" alt="Dialectic sessions — recovery and review history"/>
-</p>
-<p align="center"><em>Dialectic sessions — failed, resolved, and active recovery sessions with message counts</em></p>
-
-<p align="center">
-  <img src="docs/assets/dashboard-activity.png" width="80%" alt="Activity timeline — check-ins, verdicts, discoveries"/>
-</p>
-<p align="center"><em>Activity timeline — filterable event log across all agents</em></p>
 
 </details>
 
