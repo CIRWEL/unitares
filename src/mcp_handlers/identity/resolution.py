@@ -331,9 +331,6 @@ async def resolve_session_identity(
         session_key = re.sub(r'[^\w\-.:@]', '_', session_key)
         logger.warning(f"[SECURITY] Session key sanitized: {original[:30]}... -> {session_key[:30]}...")
 
-    # Track predecessor UUID when resume=False finds an existing identity
-    _predecessor_uuid = None
-
     # If force_new is requested, skip lookup paths and go straight to creation
 
     if not force_new:
@@ -386,14 +383,11 @@ async def resolve_session_identity(
                         agent_id = cached_id
 
                     # IDENTITY HONESTY: When resume=False, don't return cached identity.
-                    # Record it as predecessor and fall through to PATH 3 (create new).
-                    if not resume:
-                        _predecessor_uuid = agent_uuid
-                        logger.info(
-                            f"[IDENTITY] resume=False, skipping Redis hit for {agent_uuid[:8]}... "
-                            f"(will create new with predecessor link)"
-                        )
-                    else:
+                    # Fall through to PATH 3 (create new). Fingerprint match is a routing
+                    # hint only, never a succession claim — we do NOT record the cached
+                    # agent as the new identity's predecessor.
+                    # See docs/specs/2026-04-16-sever-fingerprint-eisv-inheritance-design.md
+                    if resume:
 
                         # Check if persisted in PostgreSQL
 
@@ -464,113 +458,105 @@ async def resolve_session_identity(
 
         # NOTE: As of v2.5.2, sessions reference agents by UUID.
 
-        if not _predecessor_uuid:  # Skip PG if Redis already found a predecessor
+        # IDENTITY HONESTY: When resume=False, don't return PG identity.
+        # Fingerprint match is a routing hint only, never a succession claim.
+        # See docs/specs/2026-04-16-sever-fingerprint-eisv-inheritance-design.md
+        try:
 
-            try:
+            db = get_db()
 
-                db = get_db()
+            if hasattr(db, "init"):
 
-                if hasattr(db, "init"):
-
-                    await db.init()
-
-
-
-                session = await db.get_session(session_key)
-
-                if session and session.agent_id:
-
-                    stored_id = session.agent_id
-
-                    # Detect format: UUID (correct) vs model+date (legacy)
-
-                    is_uuid = len(stored_id) == 36 and stored_id.count("-") == 4
-
-                    if is_uuid:
-
-                        agent_uuid = stored_id
-
-                        # Fetch agent_id (model+date) from metadata
-
-                        agent_id = await _get_agent_id_from_metadata(agent_uuid) or agent_uuid
-
-                    else:
-
-                        # Legacy format (pre-v2.5.2): treat as both agent_id and UUID fallback
-
-                        agent_uuid = stored_id
-
-                        agent_id = stored_id
-
-                    # IDENTITY HONESTY: When resume=False, don't return PG identity.
-                    if not resume:
-                        _predecessor_uuid = agent_uuid
-                        logger.info(
-                            f"[IDENTITY] resume=False, skipping PG hit for {agent_uuid[:8]}... "
-                            f"(will create new with predecessor link)"
-                        )
-                    else:
-
-                        label = await _get_agent_label(agent_uuid)
-
-                        # Check archived status
-                        agent_status = await _get_agent_status(agent_uuid)
-                        is_archived = agent_status == "archived"
-
-                        # Soft trajectory verification (v2.8)
-                        traj_result = await _soft_verify_trajectory(agent_uuid, trajectory_signature, "postgres")
-
-                        # Warm Redis cache for next time (cache UUID + display agent_id)
-
-                        # This also resets the TTL to 24h (sliding window)
-
-                        await _cache_session(
-                            session_key, agent_uuid, display_agent_id=agent_id,
-                            trajectory_required=traj_result.get("checked", False),
-                        )
+                await db.init()
 
 
 
-                        # Update DB last_active (non-blocking best effort)
+            session = await db.get_session(session_key)
 
-                        try:
+            if session and session.agent_id and resume:
 
-                            await db.update_session_activity(session_key)
+                stored_id = session.agent_id
 
-                        except Exception:
+                # Detect format: UUID (correct) vs model+date (legacy)
 
-                            pass
+                is_uuid = len(stored_id) == 36 and stored_id.count("-") == 4
+
+                if is_uuid:
+
+                    agent_uuid = stored_id
+
+                    # Fetch agent_id (model+date) from metadata
+
+                    agent_id = await _get_agent_id_from_metadata(agent_uuid) or agent_uuid
+
+                else:
+
+                    # Legacy format (pre-v2.5.2): treat as both agent_id and UUID fallback
+
+                    agent_uuid = stored_id
+
+                    agent_id = stored_id
+
+                label = await _get_agent_label(agent_uuid)
+
+                # Check archived status
+                agent_status = await _get_agent_status(agent_uuid)
+                is_archived = agent_status == "archived"
+
+                # Soft trajectory verification (v2.8)
+                traj_result = await _soft_verify_trajectory(agent_uuid, trajectory_signature, "postgres")
+
+                # Warm Redis cache for next time (cache UUID + display agent_id)
+
+                # This also resets the TTL to 24h (sliding window)
+
+                await _cache_session(
+                    session_key, agent_uuid, display_agent_id=agent_id,
+                    trajectory_required=traj_result.get("checked", False),
+                )
 
 
 
-                        return {
+                # Update DB last_active (non-blocking best effort)
 
-                            "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
-                            "public_agent_id": agent_id,
+                try:
 
-                            "agent_uuid": agent_uuid,
+                    await db.update_session_activity(session_key)
 
-                            "display_name": label,
+                except Exception:
 
-                            "label": label,  # backward compat
+                    pass
 
-                            "created": False,
 
-                            "persisted": True,  # Found in PostgreSQL = persisted
 
-                            "archived": is_archived,
+                return {
 
-                            "source": "postgres",
+                    "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
+                    "public_agent_id": agent_id,
 
-                            "trajectory_verified": traj_result.get("verified"),
+                    "agent_uuid": agent_uuid,
 
-                            "trajectory_warning": traj_result.get("warning"),
+                    "display_name": label,
 
-                        }
+                    "label": label,  # backward compat
 
-            except Exception as e:
+                    "created": False,
 
-                logger.debug(f"PostgreSQL session lookup failed: {e}")
+                    "persisted": True,  # Found in PostgreSQL = persisted
+
+                    "archived": is_archived,
+
+                    "source": "postgres",
+
+                    "trajectory_verified": traj_result.get("verified"),
+
+                    "trajectory_warning": traj_result.get("warning"),
+
+                }
+
+        except Exception as e:
+
+            logger.debug(f"PostgreSQL session lookup failed: {e}")
 
 
 
@@ -676,11 +662,6 @@ async def resolve_session_identity(
     # Auto-assign label from client signals to prevent future ghosts
     label = _generate_auto_label(model_type, client_hint) if not agent_name else None
 
-    if _predecessor_uuid:
-        logger.info(
-            f"[IDENTITY] New agent {agent_uuid[:8]}... with predecessor {_predecessor_uuid[:8]}..."
-        )
-
     if persist:
         # Persist immediately to PostgreSQL
         try:
@@ -740,8 +721,6 @@ async def resolve_session_identity(
                 "persisted": True,
                 "source": "created",
             }
-            if _predecessor_uuid:
-                result["predecessor_uuid"] = _predecessor_uuid
             return result
 
         except Exception as e:
@@ -763,8 +742,6 @@ async def resolve_session_identity(
         "persisted": False,
         "source": "memory_only",
     }
-    if _predecessor_uuid:
-        result["predecessor_uuid"] = _predecessor_uuid
     return result
 
 
