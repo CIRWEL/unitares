@@ -1002,10 +1002,6 @@ async def execute_post_update_effects(ctx: UpdateContext) -> None:
     except Exception as e:
         logger.debug(f"CIRS resonance auto-emit skipped: {e}")
 
-    # CIRS: Neighbor pressure disabled — caused cross-agent EISV convergence,
-    # destroying individual diagnostic value by coupling all agents toward
-    # a shared equilibrium via governor threshold tightening.
-
     # CIRS: Persist resonance event to PostgreSQL
     try:
         cirs_data = ctx.result.get('cirs', {})
