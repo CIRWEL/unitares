@@ -516,8 +516,10 @@ class TestHandleIdentityV2:
         assert result.get("display_name") == "TestBot"
 
     @pytest.mark.asyncio
-    async def test_identity_name_claim_resolves_existing(self, patch_all_deps, mock_db, mock_redis, mock_raw_redis):
-        """identity(name='X') resolves to existing agent via name claim."""
+    async def test_identity_name_claim_resolves_existing(self, patch_all_deps, mock_db, mock_redis, mock_raw_redis, monkeypatch):
+        """identity(name='X') resolves to existing agent via name claim
+        (legacy mode escape hatch — strict mode requires proof)."""
+        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "0")
         from src.mcp_handlers.identity.handlers import handle_identity_v2
 
         test_uuid = str(uuid.uuid4())
@@ -1049,8 +1051,11 @@ class TestHandleIdentityAdapter:
         assert data["agent_id"] == "Gpt_5_Codex_20260404"
 
     @pytest.mark.asyncio
-    async def test_identity_name_claim_resolves_existing(self, patch_identity_deps, mock_db, mock_redis, mock_raw_redis):
-        """identity(name='X') resolves via name claim when no explicit session binding is provided."""
+    async def test_identity_name_claim_resolves_existing(self, patch_identity_deps, mock_db, mock_redis, mock_raw_redis, monkeypatch):
+        """identity(name='X') resolves via name claim when no explicit session
+        binding is provided (legacy mode escape hatch — strict mode v2.7.0
+        requires cryptographic proof for this path)."""
+        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "0")
         from src.mcp_handlers.identity.handlers import handle_identity_adapter
 
         test_uuid = str(uuid.uuid4())
@@ -1655,8 +1660,10 @@ class TestHandleOnboardV2:
         assert data["uuid"] != predecessor_uuid
 
     @pytest.mark.asyncio
-    async def test_onboard_with_name_resolves_by_name_claim(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
-        """onboard(name='X') resolves via name claim."""
+    async def test_onboard_with_name_resolves_by_name_claim(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis, monkeypatch):
+        """onboard(name='X') resolves via name claim (legacy mode escape
+        hatch — strict mode requires proof for this path)."""
+        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "0")
         from src.mcp_handlers.identity.handlers import handle_onboard_v2
 
         test_uuid = str(uuid.uuid4())
@@ -2606,8 +2613,11 @@ class TestContextUpdateExceptions:
         assert data["success"] is True
 
     @pytest.mark.asyncio
-    async def test_identity_adapter_name_claim_context_update_exception(self, patch_ctx_deps, mock_db, mock_redis, mock_raw_redis):
-        """update_context_agent_id failure in name claim path is swallowed (lines 1217-1218)."""
+    async def test_identity_adapter_name_claim_context_update_exception(self, patch_ctx_deps, mock_db, mock_redis, mock_raw_redis, monkeypatch):
+        """update_context_agent_id failure in name claim path is swallowed
+        (lines 1217-1218). Pinned to legacy mode since the concern here is
+        the exception path, not the strict-gate behavior."""
+        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "0")
         from src.mcp_handlers.identity.handlers import handle_identity_adapter
 
         test_uuid = str(uuid.uuid4())

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
+import os
 import uuid
 import re
 
@@ -757,8 +758,28 @@ async def resolve_by_name_claim(
     in PostgreSQL. If found, bind this session to that identity.
 
     HARDENED (v2.6.0): If the target identity has a stored trajectory,
-    trajectory_signature is REQUIRED — not optional. This prevents
+    ``trajectory_signature`` is REQUIRED — not optional. This prevents
     impersonation of established agents.
+
+    HARDENED (v2.7.0 — strict name-claim): A label collision requires
+    cryptographic proof even when the target has NO stored trajectory yet.
+    The old permissive branch ("no stored trajectory + no signature →
+    silent bind") was the "name-claim identity ghost": every new client
+    that defaulted to ``onboard(name=X)`` without a token accidentally
+    resumed whatever agent already owned that label. See
+    ``project_name-claim-identity-ghost.md`` in operator memory.
+
+    Callers with legitimate proof bypass or satisfy this gate:
+      - ``continuity_token``       — handled upstream at PATH 2.8, never
+                                     reaches this function
+      - ``agent_uuid``             — PATH 0 UUID-direct, same
+      - ``trajectory_signature``   — verified below
+      - ``force_new=true``         — onboard handler skips this function
+
+    Escape hatch: ``UNITARES_STRICT_NAME_CLAIM=0`` restores legacy
+    silent-bind for emergency rollback during the caller-migration
+    window. Every legacy bind is logged so operators can see which
+    callers still need updating.
     """
     if not agent_name or len(agent_name) < 2:
         return None
@@ -769,7 +790,9 @@ async def resolve_by_name_claim(
         logger.debug(f"[NAME_CLAIM] No agent found with label '{agent_name}'")
         return None
 
-    # Check if target has a stored trajectory (established identity)
+    # Check if target has a stored trajectory (established identity). The
+    # result drives the rejection *reason* but no longer the rejection
+    # *decision* in strict mode.
     has_stored_trajectory = False
     try:
         from src.trajectory_identity import get_trajectory_status
@@ -782,25 +805,48 @@ async def resolve_by_name_claim(
     except Exception as e:
         logger.debug(f"[NAME_CLAIM] Trajectory status check failed: {e}")
 
-    # If target has stored trajectory, REQUIRE trajectory_signature
-    if has_stored_trajectory:
-        if not trajectory_signature or not isinstance(trajectory_signature, dict):
+    strict = os.environ.get("UNITARES_STRICT_NAME_CLAIM", "1") != "0"
+    has_signature = bool(
+        trajectory_signature and isinstance(trajectory_signature, dict)
+    )
+
+    if not has_signature:
+        if strict:
+            reason = "trajectory_required" if has_stored_trajectory else "identity_proof_required"
+            qualifier = (
+                "has an established trajectory"
+                if has_stored_trajectory
+                else "already exists"
+            )
             logger.warning(
-                f"[NAME_CLAIM] Rejecting claim for '{agent_name}' — "
-                f"target has stored trajectory but no signature provided"
+                f"[NAME_CLAIM] Rejecting claim for '{agent_name}' -> "
+                f"{agent_uuid[:8]}... (no proof, reason={reason})"
             )
             return {
                 "rejected": True,
-                "reason": "trajectory_required",
+                "reason": reason,
                 "agent_name": agent_name,
                 "message": (
-                    f"Identity '{agent_name}' has an established trajectory. "
-                    f"Provide trajectory_signature to verify continuity, "
-                    f"or use force_new=true for a new identity."
+                    f"Identity '{agent_name}' {qualifier}. To resume it, "
+                    f"provide a continuity_token, agent_uuid, or "
+                    f"trajectory_signature. To create a new identity "
+                    f"under a different UUID, pass force_new=true."
                 ),
             }
+        # Legacy permissive path. Every hit here is a caller that needs
+        # updating before we can remove the rollback flag. Log loudly so
+        # operators can identify them from the server logs.
+        logger.warning(
+            f"[NAME_CLAIM] Legacy silent-bind for '{agent_name}' -> "
+            f"{agent_uuid[:8]}... "
+            f"(UNITARES_STRICT_NAME_CLAIM=0; caller sent no "
+            f"trajectory_signature/UUID/continuity_token)"
+        )
 
-        # Verify trajectory
+    # Trajectory verification. Runs whenever a signature was provided —
+    # both in strict mode (after the gate allowed it) and legacy mode
+    # (backward-compat optional verification path).
+    if has_signature:
         try:
             from src.trajectory_identity import TrajectorySignature, verify_trajectory_identity
             sig = TrajectorySignature.from_dict(trajectory_signature)
@@ -812,36 +858,21 @@ async def resolve_by_name_claim(
                         f"[NAME_CLAIM] Trajectory mismatch for '{agent_name}' "
                         f"(lineage={lineage_sim:.3f}) - rejecting claim"
                     )
-                    return {
-                        "rejected": True,
-                        "reason": "trajectory_mismatch",
-                        "agent_name": agent_name,
-                        "lineage_similarity": lineage_sim,
-                        "message": (
-                            f"Trajectory verification failed for '{agent_name}' "
-                            f"(lineage similarity={lineage_sim:.3f}, threshold=0.6). "
-                            f"Use force_new=true to create a new identity."
-                        ),
-                    }
+                    if has_stored_trajectory:
+                        return {
+                            "rejected": True,
+                            "reason": "trajectory_mismatch",
+                            "agent_name": agent_name,
+                            "lineage_similarity": lineage_sim,
+                            "message": (
+                                f"Trajectory verification failed for '{agent_name}' "
+                                f"(lineage similarity={lineage_sim:.3f}, threshold=0.6). "
+                                f"Use force_new=true to create a new identity."
+                            ),
+                        }
+                    return None
         except Exception as e:
             logger.debug(f"[NAME_CLAIM] Trajectory verification failed: {e}")
-    else:
-        # No stored trajectory — optional verification (backward compat)
-        if trajectory_signature and isinstance(trajectory_signature, dict):
-            try:
-                from src.trajectory_identity import TrajectorySignature, verify_trajectory_identity
-                sig = TrajectorySignature.from_dict(trajectory_signature)
-                verification = await verify_trajectory_identity(agent_uuid, sig)
-                if verification and not verification.get("verified", True):
-                    lineage_sim = verification.get("tiers", {}).get("lineage", {}).get("similarity", 1.0)
-                    if lineage_sim < 0.6:
-                        logger.warning(
-                            f"[NAME_CLAIM] Trajectory mismatch for '{agent_name}' "
-                            f"(lineage={lineage_sim:.3f}) - rejecting claim"
-                        )
-                        return None
-            except Exception as e:
-                logger.debug(f"[NAME_CLAIM] Trajectory verification skipped: {e}")
 
     # Fetch display metadata
     agent_id = await _get_agent_id_from_metadata(agent_uuid) or agent_uuid
