@@ -1536,6 +1536,11 @@ def _consume_coro(coro, name=None):
     return MagicMock()
 
 
+def _persist_calls(mock_track):
+    """Return calls to create_tracked_task that were for persist_tool_usage."""
+    return [c for c in mock_track.call_args_list if c.kwargs.get("name") == "persist_tool_usage"]
+
+
 class TestToolUsageRecording:
     """Every dispatched tool call should land in audit.tool_usage via fire-and-forget."""
 
@@ -1561,9 +1566,9 @@ class TestToolUsageRecording:
         assert call_kwargs["success"] is True
         assert call_kwargs["tool_name"] == "health_check"
 
-        # DB persist task created exactly once
-        assert mock_track.call_count == 1
-        assert mock_track.call_args.kwargs.get("name") == "persist_tool_usage"
+        # Exactly one persist_tool_usage task scheduled (other unrelated
+        # create_tracked_task calls like auto-heartbeat may also happen)
+        assert len(_persist_calls(mock_track)) == 1
 
     @pytest.mark.asyncio
     async def test_unknown_tool_records_failure(self):
@@ -1581,7 +1586,7 @@ class TestToolUsageRecording:
         call_kwargs = mock_tracker.log_tool_call.call_args.kwargs
         assert call_kwargs["success"] is False
         assert call_kwargs["error_type"] == "unknown_tool"
-        assert mock_track.call_count == 1
+        assert len(_persist_calls(mock_track)) == 1
 
     @pytest.mark.asyncio
     async def test_execution_error_records_failure(self):
@@ -1600,7 +1605,7 @@ class TestToolUsageRecording:
         call_kwargs = mock_tracker.log_tool_call.call_args.kwargs
         assert call_kwargs["success"] is False
         assert call_kwargs["error_type"] == "execution_error"
-        assert mock_track.call_count == 1
+        assert len(_persist_calls(mock_track)) == 1
 
     @pytest.mark.asyncio
     async def test_db_persist_failure_does_not_break_tool_call(self):

@@ -7,6 +7,7 @@ plain argument dicts. Everything else falls back to the MCP dispatch pipeline.
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from src.mcp_handlers.identity.handlers import (
@@ -17,6 +18,7 @@ from src.mcp_handlers.core import handle_process_agent_update
 from src.mcp_handlers.utils import require_agent_id
 from src.services.http_dispatch_fallback import execute_http_dispatch_fallback
 from src.services.runtime_queries import get_governance_metrics_data, get_health_check_data
+from src.services.tool_usage_recorder import record_tool_usage
 
 ToolHandler = Callable[[Dict[str, Any]], Awaitable[Any]]
 
@@ -61,9 +63,27 @@ async def execute_http_tool(tool_name: str, arguments: Dict[str, Any]) -> Any:
     Core governance tools use direct handlers so HTTP does not always depend on
     the full MCP dispatch path. All other tools use an HTTP-specific fallback
     that skips identity-resolution middleware because HTTP already set context.
+
+    Records tool_usage telemetry (JSONL + audit.tool_usage) at every exit point.
     """
-    handler = get_direct_http_tool_handler(tool_name)
-    if handler is not None:
-        result = await handler(arguments)
-        return _normalize_direct_http_result(result)
-    return await execute_http_dispatch_fallback(tool_name, arguments)
+    agent_id = arguments.get("agent_id") if isinstance(arguments, dict) else None
+    t0 = time.monotonic()
+    try:
+        handler = get_direct_http_tool_handler(tool_name)
+        if handler is not None:
+            result = await handler(arguments)
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            record_tool_usage(tool_name=tool_name, agent_id=agent_id,
+                              success=True, latency_ms=latency_ms)
+            return _normalize_direct_http_result(result)
+        result = await execute_http_dispatch_fallback(tool_name, arguments)
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        record_tool_usage(tool_name=tool_name, agent_id=agent_id,
+                          success=True, latency_ms=latency_ms)
+        return result
+    except Exception as e:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        record_tool_usage(tool_name=tool_name, agent_id=agent_id,
+                          success=False, error_type=type(e).__name__,
+                          latency_ms=latency_ms)
+        raise
