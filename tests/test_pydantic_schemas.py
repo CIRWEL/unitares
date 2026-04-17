@@ -73,8 +73,13 @@ class TestPydanticSchemas:
             assert hasattr(model_cls, "model_validate"), f"Schema for {name} must be a Pydantic model"
 
     def test_pi_params_validation(self):
-        """Verify complex discriminated unions or enums in PiParams work."""
-        from src.mcp_handlers.schemas.pi_orchestration import PiParams
+        """Verify complex discriminated unions or enums in PiParams work.
+
+        PiParams lives in unitares-pi-plugin as of Phase B1; skip when
+        plugin isn't installed.
+        """
+        plugin_schemas = pytest.importorskip("unitares_pi_plugin.schemas")
+        PiParams = plugin_schemas.PiParams
         valid_health = PiParams(action="health")
         assert valid_health.action == "health"
 

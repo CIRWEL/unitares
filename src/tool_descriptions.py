@@ -11,3 +11,13 @@ def _load_descriptions() -> dict:
 
 
 TOOL_DESCRIPTIONS = _load_descriptions()
+
+
+def register_extra_descriptions(descriptions: dict) -> None:
+    """Merge plugin-supplied tool descriptions into ``TOOL_DESCRIPTIONS``.
+
+    Called by ``governance_mcp.plugins`` entry-point plugins during
+    ``plugin_loader.load_plugins()``. Existing keys are overwritten
+    silently — the last loader wins, same precedence as the JSON file.
+    """
+    TOOL_DESCRIPTIONS.update(descriptions)

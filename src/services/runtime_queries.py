@@ -544,28 +544,35 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
     except Exception as e:
         checks["data_directory"] = {"status": "error", "error": str(e)}
 
+    # Pi connectivity check is skipped entirely when the unitares-pi-plugin
+    # isn't installed; a missing plugin is the default in OSS builds and
+    # shouldn't surface as a "degraded" signal in the health payload.
     try:
-        from src.mcp_handlers.observability.pi_orchestration import PI_MCP_URLS, call_pi_tool
-        pi_start = _time.time()
-        pi_result = await asyncio.wait_for(call_pi_tool("get_health", {}, timeout=3.0), timeout=4.0)
-        pi_latency = (_time.time() - pi_start) * 1000
-        if isinstance(pi_result, dict) and "error" not in pi_result:
-            checks["pi_connectivity"] = {
-                "status": "healthy",
-                "reachable": True,
-                "latency_ms": round(pi_latency, 1),
-                "urls_configured": PI_MCP_URLS,
-            }
-        else:
-            error_msg = str(pi_result.get("error", "unknown")) if isinstance(pi_result, dict) else str(pi_result)
-            checks["pi_connectivity"] = {
-                "status": "warning",
-                "reachable": False,
-                "error": error_msg,
-                "urls_configured": PI_MCP_URLS,
-            }
-    except (asyncio.TimeoutError, Exception) as e:
-        checks["pi_connectivity"] = {"status": "warning", "reachable": False, "error": str(e)}
+        from unitares_pi_plugin.handlers import PI_MCP_URLS, call_pi_tool  # type: ignore
+    except ImportError:
+        pass
+    else:
+        try:
+            pi_start = _time.time()
+            pi_result = await asyncio.wait_for(call_pi_tool("get_health", {}, timeout=3.0), timeout=4.0)
+            pi_latency = (_time.time() - pi_start) * 1000
+            if isinstance(pi_result, dict) and "error" not in pi_result:
+                checks["pi_connectivity"] = {
+                    "status": "healthy",
+                    "reachable": True,
+                    "latency_ms": round(pi_latency, 1),
+                    "urls_configured": PI_MCP_URLS,
+                }
+            else:
+                error_msg = str(pi_result.get("error", "unknown")) if isinstance(pi_result, dict) else str(pi_result)
+                checks["pi_connectivity"] = {
+                    "status": "warning",
+                    "reachable": False,
+                    "error": error_msg,
+                    "urls_configured": PI_MCP_URLS,
+                }
+        except (asyncio.TimeoutError, Exception) as e:
+            checks["pi_connectivity"] = {"status": "warning", "reachable": False, "error": str(e)}
 
     effective_checks = dict(checks)
     redis_check = effective_checks.get("redis_cache")

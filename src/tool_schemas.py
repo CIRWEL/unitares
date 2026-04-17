@@ -14,6 +14,22 @@ from mcp.types import Tool
 from pydantic import BaseModel
 
 
+_EXTRA_SCHEMA_MODULES: list[str] = []
+
+
+def register_extra_schemas(module_path: str) -> None:
+    """Append a plugin schema module to the loader.
+
+    Called by ``governance_mcp.plugins`` entry-point plugins during
+    ``plugin_loader.load_plugins()`` to make their Pydantic ``*Params``
+    models discoverable by ``_load_pydantic_schemas``.
+    """
+    if module_path not in _EXTRA_SCHEMA_MODULES:
+        _EXTRA_SCHEMA_MODULES.append(module_path)
+    global _PYDANTIC_SCHEMAS_CACHE
+    _PYDANTIC_SCHEMAS_CACHE = None  # invalidate so next lookup reloads
+
+
 def _load_pydantic_schemas():
     """Discover all Pydantic *Params models from schema modules."""
     mods = [
@@ -23,11 +39,11 @@ def _load_pydantic_schemas():
         "src.mcp_handlers.schemas.knowledge",
         "src.mcp_handlers.schemas.dialectic",
         "src.mcp_handlers.schemas.observability",
-        "src.mcp_handlers.schemas.pi_orchestration",
         "src.mcp_handlers.schemas.calibration",
         "src.mcp_handlers.schemas.identity",
         "src.mcp_handlers.schemas.admin",
         "src.mcp_handlers.schemas.dashboard",
+        *_EXTRA_SCHEMA_MODULES,
     ]
     all_schemas = {}
     for mod_name in mods:
@@ -126,18 +142,7 @@ TOOL_ORDER = [
     "cirs_protocol",
     "self_recovery",
     "operator_resume_agent",
-    "pi_get_context",
-    "pi_health",
-    "pi_sync_eisv",
-    "pi_display",
-    "pi_say",
-    "pi_post_message",
-    "pi_query",
-    "pi_workflow",
-    "pi_git_pull",
-    "pi_system_power",
-    "pi_restart_service",
-    "pi",
+    # pi_* tools and the consolidated "pi" router live in unitares-pi-plugin.
     "observe",
     "dialectic",
     "dashboard",

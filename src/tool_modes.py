@@ -43,7 +43,7 @@ LITE_MODE_TOOLS: Set[str] = {
     "agent",                      # Agent lifecycle (list/get/update/archive/delete)
     "knowledge",                  # Knowledge graph (store/search/get/list/update/note/cleanup/stats)
     "observe",                    # Observability (agent/compare/similar/anomalies/aggregate)
-    "pi",                         # Pi/Lumen operations (health/context/display/say/query/etc)
+    # "pi" moved to unitares-pi-plugin; registered only when the plugin is installed.
     "dialectic",                  # Dialectic (request/get/list/llm)
     "calibration",                # Calibration (check/update/backfill/rebuild)
     "config",                     # Config (get/set thresholds)

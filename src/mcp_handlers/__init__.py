@@ -127,22 +127,10 @@ from .cirs import (
     auto_emit_state_announce,  # Hook for process_agent_update
     maybe_emit_resonance_signal,  # Hook for process_agent_update
 )
-# Pi Orchestration - Mac→Pi coordination tools (Feb 2026)
-# Proxies calls to anima-mcp on Pi via Streamable HTTP transport (MCP 1.24.0+)
-from .observability.pi_orchestration import (
-    handle_pi_list_tools,
-    handle_pi_get_context,
-    handle_pi_health,
-    handle_pi_sync_eisv,
-    handle_pi_display,
-    handle_pi_say,
-    handle_pi_post_message,
-    handle_pi_lumen_qa,
-    handle_pi_query,
-    handle_pi_workflow,
-    handle_pi_git_pull,
-    handle_pi_restart_service,  # SSH-based fallback when MCP is down
-)
+# Pi orchestration moved out to the ``unitares-pi-plugin`` package — see
+# docs/specs/2026-04-17-lumen-decoupling-design.md (Phase B1). Install
+# with ``pip install unitares-pi-plugin`` to restore the pi_* tools.
+
 # Keep helper functions from identity_shared.py (used by dispatch_tool)
 from .identity.shared import (
     get_bound_agent_id,
@@ -173,9 +161,27 @@ TOOL_HANDLERS: Dict[str, callable] = {}
 
 # Populate registry from decorator-registered tools
 # All handlers use @mcp_tool decorator which auto-registers them
+# Note: plugin-provided tools are added later by a second pass triggered
+# from src/mcp_server.py once this package is fully initialised (deferring
+# plugin loading avoids a circular import: plugins import from
+# src.mcp_handlers.* which is still mid-init here).
 decorator_registry = get_decorator_registry()
 for tool_name, handler in decorator_registry.items():
     TOOL_HANDLERS[tool_name] = handler
+
+
+def refresh_tool_handlers_from_registry() -> int:
+    """Re-sync TOOL_HANDLERS with the decorator registry.
+
+    Called from mcp_server.py after ``plugin_loader.load_plugins()`` has
+    run. Returns the number of NEW handlers added (vs the first-party
+    snapshot captured at import time).
+    """
+    before = len(TOOL_HANDLERS)
+    current = get_decorator_registry()
+    for tool_name, handler in current.items():
+        TOOL_HANDLERS.setdefault(tool_name, handler)
+    return len(TOOL_HANDLERS) - before
 
 
 async def dispatch_tool(name: str, arguments: Optional[Dict[str, Any]]) -> Sequence[TextContent] | None:

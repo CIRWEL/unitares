@@ -527,8 +527,18 @@ class TestHealthCheck:
 
     @pytest.fixture(autouse=True)
     def mock_pi_connectivity(self):
-        """Mock Pi connectivity to prevent real network calls (times out in CI)."""
-        with patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool",
+        """Mock Pi connectivity to prevent real network calls (times out in CI).
+
+        No-op when ``unitares_pi_plugin`` isn't installed — in that case
+        governance's runtime_queries skips the pi_connectivity check and
+        no network call happens anyway.
+        """
+        try:
+            import unitares_pi_plugin.handlers  # noqa: F401
+        except ImportError:
+            yield
+            return
+        with patch("unitares_pi_plugin.handlers.call_pi_tool",
                    new_callable=AsyncMock,
                    return_value={"error": "mocked - Pi unreachable"}):
             yield
@@ -591,7 +601,7 @@ class TestHealthCheck:
              patch("src.audit_log.audit_logger", mock_audit), \
              patch("src.db.get_db", return_value=mock_db), \
              patch("src.embeddings.embeddings_available", return_value=True), \
-             patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool",
+             patch("unitares_pi_plugin.handlers.call_pi_tool",
                    new_callable=AsyncMock,
                    return_value={"status": "healthy"}), \
              patch("src.calibration_db.calibration_health_check_async",
@@ -640,7 +650,7 @@ class TestHealthCheck:
              patch("src.audit_log.audit_logger", mock_audit), \
              patch("src.db.get_db", return_value=mock_db), \
              patch("src.embeddings.embeddings_available", return_value=True), \
-             patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool",
+             patch("unitares_pi_plugin.handlers.call_pi_tool",
                    new_callable=AsyncMock,
                    return_value={"status": "healthy"}), \
              patch("src.calibration_db.calibration_health_check_async",
@@ -703,7 +713,7 @@ class TestHealthCheck:
              patch("src.audit_log.audit_logger", mock_audit), \
              patch("src.db.get_db", return_value=mock_db), \
              patch("src.embeddings.embeddings_available", return_value=True), \
-             patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool",
+             patch("unitares_pi_plugin.handlers.call_pi_tool",
                    new_callable=AsyncMock,
                    return_value={"status": "healthy"}), \
              patch("src.calibration_db.calibration_health_check_async",
@@ -1928,8 +1938,18 @@ class TestHealthCheckEdgeCases:
 
     @pytest.fixture(autouse=True)
     def mock_pi_connectivity(self):
-        """Mock Pi connectivity to prevent real network calls (times out in CI)."""
-        with patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool",
+        """Mock Pi connectivity to prevent real network calls (times out in CI).
+
+        No-op when ``unitares_pi_plugin`` isn't installed — in that case
+        governance's runtime_queries skips the pi_connectivity check and
+        no network call happens anyway.
+        """
+        try:
+            import unitares_pi_plugin.handlers  # noqa: F401
+        except ImportError:
+            yield
+            return
+        with patch("unitares_pi_plugin.handlers.call_pi_tool",
                    new_callable=AsyncMock,
                    return_value={"error": "mocked - Pi unreachable"}):
             yield
