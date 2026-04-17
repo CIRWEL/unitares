@@ -14,7 +14,7 @@ Agent observability today means grepping logs and inferring condition from outpu
 
 Check-ins over MCP or HTTP become four continuous state variables — **EISV** (energy, integrity, entropy, void) — alongside verdicts, guidance, calibration, and recovery paths returned in real time. Long-run trajectories are stored in PostgreSQL + AGE. The state model is derived from what agents actually do: EMA-smoothed observations, not model predictions.
 
-Running continuously in production since November 2025 with 6,200+ passing tests at 77% coverage, including [Lumen](https://github.com/CIRWEL/anima-mcp), an embodied agent on a Raspberry Pi.
+Running continuously in production since November 2025 with 6,200+ passing tests at 77% coverage.
 
 | | |
 |--|--|
@@ -54,14 +54,11 @@ As of April 2026:
 | Metric | Value |
 |--------|-------|
 | Agents onboarded | 2,574 total |
-| Unique agents active (last 7 days) | 2,226 — mostly ephemeral CLI sessions, plus resident agents like Lumen |
+| Unique agents active (last 7 days) | 2,226 — mostly ephemeral CLI sessions, plus long-running resident agents |
 | Governance events processed | 94,000+ (≈51K in the last 7 days) |
 | Knowledge graph discoveries | 578 |
-| EISV (Lumen, illustrative) | E≈0.72, I≈0.75, S≈0.20, V≈-0.04 |
 | V operating range | Active agents often within [-0.1, 0.1] |
 | Tests | 6,200+ passing · 77% coverage |
-
-[Lumen](https://github.com/CIRWEL/anima-mcp) is an embodied agent on a Raspberry Pi: sensors feed check-ins; local drawing is modulated by coherence-related dynamics. See [anima-mcp](https://github.com/CIRWEL/anima-mcp) for hardware and art pipeline details.
 
 <p align="center">
   <img src="docs/assets/dashboard.png" width="80%" alt="UNITARES dashboard — stats overview with fleet coherence, agent count, discoveries, and system health"/>
