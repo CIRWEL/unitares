@@ -45,6 +45,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.request
@@ -330,9 +331,55 @@ class Finding:
         a content hash. Callers that want content-aware dedup should set
         ``line_content_hash`` BEFORE invoking this and then assign the
         result back to ``fingerprint``.
+
+        The file path is normalized to its repo-relative form (relative to
+        the git worktree root containing it) so the same line in identical
+        code checked out across multiple git worktrees produces ONE
+        fingerprint, not N. The displayed ``file`` field is left absolute so
+        the user can navigate to the right copy.
         """
-        key = f"{self.pattern}|{self.file}|{self.line}|{self.line_content_hash}"
+        normalized_path = repo_relative_path(self.file)
+        key = f"{self.pattern}|{normalized_path}|{self.line}|{self.line_content_hash}"
         return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+_REPO_ROOT_CACHE: dict[str, str] = {}
+
+
+def repo_relative_path(file_path: str) -> str:
+    """Return ``file_path`` relative to its containing git worktree root.
+
+    Falls back to the absolute string if the path is not inside a git
+    repository or git invocation fails. Result is normalized to forward
+    slashes so the fingerprint is platform-stable.
+
+    Cached per-directory because hook-driven scans hit the same worktree
+    over and over and ``git rev-parse`` is otherwise tens of ms each call.
+    """
+    if not file_path:
+        return file_path
+    p = Path(file_path)
+    parent_key = str(p.parent if p.is_absolute() else p.resolve().parent)
+    toplevel = _REPO_ROOT_CACHE.get(parent_key)
+    if toplevel is None:
+        try:
+            result = subprocess.run(
+                ["git", "-C", parent_key, "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            toplevel = result.stdout.strip() if result.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            toplevel = ""
+        _REPO_ROOT_CACHE[parent_key] = toplevel
+    if not toplevel:
+        return file_path
+    try:
+        rel = Path(file_path).resolve().relative_to(Path(toplevel).resolve())
+    except ValueError:
+        return file_path
+    return rel.as_posix()
 
 
 def hash_line_content(source_line: str) -> str:
