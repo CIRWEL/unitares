@@ -252,7 +252,7 @@ def build_onboard_response_data(
     if parent_agent_id and not force_new:
         result["predecessor"] = {
             "uuid": parent_agent_id,
-            "note": "Previous instance in this trajectory. Your state was inherited from it.",
+            "note": "Lineage record only; no state was inherited.",
         }
 
     if was_archived:
