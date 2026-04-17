@@ -610,15 +610,19 @@ class SentinelAgent(GovernanceAgent):
     async def _bounded_analysis_cycle(self) -> str:
         """Run one analysis cycle with a hard timeout.
 
-        Uses anyio.fail_after (not asyncio.wait_for) because the MCP SDK
-        uses anyio task groups internally — asyncio's cancellation mechanism
-        violates anyio's cancel scope ownership and causes RuntimeError.
+        Uses asyncio.wait_for — NOT anyio.fail_after — because super().run_once()
+        opens an MCP ClientSession whose internal reader task owns its own anyio
+        cancel scope. An outer anyio.fail_after and the SDK's inner task group
+        end up with mismatched cancel-scope ownership: when the timeout fires
+        during session.initialize, unwinding crashes with "Attempted to exit a
+        cancel scope that isn't the current task's current cancel scope".
+        asyncio.wait_for wraps the coroutine in its own task so MCP's task
+        group is entered and exited within a single task boundary.
         """
         try:
-            with anyio.fail_after(CYCLE_TIMEOUT):
-                await super().run_once()
+            await asyncio.wait_for(super().run_once(), CYCLE_TIMEOUT)
             return f"cycle {self._cycle_count} complete"
-        except TimeoutError:
+        except asyncio.TimeoutError:
             log(f"Analysis cycle exceeded {CYCLE_TIMEOUT}s — skipping")
             return f"TIMEOUT after {CYCLE_TIMEOUT}s"
 

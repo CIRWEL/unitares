@@ -146,3 +146,41 @@ def test_cycle_timeout_default_is_bounded(sentinel_module):
         f"CYCLE_TIMEOUT={sentinel_module.CYCLE_TIMEOUT} is outside the sane "
         "operational window (30s..600s)"
     )
+
+
+def test_bounded_cycle_uses_asyncio_wait_for_not_anyio_fail_after():
+    """Structural check: the outer cycle timeout MUST use asyncio.wait_for.
+
+    Why: ``anyio.fail_after`` creates a cancel scope owned by the caller task.
+    Inside ``super().run_once()``, ``GovernanceClient`` opens a ClientSession
+    that spawns an internal reader task for the MCP memory stream. When the
+    outer ``fail_after`` fires during ``session.initialize``, cancellation
+    propagates across the reader-task boundary and unwinding the cancel scope
+    crashes with ``RuntimeError: Attempted to exit a cancel scope that isn't
+    the current task's current cancel scope``. In production (2026-04-17) this
+    caused Sentinel to exit 1 on every cycle, riding 45 launchd restarts.
+
+    ``asyncio.wait_for`` wraps the coroutine in its own task, so MCP's internal
+    task group is entered and exited within a single task boundary — no cross-
+    task cancel-scope ownership issue.
+    """
+    source = SENTINEL_PATH.read_text()
+    # Find _bounded_analysis_cycle body and inspect what timeout primitive it uses.
+    import re
+    match = re.search(
+        r"async def _bounded_analysis_cycle.*?(?=\n    async def |\nclass |\Z)",
+        source,
+        re.DOTALL,
+    )
+    assert match, "_bounded_analysis_cycle not found in sentinel source"
+    body = match.group(0)
+    # Strip docstring so we inspect the actual executable code, not prose.
+    no_docstring = re.sub(r'""".*?"""', "", body, count=1, flags=re.DOTALL)
+    assert "await asyncio.wait_for(" in no_docstring, (
+        "outer cycle timeout must use asyncio.wait_for — anyio.fail_after "
+        "violates cancel-scope ownership against MCP SDK's reader task"
+    )
+    assert "with anyio.fail_after(" not in no_docstring, (
+        "anyio.fail_after inside _bounded_analysis_cycle reintroduces the "
+        "cross-task cancel-scope crash; keep it out of this wrapper"
+    )
