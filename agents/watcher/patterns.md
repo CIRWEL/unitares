@@ -47,6 +47,12 @@ The structural verifier drops any P001 finding whose flagged line matches
 `name = ...create_task(...)` — the assignment is sufficient evidence that
 the ref is stored. See `_P001_TASK_ASSIGNMENT` in `agent.py`.
 
+The verifier also drops findings on `create_tracked_task(...)` call sites:
+that helper is the project's blessed wrapper which stores the task ref in
+a tracked set by construction. False-positive sweep 2026-04-17: flagged
+two sites in `mcp_server_std.py:511,551` (both `create_tracked_task(...)`
+calls). See `_P001_TRACKED_HELPER` in `agent.py`.
+
 **Hint template:** `fire-and-forget task — store ref or use TaskGroup`
 
 ### P002 — Unbounded dict/list growth (severity: medium, violation_class: ENT)
@@ -67,6 +73,13 @@ Creating a `UNITARESMonitor(agent_id)` instance outside of
 the cache and cause init storms over time.
 
 **Seen in:** `stuck.py:175-186` (2026-04-10 incident)
+
+The structural verifier drops findings whose flagged line lives inside the
+body of `def get_or_create_monitor(` itself — that function IS the cache,
+not a transient call site. False-positive sweep 2026-04-17: flagged
+`agent_lifecycle.py:26` (the `monitor = UNITARESMonitor(agent_id)` line
+that the cache uses to populate itself). See
+`_is_inside_get_or_create_monitor` in `agent.py`.
 
 **Hint template:** `transient monitor — use get_or_create_monitor`
 
