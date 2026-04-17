@@ -4,8 +4,10 @@ import pytest
 
 from unitares_sdk.errors import GovernanceError, IdentityDriftError, VerdictError
 from unitares_sdk.models import (
+    ArchiveResult,
     AuditResult,
     CheckinResult,
+    CleanupResult,
     IdentityResult,
     ModelResult,
     OnboardResult,
@@ -206,3 +208,43 @@ def test_audit_empty_on_no_payload():
     r = AuditResult(success=False, error="nope")
     assert r.audit is None
     assert r.error == "nope"
+
+
+# --- CleanupResult / ArchiveResult wire-shape regressions ---
+
+
+def test_cleanup_result_sums_from_server_wrapper():
+    """Server returns counters under `cleanup_result`, not `cleaned`.
+
+    Vigil's groundskeeper reported `0 archived` even after successful
+    cleanups because the legacy `cleaned` field stayed at its default.
+    `cleaned_total` sums the real counters.
+    """
+    wire = {
+        "success": True,
+        "cleanup_result": {
+            "discoveries_archived": 12,
+            "ephemeral_archived": 4,
+            "discoveries_deleted": 0,
+            "skipped_permanent": 3,
+        },
+    }
+    r = CleanupResult.model_validate(wire)
+    assert r.success is True
+    assert r.cleaned == 0  # legacy field stays default
+    assert r.cleaned_total == 16
+
+
+def test_archive_result_reads_archived_count():
+    """Server returns `archived_count`, not `archived`. Vigil now falls
+    back to archived_count so orphan cleanups are counted correctly."""
+    wire = {
+        "success": True,
+        "archived_count": 11,
+        "dry_run": False,
+    }
+    r = ArchiveResult.model_validate(wire)
+    assert r.archived_count == 11
+    assert r.archived == 0  # legacy field
+    # What Vigil reports:
+    assert (r.archived_count or r.archived) == 11

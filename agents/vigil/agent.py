@@ -334,7 +334,11 @@ class HeartbeatAgent(GovernanceAgent):
                 if summary["stale_found"] > 0:
                     cleanup_result = await client.cleanup_knowledge(dry_run=False)
                     if cleanup_result.success:
-                        summary["archived"] = cleanup_result.cleaned
+                        # Use cleaned_total (sums discoveries/ephemeral/deleted
+                        # from the server's cleanup_result dict) rather than
+                        # the legacy `cleaned` field that the server never
+                        # populates.
+                        summary["archived"] = cleanup_result.cleaned_total
             else:
                 err = getattr(audit_result, "error", None) or "Audit failed"
                 summary["errors"].append(str(err))
@@ -342,7 +346,11 @@ class HeartbeatAgent(GovernanceAgent):
 
             orphan_result = await client.archive_orphan_agents()
             if orphan_result.success:
-                summary["orphans_archived"] = orphan_result.archived
+                # Server returns `archived_count`; the legacy `archived` field
+                # stays 0 in the response. Read whichever is populated.
+                summary["orphans_archived"] = (
+                    orphan_result.archived_count or orphan_result.archived
+                )
 
         except Exception as e:
             summary["errors"].append(str(e))

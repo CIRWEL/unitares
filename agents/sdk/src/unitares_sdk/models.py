@@ -66,11 +66,30 @@ class AuditResult(_GovModel):
 class CleanupResult(_GovModel):
     success: bool
     cleaned: int = 0
+    # Server wraps detail under `cleanup_result`; `cleaned` stays 0 without
+    # this field because the wire shape uses different counter names
+    # (discoveries_archived, ephemeral_archived, discoveries_deleted).
+    cleanup_result: dict | None = None
+
+    @property
+    def cleaned_total(self) -> int:
+        """Sum of all archive/delete counters from the server's cleanup_result."""
+        if not isinstance(self.cleanup_result, dict):
+            return self.cleaned
+        return (
+            self.cleanup_result.get("discoveries_archived", 0)
+            + self.cleanup_result.get("ephemeral_archived", 0)
+            + self.cleanup_result.get("discoveries_deleted", 0)
+        )
 
 
 class ArchiveResult(_GovModel):
     success: bool
     archived: int = 0
+    # Server returns `archived_count`, not `archived`. Keep both so older
+    # callers don't break while new code reads archived_count directly.
+    archived_count: int = 0
+    dry_run: bool = False
 
 
 class RecoveryResult(_GovModel):
