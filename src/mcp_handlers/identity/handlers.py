@@ -632,11 +632,11 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     # write it to PostgreSQL before returning so the token's promise is real.
     if result.get("created") and not result.get("persisted"):
         try:
-            # predecessor_uuid may be set by resolve_session_identity when it
-            # decides this identity is a successor to a prior agent in the
-            # same session — carry it through so parent_agent_id/spawn_reason
-            # get recorded on the new row.
-            _parent = result.get("predecessor_uuid") or result.get("parent_agent_id")
+            # parent_agent_id is only set when the caller explicitly asserted
+            # succession (post-2026-04-16 EISV inheritance spec). Fingerprint
+            # match no longer auto-claims lineage, so no predecessor_uuid to
+            # read here.
+            _parent = result.get("parent_agent_id")
             _spawn = result.get("spawn_reason") or ("new_session" if _parent else None)
             newly_persisted = await ensure_agent_persisted(
                 agent_uuid,
