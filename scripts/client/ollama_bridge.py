@@ -54,7 +54,11 @@ def make_wrappers(mcp_tools: dict):
         Args:
             name: Display name for this agent (e.g. 'ollama-local')
         """
-        return mcp_tools["onboard"](name=name, spawn_reason="explicit")
+        # force_new=True creates a fresh UUID; `name` is stored as the
+        # cosmetic label (not used for resolution — name-claim removed
+        # 2026-04-17). Persistent Ollama sessions should cache the returned
+        # agent_uuid and call identity(agent_uuid=..., resume=true) next time.
+        return mcp_tools["onboard"](name=name, force_new=True, spawn_reason="explicit")
 
     @tool
     def checkin(description: str, complexity: float, confidence: float = 0.7) -> str:
