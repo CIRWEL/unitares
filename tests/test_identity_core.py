@@ -257,8 +257,14 @@ class TestNormalizeModelType:
 class TestResolvePath25NameClaim:
 
     @pytest.mark.asyncio
-    async def test_name_claim_resolves_existing_agent(self, patch_all_deps, mock_db, mock_redis, mock_raw_redis):
-        """agent_name resolves to existing agent by label."""
+    async def test_name_claim_resolves_existing_agent(self, patch_all_deps, mock_db, mock_redis, mock_raw_redis, monkeypatch):
+        """agent_name resolves to existing agent by label (legacy mode).
+
+        Under strict name-claim (v2.7.0 default) this path requires proof;
+        this test covers the legacy escape-hatch behavior that remains
+        available via UNITARES_STRICT_NAME_CLAIM=0 during the caller
+        migration window."""
+        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "0")
         from src.mcp_handlers.identity.handlers import resolve_session_identity
 
         test_uuid = str(uuid.uuid4())
@@ -685,6 +691,12 @@ class TestResolveByNameClaim:
 
     @pytest.mark.asyncio
     async def test_resolves_when_label_found(self):
+        """Canonical success path: label match + valid trajectory_signature.
+
+        Under strict name-claim (v2.7.0 default) callers must prove
+        identity to resume by label — a signature that verifies cleanly
+        is one of the three accepted proofs alongside continuity_token
+        and agent_uuid."""
         from src.mcp_handlers.identity.handlers import resolve_by_name_claim
 
         test_uuid = str(uuid.uuid4())
@@ -705,12 +717,22 @@ class TestResolveByNameClaim:
         async def _get_raw():
             return mock_raw
 
+        mock_verification = {
+            "verified": True,
+            "tiers": {"lineage": {"similarity": 0.95}},
+        }
+
         with patch("src.mcp_handlers.identity.resolution.get_db", return_value=mock_db), \
              patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
              patch("src.mcp_handlers.identity.persistence._redis_cache", None), \
+             patch("src.trajectory_identity.get_trajectory_status", new_callable=AsyncMock, return_value={"has_genesis": True}), \
+             patch("src.trajectory_identity.verify_trajectory_identity", new_callable=AsyncMock, return_value=mock_verification), \
              patch("src.cache.get_session_cache", return_value=mock_cache), \
              patch("src.cache.redis_client.get_redis", new=_get_raw):
-            result = await resolve_by_name_claim("FoundAgent", "session-resolve")
+            result = await resolve_by_name_claim(
+                "FoundAgent", "session-resolve",
+                trajectory_signature={"preferences": {}, "beliefs": {}},
+            )
 
         assert result is not None
         assert result["agent_uuid"] == test_uuid
@@ -741,6 +763,148 @@ class TestResolveByNameClaim:
             )
 
         assert result is None  # Rejected due to lineage mismatch
+
+    # ----------------------------------------------------------------
+    # Strict name-claim guard (v2.7.0) — a label collision requires proof
+    # even when the target has no stored trajectory yet. Regression bar:
+    # the "name-claim identity ghost" kept reappearing because every new
+    # client defaulted to onboard(name=X) and silently hijacked whoever
+    # owned that label. These tests pin the strict behavior so the bug
+    # can't slide back in as a permissive default.
+    # ----------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_strict_rejects_label_collision_without_proof(self, monkeypatch):
+        """No trajectory + no signature must be rejected, not silently bound."""
+        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "1")
+        from src.mcp_handlers.identity.handlers import resolve_by_name_claim
+
+        test_uuid = str(uuid.uuid4())
+        mock_db = AsyncMock()
+        mock_db.find_agent_by_label.return_value = test_uuid
+
+        # Target has no stored trajectory — the path that used to silently bind.
+        with patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity.persistence._redis_cache", False), \
+             patch("src.trajectory_identity.get_trajectory_status", new_callable=AsyncMock, return_value={"has_genesis": False}):
+            result = await resolve_by_name_claim("GhostlyAgent", "session-strict-no-proof")
+
+        assert result is not None
+        assert result.get("rejected") is True
+        assert result.get("reason") == "identity_proof_required"
+        # Recovery hint must name all three valid proofs so callers can fix
+        # themselves without reading source.
+        msg = result.get("message", "")
+        assert "continuity_token" in msg
+        assert "trajectory_signature" in msg
+        assert "force_new" in msg
+
+    @pytest.mark.asyncio
+    async def test_strict_preserves_trajectory_required_reason(self, monkeypatch):
+        """Existing 'trajectory_required' semantics for established agents
+        must survive the strict-mode refactor — they're a distinct signal
+        to operators that the target has history worth protecting."""
+        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "1")
+        from src.mcp_handlers.identity.handlers import resolve_by_name_claim
+
+        test_uuid = str(uuid.uuid4())
+        mock_db = AsyncMock()
+        mock_db.find_agent_by_label.return_value = test_uuid
+
+        with patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity.persistence._redis_cache", False), \
+             patch("src.trajectory_identity.get_trajectory_status", new_callable=AsyncMock, return_value={"has_genesis": True}):
+            result = await resolve_by_name_claim("EstablishedAgent", "session-strict-established")
+
+        assert result.get("rejected") is True
+        assert result.get("reason") == "trajectory_required"
+
+    @pytest.mark.asyncio
+    async def test_legacy_mode_silently_binds_as_escape_hatch(self, monkeypatch):
+        """UNITARES_STRICT_NAME_CLAIM=0 preserves the v2.6 permissive path
+        so operators have a one-env-var rollback if an unforeseen caller
+        breaks under strict mode. The feature flag is the migration window."""
+        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "0")
+        from src.mcp_handlers.identity.handlers import resolve_by_name_claim
+
+        test_uuid = str(uuid.uuid4())
+        mock_db = AsyncMock()
+        mock_db.find_agent_by_label.return_value = test_uuid
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1", metadata={"agent_id": "Legacy_20260417"}
+        )
+        mock_db.get_agent_label.return_value = "LegacyAgent"
+        mock_db.create_session = AsyncMock()
+
+        mock_cache = AsyncMock()
+        mock_cache.bind = AsyncMock()
+        mock_raw = AsyncMock()
+        mock_raw.setex = AsyncMock()
+
+        async def _get_raw():
+            return mock_raw
+
+        with patch("src.mcp_handlers.identity.resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity.persistence._redis_cache", None), \
+             patch("src.trajectory_identity.get_trajectory_status", new_callable=AsyncMock, return_value={"has_genesis": False}), \
+             patch("src.cache.get_session_cache", return_value=mock_cache), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw):
+            result = await resolve_by_name_claim("LegacyAgent", "session-legacy")
+
+        # Legacy behavior: bind succeeds without proof.
+        assert result is not None
+        assert result.get("rejected") is not True
+        assert result.get("agent_uuid") == test_uuid
+        assert result.get("source") == "name_claim"
+
+    @pytest.mark.asyncio
+    async def test_strict_with_valid_signature_still_binds(self, monkeypatch):
+        """A caller that provides a valid trajectory_signature must still
+        succeed under strict mode — otherwise we've broken established
+        resume flows too."""
+        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "1")
+        from src.mcp_handlers.identity.handlers import resolve_by_name_claim
+
+        test_uuid = str(uuid.uuid4())
+        mock_db = AsyncMock()
+        mock_db.find_agent_by_label.return_value = test_uuid
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i1", metadata={"agent_id": "Real_20260417"}
+        )
+        mock_db.get_agent_label.return_value = "RealAgent"
+        mock_db.create_session = AsyncMock()
+
+        mock_cache = AsyncMock()
+        mock_cache.bind = AsyncMock()
+        mock_raw = AsyncMock()
+        mock_raw.setex = AsyncMock()
+
+        async def _get_raw():
+            return mock_raw
+
+        # Signature verifies cleanly (lineage similarity above threshold).
+        mock_verification = {
+            "verified": True,
+            "tiers": {"lineage": {"similarity": 0.95}},
+        }
+
+        with patch("src.mcp_handlers.identity.resolution.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity.persistence._redis_cache", None), \
+             patch("src.trajectory_identity.get_trajectory_status", new_callable=AsyncMock, return_value={"has_genesis": True}), \
+             patch("src.trajectory_identity.verify_trajectory_identity", new_callable=AsyncMock, return_value=mock_verification), \
+             patch("src.cache.get_session_cache", return_value=mock_cache), \
+             patch("src.cache.redis_client.get_redis", new=_get_raw):
+            result = await resolve_by_name_claim(
+                "RealAgent", "session-strict-sig-valid",
+                trajectory_signature={"preferences": {}, "beliefs": {}},
+            )
+
+        assert result is not None
+        assert result.get("rejected") is not True
+        assert result.get("agent_uuid") == test_uuid
+        assert result.get("source") == "name_claim"
 
 
 # ============================================================================
@@ -1014,8 +1178,13 @@ class TestResolveByNameClaimTrajectoryException:
         assert result["source"] == "name_claim"
 
     @pytest.mark.asyncio
-    async def test_session_persist_failure_still_resolves(self):
-        """If session persistence fails in name claim, result is still returned (lines 779-780)."""
+    async def test_session_persist_failure_still_resolves(self, monkeypatch):
+        """If session persistence fails in name claim, result is still returned (lines 779-780).
+
+        Pinned to legacy mode — the concern here is the session-persist
+        exception path, not the strict-gate behavior. Strict mode has
+        its own dedicated coverage in TestResolveByNameClaim."""
+        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "0")
         from src.mcp_handlers.identity.handlers import resolve_by_name_claim
 
         test_uuid = str(uuid.uuid4())
@@ -1161,42 +1330,30 @@ class TestNameClaimTrajectoryRequired:
         assert result["source"] == "name_claim"
 
     @pytest.mark.asyncio
-    async def test_name_claim_allows_without_trajectory_when_none_stored(self):
-        """Allow name claim without signature when target has no stored trajectory (backward compat)."""
+    async def test_name_claim_rejects_without_signature_even_when_no_stored_trajectory(self):
+        """Strict mode: a label collision requires proof even when the
+        target has no stored trajectory yet. This used to be the
+        permissive 'backward compat' branch — it was the exact path the
+        name-claim identity ghost used to silently hijack identities
+        across parallel Claude processes. v2.7.0 closes it; rollback
+        remains available via UNITARES_STRICT_NAME_CLAIM=0."""
         from src.mcp_handlers.identity.handlers import resolve_by_name_claim
 
         test_uuid = str(uuid.uuid4())
         mock_db = AsyncMock()
         mock_db.find_agent_by_label.return_value = test_uuid
-        mock_db.get_identity.return_value = SimpleNamespace(
-            identity_id="i1", metadata={"agent_id": "NewAgent_20260311"}
-        )
-        mock_db.get_agent_label.return_value = "NewAgent"
-        mock_db.create_session = AsyncMock()
 
         mock_traj_status = {"has_genesis": False}
 
-        mock_cache = AsyncMock()
-        mock_cache.bind = AsyncMock()
-        mock_raw = AsyncMock()
-        mock_raw.setex = AsyncMock()
-        mock_raw.rpush = AsyncMock()
-        mock_raw.expire = AsyncMock()
-        async def _get_raw():
-            return mock_raw
-
-        with patch("src.mcp_handlers.identity.resolution.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
-             patch("src.mcp_handlers.identity.persistence._redis_cache", None), \
-             patch("src.cache.get_session_cache", return_value=mock_cache), \
-             patch("src.cache.redis_client.get_redis", new=_get_raw), \
+        with patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.identity.persistence._redis_cache", False), \
              patch("src.trajectory_identity.get_trajectory_status",
                    new_callable=AsyncMock, return_value=mock_traj_status):
             result = await resolve_by_name_claim("NewAgent", "session-no-traj")
 
         assert result is not None
-        assert result.get("rejected") is not True
-        assert result["agent_uuid"] == test_uuid
+        assert result.get("rejected") is True
+        assert result["reason"] == "identity_proof_required"
 
     @pytest.mark.asyncio
     async def test_name_claim_trajectory_mismatch_rejected(self):
