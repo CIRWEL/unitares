@@ -243,6 +243,10 @@ _TOOL_ALIASES: Dict[str, ToolAlias] = {
     # ==========================================================================
 
     # Pi tools → pi(action='...')
+    # The `pi_*` aliases below are pending removal per the Lumen-decoupling plan
+    # (docs/specs/2026-04-17-lumen-decoupling-design.md). Final disposition
+    # depends on the Phase B architectural decision (B1 plugin / B2 feature flag
+    # / B3 unidirectional). Do not add new `pi_*` aliases.
     "pi_health": ToolAlias(old_name="pi_health", new_name="pi", reason="consolidated",
         migration_note="Use pi(action='health')", inject_action="health"),
     "pi_get_context": ToolAlias(old_name="pi_get_context", new_name="pi", reason="consolidated",
