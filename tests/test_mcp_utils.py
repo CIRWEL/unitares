@@ -540,6 +540,39 @@ class TestRequireAgentId:
         require_agent_id(args)
         assert args.get("agent_id") is not None
 
+    @patch("src.mcp_handlers.validators.validate_agent_id_reserved_names", return_value=("bound-uuid", None))
+    @patch("src.mcp_handlers.validators.validate_agent_id_format", return_value=("bound-uuid", None))
+    @patch("src.mcp_handlers.context.get_context_agent_id", return_value="bound-uuid")
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_explicit_alias_of_bound_rewritten_to_uuid(self, ms, mc, mf, mr):
+        """If the explicit agent_id is a label/structured_id of the bound agent,
+        rewrite it to the canonical UUID so downstream metadata lookups work."""
+        s = _mock_server({"bound-uuid": _meta(label="Bot", structured_id="S1", display_name="Bot")})
+        ms.return_value = s
+        args = {"agent_id": "Bot"}  # alias of the bound agent
+        a, e = require_agent_id(args)
+        assert a == "bound-uuid", "alias should be rewritten to bound UUID"
+        assert args["agent_id"] == "bound-uuid"
+        assert e is None
+
+    @patch("src.mcp_handlers.validators.validate_agent_id_reserved_names", return_value=("Other", None))
+    @patch("src.mcp_handlers.validators.validate_agent_id_format", return_value=("Other", None))
+    @patch("src.mcp_handlers.context.get_context_agent_id", return_value="bound-uuid")
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_explicit_cross_agent_not_silently_substituted(self, ms, mc, mf, mr):
+        """Regression: when the explicit agent_id names a different agent than
+        the session-bound one (and isn't an alias of the bound agent), the
+        explicit value must be honored. Silent substitution here violated the
+        identity invariant and caused cross-agent writes on agent.update calls
+        to land on the caller's own record."""
+        s = _mock_server({"bound-uuid": _meta(label="Caller", structured_id="S-caller", display_name="Caller")})
+        ms.return_value = s
+        args = {"agent_id": "Other"}  # label of a different agent
+        a, e = require_agent_id(args)
+        assert a == "Other", f"explicit cross-agent id must be honored, got {a!r}"
+        assert args["agent_id"] == "Other"
+        assert e is None
+
 
 class TestRequireRegisteredAgent:
     @patch("src.mcp_handlers.validators.validate_agent_id_reserved_names", return_value=("u1", None))
