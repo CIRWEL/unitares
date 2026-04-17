@@ -214,10 +214,17 @@ def _should_rebadge_agent_id(current_agent_id: Optional[str], model_type: Option
 
 
 async def _persist_rebadged_agent_id(agent_uuid: str, new_agent_id: str) -> None:
-    """Best-effort sync of refreshed structured agent_id to memory + DB."""
+    """Best-effort sync of refreshed structured agent_id to memory + DB.
+
+    Updates both `agent_id` and `public_agent_id` in the in-memory metadata
+    so lifecycle events and any other readers of `meta.agent_id` see the
+    current identity — not the stale pre-rebadge value.
+    """
     try:
         if agent_uuid in mcp_server.agent_metadata:
-            mcp_server.agent_metadata[agent_uuid].public_agent_id = new_agent_id
+            meta = mcp_server.agent_metadata[agent_uuid]
+            meta.agent_id = new_agent_id
+            meta.public_agent_id = new_agent_id
     except Exception:
         pass
     try:
@@ -1234,8 +1241,10 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     public_agent_id = agent_id if agent_id and agent_id != agent_uuid else None
     structured_id = None
     try:
-        if agent_uuid in mcp_server.agent_metadata:
-            meta = mcp_server.agent_metadata[agent_uuid]
+        # Atomic read via .get — avoids TOCTOU between `in` check and subscript
+        # if another task mutates agent_metadata concurrently.
+        meta = mcp_server.agent_metadata.get(agent_uuid)
+        if meta is not None:
             public_agent_id = getattr(meta, "public_agent_id", None) or public_agent_id
             structured_id = getattr(meta, 'structured_id', None)
     except Exception:

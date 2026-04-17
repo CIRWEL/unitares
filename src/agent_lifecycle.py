@@ -40,19 +40,21 @@ def get_or_create_monitor(agent_id: str) -> UNITARESMonitor:
 
 
 def _agent_age_hours(meta: AgentMetadata) -> float | None:
-    """Return hours since last activity, or None if unparseable."""
+    """Return hours since last activity, or None if unparseable.
+
+    Timestamps without tzinfo are interpreted as UTC (the format UNITARES
+    emits everywhere). This avoids mixing naive-local `datetime.now()` with
+    a naive-UTC stored timestamp, which would off-by-local-offset the age.
+    """
     from datetime import timezone
     try:
         last_update_str = meta.last_update or meta.created_at
         last_update_dt = datetime.fromisoformat(
             last_update_str.replace('Z', '+00:00') if 'Z' in last_update_str else last_update_str
         )
-        # Use timezone-aware comparison if the timestamp has tzinfo,
-        # otherwise fall back to naive local time.
-        if last_update_dt.tzinfo is not None:
-            now = datetime.now(timezone.utc)
-        else:
-            now = datetime.now()
+        if last_update_dt.tzinfo is None:
+            last_update_dt = last_update_dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
         return (now - last_update_dt).total_seconds() / 3600
     except (ValueError, TypeError, AttributeError):
         return None
@@ -237,8 +239,12 @@ def build_standardized_agent_info(
         update_count = meta.total_updates
 
     try:
+        from datetime import timezone
         created_dt = datetime.fromisoformat(created_ts.replace('Z', '+00:00') if 'Z' in created_ts else created_ts)
-        age_days = (datetime.now(created_dt.tzinfo) - created_dt).days
+        if created_dt.tzinfo is None:
+            # Naive stored timestamps are UTC (see _agent_age_hours).
+            created_dt = created_dt.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - created_dt).days
     except (ValueError, TypeError, AttributeError):
         age_days = None
 
