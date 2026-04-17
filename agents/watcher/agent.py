@@ -126,15 +126,30 @@ def _save_session(client_session_id: str, continuity_token: str, agent_uuid: str
 
 
 def resolve_identity(client) -> None:
-    """Three-step identity resolution: token → name → fresh onboard.
+    """Resolve Watcher identity via UUID-direct → token → fresh onboard.
+
+    Name-resume (previous Step 2) was removed 2026-04-17 when the server-side
+    name-claim path was deleted. Without it, every `identity(name="Watcher")`
+    call forks a fresh UUID, which is exactly what happened: 21 Watcher
+    forks in ~2h before this fix. PATH 0 (UUID-direct) takes its place —
+    strongest signal, unambiguous, unchallengeable by name-collision bugs.
 
     Sets module-level _watcher_identity on success, leaves it None on failure.
-    Mirrors the GovernanceAgent._ensure_identity pattern but synchronous.
     """
     global _watcher_identity
     saved = _load_session()
 
-    # Step 1: Token resume (strong)
+    # Step 0: UUID-direct (PATH 0) — strongest resume signal.
+    # Works whenever we have a stored UUID, even if the token is stale.
+    if saved.get("agent_uuid"):
+        try:
+            client.identity(agent_uuid=saved["agent_uuid"], resume=True)
+            _sync_identity(client)
+            return
+        except Exception as e:
+            log(f"uuid-direct resume failed: {e}", "warning")
+
+    # Step 1: Token resume (PATH 2.8) — fallback when UUID is missing.
     if saved.get("continuity_token"):
         try:
             client.identity(continuity_token=saved["continuity_token"], resume=True)
@@ -143,15 +158,7 @@ def resolve_identity(client) -> None:
         except Exception as e:
             log(f"token resume failed: {e}", "warning")
 
-    # Step 2: Name resume (weak)
-    try:
-        client.identity(name="Watcher", resume=True)
-        _sync_identity(client)
-        return
-    except Exception as e:
-        log(f"name resume failed: {e}", "warning")
-
-    # Step 3: Fresh onboard
+    # Step 2: Fresh onboard — only when nothing else works.
     try:
         client.onboard("Watcher", spawn_reason="resident_observer")
         _sync_identity(client)
