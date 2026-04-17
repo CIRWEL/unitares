@@ -6,19 +6,7 @@ Use this path if you are working from Codex or ChatGPT and want the cleanest UNI
 
 Connect to a running UNITARES governance server, preserve continuity cleanly, and check in at meaningful milestones instead of every trivial edit.
 
-## Recommended Default
-
-Use `explicit` mode unless you are deliberately dogfooding tighter automation.
-
-### Modes
-
-- `explicit`: manual onboarding/check-in/diagnosis; best default
-- `dogfood-light`: explicit check-ins plus stronger milestone reminders
-- `dogfood-heavy`: research mode for tighter automation and deterministic outcome capture
-
-This plugin currently optimizes for `explicit`.
-
-## Recommended Flow
+## Stable Workflow
 
 1. Run `/governance-start`
 2. Keep continuity in `.unitares/session.json`
@@ -29,14 +17,20 @@ This plugin currently optimizes for `explicit`.
 
 If you are not using commands directly, the equivalent raw tool flow is:
 
-1. `onboard()`
-2. keep `continuity_token` when supported, otherwise `client_session_id`
+1. `onboard()` once and save `uuid`
+2. On subsequent sessions, call `identity(agent_uuid=..., resume=true)`
 3. `process_agent_update()` after meaningful work
 4. `get_governance_metrics()` for read-only state checks
-5. `identity()` if continuity looks wrong
-6. `health_check()` if the system itself may be part of the problem
+5. `health_check()` only if the system itself may be part of the problem
 
-## Local Continuity Cache
+## Continuity Model
+
+- `uuid` is the primary identity anchor for resident agents
+- `continuity_token` and `client_session_id` are useful resume metadata and fallback paths
+- `session_resolution_source` tells you how the runtime actually resolved continuity
+- if continuity falls back to a weak source, rerun `/governance-start` or `identity(agent_uuid=..., resume=true)`
+
+## Local Cache
 
 Codex should treat continuity as local workspace state, not Claude-only adapter state.
 
@@ -50,11 +44,11 @@ Shared helper:
 
 Treat this as local runtime state. It should not be used as a source of truth over the server, but it is the first place to look for:
 
-- `continuity_token`
-- `client_session_id`
 - `uuid`
 - `agent_id`
 - `display_name`
+- `continuity_token`
+- `client_session_id`
 - `session_resolution_source`
 
 ## Minimal Session Pattern
@@ -70,10 +64,11 @@ Do not treat every file edit as a governance event. High-signal check-ins are mo
 
 ## What to Watch
 
-- `continuity_token`: prefer this when available
-- `client_session_id`: fallback continuity token when strong resume is unavailable
-- `session_resolution_source`: if this falls back to a weak source, resume explicitly
-- `identity_assurance`: strong is better than implicit
+- `identity_status`
+- `bound_identity`
+- `session_resolution_source`
+- `continuity_token_supported`
+- `identity_assurance` when an update response includes it
 
 ## Commands
 
@@ -81,6 +76,10 @@ Do not treat every file edit as a governance event. High-signal check-ins are mo
 - `/checkin` for a governance update after meaningful work
 - `/diagnose` for identity, state, and operator diagnostics
 - `/dialectic` for structured review
+
+## Scope
+
+This file documents the stable manual Codex path. Older planning docs mention `explicit`, `dogfood-light`, and `dogfood-heavy` modes; treat those as planning terms unless a concrete runtime surface is documented alongside them.
 
 ## Claude Note
 
