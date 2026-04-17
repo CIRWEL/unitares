@@ -618,7 +618,29 @@ def _on_background_task_done(task: asyncio.Task) -> None:
 # Agent silence detection
 # ---------------------------------------------------------------------------
 
-# Expected check-in intervals for persistent agents (seconds)
+# Expected check-in intervals in seconds, derived from ``cadence.*`` agent tags.
+# Generic — any agent with a cadence tag gets the matching interval regardless
+# of label. Adding a new cadence is a single-line change here.
+CADENCE_FROM_TAG: dict[str, int] = {
+    "cadence.1min": 60,
+    "cadence.5min": 300,
+    "cadence.10min": 600,
+    "cadence.30min": 1800,
+    "cadence.1hr": 3600,
+}
+
+
+def cadence_from_tags(tags) -> int | None:
+    """Return the expected check-in interval (seconds) for an agent from its tags, or None."""
+    for tag in (tags or []):
+        interval = CADENCE_FROM_TAG.get(tag)
+        if interval is not None:
+            return interval
+    return None
+
+
+# Back-compat label-based intervals: used only when an agent has no
+# ``cadence.*`` tag yet. Retire this once Lumen/Vigil/Sentinel are tagged.
 _PERSISTENT_AGENT_INTERVALS = {
     "Vigil": 1800,     # 30 min
     "Lumen": 300,      # 5 min
@@ -641,10 +663,19 @@ _SILENCE_PROXY_AGENTS: dict[str, str] = {
 
 
 def _get_expected_interval(meta) -> int | None:
-    """Return expected check-in interval for persistent agents, None for ephemeral."""
+    """Return expected check-in interval for persistent agents, None for ephemeral.
+
+    Priority:
+      1. ``cadence.*`` tag (generic, label-independent)
+      2. Hardcoded label fallback (back-compat; retires with tag migration)
+      3. ``embodied`` / ``autonomous`` tag → 300s default
+    """
+    tags = meta.tags or []
+    tagged_cadence = cadence_from_tags(tags)
+    if tagged_cadence is not None:
+        return tagged_cadence
     if meta.label and meta.label in _PERSISTENT_AGENT_INTERVALS:
         return _PERSISTENT_AGENT_INTERVALS[meta.label]
-    tags = meta.tags or []
     if "embodied" in tags or "autonomous" in tags:
         return 300  # default for embodied/autonomous agents
     return None  # ephemeral — skip

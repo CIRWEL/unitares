@@ -78,8 +78,13 @@ def is_agent_protected(agent_id: str, meta: AgentMetadata) -> bool:
     """Return True if the agent should never be auto-archived."""
     if agent_id in _SYSTEM_AGENT_IDS:
         return True
-    if "pioneer" in (meta.tags or []):
+    tags = meta.tags or []
+    if "pioneer" in tags:
         return True
+    if "persistent" in tags or "protected" in tags:
+        return True
+    # Back-compat: ``Lumen`` label as protection marker, pending migration to
+    # the generic ``persistent`` / ``protected`` tags. Drop once tagged.
     label = getattr(meta, 'label', None) or getattr(meta, 'display_name', None) or ""
     if label == "Lumen":
         return True

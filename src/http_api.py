@@ -1386,7 +1386,18 @@ async def http_residents(request):
                 except (ValueError, TypeError):
                     pass
 
-            silence_threshold = _DEFAULT_RESIDENT_SILENCE_SECONDS.get(label.lower(), 30 * 60)
+            # Prefer tag-driven cadence (generic, label-independent); fall
+            # back to the hardcoded per-label default for agents not yet
+            # migrated to ``cadence.*`` tags.
+            silence_threshold: int = 30 * 60
+            meta_tags = getattr(meta, "tags", None) or []
+            from src.background_tasks import cadence_from_tags
+            tag_cadence = cadence_from_tags(meta_tags)
+            if tag_cadence is not None:
+                # Threshold = 2x expected cadence — tolerates one missed cycle.
+                silence_threshold = tag_cadence * 2
+            else:
+                silence_threshold = _DEFAULT_RESIDENT_SILENCE_SECONDS.get(label.lower(), 30 * 60)
 
             # Status: paused > silent > healthy > unknown.
             status = "unknown"
