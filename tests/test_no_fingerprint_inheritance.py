@@ -189,3 +189,43 @@ async def test_path2_postgres_hit_resume_false_does_not_set_predecessor():
         f"resume=False + PostgreSQL session hit must not leak predecessor_uuid "
         f"(got {result.get('predecessor_uuid')!r})"
     )
+
+
+def test_explicit_parent_agent_id_records_lineage_without_state_transplant():
+    """
+    When a caller explicitly asserts a predecessor via parent_agent_id on
+    agent_metadata, the metadata row records lineage but the new agent's
+    monitor starts with a fresh GovernanceState.
+    """
+    from datetime import datetime, timezone
+    from src.agent_lifecycle import get_or_create_monitor
+    from src.governance_monitor import UNITARESMonitor
+
+    parent_uuid = "33333333-3333-4333-8333-333333333333"
+    parent_monitor = UNITARESMonitor(parent_uuid)
+    parent_monitor.state.V_history.extend([0.5, 0.6])
+    monitors[parent_uuid] = parent_monitor
+
+    child_uuid = "44444444-4444-4444-8444-444444444444"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    # Explicit caller assertion: "I am forking from parent_uuid"
+    agent_metadata[child_uuid] = AgentMetadata(
+        agent_id=child_uuid,
+        parent_agent_id=parent_uuid,
+        status="active",
+        created_at=now_iso,
+        last_update=now_iso,
+    )
+
+    def fake_load(agent_id):
+        if agent_id == parent_uuid:
+            return parent_monitor.state
+        return None
+
+    with patch("src.agent_lifecycle.load_monitor_state", side_effect=fake_load):
+        child_monitor = get_or_create_monitor(child_uuid)
+
+    # Lineage is recorded in metadata.
+    assert agent_metadata[child_uuid].parent_agent_id == parent_uuid
+    # But state is NOT transplanted.
+    assert child_monitor.state.V_history == []
