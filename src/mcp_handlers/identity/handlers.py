@@ -1241,8 +1241,10 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     public_agent_id = agent_id if agent_id and agent_id != agent_uuid else None
     structured_id = None
     try:
-        if agent_uuid in mcp_server.agent_metadata:
-            meta = mcp_server.agent_metadata[agent_uuid]
+        # Atomic read via .get — avoids TOCTOU between `in` check and subscript
+        # if another task mutates agent_metadata concurrently.
+        meta = mcp_server.agent_metadata.get(agent_uuid)
+        if meta is not None:
             public_agent_id = getattr(meta, "public_agent_id", None) or public_agent_id
             structured_id = getattr(meta, 'structured_id', None)
     except Exception:
