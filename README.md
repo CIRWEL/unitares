@@ -10,9 +10,11 @@
 
 Status: live. For architecture details, see [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md) and [docs/CANONICAL_SOURCES.md](docs/CANONICAL_SOURCES.md).
 
-UNITARES is a runtime governance system for AI agents. It accepts check-ins over MCP and HTTP, turns observable behavior into shared state (**EISV**: energy, integrity, entropy, void), stores long-run trajectories in PostgreSQL + AGE, and returns verdicts, guidance, calibration, and recovery paths in real time.
+Agent observability today means grepping logs and inferring condition from outputs. UNITARES is a runtime governance system that gives AI agents **digital proprioception** — a shared, readable representation of state, so humans, services, and other agents can see how an agent is doing without reverse-engineering its behavior.
 
-The state model is derived from what agents actually do — EMA-smoothed observations, not model predictions. Running continuously in production since November 2025 with 6,000+ passing tests at 77% coverage, including [Lumen](https://github.com/CIRWEL/anima-mcp), an embodied agent on a Raspberry Pi.
+Check-ins over MCP or HTTP become four continuous state variables — **EISV** (energy, integrity, entropy, void) — alongside verdicts, guidance, calibration, and recovery paths returned in real time. Long-run trajectories are stored in PostgreSQL + AGE. The state model is derived from what agents actually do: EMA-smoothed observations, not model predictions.
+
+Running continuously in production since November 2025 with 6,000+ passing tests at 77% coverage, including [Lumen](https://github.com/CIRWEL/anima-mcp), an embodied agent on a Raspberry Pi.
 
 | | |
 |--|--|
@@ -139,11 +141,14 @@ Agents emit text and tool results; they rarely expose a stable notion of interna
 | **E** (Energy) | [0, 1] | Productive capacity |
 | **I** (Integrity) | [0, 1] | Information coherence |
 | **S** (Entropy) | [0, 1] | Disorder and uncertainty |
-| **V** (Void) | [-1, 1] | Accumulated E-I imbalance |
+| **V** (Void) | [-1, 1] | Running imbalance: energetic-but-incoherent (positive) vs coherent-but-depleted (negative) |
 
 **Behavioral EISV (primary, verdict-driving)** — Implemented in `src/behavioral_state.py` and `src/behavioral_assessment.py`: EMA-smoothed observations per dimension, no ODE and no universal attractor. After **~30** updates, per-agent **Welford** baselines enable self-relative scoring (z-score vs *your* operating point). Earlier check-ins use bootstrap behavior; absolute safety floors still apply.
 
 **ODE in `governance_core` (secondary, diagnostic/fallback)** — The same four variables also evolve in a coupled ODE with contraction-style stability analysis. That integration runs **in parallel for analysis**; governance verdicts normally follow behavioral EISV once behavioral confidence is established, while ODE remains the fallback when behavioral confidence is still insufficient. See [Architecture](docs/UNIFIED_ARCHITECTURE.md) for the full pipeline (drift → entropy, calibration, circuit breaker, dialectic).
+
+<details>
+<summary><strong>Dynamics (for the curious)</strong> — the coupled ODE behind the fallback path</summary>
 
 ```
 dE/dt = α(I - E) - β·E·S           Energy tracks integrity, dragged by entropy
@@ -151,6 +156,8 @@ dI/dt = -k·S + β_I·C(V) - γ_I·I   Integrity boosted by coherence, reduced b
 dS/dt = -μ·S + λ₁·‖Δη‖² - λ₂·C   Entropy decays, rises with drift, damped by coherence
 dV/dt = κ(E - I) - δ·V             Void accumulates E-I mismatch, decays toward zero
 ```
+
+</details>
 
 ---
 
