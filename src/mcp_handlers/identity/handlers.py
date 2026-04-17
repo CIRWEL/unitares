@@ -66,7 +66,6 @@ from .resolution import (
     _generate_auto_label,
     _normalize_model_type,
     resolve_session_identity,
-    resolve_by_name_claim,
 )
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 # =============================================================================
@@ -297,45 +296,10 @@ async def handle_identity_v2(
 
     This tool does NOT look up other agents. Use get_agent_metadata for that.
     """
-    # Resolve session to identity (lazy - doesn't persist yet)
-    # Try name-based resolution first (PATH 2.5)
+    # Resolve session to identity (lazy — doesn't persist yet).
+    # Name-claim was removed 2026-04-17: `name` is now a cosmetic label,
+    # set via set_agent_label after the session resolves normally.
     name = arguments.get("name")
-    if name:
-        trajectory_sig = arguments.get("trajectory_signature")
-        name_result = await resolve_by_name_claim(name, session_key, trajectory_signature=trajectory_sig)
-        if name_result:
-            # Handle rejection (trajectory required or mismatch)
-            if name_result.get("rejected"):
-                return {
-                    "success": False,
-                    "error": name_result.get("reason", "identity_claim_rejected"),
-                    "message": name_result.get("message", "Identity claim rejected"),
-                    "hint": "Provide trajectory_signature for identity verification, or use force_new=true to create a new identity.",
-                }
-
-            agent_uuid = name_result["agent_uuid"]
-            agent_id = name_result["agent_id"]
-            display_name = name_result.get("label")
-            from .shared import make_client_session_id
-            stable_session_id = make_client_session_id(agent_uuid)
-            return {
-                "success": True,
-                "agent_id": agent_id,
-                "agent_uuid": agent_uuid,
-                "display_name": display_name,
-                "label": display_name,
-                "bound": True,
-                "persisted": True,
-                "source": "name_claim",
-                "created": False,
-                "resumed_by_name": True,
-                "client_session_id": stable_session_id,
-                "message": f"Resumed identity: {display_name or agent_id}",
-                "session_continuity": {
-                    "client_session_id": stable_session_id,
-                    "instruction": "Your session is auto-bound. You only need client_session_id if tools don't recognize you.",
-                },
-            }
 
     # Pass model_type to generate proper agent_id (model+date format)
     identity = await resolve_session_identity(
@@ -485,48 +449,9 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
         })
         return _identity_success(payload, agent_uuid=_direct_uuid)
 
-    # PATH 2.5: Name-based identity claim (only when resume=true, before session resolution)
-    # If the caller provides name= + resume=true and isn't forcing new, try to reconnect
+    # PATH 2.5 (name-claim) removed 2026-04-17. `name` is now a cosmetic
+    # label updated after the session resolves; it never drives lookup.
     name = arguments.get("name")
-    if name and not force_new and resume and not explicit_resume_binding:
-        trajectory_sig = arguments.get("trajectory_signature")
-        name_result = await resolve_by_name_claim(name, base_session_key, trajectory_signature=trajectory_sig)
-        if name_result:
-            # Handle rejection (trajectory required or mismatch)
-            if name_result.get("rejected"):
-                return error_response(
-                    name_result.get("message", "Identity claim rejected"),
-                    recovery={
-                        "reason": name_result.get("reason"),
-                        "hint": "Provide trajectory_signature for identity verification, or use force_new=true to create a new identity.",
-                    }
-                )
-
-            agent_uuid = name_result["agent_uuid"]
-            agent_id = name_result["agent_id"]
-            label = name_result.get("label")
-            logger.info(f"[IDENTITY] Resolved '{name}' via name claim -> {agent_uuid[:8]}...")
-
-            # Update request context so signature matches
-            try:
-                from ..context import update_context_agent_id
-                update_context_agent_id(agent_uuid)
-            except Exception:
-                pass
-
-            payload = _identity_diag_payload(
-                agent_uuid=agent_uuid,
-                agent_id=agent_id,
-                label=label,
-                status="resumed",
-            )
-            payload.update({
-                "resumed": True,
-                "resumed_by_name": True,
-                "message": f"Welcome back! Resumed identity '{label or agent_id}'",
-                "hint": "Use force_new=true to create a new identity instead"
-            })
-            return _identity_success(payload, agent_uuid=agent_uuid)
 
     # Extract agent UUID from continuity token for direct lookup fallback.
     # If session bindings expired, this allows rebinding without forking.
@@ -993,11 +918,11 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     created_fresh_identity = False  # Track if we got a fresh identity to persist
     _was_archived = False  # Track if agent was auto-unarchived
     if not force_new:
-        # Token-based resume takes precedence over name claim.
-        # A continuity_token is a signed identity anchor — if the client has one,
-        # use resolve_session_identity (which includes PATH 2.8 token rebind)
-        # BEFORE attempting name-based matching, which can reject when the name
-        # collides with a trajectory-protected identity the client isn't claiming.
+        # Token-based resume is the only name-free resume path (PATH 2.8).
+        # Name-based reconnection was removed 2026-04-17 — a label alone is
+        # not proof of identity. Callers who previously relied on
+        # `onboard(name=X, resume=true)` must now pass agent_uuid or
+        # continuity_token, or accept a fresh identity via force_new=true.
         if _token_agent_uuid and resume:
             existing_identity = await resolve_session_identity(
                 base_session_key, persist=False, resume=resume,
@@ -1012,30 +937,6 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                         "token_agent_uuid": existing_identity.get("token_agent_uuid"),
                         "hint": "Call onboard(force_new=true) to create a new identity.",
                     }
-                )
-        elif name and resume:
-            # Name-based reconnection — only when no token is available
-            trajectory_sig = arguments.get("trajectory_signature")
-            existing_by_name = await resolve_by_name_claim(name, base_session_key, trajectory_signature=trajectory_sig)
-            if existing_by_name:
-                # Handle rejection (trajectory required or mismatch)
-                if existing_by_name.get("rejected"):
-                    return error_response(
-                        existing_by_name.get("message", "Identity claim rejected"),
-                        recovery={
-                            "reason": existing_by_name.get("reason"),
-                            "hint": "Provide trajectory_signature for identity verification, or use force_new=true to create a new identity.",
-                        }
-                    )
-                existing_identity = existing_by_name
-                agent_uuid = existing_by_name["agent_uuid"]
-                agent_id = existing_by_name["agent_id"]
-                label = existing_by_name.get("label")
-                logger.info(f"[ONBOARD] Resumed '{name}' via name claim -> {agent_uuid[:8]}...")
-            else:
-                existing_identity = await resolve_session_identity(
-                    base_session_key, persist=False, resume=resume,
-                    token_agent_uuid=_token_agent_uuid,
                 )
         else:
             existing_identity = await resolve_session_identity(

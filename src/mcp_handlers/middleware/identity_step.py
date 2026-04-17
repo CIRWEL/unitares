@@ -265,20 +265,11 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
         f"client_session_id={client_session_id!r} signals={signals.transport if signals else 'None'}"
     )
 
-    # Resolve identity (Redis → PostgreSQL → Name Claim → Create)
+    # Resolve identity (Redis → PostgreSQL → Token Rebind → Create).
+    # Name-claim lookup removed 2026-04-17 — middleware no longer passes
+    # agent_name into resolution. Label is set by onboard/identity handlers.
     from ..identity.handlers import resolve_session_identity
-    agent_name_hint = None
-    if arguments:
-        # Only use name for identity lookup if resume=True is explicitly passed
-        # This prevents accidental identity collision when multiple sessions use same name
-        resume_requested = arguments.get("resume", False)
-        if resume_requested:
-            agent_name_hint = arguments.get("agent_name") or (
-                arguments.get("name") if name in ("identity", "onboard") else None
-            )
-        else:
-            # Without resume, only use agent_name (not "name" parameter)
-            agent_name_hint = arguments.get("agent_name")
+
     # Extract X-Agent-Id from SessionSignals (set at transport layer) or fallback to request headers
     x_agent_id_header = signals.x_agent_id if signals else None
     if not x_agent_id_header:
@@ -292,15 +283,10 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
             pass
 
     # X-Agent-Name auto-resume REMOVED (identity honesty refactor):
-    # Silent name claims from transport headers bypass consent.
-    # Agents must explicitly pass name= + resume=true in onboard/identity calls.
-
-    # Use header as name-claim fallback only when no name hint from arguments
-    if not agent_name_hint and x_agent_id_header:
-        is_uuid = len(x_agent_id_header) == 36 and x_agent_id_header.count("-") == 4
-        if not is_uuid:
-            agent_name_hint = x_agent_id_header
-            logger.debug(f"[DISPATCH] Using X-Agent-Id as name claim: {x_agent_id_header}")
+    # Silent name claims from transport headers bypass consent. All
+    # name-claim resolution paths were removed 2026-04-17 — a non-UUID
+    # X-Agent-Id header is ignored (only UUID values are used for PATH
+    # 2.75 UUID recovery below).
     trajectory_sig = arguments.get("trajectory_signature") if arguments else None
 
     # PATH 0 passthrough: when caller supplies agent_uuid, skip session
@@ -347,7 +333,6 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
         # creating new identities, we are looking up the existing one.
         identity_result = await resolve_session_identity(
             session_key,
-            agent_name=agent_name_hint,
             trajectory_signature=trajectory_sig,
             resume=True,
             token_agent_uuid=_token_agent_uuid,

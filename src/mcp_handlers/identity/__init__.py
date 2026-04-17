@@ -12,7 +12,6 @@ from .handlers import (
 from .shared import get_bound_agent_id, is_session_bound
 from .core import (
     resolve_session_identity,
-    resolve_by_name_claim,
     set_agent_label,
 )
 
@@ -27,6 +26,5 @@ __all__ = [
     "derive_session_key",
     "_agent_exists_in_postgres",
     "resolve_session_identity",
-    "resolve_by_name_claim",
     "set_agent_label",
 ]
