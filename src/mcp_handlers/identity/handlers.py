@@ -1090,12 +1090,6 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             created_fresh_identity = True
             agent_uuid = existing_identity.get("agent_uuid")
             agent_id = existing_identity.get("agent_id", agent_uuid)
-            # IDENTITY HONESTY: Wire predecessor from resolve_session_identity
-            # when resume=False found an existing identity but created a new UUID
-            if not _parent_agent_id and existing_identity.get("predecessor_uuid"):
-                _parent_agent_id = existing_identity["predecessor_uuid"]
-                if not _spawn_reason:
-                    _spawn_reason = "new_session"
             logger.info(f"[ONBOARD] Created fresh identity {agent_uuid[:8]}... (will persist)")
 
             # Use base session key — model_type goes into metadata, not session key
