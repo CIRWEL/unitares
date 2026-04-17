@@ -77,6 +77,8 @@ from src.agent_state import (
 
 from src.tool_schemas import get_tool_definitions
 from src.lock_cleanup import cleanup_stale_state_locks
+from src.services.tool_usage_recorder import record_tool_usage
+from src.background_tasks import create_tracked_task
 
 # ============================================================================
 # MCP Server Instance
@@ -356,38 +358,6 @@ async def inject_lightweight_heartbeat(
         logger.error(f"Error injecting heartbeat for {agent_id}: {e}", exc_info=True)
 
 
-def _record_tool_usage(name, agent_id, success, error_type=None, latency_ms=None):
-    """Record a tool call to JSONL (sync, local) and audit.tool_usage (fire-and-forget).
-
-    Never raises — a telemetry failure must not break the tool call.
-    """
-    try:
-        from src.tool_usage_tracker import get_tool_usage_tracker
-        get_tool_usage_tracker().log_tool_call(
-            tool_name=name, agent_id=agent_id, success=success, error_type=error_type,
-        )
-    except Exception as e:
-        logger.debug(f"JSONL tool_usage log failed (non-fatal): {e}")
-
-    try:
-        from src.background_tasks import create_tracked_task
-        from src.audit_db import append_tool_usage_async
-        create_tracked_task(
-            append_tool_usage_async(
-                agent_id=agent_id,
-                tool_name=name,
-                latency_ms=latency_ms,
-                success=success,
-                error_type=error_type,
-            ),
-            name="persist_tool_usage",
-        )
-    except RuntimeError:
-        pass  # no running event loop (CLI / tests)
-    except Exception as e:
-        logger.debug(f"DB tool_usage persist failed (non-fatal): {e}")
-
-
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any] | None) -> Sequence[TextContent]:
     """Handle tool calls from MCP client"""
@@ -475,10 +445,10 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> Sequence[Tex
         result = await dispatch_tool(name, arguments)
         latency_ms = int((time.monotonic() - t0) * 1000)
         if result is not None:
-            _record_tool_usage(name, agent_id, success=True, latency_ms=latency_ms)
+            record_tool_usage(tool_name=name, agent_id=agent_id, success=True, latency_ms=latency_ms)
             return result
-        _record_tool_usage(name, agent_id, success=False,
-                           error_type="unknown_tool", latency_ms=latency_ms)
+        record_tool_usage(tool_name=name, agent_id=agent_id, success=False,
+                          error_type="unknown_tool", latency_ms=latency_ms)
         return [TextContent(type="text", text=json.dumps({"success": False, "error": f"Unknown tool: {name}"}, indent=2))]
     except ImportError:
         return [TextContent(type="text", text=json.dumps({"success": False, "error": f"Handler registry not available for tool '{name}'"}, indent=2))]
@@ -490,8 +460,8 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> Sequence[Tex
             f"Error executing tool '{name}': {str(e)}",
             recovery={"action": "Check tool parameters and try again"}
         )
-        _record_tool_usage(name, agent_id, success=False,
-                           error_type="execution_error", latency_ms=latency_ms)
+        record_tool_usage(tool_name=name, agent_id=agent_id, success=False,
+                          error_type="execution_error", latency_ms=latency_ms)
         return [sanitized_error]
 
 
