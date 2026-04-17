@@ -26,7 +26,6 @@ from .resolution import (
     _generate_auto_label,
     _normalize_model_type,
     resolve_session_identity,
-    resolve_by_name_claim,
 )
 
 __all__ = [
@@ -46,5 +45,4 @@ __all__ = [
     "_generate_auto_label",
     "_normalize_model_type",
     "resolve_session_identity",
-    "resolve_by_name_claim",
 ]

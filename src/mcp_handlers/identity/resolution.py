@@ -1,14 +1,15 @@
 """
 Core identity resolution logic.
 
-Houses resolve_session_identity, resolve_by_name_claim, and agent ID generation.
+Houses resolve_session_identity and agent ID generation. Name-claim
+resolution (resolve_by_name_claim) was removed 2026-04-17 — `name` is a
+cosmetic label, not an identity key.
 """
 
 from __future__ import annotations
 
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
-import os
 import uuid
 import re
 
@@ -247,8 +248,6 @@ async def resolve_session_identity(
     client_hint: Optional[str] = None,
 
     force_new: bool = False,
-
-    agent_name: Optional[str] = None,
 
     trajectory_signature: Optional[dict] = None,
 
@@ -561,37 +560,17 @@ async def resolve_session_identity(
 
 
 
-    # PATH 2.5: Name-based identity claim
-    # If agent provides a name, try to resolve to existing identity by label.
-    # This enables reconnection even when session keys rotate.
-    if agent_name:
-        name_result = await resolve_by_name_claim(
-            agent_name, session_key, trajectory_signature
-        )
-        if name_result:
-            return name_result
-
-    # PATH 2.75: Auto-name from client signals (prevents ghost proliferation)
-    # If no explicit agent_name was provided, generate a stable label from
-    # model_type + client_hint and try to claim an existing identity.
-    #
-    # IDENTITY INTEGRITY FIX (v2.7.1): Auto-name claims now REQUIRE trajectory
-    # signature verification. Without it, every fresh session of the same model
-    # type silently inherits prior history and relational context — false continuity.
-    # An agent ends up believing it has 30 visits to Lumen when it has none.
-    #
-    # Rule: only auto-claim an *existing* identity if trajectory_signature is
-    # provided and passes verification. Without it, PATH 3 creates a fresh UUID
-    # (the auto_label is still assigned so the new agent can be found later).
-    if not agent_name and (model_type or client_hint) and trajectory_signature:
-        auto_label = _generate_auto_label(model_type, client_hint)
-        if auto_label:
-            auto_result = await resolve_by_name_claim(
-                auto_label, session_key, trajectory_signature
-            )
-            if auto_result:
-                logger.info(f"[AUTO_NAME] Reused identity via auto-label '{auto_label}' (trajectory verified)")
-                return auto_result
+    # NAME-CLAIM REMOVED (2026-04-17)
+    # PATH 2.5 (explicit agent_name) and PATH 2.75 (auto-name) used to
+    # resolve identity by label. They were the original source of the
+    # "ghost siphon" — multiple distinct sessions colliding on one UUID
+    # because they happened to send the same human-readable label. Name
+    # is now strictly a cosmetic attribute stored at creation or updated
+    # via set_agent_label. Identity resumption must go through a
+    # cryptographic signal: PATH 0 (agent_uuid), PATH 2.8
+    # (continuity_token), or explicit session binding via PATH 1/2.
+    # Callers with only a label and no UUID/token get a fresh identity.
+    # See project_name-claim-identity-ghost.md in operator memory.
 
     # PATH 2.8: Direct agent lookup from continuity token
     # The token embeds the agent UUID. If session bindings expired but the
@@ -660,8 +639,11 @@ async def resolve_session_identity(
     # agent_id is human-readable label (model+date format, for display)
     agent_uuid = str(uuid.uuid4())
     agent_id = _generate_agent_id(model_type, client_hint)
-    # Auto-assign label from client signals to prevent future ghosts
-    label = _generate_auto_label(model_type, client_hint) if not agent_name else None
+    # Auto-assign a cosmetic default label from client signals. Multiple
+    # agents can share this label — it is NOT used for lookup (name-claim
+    # removed 2026-04-17). Operators set a meaningful label later via
+    # set_agent_label / identity(name=X).
+    label = _generate_auto_label(model_type, client_hint)
 
     if persist:
         # Persist immediately to PostgreSQL
@@ -746,207 +728,7 @@ async def resolve_session_identity(
     return result
 
 
-async def resolve_by_name_claim(
-    agent_name: str,
-    session_key: str,
-    trajectory_signature: Optional[dict] = None,
-) -> Optional[Dict[str, Any]]:
-    """
-    PATH 2.5: Resolve identity by name claim.
-
-    If an agent provides its name, look up the existing identity by label
-    in PostgreSQL. If found, bind this session to that identity.
-
-    HARDENED (v2.6.0): If the target identity has a stored trajectory,
-    ``trajectory_signature`` is REQUIRED — not optional. This prevents
-    impersonation of established agents.
-
-    HARDENED (v2.7.0 — strict name-claim): A label collision requires
-    cryptographic proof even when the target has NO stored trajectory yet.
-    The old permissive branch ("no stored trajectory + no signature →
-    silent bind") was the "name-claim identity ghost": every new client
-    that defaulted to ``onboard(name=X)`` without a token accidentally
-    resumed whatever agent already owned that label. See
-    ``project_name-claim-identity-ghost.md`` in operator memory.
-
-    Callers with legitimate proof bypass or satisfy this gate:
-      - ``continuity_token``       — handled upstream at PATH 2.8, never
-                                     reaches this function
-      - ``agent_uuid``             — PATH 0 UUID-direct, same
-      - ``trajectory_signature``   — verified below
-      - ``force_new=true``         — onboard handler skips this function
-
-    Escape hatch: ``UNITARES_STRICT_NAME_CLAIM=0`` restores legacy
-    silent-bind for emergency rollback during the caller-migration
-    window. Every legacy bind is logged so operators can see which
-    callers still need updating.
-    """
-    if not agent_name or len(agent_name) < 2:
-        return None
-
-    # Look up existing agent by label
-    agent_uuid = await _find_agent_by_label(agent_name)
-    if not agent_uuid:
-        logger.debug(f"[NAME_CLAIM] No agent found with label '{agent_name}'")
-        return None
-
-    # Check if target has a stored trajectory (established identity). The
-    # result drives the rejection *reason* but no longer the rejection
-    # *decision* in strict mode.
-    has_stored_trajectory = False
-    try:
-        from src.trajectory_identity import get_trajectory_status
-        traj_status = await get_trajectory_status(agent_uuid)
-        has_stored_trajectory = bool(
-            traj_status
-            and not traj_status.get("error")
-            and traj_status.get("has_genesis")
-        )
-    except Exception as e:
-        logger.debug(f"[NAME_CLAIM] Trajectory status check failed: {e}")
-
-    strict = os.environ.get("UNITARES_STRICT_NAME_CLAIM", "1") != "0"
-    has_signature = bool(
-        trajectory_signature and isinstance(trajectory_signature, dict)
-    )
-
-    if not has_signature:
-        if strict:
-            reason = "trajectory_required" if has_stored_trajectory else "identity_proof_required"
-            qualifier = (
-                "has an established trajectory"
-                if has_stored_trajectory
-                else "already exists"
-            )
-            logger.warning(
-                f"[NAME_CLAIM] Rejecting claim for '{agent_name}' -> "
-                f"{agent_uuid[:8]}... (no proof, reason={reason})"
-            )
-            return {
-                "rejected": True,
-                "reason": reason,
-                "agent_name": agent_name,
-                "message": (
-                    f"Identity '{agent_name}' {qualifier}. To resume it, "
-                    f"provide a continuity_token, agent_uuid, or "
-                    f"trajectory_signature. To create a new identity "
-                    f"under a different UUID, pass force_new=true."
-                ),
-            }
-        # Legacy permissive path. Every hit here is a caller that needs
-        # updating before we can remove the rollback flag. Log loudly so
-        # operators can identify them from the server logs.
-        logger.warning(
-            f"[NAME_CLAIM] Legacy silent-bind for '{agent_name}' -> "
-            f"{agent_uuid[:8]}... "
-            f"(UNITARES_STRICT_NAME_CLAIM=0; caller sent no "
-            f"trajectory_signature/UUID/continuity_token)"
-        )
-
-    # Trajectory verification. Runs whenever a signature was provided —
-    # both in strict mode (after the gate allowed it) and legacy mode
-    # (backward-compat optional verification path).
-    if has_signature:
-        try:
-            from src.trajectory_identity import TrajectorySignature, verify_trajectory_identity
-            sig = TrajectorySignature.from_dict(trajectory_signature)
-            verification = await verify_trajectory_identity(agent_uuid, sig)
-            if verification and not verification.get("verified", True):
-                lineage_sim = verification.get("tiers", {}).get("lineage", {}).get("similarity", 1.0)
-                if lineage_sim < 0.6:
-                    logger.warning(
-                        f"[NAME_CLAIM] Trajectory mismatch for '{agent_name}' "
-                        f"(lineage={lineage_sim:.3f}) - rejecting claim"
-                    )
-                    if has_stored_trajectory:
-                        return {
-                            "rejected": True,
-                            "reason": "trajectory_mismatch",
-                            "agent_name": agent_name,
-                            "lineage_similarity": lineage_sim,
-                            "message": (
-                                f"Trajectory verification failed for '{agent_name}' "
-                                f"(lineage similarity={lineage_sim:.3f}, threshold=0.6). "
-                                f"Use force_new=true to create a new identity."
-                            ),
-                        }
-                    return None
-        except Exception as e:
-            logger.debug(f"[NAME_CLAIM] Trajectory verification failed: {e}")
-
-    # Fetch display metadata
-    agent_id = await _get_agent_id_from_metadata(agent_uuid) or agent_uuid
-    label = await _get_agent_label(agent_uuid) or agent_name
-
-    # Bind this session to the existing identity (Redis + PG)
-    await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
-    try:
-        db = get_db()
-        identity = await db.get_identity(agent_uuid)
-        if identity:
-            await db.create_session(
-                session_id=session_key,
-                identity_id=identity.identity_id,
-                expires_at=datetime.now() + timedelta(hours=GovernanceConfig.SESSION_TTL_HOURS),
-                client_type="mcp",
-                client_info={"agent_uuid": agent_uuid, "resumed_by_name": True}
-            )
-    except Exception as e:
-        logger.debug(f"[NAME_CLAIM] Session persist failed (non-fatal): {e}")
-
-    # Audit the identity claim
-    await _audit_identity_claim(agent_uuid, session_key, agent_name)
-
-    logger.info(f"[NAME_CLAIM] Resolved '{agent_name}' -> {agent_uuid[:8]}... via name claim")
-
-    return {
-        "agent_id": agent_id,
-        "agent_uuid": agent_uuid,
-        "display_name": label,
-        "label": label,
-        "created": False,
-        "persisted": True,
-        "source": "name_claim",
-        "resumed_by_name": True,
-    }
-
-
-async def _audit_identity_claim(
-    agent_uuid: str,
-    session_key: str,
-    agent_name: str,
-) -> None:
-    """Log identity claim and queue notification if session changed."""
-    try:
-        from src.audit_log import AuditLogger
-        audit_logger = AuditLogger()
-        audit_logger.log_identity_claim(
-            agent_id=agent_uuid,
-            claimed_name=agent_name,
-            session_key=session_key[:20] + "..." if len(session_key) > 20 else session_key,
-        )
-
-        # Queue notification in Redis only if session actually changed
-        try:
-            from src.cache.redis_client import get_redis
-            redis = await get_redis()
-            if redis:
-                import json
-                # Check if this is actually a new session
-                prev_session_key = f"identity_last_session:{agent_uuid}"
-                previous = await redis.get(prev_session_key)
-                await redis.set(prev_session_key, session_key, ex=86400)
-                if previous and previous != session_key:
-                    notification = json.dumps({
-                        "type": "identity_claim",
-                        "message": f"Your identity was accessed via name claim from a different session",
-                        "session_key_prefix": session_key[:12] + "...",
-                        "timestamp": datetime.now().isoformat(),
-                    })
-                    key = f"identity_notifications:{agent_uuid}"
-                    await redis.rpush(key, notification)
-                    await redis.expire(key, 86400)  # TTL 24h
-        except Exception as e:
-            logger.debug(f"[AUDIT] Could not queue identity notification: {e}")
-    except Exception as e:
-        logger.debug(f"[AUDIT] Identity claim audit failed: {e}")
+# resolve_by_name_claim and _audit_identity_claim removed 2026-04-17.
+# Name is now a cosmetic label set at agent creation or via set_agent_label;
+# identity resolution goes through cryptographic signals only (UUID, token,
+# or explicit session binding). See project_name-claim-identity-ghost.md.

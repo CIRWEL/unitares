@@ -13,7 +13,6 @@ Covers the full identity resolution pipeline:
 - _generate_agent_id (pure function)
 - _normalize_model_type (pure function)
 - set_agent_label
-- resolve_by_name_claim
 - _cache_session
 - _extract_base_fingerprint
 - ua_hash_from_header
@@ -515,35 +514,8 @@ class TestHandleIdentityV2:
         assert result.get("label") == "TestBot"
         assert result.get("display_name") == "TestBot"
 
-    @pytest.mark.asyncio
-    async def test_identity_name_claim_resolves_existing(self, patch_all_deps, mock_db, mock_redis, mock_raw_redis, monkeypatch):
-        """identity(name='X') resolves to existing agent via name claim
-        (legacy mode escape hatch — strict mode requires proof)."""
-        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "0")
-        from src.mcp_handlers.identity.handlers import handle_identity_v2
-
-        test_uuid = str(uuid.uuid4())
-        mock_db.find_agent_by_label.return_value = test_uuid
-        mock_db.get_identity.return_value = SimpleNamespace(
-            identity_id="i1", metadata={"agent_id": "Claude_20260206"}
-        )
-        mock_db.get_agent_label.return_value = "ExistingBot"
-
-        with patch("src.mcp_handlers.identity.shared.make_client_session_id", return_value="agent-test12345"):
-            result = await handle_identity_v2(
-                arguments={"name": "ExistingBot"},
-                session_key="name-claim-handler-test",
-            )
-
-        assert result["success"] is True
-        assert result["agent_uuid"] == test_uuid
-        assert result.get("resumed_by_name") is True
-        assert result.get("source") == "name_claim"
 
 
-# ============================================================================
-# resolve_by_name_claim (standalone)
-# ============================================================================
 
 class TestIdentityResolutionIntegration:
 
@@ -1050,66 +1022,7 @@ class TestHandleIdentityAdapter:
         assert data["success"] is True
         assert data["agent_id"] == "Gpt_5_Codex_20260404"
 
-    @pytest.mark.asyncio
-    async def test_identity_name_claim_resolves_existing(self, patch_identity_deps, mock_db, mock_redis, mock_raw_redis, monkeypatch):
-        """identity(name='X') resolves via name claim when no explicit session
-        binding is provided (legacy mode escape hatch — strict mode v2.7.0
-        requires cryptographic proof for this path)."""
-        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "0")
-        from src.mcp_handlers.identity.handlers import handle_identity_adapter
 
-        test_uuid = str(uuid.uuid4())
-        mock_redis.get.return_value = None
-        mock_db.get_session.return_value = None
-        mock_db.find_agent_by_label.return_value = test_uuid
-        mock_db.get_identity.return_value = SimpleNamespace(
-            identity_id="i1", metadata={"agent_id": "Claude_20260206"}
-        )
-        mock_db.get_agent_label.return_value = "TestBot"
-        mock_db.create_session = AsyncMock()
-
-        result = await handle_identity_adapter({
-            "name": "TestBot",
-            "resume": True,
-        })
-        data = parse_result(result)
-
-        assert data["success"] is True
-        assert data["uuid"] == test_uuid
-        assert data["identity_status"] == "resumed"
-        assert data.get("resumed") is True
-        assert data.get("resumed_by_name") is True
-        assert "agent_signature" not in data
-
-    @pytest.mark.asyncio
-    async def test_identity_explicit_session_beats_name_claim(self, patch_identity_deps, mock_db, mock_redis, mock_raw_redis):
-        """Explicit client_session_id should win over name-claim recovery."""
-        from src.mcp_handlers.identity.handlers import handle_identity_adapter
-
-        bound_uuid = str(uuid.uuid4())
-        claimed_uuid = str(uuid.uuid4())
-        mock_redis.get.return_value = {
-            "agent_id": bound_uuid,
-            "display_agent_id": "Gpt_5_4_Codex_20260401",
-            "label": "Codex Dogfood",
-        }
-        mock_db.find_agent_by_label.return_value = claimed_uuid
-        mock_db.get_identity.return_value = SimpleNamespace(
-            identity_id="i1", metadata={"agent_id": "Gpt_5_4_Codex_20260401"}
-        )
-        mock_db.get_agent_label.return_value = "Codex Dogfood"
-
-        result = await handle_identity_adapter({
-            "client_session_id": "agent-explicit123",
-            "name": "Codex Dogfood",
-            "resume": True,
-        })
-        data = parse_result(result)
-
-        assert data["success"] is True
-        assert data["uuid"] == bound_uuid
-        assert data.get("resumed") is True
-        assert not data.get("resumed_by_name", False)
 
     @pytest.mark.asyncio
     async def test_identity_resumes_existing_agent(self, patch_identity_deps, mock_db, mock_redis, mock_raw_redis):
@@ -1659,69 +1572,7 @@ class TestHandleOnboardV2:
         assert data["is_new"] is True
         assert data["uuid"] != predecessor_uuid
 
-    @pytest.mark.asyncio
-    async def test_onboard_with_name_resolves_by_name_claim(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis, monkeypatch):
-        """onboard(name='X') resolves via name claim (legacy mode escape
-        hatch — strict mode requires proof for this path)."""
-        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "0")
-        from src.mcp_handlers.identity.handlers import handle_onboard_v2
 
-        test_uuid = str(uuid.uuid4())
-        mock_redis.get.return_value = None
-        mock_db.get_session.return_value = None
-        mock_db.find_agent_by_label.return_value = test_uuid
-        mock_db.get_identity.return_value = SimpleNamespace(
-            identity_id="i1", metadata={"agent_id": "Claude_20260207"}
-        )
-        mock_db.get_agent_label.return_value = "NamedAgent"
-        mock_db.create_session = AsyncMock()
-
-        result = await handle_onboard_v2({
-            "client_session_id": "onboard-name-claim",
-            "name": "NamedAgent",
-            "resume": True,
-        })
-        data = parse_result(result)
-
-        assert data["success"] is True
-        assert data["uuid"] == test_uuid
-        assert data["is_new"] is False
-
-    @pytest.mark.asyncio
-    async def test_onboard_token_takes_precedence_over_name_claim(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
-        """continuity_token resume succeeds even when name claim would reject."""
-        from src.mcp_handlers.identity.handlers import handle_onboard_v2
-
-        token_uuid = str(uuid.uuid4())
-        # The name "ProtectedAgent" would reject (has trajectory) — but token
-        # for a different UUID should bypass the name claim entirely.
-        mock_redis.get.return_value = None
-        mock_db.get_session.return_value = None
-        mock_db.find_agent_by_label.return_value = None
-        mock_db.get_identity.return_value = SimpleNamespace(
-            identity_id="i-token", metadata={"agent_id": "Claude_20260415"}
-        )
-        mock_db.get_agent_label.return_value = None
-        mock_db.get_agent_status.return_value = "active"
-
-        with patch("src.mcp_handlers.identity.session.extract_token_agent_uuid", return_value=token_uuid), \
-             patch("src.mcp_handlers.identity.resolution._agent_exists_in_postgres", new_callable=AsyncMock, return_value=True), \
-             patch("src.mcp_handlers.identity.resolution._get_agent_status", new_callable=AsyncMock, return_value="active"), \
-             patch("src.mcp_handlers.identity.resolution._get_agent_id_from_metadata", new_callable=AsyncMock, return_value=token_uuid), \
-             patch("src.mcp_handlers.identity.resolution._get_agent_label", new_callable=AsyncMock, return_value=None), \
-             patch("src.mcp_handlers.identity.resolution._cache_session", new_callable=AsyncMock), \
-             patch("src.mcp_handlers.identity.handlers.extract_token_agent_uuid", return_value=token_uuid):
-            result = await handle_onboard_v2({
-                "client_session_id": "onboard-token-priority",
-                "name": "ProtectedAgent",
-                "resume": True,
-                "continuity_token": "v1.fake-token.sig",
-            })
-        data = parse_result(result)
-
-        assert data["success"] is True
-        assert data["uuid"] == token_uuid
-        assert data.get("is_new") is False  # Resumed via token, not created
 
     @pytest.mark.asyncio
     async def test_onboard_force_new(self, patch_onboard_deps, mock_db, mock_redis):
@@ -2612,33 +2463,6 @@ class TestContextUpdateExceptions:
 
         assert data["success"] is True
 
-    @pytest.mark.asyncio
-    async def test_identity_adapter_name_claim_context_update_exception(self, patch_ctx_deps, mock_db, mock_redis, mock_raw_redis, monkeypatch):
-        """update_context_agent_id failure in name claim path is swallowed
-        (lines 1217-1218). Pinned to legacy mode since the concern here is
-        the exception path, not the strict-gate behavior."""
-        monkeypatch.setenv("UNITARES_STRICT_NAME_CLAIM", "0")
-        from src.mcp_handlers.identity.handlers import handle_identity_adapter
-
-        test_uuid = str(uuid.uuid4())
-        mock_redis.get.return_value = None
-        mock_db.get_session.return_value = None
-        mock_db.find_agent_by_label.return_value = test_uuid
-        mock_db.get_identity.return_value = SimpleNamespace(
-            identity_id="i1", metadata={"agent_id": "Claude_20260207"}
-        )
-        mock_db.get_agent_label.return_value = "CtxFailAgent"
-        mock_db.create_session = AsyncMock()
-
-        with patch("src.mcp_handlers.context.update_context_agent_id", side_effect=Exception("Context error")):
-            result = await handle_identity_adapter({
-                "name": "CtxFailAgent",
-                "resume": True,
-            })
-        data = parse_result(result)
-
-        assert data["success"] is True
-        assert data.get("resumed_by_name") is True
 
 
 # ============================================================================

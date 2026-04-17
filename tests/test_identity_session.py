@@ -13,7 +13,6 @@ Covers the full identity resolution pipeline:
 - _generate_agent_id (pure function)
 - _normalize_model_type (pure function)
 - set_agent_label
-- resolve_by_name_claim
 - _cache_session
 - _extract_base_fingerprint
 - ua_hash_from_header
