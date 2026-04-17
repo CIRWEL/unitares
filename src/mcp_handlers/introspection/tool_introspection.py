@@ -391,11 +391,9 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             "related_to": ["agent", "process_agent_update"],
             "category": "observability"
         },
-        "pi": {
-            "depends_on": [],
-            "related_to": ["config"],
-            "category": "admin"
-        },
+        # "pi" introspection entry lives in unitares-pi-plugin when that
+        # plugin is installed; omitted here so OSS builds don't advertise
+        # an embodied-system tool that isn't loaded.
     }
     
     # Define common workflows

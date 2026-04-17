@@ -74,20 +74,9 @@ from .dialectic.handlers import (
     handle_reassign_reviewer,
 )
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
-from .observability.pi_orchestration import (
-    handle_pi_list_tools,
-    handle_pi_get_context,
-    handle_pi_health,
-    handle_pi_sync_eisv,
-    handle_pi_display,
-    handle_pi_say,
-    handle_pi_post_message,
-    handle_pi_lumen_qa,
-    handle_pi_query,
-    handle_pi_workflow,
-    handle_pi_git_pull,
-    handle_pi_system_power,
-)
+# Pi orchestration (``pi`` action router + handlers) moved to the
+# ``unitares-pi-plugin`` package — registered via the
+# ``governance_mcp.plugins`` entry point at server startup.
 
 # ============================================================
 # Consolidated Knowledge Graph Tool
@@ -233,35 +222,7 @@ handle_observe = action_router(
     ],
 )
 
-# ============================================================
-# Consolidated Pi Orchestration Tool
-# ============================================================
-
-handle_pi = action_router(
-    "pi",
-    actions={
-        "tools": handle_pi_list_tools,
-        "context": handle_pi_get_context,
-        "health": handle_pi_health,
-        "sync_eisv": handle_pi_sync_eisv,
-        "display": handle_pi_display,
-        "say": handle_pi_say,
-        "message": handle_pi_post_message,
-        "qa": handle_pi_lumen_qa,
-        "query": handle_pi_query,
-        "workflow": handle_pi_workflow,
-        "git_pull": handle_pi_git_pull,
-        "power": handle_pi_system_power,
-    },
-    timeout=120.0,
-    description="Unified Pi/Lumen orchestration: tools, context, health, sync_eisv, display, say, message, qa, query, workflow, git_pull, power",
-    examples=[
-        "pi(action='tools')",
-        "pi(action='context')",
-        "pi(action='health')",
-        "pi(action='say', text='Hello!')",
-    ],
-)
+# ``pi`` consolidated tool moved to unitares-pi-plugin (see register() there).
 
 # ============================================================
 # Consolidated Dialectic Tool

@@ -1,11 +1,16 @@
 """
 Tests for Pi orchestration EISV mapping and sync.
+
+Pi orchestration lives in the ``unitares-pi-plugin`` package as of the
+Phase B1 extraction (docs/specs/2026-04-17-lumen-decoupling-design.md).
+These tests are skipped when the plugin isn't installed.
 """
 
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from src.mcp_handlers.observability.pi_orchestration import map_anima_to_eisv
+_plugin = pytest.importorskip("unitares_pi_plugin.handlers")
+map_anima_to_eisv = _plugin.map_anima_to_eisv
 
 
 class TestMapAnimaToEisv:

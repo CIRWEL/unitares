@@ -576,6 +576,16 @@ async def main():
     """Main entry point for governance MCP server."""
     args = parse_args()
 
+    # Load entry-point plugins now that src.mcp_handlers is fully
+    # initialised (deferred here to avoid a circular import when a
+    # plugin's handlers module imports from src.mcp_handlers.*).
+    from src.plugin_loader import load_plugins
+    from src.mcp_handlers import refresh_tool_handlers_from_registry
+    loaded = load_plugins()
+    added = refresh_tool_handlers_from_registry()
+    if loaded:
+        logger.info("plugins loaded: %s (+%d tools)", loaded, added)
+
     # Keep FastMCP's declared host aligned with uvicorn when --host overrides env defaults
     try:
         mcp.settings.host = args.host
