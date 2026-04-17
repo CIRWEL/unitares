@@ -52,6 +52,7 @@ class AuditMixin:
         self,
         agent_id: Optional[str] = None,
         event_type: Optional[str] = None,
+        event_types: Optional[List[str]] = None,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: int = 1000,
@@ -68,6 +69,10 @@ class AuditMixin:
         if event_type:
             conditions.append(f"event_type = ${param_idx}")
             params.append(event_type)
+            param_idx += 1
+        elif event_types:
+            conditions.append(f"event_type = ANY(${param_idx}::text[])")
+            params.append(list(event_types))
             param_idx += 1
         if start_time:
             conditions.append(f"ts >= ${param_idx}")

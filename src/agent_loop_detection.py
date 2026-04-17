@@ -474,6 +474,26 @@ async def process_update_authenticated_async(
             result["paused"] = True
             result["circuit_breaker_triggered"] = True
 
+            # P011: persist paused_at + the lifecycle event so they survive
+            # the next load_metadata_async(force=True). Without this, the
+            # agent record shows paused_at=null and lifecycle_events=[]
+            # despite the pause having actually fired.
+            try:
+                from src import agent_storage
+                await agent_storage.persist_runtime_state(
+                    agent_id,
+                    paused_at=now,
+                    append_lifecycle_event={
+                        "event": "paused",
+                        "timestamp": now,
+                        "reason": decision_reason,
+                    },
+                )
+            except Exception as e:
+                logger.warning(
+                    f"persist_runtime_state(paused) failed for {agent_id[:8]}...: {e}"
+                )
+
             # Telemetry: record governance pause timestamp
             _governance_pause_timestamps.append(datetime.now(timezone.utc))
 
@@ -589,11 +609,33 @@ async def _auto_initiate_dialectic_recovery(agent_id: str, reason: str) -> None:
                         meta.loop_detected_at = None
                         meta.recent_update_timestamps = []
                         meta.recent_decisions = []
-                        meta.add_lifecycle_event(
-                            "auto_resumed_dialectic",
-                            f"LLM dialectic recommended RESUME: {content.get('message', '')[:100]}"
+                        resume_reason = (
+                            f"LLM dialectic recommended RESUME: "
+                            f"{content.get('message', '')[:100]}"
                         )
+                        meta.add_lifecycle_event("auto_resumed_dialectic", resume_reason)
                         logger.info(f"Agent '{agent_id}' auto-resumed after LLM dialectic")
+
+                        # P011: persist the resume so paused_at=None survives
+                        # reload and the dialectic event is in the audit trail.
+                        try:
+                            from src import agent_storage
+                            await agent_storage.persist_runtime_state(
+                                agent_id,
+                                paused_at=None,
+                                loop_cooldown_until=None,
+                                loop_detected_at=None,
+                                append_lifecycle_event={
+                                    "event": "auto_resumed_dialectic",
+                                    "timestamp": datetime.now().isoformat(),
+                                    "reason": resume_reason,
+                                },
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"persist_runtime_state(auto_resumed_dialectic) failed "
+                                f"for {agent_id[:8]}...: {e}"
+                            )
                 elif recommendation == "COOLDOWN":
                     logger.info(f"Agent '{agent_id}' in cooldown after LLM dialectic — stuck-detector will handle later")
                 else:
@@ -637,14 +679,35 @@ async def _safety_net_resume(agent_id: str, reason: str) -> None:
             meta.loop_detected_at = None
             meta.recent_update_timestamps = []
             meta.recent_decisions = []
-            meta.add_lifecycle_event(
-                "safety_net_resumed",
-                f"All dialectic paths failed ({reason}); state safe (coherence={coherence:.2f}, risk={risk:.2f}) — auto-resumed"
+            resume_reason = (
+                f"All dialectic paths failed ({reason}); state safe "
+                f"(coherence={coherence:.2f}, risk={risk:.2f}) — auto-resumed"
             )
+            meta.add_lifecycle_event("safety_net_resumed", resume_reason)
             logger.info(
                 f"Agent '{agent_id}' safety-net resumed "
                 f"(coherence={coherence:.2f}, risk={risk:.2f}, dialectic failure: {reason})"
             )
+
+            # P011: persist the resume so paused_at=None survives reload and
+            # the safety-net event is in the audit trail.
+            try:
+                from src import agent_storage
+                await agent_storage.persist_runtime_state(
+                    agent_id,
+                    paused_at=None,
+                    loop_cooldown_until=None,
+                    loop_detected_at=None,
+                    append_lifecycle_event={
+                        "event": "safety_net_resumed",
+                        "timestamp": datetime.now().isoformat(),
+                        "reason": resume_reason,
+                    },
+                )
+            except Exception as e:
+                logger.warning(
+                    f"persist_runtime_state(safety_net_resumed) failed for {agent_id[:8]}...: {e}"
+                )
         else:
             logger.warning(
                 f"Agent '{agent_id}' NOT safe for safety-net resume "

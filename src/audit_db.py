@@ -37,12 +37,13 @@ async def append_audit_event_async(entry: Dict[str, Any], raw_hash: Optional[str
 async def query_audit_events_async(
     agent_id: Optional[str] = None,
     event_type: Optional[str] = None,
+    event_types: Optional[List[str]] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     limit: int = 1000,
     order: str = "asc",
 ) -> List[Dict[str, Any]]:
-    """Query audit events from PostgreSQL."""
+    """Query audit events from PostgreSQL. Pass event_types for IN-list filtering."""
     from src.db import get_db
     db = get_db()
     if not hasattr(db, '_pool') or db._pool is None:
@@ -54,6 +55,7 @@ async def query_audit_events_async(
     events = await db.query_audit_events(
         agent_id=agent_id,
         event_type=event_type,
+        event_types=event_types,
         start_time=start_dt,
         end_time=end_dt,
         limit=limit,

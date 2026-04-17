@@ -954,6 +954,89 @@ async def http_events(request):
         }, status_code=500)
 
 
+# Event types surfaced by /v1/lifecycle/recent. Pause-side answers
+# "why did this agent stop?", resume-side answers "how did it come back?".
+_LIFECYCLE_EVENT_TYPES = (
+    "lifecycle_paused",
+    "lifecycle_resumed",
+    "lifecycle_archived",
+    "lifecycle_loop_detected",
+    "lifecycle_stuck_detected",
+    "circuit_breaker_trip",
+    "circuit_breaker_reset",
+)
+
+
+async def http_lifecycle_recent(request):
+    """GET /v1/lifecycle/recent — recent lifecycle / circuit-breaker events
+    from audit.events with the full payload (reason, EISV, drift) and
+    agent label resolution.
+
+    Query params:
+      - agent_id: filter to one agent (UUID or label)
+      - hours: lookback window in hours (default 24, max 168)
+      - limit: max events (default 100, max 500)
+    """
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    if not _check_http_auth(request, http_api_token=http_api_token):
+        return _http_unauthorized()
+    try:
+        from src.audit_db import query_audit_events_async
+        from datetime import datetime, timedelta, timezone
+
+        agent_id_param = request.query_params.get("agent_id")
+        hours = max(1, min(168, int(request.query_params.get("hours", 24))))
+        limit = max(1, min(500, int(request.query_params.get("limit", 100))))
+        start_time = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+        # Resolve label → UUID and build a UUID → label lookup for enrichment.
+        from src.agent_metadata_model import agent_metadata
+        label_to_uuid = {}
+        uuid_to_label = {}
+        for uuid_, meta in agent_metadata.items():
+            label = getattr(meta, "label", None) or ""
+            if label:
+                label_to_uuid[label] = uuid_
+                uuid_to_label[uuid_] = label
+        resolved_agent_id = label_to_uuid.get(agent_id_param, agent_id_param) \
+            if agent_id_param else None
+
+        rows = await query_audit_events_async(
+            agent_id=resolved_agent_id,
+            event_types=list(_LIFECYCLE_EVENT_TYPES),
+            start_time=start_time,
+            limit=limit,
+            order="desc",
+        )
+
+        events = []
+        for r in rows:
+            details = r.get("details") or {}
+            events.append({
+                "timestamp": r.get("timestamp"),
+                "event_type": r.get("event_type"),
+                "agent_id": r.get("agent_id"),
+                "agent_label": uuid_to_label.get(r.get("agent_id"), ""),
+                "reason": details.get("reason"),
+                "details": details,
+                "event_id": r.get("event_id"),
+            })
+
+        return JSONResponse({
+            "success": True,
+            "events": events,
+            "count": len(events),
+            "window_hours": hours,
+        })
+    except Exception as e:
+        logger.error(f"Error fetching lifecycle events: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e),
+            "events": []
+        }, status_code=500)
+
+
 # Allowed severity values for externally posted findings
 _FINDING_SEVERITIES = frozenset({"info", "low", "medium", "warning", "high", "critical"})
 # Only accept *_finding event types via this endpoint (prevents spoofing
@@ -1539,6 +1622,7 @@ def register_http_routes(
     app.routes.append(Route("/health/deep", http_health_deep, methods=["GET"]))
     app.routes.append(Route("/metrics", http_metrics, methods=["GET"]))
     app.routes.append(Route("/v1/eisv/latest", http_eisv_latest, methods=["GET"]))
+    app.routes.append(Route("/v1/lifecycle/recent", http_lifecycle_recent, methods=["GET"]))
     app.routes.append(Route("/api/events", http_events, methods=["GET"]))
     app.routes.append(Route("/api/findings", http_record_finding, methods=["POST"]))
     app.routes.append(Route("/api/activity", http_activity, methods=["GET"]))
