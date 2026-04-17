@@ -619,3 +619,139 @@ class TestStickyRESTPath:
 
         # Uses resolved identity, not cached
         assert result == "uuid-explicit-session"
+
+
+# ============================================================================
+# Redis recovery deadlock guard
+# ============================================================================
+
+class TestRedisRecoveryTimeoutGuard:
+    """The middleware's Redis read is guarded by asyncio.wait_for so the
+    documented anyio-asyncio deadlock (CLAUDE.md) degrades to a cold miss
+    instead of hanging every subsequent MCP tool call."""
+
+    @pytest.mark.asyncio
+    async def test_redis_timeout_returns_none(self):
+        """A stuck Redis read is bounded by the recovery timeout."""
+        import asyncio as _asyncio
+        from src.mcp_handlers.middleware import identity_step as step
+
+        async def _hang(*_args, **_kwargs):
+            await _asyncio.sleep(10)
+
+        hung_redis = MagicMock()
+        hung_redis.get = AsyncMock(side_effect=_hang)
+
+        with patch("src.cache.redis_client.get_redis", new_callable=AsyncMock, return_value=hung_redis):
+            with patch.object(step, "_REDIS_RECOVERY_TIMEOUT", 0.05):
+                result = await step._load_binding_from_redis("sticky:deadlock-sim")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_redis_success_returns_binding(self):
+        """Fast Redis reads still hydrate the cache."""
+        import json
+        from src.mcp_handlers.middleware import identity_step as step
+
+        fast_redis = MagicMock()
+        fast_redis.get = AsyncMock(return_value=json.dumps({
+            "agent_uuid": "uuid-redis-hit",
+            "session_key": "sk-redis",
+            "source": "redis_recovery",
+        }))
+
+        with patch("src.cache.redis_client.get_redis", new_callable=AsyncMock, return_value=fast_redis):
+            result = await step._load_binding_from_redis("sticky:hot")
+
+        assert result is not None
+        assert result.agent_uuid == "uuid-redis-hit"
+        assert step._transport_identity_cache["sticky:hot"].agent_uuid == "uuid-redis-hit"
+
+
+# ============================================================================
+# Startup warmup task
+# ============================================================================
+
+class TestTransportBindingCacheWarmup:
+    """Startup warmup pre-populates the in-memory cache from Redis so the
+    in-band Redis read almost never has to fire."""
+
+    @pytest.mark.asyncio
+    async def test_warmup_populates_cache(self, monkeypatch):
+        import json
+        from src.mcp_handlers.middleware import identity_step as step
+        import src.background_tasks as bg_tasks
+
+        fake_entries = {
+            "transport_binding:sticky:10.0.0.1:ua-a": json.dumps({
+                "agent_uuid": "uuid-a",
+                "session_key": "sk-a",
+                "source": "agent_uuid_passthrough",
+            }),
+            "transport_binding:sticky:10.0.0.2:ua-b": json.dumps({
+                "agent_uuid": "uuid-b",
+                "session_key": "sk-b",
+                "source": "redis",
+            }),
+            "transport_binding:": json.dumps({  # malformed, should be skipped
+                "agent_uuid": "uuid-bad",
+                "session_key": "sk-bad",
+            }),
+        }
+
+        async def _scan_iter(match=None, count=None):
+            for k in fake_entries:
+                yield k
+
+        fake_redis = MagicMock()
+        fake_redis.scan_iter = _scan_iter
+        fake_redis.get = AsyncMock(side_effect=lambda k: fake_entries.get(k))
+
+        # Skip the 2-second sleep at the top of the warmup
+        async def _no_sleep(_):
+            return None
+        monkeypatch.setattr(bg_tasks.asyncio, "sleep", _no_sleep)
+        monkeypatch.setattr("src.cache.is_redis_available", lambda: True)
+        monkeypatch.setattr("src.cache.redis_client.get_redis", AsyncMock(return_value=fake_redis))
+
+        await bg_tasks.transport_binding_cache_warmup()
+
+        assert "sticky:10.0.0.1:ua-a" in step._transport_identity_cache
+        assert "sticky:10.0.0.2:ua-b" in step._transport_identity_cache
+        assert step._transport_identity_cache["sticky:10.0.0.1:ua-a"].agent_uuid == "uuid-a"
+        # Malformed key (no suffix after prefix) was skipped
+        assert "" not in step._transport_identity_cache
+
+    @pytest.mark.asyncio
+    async def test_warmup_skips_when_redis_unavailable(self, monkeypatch):
+        from src.mcp_handlers.middleware import identity_step as step
+        import src.background_tasks as bg_tasks
+
+        async def _no_sleep(_):
+            return None
+        monkeypatch.setattr(bg_tasks.asyncio, "sleep", _no_sleep)
+        monkeypatch.setattr("src.cache.is_redis_available", lambda: False)
+
+        await bg_tasks.transport_binding_cache_warmup()
+
+        assert step._transport_identity_cache == {}
+
+    def test_populate_does_not_trigger_redis_write(self, monkeypatch):
+        """populate_transport_binding_from_recovery must NOT call _persist_binding_to_redis —
+        otherwise startup warmup would write every recovered entry back to Redis."""
+        from src.mcp_handlers.middleware import identity_step as step
+
+        called = {"persist": False}
+
+        def _spy(*_args, **_kwargs):
+            called["persist"] = True
+
+        monkeypatch.setattr(step, "_persist_binding_to_redis", _spy)
+
+        step.populate_transport_binding_from_recovery(
+            "sticky:1.2.3.4:x", "uuid-warmed", "sk-warmed", source="warmup",
+        )
+
+        assert called["persist"] is False
+        assert step._transport_identity_cache["sticky:1.2.3.4:x"].agent_uuid == "uuid-warmed"

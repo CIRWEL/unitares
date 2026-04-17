@@ -819,6 +819,72 @@ async def check_agent_silence():
         await asyncio.sleep(600)  # every 10 minutes
 
 
+async def transport_binding_cache_warmup():
+    """Pre-populate the sticky transport-binding cache from Redis at startup.
+
+    Mirrors identity_cache_warmup but reads the transport_binding:* keys that
+    identity_step.py writes. Running this at boot means the dispatch-path
+    Redis read (guarded by wait_for) rarely has to fire, which keeps the
+    anyio-asyncio deadlock off the critical path.
+    """
+    await asyncio.sleep(2)  # Wait for DB and Redis to be ready
+    try:
+        from src.cache import is_redis_available
+        if not is_redis_available():
+            logger.info("[WARMUP] Redis unavailable, skipping transport binding warmup")
+            return
+
+        from src.cache.redis_client import get_redis
+        redis = await get_redis()
+        if not redis:
+            logger.info("[WARMUP] Redis client not ready, skipping transport binding warmup")
+            return
+
+        from src.mcp_handlers.middleware.identity_step import (
+            populate_transport_binding_from_recovery,
+        )
+        import json
+
+        warmed = 0
+        max_scan = 500
+        scanned = 0
+        async for redis_key in redis.scan_iter(match="transport_binding:*", count=50):
+            scanned += 1
+            if scanned > max_scan:
+                logger.debug(f"[WARMUP] Transport binding scan cap reached ({max_scan})")
+                break
+            try:
+                data = await redis.get(redis_key)
+                if not data:
+                    continue
+                parsed = json.loads(data)
+                agent_uuid = parsed.get("agent_uuid")
+                session_key = parsed.get("session_key")
+                if not (agent_uuid and session_key):
+                    continue
+                # Strip the "transport_binding:" prefix to recover the cache key
+                raw_key = redis_key.decode() if isinstance(redis_key, bytes) else str(redis_key)
+                cache_key = raw_key.removeprefix("transport_binding:")
+                if not cache_key or cache_key == raw_key:
+                    continue
+                populate_transport_binding_from_recovery(
+                    cache_key,
+                    agent_uuid,
+                    session_key,
+                    source=parsed.get("source", "warmup"),
+                )
+                warmed += 1
+            except Exception:
+                continue  # Skip malformed entries
+
+        if warmed > 0:
+            logger.info(f"[WARMUP] Pre-populated transport binding cache with {warmed} entry(s)")
+        else:
+            logger.info("[WARMUP] No transport bindings found to warm")
+    except Exception as e:
+        logger.warning(f"[WARMUP] Transport binding warmup failed (non-fatal): {e}")
+
+
 async def identity_cache_warmup():
     """Pre-populate sticky transport identity cache from recent session bindings.
 
@@ -1034,3 +1100,4 @@ def start_all_background_tasks(connection_tracker, set_ready):
     logger.info("[SILENCE] Started agent silence detection (every 10m)")
 
     _supervised_create_task(identity_cache_warmup(), name="identity_cache_warmup")
+    _supervised_create_task(transport_binding_cache_warmup(), name="transport_binding_cache_warmup")

@@ -72,6 +72,23 @@ def update_transport_binding(key: str, agent_uuid: str, session_key: str, source
     _persist_binding_to_redis(key, agent_uuid, session_key, source)
 
 
+def populate_transport_binding_from_recovery(
+    key: str, agent_uuid: str, session_key: str, source: str
+) -> None:
+    """Populate the in-memory cache without triggering a Redis write-back.
+
+    Used by startup warmup to hydrate from Redis without creating a loop where
+    recovered entries get re-written to Redis on every boot.
+    """
+    _transport_identity_cache[key] = TransportBinding(
+        agent_uuid=agent_uuid,
+        session_key=session_key,
+        bound_at=_time.monotonic(),
+        source=source,
+    )
+    _evict_stale_entries()
+
+
 def _persist_binding_to_redis(key: str, agent_uuid: str, session_key: str, source: str) -> None:
     """Best-effort fire-and-forget write of transport binding to Redis."""
     try:
@@ -103,31 +120,55 @@ async def _persist_binding_to_redis_async(key: str, agent_uuid: str, session_key
         logger.debug(f"[STICKY] Redis persist failed: {e}")
 
 
+# Budget for in-band Redis recovery from the dispatch path. Short by design:
+# the anyio-asyncio deadlock (see CLAUDE.md "Known Issue") can stall awaits
+# indefinitely, so we degrade to a cold miss rather than hang the pipeline.
+_REDIS_RECOVERY_TIMEOUT = 0.5
+
+
 async def _load_binding_from_redis(key: str) -> Optional[TransportBinding]:
-    """Try to recover a transport binding from Redis after restart."""
+    """Try to recover a transport binding from Redis after restart.
+
+    Guarded by asyncio.wait_for: on timeout (typically the anyio-asyncio
+    deadlock) we return None so the caller resolves identity fresh instead of
+    blocking every subsequent MCP tool call.
+    """
     try:
-        from src.cache.redis_client import get_redis
-        import json
-        redis = await get_redis()
-        if not redis:
-            return None
-        data = await redis.get(f"transport_binding:{key}")
-        if not data:
-            return None
-        parsed = json.loads(data)
-        binding = TransportBinding(
-            agent_uuid=parsed["agent_uuid"],
-            session_key=parsed["session_key"],
-            bound_at=_time.monotonic(),  # Treat as fresh since Redis TTL handles expiry
-            source=parsed.get("source", "redis_recovery"),
+        return await asyncio.wait_for(
+            _load_binding_from_redis_inner(key),
+            timeout=_REDIS_RECOVERY_TIMEOUT,
         )
-        # Warm the in-memory cache
-        _transport_identity_cache[key] = binding
-        logger.debug(f"[STICKY] Redis recovery for {key}: agent={binding.agent_uuid[:8]}...")
-        return binding
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"[STICKY] Redis recovery timed out after {_REDIS_RECOVERY_TIMEOUT}s "
+            f"for {key} — falling back to cold path"
+        )
+        return None
     except Exception as e:
         logger.debug(f"[STICKY] Redis recovery failed: {e}")
         return None
+
+
+async def _load_binding_from_redis_inner(key: str) -> Optional[TransportBinding]:
+    from src.cache.redis_client import get_redis
+    import json
+    redis = await get_redis()
+    if not redis:
+        return None
+    data = await redis.get(f"transport_binding:{key}")
+    if not data:
+        return None
+    parsed = json.loads(data)
+    binding = TransportBinding(
+        agent_uuid=parsed["agent_uuid"],
+        session_key=parsed["session_key"],
+        bound_at=_time.monotonic(),  # Treat as fresh since Redis TTL handles expiry
+        source=parsed.get("source", "redis_recovery"),
+    )
+    # Warm the in-memory cache
+    _transport_identity_cache[key] = binding
+    logger.debug(f"[STICKY] Redis recovery for {key}: agent={binding.agent_uuid[:8]}...")
+    return binding
 
 
 def invalidate_transport_binding(key: str) -> None:
