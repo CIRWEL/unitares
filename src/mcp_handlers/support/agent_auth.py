@@ -147,7 +147,19 @@ def require_agent_id(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextConte
         except Exception as e:
             logger.debug(f"Could not retrieve session-bound identity: {e}")
 
-    # Canonical ID clarification: warn if explicit agent_id doesn't match session
+    # Canonical ID resolution when both explicit agent_id and a session binding exist.
+    #
+    # Two cases:
+    #   1. Self-reference: the explicit agent_id is an alias (label, structured_id,
+    #      or public_agent_id) of the session-bound agent itself. Rewrite to the
+    #      canonical UUID so downstream lookups use the storage key.
+    #   2. Cross-agent reference: the explicit agent_id names a different agent
+    #      (e.g. an admin calling `agent.update(agent_id='Lumen', ...)`). Honor
+    #      the explicit value and let verify_agent_ownership downstream decide
+    #      whether the caller is allowed to touch the target's record. Silently
+    #      substituting the bound UUID here would violate the identity invariant
+    #      (``never silently substitute identity'') by writing the caller's own
+    #      record while reporting success under the requested agent_id.
     if explicit_agent_id:
         try:
             from ..context import get_context_agent_id
@@ -162,13 +174,20 @@ def require_agent_id(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextConte
                         structured_id = getattr(meta, 'structured_id', None)
                         public_agent_id = getattr(meta, 'public_agent_id', None)
                         if explicit_agent_id in (label, public_agent_id, structured_id):
-                            logger.debug(f"Explicit agent_id '{explicit_agent_id}' matches label/structured_id, using UUID '{bound_uuid[:8]}...'")
+                            # Case 1: alias of the bound agent — rewrite to UUID.
+                            logger.debug(
+                                f"Explicit agent_id '{explicit_agent_id}' is an alias "
+                                f"of bound UUID '{bound_uuid[:8]}...'; using UUID."
+                            )
                             agent_id = bound_uuid
                             arguments["agent_id"] = agent_id
                         else:
-                            logger.debug(f"Explicit agent_id '{explicit_agent_id}' differs from session-bound UUID '{bound_uuid[:8]}...' - using session-bound UUID")
-                            agent_id = bound_uuid
-                            arguments["agent_id"] = agent_id
+                            # Case 2: cross-agent reference — honor the explicit
+                            # value; ownership verification runs downstream.
+                            logger.debug(
+                                f"Explicit agent_id '{explicit_agent_id}' differs from "
+                                f"bound UUID '{bound_uuid[:8]}...'; honoring explicit value."
+                            )
                 except Exception:
                     pass
         except Exception:
