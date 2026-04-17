@@ -45,6 +45,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.request
@@ -330,9 +331,55 @@ class Finding:
         a content hash. Callers that want content-aware dedup should set
         ``line_content_hash`` BEFORE invoking this and then assign the
         result back to ``fingerprint``.
+
+        The file path is normalized to its repo-relative form (relative to
+        the git worktree root containing it) so the same line in identical
+        code checked out across multiple git worktrees produces ONE
+        fingerprint, not N. The displayed ``file`` field is left absolute so
+        the user can navigate to the right copy.
         """
-        key = f"{self.pattern}|{self.file}|{self.line}|{self.line_content_hash}"
+        normalized_path = repo_relative_path(self.file)
+        key = f"{self.pattern}|{normalized_path}|{self.line}|{self.line_content_hash}"
         return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+_REPO_ROOT_CACHE: dict[str, str] = {}
+
+
+def repo_relative_path(file_path: str) -> str:
+    """Return ``file_path`` relative to its containing git worktree root.
+
+    Falls back to the absolute string if the path is not inside a git
+    repository or git invocation fails. Result is normalized to forward
+    slashes so the fingerprint is platform-stable.
+
+    Cached per-directory because hook-driven scans hit the same worktree
+    over and over and ``git rev-parse`` is otherwise tens of ms each call.
+    """
+    if not file_path:
+        return file_path
+    p = Path(file_path)
+    parent_key = str(p.parent if p.is_absolute() else p.resolve().parent)
+    toplevel = _REPO_ROOT_CACHE.get(parent_key)
+    if toplevel is None:
+        try:
+            result = subprocess.run(
+                ["git", "-C", parent_key, "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            toplevel = result.stdout.strip() if result.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            toplevel = ""
+        _REPO_ROOT_CACHE[parent_key] = toplevel
+    if not toplevel:
+        return file_path
+    try:
+        rel = Path(file_path).resolve().relative_to(Path(toplevel).resolve())
+    except ValueError:
+        return file_path
+    return rel.as_posix()
 
 
 def hash_line_content(source_line: str) -> str:
@@ -1360,6 +1407,22 @@ _PATTERN_FILE_PATH_CONSTRAINTS: dict[str, tuple[str, ...]] = {
 # flagged line, the task reference is stored — not fire-and-forget.
 _P001_TASK_ASSIGNMENT = re.compile(r"\b[a-zA-Z_]\w*\s*=\s*[^=].*create_task\(")
 
+# Regex: project's blessed tracked-task wrapper. By construction stores the
+# task ref in a tracked set; P001 should not flag call sites of it. The
+# required-token check still keeps `create_task(` matches because
+# `create_tracked_task` contains the substring `create_task(`. Caught when
+# qwen3-coder-next flagged 2 sites in mcp_server_std.py on 2026-04-17.
+_P001_TRACKED_HELPER = re.compile(r"\bcreate_tracked_task\s*\(")
+
+# Regex: header line of `def get_or_create_monitor(` — when a P003 flag
+# lands inside the body of this function (which IS the cache), the
+# "instantiated outside the cache" rule does not apply. Caught when
+# qwen3-coder-next flagged agent_lifecycle.py:26 on 2026-04-17.
+_P003_CACHE_FUNC_HEADER = re.compile(
+    r"^\s*(?:async\s+)?def\s+get_or_create_monitor\s*\("
+)
+_P003_OTHER_DEF = re.compile(r"^\s*(?:async\s+)?def\s+\w+\s*\(")
+
 # Regex: `getattr(<obj>, "success", ...)` — defensive typed-attribute access.
 # By construction this targets a flat object's attribute and cannot mask a
 # nested envelope. The quoted "success" satisfies the required-token check,
@@ -1367,6 +1430,27 @@ _P001_TASK_ASSIGNMENT = re.compile(r"\b[a-zA-Z_]\w*\s*=\s*[^=].*create_task\(")
 _P016_GETATTR_SUCCESS = re.compile(
     r"""\bgetattr\s*\([^,]+,\s*['"]success['"]"""
 )
+
+
+def _is_inside_get_or_create_monitor(
+    flagged_line: int, snippet_lines_by_num: dict[int, str]
+) -> bool:
+    """Return True if the flagged line sits inside the body of the
+    ``def get_or_create_monitor`` function. Walks back through the snippet:
+    the first def header we hit decides — if it's our cache function, we're
+    inside; if it's any other def at the same/outer indent, we're not.
+    """
+    for line_no in sorted(snippet_lines_by_num.keys(), reverse=True):
+        if line_no >= flagged_line:
+            continue
+        line = snippet_lines_by_num.get(line_no, "")
+        if not line.strip():
+            continue
+        if _P003_CACHE_FUNC_HEADER.match(line):
+            return True
+        if _P003_OTHER_DEF.match(line):
+            return False
+    return False
 
 
 def _has_preceding_persist_call(
@@ -1433,6 +1517,28 @@ def _verify_finding_against_source(
         log(
             f"drop P001 {finding.file}:{finding.line} — task ref assigned on flagged line "
             f"(not fire-and-forget): {src_line.strip()[:80]}",
+            "warning",
+        )
+        return False
+    # P001 specifically: `create_tracked_task(...)` is the project's blessed
+    # wrapper that stores the task ref in a tracked set. Call sites of it
+    # are by construction not fire-and-forget.
+    if finding.pattern == "P001" and _P001_TRACKED_HELPER.search(src_line):
+        log(
+            f"drop P001 {finding.file}:{finding.line} — create_tracked_task() "
+            f"wrapper stores ref by construction: {src_line.strip()[:80]}",
+            "warning",
+        )
+        return False
+    # P003 specifically: if the flagged line is inside the body of
+    # get_or_create_monitor itself (the cache function), the
+    # "instantiated outside the cache" rule does not apply.
+    if finding.pattern == "P003" and _is_inside_get_or_create_monitor(
+        finding.line, snippet_lines_by_num
+    ):
+        log(
+            f"drop P003 {finding.file}:{finding.line} — flag lands inside "
+            f"get_or_create_monitor body (the cache itself): {src_line.strip()[:80]}",
             "warning",
         )
         return False
