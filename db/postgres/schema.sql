@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS core.identities (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     disabled_at         TIMESTAMPTZ NULL,
+    last_activity_at    TIMESTAMPTZ NULL,
 
     -- Lineage (shortcut; full lineage in AGE graph)
     parent_agent_id     TEXT NULL REFERENCES core.agents(id),
@@ -95,6 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_identities_agent_id ON core.identities(agent_id);
 CREATE INDEX IF NOT EXISTS idx_identities_status ON core.identities(status) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_identities_parent ON core.identities(parent_agent_id) WHERE parent_agent_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_identities_created_at ON core.identities(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_identities_last_activity_at ON core.identities(last_activity_at DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS idx_identities_metadata_gin ON core.identities USING GIN (metadata jsonb_path_ops);
 CREATE INDEX IF NOT EXISTS idx_identities_metadata_tsv ON core.identities USING GIN (metadata_tsv);
 

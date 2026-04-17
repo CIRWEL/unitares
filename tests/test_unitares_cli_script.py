@@ -1,8 +1,9 @@
 """Regression tests for scripts/unitares — the bash CLI wrapper.
 
 The script is a thin REST client for the governance MCP server, so these tests
-require a live server on localhost:8767. The server is started by the user's
-LaunchAgent in normal dev; in CI without it, these tests skip cleanly.
+require a live server. We start a sacrificial mcp_server.py instance against
+the governance_test database on a random port — never the production server
+on 8767. Skips if governance_test is not provisioned (see tests/test_db_utils).
 
 What we verify:
     * URL sanitization strips trailing "/mcp" and "/" so a stale
@@ -15,19 +16,27 @@ What we verify:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import socket
 import subprocess
+import sys
 import time
+import urllib.request
 import uuid
 from pathlib import Path
 
 import pytest
 
+from tests.test_db_utils import (
+    TEST_DB_URL,
+    can_connect_to_test_db,
+    ensure_test_database_schema,
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI = REPO_ROOT / "scripts" / "unitares"
-DEFAULT_URL = "http://localhost:8767"
 
 
 def _unique_agent_name() -> str:
@@ -36,46 +45,113 @@ def _unique_agent_name() -> str:
     return f"cli-pytest-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
 
 
-TEST_AGENT_RESUMABLE = "cli-pytest-probe-resume-fixture"
+def _pick_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
-def _server_reachable() -> bool:
+def _wait_for_ready(url: str, timeout_s: float = 60.0) -> None:
+    """Wait until /health returns 200. The CLI uses /health (deep check that
+    includes DB probe completion), so /health/live is not sufficient — the
+    background probe must have run at least once."""
+    deadline = time.time() + timeout_s
+    last_err: Exception | None = None
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"{url}/health", timeout=3) as resp:
+                if resp.status == 200:
+                    return
+                last_err = RuntimeError(f"/health returned {resp.status}")
+        except Exception as e:
+            last_err = e
+        time.sleep(0.5)
+    raise TimeoutError(f"mcp_server at {url} not ready after {timeout_s}s: {last_err}")
+
+
+@pytest.fixture(scope="session")
+def mcp_test_server():
+    """Start a sacrificial mcp_server.py against governance_test on a random
+    port. Tears it down after the test session.
+
+    Skips the whole module if governance_test is not reachable — we will not
+    fall back to the production server on 8767.
+    """
+    if not can_connect_to_test_db():
+        pytest.skip(
+            "governance_test database not available — see db/postgres/README.md "
+            "for setup (createdb governance_test + init-extensions.sql)"
+        )
+
+    asyncio.run(ensure_test_database_schema())
+
+    port = _pick_free_port()
+    url = f"http://127.0.0.1:{port}"
+
+    env = os.environ.copy()
+    env["DB_POSTGRES_URL"] = TEST_DB_URL
+    env["UNITARES_MCP_HOST"] = "127.0.0.1"
+    env.pop("UNITARES_BIND_ALL_INTERFACES", None)
+    # continuity_token is HMAC-signed; the server only emits one when a
+    # secret is configured. Provide a deterministic test secret so the
+    # CLI tests can assert on the token field.
+    env.setdefault("UNITARES_CONTINUITY_TOKEN_SECRET", "pytest-fixture-secret")
+
+    proc = subprocess.Popen(
+        [sys.executable, str(REPO_ROOT / "src" / "mcp_server.py"),
+         "--port", str(port), "--force"],
+        env=env,
+        cwd=str(REPO_ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+
     try:
-        with socket.create_connection(("127.0.0.1", 8767), timeout=0.5):
-            return True
-    except OSError:
-        return False
+        _wait_for_ready(url, timeout_s=60.0)
+    except Exception:
+        proc.terminate()
+        try:
+            _, stderr = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stderr = b""
+        pytest.fail(
+            f"test mcp_server failed to start on {url}\n"
+            f"stderr:\n{stderr.decode(errors='replace')[:4000]}"
+        )
 
+    yield url
 
-pytestmark = pytest.mark.skipif(
-    not _server_reachable(),
-    reason="governance-mcp not running on localhost:8767",
-)
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
 
 
 @pytest.fixture
-def cli_env(tmp_path):
-    """Minimal env for the CLI: clean URL, unique per-test agent, temp session file.
+def cli_env(tmp_path, mcp_test_server):
+    """Minimal env for the CLI: isolated test-server URL, unique per-test
+    agent, temp session file.
 
     A unique agent name avoids collisions with the server's
     trajectory-verification guard when the test is rerun in the same
-    governance database.
+    governance_test database.
 
-    Archives the test agent on teardown to prevent proliferation.
+    Archives the test agent on teardown so the test DB stays tidy.
     """
     env = os.environ.copy()
-    env.pop("UNITARES_URL", None)  # force default localhost
+    env["UNITARES_URL"] = mcp_test_server
     agent_name = _unique_agent_name()
     env["UNITARES_AGENT"] = agent_name
     env["UNITARES_SESSION_FILE"] = str(tmp_path / "session.json")
     env["UNITARES_TIMEOUT"] = "15"
     yield env
-    # Cleanup: archive the test agent so it doesn't pollute the dashboard
     try:
-        import urllib.request, json as _json
         req = urllib.request.Request(
-            f"{DEFAULT_URL}/v1/tools/call",
-            data=_json.dumps({
+            f"{mcp_test_server}/v1/tools/call",
+            data=json.dumps({
                 "name": "agent",
                 "arguments": {"action": "archive", "agent_id": agent_name}
             }).encode(),
@@ -83,7 +159,7 @@ def cli_env(tmp_path):
         )
         urllib.request.urlopen(req, timeout=5)
     except Exception:
-        pass  # Best-effort cleanup
+        pass
 
 
 def _run(env, *args, check=True):
@@ -109,27 +185,27 @@ def test_cli_is_executable():
     assert os.access(CLI, os.X_OK), f"{CLI} is not executable"
 
 
-def test_diag_reports_localhost_reachable(cli_env):
+def test_diag_reports_localhost_reachable(cli_env, mcp_test_server):
     result = _run(cli_env, "diag")
-    assert "UNITARES_URL    : http://localhost:8767" in result.stdout
+    assert f"UNITARES_URL    : {mcp_test_server}" in result.stdout
     assert f"UNITARES_AGENT  : {cli_env['UNITARES_AGENT']}" in result.stdout
     assert "Reachability    : OK" in result.stdout
 
 
-def test_url_sanitization_strips_mcp_suffix(cli_env):
+def test_url_sanitization_strips_mcp_suffix(cli_env, mcp_test_server):
     """A stale URL with /mcp baked on should still hit the REST API."""
-    cli_env["UNITARES_URL"] = f"{DEFAULT_URL}/mcp"
+    cli_env["UNITARES_URL"] = f"{mcp_test_server}/mcp"
     result = _run(cli_env, "diag")
     # After sanitization, the printed URL must NOT contain /mcp.
-    assert "UNITARES_URL    : http://localhost:8767" in result.stdout
+    assert f"UNITARES_URL    : {mcp_test_server}" in result.stdout
     assert "/mcp" not in result.stdout.split("UNITARES_URL")[1].split("\n")[0]
     assert "Reachability    : OK" in result.stdout
 
 
-def test_url_sanitization_strips_trailing_slash(cli_env):
-    cli_env["UNITARES_URL"] = f"{DEFAULT_URL}/"
+def test_url_sanitization_strips_trailing_slash(cli_env, mcp_test_server):
+    cli_env["UNITARES_URL"] = f"{mcp_test_server}/"
     result = _run(cli_env, "diag")
-    assert "UNITARES_URL    : http://localhost:8767" in result.stdout
+    assert f"UNITARES_URL    : {mcp_test_server}" in result.stdout
 
 
 def test_unreachable_host_fails_cleanly_without_traceback(cli_env):
@@ -192,12 +268,12 @@ def test_update_returns_verdict(cli_env):
     assert any(v in result.stdout for v in ("proceed", "guide", "pause", "reject"))
 
 
-def test_session_command_shows_config(cli_env):
+def test_session_command_shows_config(cli_env, mcp_test_server):
     agent = cli_env["UNITARES_AGENT"]
     _run(cli_env, "onboard", agent, "pytest")
     result = _run(cli_env, "session")
     assert f"Agent ID:     {agent}" in result.stdout
-    assert "URL:          http://localhost:8767" in result.stdout
+    assert f"URL:          {mcp_test_server}" in result.stdout
     assert "Continuity:   present" in result.stdout
 
 
