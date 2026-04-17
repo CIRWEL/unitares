@@ -1,32 +1,47 @@
-# CLAUDE.md — unitares
+# AGENTS.md — unitares
 
-Bootstrap for Claude Code sessions in this repo. Content below the `SHARED CONTRACT` markers is kept byte-identical with `AGENTS.md` — CI (`scripts/dev/check-shared-contract.sh`) enforces parity. Edit shared rules in **both** files; edit the Claude preamble here only.
+Bootstrap for Codex (and other non-Claude) sessions in this repo. Content below the `SHARED CONTRACT` markers is kept byte-identical with `CLAUDE.md` — CI (`scripts/dev/check-shared-contract.sh`) enforces parity. Edit shared rules in **both** files; edit the Codex preamble here only.
 
-## Claude-specific wiring
+For a human-facing Codex quickstart (modes, minimal session pattern, what to watch), see `CODEX_START.md`.
 
-Claude Code runs through a plugin-style harness. The hook lifecycle is:
+## Codex-specific wiring
 
-- `hooks/hooks.json` — plugin manifest; declares `SessionStart` and `PostToolUse` (`Edit|Write`) matchers under `${CLAUDE_PLUGIN_ROOT}`
-- `hooks/session-start` — runs once per session; performs governance onboarding/resume
-- `hooks/post-edit` — runs async after every `Edit`/`Write`; invokes the Watcher
+Codex has no hook system analogous to Claude's. **Nothing is automatic.** You decide when to check in, diagnose, and surface Watcher findings.
 
-Watcher findings **surface automatically** here. `hooks/post-edit` calls `agents/watcher/watcher-hook.sh`, which scans the just-edited region and emits unresolved findings as a chime block on your next turn. To close a finding:
+### Slash commands (`commands/*.md`)
+
+- `/governance-start` — onboard or resume; refreshes local continuity state
+- `/checkin` — governance update after meaningful work
+- `/diagnose` — identity, state, and operator diagnostics
+- `/dialectic` — structured review
+
+Raw tool flow when slash commands are unavailable: `onboard()` → save `uuid` → `identity(agent_uuid=..., resume=true)` → `process_agent_update(response_text, complexity)` → `get_governance_metrics()` for read-only checks → `health_check()` only if system health is suspect.
+
+### Local continuity cache
+
+`.unitares/session.json` is Codex's authoritative local workspace state (not Claude's memory system). It holds `uuid`, `continuity_token`, `client_session_id`, `session_resolution_source`, `identity_assurance`. Helper: `scripts/client/session_cache.py`. On every session, restart, call `identity(agent_uuid=<saved uuid>, resume=true)`.
+
+If `session_resolution_source` falls back to a weak source, rerun `/governance-start` or re-resume explicitly.
+
+### Watcher visibility is manual
+
+There is no `PostToolUse` hook to surface findings. To see and close them:
 
 ```bash
-python3 agents/watcher/agent.py --resolve <fingerprint>   # confirmed bug, fixed
-python3 agents/watcher/agent.py --dismiss <fingerprint>   # false positive
+python3 agents/watcher/agent.py --list-findings --only-open   # list open/surfaced findings
+python3 agents/watcher/agent.py --print-unresolved            # print unresolved block without mutating
+python3 agents/watcher/agent.py --surface-pending             # print + transition open→surfaced
+python3 agents/watcher/agent.py --resolve <fingerprint>       # mark confirmed (fixed)
+python3 agents/watcher/agent.py --dismiss <fingerprint>       # mark false positive
 ```
 
-Reference fingerprints in the commit message — Watcher's audit trail lives in commits, not in tracked files (`data/watcher/` is gitignored).
+Reference fingerprints in the commit message — Watcher's audit trail lives in commits, not tracked files (`data/watcher/` is gitignored).
 
-### Machine-local overlay
+### What Codex should NOT reference
 
-`.claude/CLAUDE.md` is gitignored and layers on deployment-specific details (bind address, LaunchAgent paths, `governance_core` source symlink). Read both files; the overlay wins on conflicts.
-
-### What Claude should NOT reference
-
-- `commands/*.md` — those are **Codex** slash commands, not Claude commands.
-- `.unitares/session.json` — that's the Codex continuity cache. Claude's continuity comes from the hook chain + `~/.claude/projects/.../memory/MEMORY.md`.
+- `hooks/` — Claude plugin manifest; has no meaning in Codex.
+- `.claude/CLAUDE.md` — Claude-only machine-local overlay.
+- `~/.claude/projects/.../memory/MEMORY.md` — Claude's memory system; Codex uses `.unitares/session.json` instead.
 
 <!-- BEGIN SHARED CONTRACT — keep byte-identical across AGENTS.md and CLAUDE.md; scripts/dev/check-shared-contract.sh enforces parity -->
 
