@@ -1536,11 +1536,6 @@ def _consume_coro(coro, name=None):
     return MagicMock()
 
 
-def _persist_calls(mock_track):
-    """Return calls to create_tracked_task that were for persist_tool_usage."""
-    return [c for c in mock_track.call_args_list if c.kwargs.get("name") == "persist_tool_usage"]
-
-
 class TestToolUsageRecording:
     """Every dispatched tool call should land in audit.tool_usage via fire-and-forget."""
 
@@ -1555,6 +1550,7 @@ class TestToolUsageRecording:
 
         with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None), \
              patch("src.mcp_server_std.STDIO_PROXY_URL", None), \
+             patch("src.mcp_server_std.HEARTBEAT_CONFIG.enabled", False), \
              patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock, return_value=mock_result), \
              patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=mock_tracker), \
              patch("src.background_tasks.create_tracked_task", side_effect=_consume_coro) as mock_track:
@@ -1566,9 +1562,9 @@ class TestToolUsageRecording:
         assert call_kwargs["success"] is True
         assert call_kwargs["tool_name"] == "health_check"
 
-        # Exactly one persist_tool_usage task scheduled (other unrelated
-        # create_tracked_task calls like auto-heartbeat may also happen)
-        assert len(_persist_calls(mock_track)) == 1
+        # DB persist task created exactly once
+        assert mock_track.call_count == 1
+        assert mock_track.call_args.kwargs.get("name") == "persist_tool_usage"
 
     @pytest.mark.asyncio
     async def test_unknown_tool_records_failure(self):
@@ -1577,6 +1573,7 @@ class TestToolUsageRecording:
 
         with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None), \
              patch("src.mcp_server_std.STDIO_PROXY_URL", None), \
+             patch("src.mcp_server_std.HEARTBEAT_CONFIG.enabled", False), \
              patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock, return_value=None), \
              patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=mock_tracker), \
              patch("src.background_tasks.create_tracked_task", side_effect=_consume_coro) as mock_track:
@@ -1586,7 +1583,7 @@ class TestToolUsageRecording:
         call_kwargs = mock_tracker.log_tool_call.call_args.kwargs
         assert call_kwargs["success"] is False
         assert call_kwargs["error_type"] == "unknown_tool"
-        assert len(_persist_calls(mock_track)) == 1
+        assert mock_track.call_count == 1
 
     @pytest.mark.asyncio
     async def test_execution_error_records_failure(self):
@@ -1595,6 +1592,7 @@ class TestToolUsageRecording:
 
         with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None), \
              patch("src.mcp_server_std.STDIO_PROXY_URL", None), \
+             patch("src.mcp_server_std.HEARTBEAT_CONFIG.enabled", False), \
              patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock,
                    side_effect=RuntimeError("boom")), \
              patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=mock_tracker), \
@@ -1605,7 +1603,7 @@ class TestToolUsageRecording:
         call_kwargs = mock_tracker.log_tool_call.call_args.kwargs
         assert call_kwargs["success"] is False
         assert call_kwargs["error_type"] == "execution_error"
-        assert len(_persist_calls(mock_track)) == 1
+        assert mock_track.call_count == 1
 
     @pytest.mark.asyncio
     async def test_db_persist_failure_does_not_break_tool_call(self):
@@ -1623,6 +1621,7 @@ class TestToolUsageRecording:
 
         with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None), \
              patch("src.mcp_server_std.STDIO_PROXY_URL", None), \
+             patch("src.mcp_server_std.HEARTBEAT_CONFIG.enabled", False), \
              patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock, return_value=mock_result), \
              patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=mock_tracker), \
              patch("src.background_tasks.create_tracked_task", side_effect=_raise_runtime):
@@ -1898,4 +1897,3 @@ class TestWriteStateFile:
         _write_state_file(state_file, {"version": 2})
         loaded = json.loads(state_file.read_text())
         assert loaded["version"] == 2
-
