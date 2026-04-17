@@ -2,7 +2,7 @@
 CIRS auto-emit hooks — called from process_agent_update.
 
 Houses maybe_emit_void_alert, auto_emit_state_announce,
-maybe_emit_resonance_signal, maybe_apply_neighbor_pressure.
+maybe_emit_resonance_signal.
 """
 
 from typing import Dict, Any, Optional
@@ -16,7 +16,6 @@ from .types import (
 from .storage import (
     _store_void_alert, _store_state_announce,
     _emit_resonance_alert, _emit_stability_restored,
-    _get_recent_resonance_signals, _coherence_report_buffer,
 )
 
 logger = get_logger(__name__)
@@ -160,105 +159,3 @@ def maybe_emit_resonance_signal(
         )
         return restored.to_dict()
 
-def auto_emit_coherence_reports(agent_id: str) -> int:
-    """Auto-compute coherence reports for peers that emitted RESONANCE_ALERT.
-
-    Called before maybe_apply_neighbor_pressure() so the buffer has data.
-    Only computes reports for peers we don't already have a recent report for.
-
-    Returns number of reports computed.
-    """
-    signals = _get_recent_resonance_signals(max_age_minutes=30)
-    computed = 0
-
-    for signal in signals:
-        peer_id = signal.get("agent_id")
-        if not peer_id or peer_id == agent_id:
-            continue
-        if signal.get("type") != "RESONANCE_ALERT":
-            continue
-
-        # Skip if we already have a report for this pair
-        key_fwd = f"{agent_id}:{peer_id}"
-        key_rev = f"{peer_id}:{agent_id}"
-        if _coherence_report_buffer.get(key_fwd) or _coherence_report_buffer.get(key_rev):
-            continue
-
-        # Get both monitors
-        source_monitor = mcp_server.monitors.get(agent_id)
-        target_monitor = mcp_server.monitors.get(peer_id)
-        if not source_monitor or not target_monitor:
-            continue
-
-        try:
-            from .coherence import compute_pairwise_similarity
-            from .storage import _store_coherence_report
-            report = compute_pairwise_similarity(source_monitor, target_monitor)
-            if report:
-                _store_coherence_report(report)
-                computed += 1
-                logger.debug(
-                    f"[CIRS/AUTO_COHERENCE] {agent_id} <-> {peer_id}: "
-                    f"similarity={report.similarity_score:.3f}"
-                )
-        except Exception as e:
-            logger.debug(f"Auto-emit coherence report failed for {agent_id}<->{peer_id}: {e}")
-
-    return computed
-
-def maybe_apply_neighbor_pressure(
-    agent_id: str,
-    governor,
-) -> None:
-    """
-    Apply neighbor pressure from peer resonance alerts.
-
-    Reads recent RESONANCE_ALERT signals from other agents.
-    For each alert, looks up coherence similarity. If similar enough,
-    applies defensive threshold tightening to the local governor.
-    """
-    if governor is None:
-        return
-
-    signals = _get_recent_resonance_signals(max_age_minutes=30)
-
-    for signal in signals:
-        peer_id = signal.get("agent_id")
-
-        if peer_id == agent_id:
-            continue
-
-        signal_type = signal.get("type")
-
-        if signal_type == "RESONANCE_ALERT":
-            similarity = _lookup_similarity(agent_id, peer_id)
-            if similarity is not None:
-                governor.apply_neighbor_pressure(similarity=similarity)
-                logger.debug(
-                    f"[CIRS/NEIGHBOR] Pressure applied to {agent_id} "
-                    f"from {peer_id} (similarity={similarity:.3f})"
-                )
-
-        elif signal_type == "STABILITY_RESTORED":
-            governor.decay_neighbor_pressure()
-            logger.debug(
-                f"[CIRS/NEIGHBOR] Pressure decayed for {agent_id} "
-                f"(peer {peer_id} stabilized)"
-            )
-
-def _lookup_similarity(agent_id: str, peer_id: str) -> Optional[float]:
-    """
-    Look up pairwise coherence similarity between two agents.
-    Checks both directions in the coherence report buffer.
-    """
-    key = f"{agent_id}:{peer_id}"
-    report = _coherence_report_buffer.get(key)
-    if report:
-        return report.get("similarity_score")
-
-    key_reverse = f"{peer_id}:{agent_id}"
-    report_reverse = _coherence_report_buffer.get(key_reverse)
-    if report_reverse:
-        return report_reverse.get("similarity_score")
-
-    return None

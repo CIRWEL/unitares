@@ -3,7 +3,6 @@ Tests for CIRS resonance → protocol wiring.
 
 Covers:
 - maybe_emit_resonance_signal: transition detection and signal emission
-- maybe_apply_neighbor_pressure: peer alert reading and pressure application
 """
 
 import pytest
@@ -12,9 +11,7 @@ from unittest.mock import MagicMock
 
 from src.mcp_handlers.cirs.protocol import (
     maybe_emit_resonance_signal,
-    maybe_apply_neighbor_pressure,
     _resonance_alert_buffer,
-    _coherence_report_buffer,
     _get_recent_resonance_signals,
     _emit_resonance_alert,
     _emit_stability_restored,
@@ -116,149 +113,18 @@ class TestMaybeEmitResonanceSignal:
         assert len(_resonance_alert_buffer) == 0
 
 
-class TestMaybeApplyNeighborPressure:
-    """maybe_apply_neighbor_pressure reads peer alerts and applies pressure."""
-
-    def setup_method(self):
-        """Clear buffers before each test."""
-        _resonance_alert_buffer.clear()
-        _coherence_report_buffer.clear()
-
-    def test_applies_pressure_when_similar_peer_resonating(self):
-        """High-similarity peer resonance -> pressure applied."""
-        gov = AdaptiveGovernor()
-        assert gov.state.neighbor_pressure == 0.0
-
-        # Peer emits RESONANCE_ALERT
-        alert = ResonanceAlert(
-            agent_id="peer-1",
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            oi=3.0, phase="integration",
-            tau_current=0.42, beta_current=0.58, flips=5,
-        )
-        _emit_resonance_alert(alert)
-
-        # Coherence report shows high similarity
-        _coherence_report_buffer["my-agent:peer-1"] = {
-            "source_agent_id": "my-agent",
-            "target_agent_id": "peer-1",
-            "similarity_score": 0.75,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-
-        maybe_apply_neighbor_pressure(
-            agent_id="my-agent",
-            governor=gov,
-        )
-
-        assert gov.state.neighbor_pressure > 0.0
-
-    def test_skips_pressure_when_no_coherence_report(self):
-        """No coherence report -> no pressure (conservative default)."""
-        gov = AdaptiveGovernor()
-
-        # Peer emits RESONANCE_ALERT
-        alert = ResonanceAlert(
-            agent_id="peer-1",
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            oi=3.0, phase="integration",
-            tau_current=0.42, beta_current=0.58, flips=5,
-        )
-        _emit_resonance_alert(alert)
-
-        # No coherence report exists
-        maybe_apply_neighbor_pressure(
-            agent_id="my-agent",
-            governor=gov,
-        )
-
-        assert gov.state.neighbor_pressure == 0.0
-
-    def test_skips_pressure_when_low_similarity(self):
-        """Low similarity -> no pressure."""
-        gov = AdaptiveGovernor()
-
-        alert = ResonanceAlert(
-            agent_id="peer-1",
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            oi=3.0, phase="integration",
-            tau_current=0.42, beta_current=0.58, flips=5,
-        )
-        _emit_resonance_alert(alert)
-
-        _coherence_report_buffer["my-agent:peer-1"] = {
-            "source_agent_id": "my-agent",
-            "target_agent_id": "peer-1",
-            "similarity_score": 0.3,  # Below 0.5 threshold
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-
-        maybe_apply_neighbor_pressure(
-            agent_id="my-agent",
-            governor=gov,
-        )
-
-        assert gov.state.neighbor_pressure == 0.0
-
-    def test_ignores_own_resonance_alerts(self):
-        """Agent doesn't apply pressure from its own alerts."""
-        gov = AdaptiveGovernor()
-
-        # Self-emitted alert
-        alert = ResonanceAlert(
-            agent_id="my-agent",
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            oi=3.0, phase="integration",
-            tau_current=0.42, beta_current=0.58, flips=5,
-        )
-        _emit_resonance_alert(alert)
-
-        maybe_apply_neighbor_pressure(
-            agent_id="my-agent",
-            governor=gov,
-        )
-
-        assert gov.state.neighbor_pressure == 0.0
-
-    def test_decays_pressure_on_stability_restored(self):
-        """STABILITY_RESTORED from previously-pressuring peer -> decay."""
-        gov = AdaptiveGovernor()
-        # Manually set some existing pressure
-        gov.state.neighbor_pressure = 0.05
-        gov.state.agents_in_resonance = 1
-
-        # Peer restored stability
-        restored = StabilityRestored(
-            agent_id="peer-1",
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            oi=0.3, tau_settled=0.40, beta_settled=0.60,
-        )
-        _emit_stability_restored(restored)
-
-        maybe_apply_neighbor_pressure(
-            agent_id="my-agent",
-            governor=gov,
-        )
-
-        assert gov.state.neighbor_pressure < 0.05  # Decayed
-
-
 class TestResonanceFullLoop:
-    """Integration: governor detects → alert emits → peer tightens."""
+    """Integration: governor detects → alert emits."""
 
     def setup_method(self):
         _resonance_alert_buffer.clear()
-        _coherence_report_buffer.clear()
 
     def test_full_resonance_propagation_loop(self):
         """
         Agent A oscillates → detects resonance → emits RESONANCE_ALERT.
-        Agent B has high similarity → reads alert → applies neighbor pressure.
-        Agent B's thresholds tighten.
         """
         config = GovernorConfig(flip_threshold=3)
         gov_a = AdaptiveGovernor(config=config)
-        gov_b = AdaptiveGovernor()
         histories = _stable_histories()
 
         # Phase 1: Drive Agent A into resonance
@@ -279,45 +145,7 @@ class TestResonanceFullLoop:
         assert signal is not None
         assert signal["type"] == "RESONANCE_ALERT"
 
-        # Phase 3: Set up similarity between A and B
-        _coherence_report_buffer["agent-b:agent-a"] = {
-            "source_agent_id": "agent-b",
-            "target_agent_id": "agent-a",
-            "similarity_score": 0.8,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-
-        # Phase 4: Agent B reads and applies pressure
-        initial_pressure = gov_b.state.neighbor_pressure
-        maybe_apply_neighbor_pressure(
-            agent_id="agent-b",
-            governor=gov_b,
-        )
-        assert gov_b.state.neighbor_pressure > initial_pressure
-
-        # Phase 5: Agent A stabilizes → emits STABILITY_RESTORED
-        for _ in range(5):
-            result_a = gov_a.update(
-                coherence=0.65, risk=0.20, verdict="safe", **histories
-            )
-
-        if not result_a["resonant"]:
-            signal_restored = maybe_emit_resonance_signal(
-                agent_id="agent-a",
-                cirs_result=result_a,
-                was_resonant=True,
-            )
-            if signal_restored:
-                assert signal_restored["type"] == "STABILITY_RESTORED"
-
-        # Phase 6: Agent B decays pressure
-        pressure_before_decay = gov_b.state.neighbor_pressure
-        maybe_apply_neighbor_pressure(
-            agent_id="agent-b",
-            governor=gov_b,
-        )
-        # If stability was restored, pressure should have decayed
-        # (may still have RESONANCE_ALERT in buffer too, so just check it moved)
+        # Coupling is structurally removed — emission is the full loop we cover here.
 
 
 class TestCirsDampeningAdvisory:
