@@ -229,3 +229,153 @@ def test_explicit_parent_agent_id_records_lineage_without_state_transplant():
     assert agent_metadata[child_uuid].parent_agent_id == parent_uuid
     # But state is NOT transplanted.
     assert child_monitor.state.V_history == []
+
+
+@pytest.mark.asyncio
+async def test_continuity_token_roundtrip_preserves_uuid():
+    """
+    Regression guard for the explicit-continuity path (the blessed
+    alternative to fingerprint-based resumption that this spec removes).
+
+    Round-trip: onboard() -> capture uuid + continuity_token ->
+    call identity() again with that token -> the SAME UUID must come back.
+    No new identity may be forged.
+    """
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from tests.helpers import parse_result
+
+    # --- Mock plumbing (inline to keep this file self-contained) -------------
+    mock_db = AsyncMock()
+    mock_db.init = AsyncMock()
+    mock_db.get_session = AsyncMock(return_value=None)
+    mock_db.get_identity = AsyncMock(return_value=None)
+    mock_db.get_agent = AsyncMock(return_value=None)
+    mock_db.get_agent_label = AsyncMock(return_value="RoundtripAgent")
+    mock_db.get_agent_status = AsyncMock(return_value="active")
+    mock_db.upsert_agent = AsyncMock()
+    mock_db.upsert_identity = AsyncMock()
+    mock_db.create_session = AsyncMock()
+    mock_db.update_session_activity = AsyncMock()
+    mock_db.find_agent_by_label = AsyncMock(return_value=None)
+    mock_db.get_agent_thread_info = AsyncMock(return_value=None)
+    mock_db.get_thread_nodes = AsyncMock(return_value=[])
+
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=None)
+    mock_redis.bind = AsyncMock()
+
+    mock_raw_redis = AsyncMock()
+    mock_raw_redis.setex = AsyncMock()
+    mock_raw_redis.expire = AsyncMock()
+    mock_raw_redis.get = AsyncMock(return_value=None)
+
+    async def _get_raw():
+        return mock_raw_redis
+
+    def _discard_task(coro, **kwargs):
+        try:
+            coro.close()
+        except Exception:
+            pass
+        t = MagicMock()
+        t.cancel = MagicMock()
+        return t
+
+    mock_server = MagicMock()
+    mock_server.agent_metadata = {}
+
+    # --- First call: onboard a fresh identity --------------------------------
+    # get_identity is called twice: once by resolve_session_identity (expect None
+    # so we create), once by ensure_agent_persisted check (None -> persist), and
+    # then after upsert ensure_agent_persisted re-reads it.
+    mock_db.get_identity.side_effect = [
+        None,  # resolution PG lookup (PATH 2 miss)
+        None,  # ensure_agent_persisted existence check
+        SimpleNamespace(identity_id="i-new", metadata={}),  # post-upsert read
+    ]
+
+    from src.mcp_handlers.identity.handlers import (
+        handle_onboard_v2,
+        handle_identity_adapter,
+    )
+
+    env = {"UNITARES_CONTINUITY_TOKEN_SECRET": "test-roundtrip-secret"}
+
+    with patch.dict("os.environ", env, clear=False), \
+         patch("src.mcp_handlers.identity.persistence._redis_cache", None), \
+         patch("src.cache.get_session_cache", return_value=mock_redis), \
+         patch("src.mcp_handlers.identity.handlers.get_db", return_value=mock_db), \
+         patch("src.mcp_handlers.identity.resolution.get_db", return_value=mock_db), \
+         patch("src.mcp_handlers.identity.persistence.get_db", return_value=mock_db), \
+         patch("src.cache.redis_client.get_redis", new=_get_raw), \
+         patch("src.mcp_handlers.context.get_mcp_session_id", return_value=None), \
+         patch("src.mcp_handlers.context.get_context_session_key", return_value="roundtrip-ctx"), \
+         patch("src.mcp_handlers.context.get_context_agent_id", return_value=None), \
+         patch("src.mcp_handlers.context.get_context_client_hint", return_value="test"), \
+         patch("src.mcp_handlers.context.update_context_agent_id"), \
+         patch("asyncio.create_task", side_effect=_discard_task), \
+         patch("src.mcp_handlers.shared.get_mcp_server", return_value=mock_server), \
+         patch("src.mcp_handlers.identity.shared._register_uuid_prefix"):
+
+        first_result = await handle_onboard_v2({
+            "client_session_id": "roundtrip-session-1",
+            "resume": True,
+        })
+        first_data = parse_result(first_result)
+
+        # Sanity: onboard succeeded and handed us a UUID + token.
+        assert first_data.get("success") is True, first_data
+        assert first_data.get("is_new") is True
+        first_uuid = first_data.get("uuid")
+        assert first_uuid, f"onboard response missing uuid: {first_data}"
+        captured_token = first_data.get("continuity_token")
+        assert captured_token, (
+            "onboard response must include continuity_token when the secret "
+            f"is configured (got keys: {sorted(first_data.keys())})"
+        )
+
+        # --- Second call: resume via the captured token ----------------------
+        # For the second call the resolver should find the existing agent.
+        # The token encodes agent_uuid + client_session_id; handle_identity_adapter
+        # resolves the token back to its stable session id, then resolve_session_identity
+        # is called with that. We make PATH 1 (Redis) return the existing agent
+        # cached under that session_key so no new UUID is minted.
+        display_agent_id = first_data.get("agent_id") or first_uuid
+
+        async def cache_get_second(session_id):
+            # Any session key routed through on the second call resolves to the
+            # existing agent. This models the Redis cache that the first
+            # onboard populated (we don't exercise real cache writes here).
+            return {
+                "agent_id": first_uuid,
+                "display_agent_id": display_agent_id,
+                "label": "RoundtripAgent",
+            }
+
+        mock_redis.get.side_effect = cache_get_second
+        # Identity lookups on the second call resolve the existing row.
+        mock_db.get_identity.side_effect = None
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="i-new",
+            metadata={"agent_id": display_agent_id},
+        )
+
+        second_result = await handle_identity_adapter({
+            "continuity_token": captured_token,
+            "resume": True,
+        })
+        second_data = parse_result(second_result)
+
+    # --- The contract: same agent, no new identity --------------------------
+    assert second_data.get("success") is True, second_data
+    assert second_data.get("uuid") == first_uuid, (
+        "continuity_token round-trip must resolve to the original UUID; "
+        f"first={first_uuid!r} second={second_data.get('uuid')!r}"
+    )
+    # is_new should be False/absent — this is a resume, not a creation.
+    assert second_data.get("is_new") in (False, None), (
+        f"second call must not create a new identity (is_new={second_data.get('is_new')!r})"
+    )
