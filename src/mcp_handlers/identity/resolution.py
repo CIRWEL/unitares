@@ -287,9 +287,9 @@ async def resolve_session_identity(
 
         resume: If True, reuse existing identity from cache/DB (PATH 1/2).
 
-                If False (default), skip to PATH 3 (create new) with predecessor
-
-                linking when a prior identity exists.
+                If False (default), skip to PATH 3 and create a fresh identity.
+                Fingerprint match is a routing hint, not a succession claim —
+                no predecessor link is recorded (see 2026-04-16 spec).
 
 
 
