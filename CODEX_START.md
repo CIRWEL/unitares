@@ -2,6 +2,8 @@
 
 Use this path if you are working from Codex or ChatGPT and want the cleanest UNITARES workflow without depending on Claude-only hooks.
 
+`AGENTS.md` is the machine-facing Codex bootstrap. This file is the human-facing quickstart.
+
 ## Goal
 
 Connect to a running UNITARES governance server, preserve continuity cleanly, and check in at meaningful milestones instead of every trivial edit.
@@ -22,6 +24,13 @@ If you are not using commands directly, the equivalent raw tool flow is:
 3. `process_agent_update()` after meaningful work
 4. `get_governance_metrics()` for read-only state checks
 5. `health_check()` only if the system itself may be part of the problem
+
+## Codex Reality
+
+- Codex uses slash commands and explicit tool calls, not Claude hooks
+- nothing auto-checks in for you
+- Watcher findings are manual unless you invoke the watcher CLI yourself
+- `.unitares/session.json` is the local continuity cache you should trust first
 
 ## Continuity Model
 
@@ -76,6 +85,17 @@ Do not treat every file edit as a governance event. High-signal check-ins are mo
 - `/checkin` for a governance update after meaningful work
 - `/diagnose` for identity, state, and operator diagnostics
 - `/dialectic` for structured review
+
+## Watcher
+
+Codex does not get automatic Watcher surfacing. Use the CLI directly when you want the same signal:
+
+```bash
+python3 agents/watcher/agent.py --list-findings --only-open
+python3 agents/watcher/agent.py --print-unresolved
+python3 agents/watcher/agent.py --resolve <fingerprint> --agent-id <your-uuid>
+python3 agents/watcher/agent.py --dismiss <fingerprint> --agent-id <your-uuid>
+```
 
 ## Scope
 

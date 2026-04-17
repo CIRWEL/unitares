@@ -1,8 +1,8 @@
 # AGENTS.md — unitares
 
-Bootstrap for Codex (and other non-Claude) sessions in this repo. Content below the `SHARED CONTRACT` markers is kept byte-identical with `CLAUDE.md` — CI (`scripts/dev/check-shared-contract.sh`) enforces parity. Edit shared rules in **both** files; edit the Codex preamble here only.
+Bootstrap for Codex (and other non-Claude) sessions in this repo. This file is the **machine-facing Codex bootstrap**. Content below the `SHARED CONTRACT` markers is kept byte-identical with `CLAUDE.md` — CI (`scripts/dev/check-shared-contract.sh`) enforces parity. Edit shared rules in **both** files; edit the Codex preamble here only.
 
-For a human-facing Codex quickstart (modes, minimal session pattern, what to watch), see `CODEX_START.md`.
+For the human-facing Codex quickstart, see `CODEX_START.md`.
 
 ## Codex-specific wiring
 
@@ -19,7 +19,7 @@ Raw tool flow when slash commands are unavailable: `onboard()` → save `uuid` �
 
 ### Local continuity cache
 
-`.unitares/session.json` is Codex's authoritative local workspace state (not Claude's memory system). It holds `uuid`, `continuity_token`, `client_session_id`, `session_resolution_source`, `identity_assurance`. Helper: `scripts/client/session_cache.py`. On every session, restart, call `identity(agent_uuid=<saved uuid>, resume=true)`.
+`.unitares/session.json` is Codex's authoritative local workspace state (not Claude's memory system). It holds `uuid`, `continuity_token`, `client_session_id`, `session_resolution_source`, `identity_assurance`. Helper: `scripts/client/session_cache.py`. On every new session or after a restart, call `identity(agent_uuid=<saved uuid>, resume=true)`.
 
 If `session_resolution_source` falls back to a weak source, rerun `/governance-start` or re-resume explicitly.
 
@@ -31,11 +31,11 @@ There is no `PostToolUse` hook to surface findings. To see and close them:
 python3 agents/watcher/agent.py --list-findings --only-open   # list open/surfaced findings
 python3 agents/watcher/agent.py --print-unresolved            # print unresolved block without mutating
 python3 agents/watcher/agent.py --surface-pending             # print + transition open→surfaced
-python3 agents/watcher/agent.py --resolve <fingerprint>       # mark confirmed (fixed)
-python3 agents/watcher/agent.py --dismiss <fingerprint>       # mark false positive
+python3 agents/watcher/agent.py --resolve <fingerprint> --agent-id <your-uuid>
+python3 agents/watcher/agent.py --dismiss <fingerprint> --agent-id <your-uuid>
 ```
 
-Reference fingerprints in the commit message — Watcher's audit trail lives in commits, not tracked files (`data/watcher/` is gitignored).
+Use `--agent-id` when resolving or dismissing so the audit trail stays attributed. `data/watcher/` is gitignored, so commit messages are still useful context when you close a finding.
 
 ### What Codex should NOT reference
 
