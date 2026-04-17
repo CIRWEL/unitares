@@ -100,3 +100,31 @@ class TestPydanticSchemas:
         assert model.tags is None
         dumped = model.model_dump()
         assert dumped["tags"] is None
+
+    def test_knowledge_schema_accepts_audit_and_supersede(self):
+        """Schema must accept every action the dispatcher routes.
+
+        Regression: Vigil's groundskeeper silently failed for weeks because
+        the dispatcher at consolidated.py routed 'audit' and 'supersede' but
+        the schema Literal listed only 9 actions — every call hit
+        PARAMETER_ERROR before reaching the handler. If you add a new action
+        to consolidated.handle_knowledge, add it here too.
+        """
+        import typing
+        from src.mcp_handlers.schemas.knowledge import KnowledgeParams
+
+        schema_actions = set(typing.get_args(KnowledgeParams.model_fields["action"].annotation))
+
+        # These were the two silently-rejected actions from the incident
+        assert "audit" in schema_actions
+        assert "supersede" in schema_actions
+
+        # The handler dispatcher's full action set (consolidated.py:98-109).
+        # Kept in a literal here so adding an action there without updating
+        # the schema surfaces as a test failure, not a runtime PARAMETER_ERROR.
+        dispatcher_actions = {
+            "store", "search", "get", "list", "update", "details",
+            "note", "cleanup", "stats", "supersede", "audit",
+        }
+        missing = dispatcher_actions - schema_actions
+        assert not missing, f"Schema missing dispatcher actions: {missing}"

@@ -25,7 +25,6 @@ What it does each cycle:
 
 import asyncio
 
-import anyio
 import json
 import os
 import subprocess
@@ -328,7 +327,9 @@ class HeartbeatAgent(GovernanceAgent):
                     if cleanup_result.success:
                         summary["archived"] = cleanup_result.cleaned
             else:
-                summary["errors"].append("Audit failed")
+                err = getattr(audit_result, "error", None) or "Audit failed"
+                summary["errors"].append(str(err))
+                log(f"GROUNDSKEEPER: audit_knowledge failed — {err}")
 
             orphan_result = await client.archive_orphan_agents()
             if orphan_result.success:
@@ -336,6 +337,7 @@ class HeartbeatAgent(GovernanceAgent):
 
         except Exception as e:
             summary["errors"].append(str(e))
+            log(f"GROUNDSKEEPER: exception during audit — {type(e).__name__}: {e}")
 
         if summary["audit_run"]:
             note_text = (
@@ -639,16 +641,18 @@ class HeartbeatAgent(GovernanceAgent):
     async def run_once(self, timeout: float = CYCLE_TIMEOUT):
         """Run a single heartbeat cycle with a wall-clock timeout.
 
-        Uses anyio.fail_after (not asyncio.wait_for) because the MCP SDK
-        uses anyio task groups internally — asyncio's cancellation mechanism
-        violates anyio's cancel scope ownership and causes RuntimeError.
+        Uses asyncio.wait_for — the historical comment here claimed
+        anyio.fail_after was required to avoid cancel-scope ownership
+        violations, but under Python 3.14 anyio.fail_after itself raises
+        RuntimeError on exit ("Attempted to exit a cancel scope that isn't
+        the current task's current cancel scope"). wait_for is the
+        project-standard pattern (CLAUDE.md "Known Issue" mitigation #3).
         """
         log("--- Heartbeat cycle start ---")
         start = time.time()
         try:
-            with anyio.fail_after(timeout):
-                await super().run_once()
-        except TimeoutError:
+            await asyncio.wait_for(super().run_once(), timeout=timeout)
+        except asyncio.TimeoutError:
             elapsed = time.time() - start
             log(f"CYCLE TIMEOUT after {elapsed:.1f}s (limit={timeout}s) — aborting")
             _trim_log(LOG_FILE, MAX_LOG_LINES)

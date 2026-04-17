@@ -243,7 +243,7 @@ class CleanupKnowledgeGraphParams(AgentIdentityMixin):
 
 class KnowledgeParams(AgentIdentityMixin):
     """Parameters for knowledge"""
-    action: Literal["store", "search", "get", "list", "update", "details", "note", "cleanup", "stats"] = Field(..., description="Operation to perform")
+    action: Literal["store", "search", "get", "list", "update", "details", "note", "cleanup", "stats", "supersede", "audit"] = Field(..., description="Operation to perform")
     query: Optional[str] = Field(None, description="Search query (for action=search)")
     content: Optional[str] = Field(None, description="Extended content/details (for action=store or action=note)")
     details: Optional[str] = Field(None, description="Extended details for discovery (for action=store). Alias: content")
