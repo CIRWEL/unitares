@@ -28,36 +28,36 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-HEARTBEAT_PATH = REPO_ROOT / "agents" / "vigil" / "agent.py"
+VIGIL_PATH = REPO_ROOT / "agents" / "vigil" / "agent.py"
 sys.path.insert(0, str(REPO_ROOT))
 
 
-def _load_heartbeat_module() -> ModuleType:
+def _load_vigil_module() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
-        "heartbeat_agent_under_test", HEARTBEAT_PATH
+        "vigil_agent_under_test", VIGIL_PATH
     )
-    assert spec and spec.loader, f"cannot load {HEARTBEAT_PATH}"
+    assert spec and spec.loader, f"cannot load {VIGIL_PATH}"
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
 @pytest.fixture(scope="module")
-def heartbeat_module() -> ModuleType:
-    return _load_heartbeat_module()
+def vigil_module() -> ModuleType:
+    return _load_vigil_module()
 
 
 @pytest.fixture
-def agent(heartbeat_module, tmp_path, monkeypatch):
+def agent(vigil_module, tmp_path, monkeypatch):
     """Construct an agent with file paths redirected to tmp_path so the test
     does not touch the real ~/Library/Logs or .vigil_* files."""
-    log_file = tmp_path / "heartbeat.log"
+    log_file = tmp_path / "vigil.log"
     session_file = tmp_path / "vigil_session.json"
     state_file = tmp_path / "vigil_state.json"
-    monkeypatch.setattr(heartbeat_module, "LOG_FILE", log_file)
-    monkeypatch.setattr(heartbeat_module, "SESSION_FILE", session_file)
-    monkeypatch.setattr(heartbeat_module, "STATE_FILE", state_file)
-    a = heartbeat_module.HeartbeatAgent(
+    monkeypatch.setattr(vigil_module, "LOG_FILE", log_file)
+    monkeypatch.setattr(vigil_module, "SESSION_FILE", session_file)
+    monkeypatch.setattr(vigil_module, "STATE_FILE", state_file)
+    a = vigil_module.VigilAgent(
         mcp_url="http://127.0.0.1:8767/mcp/",
         label="VigilTest",
     )
@@ -75,7 +75,7 @@ def _mock_sdk_connection():
 
 
 @pytest.mark.asyncio
-async def test_run_once_aborts_when_cycle_hangs(agent, heartbeat_module):
+async def test_run_once_aborts_when_cycle_hangs(agent, vigil_module):
     """A never-returning run_cycle must be cancelled by the timeout."""
     hang_started = asyncio.Event()
 
@@ -98,7 +98,7 @@ async def test_run_once_aborts_when_cycle_hangs(agent, heartbeat_module):
 
 
 @pytest.mark.asyncio
-async def test_run_once_completes_normally_under_timeout(agent, heartbeat_module):
+async def test_run_once_completes_normally_under_timeout(agent, vigil_module):
     """A fast run_cycle must not be affected by the timeout wrapper."""
     called = asyncio.Event()
 
@@ -111,7 +111,7 @@ async def test_run_once_completes_normally_under_timeout(agent, heartbeat_module
 
 
 @pytest.mark.asyncio
-async def test_timeout_writes_readable_log_line(agent, heartbeat_module):
+async def test_timeout_writes_readable_log_line(agent, vigil_module):
     """The timeout path must leave a traceable log line for operators."""
 
     async def _hang(self, client=None):
@@ -122,17 +122,17 @@ async def test_timeout_writes_readable_log_line(agent, heartbeat_module):
     with pytest.raises(asyncio.TimeoutError):
         await agent.run_once(timeout=0.1)
 
-    log_contents = heartbeat_module.LOG_FILE.read_text()
+    log_contents = vigil_module.LOG_FILE.read_text()
     assert "Heartbeat cycle start" in log_contents
     assert "CYCLE TIMEOUT" in log_contents
     assert "limit=0.1s" in log_contents or "limit=0" in log_contents
 
 
-def test_cycle_timeout_default_is_bounded(heartbeat_module):
+def test_cycle_timeout_default_is_bounded(vigil_module):
     """Sanity check: the module-level default must not be absent or absurd."""
-    assert isinstance(heartbeat_module.CYCLE_TIMEOUT, int)
-    assert 30 <= heartbeat_module.CYCLE_TIMEOUT <= 600, (
-        f"CYCLE_TIMEOUT={heartbeat_module.CYCLE_TIMEOUT} is outside the sane "
+    assert isinstance(vigil_module.CYCLE_TIMEOUT, int)
+    assert 30 <= vigil_module.CYCLE_TIMEOUT <= 600, (
+        f"CYCLE_TIMEOUT={vigil_module.CYCLE_TIMEOUT} is outside the sane "
         "operational window (30s..600s)"
     )
 

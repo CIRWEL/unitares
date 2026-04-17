@@ -15,19 +15,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Load heartbeat_agent module from its new location via importlib
+# Load vigil_agent module from its new location via importlib
 project_root = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 module_path = project_root / "agents" / "vigil" / "agent.py"
-spec = importlib.util.spec_from_file_location("heartbeat_agent", module_path)
+spec = importlib.util.spec_from_file_location("vigil_agent", module_path)
 assert spec and spec.loader
 _hb_module = importlib.util.module_from_spec(spec)
-sys.modules["heartbeat_agent"] = _hb_module
+sys.modules["vigil_agent"] = _hb_module
 spec.loader.exec_module(_hb_module)
 
-from heartbeat_agent import (
-    HeartbeatAgent,
+from vigil_agent import (
+    VigilAgent,
     detect_changes,
 )
 
@@ -46,9 +46,9 @@ _hb_module.LOG_FILE = Path(tempfile.gettempdir()) / "unitares-heartbeat-test.log
 # Test helpers
 # =============================================================================
 
-def _make_agent(with_audit: bool = True) -> HeartbeatAgent:
-    """Create a HeartbeatAgent with mocked identity."""
-    agent = HeartbeatAgent(
+def _make_agent(with_audit: bool = True) -> VigilAgent:
+    """Create a VigilAgent with mocked identity."""
+    agent = VigilAgent(
         mcp_url="http://localhost:8767/mcp/",
         with_audit=with_audit,
     )
@@ -170,12 +170,12 @@ class TestWithAuditFlag:
 
     def test_default_with_audit_true(self):
         """By default, with_audit should be True."""
-        agent = HeartbeatAgent()
+        agent = VigilAgent()
         assert agent.with_audit is True
 
     def test_with_audit_false(self):
         """with_audit=False should be settable."""
-        agent = HeartbeatAgent(with_audit=False)
+        agent = VigilAgent(with_audit=False)
         assert agent.with_audit is False
 
 

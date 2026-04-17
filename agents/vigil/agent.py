@@ -54,7 +54,7 @@ from agents.vigil.checks.runner import run_health_checks
 ANIMA_PROJECT = Path(os.getenv("ANIMA_PROJECT", str(project_root.parent / "anima-mcp")))
 SESSION_FILE = project_root / ".vigil_session"
 STATE_FILE = project_root / ".vigil_state"
-LOG_FILE = Path.home() / "Library" / "Logs" / "unitares-heartbeat.log"
+LOG_FILE = Path.home() / "Library" / "Logs" / "unitares-vigil.log"
 MAX_LOG_LINES = 500
 
 # Test timeout
@@ -254,7 +254,7 @@ def _filter_sentinel_findings(
     return out
 
 
-class HeartbeatAgent(GovernanceAgent):
+class VigilAgent(GovernanceAgent):
     def __init__(
         self,
         mcp_url: str = GOV_MCP_URL,
@@ -279,7 +279,7 @@ class HeartbeatAgent(GovernanceAgent):
         self._cycle_state: Dict[str, Any] = {}
         self._cycle_prev_state: Dict[str, Any] = {}
         # Register built-in checks + any VIGIL_CHECK_PLUGINS externals.
-        # Idempotent: safe to call from multiple HeartbeatAgent instances in tests.
+        # Idempotent: safe to call from multiple VigilAgent instances in tests.
         load_plugins()
 
     async def _read_sentinel_findings(
@@ -681,7 +681,7 @@ async def main():
     parser.add_argument("--interval", type=int, default=1800, help="Daemon interval (seconds)")
     args = parser.parse_args()
 
-    agent = HeartbeatAgent(
+    agent = VigilAgent(
         mcp_url=args.url,
         label=args.label,
         heartbeat_interval=args.interval,

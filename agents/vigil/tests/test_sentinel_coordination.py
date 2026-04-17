@@ -17,13 +17,13 @@ project_root = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 module_path = project_root / "agents" / "vigil" / "agent.py"
-spec = importlib.util.spec_from_file_location("heartbeat_agent", module_path)
+spec = importlib.util.spec_from_file_location("vigil_agent", module_path)
 assert spec and spec.loader
 _hb_module = importlib.util.module_from_spec(spec)
-sys.modules["heartbeat_agent"] = _hb_module
+sys.modules["vigil_agent"] = _hb_module
 spec.loader.exec_module(_hb_module)
 
-from heartbeat_agent import HeartbeatAgent, _filter_sentinel_findings
+from vigil_agent import VigilAgent, _filter_sentinel_findings
 
 from unitares_sdk.models import (
     ArchiveResult,
@@ -116,8 +116,8 @@ class TestFilterSentinelFindings:
 # Read-from-KG tests
 # =============================================================================
 
-def _make_agent(with_audit: bool = True) -> HeartbeatAgent:
-    agent = HeartbeatAgent(mcp_url="http://localhost:8767/mcp/", with_audit=with_audit)
+def _make_agent(with_audit: bool = True) -> VigilAgent:
+    agent = VigilAgent(mcp_url="http://localhost:8767/mcp/", with_audit=with_audit)
     agent.client_session_id = "test-session-id"
     return agent
 
