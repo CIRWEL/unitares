@@ -10,7 +10,6 @@ from .protocol import (
     maybe_emit_void_alert,
     auto_emit_state_announce,
     maybe_emit_resonance_signal,
-    maybe_apply_neighbor_pressure,
 )
 
 __all__ = [
@@ -23,5 +22,4 @@ __all__ = [
     "maybe_emit_void_alert",
     "auto_emit_state_announce",
     "maybe_emit_resonance_signal",
-    "maybe_apply_neighbor_pressure",
 ]

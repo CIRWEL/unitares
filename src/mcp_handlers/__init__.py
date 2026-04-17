@@ -126,7 +126,6 @@ from .cirs import (
     maybe_emit_void_alert,  # Hook for process_agent_update
     auto_emit_state_announce,  # Hook for process_agent_update
     maybe_emit_resonance_signal,  # Hook for process_agent_update
-    maybe_apply_neighbor_pressure,  # Hook for process_agent_update
 )
 # Pi Orchestration - Mac→Pi coordination tools (Feb 2026)
 # Proxies calls to anima-mcp on Pi via Streamable HTTP transport (MCP 1.24.0+)
