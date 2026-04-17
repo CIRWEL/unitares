@@ -423,11 +423,6 @@ class TestBehavioralSensorInjection:
     async def test_compute_behavioral_raises_no_sensor_injected(self):
         """If compute_behavioral_sensor_eisv itself raises, update succeeds without sensor."""
         from src.mcp_handlers.updates.phases import execute_locked_update
-        import src.sensor_buffer as sb
-        # Clear buffer so the buffer fallback doesn't inject stale data
-        sb._buffer["eisv"] = None
-        sb._buffer["anima"] = None
-        sb._buffer["timestamp"] = None
 
         monitor = self._make_mock_monitor(n=10)
         ctx = self._make_ctx(monitor)
@@ -448,35 +443,8 @@ class TestBehavioralSensorInjection:
         # The injection code checks `if monitor and len(...)` — this would skip
 
     @pytest.mark.asyncio
-    async def test_buffer_fallback_injects_sensor_eisv(self):
-        """Buffer fallback injects sensor_eisv when no explicit sensor_data is provided."""
-        import src.sensor_buffer as sensor_buffer_module
-        from src.mcp_handlers.updates.phases import execute_locked_update
-
-        # A monitor with no decision history — behavioral sensor will not fire
-        monitor = MagicMock()
-        monitor.state.decision_history = []
-        ctx = self._make_ctx(monitor)
-
-        buffered_eisv = {"E": 0.75, "I": 0.65, "S": 0.15, "V": 0.05}
-        buffered_anima = {"valence": 0.6, "arousal": 0.4, "dominance": 0.5}
-        fake_buffered = {"eisv": buffered_eisv, "anima": buffered_anima, "timestamp": 1000.0}
-
-        with self._patch_execute_locked_deps(), \
-             patch.object(sensor_buffer_module, "get_latest_sensor_eisv", return_value=fake_buffered), \
-             patch("src.db.get_db", return_value=None):
-            result = await execute_locked_update(ctx)
-
-        assert result is None, "No early-exit error expected"
-        assert ctx.agent_state.get("sensor_eisv") == buffered_eisv, \
-            "sensor_eisv should be populated from the buffer"
-        assert ctx.arguments.get("sensor_data") == {"eisv": buffered_eisv, "anima": buffered_anima}, \
-            "sensor_data should be back-filled for broadcast enrichment"
-
-    @pytest.mark.asyncio
-    async def test_buffer_fallback_skipped_when_explicit_sensor_data_present(self):
-        """Explicit sensor_data takes priority; buffer is not consulted."""
-        import src.sensor_buffer as sensor_buffer_module
+    async def test_explicit_sensor_data_eisv_routed_to_agent_state(self):
+        """When sensor_data["eisv"] is in the payload, it lands in agent_state["sensor_eisv"]."""
         from src.mcp_handlers.updates.phases import execute_locked_update
 
         monitor = MagicMock()
@@ -486,25 +454,16 @@ class TestBehavioralSensorInjection:
         explicit_eisv = {"E": 0.9, "I": 0.8, "S": 0.1, "V": 0.0}
         ctx.arguments["sensor_data"] = {"eisv": explicit_eisv}
 
-        buffered_eisv = {"E": 0.1, "I": 0.1, "S": 0.1, "V": 0.1}
-        fake_buffered = {"eisv": buffered_eisv, "anima": {}, "timestamp": 1000.0}
-
-        mock_get_latest = MagicMock(return_value=fake_buffered)
-
         with self._patch_execute_locked_deps(), \
-             patch.object(sensor_buffer_module, "get_latest_sensor_eisv", mock_get_latest), \
              patch("src.db.get_db", return_value=None):
             result = await execute_locked_update(ctx)
 
         assert result is None
-        assert ctx.agent_state.get("sensor_eisv") == explicit_eisv, \
-            "Explicit sensor_data should win over buffer"
-        mock_get_latest.assert_not_called()
+        assert ctx.agent_state.get("sensor_eisv") == explicit_eisv
 
     @pytest.mark.asyncio
-    async def test_buffer_fallback_degrades_gracefully_on_exception(self):
-        """If sensor_buffer raises, update still succeeds without sensor_eisv from buffer."""
-        import src.sensor_buffer as sensor_buffer_module
+    async def test_no_sensor_data_means_no_sensor_eisv(self):
+        """When the payload carries no sensor_data, agent_state lacks sensor_eisv."""
         from src.mcp_handlers.updates.phases import execute_locked_update
 
         monitor = MagicMock()
@@ -512,26 +471,6 @@ class TestBehavioralSensorInjection:
         ctx = self._make_ctx(monitor)
 
         with self._patch_execute_locked_deps(), \
-             patch.object(sensor_buffer_module, "get_latest_sensor_eisv", side_effect=RuntimeError("buffer gone")), \
-             patch("src.db.get_db", return_value=None):
-            result = await execute_locked_update(ctx)
-
-        assert result is None, "Update should still succeed despite buffer read failure"
-        # Behavioral sensor also won't fire (no history), so sensor_eisv absent
-        assert ctx.agent_state.get("sensor_eisv") is None
-
-    @pytest.mark.asyncio
-    async def test_buffer_fallback_skipped_when_buffer_empty(self):
-        """When buffer returns None (empty/stale), no sensor_eisv is injected from it."""
-        import src.sensor_buffer as sensor_buffer_module
-        from src.mcp_handlers.updates.phases import execute_locked_update
-
-        monitor = MagicMock()
-        monitor.state.decision_history = []
-        ctx = self._make_ctx(monitor)
-
-        with self._patch_execute_locked_deps(), \
-             patch.object(sensor_buffer_module, "get_latest_sensor_eisv", return_value=None), \
              patch("src.db.get_db", return_value=None):
             result = await execute_locked_update(ctx)
 

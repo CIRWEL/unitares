@@ -633,11 +633,7 @@ _silence_server_start: datetime | None = None  # set on first iteration
 # Maps agent label → label of the proxy agent that calls the same host.
 # When the proxy has checked in recently, a missing direct check-in is
 # a path issue (circuit breaker, threading) not a real outage.
-_SILENCE_PROXY_AGENTS: dict[str, str] = {
-    # eisv-sync-task removed — it no longer checks in as an agent.
-    # The background sensor sync still proves Pi is reachable, but it
-    # writes to the sensor_buffer, not to agent metadata.
-}
+_SILENCE_PROXY_AGENTS: dict[str, str] = {}
 
 
 def _get_expected_interval(meta) -> int | None:
@@ -1077,13 +1073,6 @@ def start_all_background_tasks(connection_tracker, set_ready):
     _supervised_create_task(server_warmup_task(set_ready), name="server_warmup")
     _supervised_create_task(deep_health_probe_task(), name="deep_health_probe")
     logger.info("[HEALTH_PROBE] Deep health probe started (cached snapshots for health_check handler)")
-
-    try:
-        from src.mcp_handlers.observability.pi_orchestration import eisv_sync_task
-        _supervised_create_task(eisv_sync_task(interval_minutes=5.0), name="eisv_sync")
-        logger.info("[EISV_SYNC] Started periodic Pi sensor sync")
-    except Exception as e:
-        logger.warning(f"[EISV_SYNC] Could not start: {e}")
 
     _supervised_create_task(session_cleanup_task(interval_hours=6.0), name="session_cleanup")
     logger.info("[SESSION_CLEANUP] Started periodic expired session cleanup (every 6h)")

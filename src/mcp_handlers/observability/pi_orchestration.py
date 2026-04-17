@@ -550,15 +550,13 @@ async def handle_pi_health(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 @mcp_tool("pi_sync_eisv", timeout=30.0, register=False, description="Sync anima to EISV. Use pi(action='sync_eisv') instead.")
 async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
-    Sync Pi's anima state to Mac's EISV governance metrics.
+    Diagnostic: read Pi anima state and show the anima→EISV mapping.
 
-    This bridges the embodied (Pi) and governance (Mac) systems:
-    1. Reads current anima state from Pi
-    2. Maps anima → EISV
-    3. Optionally updates governance state
+    Agents with physical sensors publish `sensor_eisv` directly in their
+    `process_agent_update` payload; this tool is a human-facing diagnostic,
+    not part of the spring-coupling path.
     """
     agent_id = arguments.get("agent_id", "mac-orchestrator")
-    update_governance = arguments.get("update_governance", False)
 
     # Get anima state from Pi
     context = await call_pi_tool("get_lumen_context", {"include": ["anima"]}, agent_id=agent_id)
@@ -575,7 +573,7 @@ async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent
     # Map to EISV — prefer Pi's pre-computed EISV when available
     eisv = map_anima_to_eisv(anima, pre_computed_eisv=context.get("eisv"))
 
-    # Log the sync
+    # Log the diagnostic read
     audit_logger.log_eisv_sync(
         agent_id=agent_id,
         source_device="pi",
@@ -586,9 +584,9 @@ async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent
     )
 
     eisv_source = "pi (neural-weighted)" if context.get("eisv") else "mac (fallback)"
-    result = {
-        "operation": "sync_to_buffer",
-        "note": "Synced: anima→EISV written to sensor buffer.",
+    return success_response({
+        "operation": "diagnostic_mapping",
+        "note": "anima→EISV mapping; the agent must push sensor_eisv itself to affect governance.",
         "anima": anima,
         "eisv": eisv,
         "eisv_source": eisv_source,
@@ -598,14 +596,7 @@ async def handle_pi_sync_eisv(arguments: Dict[str, Any]) -> Sequence[TextContent
             "stability → S (Entropy)": f"{anima.get('stability', 0):.6f} → {eisv['S']:.6f} (inverted)",
             "presence → V (Void)": f"{anima.get('presence', 0):.6f} → {eisv['V']:.6f} (scaled)",
         }
-    }
-
-    # Write to shared buffer — Lumen's check-ins pick this up via phases.py
-    from src.sensor_buffer import update_sensor_eisv
-    update_sensor_eisv(eisv, anima)
-    result["buffer_updated"] = True
-
-    return success_response(result)
+    })
 
 @mcp_tool("pi_display", timeout=15.0, register=False, description="Control Pi display. Use pi(action='display') instead.")
 async def handle_pi_display(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -1014,116 +1005,3 @@ async def handle_pi_restart_service(arguments: Dict[str, Any]) -> Sequence[TextC
     except Exception as e:
         return error_response(f"SSH command failed: {e}")
 
-# ============================================================
-# Periodic EISV Sync Task (Background)
-# ============================================================
-
-async def sync_eisv_once() -> Dict[str, Any]:
-    """
-    Perform a single EISV sync from Pi to Mac.
-
-    Reads anima state from Pi, maps it to EISV, and writes the result to
-    the shared sensor buffer (src.sensor_buffer). Lumen's check-ins read
-    from the buffer via phases.py — no agent identity or governance calls
-    are involved.
-
-    Returns:
-        Dict with sync results or error
-    """
-    try:
-        # Get anima state from Pi (includes pre-computed EISV when available)
-        result = await call_pi_tool("get_lumen_context", {"include": ["anima"]}, agent_id="sensor-sync")
-
-        error_msg = _extract_error_message(result)
-        if error_msg:
-            return {"success": False, "error": error_msg}
-
-        # Extract anima values
-        anima = result.get("anima", {})
-        if not anima:
-            return {"success": False, "error": "No anima state in Pi response"}
-
-        # Map to EISV — prefer Pi's pre-computed EISV when available
-        eisv = map_anima_to_eisv(anima, pre_computed_eisv=result.get("eisv"))
-
-        # Log the sync
-        audit_logger.log_eisv_sync(
-            agent_id="sensor-sync",
-            source_device="pi",
-            target_device="mac",
-            anima_state=anima,
-            eisv_mapped=eisv,
-            sync_direction="pi_to_mac",
-            details={"periodic": True}
-        )
-
-        sync_result = {
-            "success": True,
-            "anima": anima,
-            "eisv": eisv,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")
-        }
-
-        # Write to shared buffer — Lumen's check-ins pick this up via phases.py
-        from src.sensor_buffer import update_sensor_eisv
-        update_sensor_eisv(eisv, anima)
-        sync_result["buffer_updated"] = True
-
-        return sync_result
-
-    except Exception as e:
-        logger.warning(f"[EISV_SYNC] Sync failed: {e}")
-        return {"success": False, "error": str(e)}
-
-async def eisv_sync_task(interval_minutes: float = 5.0):
-    """
-    Background task that periodically syncs EISV from Pi to Mac.
-
-    Runs every interval_minutes, reads sensor-derived EISV from Pi,
-    and writes it to the shared sensor buffer (src.sensor_buffer). Lumen's
-    check-ins pick up the buffer values via phases.py. No agent identity or
-    governance calls are involved.
-
-    Args:
-        interval_minutes: Sync interval (default: 5 minutes)
-    """
-    logger.info(f"[EISV_SYNC] Starting periodic sync (interval: {interval_minutes} min)")
-
-    # Per-cycle deadline for sync_eisv_once. Without this the task can park
-    # forever if the Pi httpx call hangs below the timeout layer.
-    # PI_MCP_TIMEOUT alone is ~30s per URL with up to 3 retries, so 60s
-    # covers the realistic worst case while still letting launchd/operators
-    # notice a wedged cycle. Same shape as deep_health_probe_task's
-    # wait_for guard.
-    EISV_SYNC_CYCLE_TIMEOUT = 60.0
-
-    while True:
-        try:
-            await asyncio.sleep(interval_minutes * 60)
-
-            try:
-                result = await asyncio.wait_for(
-                    sync_eisv_once(),
-                    timeout=EISV_SYNC_CYCLE_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"[EISV_SYNC] Sync exceeded {EISV_SYNC_CYCLE_TIMEOUT}s — "
-                    "skipping cycle (Pi unreachable)"
-                )
-                continue
-
-            if result.get("success"):
-                eisv = result.get("eisv", {})
-                logger.info(
-                    f"[EISV_SYNC] Synced: E={eisv.get('E', 0):.3f} "
-                    f"I={eisv.get('I', 0):.3f} S={eisv.get('S', 0):.3f} V={eisv.get('V', 0):.3f}"
-                )
-            else:
-                logger.warning(f"[EISV_SYNC] Sync failed: {result.get('error')}")
-
-        except asyncio.CancelledError:
-            logger.info("[EISV_SYNC] Periodic sync task cancelled")
-            break
-        except Exception as e:
-            logger.warning(f"[EISV_SYNC] Task error: {e}")
