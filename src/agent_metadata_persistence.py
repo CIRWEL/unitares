@@ -350,6 +350,11 @@ def get_or_create_metadata(agent_id: str, **kwargs) -> AgentMetadata:
     """
     Get metadata for agent, creating if needed.
 
+    In-memory cache helper only — PostgreSQL persistence is the caller's
+    responsibility (via agent_storage). Do not add DB writes here; callers
+    like onboard/register_agent write to PG first and then populate this
+    cache.
+
     Args:
         agent_id: Agent identifier (human-readable label, can be renamed)
         **kwargs: Optional fields to set on creation (e.g., purpose, notes, tags)
