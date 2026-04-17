@@ -38,13 +38,24 @@ def test_get_or_create_monitor_does_not_transplant_state_from_predecessor():
 
     # Build a predecessor monitor and populate its state so
     # load_monitor_state(parent_uuid) would return something real.
-    parent_uuid = "parent-uuid-1111"
+    # Fixed UUID4s (deterministic) — real UUIDs are required because
+    # downstream code in agent_metadata_persistence.get_or_create_metadata
+    # validates agent_id against a strict UUID4 pattern; using non-UUID
+    # strings could cause the test to fail for the wrong reason or pass
+    # vacuously after the Task 2 fix lands.
+    parent_uuid = "11111111-1111-4111-8111-111111111111"
     parent_monitor = UNITARESMonitor(parent_uuid)
     parent_monitor.state.V_history.extend([0.1, 0.2, 0.3])
     monitors[parent_uuid] = parent_monitor
 
     # Child agent metadata points to the predecessor.
-    child_uuid = "child-uuid-2222"
+    # NOTE: get_or_create_monitor calls get_or_create_metadata(child_uuid)
+    # BEFORE reading agent_metadata[child_uuid] to decide about transplant.
+    # Verified (see src/agent_metadata_persistence.py:359) that
+    # get_or_create_metadata is a no-op when the entry already exists —
+    # it returns the existing AgentMetadata untouched — so the seed below
+    # survives into the transplant branch.
+    child_uuid = "22222222-2222-4222-8222-222222222222"
     now_iso = "2026-04-16T00:00:00+00:00"
     agent_metadata[child_uuid] = AgentMetadata(
         agent_id=child_uuid,
