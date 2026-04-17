@@ -69,7 +69,7 @@
     <circle cx="65" cy="20" r="18" fill="url(#node-s)" opacity="0.9" filter="url(#glow)"/>
     <text x="65" y="25" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="700" fill="#ffffff">S</text>
 
-    <!-- V node (bottom) - Void -->
+    <!-- V node (bottom) - Valence -->
     <circle cx="0" cy="70" r="18" fill="url(#node-v)" opacity="0.9" filter="url(#glow)"/>
     <text x="0" y="75" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="700" fill="#ffffff">V</text>
 
@@ -77,7 +77,7 @@
     <text x="0" y="-86" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e" letter-spacing="0.5">ENERGY</text>
     <text x="-65" y="50" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e" letter-spacing="0.5">INTEGRITY</text>
     <text x="65" y="50" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e" letter-spacing="0.5">ENTROPY</text>
-    <text x="0" y="100" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e" letter-spacing="0.5">VOID</text>
+    <text x="0" y="100" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="9" fill="#8b949e" letter-spacing="0.5">VALENCE</text>
   </g>
 
   <!-- Text content (left side) -->
@@ -86,7 +86,7 @@
     <text y="100" font-family="system-ui, -apple-system, sans-serif" font-size="42" font-weight="800" fill="#e6edf3" letter-spacing="3">UNITARES</text>
 
     <!-- Tagline -->
-    <text y="135" font-family="system-ui, -apple-system, sans-serif" font-size="16" fill="#8b949e" letter-spacing="0.5">Digital proprioception for AI agents</text>
+    <text y="135" font-family="system-ui, -apple-system, sans-serif" font-size="16" fill="#8b949e" letter-spacing="0.5">Self-regulating AI agents</text>
 
     <!-- Descriptor line -->
     <text y="175" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#58a6ff" opacity="0.8">Runtime governance</text>

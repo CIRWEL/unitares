@@ -17,7 +17,7 @@ The governance loop evaluates EISV state, coherence, and risk. If the agent ente
 Common triggers:
 - Low coherence (fragmented output or inconsistent work)
 - Elevated risk score
-- Persistent void activity (energy–integrity imbalance)
+- Persistent valence excursion (energy–integrity imbalance)
 
 The circuit breaker is a **protective pause**, not a failure. It exists to prevent runaway behavior and prompt a structured review.
 
@@ -81,7 +81,7 @@ Key tools:
 
 For simple stuck scenarios (timeouts, trivial stalls) when the state is safe:
 
-- `self_recovery(action="quick")` — checks coherence/risk/void and resumes if safe (coherence > 0.60, risk < 0.40)
+- `self_recovery(action="quick")` — checks coherence/risk/valence and resumes if safe (coherence > 0.60, risk < 0.40)
 - `self_recovery(action="review", reflection="...")` — reflective recovery for cases that don't meet quick-resume thresholds
 
 > **Note:** `direct_resume_if_safe` is deprecated. Use `self_recovery` instead.

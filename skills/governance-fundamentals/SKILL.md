@@ -28,14 +28,14 @@ Every agent has four dimensions, updated through check-ins:
 | **E** (Energy) | [0, 1] | Productive capacity |
 | **I** (Information Integrity) | [0, 1] | Signal fidelity |
 | **S** (Entropy) | [0, 1] | Semantic uncertainty (lower is better) |
-| **V** (Void) | [-1, 1] | Accumulated E-I imbalance |
+| **V** (Valence) | [-1, 1] | Accumulated E-I imbalance |
 
 ### How They Couple
 
 - **E (Energy)**: Couples toward I (when I > E, energy rises). Dragged down by high entropy via E*S cross-coupling. High complexity affects E indirectly through S.
 - **I (Information Integrity)**: Boosted by coherence C(V,Theta), reduced by entropy S. Has logistic self-regulation. Confidence and calibration affect I indirectly via the check-in pipeline (they drive S and ethical drift, which couple to I).
 - **S (Entropy)**: Naturally decays (mu*S), rises with ethical drift and task complexity, reduced by coherence. The only dimension that directly responds to complexity.
-- **V (Void)**: Accumulated E-I imbalance. Positive when energy exceeds integrity (running hot), negative when integrity exceeds energy (running careful). Decays toward zero over time. Drives coherence via C(V,Theta).
+- **V (Valence)**: Accumulated E-I imbalance. Positive when energy exceeds integrity (running hot), negative when integrity exceeds energy (running careful). Decays toward zero over time. Drives coherence via C(V,Theta).
 
 These combine into a **coherence** score and **risk** score that determine governance decisions. Prefer live tool output over static range lore if the current runtime reports a narrower or more precise bound.
 

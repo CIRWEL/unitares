@@ -1,7 +1,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/hero.svg">
-  <img alt="UNITARES — Digital proprioception for AI agents" src="docs/assets/hero.svg" width="100%">
+  <img alt="UNITARES — Self-regulating AI agents" src="docs/assets/hero.svg" width="100%">
 </picture>
 
 [![Tests](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml/badge.svg)](https://github.com/CIRWEL/unitares/actions/workflows/tests.yml)
@@ -10,40 +10,53 @@
 
 Status: live. For architecture details, see [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md) and [docs/CANONICAL_SOURCES.md](docs/CANONICAL_SOURCES.md).
 
-Agent observability today means grepping logs and inferring condition from outputs. UNITARES is a runtime governance system that gives AI agents **digital proprioception** — a shared, readable representation of state, so humans, services, and other agents can see how an agent is doing without reverse-engineering its behavior.
+Most AI agents fly blind: they can't tell when they're thrashing, drifting, or overconfident until a human notices. UNITARES is a runtime layer that lets agents **see their own state and regulate themselves** — slow down when disorder spikes, ask for review when integrity drops, hand off when they're running on fumes.
 
-Check-ins over MCP or HTTP become four continuous state variables — **EISV** (energy, integrity, entropy, void) — alongside verdicts, guidance, calibration, and recovery paths returned in real time. Long-run trajectories are stored in PostgreSQL + AGE. The state model is derived from what agents actually do: EMA-smoothed observations, not model predictions.
+Each check-in returns four numbers — **EISV**: energy, integrity, entropy, valence (the signed energy/integrity imbalance) — plus a verdict, guidance, and calibration. Agents use those numbers to adjust their own behavior *before* external circuit breakers have to fire. Humans and peer agents read the same state, so one signal serves three consumers: agents regulating themselves, humans watching dashboards, peers coordinating.
 
-Running continuously in production since November 2025 with 6,200+ passing tests at 77% coverage.
+Circuit breakers and kill switches are still there — they're just the last line of defense, not the first.
+
+Running continuously in production since November 2025 with 6,200+ passing tests at 77% coverage. Long-run trajectories are stored in PostgreSQL + AGE; the state model is derived from what agents actually do (EMA-smoothed observations, not model predictions).
 
 | | |
 |--|--|
-| **What it does** | Turn agent check-ins into **EISV** state, **verdicts** (`proceed` / `guide` / `pause` / `reject`), calibration, and a **shared knowledge graph**. |
+| **What it does** | Give agents live readings of their own state (**EISV**) plus a verdict (`proceed` / `guide` / `pause` / `reject`), so they can regulate themselves — and share the state with humans and peers through the dashboard and knowledge graph. |
 | **Workflow** | `onboard()` → `process_agent_update()` → `get_governance_metrics()` — details in [Getting Started](docs/guides/START_HERE.md). |
 | **Transports** | MCP on `/mcp/` (Streamable HTTP) · REST on `/v1/tools/call` · Dashboard on `/dashboard` |
 | **Stack** | Python 3.12+ · PostgreSQL + AGE + pgvector · Redis (optional) |
 
 ---
 
-## What makes it different
+## The self-regulation loop
 
-Most tooling scores **outputs** (correct, safe, useful). UNITARES emphasizes **state legibility**: a shared representation of condition that humans, services, and other agents can read without reverse-engineering logs.
+1. **Agent acts** — tool call, response, decision.
+2. **UNITARES updates state** — four numbers that summarize how it's going.
+3. **Agent reads its own state back** in the check-in response.
+4. **Agent applies its own policy** — proceed, narrow scope, ask for review, or stop.
 
-| Layer | What it does | Examples |
-|-------|----------------|----------|
-| Output validation | Judges results after the fact | Guardrails, evals |
-| Behavioral constraint | Limits what can be done | Sandboxes, permissions |
-| **State legibility** | Makes inner state readable | **UNITARES** |
+```python
+# Inside the agent's loop
+result = process_agent_update(response_text=output, complexity=0.6, confidence=0.8)
 
-**Self-relative assessment.** After warmup, scoring uses deviation from *your* baseline, not only global thresholds.
+if result["metrics"]["integrity"] < 0.4:
+    agent.require_human_review("integrity low — pausing autonomous actions")
+elif result["metrics"]["entropy"] > 0.7:
+    agent.narrow_scope()            # fewer tools, tighter search
+elif result["metrics"]["energy"] < 0.2:
+    agent.stop_and_summarize()      # avoid thrashing
+```
 
-**Ethical drift from observables.** Calibration deviation, complexity divergence, coherence deviation, and stability deviation define a drift signal that feeds entropy dynamics — no hand-labeled “ethics” oracle.
+The agent reads its own metrics and adjusts *before* external controls have to fire. Humans see the same state on the dashboard; peer agents read it over the API. UNITARES isn't an output validator (guardrails, evals) or a behavioral sandbox (permissions, container limits) — it's a state layer the agent itself can read.
 
-**Trajectory as identity.** Long-run EISV patterns support continuity and anomaly questions (“still the same agent?”).
+## What makes the signal trustworthy
 
-**Response modes.** Including `mirror` for actionable calibration and graph hints without raw vector overload — plus `minimal`, `compact`, `standard`, `full`, `auto`.
+**Self-relative scoring.** After ~30 check-ins, the four numbers are graded against *your* baseline, not a universal threshold. You're flagged when *you* drift.
 
-**Dialectic.** Thesis → antithesis → synthesis with peer agents when available; **LLM-assisted** dialectic when alone.
+**Drift from observables, not an ethics oracle.** The drift signal comes from calibration accuracy, complexity divergence, coherence, and stability — things the system already measures. No hand-labeled "is this ethical?" classifier.
+
+**Trajectory as identity.** Long-run EISV patterns answer continuity questions ("still the same agent?") and surface drift no single check-in could see.
+
+**Peer review when needed.** When an agent's confidence and the system's assessment disagree, UNITARES can run a short adversarial review with peer agents — or with an LLM when no peers are around — before anything halts.
 
 ---
 
@@ -209,7 +222,7 @@ Agents emit text and tool results; they rarely expose a stable notion of interna
 | **E** (Energy) | [0, 1] | Productive capacity |
 | **I** (Integrity) | [0, 1] | Information coherence |
 | **S** (Entropy) | [0, 1] | Disorder and uncertainty |
-| **V** (Void) | [-1, 1] | Running imbalance: energetic-but-incoherent (positive) vs coherent-but-depleted (negative) |
+| **V** (Valence) | [-1, 1] | Signed energy/integrity imbalance: energetic-but-incoherent (positive) vs coherent-but-depleted (negative) |
 
 **Behavioral EISV (primary, verdict-driving)** — Implemented in `src/behavioral_state.py` and `src/behavioral_assessment.py`: EMA-smoothed observations per dimension, no ODE and no universal attractor. After **~30** updates, per-agent **Welford** baselines enable self-relative scoring (z-score vs *your* operating point). Earlier check-ins use bootstrap behavior; absolute safety floors still apply.
 
@@ -222,7 +235,7 @@ Agents emit text and tool results; they rarely expose a stable notion of interna
 dE/dt = α(I - E) - β·E·S           Energy tracks integrity, dragged by entropy
 dI/dt = -k·S + β_I·C(V) - γ_I·I   Integrity boosted by coherence, reduced by entropy
 dS/dt = -μ·S + λ₁·‖Δη‖² - λ₂·C   Entropy decays, rises with drift, damped by coherence
-dV/dt = κ(E - I) - δ·V             Void accumulates E-I mismatch, decays toward zero
+dV/dt = κ(E - I) - δ·V             Valence accumulates E-I mismatch, decays toward zero
 ```
 
 </details>

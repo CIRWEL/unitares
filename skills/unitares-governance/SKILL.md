@@ -26,7 +26,7 @@ UNITARES evaluates agent state with the **EISV** model:
 - `E`: effective energy / execution drive
 - `I`: integrity / coherence of alignment
 - `S`: entropy / disorder / instability
-- `V`: void pressure / collapse tendency
+- `V`: valence (signed E-I imbalance)
 
 Agents typically start with `onboard()` and continue with
 `process_agent_update()` as their main check-in loop.
