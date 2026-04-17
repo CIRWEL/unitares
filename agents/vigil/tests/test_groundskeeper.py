@@ -28,9 +28,7 @@ spec.loader.exec_module(_hb_module)
 
 from heartbeat_agent import (
     HeartbeatAgent,
-    _get_anima_urls,
     detect_changes,
-    ANIMA_HEALTH_URLS,
 )
 
 from unitares_sdk.models import (
@@ -68,7 +66,7 @@ def _make_mock_client(
 
     client.audit_knowledge = AsyncMock(return_value=audit_result or AuditResult(
         success=True,
-        results=[{"buckets": {"healthy": 5, "aging": 2, "stale": 1, "candidate_for_archive": 0}}],
+        audit={"buckets": {"healthy": 5, "aging": 2, "stale": 1, "candidate_for_archive": 0}},
     ))
     client.cleanup_knowledge = AsyncMock(return_value=cleanup_result or CleanupResult(
         success=True, cleaned=0,
@@ -105,7 +103,7 @@ class TestRunGroundskeeper:
         client = _make_mock_client(
             audit_result=AuditResult(
                 success=True,
-                results=[{"buckets": {"healthy": 2, "aging": 1, "stale": 1, "candidate_for_archive": 3}}],
+                audit={"buckets": {"healthy": 2, "aging": 1, "stale": 1, "candidate_for_archive": 3}},
             ),
             cleanup_result=CleanupResult(success=True, cleaned=3),
         )
@@ -122,7 +120,7 @@ class TestRunGroundskeeper:
         client = _make_mock_client(
             audit_result=AuditResult(
                 success=True,
-                results=[{"buckets": {"healthy": 5, "aging": 0, "stale": 0, "candidate_for_archive": 0}}],
+                audit={"buckets": {"healthy": 5, "aging": 0, "stale": 0, "candidate_for_archive": 0}},
             ),
         )
         await agent._run_groundskeeper(client)
@@ -216,31 +214,6 @@ class TestDetectChangesGroundskeeper:
         changes = detect_changes(prev, curr)
         gk_changes = [c for c in changes if "groundskeeper" in c.get("tags", [])]
         assert len(gk_changes) == 1  # 15 > 0 + 10
-
-
-# =============================================================================
-# Tests: smart Lumen URL ordering
-# =============================================================================
-
-class TestGetAnimaUrls:
-    def test_default_order_when_no_history(self):
-        urls = _get_anima_urls({})
-        assert urls == list(ANIMA_HEALTH_URLS)
-
-    def test_last_ok_url_goes_first(self):
-        last_ok = ANIMA_HEALTH_URLS[1]
-        urls = _get_anima_urls({"lumen_last_ok_url": last_ok})
-        assert urls[0] == last_ok
-        assert len(urls) == len(ANIMA_HEALTH_URLS)
-
-    def test_unknown_url_ignored(self):
-        urls = _get_anima_urls({"lumen_last_ok_url": "http://unknown:8766/health"})
-        assert urls == list(ANIMA_HEALTH_URLS)
-
-    def test_no_duplicates(self):
-        for url in ANIMA_HEALTH_URLS:
-            urls = _get_anima_urls({"lumen_last_ok_url": url})
-            assert len(urls) == len(set(urls))
 
 
 # =============================================================================

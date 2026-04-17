@@ -190,8 +190,15 @@ def _full_mock_client(search_results=None):
 
 
 def _patch_health_checks(monkeypatch):
-    """Stub network health checks so run_cycle doesn't try real HTTP."""
-    monkeypatch.setattr(_hb_module, "check_http_health", lambda *a, **kw: (True, "ok (1ms)"))
+    """Stub network health checks so run_cycle doesn't try real HTTP.
+
+    With the registry refactor, health probes go through run_health_checks
+    (imported into agent.py). Returning [] means no checks ran — defaults in
+    _collect_health_state treat governance and lumen as healthy.
+    """
+    async def _no_checks(prev_state=None):
+        return []
+    monkeypatch.setattr(_hb_module, "run_health_checks", _no_checks)
 
 
 class TestRunCycleCoordination:
