@@ -528,29 +528,15 @@ async def execute_locked_update(ctx: UpdateContext) -> Optional[Sequence[TextCon
         "complexity": ctx.complexity
     }
 
-    # Inject sensor EISV for spring coupling (agents with physical sensors, e.g. Lumen)
+    # Inject sensor EISV for spring coupling when the caller provides it.
+    # Agents with physical sensors should publish `sensor_data["eisv"]` in
+    # their process_agent_update payload; anything else falls through to the
+    # behavioral sensor below.
     sensor_data = ctx.arguments.get("sensor_data")
     if sensor_data and isinstance(sensor_data, dict):
         sensor_eisv = sensor_data.get("eisv")
         if sensor_eisv and isinstance(sensor_eisv, dict):
             ctx.agent_state["sensor_eisv"] = sensor_eisv
-
-    # Fallback: if no sensor_data was passed but the buffer has a fresh reading,
-    # inject it. This is the normal path for Lumen after the eisv-sync-task
-    # de-agentification — the background task writes to the buffer, and
-    # Lumen's check-ins pick it up here.
-    if "sensor_eisv" not in ctx.agent_state:
-        try:
-            from src.sensor_buffer import get_latest_sensor_eisv
-            buffered = get_latest_sensor_eisv()
-            if buffered is not None:
-                ctx.agent_state["sensor_eisv"] = buffered["eisv"]
-                # Also populate sensor_data for the broadcast enrichment
-                if not sensor_data:
-                    ctx.arguments["sensor_data"] = {"eisv": buffered["eisv"], "anima": buffered["anima"]}
-                logger.debug(f"Injected buffered sensor EISV for {ctx.agent_id}: {buffered['eisv']}")
-        except Exception as e:
-            logger.debug(f"Sensor buffer read failed for {ctx.agent_id}: {e}")
 
     # Behavioral sensor: compute EISV from governance observables for non-embodied agents
     if "sensor_eisv" not in ctx.agent_state:

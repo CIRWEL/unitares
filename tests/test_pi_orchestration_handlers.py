@@ -19,8 +19,6 @@ Covers:
 - handle_pi_git_pull
 - handle_pi_system_power
 - handle_pi_restart_service
-- sync_eisv_once
-- eisv_sync_task
 
 All external I/O (MCP transport, SSH, httpx) is mocked.
 """
@@ -73,8 +71,6 @@ from src.mcp_handlers.observability.pi_orchestration import (
     handle_pi_git_pull,
     handle_pi_system_power,
     handle_pi_restart_service,
-    sync_eisv_once,
-    eisv_sync_task,
     PI_MCP_URLS,
     PI_RETRY_MAX_ATTEMPTS,
 )
@@ -685,13 +681,8 @@ class TestHandlePiSyncEisv:
         assert "Anima state unavailable" in data["error"]
 
     @pytest.mark.asyncio
-    async def test_writes_to_buffer(self, mock_call_pi_tool, _mock_audit_logger):
-        """handle_pi_sync_eisv writes EISV to sensor buffer."""
-        import src.sensor_buffer as sb
-        sb._buffer["eisv"] = None
-        sb._buffer["anima"] = None
-        sb._buffer["timestamp"] = None
-
+    async def test_diagnostic_only_no_side_effects(self, mock_call_pi_tool, _mock_audit_logger):
+        """handle_pi_sync_eisv is now a diagnostic: returns the mapping, no buffer write."""
         mock_call_pi_tool.return_value = {
             "anima": {
                 "warmth": 0.8,
@@ -704,36 +695,9 @@ class TestHandlePiSyncEisv:
         result = await handle_pi_sync_eisv({})
         data = parse_result(result)
         assert data["success"] is True
-        assert data["buffer_updated"] is True
-        assert data["operation"] == "sync_to_buffer"
-
-        reading = sb.get_latest_sensor_eisv()
-        assert reading is not None
-        assert reading["eisv"]["E"] == pytest.approx(0.8)
-
-    @pytest.mark.asyncio
-    async def test_update_governance_arg_ignored(self, mock_call_pi_tool, _mock_audit_logger):
-        """The update_governance argument is accepted but ignored; buffer is always updated."""
-        import src.sensor_buffer as sb
-        sb._buffer["eisv"] = None
-        sb._buffer["anima"] = None
-        sb._buffer["timestamp"] = None
-
-        mock_call_pi_tool.return_value = {
-            "anima": {
-                "warmth": 0.5,
-                "clarity": 0.5,
-                "stability": 0.5,
-                "presence": 0.5,
-            }
-        }
-
-        result = await handle_pi_sync_eisv({"update_governance": True})
-        data = parse_result(result)
-        assert data["success"] is True
-        assert data["buffer_updated"] is True
-        # No governance_updated key in the new response
-        assert "governance_updated" not in data
+        assert data["operation"] == "diagnostic_mapping"
+        assert "buffer_updated" not in data  # buffer no longer exists
+        assert data["eisv"]["E"] == pytest.approx(0.8)
 
 
 class TestHandlePiDisplay:
@@ -1295,201 +1259,3 @@ class TestHandlePiRestartService:
         assert _mock_audit_logger.log_cross_device_call.call_count == 2
 
 
-# ============================================================================
-# 4. Background task tests (lines 1047-1117)
-# ============================================================================
-
-class TestSyncEisvOnce:
-    """Tests for sync_eisv_once."""
-
-    @pytest.mark.asyncio
-    async def test_success(self, _mock_audit_logger):
-        import src.sensor_buffer as sb
-        sb._buffer["eisv"] = None
-        sb._buffer["anima"] = None
-        sb._buffer["timestamp"] = None
-
-        anima_data = {
-            "anima": {
-                "warmth": 0.8,
-                "clarity": 0.7,
-                "stability": 0.6,
-                "presence": 0.5,
-            }
-        }
-
-        with patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool", new_callable=AsyncMock) as mock_cpt:
-            mock_cpt.return_value = anima_data
-
-            result = await sync_eisv_once()
-            assert result["success"] is True
-            assert "anima" in result
-            assert "eisv" in result
-            assert "timestamp" in result
-            assert result["buffer_updated"] is True
-
-    @pytest.mark.asyncio
-    async def test_error_from_pi(self, _mock_audit_logger):
-        with patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool", new_callable=AsyncMock) as mock_cpt:
-            mock_cpt.return_value = {"error": "Pi down"}
-
-            result = await sync_eisv_once()
-            assert result["success"] is False
-            assert result["error"] == "Pi down"
-
-    @pytest.mark.asyncio
-    async def test_empty_anima(self, _mock_audit_logger):
-        with patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool", new_callable=AsyncMock) as mock_cpt:
-            mock_cpt.return_value = {"anima": {}}
-
-            result = await sync_eisv_once()
-            assert result["success"] is False
-            assert "No anima state" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_exception_caught(self, _mock_audit_logger):
-        with patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool", new_callable=AsyncMock) as mock_cpt:
-            mock_cpt.side_effect = RuntimeError("crash")
-
-            result = await sync_eisv_once()
-            assert result["success"] is False
-            assert "crash" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_with_pre_computed_eisv(self, _mock_audit_logger):
-        with patch("src.mcp_handlers.observability.pi_orchestration.call_pi_tool", new_callable=AsyncMock) as mock_cpt:
-            mock_cpt.return_value = {
-                "anima": {"warmth": 0.5, "clarity": 0.5, "stability": 0.5, "presence": 0.5},
-                "eisv": {"E": 0.9, "I": 0.8, "S": 0.7, "V": 0.6},
-            }
-
-            result = await sync_eisv_once()
-            assert result["success"] is True
-            assert result["eisv"]["E"] == 0.9
-
-    @pytest.mark.asyncio
-    async def test_sync_eisv_once_writes_to_buffer(self, monkeypatch):
-        """sync_eisv_once writes to sensor_buffer, not to governance."""
-        import src.sensor_buffer as sb
-        # Reset buffer
-        sb._buffer["eisv"] = None
-        sb._buffer["anima"] = None
-        sb._buffer["timestamp"] = None
-
-        fake_anima = {"warmth": 0.6, "clarity": 0.7, "stability": 0.8, "presence": 0.5}
-        async def fake_call_pi_tool(tool, args, **kw):
-            return {"anima": fake_anima, "eisv": {"E": 0.6, "I": 0.7, "S": 0.2, "V": -0.1}}
-
-        monkeypatch.setattr(
-            "src.mcp_handlers.observability.pi_orchestration.call_pi_tool",
-            fake_call_pi_tool,
-        )
-
-        from src.mcp_handlers.observability.pi_orchestration import sync_eisv_once
-        result = await sync_eisv_once()
-        assert result["success"] is True
-        assert result["buffer_updated"] is True
-
-        reading = sb.get_latest_sensor_eisv()
-        assert reading is not None
-        assert reading["eisv"]["E"] == 0.6
-
-
-class TestEisvSyncTask:
-    """Tests for eisv_sync_task."""
-
-    @pytest.mark.asyncio
-    async def test_runs_and_can_be_cancelled(self, _mock_audit_logger):
-        """The background task runs, syncs, and stops on CancelledError."""
-        call_count = [0]
-
-        async def mock_sync_once():
-            call_count[0] += 1
-            return {"success": True, "eisv": {"E": 0.5, "I": 0.5, "S": 0.5, "V": 0.5}}
-
-        with patch("src.mcp_handlers.observability.pi_orchestration.sync_eisv_once", side_effect=mock_sync_once), \
-             patch("src.mcp_handlers.observability.pi_orchestration.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-
-            mock_sleep.side_effect = [None, asyncio.CancelledError()]
-
-            await eisv_sync_task(interval_minutes=0.001)
-            assert call_count[0] >= 1
-
-    @pytest.mark.asyncio
-    async def test_handles_sync_failure(self, _mock_audit_logger):
-        """The task continues running even when sync fails."""
-        call_count = [0]
-
-        async def mock_sync_once():
-            call_count[0] += 1
-            return {"success": False, "error": "Pi down"}
-
-        with patch("src.mcp_handlers.observability.pi_orchestration.sync_eisv_once", side_effect=mock_sync_once), \
-             patch("src.mcp_handlers.observability.pi_orchestration.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-
-            mock_sleep.side_effect = [None, asyncio.CancelledError()]
-
-            await eisv_sync_task(interval_minutes=0.001)
-            assert call_count[0] >= 1
-
-    @pytest.mark.asyncio
-    async def test_handles_unexpected_exception(self, _mock_audit_logger):
-        """The task continues running even on unexpected exceptions."""
-        call_count = [0]
-
-        async def mock_sync_once():
-            call_count[0] += 1
-            raise ValueError("unexpected error")
-
-        with patch("src.mcp_handlers.observability.pi_orchestration.sync_eisv_once", side_effect=mock_sync_once), \
-             patch("src.mcp_handlers.observability.pi_orchestration.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-
-            mock_sleep.side_effect = [None, None, asyncio.CancelledError()]
-
-            await eisv_sync_task(interval_minutes=0.001)
-            assert call_count[0] >= 1
-
-    @pytest.mark.asyncio
-    async def test_continues_after_sync_timeout(self, _mock_audit_logger):
-        """If sync_eisv_once hangs past the per-cycle deadline, the task must
-        log the timeout and continue the loop instead of parking forever.
-
-        Regression for the 2026-04-14 dogfood finding: bare ``await
-        sync_eisv_once(...)`` with no ``asyncio.wait_for`` wrapper meant a
-        hung Pi httpx call or stuck DB pool acquisition would wedge the
-        whole sync task indefinitely. Same shape as the
-        heartbeat-hung-launchd incident.
-
-        Test approach: patch ``asyncio.wait_for`` *inside the orchestration
-        module* to raise ``TimeoutError`` immediately. If the loop swallows
-        the TimeoutError and runs another cycle, the fix is wired correctly.
-        If the loop crashes or never runs another cycle, the regression is
-        back."""
-        # Force every wait_for call to raise TimeoutError without actually
-        # awaiting the inner coroutine — but close the coroutine so it
-        # doesn't leak as "never awaited".
-        async def instant_timeout(coro, timeout):
-            coro.close()
-            raise asyncio.TimeoutError()
-
-        # We track invocations on the patched mock directly. AsyncMock so
-        # the eisv_sync_task code can call sync_eisv_once(...) and get back
-        # a coroutine (which instant_timeout then closes).
-        with patch("src.mcp_handlers.observability.pi_orchestration.sync_eisv_once", new_callable=AsyncMock) as mock_sync, \
-             patch("src.mcp_handlers.observability.pi_orchestration.asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
-             patch("src.mcp_handlers.observability.pi_orchestration.asyncio.wait_for", side_effect=instant_timeout):
-
-            # Two cycles: first triggers timeout, second triggers timeout,
-            # third sleep raises CancelledError to exit the loop. If the
-            # task fails to continue after the first timeout, mock_sync
-            # call_count will be 1 instead of 2.
-            mock_sleep.side_effect = [None, None, asyncio.CancelledError()]
-
-            await eisv_sync_task(interval_minutes=0.001)
-
-            # sync_eisv_once was invoked twice (once per cycle that survived
-            # the TimeoutError), proving the loop continues past timeouts.
-            assert mock_sync.call_count == 2, (
-                f"loop did not continue after TimeoutError — sync_eisv_once "
-                f"called {mock_sync.call_count} times, expected 2"
-            )

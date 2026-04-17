@@ -390,7 +390,7 @@ class UNITARESMonitor:
             complexity = 0.5
         complexity = float(np.clip(complexity, 0.0, 1.0))  # Ensure in valid range
 
-        # Extract sensor EISV for spring coupling (agents with physical sensors, e.g. Lumen)
+        # Extract sensor EISV for spring coupling (agents that publish sensor_eisv)
         sensor_eisv = None
         raw_sensor_eisv = agent_state.get('sensor_eisv')
         if raw_sensor_eisv and isinstance(raw_sensor_eisv, dict):
@@ -808,7 +808,7 @@ class UNITARESMonitor:
         # Extract observations from existing signals for behavioral state
         sensor_eisv = agent_state.get('sensor_eisv')
         if sensor_eisv:
-            # Lumen: use physical sensor EISV directly
+            # Use externally supplied sensor EISV directly when available
             beh_E_obs = float(sensor_eisv.get('E', 0.5))
             beh_I_obs = float(sensor_eisv.get('I', 0.5))
             beh_S_obs = float(sensor_eisv.get('S', 0.2))

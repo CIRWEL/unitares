@@ -239,10 +239,10 @@ class TrajectorySignature:
     """
     Minimal trajectory signature for governance integration.
 
-    Full computation happens in anima-mcp; UNITARES receives and stores
-    the computed signature for comparison and anomaly detection.
+    Full computation happens upstream in the agent; UNITARES receives and
+    stores the computed signature for comparison and anomaly detection.
     """
-    # Core components (as computed by anima-mcp trajectory.py)
+    # Core components (as computed upstream; see agent's trajectory module)
     preferences: Dict[str, Any] = field(default_factory=dict)   # Π
     beliefs: Dict[str, Any] = field(default_factory=dict)       # B
     attractor: Optional[Dict[str, Any]] = None                  # A
