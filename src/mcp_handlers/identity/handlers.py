@@ -214,10 +214,17 @@ def _should_rebadge_agent_id(current_agent_id: Optional[str], model_type: Option
 
 
 async def _persist_rebadged_agent_id(agent_uuid: str, new_agent_id: str) -> None:
-    """Best-effort sync of refreshed structured agent_id to memory + DB."""
+    """Best-effort sync of refreshed structured agent_id to memory + DB.
+
+    Updates both `agent_id` and `public_agent_id` in the in-memory metadata
+    so lifecycle events and any other readers of `meta.agent_id` see the
+    current identity — not the stale pre-rebadge value.
+    """
     try:
         if agent_uuid in mcp_server.agent_metadata:
-            mcp_server.agent_metadata[agent_uuid].public_agent_id = new_agent_id
+            meta = mcp_server.agent_metadata[agent_uuid]
+            meta.agent_id = new_agent_id
+            meta.public_agent_id = new_agent_id
     except Exception:
         pass
     try:
