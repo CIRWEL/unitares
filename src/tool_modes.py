@@ -64,6 +64,9 @@ LITE_MODE_TOOLS: Set[str] = {
 
     # Recovery
     "self_recovery",              # Primary recovery path for stuck agents
+
+    # Janitorial (used by Vigil groundskeeper — needed in lite so MCP-native SDK clients can call it)
+    "archive_orphan_agents",
 }
 
 # Operator read-only mode: Observability and detection tools for central operator agent

@@ -56,6 +56,11 @@ class SearchResult(_GovModel):
 class AuditResult(_GovModel):
     success: bool
     results: list[dict] = Field(default_factory=list)
+    # Server returns audit data under `audit` at the top level, not `results`.
+    # Kept `results` above for backwards compatibility; new consumers should
+    # read buckets/top_stale from `audit`.
+    audit: dict | None = None
+    error: str | None = None
 
 
 class CleanupResult(_GovModel):

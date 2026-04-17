@@ -4,6 +4,7 @@ import pytest
 
 from unitares_sdk.errors import GovernanceError, IdentityDriftError, VerdictError
 from unitares_sdk.models import (
+    AuditResult,
     CheckinResult,
     IdentityResult,
     ModelResult,
@@ -160,3 +161,48 @@ def test_verdict_error_no_guidance():
     e = VerdictError("reject")
     assert "reject" in str(e)
     assert e.guidance is None
+
+
+# --- AuditResult ---
+
+
+def test_audit_parses_audit_payload():
+    """Regression: server returns audit data under `audit`, not `results`.
+
+    Vigil's groundskeeper silently failed for months because AuditResult
+    only modeled `results: list[dict]` while the server sent `audit: dict`.
+    The wire payload must hydrate into `audit` so callers can read
+    buckets/top_stale without iterating an empty list.
+    """
+    # Shape observed from knowledge(action="audit") REST response:
+    wire = {
+        "success": True,
+        "audit": {
+            "timestamp": "2026-04-16T22:37:09.058725",
+            "scope": "open",
+            "total_audited": 184,
+            "buckets": {
+                "healthy": 49,
+                "aging": 8,
+                "stale": 0,
+                "candidate_for_archive": 127,
+            },
+            "top_stale": [],
+        },
+    }
+    r = AuditResult.model_validate(wire)
+    assert r.success is True
+    assert r.audit is not None
+    assert r.audit["buckets"]["candidate_for_archive"] == 127
+    # Vigil's groundskeeper parser relies on this exact access path:
+    stale_found = (
+        r.audit["buckets"].get("stale", 0)
+        + r.audit["buckets"].get("candidate_for_archive", 0)
+    )
+    assert stale_found == 127
+
+
+def test_audit_empty_on_no_payload():
+    r = AuditResult(success=False, error="nope")
+    assert r.audit is None
+    assert r.error == "nope"

@@ -47,6 +47,8 @@ from unitares_sdk.client import GovernanceClient
 from unitares_sdk.errors import GovernanceError, VerdictError
 from unitares_sdk.utils import notify
 from agents.common.findings import post_finding, compute_fingerprint
+from agents.vigil.checks.registry import load_plugins
+from agents.vigil.checks.runner import run_health_checks
 
 # Paths
 ANIMA_PROJECT = Path(os.getenv("ANIMA_PROJECT", str(project_root.parent / "anima-mcp")))
@@ -54,13 +56,6 @@ SESSION_FILE = project_root / ".vigil_session"
 STATE_FILE = project_root / ".vigil_state"
 LOG_FILE = Path.home() / "Library" / "Logs" / "unitares-heartbeat.log"
 MAX_LOG_LINES = 500
-
-# Health endpoints
-GOVERNANCE_HEALTH_URL = "http://localhost:8767/health"
-ANIMA_HEALTH_URLS = [
-    "http://192.168.1.165:8766/health",   # LAN
-    "http://lumen:8766/health",            # Tailscale hostname
-]
 
 # Test timeout
 TEST_TIMEOUT = 180  # 3 minutes per suite
@@ -147,34 +142,42 @@ def detect_changes(prev: Dict[str, Any], current: Dict[str, Any]) -> List[Dict[s
     return notes
 
 
-def check_http_health(url: str, timeout: float = 5.0) -> Tuple[bool, str]:
-    """Check an HTTP health endpoint. Returns (healthy, detail_with_latency)."""
-    start = time.monotonic()
-    try:
-        resp = httpx.get(url, timeout=timeout)
-        latency_ms = int((time.monotonic() - start) * 1000)
-        if resp.status_code == 200:
-            try:
-                data = resp.json()
-                status = data.get("status", "ok")
-                return True, f"{status} ({latency_ms}ms)"
-            except Exception:
-                return True, f"ok ({latency_ms}ms)"
-        return False, f"HTTP {resp.status_code} ({latency_ms}ms)"
-    except httpx.ConnectError:
-        return False, "unreachable"
-    except httpx.TimeoutException:
-        return False, f"timeout (>{int(timeout*1000)}ms)"
-    except Exception as e:
-        return False, str(e)
+def _collect_health_state(
+    check_results: List[Tuple[Any, Any]],
+    prev_state: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Turn check results into Vigil's state-dict fragments.
 
+    Preserves the existing state file keys (``governance_healthy``,
+    ``lumen_healthy``, ``gov_up_cycles``, ``lumen_up_cycles``,
+    ``lumen_down_streak``, ``lumen_last_ok_url``) so the refactor is
+    invisible to the persisted .vigil_state format. Plugin-persistent
+    fields are pulled from ``result.detail``.
+    """
+    state: Dict[str, Any] = {}
+    by_key = {c.service_key: r for c, r in check_results}
 
-def _get_anima_urls(prev_state: Dict[str, Any]) -> List[str]:
-    """Return anima health URLs, trying last-successful URL first."""
-    last_ok = prev_state.get("lumen_last_ok_url")
-    if last_ok and last_ok in ANIMA_HEALTH_URLS:
-        return [last_ok] + [u for u in ANIMA_HEALTH_URLS if u != last_ok]
-    return list(ANIMA_HEALTH_URLS)
+    gov_r = by_key.get("governance")
+    gov_healthy = gov_r.ok if gov_r else True
+    state["governance_healthy"] = gov_healthy
+    state["governance_detail"] = gov_r.summary if gov_r else "no check"
+    state["gov_up_cycles"] = prev_state.get("gov_up_cycles", 0) + (1 if gov_healthy else 0)
+
+    lumen_r = by_key.get("lumen")
+    anima_healthy = lumen_r.ok if lumen_r else True
+    state["lumen_healthy"] = anima_healthy
+    state["lumen_detail"] = lumen_r.summary if lumen_r else "not configured"
+    state["lumen_up_cycles"] = prev_state.get("lumen_up_cycles", 0) + (1 if anima_healthy else 0)
+
+    lumen_down_streak = 0
+    if lumen_r and not anima_healthy:
+        lumen_down_streak = prev_state.get("lumen_down_streak", 0) + 1
+    state["lumen_down_streak"] = lumen_down_streak
+
+    if lumen_r and lumen_r.detail:
+        state.update(lumen_r.detail)
+
+    return state
 
 
 def run_pytest(project_dir: Path, label: str) -> Tuple[bool, int, int, str]:
@@ -275,6 +278,9 @@ class HeartbeatAgent(GovernanceAgent):
         # Vigil-specific cycle data (populated during run_cycle, used in post-checkin)
         self._cycle_state: Dict[str, Any] = {}
         self._cycle_prev_state: Dict[str, Any] = {}
+        # Register built-in checks + any VIGIL_CHECK_PLUGINS externals.
+        # Idempotent: safe to call from multiple HeartbeatAgent instances in tests.
+        load_plugins()
 
     async def _read_sentinel_findings(
         self, client: GovernanceClient, since_iso: Optional[str]
@@ -316,11 +322,14 @@ class HeartbeatAgent(GovernanceAgent):
             audit_result = await client.audit_knowledge(scope="open", top_n=10)
             if audit_result.success:
                 summary["audit_run"] = True
-                # Parse audit data from the results
-                for item in audit_result.results:
-                    if isinstance(item, dict):
-                        buckets = item.get("buckets", {})
-                        summary["stale_found"] = buckets.get("stale", 0) + buckets.get("candidate_for_archive", 0)
+                # Server returns audit payload under `audit`, not `results`.
+                # Iterating `.results` stays empty and leaves stale_found=0 —
+                # the silent failure that hid 127 archive candidates for months.
+                audit_data = getattr(audit_result, "audit", None) or {}
+                buckets = audit_data.get("buckets", {}) if isinstance(audit_data, dict) else {}
+                summary["stale_found"] = (
+                    buckets.get("stale", 0) + buckets.get("candidate_for_archive", 0)
+                )
 
                 if summary["stale_found"] > 0:
                     cleanup_result = await client.cleanup_knowledge(dry_run=False)
@@ -363,57 +372,37 @@ class HeartbeatAgent(GovernanceAgent):
         prev_state = self.load_state()
         self._cycle_prev_state = prev_state
 
-        # --- 1. Governance health ---
-        gov_healthy, gov_detail = check_http_health(GOVERNANCE_HEALTH_URL)
-        if gov_healthy:
-            findings.append(f"Governance: {gov_detail}")
-        else:
-            findings.append(f"Governance: UNHEALTHY ({gov_detail})")
-            issues += 1
+        # --- 1. Run registered health checks (governance built-in + plugins) ---
+        check_results = await run_health_checks(prev_state)
+        health_state = _collect_health_state(check_results, prev_state)
 
-        # --- 2. Lumen/Anima health (smart URL ordering) ---
-        anima_healthy = False
-        anima_detail = "unreachable"
-        anima_ok_url = None
-        for url in _get_anima_urls(prev_state):
-            anima_healthy, anima_detail = check_http_health(url, timeout=10.0)
-            if anima_healthy:
-                anima_ok_url = url
-                break
-        if anima_healthy:
-            findings.append(f"Lumen: {anima_detail}")
-        else:
-            findings.append(f"Lumen: UNREACHABLE ({anima_detail})")
-            issues += 1
+        for _check, result in check_results:
+            findings.append(result.summary)
+            if not result.ok:
+                issues += 1
 
-        # Track Lumen outage streak
-        lumen_down_streak = 0
-        if not anima_healthy:
-            lumen_down_streak = prev_state.get("lumen_down_streak", 0) + 1
+        gov_healthy = health_state["governance_healthy"]
+        gov_detail = health_state["governance_detail"]
+        anima_healthy = health_state["lumen_healthy"]
+        anima_detail = health_state["lumen_detail"]
+        anima_ok_url = health_state.get("lumen_last_ok_url")
+        lumen_down_streak = health_state["lumen_down_streak"]
 
-        # --- macOS notifications for critical events + event-stream emit ---
-        if not gov_healthy and prev_state.get("governance_healthy", True):
-            notify("Vigil", f"Governance is down: {gov_detail}")
-            post_finding(
-                event_type="vigil_finding",
-                severity="critical",
-                message=f"Governance is down: {gov_detail}",
-                agent_id="vigil",
-                agent_name="Vigil",
-                fingerprint=compute_fingerprint(["vigil", "governance_down"]),
-                extra={"finding_type": "governance_down"},
-            )
-        if lumen_down_streak == 3:
-            notify("Vigil", "Lumen unreachable for 3 consecutive cycles (1.5h)")
-            post_finding(
-                event_type="vigil_finding",
-                severity="critical",
-                message="Lumen unreachable for 3 consecutive cycles (1.5h)",
-                agent_id="vigil",
-                agent_name="Vigil",
-                fingerprint=compute_fingerprint(["vigil", "lumen_unreachable"]),
-                extra={"finding_type": "lumen_unreachable"},
-            )
+        # --- Transition-emit: page once on healthy -> unhealthy per service ---
+        for check, result in check_results:
+            svc = check.service_key
+            was_healthy = prev_state.get(f"{svc}_healthy", True)
+            if not result.ok and was_healthy and result.fingerprint_key:
+                notify("Vigil", result.summary)
+                post_finding(
+                    event_type="vigil_finding",
+                    severity=result.severity,
+                    message=result.summary,
+                    agent_id="vigil",
+                    agent_name="Vigil",
+                    fingerprint=compute_fingerprint(["vigil", result.fingerprint_key]),
+                    extra={"finding_type": result.fingerprint_key},
+                )
 
         # --- 2.5. Read Sentinel findings since last cycle, route to action ---
         # First actual coordination arc: Sentinel observes fleet-level anomalies
@@ -436,19 +425,27 @@ class HeartbeatAgent(GovernanceAgent):
         if self.with_tests:
             loop = asyncio.get_event_loop()
             gov_future = loop.run_in_executor(None, run_pytest, project_root, "governance")
-            anima_future = loop.run_in_executor(None, run_pytest, ANIMA_PROJECT, "anima")
+            # anima-mcp is optional — skip cleanly if the sibling repo isn't present
+            anima_future = (
+                loop.run_in_executor(None, run_pytest, ANIMA_PROJECT, "anima")
+                if ANIMA_PROJECT.exists()
+                else None
+            )
 
             gov_passed, gov_n_passed, gov_n_failed, gov_summary = await gov_future
-            anima_passed, anima_n_passed, anima_n_failed, anima_summary = await anima_future
-
             findings.append(gov_summary)
-            findings.append(anima_summary)
-            total_passed = gov_n_passed + anima_n_passed
-            total_failed = gov_n_failed + anima_n_failed
+            total_passed += gov_n_passed
+            total_failed += gov_n_failed
             if not gov_passed:
                 issues += 1
-            if not anima_passed:
-                issues += 1
+
+            if anima_future is not None:
+                anima_passed, anima_n_passed, anima_n_failed, anima_summary = await anima_future
+                findings.append(anima_summary)
+                total_passed += anima_n_passed
+                total_failed += anima_n_failed
+                if not anima_passed:
+                    issues += 1
 
         # --- 4. Groundskeeper duties (optional) ---
         # Forced on when a Sentinel finding indicates KG-remediable symptoms
@@ -498,21 +495,12 @@ class HeartbeatAgent(GovernanceAgent):
         # --- 6. Detect changes for notes ---
         # Build cycle state (pre-checkin; coherence/verdict filled in post-checkin)
         total_cycles = prev_state.get("total_cycles", 0) + 1
-        gov_up_cycles = prev_state.get("gov_up_cycles", 0) + (1 if gov_healthy else 0)
-        lumen_up_cycles = prev_state.get("lumen_up_cycles", 0) + (1 if anima_healthy else 0)
 
         self._cycle_state = {
-            "governance_healthy": gov_healthy,
-            "governance_detail": gov_detail,
-            "lumen_healthy": anima_healthy,
-            "lumen_detail": anima_detail,
-            "lumen_down_streak": lumen_down_streak,
-            "lumen_last_ok_url": anima_ok_url,
+            **health_state,
             "groundskeeper_stale": groundskeeper_summary.get("stale_found", 0),
             "groundskeeper_archived": groundskeeper_summary.get("archived", 0),
             "total_cycles": total_cycles,
-            "gov_up_cycles": gov_up_cycles,
-            "lumen_up_cycles": lumen_up_cycles,
             "cycle_time": datetime.now(timezone.utc).isoformat(),
         }
 
