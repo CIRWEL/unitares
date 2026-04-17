@@ -218,3 +218,96 @@ class TestLoaderHydratesRuntimeFields:
         assert meta.last_response_at == "2026-04-16T10:30:00+00:00"
         assert meta.response_completed is True
         assert meta.recovery_attempt_at == "2026-04-16T10:35:00+00:00"
+
+
+class TestCircuitBreakerPersistsRuntimeState:
+    """Pause path in agent_loop_detection.process_update_authenticated_async
+    must persist paused_at + the 'paused' lifecycle event so the agent record
+    isn't silently empty after the next force-reload (Watcher P011 ext).
+    """
+
+    @pytest.mark.asyncio
+    async def test_pause_decision_persists_paused_at_and_lifecycle_event(self):
+        from src import agent_loop_detection as ald
+        from src import agent_storage
+
+        meta = make_agent_meta(status="active")
+        meta.recent_update_timestamps = []
+        meta.recent_decisions = []
+        meta.loop_cooldown_until = None
+        meta.add_recent_update = MagicMock()
+        meta.add_lifecycle_event = MagicMock()
+
+        monitor = make_monitor()
+        monitor.process_update = MagicMock(return_value={
+            "decision": {
+                "action": "pause",
+                "reason": "UNITARES high-risk verdict (risk_score=0.65)",
+            },
+            "metrics": {"coherence": 0.45, "risk_score": 0.65},
+        })
+
+        mock_db = MagicMock()
+        mock_db.increment_update_count = AsyncMock(return_value=42)
+
+        with patch.object(ald, "agent_metadata", {AGENT_ID: meta}), \
+             patch.object(ald, "monitors", {AGENT_ID: monitor}), \
+             patch.object(ald, "verify_agent_ownership", return_value=(True, None)), \
+             patch.object(ald, "detect_loop_pattern", return_value=(False, "")), \
+             patch("src.agent_lifecycle.get_or_create_monitor", return_value=monitor), \
+             patch.object(agent_storage, "get_db", return_value=mock_db), \
+             patch.object(agent_storage, "persist_runtime_state",
+                          AsyncMock(return_value=True)) as persist_mock, \
+             patch.object(ald, "save_monitor_state_async", AsyncMock()):
+            # Disable auto-recovery to avoid touching unrelated code paths
+            with patch.dict("os.environ", {"UNITARES_AUTO_DIALECTIC_RECOVERY": "0"}):
+                await ald.process_update_authenticated_async(
+                    AGENT_ID, "test-key", {"task_type": "mixed"}
+                )
+
+        assert persist_mock.await_count >= 1, (
+            "Circuit-breaker pause must call persist_runtime_state so paused_at "
+            "and the 'paused' lifecycle event survive a force-reload — without "
+            "this, the agent record's lifecycle_events stays [] and paused_at "
+            "comes back as null, hiding the pause from anyone querying the agent."
+        )
+        kwargs = persist_mock.await_args.kwargs
+        assert kwargs.get("paused_at"), \
+            "persist_runtime_state must be called with paused_at set"
+        event = kwargs.get("append_lifecycle_event")
+        assert event and event.get("event") == "paused", \
+            "persist_runtime_state must include the 'paused' lifecycle event"
+        assert "high-risk" in (event.get("reason") or ""), \
+            "lifecycle event reason must carry the decision reason"
+
+    @pytest.mark.asyncio
+    async def test_safety_net_resume_persists_paused_at_clear_and_event(self):
+        from src import agent_loop_detection as ald
+        from src import agent_storage
+
+        meta = make_agent_meta(status="paused", paused_at="2026-04-16T22:16:36+00:00")
+        meta.loop_cooldown_until = None
+        meta.loop_detected_at = None
+        meta.recent_update_timestamps = []
+        meta.recent_decisions = []
+        meta.add_lifecycle_event = MagicMock()
+
+        monitor = make_monitor(coherence=0.55, mean_risk=0.40)
+
+        with patch.object(ald, "agent_metadata", {AGENT_ID: meta}), \
+             patch.object(ald, "monitors", {AGENT_ID: monitor}), \
+             patch.object(agent_storage, "persist_runtime_state",
+                          AsyncMock(return_value=True)) as persist_mock:
+            await ald._safety_net_resume(AGENT_ID, reason="dialectic-failed")
+
+        assert meta.status == "active"
+        assert persist_mock.await_count >= 1, (
+            "_safety_net_resume must persist paused_at=None + the resume "
+            "lifecycle event — otherwise the next force-reload re-pauses the "
+            "agent and hides the safety-net resume from the audit trail."
+        )
+        kwargs = persist_mock.await_args.kwargs
+        assert kwargs.get("paused_at") is None, \
+            "safety-net resume must clear paused_at in the persisted record"
+        event = kwargs.get("append_lifecycle_event")
+        assert event and event.get("event") == "safety_net_resumed"
