@@ -105,6 +105,9 @@ class TestResolveToolAlias:
         assert name == "process_agent_update"
 
     def test_pi_health_alias(self):
+        pytest.importorskip("unitares_pi_plugin")
+        import unitares_pi_plugin as _plugin
+        _plugin.register()
         name, alias = resolve_tool_alias("pi_health")
         assert name == "pi"
         assert alias.inject_action == "health"

@@ -584,6 +584,7 @@ class TestHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_overall_status_logic(self, mock_mcp_server, patch_context_agent_id):
         """Test the three-tier status logic: healthy, moderate, critical."""
+        pytest.importorskip("unitares_pi_plugin")
         mock_audit = MagicMock()
         mock_audit.log_file = MagicMock()
         mock_audit.log_file.exists.return_value = True
@@ -633,6 +634,7 @@ class TestHealthCheck:
         patch_context_agent_id,
     ):
         """Default health output should state when continuity is degraded-local."""
+        pytest.importorskip("unitares_pi_plugin")
         mock_audit = MagicMock()
         mock_audit.log_file = MagicMock()
         mock_audit.log_file.exists.return_value = True
@@ -683,6 +685,7 @@ class TestHealthCheck:
         patch_context_agent_id,
     ):
         """Health output should explicitly report Redis-backed continuity when available."""
+        pytest.importorskip("unitares_pi_plugin")
         mock_audit = MagicMock()
         mock_audit.log_file = MagicMock()
         mock_audit.log_file.exists.return_value = True
