@@ -80,3 +80,112 @@ def test_get_or_create_monitor_does_not_transplant_state_from_predecessor():
         "Child agent must not inherit predecessor V_history "
         f"(got {child_monitor.state.V_history!r})"
     )
+
+
+@pytest.mark.asyncio
+async def test_path1_redis_hit_resume_false_does_not_set_predecessor():
+    """
+    PATH 1: Redis lookup finds a cached agent. resume=False now creates
+    a new identity WITHOUT recording the cached agent as predecessor.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from src.mcp_handlers.identity import resolution as resolution_mod
+
+    existing_uuid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+    cache_hit = {
+        "agent_id": existing_uuid,
+        "display_agent_id": "OldAgent",
+    }
+    mock_redis = MagicMock()
+    mock_redis.get = AsyncMock(return_value=cache_hit)
+
+    mock_raw_redis = AsyncMock()
+    mock_raw_redis.expire = AsyncMock(return_value=True)
+
+    mock_db = AsyncMock()
+    mock_db.init = AsyncMock()
+    mock_db.get_session = AsyncMock(return_value=None)
+    mock_db.upsert_agent = AsyncMock()
+    mock_db.upsert_identity = AsyncMock()
+    mock_db.create_session = AsyncMock()
+    mock_db.get_identity = AsyncMock(return_value=None)
+
+    async def _get_raw():
+        return mock_raw_redis
+
+    with patch.object(resolution_mod, "_get_redis", return_value=mock_redis), \
+         patch("src.cache.redis_client.get_redis", new=_get_raw), \
+         patch.object(resolution_mod, "get_db", return_value=mock_db), \
+         patch.object(resolution_mod, "_agent_exists_in_postgres", AsyncMock(return_value=True)), \
+         patch.object(resolution_mod, "_get_agent_label", AsyncMock(return_value="OldAgent")), \
+         patch.object(resolution_mod, "_get_agent_status", AsyncMock(return_value="active")), \
+         patch.object(resolution_mod, "_soft_verify_trajectory", AsyncMock(return_value={"verified": True})), \
+         patch.object(resolution_mod, "_cache_session", AsyncMock()):
+        result = await resolution_mod.resolve_session_identity(
+            session_key="fp-session-1",
+            resume=False,
+            persist=False,
+        )
+
+    # A brand-new identity should have been created.
+    assert result["created"] is True
+    assert result["agent_uuid"] != existing_uuid
+    # And it MUST NOT carry predecessor_uuid forward.
+    assert "predecessor_uuid" not in result, (
+        f"resume=False + Redis fingerprint hit must not leak predecessor_uuid "
+        f"(got {result.get('predecessor_uuid')!r})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_path2_postgres_hit_resume_false_does_not_set_predecessor():
+    """
+    PATH 2: Redis miss, PostgreSQL finds a session-bound agent.
+    resume=False must not claim that agent as predecessor.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from src.mcp_handlers.identity import resolution as resolution_mod
+
+    existing_uuid = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+    mock_redis = MagicMock()
+    mock_redis.get = AsyncMock(return_value=None)  # PATH 1 miss
+
+    mock_raw_redis = AsyncMock()
+    mock_raw_redis.expire = AsyncMock(return_value=True)
+
+    mock_db = AsyncMock()
+    mock_db.init = AsyncMock()
+    mock_db.get_session = AsyncMock(
+        return_value=SimpleNamespace(agent_id=existing_uuid)
+    )
+    mock_db.upsert_agent = AsyncMock()
+    mock_db.upsert_identity = AsyncMock()
+    mock_db.create_session = AsyncMock()
+    mock_db.get_identity = AsyncMock(return_value=None)
+
+    async def _get_raw():
+        return mock_raw_redis
+
+    with patch.object(resolution_mod, "_get_redis", return_value=mock_redis), \
+         patch("src.cache.redis_client.get_redis", new=_get_raw), \
+         patch.object(resolution_mod, "get_db", return_value=mock_db), \
+         patch.object(resolution_mod, "_agent_exists_in_postgres", AsyncMock(return_value=True)), \
+         patch.object(resolution_mod, "_get_agent_label", AsyncMock(return_value="OldAgent")), \
+         patch.object(resolution_mod, "_get_agent_status", AsyncMock(return_value="active")), \
+         patch.object(resolution_mod, "_soft_verify_trajectory", AsyncMock(return_value={"verified": True})), \
+         patch.object(resolution_mod, "_cache_session", AsyncMock()):
+        result = await resolution_mod.resolve_session_identity(
+            session_key="fp-session-2",
+            resume=False,
+            persist=False,
+        )
+
+    assert result["created"] is True
+    assert result["agent_uuid"] != existing_uuid
+    assert "predecessor_uuid" not in result, (
+        f"resume=False + PostgreSQL session hit must not leak predecessor_uuid "
+        f"(got {result.get('predecessor_uuid')!r})"
+    )
