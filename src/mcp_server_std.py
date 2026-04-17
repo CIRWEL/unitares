@@ -458,8 +458,10 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> Sequence[Tex
                         if activity.session_start else 0
                     )
                 }
-                asyncio.create_task(
-                    inject_lightweight_heartbeat(agent_id, trigger_reason, activity_summary, activity_tracker)
+                from src.background_tasks import create_tracked_task
+                create_tracked_task(
+                    inject_lightweight_heartbeat(agent_id, trigger_reason, activity_summary, activity_tracker),
+                    name="inject_lightweight_heartbeat",
                 )
                 logger.info(f"Auto-triggered heartbeat for {agent_id}: {trigger_reason}")
             except Exception as e:
@@ -539,7 +541,11 @@ async def main():
             result = await collect_ground_truth_automatically(min_age_hours=2.0, max_decisions=50, dry_run=False)
             if result.get('updated', 0) > 0:
                 logger.info(f"Auto-collected ground truth: {result['updated']} decisions updated")
-            asyncio.create_task(auto_ground_truth_collector_task(interval_hours=6.0))
+            from src.background_tasks import create_tracked_task
+            create_tracked_task(
+                auto_ground_truth_collector_task(interval_hours=6.0),
+                name="auto_ground_truth_collector",
+            )
         except Exception as e:
             logger.warning(f"Could not auto-collect ground truth: {e}", exc_info=True)
 
@@ -579,7 +585,11 @@ async def main():
 
             # Only run background tasks in non-proxy mode
             if not (STDIO_PROXY_URL or STDIO_PROXY_HTTP_URL):
-                asyncio.create_task(safe_startup_background_tasks())
+                from src.background_tasks import create_tracked_task
+                create_tracked_task(
+                    safe_startup_background_tasks(),
+                    name="stdio_startup_background_tasks",
+                )
 
             await server.run(
                 read_stream,
