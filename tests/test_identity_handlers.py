@@ -1629,7 +1629,7 @@ class TestHandleOnboardV2:
 
     @pytest.mark.asyncio
     async def test_onboard_resume_false_creates_new_identity(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
-        """onboard(resume=false) creates new identity with predecessor link."""
+        """onboard(resume=false) creates new identity (fresh — no auto lineage claim)."""
         from src.mcp_handlers.identity.handlers import handle_onboard_v2
 
         predecessor_uuid = str(uuid.uuid4())
