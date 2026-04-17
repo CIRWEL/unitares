@@ -317,12 +317,7 @@ def process_update_authenticated(
         meta.total_updates += 1
 
         decision_action = result.get('decision', {}).get('action', 'unknown')
-        meta.recent_update_timestamps.append(now)
-        meta.recent_decisions.append(decision_action)
-
-        if len(meta.recent_update_timestamps) > 10:
-            meta.recent_update_timestamps = meta.recent_update_timestamps[-10:]
-            meta.recent_decisions = meta.recent_decisions[-10:]
+        meta.add_recent_update(now, decision_action)
 
     return result
 
@@ -452,11 +447,7 @@ async def process_update_authenticated_async(
         meta = agent_metadata.get(agent_id)
         if meta is not None:
             meta.last_update = now
-            meta.recent_update_timestamps.append(now)
-            meta.recent_decisions.append(decision_action)
-            if len(meta.recent_update_timestamps) > 10:
-                meta.recent_update_timestamps = meta.recent_update_timestamps[-10:]
-                meta.recent_decisions = meta.recent_decisions[-10:]
+            meta.add_recent_update(now, decision_action)
 
         # Atomically increment total_updates in PostgreSQL
         try:

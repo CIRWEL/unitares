@@ -186,6 +186,7 @@ class AgentMetadata:
         return asdict(self)
 
     MAX_LIFECYCLE_EVENTS = 50
+    MAX_RECENT_UPDATES = 10
 
     def add_lifecycle_event(self, event: str, reason: str = None):
         """Add a lifecycle event with timestamp. Broadcasts via event bus."""
@@ -200,6 +201,20 @@ class AgentMetadata:
         # Fire-and-forget broadcast + audit for sentinel consumption
         label = getattr(self, "label", None) or ""
         _emit_lifecycle_event(self.agent_id, event, reason, ts, label=label)
+
+    def add_recent_update(self, timestamp: str, decision: str) -> None:
+        """Append to recent_update_timestamps and recent_decisions with bounded cap.
+
+        Loop detection reads these as parallel arrays. Using this method
+        guarantees the MAX_RECENT_UPDATES cap so a new caller can't
+        accidentally grow the lists unboundedly (Watcher P002).
+        """
+        self.recent_update_timestamps.append(timestamp)
+        self.recent_decisions.append(decision)
+        cap = self.MAX_RECENT_UPDATES
+        if len(self.recent_update_timestamps) > cap:
+            self.recent_update_timestamps = self.recent_update_timestamps[-cap:]
+            self.recent_decisions = self.recent_decisions[-cap:]
 
     def validate_consistency(self) -> tuple[bool, list[str]]:
         """
