@@ -99,6 +99,34 @@ async def search_audit_events_async(
     ]
 
 
+async def append_tool_usage_async(
+    agent_id: Optional[str],
+    tool_name: str,
+    latency_ms: Optional[int],
+    success: bool,
+    error_type: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    session_id: Optional[str] = None,
+) -> bool:
+    """Append a tool_usage event to PostgreSQL. Returns False on failure — never raises."""
+    try:
+        from src.db import get_db
+        db = get_db()
+        if not hasattr(db, '_pool') or db._pool is None:
+            await db.init()
+        return await db.append_tool_usage(
+            agent_id=agent_id,
+            session_id=session_id,
+            tool_name=tool_name,
+            latency_ms=latency_ms,
+            success=success,
+            error_type=error_type,
+            payload=payload,
+        )
+    except Exception:
+        return False
+
+
 async def audit_health_check_async() -> Dict[str, Any]:
     """Health check for audit storage backend."""
     from src.db import get_db

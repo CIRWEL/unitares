@@ -1526,6 +1526,153 @@ class TestCallToolHandler:
 
 
 # ============================================================================
+# Test: tool_usage recording (JSONL + DB)
+# ============================================================================
+
+def _consume_coro(coro, name=None):
+    """Close the coroutine so tests don't leak 'never awaited' warnings."""
+    if hasattr(coro, "close"):
+        coro.close()
+    return MagicMock()
+
+
+class TestToolUsageRecording:
+    """Every dispatched tool call should land in audit.tool_usage via fire-and-forget."""
+
+    @pytest.mark.asyncio
+    async def test_success_records_to_jsonl_and_db(self):
+        """Successful dispatch records exactly one JSONL + one DB entry with latency."""
+        from src.mcp_server_std import call_tool
+        from mcp.types import TextContent
+
+        mock_result = [TextContent(type="text", text=json.dumps({"success": True}))]
+        mock_tracker = MagicMock()
+
+        with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None), \
+             patch("src.mcp_server_std.STDIO_PROXY_URL", None), \
+             patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock, return_value=mock_result), \
+             patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=mock_tracker), \
+             patch("src.background_tasks.create_tracked_task", side_effect=_consume_coro) as mock_track:
+            await call_tool("health_check", {"agent_id": "test-agent"})
+
+        # JSONL tracker called exactly once with success=True
+        mock_tracker.log_tool_call.assert_called_once()
+        call_kwargs = mock_tracker.log_tool_call.call_args.kwargs
+        assert call_kwargs["success"] is True
+        assert call_kwargs["tool_name"] == "health_check"
+
+        # DB persist task created exactly once
+        assert mock_track.call_count == 1
+        assert mock_track.call_args.kwargs.get("name") == "persist_tool_usage"
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_records_failure(self):
+        from src.mcp_server_std import call_tool
+        mock_tracker = MagicMock()
+
+        with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None), \
+             patch("src.mcp_server_std.STDIO_PROXY_URL", None), \
+             patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock, return_value=None), \
+             patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=mock_tracker), \
+             patch("src.background_tasks.create_tracked_task", side_effect=_consume_coro) as mock_track:
+            await call_tool("no_such_tool", {"agent_id": "test-agent"})
+
+        mock_tracker.log_tool_call.assert_called_once()
+        call_kwargs = mock_tracker.log_tool_call.call_args.kwargs
+        assert call_kwargs["success"] is False
+        assert call_kwargs["error_type"] == "unknown_tool"
+        assert mock_track.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_execution_error_records_failure(self):
+        from src.mcp_server_std import call_tool
+        mock_tracker = MagicMock()
+
+        with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None), \
+             patch("src.mcp_server_std.STDIO_PROXY_URL", None), \
+             patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock,
+                   side_effect=RuntimeError("boom")), \
+             patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=mock_tracker), \
+             patch("src.background_tasks.create_tracked_task", side_effect=_consume_coro) as mock_track:
+            await call_tool("broken_tool", {"agent_id": "test-agent"})
+
+        mock_tracker.log_tool_call.assert_called_once()
+        call_kwargs = mock_tracker.log_tool_call.call_args.kwargs
+        assert call_kwargs["success"] is False
+        assert call_kwargs["error_type"] == "execution_error"
+        assert mock_track.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_db_persist_failure_does_not_break_tool_call(self):
+        """If create_tracked_task raises RuntimeError (no loop), tool call must still succeed."""
+        from src.mcp_server_std import call_tool
+        from mcp.types import TextContent
+
+        mock_result = [TextContent(type="text", text=json.dumps({"success": True}))]
+        mock_tracker = MagicMock()
+
+        def _raise_runtime(coro, name=None):
+            if hasattr(coro, "close"):
+                coro.close()
+            raise RuntimeError("no loop")
+
+        with patch("src.mcp_server_std.STDIO_PROXY_HTTP_URL", None), \
+             patch("src.mcp_server_std.STDIO_PROXY_URL", None), \
+             patch("src.mcp_handlers.dispatch_tool", new_callable=AsyncMock, return_value=mock_result), \
+             patch("src.tool_usage_tracker.get_tool_usage_tracker", return_value=mock_tracker), \
+             patch("src.background_tasks.create_tracked_task", side_effect=_raise_runtime):
+            result = await call_tool("health_check", {"agent_id": "test-agent"})
+
+        # Result still valid, JSONL still logged
+        assert result == mock_result
+        mock_tracker.log_tool_call.assert_called_once()
+
+
+class TestAppendToolUsageAsync:
+    """Helper in src/audit_db.py that wraps db.append_tool_usage with pool init."""
+
+    @pytest.mark.asyncio
+    async def test_initializes_pool_if_needed(self):
+        from src.audit_db import append_tool_usage_async
+
+        mock_db = MagicMock()
+        mock_db._pool = None
+        mock_db.init = AsyncMock()
+        mock_db.append_tool_usage = AsyncMock(return_value=True)
+
+        with patch("src.db.get_db", return_value=mock_db):
+            ok = await append_tool_usage_async(
+                agent_id="a1", tool_name="health_check",
+                latency_ms=42, success=True,
+            )
+
+        assert ok is True
+        mock_db.init.assert_awaited_once()
+        mock_db.append_tool_usage.assert_awaited_once()
+        kwargs = mock_db.append_tool_usage.call_args.kwargs
+        assert kwargs["tool_name"] == "health_check"
+        assert kwargs["latency_ms"] == 42
+        assert kwargs["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_skips_init_when_pool_present(self):
+        from src.audit_db import append_tool_usage_async
+
+        mock_db = MagicMock()
+        mock_db._pool = object()  # truthy
+        mock_db.init = AsyncMock()
+        mock_db.append_tool_usage = AsyncMock(return_value=True)
+
+        with patch("src.db.get_db", return_value=mock_db):
+            await append_tool_usage_async(
+                agent_id="a1", tool_name="t", latency_ms=1, success=True,
+            )
+
+        mock_db.init.assert_not_awaited()
+        mock_db.append_tool_usage.assert_awaited_once()
+
+
+# ============================================================================
 # Test: MCP resource handlers
 # ============================================================================
 

@@ -356,6 +356,38 @@ async def inject_lightweight_heartbeat(
         logger.error(f"Error injecting heartbeat for {agent_id}: {e}", exc_info=True)
 
 
+def _record_tool_usage(name, agent_id, success, error_type=None, latency_ms=None):
+    """Record a tool call to JSONL (sync, local) and audit.tool_usage (fire-and-forget).
+
+    Never raises — a telemetry failure must not break the tool call.
+    """
+    try:
+        from src.tool_usage_tracker import get_tool_usage_tracker
+        get_tool_usage_tracker().log_tool_call(
+            tool_name=name, agent_id=agent_id, success=success, error_type=error_type,
+        )
+    except Exception as e:
+        logger.debug(f"JSONL tool_usage log failed (non-fatal): {e}")
+
+    try:
+        from src.background_tasks import create_tracked_task
+        from src.audit_db import append_tool_usage_async
+        create_tracked_task(
+            append_tool_usage_async(
+                agent_id=agent_id,
+                tool_name=name,
+                latency_ms=latency_ms,
+                success=success,
+                error_type=error_type,
+            ),
+            name="persist_tool_usage",
+        )
+    except RuntimeError:
+        pass  # no running event loop (CLI / tests)
+    except Exception as e:
+        logger.debug(f"DB tool_usage persist failed (non-fatal): {e}")
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any] | None) -> Sequence[TextContent]:
     """Handle tool calls from MCP client"""
@@ -433,39 +465,31 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> Sequence[Tex
             except Exception as e:
                 logger.warning(f"Could not inject heartbeat: {e}", exc_info=True)
 
-    # Track tool usage for analytics
-    try:
-        from src.tool_usage_tracker import get_tool_usage_tracker
-        get_tool_usage_tracker().log_tool_call(tool_name=name, agent_id=agent_id, success=True)
-    except Exception:
-        pass
-
-    # Dispatch to handler registry
+    # Dispatch to handler registry; record tool_usage at each exit point
+    # (JSONL tracker + fire-and-forget write to audit.tool_usage)
+    t0 = time.monotonic()
     try:
         from src.mcp_handlers import dispatch_tool
         result = await dispatch_tool(name, arguments)
+        latency_ms = int((time.monotonic() - t0) * 1000)
         if result is not None:
+            _record_tool_usage(name, agent_id, success=True, latency_ms=latency_ms)
             return result
-        try:
-            from src.tool_usage_tracker import get_tool_usage_tracker
-            get_tool_usage_tracker().log_tool_call(tool_name=name, agent_id=agent_id, success=False, error_type="unknown_tool")
-        except Exception:
-            pass
+        _record_tool_usage(name, agent_id, success=False,
+                           error_type="unknown_tool", latency_ms=latency_ms)
         return [TextContent(type="text", text=json.dumps({"success": False, "error": f"Unknown tool: {name}"}, indent=2))]
     except ImportError:
         return [TextContent(type="text", text=json.dumps({"success": False, "error": f"Handler registry not available for tool '{name}'"}, indent=2))]
     except Exception as e:
+        latency_ms = int((time.monotonic() - t0) * 1000)
         logger.error(f"Tool '{name}' execution error: {e}", exc_info=True)
         from src.mcp_handlers.utils import error_response as create_error_response
         sanitized_error = create_error_response(
             f"Error executing tool '{name}': {str(e)}",
             recovery={"action": "Check tool parameters and try again"}
         )
-        try:
-            from src.tool_usage_tracker import get_tool_usage_tracker
-            get_tool_usage_tracker().log_tool_call(tool_name=name, agent_id=agent_id, success=False, error_type="execution_error")
-        except Exception:
-            pass
+        _record_tool_usage(name, agent_id, success=False,
+                           error_type="execution_error", latency_ms=latency_ms)
         return [sanitized_error]
 
 
