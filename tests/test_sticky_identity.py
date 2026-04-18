@@ -755,3 +755,218 @@ class TestTransportBindingCacheWarmup:
 
         assert called["persist"] is False
         assert step._transport_identity_cache["sticky:1.2.3.4:x"].agent_uuid == "uuid-warmed"
+
+
+# ============================================================================
+# UNITARES_MIDDLEWARE_REQUIRE_BIND — identity-honesty follow-up
+# ============================================================================
+#
+# The flag addresses KG entry 3ea27c3a's third open follow-up: "Middleware
+# Ephemeral Identity (identity_step.py) still creates its own ephemerals
+# outside the identity() handler path." Default=0 preserves existing behavior
+# (Session A of the rollout); default=1 ships in a follow-up session after an
+# external-client audit.
+# ============================================================================
+
+
+class TestRequireBindFlag:
+    """Flag-gated rejection of first-call-with-no-auth to close the final
+    auto-bind ghost generator."""
+
+    def setup_method(self):
+        _transport_identity_cache.clear()
+
+    @pytest.fixture(autouse=True)
+    def _no_redis_leak(self):
+        """Prior tests in this file persist bindings to Redis via
+        update_transport_binding → _persist_binding_to_redis. Later tests
+        then hit the Redis load path during the sticky-cache miss check
+        and find stale entries. Mock both sides to sandbox each test."""
+        with patch(
+            "src.mcp_handlers.middleware.identity_step._load_binding_from_redis",
+            new_callable=AsyncMock, return_value=None,
+        ):
+            with patch(
+                "src.mcp_handlers.middleware.identity_step._persist_binding_to_redis",
+            ):
+                yield
+
+    @pytest.mark.asyncio
+    async def test_flag_off_preserves_auto_bind(self, monkeypatch):
+        """Default (flag=0 / unset) must not change behavior — existing
+        auto-bind path runs exactly as before."""
+        monkeypatch.delenv("UNITARES_MIDDLEWARE_REQUIRE_BIND", raising=False)
+
+        signals = FakeSignals(ip_ua_fingerprint="1.2.3.4:fresh")
+        ctx = DispatchContext()
+        mock_result = {"agent_uuid": "uuid-auto", "created": True, "source": "created"}
+
+        with patch("src.mcp_handlers.context.get_session_signals", return_value=signals):
+            with patch("src.mcp_handlers.identity.handlers.derive_session_key",
+                       new_callable=AsyncMock, return_value="sk-fresh"):
+                with patch("src.mcp_handlers.identity.handlers.resolve_session_identity",
+                           new_callable=AsyncMock, return_value=mock_result):
+                    with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+                        result = await resolve_identity("process_agent_update", {}, ctx)
+
+        assert not isinstance(result, list), "flag off must not short-circuit"
+        _, _, out_ctx = result
+        assert out_ctx.bound_agent_id == "uuid-auto"
+
+    @pytest.mark.asyncio
+    async def test_flag_on_rejects_tool_without_auth(self, monkeypatch):
+        """Flag=1: non-identity tool with no auth signals and no sticky cache
+        match must short-circuit with identity_binding_required."""
+        monkeypatch.setenv("UNITARES_MIDDLEWARE_REQUIRE_BIND", "1")
+
+        signals = FakeSignals(ip_ua_fingerprint="1.2.3.4:fresh")
+        ctx = DispatchContext()
+
+        with patch("src.mcp_handlers.context.get_session_signals", return_value=signals):
+            result = await resolve_identity("process_agent_update", {}, ctx)
+
+        assert isinstance(result, list), "flag on must short-circuit for unbound calls"
+        # Response is list[TextContent]; error_response merges details into top level
+        import json
+        payload = json.loads(result[0].text)
+        assert payload["success"] is False
+        assert payload["error_type"] == "identity_binding_required"
+        assert "identity" in payload["recovery"]["related_tools"]
+
+    @pytest.mark.asyncio
+    async def test_flag_on_allows_identity_tools_through(self, monkeypatch):
+        """Flag=1: identity / onboard / bind_session are ALWAYS allowed — they
+        are the paths that establish identity in the first place."""
+        monkeypatch.setenv("UNITARES_MIDDLEWARE_REQUIRE_BIND", "1")
+
+        signals = FakeSignals(ip_ua_fingerprint="1.2.3.4:fresh")
+        ctx = DispatchContext()
+        mock_result = {"agent_uuid": "uuid-new", "created": True, "source": "created"}
+
+        for tool_name in ("onboard", "identity", "bind_session"):
+            _transport_identity_cache.clear()
+            ctx = DispatchContext()
+            with patch("src.mcp_handlers.context.get_session_signals", return_value=signals):
+                with patch("src.mcp_handlers.identity.handlers.derive_session_key",
+                           new_callable=AsyncMock, return_value="sk-fresh"):
+                    with patch("src.mcp_handlers.identity.handlers.resolve_session_identity",
+                               new_callable=AsyncMock, return_value=mock_result):
+                        with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+                            result = await resolve_identity(tool_name, {}, ctx)
+
+            assert not isinstance(result, list), f"{tool_name} must not be rejected"
+
+    @pytest.mark.asyncio
+    async def test_flag_on_allows_continuity_token(self, monkeypatch):
+        """Flag=1: a caller presenting continuity_token IS explicit auth."""
+        monkeypatch.setenv("UNITARES_MIDDLEWARE_REQUIRE_BIND", "1")
+
+        signals = FakeSignals(ip_ua_fingerprint="1.2.3.4:fresh")
+        ctx = DispatchContext()
+        mock_result = {"agent_uuid": "uuid-resumed", "created": False, "source": "token"}
+
+        with patch("src.mcp_handlers.context.get_session_signals", return_value=signals):
+            with patch("src.mcp_handlers.identity.handlers.derive_session_key",
+                       new_callable=AsyncMock, return_value="sk-fresh"):
+                with patch("src.mcp_handlers.identity.handlers.resolve_session_identity",
+                           new_callable=AsyncMock, return_value=mock_result):
+                    with patch("src.mcp_handlers.identity.session.extract_token_agent_uuid",
+                               return_value="uuid-resumed"):
+                        with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+                            result = await resolve_identity(
+                                "process_agent_update",
+                                {"continuity_token": "v1.token"},
+                                ctx,
+                            )
+
+        assert not isinstance(result, list), "continuity_token caller must not be rejected"
+
+    @pytest.mark.asyncio
+    async def test_flag_on_allows_client_session_id(self, monkeypatch):
+        """Flag=1: a caller presenting client_session_id IS explicit auth."""
+        monkeypatch.setenv("UNITARES_MIDDLEWARE_REQUIRE_BIND", "1")
+
+        signals = FakeSignals(ip_ua_fingerprint="1.2.3.4:fresh")
+        ctx = DispatchContext()
+        mock_result = {"agent_uuid": "uuid-session", "created": False, "source": "redis"}
+
+        with patch("src.mcp_handlers.context.get_session_signals", return_value=signals):
+            with patch("src.mcp_handlers.identity.handlers.derive_session_key",
+                       new_callable=AsyncMock, return_value="sk-fresh"):
+                with patch("src.mcp_handlers.identity.handlers.resolve_session_identity",
+                           new_callable=AsyncMock, return_value=mock_result):
+                    with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+                        result = await resolve_identity(
+                            "process_agent_update",
+                            {"client_session_id": "agent-abc123"},
+                            ctx,
+                        )
+
+        assert not isinstance(result, list), "client_session_id caller must not be rejected"
+
+    @pytest.mark.asyncio
+    async def test_flag_on_allows_sticky_cache_hit(self, monkeypatch):
+        """Flag=1: a prior sticky-cache binding counts as authenticated —
+        the check runs AFTER the sticky cache early-return."""
+        monkeypatch.setenv("UNITARES_MIDDLEWARE_REQUIRE_BIND", "1")
+
+        update_transport_binding("sticky:1.2.3.4:stable", "uuid-pinned", "sk-pinned", "redis")
+        signals = FakeSignals(ip_ua_fingerprint="1.2.3.4:stable")
+        ctx = DispatchContext()
+
+        with patch("src.mcp_handlers.context.get_session_signals", return_value=signals):
+            with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+                result = await resolve_identity("process_agent_update", {}, ctx)
+
+        assert not isinstance(result, list), "sticky cache hit must bypass the require-bind check"
+        _, _, out_ctx = result
+        assert out_ctx.bound_agent_id == "uuid-pinned"
+
+    @pytest.mark.asyncio
+    async def test_flag_on_allows_x_session_id_header(self, monkeypatch):
+        """Flag=1: explicit X-Session-ID header counts as auth."""
+        monkeypatch.setenv("UNITARES_MIDDLEWARE_REQUIRE_BIND", "1")
+
+        signals = FakeSignals(
+            ip_ua_fingerprint="1.2.3.4:fresh",
+            x_session_id="explicit-session",
+        )
+        ctx = DispatchContext()
+        mock_result = {"agent_uuid": "uuid-hdr", "created": False, "source": "redis"}
+
+        with patch("src.mcp_handlers.context.get_session_signals", return_value=signals):
+            with patch("src.mcp_handlers.identity.handlers.derive_session_key",
+                       new_callable=AsyncMock, return_value="sk-fresh"):
+                with patch("src.mcp_handlers.identity.handlers.resolve_session_identity",
+                           new_callable=AsyncMock, return_value=mock_result):
+                    with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+                        result = await resolve_identity("process_agent_update", {}, ctx)
+
+        assert not isinstance(result, list)
+
+    @pytest.mark.asyncio
+    async def test_flag_log_does_not_reject(self, monkeypatch, caplog):
+        """Flag=log: middleware logs the rejection but continues with auto-bind,
+        letting operators observe which callers WOULD fail before flipping to 1."""
+        monkeypatch.setenv("UNITARES_MIDDLEWARE_REQUIRE_BIND", "log")
+
+        signals = FakeSignals(ip_ua_fingerprint="1.2.3.4:fresh")
+        ctx = DispatchContext()
+        mock_result = {"agent_uuid": "uuid-still-bound", "created": True, "source": "created"}
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="src.mcp_handlers.middleware.identity_step"):
+            with patch("src.mcp_handlers.context.get_session_signals", return_value=signals):
+                with patch("src.mcp_handlers.identity.handlers.derive_session_key",
+                           new_callable=AsyncMock, return_value="sk-fresh"):
+                    with patch("src.mcp_handlers.identity.handlers.resolve_session_identity",
+                               new_callable=AsyncMock, return_value=mock_result):
+                        with patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+                            result = await resolve_identity("process_agent_update", {}, ctx)
+
+        assert not isinstance(result, list), "log mode must not short-circuit"
+        _, _, out_ctx = result
+        assert out_ctx.bound_agent_id == "uuid-still-bound"
+        assert any("REQUIRE_BIND log-only" in rec.message for rec in caplog.records), (
+            "log mode must emit a 'would have rejected' warning"
+        )
