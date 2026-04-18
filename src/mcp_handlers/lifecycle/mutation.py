@@ -214,13 +214,16 @@ async def handle_archive_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
         new_notes = f"{existing_notes}\n{marker}".strip() if existing_notes else marker
         try:
             await agent_storage.update_agent(agent_uuid, notes=new_notes)
+            # Mirror in-memory ONLY on successful persist — otherwise the next
+            # load_metadata_async reload would clobber a divergent meta.notes
+            # and the marker would silently vanish (P011).
+            meta.notes = new_notes
         except Exception as e:
             logger.warning(
                 f"Could not persist sticky-archive marker for {agent_id}: {e}. "
                 f"Cooldown window still protects against immediate resurrection.",
                 exc_info=True,
             )
-        meta.notes = new_notes
 
     # Persist-first: write to Postgres before mutating in-memory state
     from .helpers import _archive_one_agent

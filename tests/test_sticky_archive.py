@@ -263,6 +263,65 @@ class TestManualArchiveMarker:
             f"Got kwargs={call_kwargs}"
         )
 
+    @pytest.mark.asyncio
+    async def test_meta_notes_not_mirrored_when_persist_fails(self):
+        """If update_agent raises, meta.notes must NOT be mirrored.
+
+        Otherwise in-memory diverges from DB: the next load_metadata_async
+        reload clobbers the mirror back to the persisted (empty) value,
+        and the sticky marker vanishes silently (P011, fingerprint ad43c067).
+        """
+        from types import SimpleNamespace
+
+        agent_uuid = "test-uuid-persist-fail"
+        meta = SimpleNamespace(
+            agent_id=agent_uuid,
+            status="active",
+            archived_at=None,
+            notes="",
+            total_updates=5,
+        )
+        meta.add_lifecycle_event = MagicMock()
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {agent_uuid: meta}
+        mock_server.load_metadata_async = AsyncMock()
+        mock_server.monitors = {}
+
+        mock_storage = MagicMock(
+            update_agent=AsyncMock(side_effect=RuntimeError("db down"))
+        )
+
+        with patch("src.mcp_handlers.lifecycle.mutation.mcp_server", mock_server), \
+             patch("src.mcp_handlers.lifecycle.mutation.agent_storage", mock_storage), \
+             patch(
+                 "src.mcp_handlers.lifecycle.mutation.require_registered_agent",
+                 return_value=(agent_uuid, None),
+             ), \
+             patch(
+                 "src.mcp_handlers.lifecycle.mutation.resolve_agent_uuid",
+                 return_value=agent_uuid,
+             ), \
+             patch(
+                 "src.mcp_handlers.lifecycle.helpers._archive_one_agent",
+                 new=AsyncMock(return_value=True),
+             ), \
+             patch(
+                 "src.mcp_handlers.lifecycle.mutation._invalidate_agent_cache",
+                 new=AsyncMock(),
+             ):
+            from src.mcp_handlers.lifecycle.mutation import handle_archive_agent
+            await handle_archive_agent({
+                "agent_id": agent_uuid,
+                "reason": "Manual archive",
+            })
+
+        assert meta.notes == "", (
+            f"Persistence failed, so meta.notes must stay in sync with DB (empty). "
+            f"Got: {meta.notes!r}"
+        )
+        mock_storage.update_agent.assert_awaited_once()
+
 
 # ----------------------------------------------------------------------
 # Task 7: Full incident replay — archive then 10s-later update is refused.
