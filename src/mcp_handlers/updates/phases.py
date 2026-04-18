@@ -312,115 +312,37 @@ async def handle_onboarding_and_resume(ctx: UpdateContext) -> Optional[Sequence[
         except Exception as e:
             logger.warning(f"Could not check knowledge graph for onboarding: {e}")
 
-    # Auto-resume check
+    # Archived-agent refusal. Historically this branch would silently
+    # auto-resume archived agents on engagement, papering over orphan-sweep
+    # false-positives on live residents. Removed once residents became
+    # self-tagging 'persistent' (PR #39) — sweep no longer targets live agents,
+    # so nothing legitimate hits the archived branch anymore. Manual archives
+    # (PR #33) and the 2026-04-18 incident race (PR #33) were never supposed
+    # to auto-resume anyway. Any archived agent must explicitly self_recovery
+    # or onboard(force_new=true) to come back.
     meta = mcp_server.agent_metadata.get(ctx.agent_uuid)
     ctx.meta = meta
 
     if meta:
         if meta.status == "archived":
-            previous_archived_at = meta.archived_at
-            days_since_archive = None
-            if previous_archived_at:
-                try:
-                    archived_dt = datetime.fromisoformat(
-                        previous_archived_at.replace('Z', '+00:00') if 'Z' in previous_archived_at else previous_archived_at
-                    )
-                    days_since_archive = (
-                        (datetime.now(archived_dt.tzinfo) - archived_dt).total_seconds() / 86400
-                        if archived_dt.tzinfo
-                        else (datetime.now() - archived_dt.replace(tzinfo=None)).total_seconds() / 86400
-                    )
-                except (ValueError, TypeError, AttributeError):
-                    pass
-
-            # Cooldown guard: any archive within the cooldown window blocks
-            # auto-resume regardless of source. Catches the race where a stale
-            # client resurrects an agent seconds after it was archived.
-            # Incident: 2026-04-18 acd8a774 archived 01:29:33, resurrected 10s
-            # later via process_agent_update, circuit-broke 45min later.
-            from config.governance_config import ARCHIVE_RESUME_COOLDOWN_SECONDS
-            seconds_since_archive = (
-                days_since_archive * 86400 if days_since_archive is not None else None
+            logger.warning(
+                f"Refused process_agent_update on archived agent {agent_id[:12]}.... "
+                f"Use self_recovery(action='quick') to restore, "
+                f"or onboard(force_new=true) for a new identity."
             )
-            in_cooldown = (
-                seconds_since_archive is not None
-                and seconds_since_archive < ARCHIVE_RESUME_COOLDOWN_SECONDS
-            )
-
-            agent_notes = getattr(meta, 'notes', '') or ''
-            explicitly_archived = bool(agent_notes and "user requested" in agent_notes.lower())
-            too_old = days_since_archive is not None and days_since_archive > 2.0
-            too_few_updates = (getattr(meta, 'total_updates', 0) or 0) < 2
-
-            if in_cooldown or explicitly_archived or (too_old and too_few_updates):
-                reasons = []
-                if in_cooldown:
-                    reasons.append(
-                        f"archived {seconds_since_archive:.0f}s ago "
-                        f"(cooldown window {ARCHIVE_RESUME_COOLDOWN_SECONDS}s)"
-                    )
-                if explicitly_archived:
-                    reasons.append(f"explicitly archived: {agent_notes}")
-                if too_old:
-                    reasons.append(f"archived {days_since_archive:.1f} days ago")
-                if too_few_updates:
-                    reasons.append(f"only {getattr(meta, 'total_updates', 0) or 0} update(s)")
-                logger.warning(
-                    f"Blocked auto-resume of agent {agent_id[:12]}... ({', '.join(reasons)}). "
-                    f"Use self_recovery(action='quick') to restore, or onboard(force_new=true) for new identity."
-                )
-                return [error_response(
-                    f"Agent '{agent_id}' is archived and cannot be auto-resumed ({', '.join(reasons)}).",
-                    recovery={
-                        "action": "Use self_recovery(action='quick') to restore yourself, or onboard(force_new=true) for a new identity",
-                        "related_tools": ["self_recovery", "onboard"],
-                    },
-                    context={
-                        "agent_id": agent_id,
-                        "status": "archived",
-                        "days_since_archive": round(days_since_archive, 2) if days_since_archive is not None else None,
-                        "total_updates": getattr(meta, 'total_updates', 0) or 0,
-                    }
-                )]
-
-            meta.status = "active"
-            meta.archived_at = None
-            meta.add_lifecycle_event("resumed", "Auto-resumed on engagement")
-
-            try:
-                await agent_storage.update_agent(agent_id, status="active")
-                logger.debug(f"PostgreSQL: Auto-resumed agent {agent_id}")
-            except Exception as e:
-                logger.warning(f"PostgreSQL auto-resume failed: {e}", exc_info=True)
-
-            try:
-                from src.cache import get_metadata_cache
-                await get_metadata_cache().invalidate(ctx.agent_uuid)
-            except Exception:
-                pass
-
-            try:
-                from src.audit_log import audit_logger
-                audit_logger.log_auto_resume(
-                    agent_id=agent_id,
-                    previous_status="archived",
-                    trigger="process_agent_update",
-                    archived_at=previous_archived_at,
-                    details={
-                        "days_since_archive": round(days_since_archive, 2) if days_since_archive is not None else None,
-                        "total_updates": meta.total_updates
-                    }
-                )
-            except Exception as e:
-                logger.warning(f"Could not log auto-resume audit event: {e}", exc_info=True)
-
-            ctx.auto_resume_info = {
-                "auto_resumed": True,
-                "message": f"Agent '{agent_id}' was automatically resumed from archived status.",
-                "previous_status": "archived",
-                "days_since_archive": round(days_since_archive, 2) if days_since_archive is not None else None,
-                "note": "Archived agents automatically resume when they engage with the system."
-            }
+            return [error_response(
+                f"Agent '{agent_id}' is archived and cannot be updated.",
+                recovery={
+                    "action": "Use self_recovery(action='quick') to restore yourself, "
+                              "or onboard(force_new=true) for a new identity",
+                    "related_tools": ["self_recovery", "onboard"],
+                },
+                context={
+                    "agent_id": agent_id,
+                    "status": "archived",
+                    "archived_at": getattr(meta, "archived_at", None),
+                }
+            )]
 
         elif meta.status == "paused":
             return [error_response(
@@ -438,7 +360,7 @@ async def handle_onboarding_and_resume(ctx: UpdateContext) -> Optional[Sequence[
                     "agent_id": agent_id,
                     "status": "paused",
                     "reason": "Circuit breaker triggered - governance threshold exceeded",
-                    "note": "Paused agents require explicit recovery. Archived agents auto-resume on engagement."
+                    "note": "Paused and archived agents both require explicit recovery via self_recovery()."
                 }
             )]
 

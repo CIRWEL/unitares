@@ -35,9 +35,8 @@ class UpdateContext:
     task_type: str = "mixed"
     calibration_correction_info: Optional[str] = None
 
-    # ── Onboarding / auto-resume (Phase 2) ─────────────────────────
+    # ── Onboarding (Phase 2) ───────────────────────────────────────
     onboarding_guidance: Optional[Dict] = None
-    auto_resume_info: Optional[Dict] = None
     dialectic_enforcement_warning: Optional[str] = None
 
     # ── Core result (Phase 4) ──────────────────────────────────────

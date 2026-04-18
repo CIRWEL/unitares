@@ -80,23 +80,27 @@ def mock_monitor():
 
 
 # ----------------------------------------------------------------------
-# Task 2: Cooldown guard refuses auto-resume when archive is recent.
+# Archived agents are always refused. Stage 3 (PR after #39) removed the
+# auto-resume branch that previously rescued sweep-archived residents —
+# that rescue is no longer needed because residents self-tag 'persistent'.
+# Manual archives were already refused via the sticky marker. This class
+# now verifies the uniform refusal regardless of how the archive happened.
 # ----------------------------------------------------------------------
 
 
-class TestCooldownGuard:
-    """Archive → immediate process_agent_update must NOT auto-resume."""
+class TestArchivedRefusal:
+    """Any archived agent hitting process_agent_update gets an error response."""
 
     @pytest.mark.asyncio
-    async def test_recent_archive_within_cooldown_is_rejected(
+    async def test_recent_archive_is_refused(
         self, mock_server, mock_monitor
     ):
-        """Archive <300s ago blocks auto-resume even without 'user requested' marker."""
-        agent_uuid = "test-uuid-cooldown"
+        """Archive seconds ago (the 2026-04-18 incident shape) is refused."""
+        agent_uuid = "test-uuid-recent-archive"
         recent = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
         meta = _make_metadata(status="archived", total_updates=5)
         meta.archived_at = recent
-        meta.notes = ""  # No manual marker — must still be blocked by cooldown.
+        meta.notes = ""
         mock_server.agent_metadata = {agent_uuid: meta}
         mock_server.get_or_create_monitor.return_value = mock_monitor
         mock_server.monitors = {agent_uuid: mock_monitor}
@@ -110,27 +114,24 @@ class TestCooldownGuard:
             })
             data = parse_result(result)
 
-        assert data["success"] is False, (
-            f"Expected auto-resume to be refused within cooldown. "
-            f"Got: {json.dumps(data, default=str)[:400]}"
-        )
-        error_lower = data["error"].lower()
-        assert "cooldown" in error_lower or "recent" in error_lower or "seconds" in error_lower, (
-            f"Error message should cite cooldown/recent/seconds. Got: {data['error']!r}"
-        )
+        assert data["success"] is False
+        assert "archived" in data["error"].lower()
         assert data["context"]["status"] == "archived"
 
     @pytest.mark.asyncio
-    async def test_old_archive_outside_cooldown_can_still_auto_resume(
+    async def test_old_archive_is_still_refused(
         self, mock_server, mock_monitor
     ):
-        """Archive >300s ago with many updates and no marker IS auto-resumed.
+        """Archive days ago with many updates is ALSO refused.
 
-        Preserves behavior where resident agents falsely sweeped by the
-        orphan heuristic can recover by checking in after cooldown expires.
+        Pre-Stage 3 this path auto-resumed to rescue sweep-archived
+        residents. Now residents carry the 'persistent' tag (PR #39) so
+        sweep can't archive them, and auto-resume for other archived
+        agents would mask real bugs. Recovery requires explicit
+        self_recovery() or onboard(force_new=true).
         """
         agent_uuid = "test-uuid-old-archive"
-        old = (datetime.now(timezone.utc) - timedelta(seconds=400)).isoformat()
+        old = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
         meta = _make_metadata(status="archived", total_updates=50)
         meta.archived_at = old
         meta.notes = ""
@@ -142,57 +143,14 @@ class TestCooldownGuard:
         with _apply_patches(p):
             from src.mcp_handlers.core import handle_process_agent_update
             result = await handle_process_agent_update({
-                "response_text": "Legitimate recovery after false sweep.",
+                "response_text": "Old archive — no auto-resume anymore.",
                 "response_mode": "full",
             })
             data = parse_result(result)
 
-        assert data.get("success") is True, (
-            f"Expected auto-resume to succeed for agents archived outside "
-            f"cooldown with no manual marker. Got: {json.dumps(data, default=str)[:500]}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_cooldown_env_override(
-        self, mock_server, mock_monitor, monkeypatch
-    ):
-        """UNITARES_ARCHIVE_COOLDOWN_SECONDS env var overrides default.
-
-        Cooldown=1s means a 10s-old archive is OUTSIDE cooldown, so it can
-        auto-resume (assuming no other gate blocks).
-        """
-        monkeypatch.setenv("UNITARES_ARCHIVE_COOLDOWN_SECONDS", "1")
-        import importlib
-        import config.governance_config as gc
-        importlib.reload(gc)
-        assert gc.ARCHIVE_RESUME_COOLDOWN_SECONDS == 1
-
-        agent_uuid = "test-uuid-env-override"
-        recent = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
-        meta = _make_metadata(status="archived", total_updates=50)
-        meta.archived_at = recent
-        meta.notes = ""
-        mock_server.agent_metadata = {agent_uuid: meta}
-        mock_server.get_or_create_monitor.return_value = mock_monitor
-        mock_server.monitors = {agent_uuid: mock_monitor}
-
-        p = _common_patches(mock_server, agent_uuid=agent_uuid)
-        with _apply_patches(p):
-            from src.mcp_handlers.core import handle_process_agent_update
-            result = await handle_process_agent_update({
-                "response_text": "With cooldown=1s, 10s-old archive is outside window.",
-                "response_mode": "full",
-            })
-            data = parse_result(result)
-
-        assert data.get("success") is True, (
-            f"With cooldown=1s, 10s-old archive should auto-resume. "
-            f"Got: {json.dumps(data, default=str)[:500]}"
-        )
-
-        # Restore default for subsequent tests.
-        monkeypatch.delenv("UNITARES_ARCHIVE_COOLDOWN_SECONDS", raising=False)
-        importlib.reload(gc)
+        assert data["success"] is False
+        assert "archived" in data["error"].lower()
+        assert "self_recovery" in data["recovery"]["action"]
 
 
 # ----------------------------------------------------------------------
@@ -365,7 +323,8 @@ class TestIncidentReplay:
 
         assert data["success"] is False
         error_text = data["error"].lower()
-        # Either marker OR cooldown may be cited — both are correct.
-        assert "cannot be auto-resumed" in error_text
-        assert ("user requested" in error_text or "cooldown" in error_text)
+        # Stage 3 collapsed all archive-refusal reasons into a single message.
+        # The detail (marker, cooldown, etc.) isn't part of the error text
+        # anymore — the refusal itself is what matters.
+        assert "archived" in error_text and "cannot" in error_text
         assert data["context"]["status"] == "archived"
