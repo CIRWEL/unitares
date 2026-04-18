@@ -257,3 +257,45 @@ v3 paper (archived) gets a note at the top indicating it predates the grounding 
 ---
 
 **Next artifact.** Once this spec is reviewed and accepted, an implementation plan (same format as `docs/plans/2026-04-17-audit-payload-capture-plan.md`) lands in a second commit on this branch: TDD-structured, task-broken, subagent-ready. Phase 1 scope only. Phases 2 and 3 get their own plans once Phase 1 data is in.
+
+---
+
+## Phase 1 Shipped — 2026-04-18
+
+Spec §5 implemented directly: grounded values land in canonical `E/I/S/coherence`
+metrics slots; legacy values preserved as `E_legacy/I_legacy/S_legacy/coherence_legacy`.
+Source annotations: `e_source/i_source/s_source/coherence_source`. `V` is not
+dual-computed in Phase 1 (§3.1 V: cosmetic internal rename only, ODE-level quantity).
+
+**How "no behavior change" holds:** the grounding enrichment runs at `order=75`,
+after gating (phases.py). Verdicts and basin classification are computed on
+legacy values before enrichment swaps grounded into the canonical slots.
+Dashboards and broadcasters see grounded values in `E/I/S/coherence`; the
+legacy-vs-grounded comparison surface (§6 appendix) reads from
+`ctx.result["metrics"]` directly.
+
+**Shipped modules:** `src/grounding/{types,entropy,mutual_info,free_energy,coherence}.py`
+
+**Shipped config:** `config/governance_config.{S,I,E}_SCALE` and `DELTA_NORM_MAX`,
+all with `provenance="placeholder"` until Phase 2 calibration runs the §3.4 protocol.
+
+**Shipped enrichment:** `@enrichment(order=75) enrich_grounding` in
+`src/mcp_handlers/updates/enrichments.py`.
+
+**Shipped tests:** 8 test files, ~35 new tests, all green.
+
+**Deferred to follow-up PRs:**
+- **Tier-1 (logprob) capture** — requires plugin-side instrumentation.
+- **Tier-2 (multi-sample) estimator** — requires a semantic-equivalence classifier.
+- **§4 audit payload side-by-side.** `record_tool_usage` does not currently
+  accept a payload blob; threading the full response metrics through the
+  dispatcher would touch `mcp_server_std.py`, `http_tool_service.py`, and the
+  `record_tool_usage` / `append_tool_usage_async` signatures. Deferred as a
+  focused PR; Phase 2 calibration can read legacy+grounded from the live
+  broadcaster event stream in the meantime.
+- **Phase 2 calibration measurement** — reference-corpus protocol per §3.4.
+- **ODE coefficient re-fit** — Phase 2 scope.
+- **Paper updates** — §6, lockstep with Phase 1 shipping.
+- **V grounding / internal `void` → `free_energy_debt` rename** — §3.1 V cosmetic change, deferred.
+
+**Plan:** `docs/plans/2026-04-18-eisv-grounding-phase-1-plan.md`
