@@ -699,3 +699,78 @@ assert GovernanceConfig.RISK_APPROVE_THRESHOLD < GovernanceConfig.RISK_REVISE_TH
     f"< REVISE({GovernanceConfig.RISK_REVISE_THRESHOLD}) "
     f"< REJECT({GovernanceConfig.RISK_REJECT_THRESHOLD}) must hold"
 )
+
+
+# =================================================================
+# Grounding Scale Constants — spec §3.4
+# =================================================================
+# Every normalization constant used by src/grounding/ modules ships with
+# measurement provenance. Phase 1 ships placeholders; Phase 2 replaces with
+# values measured on a reference corpus per the protocol in spec §3.4.
+
+@dataclass(frozen=True)
+class ScaleConstant:
+    """A scale/normalization constant with measurement provenance.
+
+    provenance is one of:
+      - "placeholder": initial guess, Phase 1; must be replaced before production
+      - "measured":    measured on a named reference corpus per spec §3.4
+      - "derived":     derived analytically from other quantities
+    """
+    name: str
+    value: float
+    measured_on: str          # ISO date (YYYY-MM-DD) when set; Phase 1 = plan date
+    corpus_size: int          # agent-turn count when measured; 0 for placeholder
+    percentile: Optional[int] # 90, 95, 99, etc.; None for non-percentile-derived
+    provenance: str           # "placeholder" | "measured" | "derived"
+    notes: str = ""
+
+    def __post_init__(self) -> None:
+        if self.provenance not in {"placeholder", "measured", "derived"}:
+            raise ValueError(f"unknown provenance {self.provenance!r}")
+        if self.value <= 0:
+            raise ValueError(f"scale constant {self.name} must be positive")
+
+
+# Phase 1 placeholders — replace with measured values after §3.4 protocol runs.
+S_SCALE = ScaleConstant(
+    name="S_SCALE",
+    value=3.0,
+    measured_on="2026-04-18",
+    corpus_size=0,
+    percentile=None,
+    provenance="placeholder",
+    notes="Phase 1 placeholder. Spec §3.1 S: 90th-percentile S_raw on healthy corpus.",
+)
+
+I_SCALE = ScaleConstant(
+    name="I_SCALE",
+    value=2.0,
+    measured_on="2026-04-18",
+    corpus_size=0,
+    percentile=None,
+    provenance="placeholder",
+    notes="Phase 1 placeholder. Spec §3.1 I: empirical MI upper envelope on held-out set.",
+)
+
+E_SCALE = ScaleConstant(
+    name="E_SCALE",
+    value=1.0,
+    measured_on="2026-04-18",
+    corpus_size=0,
+    percentile=None,
+    provenance="placeholder",
+    notes="Phase 1 placeholder. FEP form only; resource form uses TOKENS_PER_SECOND_MAX.",
+)
+
+DELTA_NORM_MAX = ScaleConstant(
+    name="DELTA_NORM_MAX",
+    value=1.8,  # just above sqrt(3) so full-diagonal deviation hits coherence=0
+    measured_on="2026-04-18",
+    corpus_size=0,
+    percentile=None,
+    provenance="placeholder",
+    notes="Phase 1 placeholder. Spec §3.4: 95th pct of observed ||Δ|| from healthy median.",
+)
+
+ALL_SCALE_CONSTANTS = [S_SCALE, I_SCALE, E_SCALE, DELTA_NORM_MAX]
