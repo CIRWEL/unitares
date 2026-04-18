@@ -150,8 +150,16 @@ def resolve_identity(client) -> None:
     forks in ~2h before this fix. PATH 0 (UUID-direct) takes its place —
     strongest signal, unambiguous, unchallengeable by name-collision bugs.
 
+    Timeout discipline (added 2026-04-17 after a 34-fork incident):
+    a transient governance timeout must NOT fall through to onboard — the
+    stored UUID is probably still valid, and onboarding forks a new agent
+    every time the server is slow. On GovernanceTimeoutError we just skip
+    this cycle; a later cycle will retry PATH 0.
+
     Sets module-level _watcher_identity on success, leaves it None on failure.
     """
+    from unitares_sdk.errors import GovernanceTimeoutError
+
     global _watcher_identity
     saved = _load_session()
 
@@ -162,6 +170,12 @@ def resolve_identity(client) -> None:
             client.identity(agent_uuid=saved["agent_uuid"], resume=True)
             _sync_identity(client)
             return
+        except GovernanceTimeoutError as e:
+            # Transient server slowness — don't fork a new agent. Skip this
+            # cycle; the stored UUID remains the ground truth.
+            log(f"uuid-direct resume timed out ({e}) — skipping, will retry next cycle", "warning")
+            _watcher_identity = None
+            return
         except Exception as e:
             log(f"uuid-direct resume failed: {e}", "warning")
 
@@ -171,6 +185,10 @@ def resolve_identity(client) -> None:
             client.identity(continuity_token=saved["continuity_token"], resume=True)
             _sync_identity(client)
             return
+        except GovernanceTimeoutError as e:
+            log(f"token resume timed out ({e}) — skipping, will retry next cycle", "warning")
+            _watcher_identity = None
+            return
         except Exception as e:
             log(f"token resume failed: {e}", "warning")
 
@@ -178,6 +196,12 @@ def resolve_identity(client) -> None:
     try:
         client.onboard("Watcher", spawn_reason="resident_observer")
         _sync_identity(client)
+    except GovernanceTimeoutError as e:
+        # Onboard timeout is the worst case — don't assume it failed, it may
+        # have partial-committed on the server side (which is exactly how
+        # the 34-fork incident happened). Just give up for this cycle.
+        log(f"onboard timed out ({e}) — skipping, will retry next cycle", "warning")
+        _watcher_identity = None
     except Exception as e:
         log(f"onboard failed — identity unavailable: {e}", "warning")
         _watcher_identity = None
