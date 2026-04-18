@@ -2000,6 +2000,77 @@ class TestWatcherIdentity:
         assert watcher_module.get_watcher_identity() is None
 
 
+class TestSessionAnchor:
+    """SESSION_FILE is a host-scoped anchor, not a per-worktree file.
+
+    Before 2026-04-17 the session file lived at PROJECT_ROOT/.watcher_session.
+    Every worktree had its own copy, so each new worktree's first edit minted
+    a fresh UUID — one Watcher per worktree instead of one per host. The
+    anchor at ~/.unitares/anchors/watcher.json fixes that by being shared
+    across all worktrees.
+    """
+
+    def test_default_session_file_is_home_anchor(self, watcher_module):
+        """Default SESSION_FILE is ~/.unitares/anchors/watcher.json, not PROJECT_ROOT-scoped."""
+        expected = Path.home() / ".unitares" / "anchors" / "watcher.json"
+        assert watcher_module.SESSION_FILE == expected
+
+    def test_legacy_session_file_is_project_root(self, watcher_module):
+        """LEGACY_SESSION_FILE still resolves to the old per-worktree path for migration."""
+        assert watcher_module.LEGACY_SESSION_FILE.name == ".watcher_session"
+
+    def test_save_session_creates_anchor_parent_dir(self, watcher_module, tmp_path, monkeypatch):
+        """_save_session mkdirs the anchor parent if missing."""
+        anchor = tmp_path / "nonexistent" / "anchors" / "watcher.json"
+        monkeypatch.setattr(watcher_module, "SESSION_FILE", anchor)
+
+        watcher_module._save_session("sess", "tok", "uuid-x")
+        assert anchor.exists()
+        data = json.loads(anchor.read_text())
+        assert data["agent_uuid"] == "uuid-x"
+
+    def test_load_session_migrates_from_legacy_when_anchor_missing(
+        self, watcher_module, tmp_path, monkeypatch
+    ):
+        """If anchor is missing but legacy file exists, migrate it and return its contents."""
+        anchor = tmp_path / "anchor.json"
+        legacy = tmp_path / "legacy" / ".watcher_session"
+        legacy.parent.mkdir()
+        legacy.write_text(json.dumps({"agent_uuid": "uuid-legacy", "continuity_token": "t-legacy"}))
+
+        monkeypatch.setattr(watcher_module, "SESSION_FILE", anchor)
+        monkeypatch.setattr(watcher_module, "LEGACY_SESSION_FILE", legacy)
+
+        data = watcher_module._load_session()
+        assert data["agent_uuid"] == "uuid-legacy"
+        assert anchor.exists(), "migration should have written the anchor"
+        assert json.loads(anchor.read_text())["agent_uuid"] == "uuid-legacy"
+
+    def test_load_session_prefers_anchor_over_legacy(
+        self, watcher_module, tmp_path, monkeypatch
+    ):
+        """When both exist, the anchor wins — legacy is ignored."""
+        anchor = tmp_path / "anchor.json"
+        anchor.write_text(json.dumps({"agent_uuid": "uuid-anchor"}))
+        legacy = tmp_path / "legacy.watcher_session"
+        legacy.write_text(json.dumps({"agent_uuid": "uuid-legacy"}))
+
+        monkeypatch.setattr(watcher_module, "SESSION_FILE", anchor)
+        monkeypatch.setattr(watcher_module, "LEGACY_SESSION_FILE", legacy)
+
+        data = watcher_module._load_session()
+        assert data["agent_uuid"] == "uuid-anchor"
+
+    def test_load_session_returns_empty_when_neither_exists(
+        self, watcher_module, tmp_path, monkeypatch
+    ):
+        """No anchor, no legacy → empty dict (caller will Fresh Onboard)."""
+        monkeypatch.setattr(watcher_module, "SESSION_FILE", tmp_path / "missing.json")
+        monkeypatch.setattr(watcher_module, "LEGACY_SESSION_FILE", tmp_path / "also-missing")
+
+        assert watcher_module._load_session() == {}
+
+
 class TestMainIdentityWiring:
     """main() calls resolve_identity before dispatching subcommands."""
 
