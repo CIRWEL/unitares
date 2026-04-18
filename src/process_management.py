@@ -18,8 +18,18 @@ logger = get_logger(__name__)
 
 # Default paths (can be overridden)
 _project_root = Path(__file__).parent.parent
-SERVER_PID_FILE = _project_root / "data" / ".mcp_server.pid"
-SERVER_LOCK_FILE = _project_root / "data" / ".mcp_server.lock"
+
+
+def _server_marker_path(env_var: str, default_name: str) -> Path:
+    """Resolve the server PID/lock path from env or fall back to repo-local data/."""
+    override = os.getenv(env_var)
+    if override:
+        return Path(override).expanduser()
+    return _project_root / "data" / default_name
+
+
+SERVER_PID_FILE = _server_marker_path("UNITARES_SERVER_PID_FILE", ".mcp_server.pid")
+SERVER_LOCK_FILE = _server_marker_path("UNITARES_SERVER_LOCK_FILE", ".mcp_server.lock")
 CURRENT_PID = os.getpid()
 
 

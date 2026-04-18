@@ -11,12 +11,15 @@ Spawned by the 2026-04-16 Watcher follow-up remediation.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import uuid
 from unittest.mock import patch
 
 import pytest
 
 from src.agent_lifecycle import _agent_age_hours, build_standardized_agent_info
 from src.agent_metadata_model import AgentMetadata
+from src.agent_metadata_persistence import get_or_create_metadata
+from src.agent_metadata_model import agent_metadata
 
 
 @pytest.fixture
@@ -81,3 +84,22 @@ class TestAgentAgeHoursTimezoneNormalization:
     def test_empty_string_returns_none(self):
         meta = _meta(last_update="")
         assert _agent_age_hours(meta) is None
+
+
+def test_new_metadata_timestamps_are_utc_aware():
+    """Fresh metadata must use explicit UTC timestamps, not naive local time."""
+    agent_id = f"test-utc-aware-{uuid.uuid4().hex[:8]}"
+    try:
+        meta = get_or_create_metadata(agent_id)
+        created_at = datetime.fromisoformat(meta.created_at)
+        last_update = datetime.fromisoformat(meta.last_update)
+        created_event = datetime.fromisoformat(meta.lifecycle_events[0]["timestamp"])
+
+        assert created_at.tzinfo is not None
+        assert last_update.tzinfo is not None
+        assert created_event.tzinfo is not None
+        assert created_at.utcoffset() == timedelta(0)
+        assert last_update.utcoffset() == timedelta(0)
+        assert created_event.utcoffset() == timedelta(0)
+    finally:
+        agent_metadata.pop(agent_id, None)

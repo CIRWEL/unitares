@@ -8,7 +8,7 @@ and DB helper functions for identity resolution.
 from __future__ import annotations
 
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 
 from src.logging_utils import get_logger
@@ -77,8 +77,8 @@ async def _cache_session(
             "public_agent_id": display_agent_id or agent_uuid,
             "display_agent_id": display_agent_id,
             "agent_label": label or binding.get("agent_label"),
-            "created_at": binding.get("created_at") or datetime.now().isoformat(),
-            "bound_at": datetime.now().isoformat(),
+            "created_at": binding.get("created_at") or datetime.now(timezone.utc).isoformat(),
+            "bound_at": datetime.now(timezone.utc).isoformat(),
             "bind_count": bind_count,
             "trajectory_required": trajectory_required,
         }
@@ -95,7 +95,6 @@ async def _cache_session(
             if display_agent_id and display_agent_id != agent_uuid:
                 # Get raw Redis client for custom write
                 from src.cache.redis_client import get_redis
-                from datetime import timezone
                 redis = await get_redis()
                 if redis:
                     data = {
@@ -126,7 +125,7 @@ async def _cache_session(
                             "agent_id": agent_uuid,
                             "display_agent_id": display_agent_id,
                             "public_agent_id": display_agent_id,
-                            "bound_at": existing.get("bound_at") or datetime.now().isoformat(),
+                            "bound_at": existing.get("bound_at") or datetime.now(timezone.utc).isoformat(),
                             "bind_count": existing.get("bind_count", 0),
                         }
                         if label:
@@ -312,7 +311,7 @@ async def ensure_agent_persisted(
         if not identity:
             identity_metadata = {
                 "source": "lazy_creation",
-                "created_at": datetime.now().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
                 "total_updates": 0,  # Initialize counter for persistence
                 "thread_id": thread_id,
                 "thread_position": thread_position,
@@ -430,7 +429,7 @@ async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str
                     # Agent not in cache yet - create proper AgentMetadata entry
                     # Import the real AgentMetadata class to avoid missing attribute errors
                     from src.agent_state import AgentMetadata
-                    now = datetime.now().isoformat()
+                    now = datetime.now(timezone.utc).isoformat()
                     meta = AgentMetadata(
                         agent_id=agent_uuid,
                         status='active',

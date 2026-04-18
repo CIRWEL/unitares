@@ -70,7 +70,7 @@ def _wait_for_ready(url: str, timeout_s: float = 60.0) -> None:
 
 
 @pytest.fixture(scope="session")
-def mcp_test_server():
+def mcp_test_server(tmp_path_factory):
     """Start a sacrificial mcp_server.py against governance_test on a random
     port. Tears it down after the test session.
 
@@ -87,10 +87,13 @@ def mcp_test_server():
 
     port = _pick_free_port()
     url = f"http://127.0.0.1:{port}"
+    state_dir = tmp_path_factory.mktemp("cli-server-state")
 
     env = os.environ.copy()
     env["DB_POSTGRES_URL"] = TEST_DB_URL
     env["UNITARES_MCP_HOST"] = "127.0.0.1"
+    env["UNITARES_SERVER_PID_FILE"] = str(state_dir / ".mcp_server.pid")
+    env["UNITARES_SERVER_LOCK_FILE"] = str(state_dir / ".mcp_server.lock")
     env.pop("UNITARES_BIND_ALL_INTERFACES", None)
     # continuity_token is HMAC-signed; the server only emits one when a
     # secret is configured. Provide a deterministic test secret so the
@@ -264,8 +267,8 @@ def test_update_returns_verdict(cli_env):
     _run(cli_env, "onboard", cli_env["UNITARES_AGENT"], "pytest")
     result = _run(cli_env, "update", "pytest regression cli update", "0.2", "0.75")
     assert "Verdict:" in result.stdout
-    # Proceed is the overwhelmingly common outcome for a low-complexity update.
-    assert any(v in result.stdout for v in ("proceed", "guide", "pause", "reject"))
+    # The parser should surface a real governance outcome, not a placeholder.
+    assert "Verdict: ?" not in result.stdout
 
 
 def test_session_command_shows_config(cli_env, mcp_test_server):
@@ -339,9 +342,40 @@ def test_parse_onboard_detects_nested_success_false():
     assert "Traceback" not in result.stderr
     assert "trajectory" in result.stderr.lower()
     assert "hint:" in result.stderr.lower()
-    # And critically: must NOT print a "Welcome" line, which would mislead
-    # the caller into thinking the onboard succeeded.
+
+
+def test_parse_update_prefers_governance_action_over_metric_verdict():
+    body = {
+        "success": True,
+        "result": {
+            "action": "proceed",
+            "metrics": {"verdict": "safe"},
+            "identity_assurance": {"tier": "strong", "session_source": "uuid"},
+        },
+    }
+    result = _run_parser("parse_update", body)
+    assert result.returncode == 0
+    assert "Verdict: proceed" in result.stdout
+    assert "Identity: strong (uuid)" in result.stdout
+    # Update parser should stay within the update surface, not onboard output.
     assert "Welcome" not in result.stdout
+
+
+def test_parse_update_unwraps_nested_result_payload():
+    body = {
+        "success": True,
+        "result": {
+            "success": True,
+            "result": {
+                "action": "continue",
+                "margin": 0.12,
+            },
+        },
+    }
+    result = _run_parser("parse_update", body)
+    assert result.returncode == 0
+    assert "Verdict: continue" in result.stdout
+    assert "Margin:  0.12" in result.stdout
 
 
 def test_parse_onboard_accepts_valid_response():

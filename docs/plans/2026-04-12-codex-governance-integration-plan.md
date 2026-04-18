@@ -20,8 +20,8 @@ The target state is:
 
 The local plugin install already has a real Codex surface:
 
-- Codex plugin manifest exists in `unitares-governance/.codex-plugin/plugin.json`
-- Codex docs exist in `unitares-governance/CODEX_START.md`
+- Codex plugin manifest exists in `.codex-plugin/plugin.json`
+- Codex docs exist in `CODEX_START.md`
 - manual commands exist:
   - `commands/checkin.md`
   - `commands/diagnose.md`

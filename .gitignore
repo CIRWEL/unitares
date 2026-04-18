@@ -178,6 +178,7 @@ scripts/archive/
 .sentinel_session
 .sentinel_state
 .watcher_session
+.watcher_session.*
 
 # Generated config
 config/generated-*.json

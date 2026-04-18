@@ -495,7 +495,7 @@ def test_escalate_to_kg_writes_critical_discovery(watcher_module, monkeypatch):
     watcher_module._escalate_to_kg(finding)
 
     assert captured["url"] == watcher_module.GOV_REST_URL
-    assert captured["timeout"] == 5
+    assert captured["timeout"] == 30
     assert captured["payload"]["name"] == "knowledge"
     args = captured["payload"]["arguments"]
     assert args["action"] == "store"

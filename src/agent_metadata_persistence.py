@@ -13,7 +13,7 @@ import fcntl
 import asyncio
 import threading
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.logging_utils import get_logger
 from src.agent_metadata_model import (
@@ -98,7 +98,7 @@ async def _load_metadata_from_postgres_async() -> dict:
     )
 
     result = {}
-    now = datetime.now().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     metadata_cache = None
     try:
@@ -363,7 +363,7 @@ def get_or_create_metadata(agent_id: str, **kwargs) -> AgentMetadata:
 
     if agent_id not in agent_metadata:
         from src.agent_identity_auth import generate_api_key
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         api_key = generate_api_key()
         import uuid
         import re

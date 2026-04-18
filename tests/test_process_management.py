@@ -1,3 +1,4 @@
+import importlib
 import os
 from pathlib import Path
 
@@ -31,3 +32,19 @@ def test_ensure_server_lock_recreates_missing(tmp_path, monkeypatch):
         assert "51515" in lock_file.read_text()
     finally:
         pm.release_server_lock(lock_fd)
+
+
+def test_server_marker_paths_honor_env_overrides(tmp_path, monkeypatch):
+    pid_file = tmp_path / "custom.pid"
+    lock_file = tmp_path / "custom.lock"
+    monkeypatch.setenv("UNITARES_SERVER_PID_FILE", str(pid_file))
+    monkeypatch.setenv("UNITARES_SERVER_LOCK_FILE", str(lock_file))
+
+    reloaded = importlib.reload(pm)
+    try:
+        assert reloaded.SERVER_PID_FILE == pid_file
+        assert reloaded.SERVER_LOCK_FILE == lock_file
+    finally:
+        monkeypatch.delenv("UNITARES_SERVER_PID_FILE", raising=False)
+        monkeypatch.delenv("UNITARES_SERVER_LOCK_FILE", raising=False)
+        importlib.reload(pm)

@@ -65,8 +65,12 @@ with open(os.environ["SESSION_FILE"], "w") as f:
 '
 }
 
-SESSION_ID="$(_py_read_field client_session_id || true)"
+STORED_SESSION_ID="$(_py_read_field client_session_id || true)"
+SESSION_ID="$STORED_SESSION_ID"
 CONT_TOKEN="$(_py_read_field continuity_token || true)"
+HAS_LOCAL_CONTINUITY=0
+[ -n "${STORED_SESSION_ID:-}" ] && HAS_LOCAL_CONTINUITY=1
+[ -n "${CONT_TOKEN:-}" ] && HAS_LOCAL_CONTINUITY=1
 
 # --- HTTP --------------------------------------------------------------------
 
@@ -220,13 +224,47 @@ except Exception as exc:
     print("error: bad JSON from process_agent_update: " + str(exc), file=sys.stderr)
     sys.exit(1)
 r = data.get("result") or {}
-if data.get("success") is False or not r:
+
+def unwrap_update_payload(payload):
+    current = payload
+    for _ in range(2):
+        if not isinstance(current, dict):
+            return payload
+        nested = current.get("result")
+        has_update_fields = any(
+            key in current for key in ("action", "verdict", "decision", "status", "metrics", "mirror", "margin")
+        )
+        if isinstance(nested, dict) and not has_update_fields:
+            current = nested
+            continue
+        return current
+    return current
+
+r = unwrap_update_payload(r)
+if data.get("success") is False or not r or r.get("success") is False:
     msg = data.get("error") or r.get("error") or "update failed"
     print("error: " + str(msg), file=sys.stderr)
+    recovery = r.get("recovery") or {}
+    hint = recovery.get("hint") if isinstance(recovery, dict) else None
+    if hint:
+        print("hint: " + str(hint), file=sys.stderr)
     sys.exit(1)
-print("Verdict: " + str(r.get("verdict", "?")))
-if "margin" in r:
-    print("Margin:  " + str(r.get("margin")))
+decision = r.get("decision") if isinstance(r.get("decision"), dict) else {}
+metrics = r.get("metrics") if isinstance(r.get("metrics"), dict) else {}
+verdict = (
+    r.get("action")
+    or decision.get("action")
+    or r.get("verdict")
+    or metrics.get("verdict")
+    or r.get("status")
+    or "?"
+)
+print("Verdict: " + str(verdict))
+margin = r.get("margin")
+if margin is None:
+    margin = decision.get("margin")
+if margin is not None:
+    print("Margin:  " + str(margin))
 mirror = r.get("mirror") or []
 for line in mirror[:3]:
     print("  - " + str(line))
@@ -323,7 +361,7 @@ cmd_diag() {
 cmd_onboard() {
     local name="${1:-$AGENT_ID}" purpose="${2:-}" force="${3:-}"
     local args
-    args=$(NAME="$name" PURPOSE="$purpose" FORCE="$force" python3 -c '
+    args=$(NAME="$name" PURPOSE="$purpose" FORCE="$force" HAS_LOCAL_CONTINUITY="$HAS_LOCAL_CONTINUITY" python3 -c '
 import json, os
 args = {"name": os.environ["NAME"]}
 purpose = os.environ.get("PURPOSE") or ""
@@ -331,6 +369,8 @@ if purpose:
     args["purpose"] = purpose
 force = (os.environ.get("FORCE") or "").lower()
 if force in ("1", "true", "force", "yes", "--force"):
+    args["force_new"] = True
+elif os.environ.get("HAS_LOCAL_CONTINUITY") != "1":
     args["force_new"] = True
 print(json.dumps(args))
 ')

@@ -12,7 +12,7 @@ import os
 import threading
 from pathlib import Path
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 # -----------------------------------------------------------------------------
 # BOOTSTRAP IMPORT PATH (critical for Claude Desktop / script execution)
@@ -192,7 +192,7 @@ class AgentMetadata:
 
     def add_lifecycle_event(self, event: str, reason: str = None):
         """Add a lifecycle event with timestamp. Broadcasts via event bus."""
-        ts = datetime.now().isoformat()
+        ts = datetime.now(timezone.utc).isoformat()
         self.lifecycle_events.append({
             "event": event,
             "timestamp": ts,

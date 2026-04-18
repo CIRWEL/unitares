@@ -5,8 +5,9 @@ import pytest
 import pytest_asyncio
 import warnings
 import sys
+import asyncio
 from collections import defaultdict, deque
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 # Filter ResourceWarnings globally before any imports
 warnings.filterwarnings("ignore", category=ResourceWarning)
@@ -226,6 +227,35 @@ def _neutralize_metadata_loading(monkeypatch):
     except Exception as exc:
         import warnings
         warnings.warn(f"test cleanup failed: {exc}", stacklevel=2)
+
+
+@pytest.fixture(autouse=True)
+def _safe_background_task_spawns(monkeypatch):
+    """
+    Close fire-and-forget coroutines spawned from sync tests with no event loop.
+
+    Some plugin registration paths opportunistically call background task
+    helpers during plain synchronous tests. When that happens there is no
+    running event loop, asyncio.create_task() raises RuntimeError, and the
+    freshly-created coroutine would otherwise leak a "was never awaited"
+    warning before the caller swallows the exception. In async tests or code
+    paths with a live loop, preserve the real task creation behavior.
+    """
+    import src.background_tasks as background_tasks
+
+    original_supervised_create_task = background_tasks._supervised_create_task
+
+    def _safe_create_task(coro, *, name=None):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            if hasattr(coro, "close"):
+                coro.close()
+            return MagicMock(name=f"closed_task_{name or 'background'}")
+        return original_supervised_create_task(coro, name=name)
+
+    monkeypatch.setattr(background_tasks, "_supervised_create_task", _safe_create_task)
+    monkeypatch.setattr(background_tasks, "create_tracked_task", _safe_create_task)
 
 
 @pytest.fixture(autouse=True)
