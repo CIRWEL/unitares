@@ -193,3 +193,60 @@ class TestCooldownGuard:
         # Restore default for subsequent tests.
         monkeypatch.delenv("UNITARES_ARCHIVE_COOLDOWN_SECONDS", raising=False)
         importlib.reload(gc)
+
+
+# ----------------------------------------------------------------------
+# Task 5: handle_archive_agent stamps notes so existing gate trips.
+# ----------------------------------------------------------------------
+
+
+class TestManualArchiveMarker:
+    """handle_archive_agent must stamp meta.notes with 'user requested' marker."""
+
+    @pytest.mark.asyncio
+    async def test_manual_archive_stamps_user_requested_marker(self):
+        """After handle_archive_agent, meta.notes must contain 'user requested'."""
+        from types import SimpleNamespace
+
+        agent_uuid = "test-uuid-manual-stamp"
+        meta = SimpleNamespace(
+            agent_id=agent_uuid,
+            status="active",
+            archived_at=None,
+            notes="",
+            total_updates=5,
+        )
+        meta.add_lifecycle_event = MagicMock()
+
+        mock_server = MagicMock()
+        mock_server.agent_metadata = {agent_uuid: meta}
+        mock_server.load_metadata_async = AsyncMock()
+        mock_server.monitors = {}
+
+        with patch("src.mcp_handlers.lifecycle.mutation.mcp_server", mock_server), \
+             patch(
+                 "src.mcp_handlers.lifecycle.mutation.require_registered_agent",
+                 return_value=(agent_uuid, None),
+             ), \
+             patch(
+                 "src.mcp_handlers.lifecycle.mutation.resolve_agent_uuid",
+                 return_value=agent_uuid,
+             ), \
+             patch(
+                 "src.mcp_handlers.lifecycle.helpers._archive_one_agent",
+                 new=AsyncMock(return_value=True),
+             ), \
+             patch(
+                 "src.mcp_handlers.lifecycle.mutation._invalidate_agent_cache",
+                 new=AsyncMock(),
+             ):
+            from src.mcp_handlers.lifecycle.mutation import handle_archive_agent
+            await handle_archive_agent({
+                "agent_id": agent_uuid,
+                "reason": "Manual archive",
+            })
+
+        assert "user requested" in meta.notes.lower(), (
+            f"handle_archive_agent must stamp meta.notes with 'user requested' "
+            f"marker so phases.py:337 gate catches it. Got notes={meta.notes!r}"
+        )
