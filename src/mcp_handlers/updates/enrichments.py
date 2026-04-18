@@ -233,10 +233,6 @@ def enrich_warnings(ctx: UpdateContext) -> None:
             ctx.response_data['loop_detection'] = ctx.loop_info
         if ctx.warnings:
             ctx.response_data["warning"] = "\n\n".join(ctx.warnings)
-
-        # Auto-resume info
-        if ctx.auto_resume_info:
-            ctx.response_data["auto_resume"] = ctx.auto_resume_info
     except Exception as e:
         logger.debug(f"Could not enrich warnings: {e}")
 

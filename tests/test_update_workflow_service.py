@@ -356,10 +356,17 @@ async def test_run_process_update_workflow_real_spine_retries_record_state_after
 
 
 @pytest.mark.asyncio
-async def test_run_process_update_workflow_real_spine_auto_resumes_archived_agent():
-    """Archived agents should auto-resume in Phase 2 and continue through the full workflow."""
+async def test_run_process_update_workflow_real_spine_refuses_archived_agent():
+    """Archived agents are refused — no auto-resume path exists (Stage 3).
+
+    Historically this branch auto-resumed on engagement. That behavior
+    existed to rescue residents falsely orphan-archived. Now residents
+    self-tag 'persistent' (PR #39), so the rescue is unnecessary and
+    resurrection would mask real bugs. Archived agents must call
+    self_recovery(action='quick') or onboard(force_new=true) explicitly.
+    """
     harness = _make_real_spine_harness(
-        response_text="Returned from archive and implemented the fix cleanly.",
+        response_text="Attempt to check in after archive — should be refused.",
     )
     harness.meta.status = "archived"
     harness.meta.archived_at = None
@@ -376,15 +383,14 @@ async def test_run_process_update_workflow_real_spine_auto_resumes_archived_agen
 
     data = parse_result(result)
 
-    assert data["success"] is True
-    assert data["auto_resume"]["auto_resumed"] is True
-    assert data["auto_resume"]["previous_status"] == "archived"
-    assert harness.meta.status == "active"
-    assert harness.meta.archived_at is None
-    harness.meta.add_lifecycle_event.assert_called_once_with("resumed", "Auto-resumed on engagement")
-    harness.storage.update_agent.assert_awaited_once_with(harness.agent_id, status="active")
-    metadata_cache.invalidate.assert_awaited_once_with(harness.agent_id)
-    audit_logger.log_auto_resume.assert_called_once()
+    assert data["success"] is False
+    assert "archived" in data["error"].lower()
+    assert "self_recovery" in data["recovery"]["action"]
+    # Status was NOT flipped back to active; no persistence side effects.
+    assert harness.meta.status == "archived"
+    harness.storage.update_agent.assert_not_called()
+    metadata_cache.invalidate.assert_not_called()
+    harness.server.lock_manager.acquire_agent_lock_async.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -408,7 +414,7 @@ async def test_run_process_update_workflow_real_spine_blocks_explicitly_archived
     data = parse_result(result)
 
     assert data["success"] is False
-    assert "cannot be auto-resumed" in data["error"]
+    assert "archived" in data["error"] and "cannot" in data["error"]
     assert data["context"]["status"] == "archived"
     assert harness.meta.status == "archived"
     harness.server.lock_manager.acquire_agent_lock_async.assert_not_called()

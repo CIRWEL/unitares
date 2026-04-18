@@ -484,7 +484,7 @@ class TestProcessAgentUpdate:
         assert data["success"] is False
         assert data["error_code"] == "AGENT_ARCHIVED"
         assert data["error_category"] == "state_error"
-        assert "cannot be auto-resumed" in data["error"]
+        assert "archived" in data["error"] and "cannot" in data["error"]
         assert data["context"]["status"] == "archived"
         assert "self_recovery" in data["recovery"]["related_tools"]
         mock_server.lock_manager.acquire_agent_lock_async.assert_not_called()
@@ -879,16 +879,16 @@ class TestProcessAgentUpdateExtended:
             assert isinstance(data, dict)
 
     # ------------------------------------------------------------------
-    # Lines 726-766: Auto-resume archived agent
+    # Archived agent is REFUSED on checkin (Stage 3, post-PR #39).
     # ------------------------------------------------------------------
     @pytest.mark.asyncio
-    async def test_archived_agent_reactivated_on_checkin(self, mock_server, mock_monitor):
-        """Archived agent is reactivated when it checks in via process_agent_update.
+    async def test_archived_agent_refused_on_checkin(self, mock_server, mock_monitor):
+        """Archived agent is refused when it checks in via process_agent_update.
 
-        The core handler does not block archived agents — checking in
-        implicitly reactivates them (status becomes 'active').
+        Pre-Stage 3 this reactivated implicitly. Now it returns an error;
+        recovery is via self_recovery() or onboard(force_new=true).
         """
-        agent_uuid = "test-uuid-archived-resume"
+        agent_uuid = "test-uuid-archived-refused"
         mock_server.agent_metadata = {}
         mock_server.get_or_create_monitor.return_value = mock_monitor
         mock_server.monitors = {agent_uuid: mock_monitor}
@@ -905,14 +905,16 @@ class TestProcessAgentUpdateExtended:
 
             from src.mcp_handlers.core import handle_process_agent_update
             result = await handle_process_agent_update({
-                "response_text": "back from archive",
+                "response_text": "attempt from archive",
                 "complexity": 0.5,
             })
 
             data = parse_result(result)
             assert isinstance(data, dict)
-            # Agent is reactivated by check-in
-            assert archived_meta.status == "active"
+            # No silent reactivation — status stays archived.
+            assert archived_meta.status == "archived"
+            assert data.get("success") is False
+            assert "archived" in data["error"].lower()
 
     # ------------------------------------------------------------------
     # Lines 776: Paused agent error (second check, after metadata loaded)
