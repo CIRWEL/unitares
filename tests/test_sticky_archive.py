@@ -119,3 +119,77 @@ class TestCooldownGuard:
             f"Error message should cite cooldown/recent/seconds. Got: {data['error']!r}"
         )
         assert data["context"]["status"] == "archived"
+
+    @pytest.mark.asyncio
+    async def test_old_archive_outside_cooldown_can_still_auto_resume(
+        self, mock_server, mock_monitor
+    ):
+        """Archive >300s ago with many updates and no marker IS auto-resumed.
+
+        Preserves behavior where resident agents falsely sweeped by the
+        orphan heuristic can recover by checking in after cooldown expires.
+        """
+        agent_uuid = "test-uuid-old-archive"
+        old = (datetime.now(timezone.utc) - timedelta(seconds=400)).isoformat()
+        meta = _make_metadata(status="archived", total_updates=50)
+        meta.archived_at = old
+        meta.notes = ""
+        mock_server.agent_metadata = {agent_uuid: meta}
+        mock_server.get_or_create_monitor.return_value = mock_monitor
+        mock_server.monitors = {agent_uuid: mock_monitor}
+
+        p = _common_patches(mock_server, agent_uuid=agent_uuid)
+        with _apply_patches(p):
+            from src.mcp_handlers.core import handle_process_agent_update
+            result = await handle_process_agent_update({
+                "response_text": "Legitimate recovery after false sweep.",
+                "response_mode": "full",
+            })
+            data = parse_result(result)
+
+        assert data.get("success") is True, (
+            f"Expected auto-resume to succeed for agents archived outside "
+            f"cooldown with no manual marker. Got: {json.dumps(data, default=str)[:500]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_cooldown_env_override(
+        self, mock_server, mock_monitor, monkeypatch
+    ):
+        """UNITARES_ARCHIVE_COOLDOWN_SECONDS env var overrides default.
+
+        Cooldown=1s means a 10s-old archive is OUTSIDE cooldown, so it can
+        auto-resume (assuming no other gate blocks).
+        """
+        monkeypatch.setenv("UNITARES_ARCHIVE_COOLDOWN_SECONDS", "1")
+        import importlib
+        import config.governance_config as gc
+        importlib.reload(gc)
+        assert gc.ARCHIVE_RESUME_COOLDOWN_SECONDS == 1
+
+        agent_uuid = "test-uuid-env-override"
+        recent = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+        meta = _make_metadata(status="archived", total_updates=50)
+        meta.archived_at = recent
+        meta.notes = ""
+        mock_server.agent_metadata = {agent_uuid: meta}
+        mock_server.get_or_create_monitor.return_value = mock_monitor
+        mock_server.monitors = {agent_uuid: mock_monitor}
+
+        p = _common_patches(mock_server, agent_uuid=agent_uuid)
+        with _apply_patches(p):
+            from src.mcp_handlers.core import handle_process_agent_update
+            result = await handle_process_agent_update({
+                "response_text": "With cooldown=1s, 10s-old archive is outside window.",
+                "response_mode": "full",
+            })
+            data = parse_result(result)
+
+        assert data.get("success") is True, (
+            f"With cooldown=1s, 10s-old archive should auto-resume. "
+            f"Got: {json.dumps(data, default=str)[:500]}"
+        )
+
+        # Restore default for subsequent tests.
+        monkeypatch.delenv("UNITARES_ARCHIVE_COOLDOWN_SECONDS", raising=False)
+        importlib.reload(gc)
