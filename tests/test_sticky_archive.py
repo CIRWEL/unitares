@@ -223,7 +223,10 @@ class TestManualArchiveMarker:
         mock_server.load_metadata_async = AsyncMock()
         mock_server.monitors = {}
 
+        mock_storage = MagicMock(update_agent=AsyncMock(return_value=True))
+
         with patch("src.mcp_handlers.lifecycle.mutation.mcp_server", mock_server), \
+             patch("src.mcp_handlers.lifecycle.mutation.agent_storage", mock_storage), \
              patch(
                  "src.mcp_handlers.lifecycle.mutation.require_registered_agent",
                  return_value=(agent_uuid, None),
@@ -249,6 +252,15 @@ class TestManualArchiveMarker:
         assert "user requested" in meta.notes.lower(), (
             f"handle_archive_agent must stamp meta.notes with 'user requested' "
             f"marker so phases.py:337 gate catches it. Got notes={meta.notes!r}"
+        )
+
+        # P011 guard: the marker must be persisted via update_agent, not just
+        # mutated in-memory. Otherwise it's clobbered on next metadata reload.
+        mock_storage.update_agent.assert_awaited_once()
+        call_kwargs = mock_storage.update_agent.await_args.kwargs
+        assert "user requested" in (call_kwargs.get("notes") or "").lower(), (
+            f"update_agent must be called with notes containing the marker. "
+            f"Got kwargs={call_kwargs}"
         )
 
 

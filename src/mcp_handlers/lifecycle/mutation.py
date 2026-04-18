@@ -203,13 +203,24 @@ async def handle_archive_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
 
     # Stamp notes with the sticky-archive marker so phases.py auto-resume
     # gate refuses to resurrect this identity on a later process_agent_update.
-    # Orphan-sweep archives go through a different code path and are
-    # intentionally NOT stamped — they remain non-sticky so legitimate
-    # residents falsely sweeped can recover.
+    # Must persist via update_agent() — an in-memory-only mutation would be
+    # clobbered on the next load_metadata_async reload (P011). Orphan-sweep
+    # archives go through a different code path and are intentionally NOT
+    # stamped — they remain non-sticky so legitimate residents falsely
+    # sweeped can recover after the cooldown window expires.
     existing_notes = (getattr(meta, "notes", "") or "").strip()
-    marker = f"user requested archive: {reason}"
     if "user requested" not in existing_notes.lower():
-        meta.notes = f"{existing_notes}\n{marker}".strip() if existing_notes else marker
+        marker = f"user requested archive: {reason}"
+        new_notes = f"{existing_notes}\n{marker}".strip() if existing_notes else marker
+        try:
+            await agent_storage.update_agent(agent_uuid, notes=new_notes)
+        except Exception as e:
+            logger.warning(
+                f"Could not persist sticky-archive marker for {agent_id}: {e}. "
+                f"Cooldown window still protects against immediate resurrection.",
+                exc_info=True,
+            )
+        meta.notes = new_notes
 
     # Persist-first: write to Postgres before mutating in-memory state
     from .helpers import _archive_one_agent
