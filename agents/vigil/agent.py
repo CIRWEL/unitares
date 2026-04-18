@@ -272,6 +272,7 @@ class VigilAgent(GovernanceAgent):
             legacy_session_file=LEGACY_SESSION_FILE,
             state_dir=STATE_FILE.parent,
             timeout=30.0,
+            persistent=True,
         )
         self.heartbeat_interval = heartbeat_interval
         self.with_tests = with_tests
