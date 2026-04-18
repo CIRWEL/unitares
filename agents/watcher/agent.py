@@ -98,29 +98,44 @@ MAX_LOG_LINES = 5000
 # Identity — persistent governance presence
 # ---------------------------------------------------------------------------
 
-SESSION_FILE = PROJECT_ROOT / ".watcher_session"
+# Anchor-scoped: one Watcher identity per host, shared across every git
+# worktree. The legacy per-worktree path (PROJECT_ROOT/.watcher_session)
+# minted a fresh UUID on the first edit in each new worktree, producing
+# N Watchers per developer instead of one.
+SESSION_FILE = Path.home() / ".unitares" / "anchors" / "watcher.json"
+LEGACY_SESSION_FILE = PROJECT_ROOT / ".watcher_session"
 
 _watcher_identity: dict[str, str] | None = None
 
 
 def _load_session() -> dict[str, str]:
-    """Load .watcher_session if it exists."""
+    """Load persistent identity from the anchor, migrating from legacy if needed."""
     if SESSION_FILE.exists():
         try:
             return json.loads(SESSION_FILE.read_text())
         except (json.JSONDecodeError, OSError):
             pass
+    if LEGACY_SESSION_FILE.exists():
+        try:
+            data = json.loads(LEGACY_SESSION_FILE.read_text())
+            SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+            SESSION_FILE.write_text(json.dumps(data))
+            log(f"migrated watcher identity from {LEGACY_SESSION_FILE} to {SESSION_FILE}")
+            return data
+        except (json.JSONDecodeError, OSError) as e:
+            log(f"legacy session migration failed: {e}", "warning")
     return {}
 
 
 def _save_session(client_session_id: str, continuity_token: str, agent_uuid: str) -> None:
-    """Persist identity state to .watcher_session."""
+    """Persist identity state to the anchor."""
     data = {
         "client_session_id": client_session_id,
         "continuity_token": continuity_token,
         "agent_uuid": agent_uuid,
     }
     try:
+        SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
         SESSION_FILE.write_text(json.dumps(data))
     except OSError as e:
         log(f"failed to save session: {e}", "warning")
