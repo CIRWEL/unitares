@@ -51,10 +51,12 @@ def _mock_server(meta=None):
     return s
 
 def _meta(status="active", label=None, structured_id=None,
-          display_name=None, paused_at=None, agent_uuid=None, tags=None):
+          display_name=None, paused_at=None, agent_uuid=None, tags=None,
+          public_agent_id=None):
     return SimpleNamespace(status=status, label=label, structured_id=structured_id,
                            display_name=display_name, paused_at=paused_at,
-                           agent_uuid=agent_uuid, tags=tags or [])
+                           agent_uuid=agent_uuid, tags=tags or [],
+                           public_agent_id=public_agent_id)
 
 
 class TestInferErrorCodeAndCategory:
@@ -201,6 +203,49 @@ class TestComputeAgentSignature:
     @patch("src.mcp_handlers.context.get_context_agent_id", side_effect=Exception("boom"))
     def test_exception_safe(self, mock_ctx):
         assert compute_agent_signature(agent_id="x") == {"uuid": None}
+
+    # ---- label_source: dual-label visibility (identity-honesty axiom) ----
+
+    @patch("src.mcp_handlers.context.get_context_agent_id")
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_label_source_claimed_when_label_differs_from_auto_ids(self, mock_srv, mock_ctx):
+        """Agent-chosen label (differs from public_agent_id/structured_id) → claimed."""
+        mock_ctx.return_value = "uuid-1"
+        mock_srv.return_value = _mock_server({
+            "uuid-1": _meta(label="hikewa", public_agent_id="Claude_Code_20260417", structured_id="mcp_20260417"),
+        })
+        sig = compute_agent_signature()
+        assert sig["agent_id"] == "hikewa"
+        assert sig["label_source"] == "claimed"
+
+    @patch("src.mcp_handlers.context.get_context_agent_id")
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_label_source_auto_when_label_matches_public_agent_id(self, mock_srv, mock_ctx):
+        """Label equals the auto-derived public_agent_id → auto."""
+        mock_ctx.return_value = "uuid-2"
+        mock_srv.return_value = _mock_server({
+            "uuid-2": _meta(label="Claude_Code_20260417", public_agent_id="Claude_Code_20260417"),
+        })
+        sig = compute_agent_signature()
+        assert sig["label_source"] == "auto"
+
+    @patch("src.mcp_handlers.context.get_context_agent_id")
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_label_source_auto_when_only_structured_id(self, mock_srv, mock_ctx):
+        """No label, only structured_id → auto."""
+        mock_ctx.return_value = "uuid-3"
+        mock_srv.return_value = _mock_server({"uuid-3": _meta(structured_id="mcp_20260417")})
+        sig = compute_agent_signature()
+        assert sig["label_source"] == "auto"
+
+    @patch("src.mcp_handlers.context.get_context_agent_id")
+    @patch("src.mcp_handlers.shared.get_mcp_server")
+    def test_label_source_uuid_when_nothing_else(self, mock_srv, mock_ctx):
+        """No label, no auto IDs → display is UUID, label_source reflects that."""
+        mock_ctx.return_value = "uuid-4"
+        mock_srv.return_value = _mock_server({"uuid-4": _meta()})
+        sig = compute_agent_signature()
+        assert sig["label_source"] == "uuid"
 
 
 class TestCheckAgentCanOperate:

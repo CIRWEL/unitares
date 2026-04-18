@@ -55,6 +55,24 @@ def compute_agent_signature(
             signature["display_name"] = display_label
         elif auto_id:
             signature["agent_id"] = auto_id
+
+        # Dual-label visibility (identity-invariants #4: "Name is cosmetic").
+        # label_source surfaces whether the displayed label reflects an
+        # explicit choice by the agent or a server-derived auto-fill:
+        #   "claimed" — label differs from auto-derived IDs, agent picked it
+        #   "auto"    — label equals public_agent_id/structured_id, or the
+        #               label is absent and the signature displays auto_id
+        #   "uuid"    — neither label nor auto_id; display falls back to UUID
+        # Heuristic (no schema change): identity is inferred from whether
+        # the label matches known auto patterns. A future schema change can
+        # replace this with an explicit label_claimed_at timestamp on the
+        # agent metadata row.
+        if display_label and display_label not in (public_agent_id, structured_id):
+            signature["label_source"] = "claimed"
+        elif display_label or auto_id:
+            signature["label_source"] = "auto"
+        else:
+            signature["label_source"] = "uuid"
         return signature
 
     except Exception as e:
