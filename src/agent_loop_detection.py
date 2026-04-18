@@ -353,6 +353,20 @@ async def process_update_authenticated_async(
     if not is_valid:
         raise PermissionError(f"Authentication failed: {error_msg}")
 
+    # Sticky-archive gate for in-process callers. The MCP-tool path
+    # (handle_process_agent_update → phases.py) has its own auto-resume /
+    # refusal logic before it reaches this function, but in-process callers
+    # like Steward (unitares-pi-plugin) reach us directly and would otherwise
+    # silently resurrect archived identities. Refuse here so the gate is
+    # uniform across all paths.
+    meta = agent_metadata.get(agent_id)
+    if meta is not None and getattr(meta, "status", None) == "archived":
+        raise ValueError(
+            f"Agent '{agent_id}' is archived and cannot be updated. "
+            f"Use self_recovery(action='quick') to restore, or "
+            f"onboard(force_new=true) for a new identity."
+        )
+
     # Check for loop pattern BEFORE processing
     is_loop, loop_reason = await loop.run_in_executor(None, detect_loop_pattern, agent_id)
     if is_loop:
