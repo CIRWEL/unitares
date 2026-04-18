@@ -52,7 +52,8 @@ from agents.vigil.checks.runner import run_health_checks
 
 # Paths
 ANIMA_PROJECT = Path(os.getenv("ANIMA_PROJECT", str(project_root.parent / "anima-mcp")))
-SESSION_FILE = project_root / ".vigil_session"
+SESSION_FILE = Path.home() / ".unitares" / "anchors" / "vigil.json"
+LEGACY_SESSION_FILE = project_root / ".vigil_session"
 STATE_FILE = project_root / ".vigil_state"
 LOG_FILE = Path.home() / "Library" / "Logs" / "unitares-vigil.log"
 MAX_LOG_LINES = 500
@@ -268,6 +269,7 @@ class VigilAgent(GovernanceAgent):
             name=label,
             mcp_url=mcp_url,
             session_file=SESSION_FILE,
+            legacy_session_file=LEGACY_SESSION_FILE,
             state_dir=STATE_FILE.parent,
             timeout=30.0,
         )

@@ -188,6 +188,52 @@ class TestSessionPersistence:
         agent._load_session()
         assert agent.client_session_id is None
 
+    def test_default_session_file_is_home_anchor(self, tmp_path, monkeypatch):
+        """Without an explicit session_file, default is ~/.unitares/anchors/<name>.json."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        from unitares_sdk.agent import GovernanceAgent
+
+        # Use the real class directly since SimpleAgent may override defaults.
+        class _BareAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None
+
+        agent = _BareAgent(name="TestAgent")
+        expected = Path(tmp_path) / ".unitares" / "anchors" / "testagent.json"
+        assert agent.session_file == expected
+
+    def test_save_creates_anchor_parent_dir(self, tmp_path):
+        """_save_session mkdirs the anchor parent automatically."""
+        anchor = tmp_path / "deep" / "nested" / "anchors" / "x.json"
+        agent = SimpleAgent(session_file=anchor)
+        agent.agent_uuid = "u-1"
+        agent._save_session()
+        assert anchor.exists()
+
+    def test_migrates_from_legacy_when_anchor_missing(self, tmp_path):
+        """Legacy session file is migrated to the anchor on first load."""
+        anchor = tmp_path / "anchor.json"
+        legacy = tmp_path / "legacy.session"
+        legacy.write_text('{"agent_uuid": "u-legacy", "continuity_token": "t-legacy"}')
+
+        agent = SimpleAgent(session_file=anchor, legacy_session_file=legacy)
+        agent._load_session()
+
+        assert agent.agent_uuid == "u-legacy"
+        assert agent.continuity_token == "t-legacy"
+        assert anchor.exists(), "anchor should have been written by migration"
+
+    def test_anchor_wins_over_legacy_when_both_exist(self, tmp_path):
+        """If both anchor and legacy exist, the anchor is the source of truth."""
+        anchor = tmp_path / "anchor.json"
+        anchor.write_text('{"agent_uuid": "u-anchor"}')
+        legacy = tmp_path / "legacy.session"
+        legacy.write_text('{"agent_uuid": "u-legacy"}')
+
+        agent = SimpleAgent(session_file=anchor, legacy_session_file=legacy)
+        agent._load_session()
+        assert agent.agent_uuid == "u-anchor"
+
 
 # --- Check-in handling ---
 

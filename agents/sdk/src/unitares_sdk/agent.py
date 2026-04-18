@@ -70,6 +70,7 @@ class GovernanceAgent:
         mcp_url: str = "http://127.0.0.1:8767/mcp/",
         state_dir: Path | None = None,
         session_file: Path | None = None,
+        legacy_session_file: Path | None = None,
         notify_on_error: bool = True,
         timeout: float = 30.0,
         parent_agent_id: str | None = None,
@@ -84,7 +85,14 @@ class GovernanceAgent:
         name_lower = name.lower()
         default_root = Path(__file__).resolve().parent.parent.parent.parent.parent
         self.state_dir = state_dir or default_root / "data" / name_lower
-        self.session_file = session_file or default_root / f".{name_lower}_session"
+        # Host-scoped anchor default: one identity per role per host, shared
+        # across every git worktree or install path (Watcher/Vigil/Sentinel
+        # previously minted a new UUID per install-path-relative session
+        # file). Subclasses override session_file+legacy_session_file pair.
+        self.session_file = session_file or (
+            Path.home() / ".unitares" / "anchors" / f"{name_lower}.json"
+        )
+        self.legacy_session_file = legacy_session_file
 
         # Opt-in lineage: when set, forwarded to the server on fresh onboard
         # so spawned agents are distinguishable from unrelated siblings.
@@ -233,7 +241,24 @@ class GovernanceAgent:
     # --- Session persistence ---
 
     def _load_session(self) -> None:
-        """Load session state from disk."""
+        """Load session state, migrating from legacy location if needed."""
+        if (
+            not self.session_file.exists()
+            and self.legacy_session_file
+            and self.legacy_session_file.exists()
+        ):
+            try:
+                legacy_data = load_json_state(self.legacy_session_file)
+                if legacy_data:
+                    self.session_file.parent.mkdir(parents=True, exist_ok=True)
+                    save_json_state(self.session_file, legacy_data)
+                    logger.info(
+                        "%s: migrated session from %s to %s",
+                        self.name, self.legacy_session_file, self.session_file,
+                    )
+            except Exception as e:
+                logger.warning("%s: legacy session migration failed: %s", self.name, e)
+
         saved = load_json_state(self.session_file)
         if saved.get("client_session_id"):
             self.client_session_id = saved["client_session_id"]
@@ -243,7 +268,7 @@ class GovernanceAgent:
             self.agent_uuid = saved["agent_uuid"]
 
     def _save_session(self) -> None:
-        """Persist session state to disk."""
+        """Persist session state to the anchor."""
         data: dict[str, Any] = {}
         if self.client_session_id:
             data["client_session_id"] = self.client_session_id
@@ -251,6 +276,7 @@ class GovernanceAgent:
             data["continuity_token"] = self.continuity_token
         if self.agent_uuid:
             data["agent_uuid"] = self.agent_uuid
+        self.session_file.parent.mkdir(parents=True, exist_ok=True)
         save_json_state(self.session_file, data)
 
     def _sync_from_client(self, client: GovernanceClient) -> None:
