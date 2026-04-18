@@ -206,7 +206,7 @@ def get_watcher_identity() -> dict[str, str] | None:
 def _make_identity_client():
     """Create a SyncGovernanceClient for identity resolution."""
     from unitares_sdk import SyncGovernanceClient
-    return SyncGovernanceClient(rest_url=GOV_REST_URL, transport="rest", timeout=5)
+    return SyncGovernanceClient(rest_url=GOV_REST_URL, transport="rest", timeout=30)
 
 
 # ---------------------------------------------------------------------------
@@ -1357,7 +1357,7 @@ def _escalate_to_kg(finding: Finding) -> None:
         f"Fingerprint: {finding.fingerprint}"
     )
     try:
-        client = SyncGovernanceClient(rest_url=GOV_REST_URL, transport="rest", timeout=5)
+        client = SyncGovernanceClient(rest_url=GOV_REST_URL, transport="rest", timeout=30)
         client.store_discovery(
             summary=summary,
             discovery_type="bug_found",
