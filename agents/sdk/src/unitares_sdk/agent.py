@@ -75,11 +75,17 @@ class GovernanceAgent:
         timeout: float = 30.0,
         parent_agent_id: str | None = None,
         spawn_reason: str | None = None,
+        persistent: bool = False,
     ):
         self.name = name
         self.mcp_url = mcp_url
         self.timeout = timeout
         self.notify_on_error = notify_on_error
+        # When True, stamp the "persistent" tag after fresh onboard so
+        # auto_archive_orphan_agents (is_agent_protected in agent_lifecycle.py)
+        # skips this identity. Resident agents (Vigil, Sentinel, etc.) should
+        # set this to True to avoid sweep false-positives.
+        self.persistent = persistent
 
         # Defaults based on name
         name_lower = name.lower()
@@ -193,6 +199,25 @@ class GovernanceAgent:
         self._sync_from_client(client)
         self._save_session()
         logger.info("%s: onboarded fresh (UUID %s)", self.name, self.agent_uuid[:12] if self.agent_uuid else "?")
+
+        if self.persistent and self.agent_uuid:
+            try:
+                await client.call_tool(
+                    "update_agent_metadata",
+                    {"agent_id": self.agent_uuid, "tags": ["persistent"]},
+                )
+                logger.info(
+                    "%s: stamped 'persistent' tag to protect from orphan sweep",
+                    self.name,
+                )
+            except Exception as e:
+                # Non-fatal. The agent still runs; it's just vulnerable to
+                # archive_orphan_agents until someone tags it manually.
+                logger.warning(
+                    "%s: failed to stamp 'persistent' tag: %s "
+                    "(will retry on next fresh onboard; manual tagging may be needed)",
+                    self.name, e,
+                )
 
     # --- Check-in handling ---
 

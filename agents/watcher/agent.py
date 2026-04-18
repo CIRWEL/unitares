@@ -196,6 +196,22 @@ def resolve_identity(client) -> None:
     try:
         client.onboard("Watcher", spawn_reason="resident_observer")
         _sync_identity(client)
+        # Stamp 'persistent' tag so auto_archive_orphan_agents skips this
+        # identity (is_agent_protected in src/agent_lifecycle.py). Without
+        # this, low-activity windows cause orphan-sweep false-positives and
+        # the Watcher gets archived-then-silently-resurrected every cycle.
+        if _watcher_identity and _watcher_identity.get("agent_uuid"):
+            try:
+                client.call_tool(
+                    "update_agent_metadata",
+                    {
+                        "agent_id": _watcher_identity["agent_uuid"],
+                        "tags": ["persistent"],
+                    },
+                )
+                log("stamped 'persistent' tag — protected from orphan sweep")
+            except Exception as e:
+                log(f"failed to stamp 'persistent' tag: {e}", "warning")
     except GovernanceTimeoutError as e:
         # Onboard timeout is the worst case — don't assume it failed, it may
         # have partial-committed on the server side (which is exactly how

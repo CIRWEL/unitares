@@ -165,6 +165,68 @@ class TestIdentityResolution:
         assert "parent_agent_id" not in call_kwargs
         assert "spawn_reason" not in call_kwargs
 
+    @pytest.mark.asyncio
+    async def test_persistent_tag_stamped_on_fresh_onboard(self, tmp_path):
+        """persistent=True agents stamp the 'persistent' tag after fresh onboard.
+
+        Protects residents (Vigil, Sentinel) from orphan-sweep false-positives.
+        Root cause: low-activity windows caused sweep to archive live residents,
+        and auto-resume silently revived them, masking the problem.
+        """
+        agent = SimpleAgent(session_file=tmp_path / ".test_session", persistent=True)
+
+        client = _mock_client_connected()
+        await agent._ensure_identity(client)
+
+        # Fresh onboard + subsequent update_agent_metadata call
+        client.onboard.assert_called_once()
+        client.call_tool.assert_awaited_once_with(
+            "update_agent_metadata",
+            {"agent_id": "uuid-test", "tags": ["persistent"]},
+        )
+
+    @pytest.mark.asyncio
+    async def test_persistent_tag_not_stamped_when_not_persistent(self, tmp_path):
+        """Default persistent=False must not call update_agent_metadata."""
+        agent = SimpleAgent(session_file=tmp_path / ".test_session")
+
+        client = _mock_client_connected()
+        await agent._ensure_identity(client)
+
+        client.onboard.assert_called_once()
+        client.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_persistent_tag_not_stamped_on_uuid_resume(self, tmp_path):
+        """Resuming an existing UUID skips tag stamping — it's already been tagged
+        on the original fresh onboard (or manually).
+        """
+        agent = SimpleAgent(session_file=tmp_path / ".test_session", persistent=True)
+        agent.agent_uuid = "uuid-test"  # triggers the resume fast path
+
+        client = _mock_client_connected()
+        await agent._ensure_identity(client)
+
+        client.identity.assert_awaited_once()
+        client.onboard.assert_not_called()
+        client.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_persistent_tag_failure_is_non_fatal(self, tmp_path):
+        """If update_agent_metadata fails, the agent still onboards successfully."""
+        agent = SimpleAgent(session_file=tmp_path / ".test_session", persistent=True)
+
+        client = _mock_client_connected()
+        client.call_tool = AsyncMock(side_effect=RuntimeError("db down"))
+
+        # Must not raise — the exception is caught and logged.
+        await agent._ensure_identity(client)
+
+        client.onboard.assert_called_once()
+        client.call_tool.assert_awaited_once()
+        # Identity is still established.
+        assert agent.agent_uuid == "uuid-test"
+
 
 # --- Session persistence ---
 

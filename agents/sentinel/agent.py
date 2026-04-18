@@ -423,6 +423,7 @@ class SentinelAgent(GovernanceAgent):
             legacy_session_file=LEGACY_SESSION_FILE,
             state_dir=STATE_FILE.parent,
             timeout=30.0,
+            persistent=True,
         )
         self.ws_url = ws_url
         self.analysis_interval = analysis_interval
