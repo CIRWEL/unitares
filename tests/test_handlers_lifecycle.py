@@ -538,6 +538,13 @@ class TestArchiveOldTestAgents:
                 status="active", label="test-probe-resume-fixture",
                 last_update=recent, total_updates=2,
             ),
+            # itest-plugin label from plugin integration suite — should archive
+            # (see unitares-governance-plugin tests/test_onboard_slot_isolation.py;
+            # operator flagged 2026-04-17 that these accumulate pair-wise per run)
+            "Claude_Code_20260417_d": make_agent_meta(
+                status="active", label="itest-plugin#cbbc29d1_edd06485",
+                last_update=recent, total_updates=1,
+            ),
             # dogfood / genuine work — must NOT archive
             "Claude_20260414_c": make_agent_meta(
                 status="active", label="dogfood-kg-contributor",
@@ -558,7 +565,9 @@ class TestArchiveOldTestAgents:
             data = json.loads(result[0].text)
 
         archived_ids = {a["id"] for a in data["archived_agents"]}
-        assert archived_ids == {"Claude_20260414_a", "Claude_20260414_b"}, (
+        assert archived_ids == {
+            "Claude_20260414_a", "Claude_20260414_b", "Claude_Code_20260417_d",
+        }, (
             f"expected label-based matches only, got {archived_ids}"
         )
         assert "Claude_20260414_c" not in archived_ids, "dogfood label must not match"
