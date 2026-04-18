@@ -1544,3 +1544,52 @@ async def enrich_agent_profile(ctx: UpdateContext) -> None:
             ctx.response_data['agent_profile'] = profile.to_summary()
     except Exception as e:
         logger.debug(f"Agent profile enrichment skipped: {e}")
+
+
+# =================================================================
+# Grounding enrichment — spec docs/specs/2026-04-17-eisv-grounding-design.md
+# =================================================================
+# Runs at order=75, AFTER gating (phases.py) but BEFORE mirror.
+# Copies legacy E/I/S/coherence into *_legacy, then overwrites E/I/S/coherence
+# with grounded values. Verdicts/basins have already been computed on legacy
+# by the time this runs. V is not touched — it's not dual-computed in Phase 1.
+
+from src.grounding.entropy import compute_entropy
+from src.grounding.mutual_info import compute_mutual_info
+from src.grounding.free_energy import compute_free_energy
+from src.grounding.coherence import compute_coherence
+
+
+@enrichment(order=75)
+async def enrich_grounding(ctx: UpdateContext) -> None:
+    """Swap grounded E/I/S/coherence into canonical metrics slots."""
+    result = ctx.result or {}
+    metrics = result.get("metrics")
+    if not isinstance(metrics, dict):
+        return
+
+    if "E_legacy" in metrics:
+        return  # idempotent
+
+    try:
+        e = compute_free_energy(ctx, metrics)
+        i = compute_mutual_info(ctx, metrics)
+        s = compute_entropy(ctx, metrics)
+        c = compute_coherence(ctx, metrics)
+    except Exception as exc:
+        logger.debug(f"Grounding enrichment failed — legacy values untouched: {exc}")
+        return
+
+    for key in ("E", "I", "S", "coherence"):
+        if key in metrics:
+            metrics[f"{key}_legacy"] = metrics[key]
+
+    metrics["E"] = e.value
+    metrics["I"] = i.value
+    metrics["S"] = s.value
+    metrics["coherence"] = c.value
+
+    metrics["e_source"] = e.source
+    metrics["i_source"] = i.source
+    metrics["s_source"] = s.source
+    metrics["coherence_source"] = c.source
