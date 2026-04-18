@@ -54,6 +54,8 @@ def _emit_lifecycle_event(
             _label.startswith("cli-pytest")
             or _label.startswith("test_")
             or _label.startswith("test-")
+            or _label.startswith("itest-")
+            or _label.startswith("itest_")
             or _label.startswith("demo_")
             or "pytest" in _label
         )

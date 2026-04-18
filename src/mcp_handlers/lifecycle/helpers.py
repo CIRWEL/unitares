@@ -63,7 +63,8 @@ def _is_test_agent(agent_id: str, label: str | None = None) -> bool:
     """Identify test/demo agents by naming patterns.
 
     Checks both agent_id and label. CLI-spawned pytest agents use UUIDs
-    as agent_id but contain 'cli-pytest' in the label.
+    as agent_id but contain 'cli-pytest' in the label; integration-test
+    agents from plugin suites use UUIDs and 'itest-*' labels.
 
     Used consistently across list_agents handlers to filter test agents.
     """
@@ -82,7 +83,11 @@ def _is_test_agent(agent_id: str, label: str | None = None) -> bool:
             label_lower.startswith("cli-pytest") or
             label_lower.startswith("test_") or
             label_lower.startswith("test-") or
+            label_lower.startswith("itest-") or
+            label_lower.startswith("itest_") or
             "pytest" in label_lower or
+            "itest" in label_lower.split("-") or
+            "itest" in label_lower.split("_") or
             "test" in label_lower.split("-") or
             "test" in label_lower.split("_")
         ):
