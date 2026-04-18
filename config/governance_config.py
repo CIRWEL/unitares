@@ -707,6 +707,16 @@ assert GovernanceConfig.RISK_APPROVE_THRESHOLD < GovernanceConfig.RISK_REVISE_TH
 # Every normalization constant used by src/grounding/ modules ships with
 # measurement provenance. Phase 1 ships placeholders; Phase 2 replaces with
 # values measured on a reference corpus per the protocol in spec §3.4.
+#
+# IMPORTANT — heterogeneity, not homogeneity. These are placeholder fleet-wide
+# values for Phase 1 scaffolding ONLY. A homogenized fleet is the wrong target:
+# embodied creatures, cron-driven janitors, streaming observers, and ephemeral
+# parsers do not share a healthy operating point or a tempo. Phase 2 calibration
+# must produce class-conditional constants keyed on existing identity tags
+# (embodied / autonomous / persistent / ephemeral) and labels (Lumen / Vigil /
+# Sentinel / Watcher / Steward). The fleet-wide constant remains as the default
+# for unclassified agents — a safe fallback, not the production target.
+# See paper §3.4 (Heterogeneity as a First-Class Constraint).
 
 @dataclass(frozen=True)
 class ScaleConstant:
