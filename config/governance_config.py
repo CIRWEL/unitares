@@ -84,6 +84,15 @@ BASIN_LOW_RISK_FLOOR = 0.70    # risk at or above this → low (matches RISK_REV
 BASIN_BOUNDARY = BasinRegion(name="boundary")
 
 
+# Sticky archive: cooldown window during which process_agent_update refuses
+# to auto-resume an archived agent. Prevents the race where an archive is
+# silently resurrected by a stale client holding the UUID seconds later.
+# Override: UNITARES_ARCHIVE_COOLDOWN_SECONDS env var.
+ARCHIVE_RESUME_COOLDOWN_SECONDS: int = int(
+    os.getenv("UNITARES_ARCHIVE_COOLDOWN_SECONDS", "300")
+)
+
+
 def classify_basin(E: float, I: float, S: float, V: float,
                    coherence: float, risk_score: float) -> str:
     """Classify current state into a basin region.
