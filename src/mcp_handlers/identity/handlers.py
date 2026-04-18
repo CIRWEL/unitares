@@ -417,6 +417,44 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     # Skips all session/name resolution — just verify the UUID exists and is active.
     _direct_uuid = arguments.get("agent_uuid")
     if _direct_uuid and resume:
+        # PATH 0 FAST: if the UUID has a live in-process monitor, trust it
+        # and skip DB verification entirely. Anyio-deadlock-safe (no awaits).
+        # Rationale: monitors are loaded at startup for all persisted agents,
+        # so a hit here means the agent is known to governance. Worst case
+        # is we briefly serve an agent that was just archived, which the
+        # next full check-in will surface via the archival log path.
+        #
+        # This is the structural fix for the 34-Watcher-fork incident:
+        # transient governance slowness can't cascade into forks when
+        # UUID-direct resume has a synchronous fallback.
+        try:
+            from ..shared import get_mcp_server
+            srv = get_mcp_server()
+            monitors = getattr(srv, "monitors", None) if srv is not None else None
+            if monitors is not None and _direct_uuid in monitors:
+                try:
+                    from ..context import update_context_agent_id, set_session_resolution_source
+                    update_context_agent_id(_direct_uuid)
+                    set_session_resolution_source("agent_uuid_direct_fastpath")
+                except Exception:
+                    pass
+                payload = _identity_diag_payload(
+                    agent_uuid=_direct_uuid,
+                    agent_id=_direct_uuid,
+                    label=None,
+                    status="resumed",
+                )
+                payload.update({
+                    "resumed": True,
+                    "resumed_by_uuid": True,
+                    "source": "monitor_cache",
+                    "message": f"Resumed identity {_direct_uuid[:12]}... via in-process monitor cache",
+                })
+                return _identity_success(payload, agent_uuid=_direct_uuid)
+        except Exception:
+            # Any fast-path failure falls through to the DB-backed slow path.
+            pass
+
         exists = await _agent_exists_in_postgres(_direct_uuid)
         if not exists:
             return error_response(
