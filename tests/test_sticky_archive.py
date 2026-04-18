@@ -250,3 +250,51 @@ class TestManualArchiveMarker:
             f"handle_archive_agent must stamp meta.notes with 'user requested' "
             f"marker so phases.py:337 gate catches it. Got notes={meta.notes!r}"
         )
+
+
+# ----------------------------------------------------------------------
+# Task 7: Full incident replay — archive then 10s-later update is refused.
+# ----------------------------------------------------------------------
+
+
+class TestIncidentReplay:
+    """Replay the 2026-04-18 acd8a774 incident timeline."""
+
+    @pytest.mark.asyncio
+    async def test_archive_then_immediate_update_is_refused(
+        self, mock_server, mock_monitor
+    ):
+        """Manual archive → 10s later process_agent_update → MUST NOT auto-resume.
+
+        Exact timeline from the incident:
+        - T+0: manual archive (stamps 'user requested' marker + sets archived_at)
+        - T+10s: process_agent_update arrives with same agent_uuid
+        - Expected: error response (blocked by manual marker AND cooldown)
+        """
+        agent_uuid = "test-uuid-incident-acd8a774"
+
+        # Simulate post-archive state as handle_archive_agent would leave it.
+        archived_at = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+        meta = _make_metadata(status="archived", total_updates=12)
+        meta.archived_at = archived_at
+        meta.notes = "user requested archive: Manual archive"
+
+        mock_server.agent_metadata = {agent_uuid: meta}
+        mock_server.get_or_create_monitor.return_value = mock_monitor
+        mock_server.monitors = {agent_uuid: mock_monitor}
+
+        p = _common_patches(mock_server, agent_uuid=agent_uuid)
+        with _apply_patches(p):
+            from src.mcp_handlers.core import handle_process_agent_update
+            result = await handle_process_agent_update({
+                "response_text": "Incident: stale client resuming after archive.",
+                "response_mode": "full",
+            })
+            data = parse_result(result)
+
+        assert data["success"] is False
+        error_text = data["error"].lower()
+        # Either marker OR cooldown may be cited — both are correct.
+        assert "cannot be auto-resumed" in error_text
+        assert ("user requested" in error_text or "cooldown" in error_text)
+        assert data["context"]["status"] == "archived"
