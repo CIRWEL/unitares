@@ -5,11 +5,26 @@ Implements the knowledge graph interface using PostgreSQL with FTS (tsvector).
 This provides unified storage with the main database and better FTS than AGE.
 """
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from src.knowledge_graph import DiscoveryNode, ResponseTo
 from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
+
+_TIMESTAMP_COLUMNS = ("updated_at", "resolved_at")
+
+
+def _coerce_timestamp(value: Any) -> Any:
+    """Accept ISO-format strings for timestamp columns; pass datetimes through.
+
+    asyncpg binds ``timestamp with time zone`` strictly and rejects strings.
+    AGE callers serialize timestamps as ISO strings, so the PG backend
+    normalizes at the boundary.
+    """
+    if isinstance(value, str):
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return value
 
 
 class KnowledgeGraphPostgres:
@@ -119,6 +134,8 @@ class KnowledgeGraphPostgres:
         for key, value in updates.items():
             if key in ("status", "resolved_at", "updated_at", "severity", "type", "summary", "details"):
                 set_clauses.append(f"{key} = ${param_idx}")
+                if key in _TIMESTAMP_COLUMNS:
+                    value = _coerce_timestamp(value)
                 params.append(value)
                 param_idx += 1
             elif key == "tags":
