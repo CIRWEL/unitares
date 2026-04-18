@@ -333,13 +333,32 @@ async def handle_onboarding_and_resume(ctx: UpdateContext) -> Optional[Sequence[
                 except (ValueError, TypeError, AttributeError):
                     pass
 
+            # Cooldown guard: any archive within the cooldown window blocks
+            # auto-resume regardless of source. Catches the race where a stale
+            # client resurrects an agent seconds after it was archived.
+            # Incident: 2026-04-18 acd8a774 archived 01:29:33, resurrected 10s
+            # later via process_agent_update, circuit-broke 45min later.
+            from config.governance_config import ARCHIVE_RESUME_COOLDOWN_SECONDS
+            seconds_since_archive = (
+                days_since_archive * 86400 if days_since_archive is not None else None
+            )
+            in_cooldown = (
+                seconds_since_archive is not None
+                and seconds_since_archive < ARCHIVE_RESUME_COOLDOWN_SECONDS
+            )
+
             agent_notes = getattr(meta, 'notes', '') or ''
             explicitly_archived = bool(agent_notes and "user requested" in agent_notes.lower())
             too_old = days_since_archive is not None and days_since_archive > 2.0
             too_few_updates = (getattr(meta, 'total_updates', 0) or 0) < 2
 
-            if explicitly_archived or (too_old and too_few_updates):
+            if in_cooldown or explicitly_archived or (too_old and too_few_updates):
                 reasons = []
+                if in_cooldown:
+                    reasons.append(
+                        f"archived {seconds_since_archive:.0f}s ago "
+                        f"(cooldown window {ARCHIVE_RESUME_COOLDOWN_SECONDS}s)"
+                    )
                 if explicitly_archived:
                     reasons.append(f"explicitly archived: {agent_notes}")
                 if too_old:
