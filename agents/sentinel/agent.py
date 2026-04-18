@@ -53,7 +53,8 @@ from agents.common.findings import post_finding, compute_fingerprint
 # Paths & Config
 # ---------------------------------------------------------------------------
 
-SESSION_FILE = project_root / ".sentinel_session"
+SESSION_FILE = Path.home() / ".unitares" / "anchors" / "sentinel.json"
+LEGACY_SESSION_FILE = project_root / ".sentinel_session"
 STATE_FILE = project_root / ".sentinel_state"
 LOG_FILE = Path.home() / "Library" / "Logs" / "unitares-sentinel.log"
 MAX_LOG_LINES = 1000
@@ -419,6 +420,7 @@ class SentinelAgent(GovernanceAgent):
             name=label,
             mcp_url=mcp_url,
             session_file=SESSION_FILE,
+            legacy_session_file=LEGACY_SESSION_FILE,
             state_dir=STATE_FILE.parent,
             timeout=30.0,
         )
