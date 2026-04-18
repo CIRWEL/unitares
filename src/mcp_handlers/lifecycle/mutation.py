@@ -201,6 +201,16 @@ async def handle_archive_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
     reason = arguments.get("reason", "Manual archive")
     keep_in_memory = arguments.get("keep_in_memory", False)
 
+    # Stamp notes with the sticky-archive marker so phases.py auto-resume
+    # gate refuses to resurrect this identity on a later process_agent_update.
+    # Orphan-sweep archives go through a different code path and are
+    # intentionally NOT stamped — they remain non-sticky so legitimate
+    # residents falsely sweeped can recover.
+    existing_notes = (getattr(meta, "notes", "") or "").strip()
+    marker = f"user requested archive: {reason}"
+    if "user requested" not in existing_notes.lower():
+        meta.notes = f"{existing_notes}\n{marker}".strip() if existing_notes else marker
+
     # Persist-first: write to Postgres before mutating in-memory state
     from .helpers import _archive_one_agent
     monitors = None if keep_in_memory else mcp_server.monitors
