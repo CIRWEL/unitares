@@ -212,7 +212,6 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
     # Unified session key derivation via SessionSignals + derive_session_key()
     from ..context import get_session_signals
     from ..identity.handlers import derive_session_key
-    import os
 
     signals = get_session_signals()
     client_session_id = arguments.get("client_session_id")
@@ -258,75 +257,6 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
     # Invalidate cache on force_new
     if force_new and transport_key:
         invalidate_transport_binding(transport_key)
-
-    # -------------------------------------------------------------------------
-    # UNITARES_MIDDLEWARE_REQUIRE_BIND — identity-honesty follow-up (2026-04-17)
-    #
-    # Identity-honesty KG entry 3ea27c3a (resolved) left a follow-up open:
-    # "Middleware Ephemeral Identity (identity_step.py) still creates its own
-    # ephemerals outside the identity() handler path." The plugin's Part C
-    # took Claude Code out of the auto-onboard business, but the server's
-    # middleware still auto-creates an identity for any first-call-with-no-
-    # auth-signals fingerprint. That produced two visible ghosts tonight:
-    # 1. f319c7f4 after a governance restart wiped the sticky cache
-    # 2. (see ghost list) the "opus_hikewa_claude_ai_*" and dated auto-labels
-    #
-    # This check rejects calls that arrive without explicit auth when flag
-    # is set to "1", and logs-only when set to "log". Default "0" preserves
-    # current behavior — zero client impact until operator flips the flag.
-    #
-    # Identity tools (onboard / identity / bind_session) are always allowed
-    # through since they ARE how a caller establishes identity.
-    # -------------------------------------------------------------------------
-    _require_bind = (os.environ.get("UNITARES_MIDDLEWARE_REQUIRE_BIND", "0") or "0").lower()
-    _is_identity_tool = name in ("onboard", "identity", "bind_session")
-    _has_explicit_signal = bool(
-        (arguments and arguments.get("agent_uuid"))
-        or (arguments and arguments.get("continuity_token"))
-        or (arguments and arguments.get("client_session_id"))
-        or force_new
-        or (signals and (signals.x_agent_id or signals.x_session_id
-                         or signals.x_client_id or signals.oauth_client_id))
-    )
-    if (_require_bind in ("1", "log")
-        and not _is_identity_tool
-        and not _has_explicit_signal):
-        fingerprint = signals.ip_ua_fingerprint if signals else None
-        fp_snippet = (fingerprint[:12] + "...") if fingerprint else "unknown"
-        rejection_reason = (
-            f"Tool '{name}' called without explicit identity binding. "
-            f"No agent_uuid / continuity_token / client_session_id in arguments, "
-            f"no X-Agent-Id / X-Session-ID / X-Client-Id / OAuth-Client-Id header, "
-            f"and no sticky cache match for fingerprint {fp_snippet}."
-        )
-        if _require_bind == "log":
-            logger.warning(
-                f"[REQUIRE_BIND log-only] Would have rejected: {rejection_reason} "
-                f"— flag=log, continuing with auto-bind."
-            )
-        else:
-            logger.info(f"[REQUIRE_BIND reject] {rejection_reason}")
-            from ..utils import error_response
-            return [error_response(
-                "Identity binding required",
-                details={
-                    "error_type": "identity_binding_required",
-                    "tool": name,
-                    "reason": rejection_reason,
-                },
-                recovery={
-                    "action": (
-                        "Invoke `identity(agent_uuid=X, resume=true)` to resume a known identity, "
-                        "or `onboard(purpose=...)` to create a new one, before calling other tools."
-                    ),
-                    "related_tools": ["identity", "onboard", "bind_session"],
-                    "note": (
-                        "UNITARES_MIDDLEWARE_REQUIRE_BIND=1 requires explicit identity "
-                        "declaration. Auto-bind-from-fingerprint is disabled for this "
-                        "deployment."
-                    ),
-                }
-            )]
 
     session_key = await derive_session_key(signals, arguments)
 
