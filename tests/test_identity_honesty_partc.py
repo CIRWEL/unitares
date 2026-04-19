@@ -228,3 +228,46 @@ class TestMiddlewarePath0Gate:
             if "[IDENTITY_STRICT]" in r.getMessage()
         ]
         assert strict_warnings, "Log mode must surface warning"
+
+
+class TestFallback2Gate:
+    """agent_auth.require_agent_id FALLBACK 2 (auto_<ts>_<uuid8>) must gate."""
+
+    def test_strict_mode_rejects_auto_generation(self, monkeypatch):
+        """In strict mode, no agent_id + no session binding → error, no ghost."""
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "strict")
+        from src.mcp_handlers.support.agent_auth import require_agent_id
+
+        args: dict = {}
+        with patch(
+            "src.mcp_handlers.context.get_context_agent_id",
+            return_value=None,
+        ):
+            agent_id, error = require_agent_id(args)
+
+        assert agent_id is None
+        assert error is not None
+        assert "onboard" in error.lower() or "identity" in error.lower()
+        assert "agent_id" not in args or not (args.get("agent_id") or "").startswith("auto_")
+
+    def test_log_mode_warns_but_generates(self, monkeypatch, caplog):
+        """In log mode, the ghost still gets created but the warning surfaces."""
+        import logging
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "log")
+        caplog.set_level(logging.WARNING)
+        from src.mcp_handlers.support.agent_auth import require_agent_id
+
+        args: dict = {}
+        with patch(
+            "src.mcp_handlers.context.get_context_agent_id",
+            return_value=None,
+        ):
+            agent_id, error = require_agent_id(args)
+
+        assert error is None
+        assert agent_id is not None and agent_id.startswith("auto_")
+        strict_warnings = [
+            r for r in caplog.records
+            if "[IDENTITY_STRICT]" in r.getMessage()
+        ]
+        assert strict_warnings, "Log mode must surface the FALLBACK 2 ghost creation"

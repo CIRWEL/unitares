@@ -212,7 +212,24 @@ def require_agent_id(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextConte
             pass
 
     # FALLBACK 2: Auto-generate if still missing
+    # Identity Honesty Part C: this handler-layer generator was the second
+    # ghost-creation path the #32 middleware flag missed. Gated on the same
+    # env flag as PATH 0. See config.governance_config.identity_strict_mode.
     if not agent_id:
+        from config.governance_config import identity_strict_mode
+        _partc_mode = identity_strict_mode()
+        if _partc_mode == "strict":
+            return None, (
+                "No agent_id provided and no session-bound identity. "
+                "Call onboard() to create a new identity or "
+                "identity(agent_uuid=X, continuity_token=Y, resume=true) to resume."
+            )
+        elif _partc_mode == "log":
+            logger.warning(
+                "[IDENTITY_STRICT] Would reject handler FALLBACK 2 "
+                "auto-generation. Caller has no agent_id and no session binding."
+            )
+
         import uuid
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         short_uuid = str(uuid.uuid4())[:8]
