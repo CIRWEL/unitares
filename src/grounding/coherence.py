@@ -19,11 +19,14 @@ def compute_coherence(ctx: Any, metrics: Dict[str, Any]) -> GroundedValue:
         except NotImplementedError:
             pass
 
+    agent_class = getattr(ctx, "agent_class", None) or "default"
+
     try:
         return _compute_manifold(
             E=float(metrics["E"]),
             I=float(metrics["I"]),
             S=float(metrics["S"]),
+            agent_class=agent_class,
         )
     except (KeyError, TypeError, ValueError):
         pass
@@ -38,9 +41,13 @@ def _compute_kl(q_now: list, q_ref: list) -> GroundedValue:
     )
 
 
-def _compute_manifold(E: float, I: float, S: float) -> GroundedValue:
-    """Manifold distance from healthy (E,I,S) baseline."""
-    from config.governance_config import BASIN_HIGH, DELTA_NORM_MAX
+def _compute_manifold(E: float, I: float, S: float, agent_class: str = "default") -> GroundedValue:
+    """Manifold distance from healthy (E,I,S) baseline.
+
+    Uses class-conditional ||Δ||_max if the class has a measured value;
+    otherwise falls back to the fleet-wide default.
+    """
+    from config.governance_config import BASIN_HIGH, get_delta_norm_max
 
     healthy_E = BASIN_HIGH.E_min
     healthy_I = BASIN_HIGH.I_min
@@ -50,7 +57,7 @@ def _compute_manifold(E: float, I: float, S: float) -> GroundedValue:
     dy = I - healthy_I
     dz = S - healthy_S
     norm = math.sqrt(dx * dx + dy * dy + dz * dz)
-    ratio = norm / DELTA_NORM_MAX.value
+    ratio = norm / get_delta_norm_max(agent_class).value
     val = 1.0 - max(0.0, min(1.0, ratio))
     return GroundedValue(value=val, source="manifold")
 

@@ -82,6 +82,49 @@ async def test_enrichment_does_not_touch_v():
 
 
 @pytest.mark.asyncio
+async def test_enrichment_records_agent_class():
+    """Agent class is classified and surfaced on the metrics block."""
+    from types import SimpleNamespace
+    ctx = UpdateContext()
+    ctx.meta = SimpleNamespace(label="Lumen", tags=["embodied", "persistent"])
+    ctx.result = {"metrics": {"E": 0.6, "I": 0.7, "S": 0.3, "V": -0.1, "coherence": 0.72}}
+    ctx.response_data = {}
+
+    await enrich_grounding(ctx)
+
+    # Class is set on ctx and surfaced on metrics
+    assert ctx.agent_class == "Lumen"
+    assert ctx.result["metrics"]["agent_class"] == "Lumen"
+
+
+@pytest.mark.asyncio
+async def test_enrichment_classifies_unrecognized_as_default():
+    from types import SimpleNamespace
+    ctx = UpdateContext()
+    ctx.meta = SimpleNamespace(label="some_session_agent", tags=[])
+    ctx.result = {"metrics": {"E": 0.5, "I": 0.5, "S": 0.5, "coherence": 0.6}}
+    ctx.response_data = {}
+
+    await enrich_grounding(ctx)
+
+    assert ctx.agent_class == "default"
+    assert ctx.result["metrics"]["agent_class"] == "default"
+
+
+@pytest.mark.asyncio
+async def test_enrichment_handles_missing_meta():
+    """Enrichment must not crash when ctx has no meta attribute set."""
+    ctx = UpdateContext()
+    # ctx.meta defaults to None
+    ctx.result = {"metrics": {"E": 0.5, "I": 0.5, "S": 0.5, "coherence": 0.6}}
+    ctx.response_data = {}
+
+    await enrich_grounding(ctx)
+
+    assert ctx.agent_class == "default"
+
+
+@pytest.mark.asyncio
 async def test_enrichment_idempotent_on_double_run():
     """Running twice must not chain the swap — *_legacy stays the original legacy."""
     ctx = UpdateContext()

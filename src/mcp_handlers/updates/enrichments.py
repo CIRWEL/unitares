@@ -1558,11 +1558,16 @@ from src.grounding.entropy import compute_entropy
 from src.grounding.mutual_info import compute_mutual_info
 from src.grounding.free_energy import compute_free_energy
 from src.grounding.coherence import compute_coherence
+from src.grounding.class_indicator import classify_agent
 
 
 @enrichment(order=75)
 async def enrich_grounding(ctx: UpdateContext) -> None:
-    """Swap grounded E/I/S/coherence into canonical metrics slots."""
+    """Swap grounded E/I/S/coherence into canonical metrics slots.
+
+    Class-conditional: classifies the agent first, sets ctx.agent_class so
+    compute functions can look up per-class scale constants.
+    """
     result = ctx.result or {}
     metrics = result.get("metrics")
     if not isinstance(metrics, dict):
@@ -1570,6 +1575,9 @@ async def enrich_grounding(ctx: UpdateContext) -> None:
 
     if "E_legacy" in metrics:
         return  # idempotent
+
+    # Classify the agent so compute_* can use class-conditional constants.
+    ctx.agent_class = classify_agent(getattr(ctx, "meta", None))
 
     try:
         e = compute_free_energy(ctx, metrics)
@@ -1593,3 +1601,7 @@ async def enrich_grounding(ctx: UpdateContext) -> None:
     metrics["i_source"] = i.source
     metrics["s_source"] = s.source
     metrics["coherence_source"] = c.source
+
+    # Surface the calibration class so audit/broadcast can see what
+    # class-conditional constants were applied to this check-in.
+    metrics["agent_class"] = ctx.agent_class

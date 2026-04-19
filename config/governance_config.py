@@ -784,3 +784,46 @@ DELTA_NORM_MAX = ScaleConstant(
 )
 
 ALL_SCALE_CONSTANTS = [S_SCALE, I_SCALE, E_SCALE, DELTA_NORM_MAX]
+
+
+# =================================================================
+# Class-Conditional Scale Maps — paper §7
+# =================================================================
+# Each *_BY_CLASS dict is keyed on calibration class names returned by
+# src.grounding.class_indicator.classify_agent. Phase 2 calibration populates
+# these dicts with measured per-class values; Phase 1 ships them empty so
+# every agent falls back to the fleet-wide *_DEFAULT below (the existing
+# placeholder values, kept under their original names for back-compat).
+
+S_SCALE_DEFAULT = S_SCALE
+I_SCALE_DEFAULT = I_SCALE
+E_SCALE_DEFAULT = E_SCALE
+DELTA_NORM_MAX_DEFAULT = DELTA_NORM_MAX
+
+# Per-class scale constants. Keys: class names from classify_agent
+# (e.g., "Lumen", "Vigil", "embodied", "resident_persistent", "ephemeral").
+# Phase 2 measurement script populates these with provenance="measured".
+S_SCALE_BY_CLASS: Dict[str, ScaleConstant] = {}
+I_SCALE_BY_CLASS: Dict[str, ScaleConstant] = {}
+E_SCALE_BY_CLASS: Dict[str, ScaleConstant] = {}
+DELTA_NORM_MAX_BY_CLASS: Dict[str, ScaleConstant] = {}
+
+
+def get_s_scale(agent_class: str = "default") -> ScaleConstant:
+    """Return class-conditional S_SCALE; fall back to fleet-wide default."""
+    return S_SCALE_BY_CLASS.get(agent_class, S_SCALE_DEFAULT)
+
+
+def get_i_scale(agent_class: str = "default") -> ScaleConstant:
+    """Return class-conditional I_SCALE; fall back to fleet-wide default."""
+    return I_SCALE_BY_CLASS.get(agent_class, I_SCALE_DEFAULT)
+
+
+def get_e_scale(agent_class: str = "default") -> ScaleConstant:
+    """Return class-conditional E_SCALE; fall back to fleet-wide default."""
+    return E_SCALE_BY_CLASS.get(agent_class, E_SCALE_DEFAULT)
+
+
+def get_delta_norm_max(agent_class: str = "default") -> ScaleConstant:
+    """Return class-conditional manifold radius; fall back to fleet-wide default."""
+    return DELTA_NORM_MAX_BY_CLASS.get(agent_class, DELTA_NORM_MAX_DEFAULT)
