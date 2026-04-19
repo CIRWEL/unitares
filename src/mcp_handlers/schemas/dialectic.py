@@ -12,12 +12,22 @@ class RequestDialecticReviewParams(AgentIdentityMixin):
 
 class GetDialecticSessionParams(AgentIdentityMixin):
     """
-    View historical dialectic sessions
+    View a dialectic session
     """
     session_id: Optional[str] = Field(
         default=None,
         description="ID of specific session to retrieve"
     )
+    check_timeout: Union[bool, str, None] = Field(
+        default=False,
+        description="Check reviewer/session timeouts and auto-facilitation state"
+    )
+
+    @model_validator(mode='after')
+    def coerce_types(self):
+        if isinstance(self.check_timeout, str):
+            self.check_timeout = self.check_timeout.lower() in ('true', '1', 'yes')
+        return self
 
 class ListDialecticSessionsParams(AgentIdentityMixin):
     """
@@ -68,6 +78,20 @@ class SubmitAntithesisParams(AgentIdentityMixin):
     observed_metrics: dict = Field(..., description="Metrics observed about paused agent")
     concerns: List[str] = Field(..., description="List of concerns")
     reasoning: Optional[str] = Field(default=None, description="Natural language explanation")
+    take_over_if_requested: Union[bool, str, None] = Field(
+        default=False,
+        description="If true, let the bound reviewer candidate take over reviewer ownership before submitting"
+    )
+    takeover_reason: Optional[str] = Field(
+        default=None,
+        description="Why reviewer ownership is being taken over for this antithesis submission"
+    )
+
+    @model_validator(mode='after')
+    def coerce_types(self):
+        if isinstance(self.take_over_if_requested, str):
+            self.take_over_if_requested = self.take_over_if_requested.lower() in ('true', '1', 'yes')
+        return self
 
 class SubmitSynthesisParams(AgentIdentityMixin):
     """
@@ -114,6 +138,7 @@ class DialecticParams(AgentIdentityMixin):
     status: Optional[str] = Field(None, description="Filter by phase (for action=list)")
     limit: Optional[int] = Field(None, description="Max sessions to return (for action=list, default 50)")
     include_transcript: Optional[bool] = Field(None, description="Include full transcript (for action=list, default false)")
+    check_timeout: Optional[bool] = Field(None, description="Check reviewer/session timeouts for action=get")
     # Write action fields
     issue_description: Optional[str] = Field(None, description="Issue description (for action=request)")
     root_cause: Optional[str] = Field(None, description="Root cause analysis (for action=thesis/synthesis)")
@@ -121,6 +146,8 @@ class DialecticParams(AgentIdentityMixin):
     reasoning: Optional[str] = Field(None, description="Explanation/reasoning")
     observed_metrics: Optional[dict] = Field(None, description="Observed metrics (for action=antithesis)")
     concerns: Optional[List[str]] = Field(None, description="Concerns (for action=antithesis)")
+    take_over_if_requested: Optional[bool] = Field(None, description="Let the current bound agent take reviewer ownership before antithesis")
+    takeover_reason: Optional[str] = Field(None, description="Reason for reviewer takeover during antithesis")
     agrees: Union[bool, str, None] = Field(None, description="Agreement flag (for action=synthesis)")
     vote: Optional[str] = Field(None, description="Vote: resume, block, or cooldown (for action=vote)")
     conditions: Optional[List[str]] = Field(None, description="Conditions (for action=vote)")

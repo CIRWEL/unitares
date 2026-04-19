@@ -26,7 +26,7 @@ def session_not_found_recovery() -> Dict[str, Any]:
 
 
 def get_session_timeout_recovery(timeout_reason: str) -> Dict[str, Any]:
-    """Recovery payload for timed-out historical sessions."""
+    """Recovery payload for timed-out dialectic sessions."""
     return {
         "action": "Session timed out - automatic resolution",
         "what_happened": timeout_reason,
@@ -36,7 +36,7 @@ def get_session_timeout_recovery(timeout_reason: str) -> Dict[str, Any]:
             "3. Leave a note about what happened with leave_note",
         ],
         "related_tools": ["get_governance_metrics", "self_recovery", "leave_note"],
-        "note": "Historical session - dialectic is now archived",
+        "note": "Session is no longer active. Inspect the transcript and current state before retrying.",
     }
 
 
@@ -53,18 +53,26 @@ def get_reviewer_stuck_recovery(reviewer_agent_id: str | None) -> Dict[str, Any]
             "3. Leave a note about what happened with leave_note",
         ],
         "related_tools": ["get_governance_metrics", "self_recovery", "leave_note"],
-        "note": "Historical session - dialectic is now archived",
+        "note": "The session is no longer active. Start a new review only if the issue still stands.",
     }
 
 
-def get_reviewer_reassigned_recovery(old_reviewer_id: str | None, new_reviewer_id: str) -> Dict[str, Any]:
+def get_reviewer_reassigned_recovery(
+    old_reviewer_id: str | None,
+    new_reviewer_id: str,
+    *,
+    reason: str | None = None,
+) -> Dict[str, Any]:
     """Recovery payload after successful reviewer reassignment."""
+    if old_reviewer_id:
+        happened = f"Reviewer changed from '{old_reviewer_id}' to '{new_reviewer_id}'."
+    else:
+        happened = f"Reviewer '{new_reviewer_id}' assigned."
+    if reason:
+        happened = f"{happened} Reason: {reason}"
     return {
         "action": "Reviewer reassigned - session continues",
-        "what_happened": (
-            f"Previous reviewer '{old_reviewer_id}' was unresponsive. "
-            f"New reviewer '{new_reviewer_id}' assigned."
-        ),
+        "what_happened": happened,
         "next_steps": [
             f"New reviewer '{new_reviewer_id}' should submit antithesis",
             "Session phase and transcript are preserved",
@@ -81,11 +89,11 @@ def get_awaiting_facilitation_recovery(session_id: str) -> Dict[str, Any]:
             "Reviewer went stale and no eligible replacement agent is available for auto-assignment."
         ),
         "what_you_can_do": [
-            f"1. Use dialectic(action='reassign_reviewer', session_id='{session_id}', new_reviewer_id='<agent_id>') to assign a reviewer manually",
+            f"1. Use dialectic(action='reassign', session_id='{session_id}', new_reviewer_id='<agent_id>') to assign a reviewer manually",
             "2. Use list_agents to find available agents",
-            "3. Or start a new Claude Code session and have it claim via submit_antithesis",
+            "3. Or let your bound session answer directly with dialectic(action='antithesis', session_id='...', reasoning='...', take_over_if_requested=true)",
         ],
-        "related_tools": ["dialectic", "list_agents", "get_dialectic_session"],
+        "related_tools": ["dialectic", "list_agents", "get_dialectic_session", "identity"],
         "note": "Session is paused, not failed. It will auto-fail after 4 hours total if no reviewer is assigned.",
     }
 
@@ -99,20 +107,20 @@ def get_agent_not_found_recovery() -> Dict[str, Any]:
 
 
 def no_sessions_found_recovery() -> Dict[str, Any]:
-    """Recovery payload when an agent has no historical sessions."""
+    """Recovery payload when an agent has no dialectic sessions."""
     return {
-        "action": "No historical sessions. This tool views past dialectic sessions (now archived).",
+        "action": "No dialectic sessions found for that agent.",
         "related_tools": ["get_governance_metrics", "search_knowledge_graph"],
-        "note": "For current state, use get_governance_metrics. For recovery, use self_recovery(action='quick').",
+        "note": "Use get_governance_metrics for live state and request_dialectic_review only when a review is actually needed.",
     }
 
 
 def missing_session_or_agent_recovery() -> Dict[str, Any]:
     """Recovery payload when neither session_id nor agent_id is provided."""
     return {
-        "action": "Provide session_id or agent_id to view historical dialectic sessions",
+        "action": "Provide session_id or agent_id to inspect a dialectic session",
         "related_tools": ["list_agents", "get_governance_metrics"],
-        "note": "This tool views archived dialectic sessions. For current state, use get_governance_metrics.",
+        "note": "Use get_governance_metrics for live state when you are not targeting a dialectic session.",
     }
 
 
@@ -167,7 +175,9 @@ def llm_incomplete_recovery(partial_result: Dict[str, Any]) -> Dict[str, Any]:
 
 def next_step_submit_antithesis(reviewer_agent_id: str | None) -> str:
     """Next-step guidance after successful thesis submission."""
-    return f"Reviewer '{reviewer_agent_id}' should submit antithesis"
+    if reviewer_agent_id:
+        return f"Reviewer '{reviewer_agent_id}' should submit antithesis"
+    return "An eligible reviewer should claim the session by submitting antithesis"
 
 
 def next_step_negotiate_synthesis() -> str:

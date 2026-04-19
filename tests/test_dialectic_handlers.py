@@ -701,6 +701,8 @@ class TestHandleSubmitAntithesis:
 
         data = parse_result(result)
         assert data["success"] is False
+        assert "assigned reviewer" in data.get("error", "").lower()
+        assert "take_over_if_requested" not in data.get("recovery", {}).get("workflow", "")
 
     @pytest.mark.asyncio
     async def test_antithesis_rejects_agent_id_override_when_session_bound(
@@ -776,6 +778,37 @@ class TestHandleSubmitAntithesis:
         data = parse_result(result)
         assert data["success"] is True
         assert session.session_id in ACTIVE_SESSIONS
+
+    @pytest.mark.asyncio
+    async def test_antithesis_takeover_reassigns_and_submits(
+        self, mock_server, mock_pg_add_message, mock_pg_update_phase,
+        mock_save_session, mock_pg_update_reviewer,
+    ):
+        """Bound operator can take over reviewer ownership and answer in one call."""
+        from src.mcp_handlers.dialectic.handlers import handle_submit_antithesis
+
+        session = _make_session(phase=DialecticPhase.ANTITHESIS)
+
+        with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock, return_value=session), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value="agent-active"), \
+             mock_pg_add_message as add_message, mock_pg_update_phase, mock_save_session, mock_pg_update_reviewer:
+            result = await handle_submit_antithesis({
+                "session_id": session.session_id,
+                "agent_id": "agent-active",
+                "observed_metrics": {"risk_score": 0.65},
+                "concerns": ["Need a conserved control signal"],
+                "reasoning": "Verdict semantics should stay uniform.",
+                "take_over_if_requested": True,
+                "takeover_reason": "Operator requested this bound Codex session to answer directly.",
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["reviewer_takeover"]["old_reviewer_id"] == "agent-reviewer"
+        assert data["reviewer_takeover"]["new_reviewer_id"] == "agent-active"
+        assert data.get("reviewer_auto_assigned") is not True
+        assert session.reviewer_agent_id == "agent-active"
+        assert add_message.await_count == 2
 
 
 # ============================================================================
@@ -1200,13 +1233,14 @@ class TestHandleGetDialecticSession:
 
         fast_dict = {
             "session_id": "fast-session",
-            "phase": "resolved",
-            "paused_agent_id": "a1",
+            "phase": "antithesis",
+            "paused_agent_id": "agent-paused",
+            "reviewer_agent_id": "agent-reviewer",
         }
 
         with patch(f"{DIALECTIC}.load_session_as_dict", new_callable=AsyncMock,
                    return_value=fast_dict), \
-             mock_context_agent:
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value="agent-reviewer"):
             result = await handle_get_dialectic_session({
                 "session_id": "fast-session",
                 "check_timeout": False,
@@ -1215,6 +1249,33 @@ class TestHandleGetDialecticSession:
         data = parse_result(result)
         assert data["success"] is True
         assert data["session_id"] == "fast-session"
+        assert data["required_role"] == "reviewer"
+        assert data["required_agent_id"] == "agent-reviewer"
+        assert data["current_agent_can_submit"] is True
+
+    @pytest.mark.asyncio
+    async def test_fast_path_actionability_surfaces_takeover_hint(self, mock_server):
+        """Session view should explain when a different bound agent can take over antithesis."""
+        from src.mcp_handlers.dialectic.handlers import handle_get_dialectic_session
+
+        fast_dict = {
+            "session_id": "fast-session",
+            "phase": "antithesis",
+            "paused_agent_id": "agent-paused",
+            "reviewer_agent_id": "agent-reviewer",
+        }
+
+        with patch(f"{DIALECTIC}.load_session_as_dict", new_callable=AsyncMock,
+                   return_value=fast_dict), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value="agent-active"):
+            result = await handle_get_dialectic_session({
+                "session_id": "fast-session",
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["current_agent_can_submit"] is False
+        assert "take_over_if_requested" in data["recommended_action"]
 
     @pytest.mark.asyncio
     async def test_session_timed_out(

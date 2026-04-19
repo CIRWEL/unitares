@@ -29,7 +29,7 @@ from src.dialectic_protocol import (
 )
 from ..utils import success_response, error_response, require_registered_agent
 from ..decorators import mcp_tool
-from ..support.coerce import resolve_agent_uuid
+from ..support.coerce import coerce_bool, resolve_agent_uuid
 from .auth import resolve_dialectic_agent_id
 from .responses import (
     default_cooldown_steps,
@@ -176,6 +176,214 @@ async def check_reviewer_stuck(session: DialecticSession) -> bool:
         return wait_time > stuck_threshold
     except (ValueError, TypeError, AttributeError):
         return False  # Can't determine — don't kill the session
+
+
+def _meta_value(meta: Any, key: str, default: Any = None) -> Any:
+    """Read a field from metadata regardless of object-vs-dict representation."""
+    if meta is None:
+        return default
+    if isinstance(meta, dict):
+        return meta.get(key, default)
+    return getattr(meta, key, default)
+
+
+def _agent_label(agent_id: Optional[str]) -> Optional[str]:
+    """Best-effort friendly label for an agent UUID."""
+    if not agent_id:
+        return None
+    meta = getattr(mcp_server, "agent_metadata", {}).get(agent_id)
+    for key in ("label", "public_agent_id", "structured_id", "agent_id"):
+        value = _meta_value(meta, key)
+        if value:
+            return str(value)
+    return None
+
+
+def _agent_status(agent_id: Optional[str]) -> Optional[str]:
+    """Best-effort live status for an agent UUID."""
+    if not agent_id:
+        return None
+    meta = getattr(mcp_server, "agent_metadata", {}).get(agent_id)
+    status = _meta_value(meta, "status")
+    return str(status) if status else None
+
+
+def _agent_display(agent_id: Optional[str]) -> str:
+    """Human-readable agent reference."""
+    if not agent_id:
+        return "unassigned"
+    return _agent_label(agent_id) or agent_id
+
+
+def _build_dialectic_actionability(session_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Annotate a session payload with concrete next-action metadata."""
+    paused_agent_id = session_data.get("paused_agent_id")
+    reviewer_agent_id = session_data.get("reviewer_agent_id") or session_data.get("reviewer")
+    phase = str(session_data.get("phase") or "").lower()
+
+    try:
+        from ..context import get_context_agent_id
+        current_agent_id = get_context_agent_id()
+    except Exception:
+        current_agent_id = None
+
+    current_agent_role = None
+    if current_agent_id:
+        if current_agent_id == paused_agent_id:
+            current_agent_role = "paused_agent"
+        elif reviewer_agent_id and current_agent_id == reviewer_agent_id:
+            current_agent_role = "reviewer"
+        else:
+            current_agent_role = "observer"
+
+    allowed_agent_ids: List[str] = []
+    required_role = "observer"
+    required_agent_id = None
+    required_agent_label = None
+    recommended_action = "Inspect the session transcript."
+
+    if phase == "thesis":
+        required_role = "paused_agent"
+        required_agent_id = paused_agent_id
+        required_agent_label = _agent_label(paused_agent_id)
+        allowed_agent_ids = [paused_agent_id] if paused_agent_id else []
+        recommended_action = (
+            f"Paused agent '{_agent_display(paused_agent_id)}' should submit thesis."
+        )
+    elif phase == "antithesis":
+        required_role = "reviewer"
+        required_agent_id = reviewer_agent_id
+        required_agent_label = _agent_label(reviewer_agent_id)
+        if reviewer_agent_id:
+            allowed_agent_ids = [reviewer_agent_id]
+            recommended_action = (
+                f"Reviewer '{_agent_display(reviewer_agent_id)}' should submit antithesis."
+            )
+            if current_agent_id and current_agent_id not in {paused_agent_id, reviewer_agent_id}:
+                recommended_action += (
+                    " If the operator wants this bound agent to answer instead, retry antithesis with "
+                    "`take_over_if_requested=true` or use `dialectic(action='reassign')`."
+                )
+        else:
+            if current_agent_id and current_agent_id != paused_agent_id:
+                allowed_agent_ids = [current_agent_id]
+            recommended_action = (
+                "Any eligible reviewer may claim this session by submitting antithesis."
+            )
+    elif phase == "synthesis":
+        required_role = "participant"
+        required_agent_id = None
+        required_agent_label = None
+        allowed_agent_ids = [
+            agent_id for agent_id in [paused_agent_id, reviewer_agent_id] if agent_id
+        ]
+        recommended_action = (
+            "Paused agent and reviewer should negotiate via submit_synthesis() until convergence."
+        )
+    elif phase in {"resolved", "failed", "escalated", "quorum_voting"}:
+        required_role = "none"
+        recommended_action = (
+            "No direct write step is pending. Review the transcript or follow the recorded resolution."
+        )
+
+    current_agent_can_submit: Optional[bool]
+    if current_agent_id is None:
+        current_agent_can_submit = None
+    elif phase == "antithesis" and reviewer_agent_id is None:
+        current_agent_can_submit = current_agent_id != paused_agent_id
+    else:
+        current_agent_can_submit = current_agent_id in allowed_agent_ids
+
+    return {
+        "paused_agent_label": _agent_label(paused_agent_id),
+        "reviewer_label": _agent_label(reviewer_agent_id),
+        "reviewer_status": _agent_status(reviewer_agent_id),
+        "required_role": required_role,
+        "required_agent_id": required_agent_id,
+        "required_agent_label": required_agent_label,
+        "allowed_agent_ids": allowed_agent_ids,
+        "current_agent_id": current_agent_id,
+        "current_agent_role": current_agent_role,
+        "current_agent_can_submit": current_agent_can_submit,
+        "recommended_action": recommended_action,
+    }
+
+
+async def _validate_explicit_reviewer_candidate(
+    session: DialecticSession,
+    candidate_id: str,
+) -> Optional[Sequence[TextContent]]:
+    """Validate a concrete reviewer assignment target."""
+    await mcp_server.load_metadata_async(force=True)
+    candidate_meta = mcp_server.agent_metadata.get(candidate_id)
+    if not candidate_meta:
+        return [error_response(
+            f"Agent '{candidate_id}' not found in metadata",
+            recovery=get_agent_not_found_recovery(),
+        )]
+
+    status = _meta_value(candidate_meta, "status")
+    if status == "paused":
+        return [error_response(
+            f"Agent '{candidate_id}' is paused and cannot review",
+            error_code="REVIEWER_PAUSED",
+            error_category="validation_error",
+        )]
+
+    if candidate_id == session.paused_agent_id:
+        return [error_response(
+            "Cannot assign paused agent as its own reviewer (use reviewer_mode='self' for self-review)",
+            error_code="SELF_REVIEW",
+            error_category="validation_error",
+        )]
+
+    return None
+
+
+async def _apply_reviewer_reassignment(
+    session_id: str,
+    session: DialecticSession,
+    new_reviewer_id: str,
+    *,
+    reason: str,
+    strict_persistence: bool = False,
+) -> Dict[str, Any]:
+    """Update the reviewer assignment in memory and persistence layers."""
+    old_reviewer_id = session.reviewer_agent_id
+    session.reviewer_agent_id = new_reviewer_id
+    session.awaiting_facilitation = False
+
+    reasoning = (
+        f"Reviewer reassigned: {old_reviewer_id or 'unassigned'} -> {new_reviewer_id}. "
+        f"Reason: {reason}"
+    )
+    reassign_msg = DialecticMessage(
+        phase=session.phase.value,
+        agent_id="system",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        reasoning=reasoning,
+    )
+    session.transcript.append(reassign_msg)
+
+    try:
+        await pg_update_reviewer(session_id, new_reviewer_id)
+        await pg_add_message(
+            session_id=session_id,
+            agent_id="system",
+            message_type="system",
+            reasoning=reasoning,
+        )
+    except Exception as e:
+        logger.error(f"Failed to persist reviewer reassignment: {e}")
+        if strict_persistence:
+            raise
+
+    return {
+        "old_reviewer_id": old_reviewer_id,
+        "new_reviewer_id": new_reviewer_id,
+        "reason": reason,
+        "reasoning": reasoning,
+    }
 
 @mcp_tool("request_dialectic_review", timeout=60.0, register=True)
 async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence[TextContent]:
@@ -398,18 +606,14 @@ async def handle_request_dialectic_review(arguments: Dict[str, Any]) -> Sequence
 @mcp_tool("get_dialectic_session", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
-    View historical dialectic sessions (archive).
-
-    Dialectic protocol is now archived - this tool views past sessions only.
-    For current state, use get_governance_metrics.
-    For recovery, use self_recovery(action='quick').
+    View an active or past dialectic session.
 
     Args:
         session_id: Dialectic session ID (optional if agent_id provided)
         agent_id: Agent ID to find sessions for (optional if session_id provided)
 
     Returns:
-        Historical session state including transcript
+        Session state including transcript and next-action guidance
     """
     try:
         session_id = arguments.get('session_id')
@@ -423,6 +627,7 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                 fast_result = await load_session_as_dict(session_id)
                 if fast_result:
                     fast_result["success"] = True
+                    fast_result.update(_build_dialectic_actionability(fast_result))
                     return success_response(fast_result)
 
             # PG-first, fallback to in-memory cache
@@ -456,23 +661,12 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                         new_reviewer = None
 
                     if new_reviewer:
-                        # Reassign and continue
-                        session.reviewer_agent_id = new_reviewer
-                        session.awaiting_facilitation = False
-                        reassign_msg = DialecticMessage(
-                            phase=session.phase.value,
-                            agent_id="system",
-                            timestamp=datetime.now(timezone.utc).isoformat(),
-                            reasoning=f"Reviewer auto-reassigned: {old_reviewer} -> {new_reviewer} (previous reviewer stuck)",
-                        )
-                        session.transcript.append(reassign_msg)
                         try:
-                            await pg_update_reviewer(session_id, new_reviewer)
-                            await pg_add_message(
-                                session_id=session_id,
-                                agent_id="system",
-                                message_type="system",
-                                reasoning=f"Reviewer auto-reassigned: {old_reviewer} -> {new_reviewer} (previous reviewer stuck)",
+                            await _apply_reviewer_reassignment(
+                                session_id,
+                                session,
+                                new_reviewer,
+                                reason="Previous reviewer did not respond within the antithesis timeout.",
                             )
                         except Exception as e:
                             logger.error(f"Failed to persist reviewer reassignment: {e}")
@@ -481,7 +675,12 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
                         result["success"] = True
                         result["reviewer_reassigned"] = True
                         result["old_reviewer_id"] = old_reviewer
-                        result["recovery"] = get_reviewer_reassigned_recovery(old_reviewer, new_reviewer)
+                        result["recovery"] = get_reviewer_reassigned_recovery(
+                            old_reviewer,
+                            new_reviewer,
+                            reason="Previous reviewer did not respond within the antithesis timeout.",
+                        )
+                        result.update(_build_dialectic_actionability(result))
                         return success_response(result)
 
                     # No replacement found — mark awaiting facilitation (not FAILED yet)
@@ -543,6 +742,7 @@ async def handle_get_dialectic_session(arguments: Dict[str, Any]) -> Sequence[Te
 
             result = session.to_dict()
             result["success"] = True
+            result.update(_build_dialectic_actionability(result))
             return success_response(result)
         
         # If agent_id provided, find all sessions for this agent
@@ -603,8 +803,8 @@ async def handle_list_dialectic_sessions(arguments: Dict[str, Any]) -> Sequence[
     """
     List all dialectic sessions with optional filtering.
 
-    Allows agents to browse historical dialectic sessions to learn from past
-    negotiations and recoveries. Returns summaries by default for efficiency.
+    Allows agents to browse active and past dialectic sessions. Returns
+    summaries by default for efficiency.
 
     Args:
         agent_id: Filter by agent (either requestor or reviewer) - optional
@@ -767,6 +967,10 @@ async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextCo
     try:
         session_id = arguments.get('session_id')
         api_key = arguments.get('api_key', '')
+        take_over_if_requested = coerce_bool(arguments.get("take_over_if_requested"), default=False)
+        takeover_reason = arguments.get("takeover_reason") or (
+            "Operator-requested reviewer takeover during antithesis submission"
+        )
 
         if not session_id:
             return [error_response(
@@ -792,6 +996,46 @@ async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextCo
                     f"Session '{session_id}' not found",
                     recovery=session_not_found_recovery(),
                 )]
+
+        original_reviewer_id = session.reviewer_agent_id
+        reviewer_takeover = None
+
+        if session.reviewer_agent_id and agent_id != session.reviewer_agent_id:
+            if not take_over_if_requested:
+                workflow = (
+                    "Wait for the assigned reviewer to answer, or use "
+                    "dialectic(action='reassign', session_id='...', new_reviewer_id='...')."
+                )
+                if agent_id != session.paused_agent_id:
+                    workflow = (
+                        "Retry with take_over_if_requested=true from your bound session, "
+                        "or use dialectic(action='reassign', session_id='...', new_reviewer_id='...')."
+                    )
+                return [error_response(
+                    "Only the assigned reviewer can submit antithesis for this session.",
+                    recovery={
+                        "action": "Use the assigned reviewer or explicitly take over reviewer ownership",
+                        "assigned_reviewer_id": session.reviewer_agent_id,
+                        "assigned_reviewer_label": _agent_label(session.reviewer_agent_id),
+                        "related_tools": ["get_dialectic_session", "dialectic", "identity"],
+                        "workflow": workflow,
+                    },
+                )]
+
+            validation_error = await _validate_explicit_reviewer_candidate(session, agent_id)
+            if validation_error:
+                return validation_error
+
+            try:
+                reviewer_takeover = await _apply_reviewer_reassignment(
+                    session_id,
+                    session,
+                    agent_id,
+                    reason=takeover_reason,
+                    strict_persistence=True,
+                )
+            except Exception as e:
+                return [error_response(f"Reviewer takeover failed during persistence: {e}")]
 
         # First-responder eligibility: if no reviewer assigned, validate the
         # submitter before the protocol auto-assigns them as reviewer.
@@ -829,13 +1073,15 @@ async def handle_submit_antithesis(arguments: Dict[str, Any]) -> Sequence[TextCo
             result["next_step"] = next_step_negotiate_synthesis()
 
             # If reviewer was auto-assigned (first-responder pattern), persist to PG
-            if result.get("reviewer_auto_assigned") or session.reviewer_agent_id == agent_id:
+            if original_reviewer_id is None and session.reviewer_agent_id == agent_id:
                 try:
                     await pg_update_reviewer(session_id, agent_id)
                     result["reviewer_auto_assigned"] = True
                     logger.info(f"Reviewer auto-assigned: {agent_id[:8]}... for session {session_id[:8]}...")
                 except Exception as e:
                     logger.warning(f"Could not persist reviewer assignment to PostgreSQL: {e}")
+            elif reviewer_takeover:
+                result["reviewer_takeover"] = reviewer_takeover
 
             # Persist to PostgreSQL
             try:
@@ -1110,28 +1356,9 @@ async def handle_reassign_reviewer(arguments: Dict[str, Any]) -> Sequence[TextCo
 
     if new_reviewer_id:
         # Validate the new reviewer exists and is eligible
-        await mcp_server.load_metadata_async(force=True)
-        new_meta = mcp_server.agent_metadata.get(new_reviewer_id)
-        if not new_meta:
-            return [error_response(
-                f"Agent '{new_reviewer_id}' not found in metadata",
-                recovery=get_agent_not_found_recovery(),
-            )]
-
-        status = getattr(new_meta, 'status', None) or (new_meta.get('status') if isinstance(new_meta, dict) else None)
-        if status == "paused":
-            return [error_response(
-                f"Agent '{new_reviewer_id}' is paused and cannot review",
-                error_code="REVIEWER_PAUSED",
-                error_category="validation_error",
-            )]
-
-        if new_reviewer_id == session.paused_agent_id:
-            return [error_response(
-                "Cannot assign paused agent as its own reviewer (use reviewer_mode='self' for self-review)",
-                error_code="SELF_REVIEW",
-                error_category="validation_error",
-            )]
+        validation_error = await _validate_explicit_reviewer_candidate(session, new_reviewer_id)
+        if validation_error:
+            return validation_error
     else:
         # Auto-select a replacement
         await mcp_server.load_metadata_async(force=True)
@@ -1156,27 +1383,13 @@ async def handle_reassign_reviewer(arguments: Dict[str, Any]) -> Sequence[TextCo
                 recovery=get_awaiting_facilitation_recovery(session_id),
             )]
 
-    # Perform reassignment
-    session.reviewer_agent_id = new_reviewer_id
-    session.awaiting_facilitation = False
-
-    # Add transcript message
-    reassign_msg = DialecticMessage(
-        phase=session.phase.value,
-        agent_id="system",
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        reasoning=f"Reviewer reassigned: {old_reviewer_id} -> {new_reviewer_id}. Reason: {reason}",
-    )
-    session.transcript.append(reassign_msg)
-
-    # Persist to PostgreSQL
     try:
-        await pg_update_reviewer(session_id, new_reviewer_id)
-        await pg_add_message(
-            session_id=session_id,
-            agent_id="system",
-            message_type="system",
-            reasoning=f"Reviewer reassigned: {old_reviewer_id} -> {new_reviewer_id}. Reason: {reason}",
+        await _apply_reviewer_reassignment(
+            session_id,
+            session,
+            new_reviewer_id,
+            reason=reason,
+            strict_persistence=True,
         )
     except Exception as e:
         logger.error(f"Failed to persist reviewer reassignment: {e}")
@@ -1195,7 +1408,11 @@ async def handle_reassign_reviewer(arguments: Dict[str, Any]) -> Sequence[TextCo
         "new_reviewer_id": new_reviewer_id,
         "phase": session.phase.value,
         "reason": reason,
-        "recovery": get_reviewer_reassigned_recovery(old_reviewer_id, new_reviewer_id),
+        "recovery": get_reviewer_reassigned_recovery(
+            old_reviewer_id,
+            new_reviewer_id,
+            reason=reason,
+        ),
     })
 
 

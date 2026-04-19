@@ -90,6 +90,8 @@ async def test_reassign_reviewer_manual():
     assert result["new_reviewer_id"] == "agent-new"
     assert result["old_reviewer_id"] == "agent-reviewer"
     assert session.reviewer_agent_id == "agent-new"
+    assert "unresponsive" not in result["recovery"]["what_happened"].lower()
+    assert "previous reviewer ended session" in result["recovery"]["what_happened"].lower()
     mock_update.assert_called_once_with(session.session_id, "agent-new")
 
 
@@ -207,6 +209,7 @@ async def test_reassign_reviewer_no_candidates():
 
     assert result.get("success") is not True
     assert "recovery" in result or "facilitation" in str(result).lower()
+    assert "action='reassign'" in " ".join(result.get("recovery", {}).get("what_you_can_do", []))
 
 
 @pytest.mark.asyncio
