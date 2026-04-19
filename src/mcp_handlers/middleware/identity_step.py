@@ -295,6 +295,45 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
     # is set correctly. This prevents ghost creation for resident agents.
     _direct_uuid = arguments.get("agent_uuid") if arguments else None
     if _direct_uuid and name in ("identity", "onboard"):
+        # Identity Honesty Part C: require matching continuity_token.
+        # Matches the handler-layer gate in identity/handlers.py PATH 0.
+        _partc_token_aid = None
+        _partc_token = arguments.get("continuity_token") if arguments else None
+        if _partc_token:
+            try:
+                from ..identity.session import extract_token_agent_uuid
+                _partc_token_aid = extract_token_agent_uuid(str(_partc_token))
+            except Exception:
+                _partc_token_aid = None
+        _partc_owned = _partc_token_aid == _direct_uuid
+
+        if not _partc_owned:
+            from config.governance_config import identity_strict_mode
+            _partc_mode = identity_strict_mode()
+            if _partc_mode == "strict":
+                ctx.strict_reject = True
+                ctx.identity_result = {
+                    "error": (
+                        "Bare agent_uuid passthrough denied. Include "
+                        "continuity_token or use force_new=true."
+                    ),
+                    "reason": "bare_uuid_resume_denied",
+                    "agent_uuid": _direct_uuid,
+                }
+                logger.warning(
+                    "[IDENTITY_STRICT] Middleware rejected PATH 0 passthrough: "
+                    "agent_uuid=%s... without matching token",
+                    _direct_uuid[:8],
+                )
+                return name, arguments, ctx
+            elif _partc_mode == "log":
+                logger.warning(
+                    "[IDENTITY_STRICT] Would reject middleware PATH 0 passthrough: "
+                    "agent_uuid=%s... token_aid=%s",
+                    _direct_uuid[:8],
+                    (_partc_token_aid[:8] + "...") if _partc_token_aid else "none",
+                )
+
         from ..context import set_session_context
         client_hint = arguments.get("client_hint") if arguments else None
         context_token = set_session_context(

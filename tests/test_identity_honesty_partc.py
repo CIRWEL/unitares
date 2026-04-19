@@ -147,3 +147,84 @@ class TestPath0RequiresOwnershipProof:
 
         data = json.loads(result[0].text)
         assert data.get("success") is True, f"Matching token must pass strict. Got: {data}"
+
+
+class TestMiddlewarePath0Gate:
+    """Middleware PATH 0 passthrough must enforce the same ownership proof."""
+
+    @pytest.mark.asyncio
+    async def test_middleware_strict_rejects_bare_uuid(self, monkeypatch):
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "strict")
+        from src.mcp_handlers.middleware.identity_step import resolve_identity
+
+        signals = MagicMock(
+            transport="http",
+            user_agent="claude-test",
+            ip_ua_fingerprint="ua:deadbe",
+            x_session_id=None,
+            x_agent_id=None,
+            mcp_session_id=None,
+            oauth_client_id=None,
+            x_client_id=None,
+            client_hint=None,
+        )
+        with patch(
+            "src.mcp_handlers.context.get_session_signals",
+            return_value=signals,
+        ):
+            ctx = MagicMock()
+            ctx.strict_reject = False
+            ctx.identity_result = None
+            name, args, ret_ctx = await resolve_identity(
+                "identity",
+                {
+                    "agent_uuid": "44444444-5555-6666-7777-888888888888",
+                    "resume": True,
+                },
+                ctx,
+            )
+
+        assert ret_ctx.strict_reject is True, (
+            f"Middleware should set strict_reject in strict mode. ctx={ret_ctx!r}"
+        )
+        assert ret_ctx.identity_result.get("reason") == "bare_uuid_resume_denied"
+
+    @pytest.mark.asyncio
+    async def test_middleware_log_mode_passes_through(self, monkeypatch, caplog):
+        import logging
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "log")
+        caplog.set_level(logging.WARNING)
+        from src.mcp_handlers.middleware.identity_step import resolve_identity
+
+        signals = MagicMock(
+            transport="http",
+            user_agent="claude-test",
+            ip_ua_fingerprint="ua:deadbe",
+            x_session_id=None,
+            x_agent_id=None,
+            mcp_session_id=None,
+            oauth_client_id=None,
+            x_client_id=None,
+            client_hint=None,
+        )
+        with patch(
+            "src.mcp_handlers.context.get_session_signals",
+            return_value=signals,
+        ):
+            ctx = MagicMock()
+            ctx.strict_reject = False
+            await resolve_identity(
+                "identity",
+                {
+                    "agent_uuid": "55555555-6666-7777-8888-999999999999",
+                    "resume": True,
+                },
+                ctx,
+            )
+
+        assert ctx.strict_reject is False, "Log mode must not reject"
+        strict_warnings = [
+            r for r in caplog.records
+            if "[IDENTITY_STRICT]" in r.getMessage()
+        ]
+        assert strict_warnings, "Log mode must surface warning"
