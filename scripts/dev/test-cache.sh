@@ -31,11 +31,55 @@ done
 TREE_HASH=$(git ls-files -- 'src/*.py' 'tests/*.py' 'agents/*.py' | sort | xargs cat | shasum -a 256 | cut -d' ' -f1)
 CACHE_FILE="$CACHE_DIR/$TREE_HASH"
 
-# --- cache hit ---
+# --- cache hit (fast path, no lock) ---
 if [[ "$FRESH" == false && -f "$CACHE_FILE" ]]; then
     AGE_SECS=$(( $(date +%s) - $(stat -f %m "$CACHE_FILE") ))
     AGE_MIN=$(( AGE_SECS / 60 ))
     echo "[test-cache] HIT — tree $TREE_HASH (cached ${AGE_MIN}m ago)"
+    cat "$CACHE_FILE"
+    exit 0
+fi
+
+# --- acquire cross-invocation lock before running pytest ---
+#
+# Without this, two concurrent test-cache.sh callers (pre-commit hook
+# firing while an agent's auto-test hook has already started a run, or
+# two agents hitting the script from different sessions) both enter the
+# miss path and spawn parallel pytests that hammer Postgres/Redis and
+# leave ghost/zombie children. macOS has no native flock(1); use atomic
+# mkdir as the lock primitive and record the holder PID so stale locks
+# from killed holders can be reclaimed.
+LOCK_DIR="/tmp/unitares-test-cache.lock"
+LOCK_HOLDER="$LOCK_DIR/holder.pid"
+LOCK_WAIT_MAX=600   # seconds
+LOCK_WAITED=0
+while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    HOLDER_PID="$(cat "$LOCK_HOLDER" 2>/dev/null || echo "")"
+    if [[ -n "$HOLDER_PID" ]] && ! kill -0 "$HOLDER_PID" 2>/dev/null; then
+        echo "[test-cache] reclaiming stale lock from dead pid $HOLDER_PID"
+        rm -rf "$LOCK_DIR"
+        continue
+    fi
+    if [[ "$LOCK_WAITED" -eq 0 ]]; then
+        echo "[test-cache] waiting for pytest lock (held by pid ${HOLDER_PID:-?})..."
+    fi
+    sleep 2
+    LOCK_WAITED=$(( LOCK_WAITED + 2 ))
+    if [[ "$LOCK_WAITED" -ge "$LOCK_WAIT_MAX" ]]; then
+        echo "[test-cache] gave up waiting for lock after ${LOCK_WAIT_MAX}s — exiting 3" >&2
+        exit 3
+    fi
+done
+echo "$$" > "$LOCK_HOLDER"
+trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
+
+# --- double-check cache now that we hold the lock ---
+# The holder ahead of us may have just populated the cache for this
+# tree hash; skip pytest if so.
+if [[ "$FRESH" == false && -f "$CACHE_FILE" ]]; then
+    AGE_SECS=$(( $(date +%s) - $(stat -f %m "$CACHE_FILE") ))
+    AGE_MIN=$(( AGE_SECS / 60 ))
+    echo "[test-cache] HIT (post-lock) — tree $TREE_HASH (cached ${AGE_MIN}m ago)"
     cat "$CACHE_FILE"
     exit 0
 fi
