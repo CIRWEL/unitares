@@ -53,8 +53,12 @@ class OnboardParams(AgentIdentityMixin):
         description="Client hint string"
     )
     resume: Union[bool, str, None] = Field(
-        default=False,
-        description="Explicitly resume existing identity"
+        default=True,
+        description=(
+            "Resume existing identity (default True — onboard is a "
+            "resume-preferred entry point). Pass resume=false for a new "
+            "identity with predecessor link, or force_new=true for a clean break."
+        )
     )
     force_new: Union[bool, str, None] = Field(
         default=False,
