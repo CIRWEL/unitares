@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -51,11 +52,23 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Atomic write with mode 0600.
+
+    This file carries continuity tokens. A world-readable cache lets any
+    same-UID process impersonate the cached identity against the
+    governance API. Inlined here rather than imported from unitares_sdk
+    because this helper is intentionally dependency-free (shared by thin
+    plugin clients that don't pull in the SDK).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        os.write(fd, data)
+        os.fchmod(fd, 0o600)
+    finally:
+        os.close(fd)
+    os.replace(tmp, str(path))
 
 
 def _load_payload(args: argparse.Namespace) -> dict[str, Any]:
