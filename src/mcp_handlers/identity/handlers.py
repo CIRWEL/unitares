@@ -417,6 +417,46 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     # Skips all session/name resolution — just verify the UUID exists and is active.
     _direct_uuid = arguments.get("agent_uuid")
     if _direct_uuid and resume:
+        # Identity Honesty Part C: PATH 0 must prove UUID ownership.
+        # Bare agent_uuid without a matching signed continuity_token would
+        # let any caller resurrect any known UUID — effectively making UUIDs
+        # lookup keys in disguise (invariant #4 violation). Require a token
+        # whose `aid` claim matches the requested UUID.
+        _partc_token_aid = None
+        if arguments.get("continuity_token"):
+            _partc_token_aid = extract_token_agent_uuid(str(arguments["continuity_token"]))
+        _partc_owned = _partc_token_aid == _direct_uuid
+
+        if not _partc_owned:
+            from config.governance_config import identity_strict_mode
+            _partc_mode = identity_strict_mode()
+            if _partc_mode == "strict":
+                return error_response(
+                    (
+                        "Bare agent_uuid resume is not permitted. Include "
+                        "continuity_token (bound to this UUID) or call "
+                        "identity(force_new=true) / onboard() to create a new identity."
+                    ),
+                    recovery={
+                        "reason": "bare_uuid_resume_denied",
+                        "agent_uuid": _direct_uuid,
+                        "hint": (
+                            "Resident agents should load continuity_token from their "
+                            "anchor file and pass it on every identity() call."
+                        ),
+                    },
+                )
+            elif _partc_mode == "log":
+                logger.warning(
+                    "[IDENTITY_STRICT] Would reject PATH 0: agent_uuid=%s... without "
+                    "matching continuity_token (token_aid=%s). Caller would fork a "
+                    "session bound to a UUID it has not proven it owns. Upgrade caller "
+                    "to pass continuity_token.",
+                    _direct_uuid[:8],
+                    (_partc_token_aid[:8] + "...") if _partc_token_aid else "none",
+                )
+            # mode == "off": unchanged behavior, no log
+
         # PATH 0 FAST: if the UUID has a live in-process monitor, trust it
         # and skip DB verification entirely. Anyio-deadlock-safe (no awaits).
         # Rationale: monitors are loaded at startup for all persisted agents,
