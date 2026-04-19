@@ -42,16 +42,15 @@ def _compute_kl(q_now: list, q_ref: list) -> GroundedValue:
 
 
 def _compute_manifold(E: float, I: float, S: float, agent_class: str = "default") -> GroundedValue:
-    """Manifold distance from healthy (E,I,S) baseline.
+    """Manifold distance from class-conditional healthy operating point.
 
-    Uses class-conditional ||Δ||_max if the class has a measured value;
-    otherwise falls back to the fleet-wide default.
+    Uses both class-conditional ||Δ||_max and class-conditional healthy
+    operating point if the class has measured values; otherwise falls back
+    to fleet-wide defaults.
     """
-    from config.governance_config import BASIN_HIGH, get_delta_norm_max
+    from config.governance_config import get_delta_norm_max, get_healthy_operating_point
 
-    healthy_E = BASIN_HIGH.E_min
-    healthy_I = BASIN_HIGH.I_min
-    healthy_S = 0.0
+    healthy_E, healthy_I, healthy_S = get_healthy_operating_point(agent_class)
 
     dx = E - healthy_E
     dy = I - healthy_I

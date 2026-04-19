@@ -40,11 +40,51 @@ def test_scale_constants_are_finite_floats():
         assert sc.value > 0
 
 
-def test_placeholder_provenance_flagged_loudly():
-    """Phase 1 ships all placeholders — this test flips when Phase 2 measures land."""
+def test_fleet_defaults_remain_placeholder():
+    """Fleet-wide ALL_SCALE_CONSTANTS are placeholders (fallback only).
+
+    Class-conditional constants in DELTA_NORM_MAX_BY_CLASS carry the
+    measured values; fleet defaults exist only as a fallback for
+    unclassified agents.
+    """
     placeholders = [sc for sc in ALL_SCALE_CONSTANTS if sc.provenance == "placeholder"]
     assert len(placeholders) == len(ALL_SCALE_CONSTANTS)
 
 
-def test_delta_norm_max_covers_full_state_space_diagonal():
+def test_class_conditional_delta_norm_max_is_measured():
+    """Phase 2 measurement populated DELTA_NORM_MAX_BY_CLASS with measured values."""
+    from config.governance_config import DELTA_NORM_MAX_BY_CLASS
+    assert len(DELTA_NORM_MAX_BY_CLASS) >= 5  # Lumen, default, Sentinel, Vigil, Watcher
+    for cls_name, sc in DELTA_NORM_MAX_BY_CLASS.items():
+        assert sc.provenance == "measured", (
+            f"class-conditional {cls_name} should be measured, got {sc.provenance}"
+        )
+        assert sc.corpus_size > 0
+        assert sc.percentile == 95
+
+
+def test_class_conditional_lookup_falls_back_for_unknown_classes():
+    """Unknown class falls back to fleet-wide DELTA_NORM_MAX_DEFAULT."""
+    from config.governance_config import (
+        get_delta_norm_max, DELTA_NORM_MAX_DEFAULT,
+    )
+    assert get_delta_norm_max("nonexistent_class") is DELTA_NORM_MAX_DEFAULT
+    assert get_delta_norm_max("Lumen").provenance == "measured"
+
+
+def test_healthy_operating_point_class_conditional():
+    """Per-class healthy points exist for measured classes; default for others."""
+    from config.governance_config import (
+        get_healthy_operating_point, HEALTHY_OPERATING_POINT_DEFAULT,
+    )
+    lumen_hop = get_healthy_operating_point("Lumen")
+    assert lumen_hop != HEALTHY_OPERATING_POINT_DEFAULT
+    assert all(0.0 <= v <= 1.0 for v in lumen_hop)
+
+    unknown_hop = get_healthy_operating_point("nonexistent")
+    assert unknown_hop == HEALTHY_OPERATING_POINT_DEFAULT
+
+
+def test_delta_norm_max_default_covers_full_state_space_diagonal():
+    """Fleet-wide default must allow full diagonal so unclassified agents can hit C=0."""
     assert DELTA_NORM_MAX.value >= math.sqrt(3) - 0.01

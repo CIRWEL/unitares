@@ -802,11 +802,63 @@ DELTA_NORM_MAX_DEFAULT = DELTA_NORM_MAX
 
 # Per-class scale constants. Keys: class names from classify_agent
 # (e.g., "Lumen", "Vigil", "embodied", "resident_persistent", "ephemeral").
-# Phase 2 measurement script populates these with provenance="measured".
+# Populated by scripts/calibrate_class_conditional.py against the
+# production agent_state corpus.
 S_SCALE_BY_CLASS: Dict[str, ScaleConstant] = {}
 I_SCALE_BY_CLASS: Dict[str, ScaleConstant] = {}
 E_SCALE_BY_CLASS: Dict[str, ScaleConstant] = {}
-DELTA_NORM_MAX_BY_CLASS: Dict[str, ScaleConstant] = {}
+
+# Manifold radius — the 95th percentile of state-space distance from each
+# class's own healthy operating point. Measured 2026-04-18 on a 30-day
+# healthy-regime slice of core.agent_state. Per-class envelopes differ by
+# 3.3× (Lumen 0.12 vs Watcher 0.40), confirming the homogenization
+# failure mode of paper §2.
+DELTA_NORM_MAX_BY_CLASS: Dict[str, ScaleConstant] = {
+    "Lumen": ScaleConstant(
+        name="DELTA_NORM_MAX[Lumen]", value=0.1187, measured_on="2026-04-18",
+        corpus_size=7320, percentile=95, provenance="measured",
+        notes="Class-conditional manifold radius from healthy slice."),
+    "default": ScaleConstant(
+        name="DELTA_NORM_MAX[default]", value=0.2018, measured_on="2026-04-18",
+        corpus_size=2033, percentile=95, provenance="measured",
+        notes="Class-conditional manifold radius from healthy slice."),
+    "Sentinel": ScaleConstant(
+        name="DELTA_NORM_MAX[Sentinel]", value=0.1702, measured_on="2026-04-18",
+        corpus_size=1870, percentile=95, provenance="measured",
+        notes="Class-conditional manifold radius from healthy slice."),
+    "Vigil": ScaleConstant(
+        name="DELTA_NORM_MAX[Vigil]", value=0.1705, measured_on="2026-04-18",
+        corpus_size=384, percentile=95, provenance="measured",
+        notes="Class-conditional manifold radius from healthy slice."),
+    "Watcher": ScaleConstant(
+        name="DELTA_NORM_MAX[Watcher]", value=0.3948, measured_on="2026-04-18",
+        corpus_size=283, percentile=95, provenance="measured",
+        notes="Class-conditional manifold radius from healthy slice."),
+}
+
+# Healthy operating points per class — median (E, I, S) on healthy-regime
+# slice. Used by _compute_manifold as the class-conditional baseline that
+# replaces the fleet-wide BASIN_HIGH corner.
+HEALTHY_OPERATING_POINT_BY_CLASS: Dict[str, Tuple[float, float, float]] = {
+    "Lumen":    (0.7454, 0.8001, 0.1678),   # N=7320
+    "default":  (0.7264, 0.7934, 0.2364),   # N=2033
+    "Sentinel": (0.7506, 0.7981, 0.1934),   # N=1870
+    "Vigil":    (0.7371, 0.7896, 0.2404),   # N=384
+    "Watcher":  (0.7482, 0.7686, 0.2477),   # N=283
+}
+
+# Default healthy operating point (fleet fallback for unclassified agents).
+# Used by _compute_manifold when class has no measured value.
+HEALTHY_OPERATING_POINT_DEFAULT: Tuple[float, float, float] = (
+    BASIN_HIGH.E_min, BASIN_HIGH.I_min, 0.0
+)
+
+
+def get_healthy_operating_point(agent_class: str = "default") -> Tuple[float, float, float]:
+    """Return class-conditional healthy (E, I, S); fall back to fleet default."""
+    return HEALTHY_OPERATING_POINT_BY_CLASS.get(
+        agent_class, HEALTHY_OPERATING_POINT_DEFAULT
+    )
 
 
 def get_s_scale(agent_class: str = "default") -> ScaleConstant:
