@@ -89,6 +89,16 @@ def extract_token_agent_uuid(token: str) -> Optional[str]:
     Unlike resolve_continuity_token, this does NOT check expiry — an expired
     token still proves identity. Used for direct agent lookup when session
     bindings have expired but the agent still exists.
+
+    Rationale (PR #42 Part C): a resident whose process has been idle 30+ days
+    should still be able to resume with their stale token, since re-onboarding
+    would fork identity and lose continuity. Signature verification alone is
+    sufficient proof of ownership for this path — freshness is not required.
+
+    If a future caller needs true freshness, add a separate
+    `verify_token_fresh(token)` rather than tightening this function. Callers
+    that rely on resume-after-long-idle will regress silently if `exp` starts
+    being enforced here.
     """
     if not token or not isinstance(token, str):
         return None
