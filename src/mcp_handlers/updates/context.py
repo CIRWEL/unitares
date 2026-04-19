@@ -57,6 +57,9 @@ class UpdateContext:
     # ── Response accumulator (Phase 6) ─────────────────────────────
     response_data: Dict[str, Any] = field(default_factory=dict)
 
+    # ── Class-conditional grounding ────────────────────────────────
+    agent_class: Optional[str] = None  # set by enrich_grounding via classify_agent
+
     # ── Cached computations ────────────────────────────────────────
     _cal_error: Optional[float] = None
     _cal_error_ready: bool = False

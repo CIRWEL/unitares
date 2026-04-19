@@ -699,3 +699,183 @@ assert GovernanceConfig.RISK_APPROVE_THRESHOLD < GovernanceConfig.RISK_REVISE_TH
     f"< REVISE({GovernanceConfig.RISK_REVISE_THRESHOLD}) "
     f"< REJECT({GovernanceConfig.RISK_REJECT_THRESHOLD}) must hold"
 )
+
+
+# =================================================================
+# Grounding Scale Constants — spec §3.4
+# =================================================================
+# Every normalization constant used by src/grounding/ modules ships with
+# measurement provenance. Phase 1 ships placeholders; Phase 2 replaces with
+# values measured on a reference corpus per the protocol in spec §3.4.
+#
+# IMPORTANT — heterogeneity, not homogeneity. These are placeholder fleet-wide
+# values for Phase 1 scaffolding ONLY. A homogenized fleet is the wrong target:
+# embodied creatures, cron-driven janitors, streaming observers, and ephemeral
+# parsers do not share a healthy operating point or a tempo. Phase 2 calibration
+# must produce class-conditional constants keyed on existing identity tags
+# (embodied / autonomous / persistent / ephemeral) and labels (Lumen / Vigil /
+# Sentinel / Watcher / Steward). The fleet-wide constant remains as the default
+# for unclassified agents — a safe fallback, not the production target.
+# See paper §3.4 (Heterogeneity as a First-Class Constraint).
+
+@dataclass(frozen=True)
+class ScaleConstant:
+    """A scale/normalization constant with measurement provenance.
+
+    provenance is one of:
+      - "placeholder": initial guess, Phase 1; must be replaced before production
+      - "measured":    measured on a named reference corpus per spec §3.4
+      - "derived":     derived analytically from other quantities
+    """
+    name: str
+    value: float
+    measured_on: str          # ISO date (YYYY-MM-DD) when set; Phase 1 = plan date
+    corpus_size: int          # agent-turn count when measured; 0 for placeholder
+    percentile: Optional[int] # 90, 95, 99, etc.; None for non-percentile-derived
+    provenance: str           # "placeholder" | "measured" | "derived"
+    notes: str = ""
+
+    def __post_init__(self) -> None:
+        if self.provenance not in {"placeholder", "measured", "derived"}:
+            raise ValueError(f"unknown provenance {self.provenance!r}")
+        if self.value <= 0:
+            raise ValueError(f"scale constant {self.name} must be positive")
+
+
+# Phase 1 placeholders — replace with measured values after §3.4 protocol runs.
+S_SCALE = ScaleConstant(
+    name="S_SCALE",
+    value=3.0,
+    measured_on="2026-04-18",
+    corpus_size=0,
+    percentile=None,
+    provenance="placeholder",
+    notes="Phase 1 placeholder. Spec §3.1 S: 90th-percentile S_raw on healthy corpus.",
+)
+
+I_SCALE = ScaleConstant(
+    name="I_SCALE",
+    value=2.0,
+    measured_on="2026-04-18",
+    corpus_size=0,
+    percentile=None,
+    provenance="placeholder",
+    notes="Phase 1 placeholder. Spec §3.1 I: empirical MI upper envelope on held-out set.",
+)
+
+E_SCALE = ScaleConstant(
+    name="E_SCALE",
+    value=1.0,
+    measured_on="2026-04-18",
+    corpus_size=0,
+    percentile=None,
+    provenance="placeholder",
+    notes="Phase 1 placeholder. FEP form only; resource form uses TOKENS_PER_SECOND_MAX.",
+)
+
+DELTA_NORM_MAX = ScaleConstant(
+    name="DELTA_NORM_MAX",
+    value=1.8,  # just above sqrt(3) so full-diagonal deviation hits coherence=0
+    measured_on="2026-04-18",
+    corpus_size=0,
+    percentile=None,
+    provenance="placeholder",
+    notes="Phase 1 placeholder. Spec §3.4: 95th pct of observed ||Δ|| from healthy median.",
+)
+
+ALL_SCALE_CONSTANTS = [S_SCALE, I_SCALE, E_SCALE, DELTA_NORM_MAX]
+
+
+# =================================================================
+# Class-Conditional Scale Maps — paper §7
+# =================================================================
+# Each *_BY_CLASS dict is keyed on calibration class names returned by
+# src.grounding.class_indicator.classify_agent. Phase 2 calibration populates
+# these dicts with measured per-class values; Phase 1 ships them empty so
+# every agent falls back to the fleet-wide *_DEFAULT below (the existing
+# placeholder values, kept under their original names for back-compat).
+
+S_SCALE_DEFAULT = S_SCALE
+I_SCALE_DEFAULT = I_SCALE
+E_SCALE_DEFAULT = E_SCALE
+DELTA_NORM_MAX_DEFAULT = DELTA_NORM_MAX
+
+# Per-class scale constants. Keys: class names from classify_agent
+# (e.g., "Lumen", "Vigil", "embodied", "resident_persistent", "ephemeral").
+# Populated by scripts/calibrate_class_conditional.py against the
+# production agent_state corpus.
+S_SCALE_BY_CLASS: Dict[str, ScaleConstant] = {}
+I_SCALE_BY_CLASS: Dict[str, ScaleConstant] = {}
+E_SCALE_BY_CLASS: Dict[str, ScaleConstant] = {}
+
+# Manifold radius — the 95th percentile of state-space distance from each
+# class's own healthy operating point. Measured 2026-04-18 on a 30-day
+# healthy-regime slice of core.agent_state. Per-class envelopes differ by
+# 3.3× (Lumen 0.12 vs Watcher 0.40), confirming the homogenization
+# failure mode of paper §2.
+DELTA_NORM_MAX_BY_CLASS: Dict[str, ScaleConstant] = {
+    "Lumen": ScaleConstant(
+        name="DELTA_NORM_MAX[Lumen]", value=0.1187, measured_on="2026-04-18",
+        corpus_size=7320, percentile=95, provenance="measured",
+        notes="Class-conditional manifold radius from healthy slice."),
+    "default": ScaleConstant(
+        name="DELTA_NORM_MAX[default]", value=0.2018, measured_on="2026-04-18",
+        corpus_size=2033, percentile=95, provenance="measured",
+        notes="Class-conditional manifold radius from healthy slice."),
+    "Sentinel": ScaleConstant(
+        name="DELTA_NORM_MAX[Sentinel]", value=0.1702, measured_on="2026-04-18",
+        corpus_size=1870, percentile=95, provenance="measured",
+        notes="Class-conditional manifold radius from healthy slice."),
+    "Vigil": ScaleConstant(
+        name="DELTA_NORM_MAX[Vigil]", value=0.1705, measured_on="2026-04-18",
+        corpus_size=384, percentile=95, provenance="measured",
+        notes="Class-conditional manifold radius from healthy slice."),
+    "Watcher": ScaleConstant(
+        name="DELTA_NORM_MAX[Watcher]", value=0.3948, measured_on="2026-04-18",
+        corpus_size=283, percentile=95, provenance="measured",
+        notes="Class-conditional manifold radius from healthy slice."),
+}
+
+# Healthy operating points per class — median (E, I, S) on healthy-regime
+# slice. Used by _compute_manifold as the class-conditional baseline that
+# replaces the fleet-wide BASIN_HIGH corner.
+HEALTHY_OPERATING_POINT_BY_CLASS: Dict[str, Tuple[float, float, float]] = {
+    "Lumen":    (0.7454, 0.8001, 0.1678),   # N=7320
+    "default":  (0.7264, 0.7934, 0.2364),   # N=2033
+    "Sentinel": (0.7506, 0.7981, 0.1934),   # N=1870
+    "Vigil":    (0.7371, 0.7896, 0.2404),   # N=384
+    "Watcher":  (0.7482, 0.7686, 0.2477),   # N=283
+}
+
+# Default healthy operating point (fleet fallback for unclassified agents).
+# Used by _compute_manifold when class has no measured value.
+HEALTHY_OPERATING_POINT_DEFAULT: Tuple[float, float, float] = (
+    BASIN_HIGH.E_min, BASIN_HIGH.I_min, 0.0
+)
+
+
+def get_healthy_operating_point(agent_class: str = "default") -> Tuple[float, float, float]:
+    """Return class-conditional healthy (E, I, S); fall back to fleet default."""
+    return HEALTHY_OPERATING_POINT_BY_CLASS.get(
+        agent_class, HEALTHY_OPERATING_POINT_DEFAULT
+    )
+
+
+def get_s_scale(agent_class: str = "default") -> ScaleConstant:
+    """Return class-conditional S_SCALE; fall back to fleet-wide default."""
+    return S_SCALE_BY_CLASS.get(agent_class, S_SCALE_DEFAULT)
+
+
+def get_i_scale(agent_class: str = "default") -> ScaleConstant:
+    """Return class-conditional I_SCALE; fall back to fleet-wide default."""
+    return I_SCALE_BY_CLASS.get(agent_class, I_SCALE_DEFAULT)
+
+
+def get_e_scale(agent_class: str = "default") -> ScaleConstant:
+    """Return class-conditional E_SCALE; fall back to fleet-wide default."""
+    return E_SCALE_BY_CLASS.get(agent_class, E_SCALE_DEFAULT)
+
+
+def get_delta_norm_max(agent_class: str = "default") -> ScaleConstant:
+    """Return class-conditional manifold radius; fall back to fleet-wide default."""
+    return DELTA_NORM_MAX_BY_CLASS.get(agent_class, DELTA_NORM_MAX_DEFAULT)
