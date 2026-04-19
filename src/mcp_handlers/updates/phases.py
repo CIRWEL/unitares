@@ -390,8 +390,10 @@ def transform_inputs(ctx: UpdateContext) -> Optional[Sequence[TextContent]]:
 
     Returns an early-exit error response (None if successful).
     """
-    # Response Text
-    ctx.response_text = ctx.arguments.get("response_text", "")
+    # Response Text — Pydantic schema defines Optional[str] with default None,
+    # so the key is always present (possibly as None). Coerce None → "" so
+    # downstream string ops (re.findall, .lower(), slicing) stay safe.
+    ctx.response_text = ctx.arguments.get("response_text") or ""
 
     # Complexity (coerce to float — Pydantic schema accepts str|float|None)
     raw_complexity = ctx.arguments.get("complexity", 0.5)
