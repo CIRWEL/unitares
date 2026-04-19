@@ -62,7 +62,7 @@ async def resolve_dialectic_agent_id(
             from ..utils import verify_agent_ownership
 
             bound_uuid = get_context_agent_id()
-            if bound_uuid and not verify_agent_ownership(provided, arguments, allow_operator=True):
+            if bound_uuid and not verify_agent_ownership(provided, arguments):
                 return None, [error_response(
                     "agent_id override is not allowed for this call. Use your bound identity.",
                     error_code="AUTH_REQUIRED",

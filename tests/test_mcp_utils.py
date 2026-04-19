@@ -683,20 +683,20 @@ class TestVerifyAgentOwnership:
 
     @patch("src.mcp_handlers.shared.get_mcp_server")
     @patch("src.mcp_handlers.context.get_context_agent_id", return_value="op")
-    def test_operator_cross(self, mc, ms):
+    def test_operator_label_no_longer_grants_access(self, mc, ms):
+        """Caller-claimed label='operator' must not grant cross-agent access.
+
+        The former allow_operator branch read self-claimed label/tag strings,
+        which any agent could set at onboard to self-promote. Removed; ACL
+        primitives that grant cross-agent access must be server-verified.
+        """
         ms.return_value = _mock_server({"op": _meta(label="Operator")})
-        assert verify_agent_ownership("other", {}, allow_operator=True) is True
+        assert verify_agent_ownership("other", {}) is False
 
     @patch("src.mcp_handlers.shared.get_mcp_server")
     @patch("src.mcp_handlers.context.get_context_agent_id", return_value="op")
-    def test_operator_tag(self, mc, ms):
+    def test_operator_tag_no_longer_grants_access(self, mc, ms):
         ms.return_value = _mock_server({"op": _meta(label="Bot", tags=["Operator"])})
-        assert verify_agent_ownership("other", {}, allow_operator=True) is True
-
-    @patch("src.mcp_handlers.shared.get_mcp_server")
-    @patch("src.mcp_handlers.context.get_context_agent_id", return_value="op")
-    def test_operator_denied_no_flag(self, mc, ms):
-        ms.return_value = _mock_server({"op": _meta(label="Operator")})
         assert verify_agent_ownership("other", {}) is False
 
     @patch("src.mcp_handlers.context.get_context_agent_id", side_effect=Exception("x"))
