@@ -440,6 +440,139 @@ def test_scan_file_persist_default_is_true(watcher_module, tmp_path, monkeypatch
 
 
 # ---------------------------------------------------------------------------
+# review_file(persist=...) — reasoning-mode persistence
+#
+# Background: `--review` mode was added 2026-04-12 (commit 327b88cb) to let
+# the local model reason freely about bugs instead of pattern-matching. But
+# the initial implementation printed findings to stdout and did NOT persist
+# them — meaning when the PostToolUse hook piped stdout to /dev/null, every
+# review observation vanished. These tests pin the persistence path and its
+# hint-aware fingerprint so the watcher stops throwing away evidence.
+# ---------------------------------------------------------------------------
+
+
+def _install_review_stubs(watcher_module, monkeypatch, review_json_text):
+    """Short-circuit review_file's pipeline so tests reach the persist gate
+    deterministically with a canned model response."""
+    monkeypatch.setattr(watcher_module, "should_skip", lambda _p: (False, ""))
+    monkeypatch.setattr(
+        watcher_module,
+        "read_file_region",
+        lambda _p, _r=None: ("10:    do_thing()", 1, 20),
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "call_model",
+        lambda _p: {"text": review_json_text, "tokens_used": 0, "model_used": "stub-review"},
+    )
+
+
+def test_review_file_persists_findings_to_jsonl(watcher_module, tmp_path, monkeypatch):
+    """review_file(persist=True) must append R000 findings to findings.jsonl
+    so the hook's piped stdout doesn't silently discard reasoning observations."""
+    review_json = json.dumps(
+        {"findings": [{"line": 10, "hint": "swallowed exception", "severity": "high"}]}
+    )
+    _install_review_stubs(watcher_module, monkeypatch, review_json)
+
+    assert not watcher_module.FINDINGS_FILE.exists()
+
+    findings = watcher_module.review_file("/tmp/fake.py")
+
+    assert findings, "review_file should have returned the stubbed finding"
+    assert findings[0].pattern == "R000"
+    assert watcher_module.FINDINGS_FILE.exists(), (
+        "review_file must persist findings — hook redirects stdout to /dev/null"
+    )
+    decoded = [json.loads(l) for l in watcher_module.FINDINGS_FILE.read_text().splitlines()]
+    assert len(decoded) == 1
+    assert decoded[0]["pattern"] == "R000"
+    assert decoded[0]["hint"] == "swallowed exception"
+
+
+def test_review_file_persist_false_does_not_write(watcher_module, tmp_path, monkeypatch):
+    """persist=False path exists for the same reason scan_file has one —
+    self-tests and dry runs must not pollute the live feed."""
+    review_json = json.dumps(
+        {"findings": [{"line": 10, "hint": "swallowed exception", "severity": "high"}]}
+    )
+    _install_review_stubs(watcher_module, monkeypatch, review_json)
+
+    findings = watcher_module.review_file("/tmp/fake.py", persist=False)
+
+    assert findings
+    assert not watcher_module.FINDINGS_FILE.exists()
+
+
+def test_review_file_dedup_suppresses_identical_repeat(watcher_module, tmp_path, monkeypatch):
+    """Running review twice on the same unchanged observation must only
+    surface the finding once. Without hint-aware fingerprinting, review-mode
+    findings collapse to a single R000|file|line key and lose content
+    awareness — so the fingerprint must include the hint text."""
+    review_json = json.dumps(
+        {"findings": [{"line": 10, "hint": "unchecked None deref", "severity": "medium"}]}
+    )
+    _install_review_stubs(watcher_module, monkeypatch, review_json)
+
+    first = watcher_module.review_file("/tmp/fake.py")
+    second = watcher_module.review_file("/tmp/fake.py")
+
+    assert len(first) == 1
+    assert second == [], "identical review observation must dedup on second run"
+
+
+def test_review_file_different_hints_at_same_line_do_not_collide(
+    watcher_module, tmp_path, monkeypatch
+):
+    """Review mode reports free-form hints — the model can flag two
+    different issues on the same line (e.g. 'unchecked None' on one run,
+    'possible race' on the next). Without hint-aware fingerprints these
+    would silently dedup to a single R000|file|line key. This is the
+    exact false-negative shape that motivated content-aware fingerprinting
+    for pattern mode in the 2026-04-11 regression set."""
+    review_json_a = json.dumps(
+        {"findings": [{"line": 10, "hint": "unchecked None deref", "severity": "medium"}]}
+    )
+    _install_review_stubs(watcher_module, monkeypatch, review_json_a)
+    first = watcher_module.review_file("/tmp/fake.py")
+
+    review_json_b = json.dumps(
+        {"findings": [{"line": 10, "hint": "possible race on shared dict", "severity": "medium"}]}
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "call_model",
+        lambda _p: {"text": review_json_b, "tokens_used": 0, "model_used": "stub-review"},
+    )
+    second = watcher_module.review_file("/tmp/fake.py")
+
+    assert len(first) == 1
+    assert len(second) == 1, (
+        "different hint at same line must produce a distinct fingerprint"
+    )
+    assert first[0].fingerprint != second[0].fingerprint
+
+
+def test_review_file_escalates_high_severity(watcher_module, tmp_path, monkeypatch):
+    """High/critical review findings must route through post_finding just
+    like pattern findings — otherwise the Discord bridge never sees them."""
+    review_json = json.dumps(
+        {"findings": [{"line": 10, "hint": "unauthenticated admin route", "severity": "critical"}]}
+    )
+    _install_review_stubs(watcher_module, monkeypatch, review_json)
+
+    calls: list[dict] = []
+    monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: calls.append(kw) or True)
+
+    watcher_module.review_file("/tmp/fake.py")
+
+    assert len(calls) == 1
+    assert calls[0]["severity"] == "critical"
+    assert calls[0]["agent_id"] == "watcher"
+    assert "R000" in calls[0]["message"]
+
+
+# ---------------------------------------------------------------------------
 # Severity routing — critical escalation
 # ---------------------------------------------------------------------------
 
@@ -2068,6 +2201,53 @@ class TestMainIdentityWiring:
         monkeypatch.setattr("sys.argv", ["watcher", "--file", "/dev/null"])
         watcher_module.main()
         assert scan_called["called"]
+
+
+class TestMainAllMode:
+    """--all runs pattern scan AND reasoning review in one process.
+
+    Background: the PostToolUse hook calls agent.py once per edit. Spinning
+    up twice (once for scan, once for review) doubles process startup and
+    Ollama warmup cost. A single --all entrypoint runs both sequentially in
+    one process and is what the hook should invoke.
+    """
+
+    def _stub_identity(self, watcher_module, monkeypatch):
+        monkeypatch.setattr(watcher_module, "resolve_identity", lambda _c: None)
+        monkeypatch.setattr(
+            watcher_module, "_make_identity_client",
+            lambda: type("C", (), {
+                "onboard": lambda *a, **kw: None,
+                "identity": lambda **kw: None,
+                "client_session_id": None,
+                "continuity_token": None,
+                "agent_uuid": None,
+            })(),
+        )
+
+    def test_all_mode_invokes_both_scan_and_review(
+        self, watcher_module, tmp_path, monkeypatch
+    ):
+        """--all --file X must call scan_file AND review_file — missing
+        either means the hook is silently dropping a detection path."""
+        self._stub_identity(watcher_module, monkeypatch)
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            watcher_module, "scan_file",
+            lambda *a, **kw: calls.append("scan") or [],
+        )
+        monkeypatch.setattr(
+            watcher_module, "review_file",
+            lambda *a, **kw: calls.append("review") or [],
+        )
+
+        monkeypatch.setattr("sys.argv", ["watcher", "--all", "--file", "/dev/null"])
+        watcher_module.main()
+
+        assert calls == ["scan", "review"], (
+            f"--all must invoke scan then review, got: {calls}"
+        )
 
 
 class TestWatcherCheckin:

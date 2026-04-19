@@ -1698,12 +1698,16 @@ def scan_file(
 def review_file(
     file_path: str,
     region: str | None = None,
+    persist: bool = True,
 ) -> list[Finding]:
     """Reasoning-based code review — model thinks freely, no pattern library.
 
-    Findings from review mode use pattern ID 'R000' and are printed to stdout
-    but NOT persisted to findings.jsonl (they don't have pattern IDs from the
-    library, so the dedup/lifecycle machinery doesn't apply).
+    Findings use pattern ID 'R000'. Fingerprint is hint-aware: the hint text
+    substitutes for line_content_hash, so two different review observations
+    at the same line produce distinct fingerprints while an unchanged
+    observation dedupes across runs. ``persist=True`` (default) appends fresh
+    findings to findings.jsonl and escalates high/critical through post_finding,
+    matching scan_file's persistence contract.
     """
     _common_trim_log(LOG_FILE, MAX_LOG_LINES)
     skip, reason = should_skip(file_path)
@@ -1748,24 +1752,42 @@ def review_file(
     findings = []
     for item in data.get("findings", []):
         line = item.get("line", 0)
-        if region_start and isinstance(line, int):
-            line = line  # review mode lines are already absolute from the snippet
+        hint = str(item.get("hint", ""))[:80]
         f = Finding(
             pattern="R000",
             file=file_path,
             line=int(line),
-            hint=str(item.get("hint", ""))[:80],
+            hint=hint,
             severity=item.get("severity", "medium"),
             detected_at=datetime.now(timezone.utc).isoformat(),
             model_used=result.get("model_used", DEFAULT_MODEL),
         )
+        # Hint-aware fingerprint: hash the hint text into the content slot so
+        # two different review observations at the same line do not silently
+        # collapse to one R000|file|line key. Without this, pattern mode's
+        # content-aware dedup rule (hash the source line) has no analogue for
+        # free-form review observations.
+        f.line_content_hash = hash_line_content(hint)
+        f.fingerprint = f.compute_fingerprint()
         findings.append(f)
 
+    if persist:
+        fresh = persist_findings(findings)
+    else:
+        fresh = findings
+
     log(
-        f"review complete: {len(findings)} findings, "
+        f"review complete: {len(findings)} raw, {len(fresh)} new, "
         f"tokens={result.get('tokens_used')}, region=L{region_start}-L{region_end}"
+        + ("" if persist else " (persist=False)")
     )
-    return findings
+
+    if persist:
+        for f in fresh:
+            if f.severity in ("high", "critical"):
+                escalate(f)
+
+    return fresh
 
 
 SELF_TEST_CODE = """async def stuck_agent_recovery_task(self):
@@ -1849,6 +1871,10 @@ def main() -> int:
         help="reasoning-based review (no pattern library, model thinks freely)",
     )
     parser.add_argument(
+        "--all", action="store_true",
+        help="run pattern scan AND reasoning review in one process (hook default)",
+    )
+    parser.add_argument(
         "--self-test", action="store_true", help="scan a synthetic buggy file and verify"
     )
     parser.add_argument(
@@ -1928,6 +1954,24 @@ def main() -> int:
     if not args.file:
         parser.print_help()
         return 1
+
+    if args.all:
+        # Pattern scan first — cheap, bounded, library-driven.
+        # Review scan second — broader reasoning, persists R000 findings.
+        # Both persist through findings.jsonl; failures in either do not
+        # abort the other (hook-invoked path must stay best-effort).
+        pattern_fresh: list[Finding] = []
+        try:
+            pattern_fresh = scan_file(args.file, args.region)
+        except Exception as e:
+            log(f"--all: scan_file failed: {e}", "error")
+        try:
+            review_file(args.file, args.region)
+        except Exception as e:
+            log(f"--all: review_file failed: {e}", "error")
+        for f in pattern_fresh:
+            print(f"[{f.severity}] {f.pattern} {f.file}:{f.line} — {f.hint}")
+        return 0
 
     if args.review:
         findings = review_file(args.file, args.region)

@@ -59,7 +59,7 @@ esac
 
 # --- Concurrency cap ---
 # Count running watcher agent.py processes. If at the limit, skip.
-RUNNING=$(pgrep -f "agents/watcher/agent.py --file" 2>/dev/null | wc -l | tr -d ' ')
+RUNNING=$(pgrep -f "agents/watcher/agent.py --all" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$RUNNING" -ge "$MAX_CONCURRENT" ]]; then
     exit 0
 fi
@@ -85,7 +85,7 @@ find "$LOCK_DIR" -name "*.lock" -mmin +10 -delete 2>/dev/null &
 # Fire and forget: detach the watcher so the hook returns instantly.
 # stdin/stdout/stderr go to /dev/null so the editor never sees the model call.
 nohup python3 "${WATCHER_AGENT}" \
-    --file "$FILE_PATH" \
+    --all --file "$FILE_PATH" \
     >/dev/null 2>&1 </dev/null &
 
 # Disown so the watcher survives the hook process exit
