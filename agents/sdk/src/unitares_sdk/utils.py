@@ -11,14 +11,22 @@ import tempfile
 from pathlib import Path
 
 
-def atomic_write(path: Path, data: str) -> None:
-    """Write data to a file atomically via temp file + os.replace."""
+def atomic_write(path: Path, data: str, mode: int = 0o600) -> None:
+    """Write data to a file atomically via temp file + os.replace.
+
+    File is created with ``mode`` (default 0o600 — owner read/write only).
+    ``tempfile.mkstemp`` already creates temp files 0o600 on POSIX, but
+    ``os.fchmod`` is called explicitly as defense-in-depth: anchor and
+    session files carry continuity tokens, and a future Python/OS change
+    to mkstemp defaults would silently regress every caller.
+    """
     fd = None
     tmp = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
         os.write(fd, data.encode())
+        os.fchmod(fd, mode)
         os.close(fd)
         fd = None
         os.replace(tmp, str(path))

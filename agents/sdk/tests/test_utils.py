@@ -37,6 +37,41 @@ def test_atomic_write_creates_parent_dirs(tmp_path):
     assert path.read_text() == "data"
 
 
+def test_atomic_write_produces_mode_0600_by_default(tmp_path):
+    """Anchors and session files hold continuity tokens — must be 0600
+    against same-UID sibling processes reading them."""
+    import os
+    import stat as _stat
+
+    path = tmp_path / "secret.json"
+    atomic_write(path, '{"token": "secret"}')
+    assert _stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+
+def test_atomic_write_overwrite_preserves_mode_0600(tmp_path):
+    """Overwriting a previously-loose file tightens it — the old file's
+    permissions do not leak through."""
+    import os
+    import stat as _stat
+
+    path = tmp_path / "secret.json"
+    path.write_text("old")
+    os.chmod(path, 0o644)
+    atomic_write(path, "new")
+    assert _stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+
+def test_atomic_write_honors_explicit_mode(tmp_path):
+    """Caller can opt into a different mode when the file genuinely needs
+    to be world-readable (not the common case)."""
+    import os
+    import stat as _stat
+
+    path = tmp_path / "public.json"
+    atomic_write(path, "data", mode=0o644)
+    assert _stat.S_IMODE(os.stat(path).st_mode) == 0o644
+
+
 # --- load_json_state / save_json_state ---
 
 

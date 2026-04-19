@@ -2113,6 +2113,19 @@ class TestSessionAnchor:
         data = json.loads(anchor.read_text())
         assert data["agent_uuid"] == "uuid-x"
 
+    def test_save_session_writes_anchor_mode_0600(self, watcher_module, tmp_path, monkeypatch):
+        """Anchor carries continuity_token — must not be world-readable to
+        same-UID siblings. Regression guard against reintroducing
+        Path.write_text (which inherits umask 022 → 0644)."""
+        import os
+        import stat as _stat
+
+        anchor = tmp_path / "anchors" / "watcher.json"
+        monkeypatch.setattr(watcher_module, "SESSION_FILE", anchor)
+
+        watcher_module._save_session("sess", "tok", "uuid-perm")
+        assert _stat.S_IMODE(os.stat(anchor).st_mode) == 0o600
+
     def test_load_session_migrates_from_legacy_when_anchor_missing(
         self, watcher_module, tmp_path, monkeypatch
     ):

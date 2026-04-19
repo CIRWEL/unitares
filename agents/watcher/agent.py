@@ -120,27 +120,35 @@ def _load_session() -> dict[str, str]:
             pass
     if LEGACY_SESSION_FILE.exists():
         try:
+            from unitares_sdk.utils import atomic_write
+
             data = json.loads(LEGACY_SESSION_FILE.read_text())
-            SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-            SESSION_FILE.write_text(json.dumps(data))
+            atomic_write(SESSION_FILE, json.dumps(data))
             log(f"migrated watcher identity from {LEGACY_SESSION_FILE} to {SESSION_FILE}")
             return data
-        except (json.JSONDecodeError, OSError) as e:
+        except (json.JSONDecodeError, OSError, ImportError) as e:
             log(f"legacy session migration failed: {e}", "warning")
     return {}
 
 
 def _save_session(client_session_id: str, continuity_token: str, agent_uuid: str) -> None:
-    """Persist identity state to the anchor."""
+    """Persist identity state to the anchor.
+
+    Uses atomic_write (0600) because this file carries a live continuity
+    token — Watcher runs on every PostToolUse edit as the same UID as
+    every other agent on this host, so a world-readable anchor would let
+    any sibling process impersonate Watcher against the governance API.
+    """
     data = {
         "client_session_id": client_session_id,
         "continuity_token": continuity_token,
         "agent_uuid": agent_uuid,
     }
     try:
-        SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        SESSION_FILE.write_text(json.dumps(data))
-    except OSError as e:
+        from unitares_sdk.utils import atomic_write
+
+        atomic_write(SESSION_FILE, json.dumps(data))
+    except (OSError, ImportError) as e:
         log(f"failed to save session: {e}", "warning")
 
 
