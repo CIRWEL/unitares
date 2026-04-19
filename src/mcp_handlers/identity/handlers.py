@@ -1377,16 +1377,12 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     logger.info(f"[ONBOARD] Agent {agent_uuid[:8]}... onboarded (is_new={is_new}, label={agent_label})")
 
-    # Auto-archive ephemeral agents (0 updates, older than 2 hours)
-    from src.background_tasks import create_tracked_task
-    from src.agent_lifecycle import auto_archive_orphan_agents
-    create_tracked_task(auto_archive_orphan_agents(
-        zero_update_hours=2.0,
-        low_update_hours=2.0,
-        unlabeled_hours=4.0,
-        ephemeral_hours=2.0,
-        ephemeral_max_updates=0,
-    ), name="auto_archive_orphans")
+    # Identity Honesty Part C: onboard-triggered orphan sweep REMOVED.
+    # It was the driver of 'agent archived almost immediately' — catching
+    # siblings of fresh onboards via the 2h zero_update_hours heuristic.
+    # With ghost creation gated upstream (PATH 0 + FALLBACK 2), the nightly
+    # sweep in src/background_tasks.py is sufficient. Users who want an
+    # immediate sweep can still call the archive_orphan_agents tool.
 
     # Use lite_response to skip redundant signature
     arguments["lite_response"] = True

@@ -321,3 +321,36 @@ class TestResidentRegression:
             "identity() call so call_tool auto-injects it. "
             f"Got client.continuity_token at call time: {captured.get('client_token_at_call')!r}"
         )
+
+
+class TestOnboardDoesNotSweep:
+    """handle_onboard_v2 must not spawn auto_archive_orphan_agents.
+
+    The sweep from inside onboard was the driver of 'agent archived almost
+    immediately' — it catches siblings of fresh onboards. With ghost creation
+    gated upstream, the nightly background sweep in background_tasks.py is
+    sufficient.
+    """
+
+    def test_onboard_handler_source_does_not_spawn_orphan_sweep(self):
+        import inspect
+        from src.mcp_handlers.identity import handlers as _h
+
+        onboard_src = inspect.getsource(_h.handle_onboard_v2)
+        assert "auto_archive_orphan_agents" not in onboard_src, (
+            "handle_onboard_v2 must not call auto_archive_orphan_agents from "
+            "the onboard path. background_tasks.py nightly sweep remains; the "
+            "onboard-triggered sweep is removed in Part C."
+        )
+
+    def test_nightly_sweep_still_exists_in_background_tasks(self):
+        """Nightly sweep elsewhere is the replacement path; must still be present."""
+        with open(
+            "src/background_tasks.py",
+            encoding="utf-8",
+        ) as f:
+            source = f.read()
+        assert "auto_archive_orphan_agents" in source, (
+            "background_tasks.py must still run the nightly sweep — it's "
+            "the replacement for the removed onboard-triggered sweep."
+        )
