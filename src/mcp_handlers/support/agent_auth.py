@@ -393,12 +393,20 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
         )
 
 
-def verify_agent_ownership(agent_id: str, arguments: Dict[str, Any], allow_operator: bool = False) -> bool:
+def verify_agent_ownership(agent_id: str, arguments: Dict[str, Any]) -> bool:
     """
     Verify that the current session owns/is bound to the given agent_id.
 
-    Uses UUID-based auth via session binding. Supports operator exception
-    for cross-agent operations.
+    Uses UUID-based auth via session binding.
+
+    The former ``allow_operator`` parameter has been removed. It granted
+    cross-agent access whenever the caller's own metadata carried
+    ``label == 'operator'`` or ``'operator'`` in ``tags``. Since labels and
+    tags are self-claimed at onboard and never server-verified, that branch
+    let any agent self-promote by onboarding with the right string. Name and
+    tag are cosmetic per the identity-invariants; lookup by label is not an
+    authorization primitive. If cross-agent privilege is needed in future,
+    it must come from an explicit server-side ACL, not caller-claimed strings.
     """
     try:
         from ..context import get_context_agent_id
@@ -414,17 +422,6 @@ def verify_agent_ownership(agent_id: str, arguments: Dict[str, Any], allow_opera
             meta = mcp_server.agent_metadata.get(bound_id)
             if meta and getattr(meta, 'agent_uuid', None) == agent_id:
                 return True
-
-            if allow_operator and meta:
-                label = getattr(meta, 'label', '') or ''
-                tags = getattr(meta, 'tags', []) or []
-                is_operator = (
-                    label.lower() == 'operator' or
-                    'operator' in [t.lower() for t in tags]
-                )
-                if is_operator:
-                    logger.info(f"Operator {bound_id} granted cross-agent access to {agent_id}")
-                    return True
 
         return False
     except Exception as e:
