@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# UNITARES Governance Plugin — SessionEnd hook
+# Auto-stash any uncommitted work in the current worktree with a
+# branch-labeled message so session boundaries don't silently orphan
+# edits across branches.
+#
+# Must never block or produce output on failure; session end stays instant.
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Operate on the cwd the user's Claude session was running in, not the
+# plugin root. Hooks inherit the session cwd via PWD.
+WORK_CWD="${PWD:-$(pwd)}"
+
+# Log location mirrors other hooks. Rotates naturally via the existing
+# watcher log rotation convention — this log is tiny, one line per session
+# end, so untruncated is fine for now.
+LOG_DIR="${HOME}/Library/Logs"
+LOG_FILE="${LOG_DIR}/unitares-session-end.log"
+mkdir -p "${LOG_DIR}" 2>/dev/null || true
+
+# Run the Python helper and capture its stdout (one line when a stash
+# was created, empty when clean). Failure is swallowed — the hook must
+# never take down a session end.
+OUTPUT="$(python3 "${SCRIPT_DIR}/session_end_stash.py" --cwd "${WORK_CWD}" 2>/dev/null || true)"
+
+if [[ -n "${OUTPUT}" ]]; then
+    TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '%s %s\n' "${TS}" "${OUTPUT}" >> "${LOG_FILE}" 2>/dev/null || true
+fi
+
+exit 0

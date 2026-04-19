@@ -4,6 +4,8 @@ Bootstrap for Codex (and other non-Claude) sessions in this repo. This file is t
 
 For the human-facing Codex quickstart, see `CODEX_START.md`.
 
+The installable Codex/Claude adapter bundle is canonical in the companion `unitares-governance-plugin` repo. This file only governs how Codex should behave while working directly inside the `unitares` server repo.
+
 ## Codex-specific wiring
 
 Codex has no hook system analogous to Claude's. **Nothing is automatic.** You decide when to check in, diagnose, and surface Watcher findings.
