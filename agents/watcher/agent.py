@@ -3,7 +3,7 @@
 Watcher — Independent Bug-Pattern Observer
 
 A non-blocking agent that scans recently edited code for known-bad patterns
-using a local LLM (qwen3-coder-next via Ollama, routed through governance call_model).
+using a local LLM (qwen3-coder-next via Ollama, called directly at localhost:11434).
 Unlike Vigil (cron, janitorial) and Sentinel (continuous, analytical), Watcher
 is event-driven — fired by PostToolUse hooks on Edit/Write.
 
@@ -20,7 +20,7 @@ Architecture:
     1. Load pattern library (agents/watcher/patterns.md)
     2. Read target file + optional region
     3. Build prompt (pattern list + code)
-    4. POST to governance REST /v1/tools/call → call_model (Ollama local)
+    4. POST directly to Ollama at localhost:11434 (OpenAI-compat endpoint)
     5. Parse JSON findings, dedup against data/watcher/dedup.json
     6. Append new findings to data/watcher/findings.jsonl
     7. Route by severity:
@@ -32,8 +32,10 @@ Design notes:
     - Never blocks the editor. The PostToolUse hook forks this script and exits.
     - Persistent governance identity via SyncGovernanceClient (REST transport).
       Checks in after surface_pending; resolution events posted on --resolve/--dismiss.
-    - Graceful degradation: if governance REST is down, falls back to calling
-      Ollama directly at localhost:11434.
+      Inference does NOT route through governance call_model — that path has a
+      30s server-side ceiling and drops token counts; direct Ollama is the
+      natural path for a local-LLM pattern scanner.
+    - Env-configurable: WATCHER_MODEL, WATCHER_TIMEOUT, WATCHER_OLLAMA_URL.
     - Findings are append-only; lifecycle (resolved/dismissed/aged-out) happens
       via the surface hook and explicit user action.
 """
@@ -49,7 +51,6 @@ import subprocess
 import sys
 import time
 import urllib.request
-import urllib.error
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -71,9 +72,11 @@ DEDUP_FILE = STATE_DIR / "dedup.json"
 LOG_FILE = Path.home() / "Library" / "Logs" / "unitares-watcher.log"
 
 GOV_REST_URL = "http://localhost:8767/v1/tools/call"
-OLLAMA_FALLBACK_URL = "http://localhost:11434/v1/chat/completions"
-DEFAULT_MODEL = "qwen3-coder-next:latest"
-DEFAULT_TIMEOUT = 45
+OLLAMA_URL = os.environ.get(
+    "WATCHER_OLLAMA_URL", "http://localhost:11434/v1/chat/completions"
+)
+DEFAULT_MODEL = os.environ.get("WATCHER_MODEL", "qwen3-coder-next:latest")
+DEFAULT_TIMEOUT = int(os.environ.get("WATCHER_TIMEOUT", "90"))
 
 # How many lines of context to include when no explicit region is given.
 # Qwen3-Coder-Next (the current default detector) has a 256K context window,
@@ -643,53 +646,25 @@ Remember: JSON only. No prose. No markdown fences around the JSON. Comments don'
 # ---------------------------------------------------------------------------
 
 
-def call_model_via_governance(prompt: str, model: str, timeout: int) -> dict[str, Any]:
-    """Call the governance REST /v1/tools/call endpoint with call_model.
+def call_ollama(prompt: str, model: str, timeout: int) -> dict[str, Any]:
+    """Call Ollama's OpenAI-compatible endpoint directly.
 
-    Notes:
-        - Uses REST /v1/tools/call transport (no anyio deadlock).
-        - If the governance server is down, the caller should catch the exception
-          and fall back to Ollama direct.
+    Configuration via OLLAMA_URL / DEFAULT_MODEL / DEFAULT_TIMEOUT at module load
+    (driven by WATCHER_OLLAMA_URL / WATCHER_MODEL / WATCHER_TIMEOUT env vars).
+
+    max_tokens=1024 matches the Qwen3 token economy (~40 tokens per finding);
+    temperature=0.0 keeps the detector output deterministic.
     """
-    from unitares_sdk import SyncGovernanceClient
-    from unitares_sdk.errors import GovernanceError
-
-    client = SyncGovernanceClient(rest_url=GOV_REST_URL, transport="rest", timeout=timeout)
-    try:
-        result = client.call_model(
-            prompt=prompt,
-            provider="ollama",
-            model=model,
-            max_tokens=1024,
-            temperature=0.0,
-        )
-    except GovernanceError as e:
-        raise RuntimeError(str(e)) from e
-
-    if not result.success:
-        raise RuntimeError(f"call_model reported failure: {result}")
-    return {
-        "text": result.response or "",
-        "model_used": model,
-        "tokens_used": 0,
-    }
-
-
-def call_ollama_direct(prompt: str, model: str, timeout: int) -> dict[str, Any]:
-    """Fallback: call Ollama's OpenAI-compatible endpoint directly."""
     body = json.dumps(
         {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            # Same rationale as call_model_via_governance above:
-            # trimmed max_tokens to match Qwen3 token economy, and
-            # temperature=0.0 for deterministic detector output.
             "max_tokens": 1024,
             "temperature": 0.0,
         }
     ).encode()
     req = urllib.request.Request(
-        OLLAMA_FALLBACK_URL,
+        OLLAMA_URL,
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -708,14 +683,8 @@ def call_ollama_direct(prompt: str, model: str, timeout: int) -> dict[str, Any]:
 
 
 def call_model(prompt: str, model: str = DEFAULT_MODEL, timeout: int = DEFAULT_TIMEOUT) -> dict[str, Any]:
-    try:
-        return call_model_via_governance(prompt, model, timeout)
-    except (urllib.error.URLError, RuntimeError, TimeoutError, json.JSONDecodeError, ImportError) as e:
-        # ImportError covers the case where unitares_sdk is not installed in the
-        # Python that launched the hook (e.g. Homebrew python3 vs system framework
-        # python). Without this the silent-fail path skips the Ollama fallback.
-        log(f"governance call_model failed ({e}); falling back to ollama direct", "warning")
-        return call_ollama_direct(prompt, model, timeout)
+    """Entry point used by scan_file; thin wrapper over call_ollama."""
+    return call_ollama(prompt, model, timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -1747,7 +1716,7 @@ def review_file(
     prompt = build_review_prompt(file_path, code_snippet)
 
     try:
-        result = call_model(prompt, timeout=90)
+        result = call_model(prompt)
     except Exception as e:
         log(f"model call failed: {e}", "error")
         return []

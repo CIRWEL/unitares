@@ -1178,25 +1178,17 @@ def test_default_context_lines_is_large_enough_for_typical_files(
 def test_model_call_uses_deterministic_temperature(watcher_module):
     """Regression for #2: detector workload wants temperature=0.0, not
     0.1. Asserts the constant hasn't drifted back to the creative-writing
-    value. We inspect the call_model_via_governance function body
-    textually rather than via a runtime probe because the temperature is
-    a literal in the payload dict."""
+    value."""
     import inspect
 
-    src_gov = inspect.getsource(watcher_module.call_model_via_governance)
-    src_direct = inspect.getsource(watcher_module.call_ollama_direct)
-    # Gov path uses SDK kwargs (temperature=0.0), direct path uses JSON literal
-    assert "temperature=0.0" in src_gov or '"temperature": 0.0' in src_gov, (
-        "gov path lost temperature=0.0 — detector must be deterministic"
+    src = inspect.getsource(watcher_module.call_ollama)
+    assert '"temperature": 0.0' in src, (
+        "call_ollama lost temperature=0.0 — detector must be deterministic"
     )
-    assert '"temperature": 0.0' in src_direct, (
-        "direct path lost temperature=0.0 — detector must be deterministic"
+    assert "temperature=0.1" not in src and '"temperature": 0.1' not in src, (
+        "call_ollama regressed to temperature=0.1 — "
+        "Ogler caught this once, do not re-ship"
     )
-    for label, src in (("gov", src_gov), ("direct", src_direct)):
-        assert "temperature=0.1" not in src and '"temperature": 0.1' not in src, (
-            f"{label} path regressed to temperature=0.1 — "
-            "Ogler caught this once, do not re-ship"
-        )
 
 
 def test_model_call_max_tokens_is_not_wasteful(watcher_module):
@@ -1204,12 +1196,10 @@ def test_model_call_max_tokens_is_not_wasteful(watcher_module):
     ~40-tokens-per-finding economy, not gemma4's 2048-era budget."""
     import inspect
 
-    src_gov = inspect.getsource(watcher_module.call_model_via_governance)
-    src_direct = inspect.getsource(watcher_module.call_ollama_direct)
-    for label, src in (("gov", src_gov), ("direct", src_direct)):
-        assert '"max_tokens": 2048' not in src, (
-            f"{label} path still has 2048 — trim to the Qwen3 economy"
-        )
+    src = inspect.getsource(watcher_module.call_ollama)
+    assert '"max_tokens": 2048' not in src, (
+        "call_ollama still has 2048 — trim to the Qwen3 economy"
+    )
 
 
 # --- Log rotation (#3) ------------------------------------------------------
@@ -1317,149 +1307,110 @@ def test_surface_pending_does_not_silently_drop_hidden_mediums(
         )
 
 
-# --- P016 self-catch: nested-success-false in call_model_via_governance ---
+# --- call_model / call_ollama: direct path + env-var config ---
 
 
-def test_call_model_via_governance_raises_on_failure(
-    watcher_module, monkeypatch
-):
-    """Regression for P016: when the SDK reports failure (either envelope
-    level), call_model_via_governance must raise so the fallback to
-    direct Ollama triggers."""
-    import unitares_sdk.sync_client as _sc
-    from unittest.mock import MagicMock
+def test_call_model_delegates_to_call_ollama(watcher_module, monkeypatch):
+    """call_model is now a thin wrapper over call_ollama (governance path
+    was removed — it had a 30s server-side ceiling and dropped token
+    counts, providing no Watcher-relevant signal)."""
 
-    fake_payload = {
-        "success": False,
-        "error": "simulated ollama failure",
-    }
-
-    class _FakeResp:
-        def __init__(self, payload):
-            self._body = json.dumps(payload).encode()
-
-        def read(self):
-            return self._body
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    def _fake_urlopen(req, timeout=None):
-        return _FakeResp(fake_payload)
-
-    monkeypatch.setattr(_sc.urllib.request, "urlopen", _fake_urlopen)
-
-    with pytest.raises(RuntimeError, match="call_model failed"):
-        watcher_module.call_model_via_governance(
-            "test prompt", "test-model", timeout=5
-        )
-
-
-def test_call_model_via_governance_accepts_nested_success_true(
-    watcher_module, monkeypatch
-):
-    """Sanity: the happy path must still succeed."""
-    import unitares_sdk.sync_client as _sc
-
-    fake_payload = {
-        "success": True,
-        "result": {
-            "success": True,
-            "response": "all good",
-            "model_used": "test-model",
-        },
-    }
-
-    class _FakeResp:
-        def __init__(self, payload):
-            self._body = json.dumps(payload).encode()
-
-        def read(self):
-            return self._body
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    def _fake_urlopen(req, timeout=None):
-        return _FakeResp(fake_payload)
-
-    monkeypatch.setattr(_sc.urllib.request, "urlopen", _fake_urlopen)
-
-    result = watcher_module.call_model_via_governance(
-        "test prompt", "test-model", timeout=5
-    )
-    assert result["text"] == "all good"
-
-
-def test_call_model_via_governance_accepts_result_without_success_field(
-    watcher_module, monkeypatch
-):
-    """Backwards-compat: older governance responses may not include a
-    nested success field at all. The SDK should handle this gracefully."""
-    import unitares_sdk.sync_client as _sc
-
-    fake_payload = {
-        "success": True,
-        "result": {
-            "success": True,
-            "response": "legacy shape",
-            "model_used": "test-model",
-        },
-    }
-
-    class _FakeResp:
-        def __init__(self, payload):
-            self._body = json.dumps(payload).encode()
-
-        def read(self):
-            return self._body
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    def _fake_urlopen(req, timeout=None):
-        return _FakeResp(fake_payload)
-
-    monkeypatch.setattr(_sc.urllib.request, "urlopen", _fake_urlopen)
-
-    result = watcher_module.call_model_via_governance(
-        "test prompt", "test-model", timeout=5
-    )
-    assert result["text"] == "legacy shape"
-
-
-def test_call_model_falls_back_to_ollama_when_sdk_import_fails(
-    watcher_module, monkeypatch
-):
-    """Regression: when the Python launching the hook lacks unitares_sdk
-    (e.g. Homebrew python3 vs system framework python), the governance
-    route raises ImportError. call_model must catch it and fall back to
-    Ollama direct instead of returning [] silently."""
-
-    def _raise_import_error(*args, **kwargs):
-        raise ImportError("No module named 'unitares_sdk'")
+    captured: dict[str, Any] = {}
 
     def _fake_ollama(prompt, model, timeout):
-        return {"text": "ok", "model_used": model, "tokens_used": 42}
+        captured["prompt"] = prompt
+        captured["model"] = model
+        captured["timeout"] = timeout
+        return {"text": "ok", "model_used": model, "tokens_used": 7}
 
-    monkeypatch.setattr(
-        watcher_module, "call_model_via_governance", _raise_import_error
+    monkeypatch.setattr(watcher_module, "call_ollama", _fake_ollama)
+
+    result = watcher_module.call_model("scan me", "m", timeout=5)
+
+    assert result == {"text": "ok", "model_used": "m", "tokens_used": 7}
+    assert captured == {"prompt": "scan me", "model": "m", "timeout": 5}
+
+
+def test_call_ollama_posts_to_configured_url(watcher_module, monkeypatch):
+    """call_ollama POSTs to module-level OLLAMA_URL (env-driven) with the
+    prompt, model, and timeout it was given."""
+
+    captured: dict[str, Any] = {}
+    fake_payload = {
+        "choices": [{"message": {"content": "resp"}}],
+        "model": "stub-model",
+        "usage": {"total_tokens": 99},
+    }
+
+    class _FakeResp:
+        def __init__(self, payload):
+            self._body = json.dumps(payload).encode()
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode())
+        captured["timeout"] = timeout
+        return _FakeResp(fake_payload)
+
+    monkeypatch.setattr(watcher_module.urllib.request, "urlopen", _fake_urlopen)
+
+    result = watcher_module.call_ollama("prompt text", "m", timeout=11)
+
+    assert result["text"] == "resp"
+    assert result["tokens_used"] == 99
+    assert captured["url"] == watcher_module.OLLAMA_URL
+    assert captured["timeout"] == 11
+    assert captured["body"]["model"] == "m"
+    assert captured["body"]["temperature"] == 0.0
+
+
+def test_env_vars_override_defaults(monkeypatch, tmp_path):
+    """WATCHER_MODEL / WATCHER_TIMEOUT / WATCHER_OLLAMA_URL are read at
+    module load. Load the file under a fresh module name to avoid
+    disturbing the cached watcher_module / agents.watcher.agent imports."""
+    import importlib.util
+
+    monkeypatch.setenv("WATCHER_MODEL", "gemma4:latest")
+    monkeypatch.setenv("WATCHER_TIMEOUT", "123")
+    monkeypatch.setenv(
+        "WATCHER_OLLAMA_URL", "http://ollama.example:11434/v1/chat/completions"
     )
-    monkeypatch.setattr(watcher_module, "call_ollama_direct", _fake_ollama)
 
-    result = watcher_module.call_model("test prompt", "test-model", timeout=5)
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    module_path = project_root / "agents" / "watcher" / "agent.py"
+    spec = importlib.util.spec_from_file_location(
+        "watcher_agent_env_test", module_path
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    # dataclass resolution at module load looks the module up in sys.modules,
+    # so we have to register it before exec_module and clean up after.
+    sys.modules["watcher_agent_env_test"] = mod
+    try:
+        spec.loader.exec_module(mod)
 
-    assert result["text"] == "ok"
-    assert result["tokens_used"] == 42
+        assert mod.DEFAULT_MODEL == "gemma4:latest"
+        assert mod.DEFAULT_TIMEOUT == 123
+        assert mod.OLLAMA_URL == "http://ollama.example:11434/v1/chat/completions"
+    finally:
+        sys.modules.pop("watcher_agent_env_test", None)
+
+
+def test_default_timeout_is_at_least_90(watcher_module):
+    """45s was too tight for qwen3-coder-next:79B and caused systematic
+    timeouts; 90s is the new floor."""
+    assert watcher_module.DEFAULT_TIMEOUT >= 90, (
+        "DEFAULT_TIMEOUT regressed below 90s — 79B scans need headroom"
+    )
 
 
 def test_surface_pending_second_chime_picks_up_previously_hidden_mediums(
