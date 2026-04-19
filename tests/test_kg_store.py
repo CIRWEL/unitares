@@ -981,6 +981,63 @@ class TestKnowledgeWriteBroadcast:
         assert data["success"] is True
 
 
+class TestLeaveNoteTagPassthrough:
+    """leave_note must not auto-inject `ephemeral` into caller-supplied tags.
+
+    Pre-fix, every non-permanent leave_note call silently had `ephemeral`
+    appended, which scheduled the note for 7-day auto-archive. Design-gap
+    notes from real dogfooding sessions were swept as a side effect.
+    """
+
+    @pytest.mark.asyncio
+    async def test_leave_note_does_not_auto_inject_ephemeral(
+        self, patch_common, registered_agent,
+    ):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_leave_note
+
+        with patch(
+            "src.mcp_handlers.knowledge.handlers.broadcaster_instance.broadcast_event",
+            new_callable=AsyncMock,
+        ) as bc:
+            result = await handle_leave_note({
+                "agent_id": registered_agent,
+                "summary": "Design gap: dialectic auto-assigns non-responsive reviewers",
+                "tags": ["design-gap", "dialectic"],
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        payload = bc.await_args.kwargs["payload"]
+        assert "ephemeral" not in payload["tags"], (
+            "leave_note must not auto-tag ephemeral; caller did not opt in"
+        )
+        assert set(payload["tags"]) == {"design-gap", "dialectic"}
+
+    @pytest.mark.asyncio
+    async def test_leave_note_respects_explicit_ephemeral_opt_in(
+        self, patch_common, registered_agent,
+    ):
+        """Callers can still opt in to ephemeral lifecycle explicitly."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_leave_note
+
+        with patch(
+            "src.mcp_handlers.knowledge.handlers.broadcaster_instance.broadcast_event",
+            new_callable=AsyncMock,
+        ) as bc:
+            result = await handle_leave_note({
+                "agent_id": registered_agent,
+                "summary": "scratch thought, don't keep this around",
+                "tags": ["scratch", "ephemeral"],
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        payload = bc.await_args.kwargs["payload"]
+        assert "ephemeral" in payload["tags"]
+
+
 # ============================================================================
 # Archived filtering in search
 # ============================================================================
