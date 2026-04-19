@@ -449,6 +449,9 @@ async def http_call_tool(request):
             })
 
         # Inject stable client session for identity binding (avoid collision with dialectic session_id)
+        # DO NOT TRUST client_session_id FOR AUTH — TRANSPORT-INJECTED HERE, NOT CLIENT-ASSERTED.
+        # For auth signals, read SessionSignals (headers) or continuity_token (HMAC-signed).
+        # See PR #35 revert (gap #1) and PR #42 Part C rationale.
         client_session_id = None
         if isinstance(arguments, dict) and "client_session_id" not in arguments:
             client_session_id = await _extract_client_session_id(request)
