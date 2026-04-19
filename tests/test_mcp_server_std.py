@@ -1285,7 +1285,12 @@ class TestAutoArchiveOrphanAgents:
     """Tests for orphan agent archival logic."""
 
     @pytest.mark.asyncio
-    async def test_archives_uuid_agent_zero_updates(self):
+    async def test_preserves_uuid_agent_zero_updates(self):
+        """Initializing agents (UUID + 0 updates) stay visible as ghosts.
+
+        Regression: tier-1 auto-archive used to sweep these after 1h and hide
+        onboarding/check-in bugs. Now never auto-archived.
+        """
         from src.agent_state import auto_archive_orphan_agents, agent_metadata, AgentMetadata
         old_time = (datetime.now() - timedelta(hours=2)).isoformat()
         test_id = "12345678-1234-4234-8234-123456789abc"
@@ -1295,10 +1300,10 @@ class TestAutoArchiveOrphanAgents:
         )
         try:
             with patch("src.agent_storage.archive_agent", new_callable=AsyncMock) as mock_archive:
-                results = await auto_archive_orphan_agents(zero_update_hours=1.0)
-                assert len(results) >= 1
-                assert agent_metadata[test_id].status == "archived"
-                mock_archive.assert_called()
+                results = await auto_archive_orphan_agents()
+                assert len(results) == 0
+                assert agent_metadata[test_id].status == "active"
+                mock_archive.assert_not_called()
         finally:
             agent_metadata.pop(test_id, None)
 
@@ -1352,12 +1357,14 @@ class TestAutoArchiveOrphanAgents:
         calls archive_agent() to persist to Postgres FIRST, and if persistence
         fails the in-memory meta must not be mutated (avoid divergence).
         """
+        # Tier-2 fixture (non-UUID, unlabeled, 1 update, 5h old) since tier-1
+        # (UUID + 0 updates) no longer classifies as archivable.
         from src.agent_state import auto_archive_orphan_agents, agent_metadata, AgentMetadata
-        old_time = (datetime.now() - timedelta(hours=2)).isoformat()
-        test_id = "12345678-1234-4234-8234-123456789aaa"
+        old_time = (datetime.now() - timedelta(hours=5)).isoformat()
+        test_id = "persist-fail-test-agent"
         agent_metadata[test_id] = AgentMetadata(
             agent_id=test_id, status="active", created_at=old_time, last_update=old_time,
-            total_updates=0,
+            total_updates=1,
         )
         try:
             with patch(
@@ -1365,7 +1372,7 @@ class TestAutoArchiveOrphanAgents:
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("DB down"),
             ):
-                results = await auto_archive_orphan_agents(zero_update_hours=1.0)
+                results = await auto_archive_orphan_agents(low_update_hours=3.0)
             # Persistence failed → must not include this agent
             assert len(results) == 0
             # In-memory state must not diverge from DB

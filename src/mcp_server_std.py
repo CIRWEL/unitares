@@ -69,7 +69,6 @@ from src.agent_state import (
     load_metadata,
     get_or_create_metadata,
     generate_api_key,
-    auto_archive_orphan_agents,
     init_server_process,
     remove_pid_file,
     _normalize_http_proxy_base,
@@ -493,18 +492,10 @@ async def main():
         except Exception as e:
             logger.warning(f"Could not load metadata in background: {e}", exc_info=True)
 
-        try:
-            orphan_results = await auto_archive_orphan_agents(
-                zero_update_hours=4.0,
-                low_update_hours=12.0,
-                unlabeled_hours=24.0,
-                ephemeral_hours=6.0,
-                ephemeral_max_updates=5,
-            )
-            if orphan_results:
-                logger.info(f"Auto-archived {len(orphan_results)} orphan/ephemeral agents")
-        except Exception as e:
-            logger.warning(f"Could not auto-archive agents: {e}", exc_info=True)
+        # Startup orphan sweep removed 2026-04-19 — it was part of the
+        # auto-archive behavior that hid initializing-agent bugs. Call the
+        # archive_orphan_agents MCP tool manually (defaults to dry_run) if
+        # wanted.
 
         try:
             from src.auto_ground_truth import collect_ground_truth_automatically, auto_ground_truth_collector_task

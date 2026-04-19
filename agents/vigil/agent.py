@@ -312,12 +312,16 @@ class VigilAgent(GovernanceAgent):
         return _filter_sentinel_findings(result.results or [], since_iso)
 
     async def _run_groundskeeper(self, client: GovernanceClient) -> Dict[str, Any]:
-        """KG audit + lifecycle cleanup + orphan archival."""
+        """KG audit + lifecycle cleanup.
+
+        Orphan agent archival is no longer part of the Groundskeeper cycle —
+        the auto-sweep was hiding initializing-agent bugs behind archival.
+        Operators can still invoke ``archive_orphan_agents`` manually.
+        """
         summary: Dict[str, Any] = {
             "audit_run": False,
             "stale_found": 0,
             "archived": 0,
-            "orphans_archived": 0,
             "errors": [],
         }
 
@@ -347,14 +351,6 @@ class VigilAgent(GovernanceAgent):
                 summary["errors"].append(str(err))
                 log(f"GROUNDSKEEPER: audit_knowledge failed — {err}")
 
-            orphan_result = await client.archive_orphan_agents()
-            if orphan_result.success:
-                # Server returns `archived_count`; the legacy `archived` field
-                # stays 0 in the response. Read whichever is populated.
-                summary["orphans_archived"] = (
-                    orphan_result.archived_count or orphan_result.archived
-                )
-
         except Exception as e:
             summary["errors"].append(str(e))
             log(f"GROUNDSKEEPER: exception during audit — {type(e).__name__}: {e}")
@@ -362,8 +358,7 @@ class VigilAgent(GovernanceAgent):
         if summary["audit_run"]:
             note_text = (
                 f"Groundskeeper: {summary['stale_found']} stale, "
-                f"{summary['archived']} archived, "
-                f"{summary['orphans_archived']} orphans cleaned"
+                f"{summary['archived']} archived"
             )
             try:
                 await client.leave_note(
