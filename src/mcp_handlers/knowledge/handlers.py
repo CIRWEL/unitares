@@ -1795,16 +1795,12 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                     response_type=response_type
                 )
 
-        # Build tags — notes are ephemeral by default (auto-archived after 7 days)
-        # unless the caller signals permanence via tags or lasting=True
+        # Tags pass through verbatim. Callers opt in to the ephemeral lifecycle
+        # by tagging scratch/temp/ephemeral themselves; the handler does NOT
+        # inject ephemeral on their behalf. The prior auto-inject silently
+        # scheduled every non-permanent note for 7-day auto-archive, which
+        # swept real design-gap notes that agents had no idea were on a timer.
         tags = normalize_tags(arguments.get("tags", []))
-        lasting = arguments.get("lasting", False)
-        if isinstance(lasting, str):
-            lasting = lasting.lower() in ("true", "1", "yes")
-        PERMANENT_SIGNALS = {"permanent", "foundational", "architecture", "decision"}
-        if not lasting and not (set(tags) & PERMANENT_SIGNALS):
-            if "ephemeral" not in tags:
-                tags.append("ephemeral")
 
         # Split long notes into summary + details
         if len(text) <= MAX_SUMMARY_LEN:
