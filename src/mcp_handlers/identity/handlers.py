@@ -344,6 +344,301 @@ async def handle_identity_v2(
 # DECORATOR-COMPATIBLE ADAPTER
 # =============================================================================
 
+def _build_identity_diag_payload_for_request(
+    arguments: Dict[str, Any],
+    model_type: Optional[str],
+    *,
+    agent_uuid: str,
+    agent_id: str,
+    label: Optional[str],
+    status: str,
+) -> Dict[str, Any]:
+    """Build the standard identity-success diag payload for `arguments` + `model_type`.
+
+    Extracted from handle_identity_adapter so per-PATH resolvers can produce
+    the same payload shape without the inner-function closure.
+    """
+    from .shared import make_client_session_id
+
+    stable_session_id = make_client_session_id(agent_uuid)
+    try:
+        from ..context import get_session_resolution_source
+        continuity_source = get_session_resolution_source()
+    except Exception:
+        continuity_source = None
+    continuity_support = continuity_token_support_status()
+    continuity_token = create_continuity_token(
+        agent_uuid,
+        stable_session_id,
+        model_type=model_type,
+        client_hint=arguments.get("client_hint"),
+    )
+    return build_identity_diag_payload(
+        agent_uuid=agent_uuid,
+        agent_id=agent_id,
+        display_name=label,
+        client_session_id=stable_session_id,
+        continuity_source=continuity_source,
+        continuity_support=continuity_support,
+        continuity_token=continuity_token,
+        identity_status=status,
+    )
+
+
+def _identity_success_for_request(
+    arguments: Dict[str, Any],
+    payload: Dict[str, Any],
+    *,
+    agent_uuid: Optional[str] = None,
+) -> Sequence[TextContent]:
+    """Wrap an identity payload in a lite success response.
+
+    Extracted from handle_identity_adapter. Does NOT mutate `arguments`.
+    """
+    response_arguments = dict(arguments)
+    response_arguments["lite_response"] = True
+    return success_response(payload, agent_id=agent_uuid, arguments=response_arguments)
+
+
+async def _try_resume_by_agent_uuid_direct(
+    arguments: Dict[str, Any],
+    *,
+    resume: bool,
+    base_session_key: str,
+    model_type: Optional[str],
+) -> Optional[Sequence[TextContent]]:
+    """PATH 0: Resolve identity directly by agent_uuid when supplied.
+
+    Returns a TextContent response if this path handled the request, or None
+    to let the dispatcher continue to the session-key pipeline. Order of
+    attempts within the path is preserved exactly from the pre-refactor
+    implementation so behavior is unchanged:
+
+      1. Part C ownership gate (strict/log/off modes)
+      2. Monitor-cache fast path (anyio-deadlock-safe, no DB)
+      3. DB-backed verification (exists + active)
+
+    Never creates a ghost — missing/archived UUIDs return explicit errors.
+    """
+    _direct_uuid = arguments.get("agent_uuid")
+    if not (_direct_uuid and resume):
+        return None
+
+    # Identity Honesty Part C: PATH 0 must prove UUID ownership.
+    # Bare agent_uuid without a matching signed continuity_token would
+    # let any caller resurrect any known UUID — effectively making UUIDs
+    # lookup keys in disguise (invariant #4 violation). Require a token
+    # whose `aid` claim matches the requested UUID.
+    _partc_token_aid = None
+    if arguments.get("continuity_token"):
+        _partc_token_aid = extract_token_agent_uuid(str(arguments["continuity_token"]))
+    _partc_owned = _partc_token_aid == _direct_uuid
+
+    if not _partc_owned:
+        from config.governance_config import identity_strict_mode
+        _partc_mode = identity_strict_mode()
+        if _partc_mode == "strict":
+            return error_response(
+                (
+                    "Bare agent_uuid resume is not permitted. Include "
+                    "continuity_token (bound to this UUID) or call "
+                    "identity(force_new=true) / onboard() to create a new identity."
+                ),
+                recovery={
+                    "reason": "bare_uuid_resume_denied",
+                    "agent_uuid": _direct_uuid,
+                    "hint": (
+                        "Resident agents should load continuity_token from their "
+                        "anchor file and pass it on every identity() call."
+                    ),
+                },
+            )
+        elif _partc_mode == "log":
+            logger.warning(
+                "[IDENTITY_STRICT] Would reject PATH 0: agent_uuid=%s... without "
+                "matching continuity_token (token_aid=%s). Caller would fork a "
+                "session bound to a UUID it has not proven it owns. Upgrade caller "
+                "to pass continuity_token.",
+                _direct_uuid[:8],
+                (_partc_token_aid[:8] + "...") if _partc_token_aid else "none",
+            )
+        # mode == "off": unchanged behavior, no log
+
+    # PATH 0 FAST: if the UUID has a live in-process monitor, trust it
+    # and skip DB verification entirely. Anyio-deadlock-safe (no awaits).
+    # Rationale: monitors are loaded at startup for all persisted agents,
+    # so a hit here means the agent is known to governance. Worst case
+    # is we briefly serve an agent that was just archived, which the
+    # next full check-in will surface via the archival log path.
+    #
+    # This is the structural fix for the 34-Watcher-fork incident:
+    # transient governance slowness can't cascade into forks when
+    # UUID-direct resume has a synchronous fallback.
+    try:
+        from ..shared import get_mcp_server
+        srv = get_mcp_server()
+        monitors = getattr(srv, "monitors", None) if srv is not None else None
+        if monitors is not None and _direct_uuid in monitors:
+            try:
+                from ..context import update_context_agent_id, set_session_resolution_source
+                update_context_agent_id(_direct_uuid)
+                set_session_resolution_source("agent_uuid_direct_fastpath")
+            except Exception:
+                pass
+            payload = _build_identity_diag_payload_for_request(
+                arguments, model_type,
+                agent_uuid=_direct_uuid,
+                agent_id=_direct_uuid,
+                label=None,
+                status="resumed",
+            )
+            payload.update({
+                "resumed": True,
+                "resumed_by_uuid": True,
+                "source": "monitor_cache",
+                "message": f"Resumed identity {_direct_uuid[:12]}... via in-process monitor cache",
+            })
+            return _identity_success_for_request(arguments, payload, agent_uuid=_direct_uuid)
+    except Exception:
+        # Any fast-path failure falls through to the DB-backed slow path.
+        pass
+
+    exists = await _agent_exists_in_postgres(_direct_uuid)
+    if not exists:
+        return error_response(
+            f"Agent UUID {_direct_uuid[:12]}... not found",
+            recovery={"reason": "uuid_not_found", "agent_uuid": _direct_uuid},
+        )
+    status = await _get_agent_status(_direct_uuid)
+    if status != "active":
+        return error_response(
+            f"Agent UUID {_direct_uuid[:12]}... is not active (status={status})",
+            recovery={"reason": "uuid_not_found", "agent_uuid": _direct_uuid, "status": status},
+        )
+    agent_id = await _get_agent_id_from_metadata(_direct_uuid) or _direct_uuid
+    label = await _get_agent_label(_direct_uuid)
+    # Update label if requested
+    requested_name = arguments.get("name")
+    if requested_name and requested_name != label:
+        if await set_agent_label(_direct_uuid, requested_name, session_key=base_session_key):
+            label = requested_name
+    await _cache_session(base_session_key, _direct_uuid, display_agent_id=agent_id)
+    try:
+        from ..context import update_context_agent_id, set_session_resolution_source
+        update_context_agent_id(_direct_uuid)
+        set_session_resolution_source("agent_uuid_direct")
+    except Exception:
+        pass
+    payload = _build_identity_diag_payload_for_request(
+        arguments, model_type,
+        agent_uuid=_direct_uuid,
+        agent_id=agent_id,
+        label=label,
+        status="resumed",
+    )
+    payload.update({
+        "resumed": True,
+        "resumed_by_uuid": True,
+        "message": f"Welcome back! Resumed identity '{label or agent_id}' via UUID",
+    })
+    return _identity_success_for_request(arguments, payload, agent_uuid=_direct_uuid)
+
+
+async def _try_resume_by_session_key(
+    arguments: Dict[str, Any],
+    *,
+    base_session_key: str,
+    force_new: bool,
+    resume: bool,
+    token_agent_uuid: Optional[str],
+    model_type: Optional[str],
+) -> "tuple[Optional[Sequence[TextContent]], Optional[Dict[str, Any]]]":
+    """STEP 1: Resolve identity under the base session key.
+
+    Returns `(response, existing_identity)`. `response` is non-None when:
+      - A resume succeeded (returns the success payload)
+      - `resolve_session_identity` reported `resume_failed` (returns error)
+      - The session maps to an archived agent (returns warning payload)
+    Returns `(None, existing_identity)` when the caller should fall through
+    to create-via-handle_identity_v2. `existing_identity` is also returned so
+    the dispatcher can apply the "skip auto-bind on archived" guard downstream.
+    """
+    if force_new:
+        return None, None
+
+    existing_identity = await resolve_session_identity(
+        base_session_key, persist=False, resume=resume,
+        token_agent_uuid=token_agent_uuid,
+    )
+
+    # Token-based resume failed — agent not found or not active
+    if existing_identity.get("resume_failed"):
+        return (
+            error_response(
+                existing_identity.get("message", "Could not resume identity"),
+                recovery={
+                    "reason": "resume_failed",
+                    "token_agent_uuid": existing_identity.get("token_agent_uuid"),
+                    "hint": "Call onboard(force_new=true) to create a new identity.",
+                },
+            ),
+            existing_identity,
+        )
+
+    if existing_identity.get("created"):
+        # Not an existing agent — fall through to create-finisher.
+        return None, existing_identity
+
+    # EXISTING AGENT FOUND under base key (only happens when resume=True)
+    agent_uuid = existing_identity.get("agent_uuid")
+    agent_id = existing_identity.get("agent_id", agent_uuid)
+    label = existing_identity.get("label")
+
+    # FIX: Don't silently resume archived agents — warn the caller
+    if existing_identity.get("archived"):
+        logger.info(f"[IDENTITY] Found archived agent {agent_uuid[:8]}... — returning warning instead of silent resume")
+        payload = _build_identity_diag_payload_for_request(
+            arguments, model_type,
+            agent_uuid=agent_uuid,
+            agent_id=agent_id,
+            label=label,
+            status="archived",
+        )
+        payload.update({
+            "archived": True,
+            "resumed": False,
+            "message": f"Session maps to archived agent '{label or agent_id}'. Use onboard() to reactivate or force_new=true for a fresh identity.",
+            "hint": "onboard() will auto-reactivate this agent. force_new=true creates a new one.",
+            "options": {
+                "reactivate": "Call onboard() to resume this archived agent",
+                "fresh": "Call identity(force_new=true) or onboard(force_new=true) for a new identity"
+            }
+        })
+        return _identity_success_for_request(arguments, payload, agent_uuid=agent_uuid), existing_identity
+
+    logger.info(f"[IDENTITY] Resuming existing agent {agent_uuid[:8]}... (explicit resume=true)")
+
+    # Update label if requested
+    if arguments.get("name") and arguments.get("name") != label:
+        success = await set_agent_label(agent_uuid, arguments.get("name"), session_key=base_session_key)
+        if success:
+            label = arguments.get("name")
+
+    payload = _build_identity_diag_payload_for_request(
+        arguments, model_type,
+        agent_uuid=agent_uuid,
+        agent_id=agent_id,
+        label=label,
+        status="resumed",
+    )
+    payload.update({
+        "resumed": True,
+        "message": f"Welcome back! Resumed identity '{label or agent_id}'",
+        "hint": "Use force_new=true to create a new identity instead"
+    })
+    return _identity_success_for_request(arguments, payload, agent_uuid=agent_uuid), existing_identity
+
+
 @mcp_tool("identity", timeout=10.0)
 async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
@@ -362,6 +657,11 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
               Requires resume=true (default). Skips session/name resolution entirely.
               Returns error if UUID not found or not active — never creates a ghost.
     Defaults to resuming existing identity if one exists for this session.
+
+    Dispatcher structure (2026-04-19 refactor):
+      1. PATH 0  — _try_resume_by_agent_uuid_direct (UUID-direct resume)
+      2. STEP 1  — _try_resume_by_session_key (base-session-key resolve)
+      3. Finisher — fall through to handle_identity_v2 + persist + response
     """
     arguments = arguments or {}
     force_new = arguments.get("force_new", False)
@@ -375,164 +675,15 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     normalized_model = None
     explicit_resume_binding = bool(arguments.get("client_session_id") or arguments.get("continuity_token"))
 
-    def _identity_diag_payload(
-        *,
-        agent_uuid: str,
-        agent_id: str,
-        label: Optional[str],
-        status: str,
-    ) -> Dict[str, Any]:
-        from .shared import make_client_session_id
-
-        stable_session_id = make_client_session_id(agent_uuid)
-        try:
-            from ..context import get_session_resolution_source
-            continuity_source = get_session_resolution_source()
-        except Exception:
-            continuity_source = None
-        continuity_support = continuity_token_support_status()
-        continuity_token = create_continuity_token(
-            agent_uuid,
-            stable_session_id,
-            model_type=model_type,
-            client_hint=arguments.get("client_hint"),
-        )
-        return build_identity_diag_payload(
-            agent_uuid=agent_uuid,
-            agent_id=agent_id,
-            display_name=label,
-            client_session_id=stable_session_id,
-            continuity_source=continuity_source,
-            continuity_support=continuity_support,
-            continuity_token=continuity_token,
-            identity_status=status,
-        )
-
-    def _identity_success(payload: Dict[str, Any], *, agent_uuid: Optional[str] = None) -> Sequence[TextContent]:
-        response_arguments = dict(arguments)
-        response_arguments["lite_response"] = True
-        return success_response(payload, agent_id=agent_uuid, arguments=response_arguments)
-
-    # PATH 0: Direct UUID lookup (resident agents with stored UUID)
-    # Skips all session/name resolution — just verify the UUID exists and is active.
-    _direct_uuid = arguments.get("agent_uuid")
-    if _direct_uuid and resume:
-        # Identity Honesty Part C: PATH 0 must prove UUID ownership.
-        # Bare agent_uuid without a matching signed continuity_token would
-        # let any caller resurrect any known UUID — effectively making UUIDs
-        # lookup keys in disguise (invariant #4 violation). Require a token
-        # whose `aid` claim matches the requested UUID.
-        _partc_token_aid = None
-        if arguments.get("continuity_token"):
-            _partc_token_aid = extract_token_agent_uuid(str(arguments["continuity_token"]))
-        _partc_owned = _partc_token_aid == _direct_uuid
-
-        if not _partc_owned:
-            from config.governance_config import identity_strict_mode
-            _partc_mode = identity_strict_mode()
-            if _partc_mode == "strict":
-                return error_response(
-                    (
-                        "Bare agent_uuid resume is not permitted. Include "
-                        "continuity_token (bound to this UUID) or call "
-                        "identity(force_new=true) / onboard() to create a new identity."
-                    ),
-                    recovery={
-                        "reason": "bare_uuid_resume_denied",
-                        "agent_uuid": _direct_uuid,
-                        "hint": (
-                            "Resident agents should load continuity_token from their "
-                            "anchor file and pass it on every identity() call."
-                        ),
-                    },
-                )
-            elif _partc_mode == "log":
-                logger.warning(
-                    "[IDENTITY_STRICT] Would reject PATH 0: agent_uuid=%s... without "
-                    "matching continuity_token (token_aid=%s). Caller would fork a "
-                    "session bound to a UUID it has not proven it owns. Upgrade caller "
-                    "to pass continuity_token.",
-                    _direct_uuid[:8],
-                    (_partc_token_aid[:8] + "...") if _partc_token_aid else "none",
-                )
-            # mode == "off": unchanged behavior, no log
-
-        # PATH 0 FAST: if the UUID has a live in-process monitor, trust it
-        # and skip DB verification entirely. Anyio-deadlock-safe (no awaits).
-        # Rationale: monitors are loaded at startup for all persisted agents,
-        # so a hit here means the agent is known to governance. Worst case
-        # is we briefly serve an agent that was just archived, which the
-        # next full check-in will surface via the archival log path.
-        #
-        # This is the structural fix for the 34-Watcher-fork incident:
-        # transient governance slowness can't cascade into forks when
-        # UUID-direct resume has a synchronous fallback.
-        try:
-            from ..shared import get_mcp_server
-            srv = get_mcp_server()
-            monitors = getattr(srv, "monitors", None) if srv is not None else None
-            if monitors is not None and _direct_uuid in monitors:
-                try:
-                    from ..context import update_context_agent_id, set_session_resolution_source
-                    update_context_agent_id(_direct_uuid)
-                    set_session_resolution_source("agent_uuid_direct_fastpath")
-                except Exception:
-                    pass
-                payload = _identity_diag_payload(
-                    agent_uuid=_direct_uuid,
-                    agent_id=_direct_uuid,
-                    label=None,
-                    status="resumed",
-                )
-                payload.update({
-                    "resumed": True,
-                    "resumed_by_uuid": True,
-                    "source": "monitor_cache",
-                    "message": f"Resumed identity {_direct_uuid[:12]}... via in-process monitor cache",
-                })
-                return _identity_success(payload, agent_uuid=_direct_uuid)
-        except Exception:
-            # Any fast-path failure falls through to the DB-backed slow path.
-            pass
-
-        exists = await _agent_exists_in_postgres(_direct_uuid)
-        if not exists:
-            return error_response(
-                f"Agent UUID {_direct_uuid[:12]}... not found",
-                recovery={"reason": "uuid_not_found", "agent_uuid": _direct_uuid},
-            )
-        status = await _get_agent_status(_direct_uuid)
-        if status != "active":
-            return error_response(
-                f"Agent UUID {_direct_uuid[:12]}... is not active (status={status})",
-                recovery={"reason": "uuid_not_found", "agent_uuid": _direct_uuid, "status": status},
-            )
-        agent_id = await _get_agent_id_from_metadata(_direct_uuid) or _direct_uuid
-        label = await _get_agent_label(_direct_uuid)
-        # Update label if requested
-        requested_name = arguments.get("name")
-        if requested_name and requested_name != label:
-            if await set_agent_label(_direct_uuid, requested_name, session_key=base_session_key):
-                label = requested_name
-        await _cache_session(base_session_key, _direct_uuid, display_agent_id=agent_id)
-        try:
-            from ..context import update_context_agent_id, set_session_resolution_source
-            update_context_agent_id(_direct_uuid)
-            set_session_resolution_source("agent_uuid_direct")
-        except Exception:
-            pass
-        payload = _identity_diag_payload(
-            agent_uuid=_direct_uuid,
-            agent_id=agent_id,
-            label=label,
-            status="resumed",
-        )
-        payload.update({
-            "resumed": True,
-            "resumed_by_uuid": True,
-            "message": f"Welcome back! Resumed identity '{label or agent_id}' via UUID",
-        })
-        return _identity_success(payload, agent_uuid=_direct_uuid)
+    # PATH 0: Direct UUID lookup (resident agents with stored UUID).
+    path0_response = await _try_resume_by_agent_uuid_direct(
+        arguments,
+        resume=resume,
+        base_session_key=base_session_key,
+        model_type=model_type,
+    )
+    if path0_response is not None:
+        return path0_response
 
     # PATH 2.5 (name-claim) removed 2026-04-17. `name` is now a cosmetic
     # label updated after the session resolves; it never drives lookup.
@@ -544,75 +695,18 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     if arguments.get("continuity_token"):
         _token_agent_uuid = extract_token_agent_uuid(str(arguments["continuity_token"]))
 
-    # STEP 1: Check for existing identity under BASE key first (unless force_new)
-    # Pass resume= through so resolve_session_identity respects the flag
-    existing_identity = None
+    # STEP 1: Check for existing identity under BASE key first (unless force_new).
     session_key = base_session_key
-
-    if not force_new:
-        existing_identity = await resolve_session_identity(
-            base_session_key, persist=False, resume=resume,
-            token_agent_uuid=_token_agent_uuid,
-        )
-
-        # Token-based resume failed — agent not found or not active
-        if existing_identity.get("resume_failed"):
-            return error_response(
-                existing_identity.get("message", "Could not resume identity"),
-                recovery={
-                    "reason": "resume_failed",
-                    "token_agent_uuid": existing_identity.get("token_agent_uuid"),
-                    "hint": "Call onboard(force_new=true) to create a new identity.",
-                }
-            )
-
-        if not existing_identity.get("created"):
-            # EXISTING AGENT FOUND under base key (only happens when resume=True)
-            agent_uuid = existing_identity.get("agent_uuid")
-            agent_id = existing_identity.get("agent_id", agent_uuid)
-            label = existing_identity.get("label")
-
-            # FIX: Don't silently resume archived agents — warn the caller
-            if existing_identity.get("archived"):
-                logger.info(f"[IDENTITY] Found archived agent {agent_uuid[:8]}... — returning warning instead of silent resume")
-                payload = _identity_diag_payload(
-                    agent_uuid=agent_uuid,
-                    agent_id=agent_id,
-                    label=label,
-                    status="archived",
-                )
-                payload.update({
-                    "archived": True,
-                    "resumed": False,
-                    "message": f"Session maps to archived agent '{label or agent_id}'. Use onboard() to reactivate or force_new=true for a fresh identity.",
-                    "hint": "onboard() will auto-reactivate this agent. force_new=true creates a new one.",
-                    "options": {
-                        "reactivate": "Call onboard() to resume this archived agent",
-                        "fresh": "Call identity(force_new=true) or onboard(force_new=true) for a new identity"
-                    }
-                })
-                return _identity_success(payload, agent_uuid=agent_uuid)
-
-            logger.info(f"[IDENTITY] Resuming existing agent {agent_uuid[:8]}... (explicit resume=true)")
-
-            # Update label if requested
-            if arguments.get("name") and arguments.get("name") != label:
-                success = await set_agent_label(agent_uuid, arguments.get("name"), session_key=session_key)
-                if success:
-                    label = arguments.get("name")
-
-            payload = _identity_diag_payload(
-                agent_uuid=agent_uuid,
-                agent_id=agent_id,
-                label=label,
-                status="resumed",
-            )
-            payload.update({
-                "resumed": True,
-                "message": f"Welcome back! Resumed identity '{label or agent_id}'",
-                "hint": "Use force_new=true to create a new identity instead"
-            })
-            return _identity_success(payload, agent_uuid=agent_uuid)
+    step1_response, existing_identity = await _try_resume_by_session_key(
+        arguments,
+        base_session_key=base_session_key,
+        force_new=force_new,
+        resume=resume,
+        token_agent_uuid=_token_agent_uuid,
+        model_type=model_type,
+    )
+    if step1_response is not None:
+        return step1_response
 
     # model_type is passed through for agent_id generation, but does NOT fork session keys.
     # All identities for a session use the base session key to prevent fragmentation.
