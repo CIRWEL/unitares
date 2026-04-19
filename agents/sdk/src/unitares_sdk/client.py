@@ -73,17 +73,31 @@ class GovernanceClient:
     # --- Connection lifecycle ---
 
     async def connect(self) -> None:
-        """Open MCP transport. Call disconnect() when done."""
+        """Open MCP transport. Call disconnect() when done.
+
+        If any step fails (e.g. httpx.ConnectError during initialize), unwinds
+        whatever was already entered before re-raising. Python does NOT call
+        __aexit__ when __aenter__ raises, so without this cleanup the MCP
+        streamable_http_client's anyio task group is leaked and later unwound
+        on a different task at GC — producing the "Attempted to exit cancel
+        scope in a different task than it was entered in" crash that killed
+        the sentinel repeatedly (KG 2026-04-19T00:51:46).
+        """
         self._http_client = httpx.AsyncClient(http2=False, timeout=self.timeout)
-        cm = streamable_http_client(self.mcp_url, http_client=self._http_client)
-        read, write, _ = await cm.__aenter__()
-        self._cm_stack.append(cm)
+        try:
+            cm = streamable_http_client(self.mcp_url, http_client=self._http_client)
+            read, write, _ = await cm.__aenter__()
+            self._cm_stack.append(cm)
 
-        session_cm = ClientSession(read, write)
-        self._session = await session_cm.__aenter__()
-        self._cm_stack.append(session_cm)
+            session_cm = ClientSession(read, write)
+            self._session = await session_cm.__aenter__()
+            self._cm_stack.append(session_cm)
 
-        await self._session.initialize()
+            await self._session.initialize()
+        except Exception as e:
+            logger.warning("connect() failed (%s: %s); unwinding partial state", type(e).__name__, e)
+            await self.disconnect()
+            raise
 
     async def disconnect(self) -> None:
         """Close MCP transport."""
