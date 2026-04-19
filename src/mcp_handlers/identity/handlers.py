@@ -417,6 +417,46 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     # Skips all session/name resolution — just verify the UUID exists and is active.
     _direct_uuid = arguments.get("agent_uuid")
     if _direct_uuid and resume:
+        # Identity Honesty Part C: PATH 0 must prove UUID ownership.
+        # Bare agent_uuid without a matching signed continuity_token would
+        # let any caller resurrect any known UUID — effectively making UUIDs
+        # lookup keys in disguise (invariant #4 violation). Require a token
+        # whose `aid` claim matches the requested UUID.
+        _partc_token_aid = None
+        if arguments.get("continuity_token"):
+            _partc_token_aid = extract_token_agent_uuid(str(arguments["continuity_token"]))
+        _partc_owned = _partc_token_aid == _direct_uuid
+
+        if not _partc_owned:
+            from config.governance_config import identity_strict_mode
+            _partc_mode = identity_strict_mode()
+            if _partc_mode == "strict":
+                return error_response(
+                    (
+                        "Bare agent_uuid resume is not permitted. Include "
+                        "continuity_token (bound to this UUID) or call "
+                        "identity(force_new=true) / onboard() to create a new identity."
+                    ),
+                    recovery={
+                        "reason": "bare_uuid_resume_denied",
+                        "agent_uuid": _direct_uuid,
+                        "hint": (
+                            "Resident agents should load continuity_token from their "
+                            "anchor file and pass it on every identity() call."
+                        ),
+                    },
+                )
+            elif _partc_mode == "log":
+                logger.warning(
+                    "[IDENTITY_STRICT] Would reject PATH 0: agent_uuid=%s... without "
+                    "matching continuity_token (token_aid=%s). Caller would fork a "
+                    "session bound to a UUID it has not proven it owns. Upgrade caller "
+                    "to pass continuity_token.",
+                    _direct_uuid[:8],
+                    (_partc_token_aid[:8] + "...") if _partc_token_aid else "none",
+                )
+            # mode == "off": unchanged behavior, no log
+
         # PATH 0 FAST: if the UUID has a live in-process monitor, trust it
         # and skip DB verification entirely. Anyio-deadlock-safe (no awaits).
         # Rationale: monitors are loaded at startup for all persisted agents,
@@ -1337,16 +1377,12 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     logger.info(f"[ONBOARD] Agent {agent_uuid[:8]}... onboarded (is_new={is_new}, label={agent_label})")
 
-    # Auto-archive ephemeral agents (0 updates, older than 2 hours)
-    from src.background_tasks import create_tracked_task
-    from src.agent_lifecycle import auto_archive_orphan_agents
-    create_tracked_task(auto_archive_orphan_agents(
-        zero_update_hours=2.0,
-        low_update_hours=2.0,
-        unlabeled_hours=4.0,
-        ephemeral_hours=2.0,
-        ephemeral_max_updates=0,
-    ), name="auto_archive_orphans")
+    # Identity Honesty Part C: onboard-triggered orphan sweep REMOVED.
+    # It was the driver of 'agent archived almost immediately' — catching
+    # siblings of fresh onboards via the 2h zero_update_hours heuristic.
+    # With ghost creation gated upstream (PATH 0 + FALLBACK 2), the nightly
+    # sweep in src/background_tasks.py is sufficient. Users who want an
+    # immediate sweep can still call the archive_orphan_agents tool.
 
     # Use lite_response to skip redundant signature
     arguments["lite_response"] = True

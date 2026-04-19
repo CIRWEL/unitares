@@ -176,6 +176,11 @@ class GovernanceAgent:
 
         # Fast path: we know who we are — just tell the server
         if self.agent_uuid:
+            # Identity Honesty Part C: server's PATH 0 now requires
+            # continuity_token alongside agent_uuid. Copy the saved token to
+            # the client so call_tool auto-injects it on this first request.
+            if self.continuity_token and not client.continuity_token:
+                client.continuity_token = self.continuity_token
             try:
                 await client.identity(agent_uuid=self.agent_uuid, resume=True)
                 self._sync_from_client(client)

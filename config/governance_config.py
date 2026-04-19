@@ -879,3 +879,29 @@ def get_e_scale(agent_class: str = "default") -> ScaleConstant:
 def get_delta_norm_max(agent_class: str = "default") -> ScaleConstant:
     """Return class-conditional manifold radius; fall back to fleet-wide default."""
     return DELTA_NORM_MAX_BY_CLASS.get(agent_class, DELTA_NORM_MAX_DEFAULT)
+
+
+# =====================================================================
+# Identity Honesty Part C — strict-mode gate
+# =====================================================================
+# Three ghost-creation paths are sources:
+#   - PATH 0 (identity handler + middleware passthrough) accepting bare
+#     agent_uuid + resume=true without proving ownership
+#   - FALLBACK 2 in require_agent_id auto-generating `auto_<ts>_<uuid8>`
+#   - Onboard-triggered orphan sweep catching siblings of fresh onboards
+# Modes:
+#   "off"    — unchanged pre-Part-C behavior (for emergency rollback)
+#   "log"    — emit [IDENTITY_STRICT] warnings, do nothing else (default)
+#   "strict" — reject the request with guidance, no ghost created
+# Override: UNITARES_IDENTITY_STRICT env var.
+IDENTITY_STRICT_MODE: str = os.getenv("UNITARES_IDENTITY_STRICT", "log").strip().lower()
+
+_VALID_STRICT_MODES = frozenset({"off", "log", "strict"})
+if IDENTITY_STRICT_MODE not in _VALID_STRICT_MODES:
+    IDENTITY_STRICT_MODE = "log"
+
+
+def identity_strict_mode() -> str:
+    """Runtime accessor — respects env changes set after module load (tests)."""
+    m = os.getenv("UNITARES_IDENTITY_STRICT", IDENTITY_STRICT_MODE).strip().lower()
+    return m if m in _VALID_STRICT_MODES else "log"
