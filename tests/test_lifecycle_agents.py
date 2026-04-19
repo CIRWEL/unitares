@@ -1021,7 +1021,13 @@ class TestArchiveOrphanAgents:
         return make_mock_server()
 
     @pytest.mark.asyncio
-    async def test_archives_uuid_zero_update_agents(self, server):
+    async def test_preserves_uuid_zero_update_agents(self, server):
+        """Initializing agents (UUID-named, 0 updates) are ghosts, not orphans.
+
+        Regression against the 2026-04-19 aggressive-sweep fix: UUID + 0 updates
+        used to archive after 1h (tier-1). Now such agents stay visible so
+        onboarding/check-in bugs surface instead of getting swept under the rug.
+        """
         old = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
         server.agent_metadata = {
             "12345678-1234-1234-1234-123456789abc": make_agent_meta(
@@ -1034,7 +1040,8 @@ class TestArchiveOrphanAgents:
             from src.mcp_handlers.lifecycle.handlers import handle_archive_orphan_agents
             result = await handle_archive_orphan_agents({})
             data = _parse(result)
-            assert data["archived_count"] >= 1
+            assert data["archived_count"] == 0
+            mock_storage.archive_agent.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_preserves_labeled_agents_with_updates(self, server):
@@ -1071,10 +1078,12 @@ class TestArchiveOrphanAgents:
 
     @pytest.mark.asyncio
     async def test_dry_run_does_not_archive(self, server):
+        # Use tier-2 case (non-UUID, unlabeled, 1 update, 5h old) since tier-1
+        # (UUID + 0 updates) no longer classifies as archivable.
         old = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
         server.agent_metadata = {
-            "12345678-1234-1234-1234-123456789abc": make_agent_meta(
-                status="active", total_updates=0, last_update=old, label=None
+            "some-non-uuid-agent": make_agent_meta(
+                status="active", total_updates=1, last_update=old, label=None
             ),
         }
         with patch_lifecycle_server(server), \
@@ -1155,21 +1164,22 @@ class TestArchiveOrphanAgents:
 
     @pytest.mark.asyncio
     async def test_max_age_hours_scales_thresholds(self, server):
+        # Tier-2 (non-UUID, unlabeled, 1 update): with max_age_hours=2 the
+        # low_update_hours tier fires at 1.0h, agent is 2h old → archived.
         old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         server.agent_metadata = {
-            "12345678-1234-1234-1234-123456789abc": make_agent_meta(
-                status="active", total_updates=0, last_update=old, label=None
+            "some-non-uuid-agent": make_agent_meta(
+                status="active", total_updates=1, last_update=old, label=None
             ),
         }
         with patch_lifecycle_server(server), \
              patch_agent_storage() as mock_storage:
             mock_storage.archive_agent = AsyncMock()
             from src.mcp_handlers.lifecycle.handlers import handle_archive_orphan_agents
-            # max_age_hours=1 → zero_update_hours=0.5, agent is 2h old → archived
-            result = await handle_archive_orphan_agents({"max_age_hours": 1})
+            result = await handle_archive_orphan_agents({"max_age_hours": 2})
             data = _parse(result)
             assert data["archived_count"] >= 1
-            assert data["thresholds"]["max_age_hours"] == 1.0
+            assert data["thresholds"]["max_age_hours"] == 2.0
 
     @pytest.mark.asyncio
     async def test_thresholds_in_response(self, server):
@@ -1181,9 +1191,11 @@ class TestArchiveOrphanAgents:
             result = await handle_archive_orphan_agents({})
             data = _parse(result)
             assert "thresholds" in data
-            assert "zero_update_hours" in data["thresholds"]
             assert "low_update_hours" in data["thresholds"]
             assert "unlabeled_hours" in data["thresholds"]
+            # zero_update_hours removed — tier-1 (UUID + 0 updates) no longer
+            # classifies as archivable.
+            assert "zero_update_hours" not in data["thresholds"]
 
 
 # ============================================================================
@@ -2193,10 +2205,11 @@ class TestArchiveOrphanAgentsEdgeCases:
     @pytest.mark.asyncio
     async def test_timezone_aware_age_calculation(self, server):
         """Line 1113: when last_update has tzinfo, uses timezone-aware calculation."""
+        # Tier-2 case (non-UUID, 1 update) since tier-1 no longer classifies.
         old = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
         server.agent_metadata = {
-            "12345678-1234-1234-1234-123456789abc": make_agent_meta(
-                status="active", total_updates=0, last_update=old, label=None
+            "some-non-uuid-agent": make_agent_meta(
+                status="active", total_updates=1, last_update=old, label=None
             ),
         }
         with patch_lifecycle_server(server), \
@@ -2210,9 +2223,11 @@ class TestArchiveOrphanAgentsEdgeCases:
     @pytest.mark.asyncio
     async def test_unparseable_date_skipped(self, server):
         """Lines 1115-1116: ValueError/TypeError on date parsing skips agent."""
+        # Use tier-2-shaped fixture so that a parseable date would otherwise
+        # classify as archivable — proves the date guard is what's skipping.
         server.agent_metadata = {
-            "12345678-1234-1234-1234-123456789abc": make_agent_meta(
-                status="active", total_updates=0, last_update="NOT-A-DATE",
+            "some-non-uuid-agent": make_agent_meta(
+                status="active", total_updates=1, last_update="NOT-A-DATE",
                 label=None, created_at="NOT-A-DATE"
             ),
         }
@@ -2227,11 +2242,12 @@ class TestArchiveOrphanAgentsEdgeCases:
     @pytest.mark.asyncio
     async def test_archive_unloads_monitor(self, server):
         """Line 1144: archiving orphan unloads monitor from memory."""
+        # Tier-2 case (non-UUID, 1 update) since tier-1 no longer classifies.
         old = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
-        agent_id = "12345678-1234-1234-1234-123456789abc"
+        agent_id = "some-non-uuid-agent"
         server.agent_metadata = {
             agent_id: make_agent_meta(
-                status="active", total_updates=0, last_update=old, label=None
+                status="active", total_updates=1, last_update=old, label=None
             ),
         }
         server.monitors = {agent_id: MagicMock()}
@@ -2247,10 +2263,11 @@ class TestArchiveOrphanAgentsEdgeCases:
     @pytest.mark.asyncio
     async def test_archive_postgres_failure(self, server):
         """Lines 1148-1149: PG failure on orphan archive is logged but continues."""
+        # Tier-2 case since tier-1 (UUID + 0 updates) no longer classifies.
         old = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
         server.agent_metadata = {
-            "12345678-1234-1234-1234-123456789abc": make_agent_meta(
-                status="active", total_updates=0, last_update=old, label=None
+            "some-non-uuid-agent": make_agent_meta(
+                status="active", total_updates=1, last_update=old, label=None
             ),
         }
         with patch_lifecycle_server(server), \

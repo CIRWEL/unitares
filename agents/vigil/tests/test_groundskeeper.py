@@ -33,7 +33,6 @@ from vigil_agent import (
 
 from unitares_sdk.models import (
     AuditResult,
-    ArchiveResult,
     CleanupResult,
     NoteResult,
 )
@@ -59,7 +58,6 @@ def _make_agent(with_audit: bool = True) -> VigilAgent:
 def _make_mock_client(
     audit_result=None,
     cleanup_result=None,
-    orphan_result=None,
 ):
     """Create a mock GovernanceClient for groundskeeper tests."""
     client = AsyncMock()
@@ -70,9 +68,6 @@ def _make_mock_client(
     ))
     client.cleanup_knowledge = AsyncMock(return_value=cleanup_result or CleanupResult(
         success=True, cleaned=0,
-    ))
-    client.archive_orphan_agents = AsyncMock(return_value=orphan_result or ArchiveResult(
-        success=True, archived=3,
     ))
     client.leave_note = AsyncMock(return_value=NoteResult(success=True))
 
@@ -127,14 +122,20 @@ class TestRunGroundskeeper:
         client.cleanup_knowledge.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_groundskeeper_archives_orphan_agents(self):
-        """Groundskeeper should call archive_orphan_agents."""
+    async def test_groundskeeper_does_not_sweep_orphans(self):
+        """Groundskeeper no longer calls archive_orphan_agents.
+
+        Regression against the 2026-04-19 aggressive-sweep fix: the auto-sweep
+        was hiding initializing-agent bugs. Operators invoke the MCP tool
+        manually if they want a sweep.
+        """
         agent = _make_agent()
-        client = _make_mock_client(
-            orphan_result=ArchiveResult(success=True, archived=5),
-        )
+        client = _make_mock_client()
         result = await agent._run_groundskeeper(client)
-        assert result["orphans_archived"] == 5
+        # Client no longer has archive_orphan_agents called on it. We use a
+        # spec-less AsyncMock so attribute access wouldn't error — assert via
+        # the result shape instead.
+        assert "orphans_archived" not in result
 
     @pytest.mark.asyncio
     async def test_groundskeeper_leaves_note(self):

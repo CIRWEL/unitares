@@ -640,14 +640,14 @@ async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[Te
     max_updates = int(arguments.get("max_updates", 3))
     dry_run = arguments.get("dry_run", True)
 
-    zero_update_hours = min(max(max_age_hours / 6, 0.5), max_age_hours)
     low_update_hours = min(max(max_age_hours / 2, 1.0), max_age_hours)
     unlabeled_hours = max_age_hours
 
     await mcp_server.load_metadata_async(force=True)
 
+    # Initializing agents (0 updates) are never archived — see
+    # classify_for_archival. The old tier-1 zero_update_hours sweep is gone.
     results = await auto_archive_orphan_agents(
-        zero_update_hours=zero_update_hours,
         low_update_hours=low_update_hours,
         unlabeled_hours=unlabeled_hours,
         dry_run=dry_run,
@@ -670,7 +670,6 @@ async def handle_archive_orphan_agents(arguments: Dict[str, Any]) -> Sequence[Te
         "thresholds": {
             "max_age_hours": max_age_hours,
             "max_updates": max_updates,
-            "zero_update_hours": zero_update_hours,
             "low_update_hours": low_update_hours,
             "unlabeled_hours": unlabeled_hours
         },

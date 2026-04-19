@@ -234,30 +234,13 @@ async def background_metadata_load():
 
 
 # ---------------------------------------------------------------------------
-# Orphan agent cleanup
+# Orphan agent cleanup — automatic sweep removed 2026-04-19.
+#
+# The periodic sweep used to hide real onboarding/check-in bugs (initializing
+# agents being archived before their first check-in). The canonical engine
+# ``auto_archive_orphan_agents`` remains available for manual operator use via
+# the ``archive_orphan_agents`` MCP tool, which defaults to dry_run=True.
 # ---------------------------------------------------------------------------
-
-async def periodic_orphan_cleanup(interval_hours: float = 2.0):
-    """Periodically archive orphan and ephemeral agents to prevent proliferation."""
-    await asyncio.sleep(2.0)
-
-    while True:
-        try:
-            from src.agent_lifecycle import auto_archive_orphan_agents
-
-            results = await auto_archive_orphan_agents(
-                zero_update_hours=4.0,
-                low_update_hours=12.0,
-                unlabeled_hours=24.0,
-                ephemeral_hours=6.0,
-                ephemeral_max_updates=5,
-            )
-            if results:
-                logger.info(f"[ORPHAN_CLEANUP] Archived {len(results)} orphan/ephemeral agents")
-        except Exception as e:
-            logger.warning(f"[ORPHAN_CLEANUP] Error: {e}", exc_info=True)
-
-        await asyncio.sleep(interval_hours * 3600)
 
 
 # ---------------------------------------------------------------------------
@@ -1099,7 +1082,9 @@ def start_all_background_tasks(connection_tracker, set_ready):
     _supervised_create_task(periodic_matview_refresh(), name="matview_refresh")
     _supervised_create_task(periodic_partition_maintenance(), name="partition_maintenance")
     _supervised_create_task(background_metadata_load(), name="metadata_load")
-    _supervised_create_task(periodic_orphan_cleanup(), name="orphan_cleanup")
+    # periodic_orphan_cleanup removed 2026-04-19 — auto-sweep was hiding
+    # onboarding bugs behind archival. Use the archive_orphan_agents MCP tool
+    # manually (defaults to dry_run) if a sweep is actually wanted.
     _supervised_create_task(stuck_agent_recovery_task(), name="stuck_agent_recovery")
     _supervised_create_task(server_warmup_task(set_ready), name="server_warmup")
     _supervised_create_task(deep_health_probe_task(), name="deep_health_probe")

@@ -99,7 +99,6 @@ def classify_for_archival(
     agent_id: str,
     meta: AgentMetadata,
     *,
-    zero_update_hours: float = 1.0,
     low_update_hours: float = 3.0,
     unlabeled_hours: float = 6.0,
     ephemeral_hours: float = 6.0,
@@ -107,7 +106,10 @@ def classify_for_archival(
 ) -> tuple[bool, str]:
     """Decide whether an agent should be archived and why.
 
-    Encodes the canonical 4-tier orphan heuristic.
+    Agents that have never checked in (``updates == 0``) are treated as
+    *initializing*, not orphaned — they stay visible as ghosts rather than
+    being swept under the rug, which used to hide onboarding bugs behind
+    an aggressive 1h UUID auto-archive.
     """
     label = getattr(meta, 'label', None) or getattr(meta, 'display_name', None) or ""
     has_label = bool(label)
@@ -119,8 +121,12 @@ def classify_for_archival(
         return False, ""
     updates = _agent_update_count(meta)
 
-    if is_uuid_named and updates == 0 and age_hours >= zero_update_hours:
-        return True, f"orphan UUID agent, 0 updates, {age_hours:.1f}h old"
+    # Initializing agents (never checked in) are ghosts, not orphans: visible,
+    # never auto-archived. Manual `archive_agent` still works if operators want
+    # them gone.
+    if updates == 0:
+        return False, ""
+
     if not has_label and updates <= 1 and age_hours >= low_update_hours:
         return True, f"unlabeled agent, {updates} updates, {age_hours:.1f}h old"
     if is_uuid_named and not has_label and updates >= 2 and age_hours >= unlabeled_hours:
@@ -131,13 +137,13 @@ def classify_for_archival(
 
 
 async def auto_archive_orphan_agents(
-    zero_update_hours: float = 1.0,
     low_update_hours: float = 3.0,
     unlabeled_hours: float = 6.0,
     ephemeral_hours: float = 6.0,
     ephemeral_max_updates: int = 5,
     dry_run: bool = False,
     *,
+    zero_update_hours: float | None = None,  # deprecated no-op, see classify_for_archival
     _metadata: dict | None = None,
     _monitors: dict | None = None,
 ) -> list[dict]:
@@ -149,6 +155,9 @@ async def auto_archive_orphan_agents(
     persist-first ``_archive_one_agent`` helper.
 
     Args:
+        zero_update_hours: Accepted for back-compat with callers that still
+            pass it; ignored. Initializing agents (0 updates) are never
+            auto-archived — see ``classify_for_archival``.
         _metadata: Override the agent_metadata dict (used by handler wrappers
             that need to iterate mcp_server.agent_metadata instead).
 
@@ -156,6 +165,7 @@ async def auto_archive_orphan_agents(
         List of dicts describing each archived (or would-archive) agent.
     """
     from src.mcp_handlers.lifecycle.helpers import _archive_one_agent
+    del zero_update_hours  # accepted for back-compat, no longer used
 
     source = _metadata if _metadata is not None else agent_metadata
     mon = _monitors if _monitors is not None else monitors
@@ -169,7 +179,6 @@ async def auto_archive_orphan_agents(
 
         should, reason = classify_for_archival(
             agent_id, meta,
-            zero_update_hours=zero_update_hours,
             low_update_hours=low_update_hours,
             unlabeled_hours=unlabeled_hours,
             ephemeral_hours=ephemeral_hours,
