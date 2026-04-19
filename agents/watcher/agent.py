@@ -168,7 +168,12 @@ def resolve_identity(client) -> None:
 
     # Step 0: UUID-direct (PATH 0) — strongest resume signal.
     # Works whenever we have a stored UUID, even if the token is stale.
+    # Identity Honesty Part C: server requires continuity_token alongside
+    # agent_uuid for PATH 0 resume — load the saved token into the client so
+    # SyncGovernanceClient.call_tool auto-injects it.
     if saved.get("agent_uuid"):
+        if saved.get("continuity_token") and not getattr(client, "continuity_token", None):
+            client.continuity_token = saved["continuity_token"]
         try:
             client.identity(agent_uuid=saved["agent_uuid"], resume=True)
             _sync_identity(client)

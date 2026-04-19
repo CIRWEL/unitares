@@ -271,3 +271,53 @@ class TestFallback2Gate:
             if "[IDENTITY_STRICT]" in r.getMessage()
         ]
         assert strict_warnings, "Log mode must surface the FALLBACK 2 ghost creation"
+
+
+class TestResidentRegression:
+    """Resident agents pass continuity_token alongside agent_uuid when saved."""
+
+    def test_sdk_base_agent_copies_token_to_client(self):
+        """_ensure_identity must set client.continuity_token before identity() call."""
+        import sys
+        import pathlib
+        sdk_path = pathlib.Path(
+            "/Users/cirwel/projects/unitares/.worktrees/identity-honesty-partc/agents/sdk/src"
+        )
+        if str(sdk_path) not in sys.path:
+            sys.path.insert(0, str(sdk_path))
+
+        from unitares_sdk.agent import GovernanceAgent
+
+        captured = {}
+
+        stub = GovernanceAgent.__new__(GovernanceAgent)
+        # Bypass __init__ to avoid session-file I/O side effects.
+        stub.name = "Test"
+        stub.persistent = True
+        stub.agent_uuid = "55555555-6666-7777-8888-999999999999"
+        stub.client_session_id = None
+        stub.continuity_token = "v1.aGVsbG8.d29ybGQ"  # plumbing-only; not verified
+        stub.parent_agent_id = None
+        stub.spawn_reason = None
+        stub.session_file = pathlib.Path("/tmp/nonexistent-partc-regression.json")
+        stub.legacy_session_file = None
+
+        client = MagicMock()
+        client.continuity_token = None
+        client.client_session_id = None
+        client.agent_uuid = stub.agent_uuid
+
+        async def _capture_identity(*args, **kwargs):
+            captured["client_token_at_call"] = client.continuity_token
+            return {"agent_uuid": stub.agent_uuid}
+
+        client.identity = AsyncMock(side_effect=_capture_identity)
+
+        import asyncio
+        asyncio.run(stub._ensure_identity(client))
+
+        assert captured.get("client_token_at_call") == "v1.aGVsbG8.d29ybGQ", (
+            "BaseAgent must copy self.continuity_token to client BEFORE the "
+            "identity() call so call_tool auto-injects it. "
+            f"Got client.continuity_token at call time: {captured.get('client_token_at_call')!r}"
+        )
