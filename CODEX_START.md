@@ -4,6 +4,8 @@ Use this path if you are working from Codex or ChatGPT and want the cleanest UNI
 
 `AGENTS.md` is the machine-facing Codex bootstrap. This file is the human-facing quickstart.
 
+The installable Codex adapter itself is canonical in the companion `unitares-governance-plugin` repo. This document is only the direct-workflow quickstart for operating against the `unitares` server repo.
+
 ## Goal
 
 Connect to a running UNITARES governance server, preserve continuity cleanly, and check in at meaningful milestones instead of every trivial edit.

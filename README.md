@@ -288,7 +288,7 @@ graph LR
 - [**unitares-discord-bridge**](https://github.com/CIRWEL/unitares-discord-bridge) — Discord presence and governance events
 - [**eisv-lumen**](https://github.com/CIRWEL/eisv-lumen) — Governance benchmark (21K trajectories on HuggingFace)
 
-Client integrations for Codex and Claude are included in this repo under `.codex-plugin/`, `hooks/`, `skills/`, and `commands/`. Codex uses the repo-local manifest plus commands/skills, while Claude uses the hook-based adapter documented in `CLAUDE.md`.
+Installable client adapters for Codex and Claude live in the companion [`unitares-governance-plugin`](https://github.com/CIRWEL/unitares-governance-plugin) repo. This `unitares` repo is the governance server/runtime; any plugin-side `.codex-plugin/`, `hooks/`, `skills/`, and `commands/` content should be treated as belonging to the companion adapter repo, not as canonical copies here.
 
 ---
 
