@@ -1484,6 +1484,101 @@ class TestHandleIdentityAdapter:
         assert recovery.get("reason") == "resume_failed"
         assert recovery.get("token_agent_uuid") == fake_token_uuid
 
+    # ------------------------------------------------------------------
+    # Post-refactor coverage gaps (KG 2026-04-19T02:22:37).
+    # Branch 7: Part C gate rejects a token whose `aid` claim does not
+    # match the requested agent_uuid (the "wrong owner" case, distinct
+    # from the bare-UUID case already covered in Part C tests).
+    # Branch 22: parent_agent_id / spawn_reason flow from adapter args
+    # into ensure_agent_persisted on the create path.
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_path0_partc_mismatched_token_strict_rejects(self, monkeypatch):
+        """Part C: token minted for uuid-A cannot authorize agent_uuid=uuid-B (strict mode).
+
+        The bare-UUID case is covered by test_identity_honesty_partc.py. This
+        locks in the mismatched-token case: a caller who holds a valid token
+        for their own UUID cannot use it to resurrect someone else's UUID.
+        Same invariant (#4: UUIDs are not lookup keys in disguise), distinct
+        code path (_partc_owned fails because token_aid != _direct_uuid, not
+        because token is absent).
+        """
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "strict")
+        monkeypatch.setenv("UNITARES_CONTINUITY_TOKEN_SECRET", "test-secret-mismatch")
+
+        from src.mcp_handlers.identity.session import create_continuity_token
+        from src.mcp_handlers.identity.handlers import handle_identity_adapter
+
+        uuid_legitimate = "aaaaaaaa-0000-1111-2222-333333333333"
+        uuid_victim     = "bbbbbbbb-0000-1111-2222-333333333333"
+
+        # Token honestly minted for uuid_legitimate.
+        token = create_continuity_token(uuid_legitimate, "test-session")
+        assert token is not None, "token creation prerequisite"
+
+        fake_server = MagicMock(monitors={}, agent_metadata={})
+        with patch("src.mcp_handlers.shared.get_mcp_server", return_value=fake_server):
+            result = await handle_identity_adapter({
+                "agent_uuid": uuid_victim,       # trying to resume someone else's UUID
+                "continuity_token": token,        # with a token we legitimately hold
+                "resume": True,
+            })
+
+        data = parse_result(result)
+        assert data.get("success") is False, (
+            f"Strict mode must reject mismatched-owner tokens. Got: {data}"
+        )
+        recovery = data.get("recovery") or {}
+        assert recovery.get("reason") == "bare_uuid_resume_denied", (
+            f"Expected bare_uuid_resume_denied for mismatched-owner case; got {recovery!r}"
+        )
+        assert recovery.get("agent_uuid") == uuid_victim
+
+    @pytest.mark.asyncio
+    async def test_identity_forwards_parent_and_spawn_reason_to_persist(
+        self, patch_identity_deps, mock_db, mock_redis,
+    ):
+        """identity(parent_agent_id=..., spawn_reason=...) must forward to ensure_agent_persisted.
+
+        Subagent / spawned-agent lineage depends on this — if the forwarding
+        breaks, lineage drops silently and new identities land as root agents
+        in core.identities instead of carrying a parent link. No test
+        currently exercises this path through the adapter; coverage gap
+        tracked in KG 2026-04-19T02:22:37 (Branch 22).
+        """
+        from src.mcp_handlers.identity import handlers as identity_handlers
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.get_identity.return_value = None
+        mock_db.get_agent.return_value = None
+
+        parent_uuid = "11111111-2222-3333-4444-555555555555"
+        spawn_reason = "subagent"
+
+        spy = AsyncMock(return_value=True)
+        with patch.object(identity_handlers, "ensure_agent_persisted", spy):
+            result = await identity_handlers.handle_identity_adapter({
+                "client_session_id": "lineage-forward-test",
+                "parent_agent_id": parent_uuid,
+                "spawn_reason": spawn_reason,
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["identity_status"] == "created"
+        assert spy.await_count == 1, "ensure_agent_persisted must be called for a fresh identity"
+
+        call = spy.await_args
+        kwargs = call.kwargs or {}
+        assert kwargs.get("parent_agent_id") == parent_uuid, (
+            f"parent_agent_id must forward through the adapter; got {kwargs!r}"
+        )
+        assert kwargs.get("spawn_reason") == spawn_reason, (
+            f"spawn_reason must forward through the adapter; got {kwargs!r}"
+        )
+
 
 # ============================================================================
 # handle_onboard_v2 - full flow (lines 1480-1857)
