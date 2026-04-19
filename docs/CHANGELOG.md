@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Identity Honesty Part C — strict-mode gates** (2026-04-18) — closes the three ghost-creation paths that PR #35 revert called out. One env flag (`UNITARES_IDENTITY_STRICT`) gates all three at their source instead of layering more archive/resurrect guards on top:
+  - **PATH 0 bare-UUID resume** (`identity/handlers.py`, `middleware/identity_step.py`) now requires a `continuity_token` whose signed `aid` claim matches the requested `agent_uuid`. Prior behavior accepted any known UUID as proof of ownership — the mechanism behind "another agent resurrected a dormant agent from yesterday." Invariant #4 violation closed.
+  - **Handler FALLBACK 2 ghost factory** (`support/agent_auth.py:214-221`) — `auto_<ts>_<uuid8>` IDs generated when the caller has no `agent_id` and no session binding. Gated on the same flag.
+  - **Onboard-triggered orphan sweep** (`identity/handlers.py:1340-1349`) — removed. With ghost creation gated upstream, the nightly sweep in `background_tasks.py` is sufficient. This was the driver of "agent archived almost immediately."
+  - **Modes:** `off` (emergency rollback), `log` (warn `[IDENTITY_STRICT]`, do nothing else — **default**), `strict` (reject with recovery guidance). Default `log` surfaces the magnitude of the problem via warnings without breaking any caller; operator flips to `strict` after external-client audit.
+  - **Residents updated:** SDK `GovernanceAgent` and Watcher now load their saved `continuity_token` into the client before the PATH 0 resume call so they keep working in strict mode without anchor-file schema changes.
+  - **Follow-up (out of scope this PR):** audit external clients (Codex plugin, Pi/Anima, Discord bridge, dashboard, raw REST callers); flip default `log → strict`; delete the dead bare-UUID / FALLBACK 2 / onboard-sweep code paths.
+
 ### Removed
 
 - **Neighbor coupling** (2026-04-17) — deleted `AdaptiveGovernor.apply_neighbor_pressure` / `decay_neighbor_pressure` and the `neighbor_pressure` / `agents_in_resonance` state fields from `unitares-core`. Deleted `cirs.hooks.maybe_apply_neighbor_pressure`, `auto_emit_coherence_reports`, `_lookup_similarity` and all re-exports. The production call site has been disabled since the `phases.py:1005` comment landed; this commit removes the dormant scaffolding so the code reflects actual runtime behavior. Rationale: agent-to-agent threshold coupling undermined independent per-agent judgment and produced correlated EISV drift that confounded fleet anomaly detection. Forward-compatible: persisted `GovernorState` snapshots carrying `neighbor_pressure` keys continue to load (unknown keys ignored).
