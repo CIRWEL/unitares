@@ -280,7 +280,7 @@ graph LR
 
 ## Paper
 
-[**UNITARES v6**](https://github.com/CIRWEL/unitares-paper-v6) — *Information-Theoretic Governance of Heterogeneous Agent Fleets*. Framework + migration paper (26 pages). Reframes EISV in Shannon + variational free-energy terms, presents class-conditional calibration as a first-class design constraint, and documents the pipeline-ordering migration mechanism used to re-ground the live system.
+[**UNITARES v6**](https://github.com/CIRWEL/unitares-paper-v6) — *Information-Theoretic Governance of Heterogeneous Agent Fleets*. Framework + migration paper (26 pages). Reframes EISV in Shannon + variational free-energy terms, presents class-conditional calibration as a first-class design constraint, and documents the pipeline-ordering migration mechanism used to re-ground the live system. DOI: [10.5281/zenodo.19647160](https://doi.org/10.5281/zenodo.19647160).
 
 ## Related Projects
 
