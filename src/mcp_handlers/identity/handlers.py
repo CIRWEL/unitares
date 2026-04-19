@@ -1082,6 +1082,12 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     from ..context import get_session_signals
     signals = get_session_signals()
     base_session_key = await derive_session_key(signals, arguments)
+    # Initialize session_key eagerly so no downstream branch can hit
+    # UnboundLocalError if the control flow misses its assignment (the
+    # 2026-04-19 crash was exactly this — schema/handler resume-default
+    # mismatch put us on a code path that never set session_key). The
+    # fresh-identity and force_new branches rebind it below.
+    session_key = base_session_key
     normalized_model = None
 
     # Session continuity: resume existing identity by default.
@@ -1111,20 +1117,25 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                 base_session_key, persist=False, resume=resume,
                 token_agent_uuid=_token_agent_uuid,
             )
-            # Token-based resume failed — agent not found or not active
-            if existing_identity.get("resume_failed"):
-                return error_response(
-                    existing_identity.get("message", "Could not resume identity"),
-                    recovery={
-                        "reason": "resume_failed",
-                        "token_agent_uuid": existing_identity.get("token_agent_uuid"),
-                        "hint": "Call onboard(force_new=true) to create a new identity.",
-                    }
-                )
         else:
             existing_identity = await resolve_session_identity(
                 base_session_key, persist=False, resume=resume,
                 token_agent_uuid=_token_agent_uuid,
+            )
+        # Token-based resume can fail on either branch above (PATH 2.8 in
+        # resolve_session_identity returns resume_failed whenever the
+        # token's agent is not active, regardless of the resume flag).
+        # Hoisting the check past both branches ensures an archived-token
+        # onboard gets a clean rejection instead of falling through to
+        # code that assumes an active existing_identity.
+        if existing_identity.get("resume_failed"):
+            return error_response(
+                existing_identity.get("message", "Could not resume identity"),
+                recovery={
+                    "reason": "resume_failed",
+                    "token_agent_uuid": existing_identity.get("token_agent_uuid"),
+                    "hint": "Call onboard(force_new=true) to create a new identity.",
+                }
             )
         if not existing_identity.get("created"):
             if existing_identity.get("archived"):

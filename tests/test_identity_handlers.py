@@ -2194,6 +2194,58 @@ class TestHandleOnboardV2:
         # Verify DB update was called
         mock_db.update_agent_fields.assert_called_with(test_uuid, status="active")
 
+    @pytest.mark.asyncio
+    async def test_archived_token_without_explicit_resume_returns_clean_error(
+        self, patch_onboard_deps, mock_db, mock_redis
+    ):
+        """Regression (2026-04-19): onboard with a continuity_token for an
+        archived agent — no explicit `resume` arg — must return a clean
+        resume_failed error instead of UnboundLocalError on session_key.
+
+        The pre-fix chain was: OnboardParams default resume=False → handler's
+        `coerce_bool(default=True)` was overridden by the Pydantic-materialized
+        False → the archived-token path fell into the non-resume branch of
+        resolve_session_identity (which also returns resume_failed), but the
+        handler only checked resume_failed on the resume=True branch. The
+        non-resume branch dropped through to code that referenced an
+        uninitialized session_key, raising UnboundLocalError and returning
+        an error_response with a misleading agent_signature echo.
+        """
+        from src.mcp_handlers.identity import handlers as identity_handlers
+
+        archived_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+        async def _fake_resolve(session_key, persist, resume, token_agent_uuid=None, **_):
+            # Simulate PATH 2.8 rejecting an archived agent regardless of
+            # the resume flag (matches real resolution.py:578-634 behavior).
+            return {
+                "resume_failed": True,
+                "error": "resume_failed",
+                "token_agent_uuid": token_agent_uuid,
+                "message": (
+                    f"Continuity token references agent {token_agent_uuid[:8]}... "
+                    f"which is not active."
+                ),
+            }
+
+        with patch.object(identity_handlers, "resolve_session_identity", side_effect=_fake_resolve), \
+             patch.object(identity_handlers, "extract_token_agent_uuid", return_value=archived_uuid):
+            # Deliberately omit `resume` — exercises the Pydantic-default path.
+            result = await identity_handlers.handle_onboard_v2({
+                "client_session_id": "archived-token-no-resume",
+                "continuity_token": "v1.fake.sig",
+            })
+
+        data = parse_result(result)
+        assert data.get("success") is False, "must NOT succeed on archived-token resume"
+        err = (data.get("error") or "").lower()
+        assert "resume" in err or "not active" in err
+        recovery = data.get("recovery") or {}
+        assert recovery.get("reason") == "resume_failed"
+        assert recovery.get("token_agent_uuid") == archived_uuid
+        # Crucially: we did not raise. Before the fix this path produced
+        # UnboundLocalError on session_key.
+
 
 # ============================================================================
 # handle_verify_trajectory_identity (lines 1884-1921)
