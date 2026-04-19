@@ -471,3 +471,75 @@ class TestNotConnected:
         client = GovernanceClient()
         with pytest.raises(GovernanceConnectionError, match="Not connected"):
             await client.call_tool("onboard", {})
+
+
+# --- Connect failure cleanup ---
+
+
+class TestConnectFailureCleanup:
+    """Regression tests for the sentinel crash (KG 2026-04-19T00:51:46).
+
+    When connect() fails partway, the partially-entered context managers must
+    be unwound before the exception propagates. Otherwise Python skips
+    __aexit__, the MCP streamable_http_client's anyio task group is leaked,
+    and it crashes at GC with "Attempted to exit cancel scope in a different
+    task than it was entered in".
+    """
+
+    @pytest.mark.asyncio
+    async def test_initialize_failure_unwinds_cm_stack_and_http_client(self):
+        """session.initialize() failure must leave client in a clean state."""
+        client = GovernanceClient()
+
+        entered_cm = AsyncMock()
+        entered_cm.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock(), MagicMock()))
+        entered_cm.__aexit__ = AsyncMock(return_value=None)
+
+        entered_session_cm = AsyncMock()
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock(side_effect=ConnectionError("upstream down"))
+        entered_session_cm.__aenter__ = AsyncMock(return_value=session_mock)
+        entered_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        http_client_mock = MagicMock()
+        http_client_mock.aclose = AsyncMock()
+
+        with (
+            patch("unitares_sdk.client.httpx.AsyncClient", return_value=http_client_mock),
+            patch("unitares_sdk.client.streamable_http_client", return_value=entered_cm),
+            patch("unitares_sdk.client.ClientSession", return_value=entered_session_cm),
+        ):
+            with pytest.raises(ConnectionError, match="upstream down"):
+                await client.connect()
+
+        # Original exception propagates; cleanup ran.
+        assert client._cm_stack == []
+        assert client._session is None
+        assert client._http_client is None
+        entered_cm.__aexit__.assert_called_once()
+        entered_session_cm.__aexit__.assert_called_once()
+        http_client_mock.aclose.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_transport_failure_unwinds_http_client(self):
+        """streamable_http_client.__aenter__ failure still closes the httpx client."""
+        client = GovernanceClient()
+
+        failing_cm = AsyncMock()
+        failing_cm.__aenter__ = AsyncMock(side_effect=ConnectionError("transport refused"))
+        failing_cm.__aexit__ = AsyncMock(return_value=None)
+
+        http_client_mock = MagicMock()
+        http_client_mock.aclose = AsyncMock()
+
+        with (
+            patch("unitares_sdk.client.httpx.AsyncClient", return_value=http_client_mock),
+            patch("unitares_sdk.client.streamable_http_client", return_value=failing_cm),
+        ):
+            with pytest.raises(ConnectionError, match="transport refused"):
+                await client.connect()
+
+        assert client._cm_stack == []
+        assert client._http_client is None
+        # Transport CM never registered on _cm_stack (its __aenter__ raised), so no __aexit__.
+        http_client_mock.aclose.assert_called_once()

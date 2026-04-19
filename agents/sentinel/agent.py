@@ -644,9 +644,14 @@ class SentinelAgent(GovernanceAgent):
         ws_task = asyncio.create_task(self.ws_consumer())
 
         try:
-            # Initial check-in
+            # Initial check-in — catch exceptions so a transient governance
+            # outage at startup doesn't kill the process and thrash launchd.
+            # Matches the periodic loop's error handling below.
             await asyncio.sleep(5)  # let WS connect
-            await self._bounded_analysis_cycle()
+            try:
+                await self._bounded_analysis_cycle()
+            except Exception as e:
+                log(f"Initial analysis cycle error: {e}")
 
             # Periodic analysis
             while self.running:
