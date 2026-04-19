@@ -1039,10 +1039,137 @@ class TestHandleSubmitSynthesis:
         assert data.get("action") == "block"
         assert "safety" in data.get("reason", "").lower()
 
+    # ------------------------------------------------------------------
+    # Participant-set eligibility gate (security)
+    #
+    # Background: before this gate, ``submit_synthesis`` called
+    # ``_resolve_dialectic_agent_id(arguments)`` with the default
+    # ``enforce_session_ownership=False``, so any registered agent could
+    # drive a synthesis to convergence and trigger resolution execution
+    # — including agents with no stake in the session. The sibling
+    # handlers (thesis/antithesis) enforce ownership; the asymmetry was
+    # intentional for the "third-party synthesizer" comment at the call
+    # site, but without a compensating allow-list it was a privilege
+    # escalation surface.
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_synthesis_rejects_non_participant(
+        self, mock_server, mock_pg_add_message, mock_pg_update_phase,
+        mock_save_session, mock_context_agent,
+    ):
+        """A registered agent who is neither paused, reviewer, quorum member,
+        nor appointed mediator must be rejected — otherwise any agent on the
+        server can push a synthesis to convergence and execute resolution."""
+        from src.mcp_handlers.dialectic.handlers import handle_submit_synthesis
+
+        session = _make_session(phase=DialecticPhase.SYNTHESIS)
+        session.synthesis_round = 1
+
+        with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock,
+                   return_value=session), \
+             mock_pg_add_message, mock_pg_update_phase, mock_save_session, \
+             mock_context_agent:
+            result = await handle_submit_synthesis({
+                "session_id": session.session_id,
+                "agent_id": "agent-active",  # registered but not a participant
+                "proposed_conditions": ["Lower threshold"],
+                "root_cause": "test",
+                "reasoning": "unauthorized",
+                "agrees": True,
+                "api_key": "key123",
+            })
+
+        data = parse_result(result)
+        assert data["success"] is False
+        assert "participant" in data["error"].lower(), (
+            f"expected participant-set rejection, got: {data}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_synthesis_accepts_quorum_reviewer(
+        self, mock_server, mock_pg_add_message, mock_pg_update_phase,
+        mock_save_session, mock_context_agent,
+    ):
+        """Quorum reviewers are legitimate participants once escalation has
+        assigned them; the gate must allow their synthesis submission."""
+        from src.mcp_handlers.dialectic.handlers import handle_submit_synthesis
+
+        session = _make_session(phase=DialecticPhase.SYNTHESIS)
+        session.synthesis_round = 1
+        # Simulate: session has been escalated to quorum voting, and an
+        # assigned quorum reviewer submits a synthesis proposal.
+        session.quorum_reviewer_ids = ["agent-active"]
+
+        with patch(f"{DIALECTIC}.load_session", new_callable=AsyncMock,
+                   return_value=session), \
+             mock_pg_add_message, mock_pg_update_phase, mock_save_session, \
+             mock_context_agent:
+            result = await handle_submit_synthesis({
+                "session_id": session.session_id,
+                "agent_id": "agent-active",
+                "proposed_conditions": ["Merged quorum condition"],
+                "root_cause": "test",
+                "reasoning": "on the quorum",
+                "agrees": False,
+                "api_key": "key123",
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True, (
+            f"quorum reviewer must be accepted, got: {data}"
+        )
+
 
 # ============================================================================
-# 5. handle_list_dialectic_sessions
+# Deadlock guards: any direct ``await get_db()`` in a dialectic handler path
+# must not hang the anyio task group. CLAUDE.md rule: new MCP handlers that
+# need DB access must use ``run_in_executor`` or ``asyncio.wait_for`` with a
+# tight timeout and graceful degradation. The three sites covered:
+#   1448: ``_initiate_quorum`` phase persist
+#   1533: ``handle_submit_quorum_vote`` reviewer-id fallback read
+#   1646: ``handle_submit_quorum_vote`` post-vote result persist
 # ============================================================================
+
+
+class TestDeadlockGuards:
+    """Regression guards for the anyio/asyncpg deadlock pattern."""
+
+    @pytest.mark.asyncio
+    async def test_initiate_quorum_tolerates_get_db_deadlock(
+        self, mock_server, mock_save_session,
+    ):
+        """``_initiate_quorum`` must complete within a bounded time even if
+        ``get_db`` hangs. Before the guard, a stuck asyncpg pool would
+        deadlock the whole handler; after the guard, the except path logs a
+        warning and the function returns in-memory state."""
+        import asyncio as _asyncio
+        from src.mcp_handlers.dialectic.handlers import _initiate_quorum
+
+        # Seed some eligible reviewers so _initiate_quorum gets past the
+        # select_quorum_reviewers short-circuit.
+        mock_server.agent_metadata = {
+            f"reviewer-{i}": _make_agent_meta(status="active")
+            for i in range(5)
+        }
+
+        async def _never_returns():
+            await _asyncio.sleep(60)  # intentionally longer than any handler budget
+            return None  # pragma: no cover
+
+        session = _make_session(phase=DialecticPhase.ANTITHESIS)
+
+        with patch(f"{DIALECTIC}.select_quorum_reviewers", new_callable=AsyncMock,
+                   return_value=[(f"reviewer-{i}", 1.0) for i in range(3)]), \
+             patch("src.db.get_db", side_effect=_never_returns), \
+             mock_save_session:
+            # Bound the test's own patience to prove the handler has its own
+            # timeout. If the fix works the call returns quickly; if it doesn't,
+            # this wait_for fires and the test fails with a clear reason.
+            result = await _asyncio.wait_for(_initiate_quorum(session), timeout=5.0)
+
+        assert result is not None, "quorum must still form even if PG persist hangs"
+        assert len(result["reviewer_ids"]) == 3
 
 class TestHandleListDialecticSessions:
     """Tests for handle_list_dialectic_sessions handler."""

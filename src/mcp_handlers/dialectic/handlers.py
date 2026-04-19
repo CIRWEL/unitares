@@ -1152,6 +1152,34 @@ async def handle_submit_synthesis(arguments: Dict[str, Any]) -> Sequence[TextCon
                     recovery=session_not_found_recovery(),
                 )]
 
+        # Participant-set eligibility gate. The sibling handlers
+        # (submit_thesis / submit_antithesis) pass enforce_session_ownership=True
+        # to _resolve_dialectic_agent_id; submit_synthesis intentionally relaxes
+        # that check to support the "third-party synthesizer" pattern. Without
+        # a compensating allow-list, any registered agent could drive a
+        # synthesis to convergence and trigger resolution execution — a real
+        # privilege escalation surface. The allow-list is: the paused agent,
+        # the assigned reviewer, any quorum reviewer (if escalated), and an
+        # appointed mediator if one has been set.
+        eligible = set()
+        if getattr(session, "paused_agent_id", None):
+            eligible.add(session.paused_agent_id)
+        if getattr(session, "reviewer_agent_id", None):
+            eligible.add(session.reviewer_agent_id)
+        eligible.update(getattr(session, "quorum_reviewer_ids", []) or [])
+        appointed_mediator = getattr(session, "appointed_mediator_id", None)
+        if appointed_mediator:
+            eligible.add(appointed_mediator)
+        agent_uuid = resolve_agent_uuid(arguments, agent_id)
+        if agent_id not in eligible and (not agent_uuid or agent_uuid not in eligible):
+            return [error_response(
+                f"Agent '{agent_id}' is not a participant in this dialectic session.",
+                recovery=(
+                    "Only the paused agent, the assigned reviewer, or assigned "
+                    "quorum members may submit synthesis."
+                ),
+            )]
+
         # Coerce agrees to bool (MCP tools may send "true"/"false" strings)
         raw_agrees = arguments.get('agrees', False)
         if isinstance(raw_agrees, str):
@@ -1442,23 +1470,31 @@ async def _initiate_quorum(session: DialecticSession) -> Optional[Dict[str, Any]
     session.quorum_reviewer_ids = reviewer_ids
     session.quorum_deadline = deadline
 
-    # Persist to PostgreSQL
+    # Persist to PostgreSQL. Wrapped with asyncio.wait_for because a direct
+    # ``await get_db()`` in an MCP handler path can deadlock under the
+    # anyio-asyncio conflict documented in CLAUDE.md. On timeout we fall
+    # through to the in-memory session state (already mutated above) and
+    # the subsequent ``save_session`` JSON write, matching the existing
+    # degrade-on-failure behavior.
     try:
         from src.db import get_db
-        db = await get_db()
-        await db.execute(
-            """UPDATE core.dialectic_sessions
-               SET phase = 'quorum_voting',
-                   status = 'quorum_voting',
-                   quorum_reviewer_ids = $1::jsonb,
-                   quorum_deadline = $2::timestamptz,
-                   updated_at = NOW()
-             WHERE session_id = $3""",
-            json.dumps(reviewer_ids),
-            deadline,
-            session.session_id,
+        db = await asyncio.wait_for(get_db(), timeout=0.5)
+        await asyncio.wait_for(
+            db.execute(
+                """UPDATE core.dialectic_sessions
+                   SET phase = 'quorum_voting',
+                       status = 'quorum_voting',
+                       quorum_reviewer_ids = $1::jsonb,
+                       quorum_deadline = $2::timestamptz,
+                       updated_at = NOW()
+                 WHERE session_id = $3""",
+                json.dumps(reviewer_ids),
+                deadline,
+                session.session_id,
+            ),
+            timeout=1.0,
         )
-    except Exception as e:
+    except (asyncio.TimeoutError, Exception) as e:
         logger.warning(f"Could not persist quorum to PostgreSQL: {e}")
 
     try:
@@ -1526,20 +1562,24 @@ async def handle_submit_quorum_vote(arguments: Dict[str, Any]) -> Sequence[TextC
         # Read quorum reviewer IDs from session (set by _initiate_quorum)
         quorum_reviewer_ids = getattr(session, 'quorum_reviewer_ids', []) or []
 
-        # PG fallback for sessions reconstructed before quorum_reviewer_ids was added
+        # PG fallback for sessions reconstructed before quorum_reviewer_ids was added.
+        # See _initiate_quorum above for why asyncio.wait_for is required here.
         if not quorum_reviewer_ids:
             try:
                 from src.db import get_db
-                db = await get_db()
-                row = await db.fetchrow(
-                    "SELECT quorum_reviewer_ids FROM core.dialectic_sessions WHERE session_id = $1",
-                    session_id,
+                db = await asyncio.wait_for(get_db(), timeout=0.5)
+                row = await asyncio.wait_for(
+                    db.fetchrow(
+                        "SELECT quorum_reviewer_ids FROM core.dialectic_sessions WHERE session_id = $1",
+                        session_id,
+                    ),
+                    timeout=1.0,
                 )
                 if row and row["quorum_reviewer_ids"]:
                     qr = row["quorum_reviewer_ids"]
                     quorum_reviewer_ids = json.loads(qr) if isinstance(qr, str) else qr
                     session.quorum_reviewer_ids = quorum_reviewer_ids  # Cache on session
-            except Exception as e:
+            except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(f"Could not load quorum_reviewer_ids from PG: {e}")
 
         if not quorum_reviewer_ids:
@@ -1640,18 +1680,22 @@ async def handle_submit_quorum_vote(arguments: Dict[str, Any]) -> Sequence[TextC
         tally = tally_quorum_votes(quorum_votes)
         result["quorum_result"] = tally.to_dict()
 
-        # Persist quorum result
+        # Persist quorum result. See _initiate_quorum above for the rationale
+        # behind the asyncio.wait_for deadlock guard.
         try:
             from src.db import get_db
-            db = await get_db()
-            await db.execute(
-                """UPDATE core.dialectic_sessions
-                   SET quorum_result = $1::jsonb, updated_at = NOW()
-                 WHERE session_id = $2""",
-                json.dumps(tally.to_dict()),
-                session_id,
+            db = await asyncio.wait_for(get_db(), timeout=0.5)
+            await asyncio.wait_for(
+                db.execute(
+                    """UPDATE core.dialectic_sessions
+                       SET quorum_result = $1::jsonb, updated_at = NOW()
+                     WHERE session_id = $2""",
+                    json.dumps(tally.to_dict()),
+                    session_id,
+                ),
+                timeout=1.0,
             )
-        except Exception as e:
+        except (asyncio.TimeoutError, Exception) as e:
             logger.warning(f"Could not persist quorum_result to PG: {e}")
 
         if tally.achieved_supermajority and tally.action == "resume":
