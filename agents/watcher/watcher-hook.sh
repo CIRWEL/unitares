@@ -82,11 +82,28 @@ touch "$LOCK_FILE"
 # --- Stale lock cleanup (opportunistic, non-blocking) ---
 find "$LOCK_DIR" -name "*.lock" -mmin +10 -delete 2>/dev/null &
 
-# Fire and forget: detach the watcher so the hook returns instantly.
-# stdin/stdout/stderr go to /dev/null so the editor never sees the model call.
-nohup python3 "${WATCHER_AGENT}" \
-    --all --file "$FILE_PATH" \
-    >/dev/null 2>&1 </dev/null &
+# --- Region extraction via git diff ---
+# Ask the hook_input module for the changed regions so the watcher sees
+# ~60-150 lines (one hunk + 5 context on each side) instead of the whole
+# file. Empty output = file untracked, clean, or git unavailable; fall
+# back to scanning head. Bounded by its own internal 5s timeout.
+REGIONS=$(python3 -m agents.watcher.hook_input --file "$FILE_PATH" 2>/dev/null || true)
+
+# Fire and forget: detach a subshell that runs the watcher(s) serially.
+# One scan per disjoint region cluster keeps each prompt small; running
+# them in sequence (within one background spawn) avoids saturating the
+# Ollama queue. stdin/stdout/stderr go to /dev/null so the editor never
+# sees the model call.
+(
+    if [[ -z "$REGIONS" ]]; then
+        python3 "${WATCHER_AGENT}" --all --file "$FILE_PATH"
+    else
+        while IFS= read -r REGION; do
+            [[ -z "$REGION" ]] && continue
+            python3 "${WATCHER_AGENT}" --all --file "$FILE_PATH" --region "$REGION"
+        done <<< "$REGIONS"
+    fi
+) </dev/null >/dev/null 2>&1 &
 
 # Disown so the watcher survives the hook process exit
 disown 2>/dev/null || true
