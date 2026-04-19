@@ -1336,6 +1336,154 @@ class TestHandleIdentityAdapter:
         assert data["uuid"] == test_uuid
         assert spy.await_count == 0, "must not re-persist an already-resumed identity"
 
+    # ------------------------------------------------------------------
+    # PATH 0 characterization (UUID-direct resume, pre-refactor snapshot).
+    # These lock in the fast-path / slow-path / error semantics so the
+    # per-PATH extraction refactor stays behavior-preserving.
+    # Part C gate (token ownership) is covered in test_identity_honesty_partc.py;
+    # these tests use log-mode to exercise the resolution paths without
+    # reconstructing tokens.
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_path0_monitor_cache_hit_skips_db(self, monkeypatch):
+        """PATH 0 FAST: UUID in monitor cache returns source=monitor_cache without a DB call."""
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "log")
+        from src.mcp_handlers.identity import handlers as identity_handlers
+
+        agent_uuid = "aaaaaaaa-1111-2222-3333-444444444444"
+        fake_server = MagicMock(
+            monitors={agent_uuid: MagicMock()},
+            agent_metadata={},
+        )
+        db_spy = AsyncMock(return_value=True)
+        status_spy = AsyncMock(return_value="active")
+
+        with patch("src.mcp_handlers.shared.get_mcp_server", return_value=fake_server), \
+             patch.object(identity_handlers, "_agent_exists_in_postgres", db_spy), \
+             patch.object(identity_handlers, "_get_agent_status", status_spy):
+            result = await identity_handlers.handle_identity_adapter({
+                "agent_uuid": agent_uuid,
+                "resume": True,
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["uuid"] == agent_uuid
+        assert data.get("source") == "monitor_cache", (
+            f"Monitor-cache hit must not hit DB; got source={data.get('source')!r}"
+        )
+        assert db_spy.await_count == 0, "Monitor-cache hit must not query _agent_exists_in_postgres"
+        assert status_spy.await_count == 0, "Monitor-cache hit must not query _get_agent_status"
+
+    @pytest.mark.asyncio
+    async def test_path0_db_slow_path_when_not_in_monitors(self, monkeypatch):
+        """PATH 0 slow path: UUID absent from monitors falls through to DB-backed verification."""
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "log")
+        from src.mcp_handlers.identity import handlers as identity_handlers
+
+        agent_uuid = "bbbbbbbb-1111-2222-3333-444444444444"
+        fake_server = MagicMock(monitors={}, agent_metadata={})
+        db_spy = AsyncMock(return_value=True)
+        status_spy = AsyncMock(return_value="active")
+        meta_spy = AsyncMock(return_value="Slow_Path_Agent")
+        label_spy = AsyncMock(return_value="SlowPathLabel")
+        cache_spy = AsyncMock()
+
+        with patch("src.mcp_handlers.shared.get_mcp_server", return_value=fake_server), \
+             patch.object(identity_handlers, "_agent_exists_in_postgres", db_spy), \
+             patch.object(identity_handlers, "_get_agent_status", status_spy), \
+             patch.object(identity_handlers, "_get_agent_id_from_metadata", meta_spy), \
+             patch.object(identity_handlers, "_get_agent_label", label_spy), \
+             patch.object(identity_handlers, "_cache_session", cache_spy):
+            result = await identity_handlers.handle_identity_adapter({
+                "agent_uuid": agent_uuid,
+                "resume": True,
+            })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["uuid"] == agent_uuid
+        assert data.get("resumed") is True
+        assert data.get("resumed_by_uuid") is True
+        assert data.get("source") != "monitor_cache", "Slow path must not claim monitor_cache"
+        assert db_spy.await_count == 1, "Slow path must verify existence in DB"
+        assert status_spy.await_count == 1, "Slow path must verify agent is active"
+
+    @pytest.mark.asyncio
+    async def test_path0_uuid_not_found_returns_error(self, monkeypatch):
+        """PATH 0 slow path: UUID absent from DB returns uuid_not_found error (no ghost creation)."""
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "log")
+        from src.mcp_handlers.identity import handlers as identity_handlers
+
+        agent_uuid = "cccccccc-1111-2222-3333-444444444444"
+        fake_server = MagicMock(monitors={}, agent_metadata={})
+
+        with patch("src.mcp_handlers.shared.get_mcp_server", return_value=fake_server), \
+             patch.object(identity_handlers, "_agent_exists_in_postgres", AsyncMock(return_value=False)):
+            result = await identity_handlers.handle_identity_adapter({
+                "agent_uuid": agent_uuid,
+                "resume": True,
+            })
+
+        data = parse_result(result)
+        assert data.get("success") is False
+        assert data.get("error_code") == "UUID_NOT_FOUND" or "not found" in (data.get("error") or "").lower()
+        recovery = data.get("recovery") or {}
+        assert recovery.get("reason") == "uuid_not_found"
+        assert recovery.get("agent_uuid") == agent_uuid
+
+    @pytest.mark.asyncio
+    async def test_path0_uuid_not_active_returns_error(self, monkeypatch):
+        """PATH 0 slow path: UUID in DB but status != active returns error (no silent archive resume)."""
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "log")
+        from src.mcp_handlers.identity import handlers as identity_handlers
+
+        agent_uuid = "dddddddd-1111-2222-3333-444444444444"
+        fake_server = MagicMock(monitors={}, agent_metadata={})
+
+        with patch("src.mcp_handlers.shared.get_mcp_server", return_value=fake_server), \
+             patch.object(identity_handlers, "_agent_exists_in_postgres", AsyncMock(return_value=True)), \
+             patch.object(identity_handlers, "_get_agent_status", AsyncMock(return_value="archived")):
+            result = await identity_handlers.handle_identity_adapter({
+                "agent_uuid": agent_uuid,
+                "resume": True,
+            })
+
+        data = parse_result(result)
+        assert data.get("success") is False
+        assert "not active" in (data.get("error") or "").lower()
+        recovery = data.get("recovery") or {}
+        assert recovery.get("reason") == "uuid_not_found"
+        assert recovery.get("status") == "archived"
+
+    @pytest.mark.asyncio
+    async def test_resume_failed_branch_returns_error(self, patch_identity_deps, mock_db, mock_redis):
+        """resolve_session_identity returning resume_failed must propagate as explicit error, not silent fork."""
+        from src.mcp_handlers.identity import handlers as identity_handlers
+
+        fake_token_uuid = "eeeeeeee-1111-2222-3333-444444444444"
+
+        async def _fake_resolve(session_key, persist, resume, token_agent_uuid=None):
+            return {
+                "resume_failed": True,
+                "message": "agent_not_active",
+                "token_agent_uuid": fake_token_uuid,
+            }
+
+        with patch.object(identity_handlers, "resolve_session_identity", side_effect=_fake_resolve):
+            result = await identity_handlers.handle_identity_adapter({
+                "client_session_id": "resume-failed-test",
+                "resume": True,
+            })
+
+        data = parse_result(result)
+        assert data.get("success") is False
+        assert "agent_not_active" in (data.get("error") or "") or "resume" in (data.get("error") or "").lower()
+        recovery = data.get("recovery") or {}
+        assert recovery.get("reason") == "resume_failed"
+        assert recovery.get("token_agent_uuid") == fake_token_uuid
+
 
 # ============================================================================
 # handle_onboard_v2 - full flow (lines 1480-1857)
