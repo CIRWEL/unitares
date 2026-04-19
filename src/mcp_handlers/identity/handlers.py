@@ -739,9 +739,13 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
             # parent_agent_id is only set when the caller explicitly asserted
             # succession (post-2026-04-16 EISV inheritance spec). Fingerprint
             # match no longer auto-claims lineage, so no predecessor_uuid to
-            # read here.
-            _parent = result.get("parent_agent_id")
-            _spawn = result.get("spawn_reason") or ("new_session" if _parent else None)
+            # read here. Read from `arguments` first because `handle_identity_v2`
+            # does not currently plumb these through its return dict —
+            # without this fallback, identity(parent_agent_id=...) silently
+            # drops lineage and contradicts the SDK contract at
+            # unitares_sdk/client.py::identity.
+            _parent = arguments.get("parent_agent_id") or result.get("parent_agent_id")
+            _spawn = arguments.get("spawn_reason") or result.get("spawn_reason") or ("new_session" if _parent else None)
             newly_persisted = await ensure_agent_persisted(
                 agent_uuid,
                 session_key,
