@@ -33,26 +33,28 @@ except ImportError:
 async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """
     Call a free/low-cost LLM for reasoning, generation, or analysis.
-    
-    Models available:
-    - gemini-flash (free, fast) - default
-    - llama-3.1-8b (via Ollama, free) - if local available
-    - gemini-pro (low-cost) - if free tier exhausted
-    
-    Routing via ngrok.ai:
-    - Automatic failover (gemini → ollama → gemini-pro)
-    - Cost optimization (route to cheapest available)
-    - Rate limit handling (distribute across providers)
-    
+
+    Providers:
+    - Ollama (local, free) — default when privacy="local" (the default). Pass a
+      model name that is actually pulled on the host (`ollama list`). The
+      local fallback for model="auto" is taken from UNITARES_LLM_MODEL
+      (default "gemma4:latest"). Requested model names are passed through
+      verbatim — no silent aliasing.
+    - Hugging Face Inference Providers (privacy="cloud", provider="hf")
+      — requires HF_TOKEN or HUGGINGFACE_TOKEN. Model names like
+      "deepseek-ai/DeepSeek-R1" or "Qwen/Qwen2.5-72B-Instruct" route here.
+    - Google Gemini (privacy="cloud", provider="gemini") — requires
+      GOOGLE_AI_API_KEY. Default model is "gemini-flash".
+
     Usage tracked in EISV (Energy consumption):
     - Model calls consume Energy
     - High usage → higher Energy → agent learns efficiency
     - Natural self-regulation
-    
+
     Example:
     {
       "prompt": "Analyze this code for potential bugs",
-      "model": "gemini-flash",
+      "model": "gemma4:latest",
       "task_type": "analysis",
       "max_tokens": 2048
     }
@@ -88,11 +90,12 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     
     # Privacy routing: Force local if requested
     if privacy == "local" or provider == "ollama":
-        # Route to Ollama (local)
+        # Route to Ollama (local). Model names pass through verbatim so
+        # callers get a clean 404 if the model isn't pulled — no silent
+        # aliasing to a model that may also be absent.
         base_url = "http://localhost:11434/v1"  # Ollama OpenAI-compatible API
-        # Use specified model or default to llama3 (common Ollama model)
-        if model == "auto" or model == "llama-3.1-8b":
-            model = "llama3:70b"  # Default Ollama model (adjust based on what's installed)
+        if model == "auto":
+            model = os.getenv("UNITARES_LLM_MODEL", "gemma4:latest")
         api_key = "ollama"  # Dummy key - Ollama ignores it but OpenAI SDK requires non-None
         provider = "ollama"
         logger.info(f"Privacy mode: local - routing to Ollama with model {model}")
@@ -325,10 +328,19 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             recovery_hint = "Wait a moment and retry, or use a different model"
         elif "not found" in error_msg.lower() or "invalid" in error_msg.lower():
             error_code = "MODEL_NOT_AVAILABLE"
-            recovery_hint = f"Model '{model}' not available. Try 'gemini-flash', 'qwen2.5:14b', or 'llama-3.1-8b'"
+            if "localhost" in base_url or "127.0.0.1" in base_url:
+                recovery_hint = (
+                    f"Model '{model}' is not pulled on this host. "
+                    "Run `ollama list` to see available models, or `ollama pull {model}` to fetch it."
+                )
+            else:
+                recovery_hint = (
+                    f"Model '{model}' not available on this provider. "
+                    "Check the provider's model catalog or try a different model."
+                )
         else:
             error_code = "INFERENCE_ERROR"
-            recovery_hint = "Check ngrok.ai configuration and model availability"
+            recovery_hint = "Check provider configuration and model availability"
         
         return [error_response(
             f"Model inference failed: {error_msg}",
