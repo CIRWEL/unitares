@@ -60,6 +60,47 @@ from .persistence import (
     set_agent_label,
 )
 
+
+def _broadcaster():
+    """Lazy accessor for the shared broadcaster. Returns None when broadcaster
+    isn't importable (e.g., unit tests without a live server). Mirrors the
+    helper in persistence.py; kept at module level here so tests patching
+    handlers._broadcaster can intercept cleanly."""
+    try:
+        from src.broadcaster import broadcaster as _b
+        return _b
+    except Exception:
+        return None
+
+
+async def _emit_identity_hijack_event(
+    direct_uuid: str,
+    mode: str,
+    token_aid: Optional[str],
+) -> None:
+    """Surface a suspected identity hijack on the shared broadcast channel.
+
+    Fires when PATH 0 detects a bare-UUID resume without a matching
+    continuity_token (see Part C gate). Dashboards and the Discord bridge
+    subscribe to this event and surface it within one broadcast cycle,
+    mirroring the `resident_fork_detected` pattern (#70).
+    """
+    b = _broadcaster()
+    if b is None:
+        return
+    try:
+        await b.broadcast_event(
+            event_type="identity_hijack_suspected",
+            agent_id=direct_uuid,
+            payload={
+                "mode": mode,
+                "proof": "matching_token" if token_aid == direct_uuid else "none",
+                "token_aid_mismatch": token_aid if (token_aid and token_aid != direct_uuid) else None,
+            },
+        )
+    except Exception as e:
+        logger.warning(f"[IDENTITY_HIJACK] broadcast_event failed: {e}")
+
 # --- identity_resolution ---
 from .resolution import (
     _generate_agent_id,
@@ -438,6 +479,7 @@ async def _try_resume_by_agent_uuid_direct(
         from config.governance_config import identity_strict_mode
         _partc_mode = identity_strict_mode()
         if _partc_mode == "strict":
+            await _emit_identity_hijack_event(_direct_uuid, "strict", _partc_token_aid)
             return error_response(
                 (
                     "Bare agent_uuid resume is not permitted. Include "
@@ -462,7 +504,8 @@ async def _try_resume_by_agent_uuid_direct(
                 _direct_uuid[:8],
                 (_partc_token_aid[:8] + "...") if _partc_token_aid else "none",
             )
-        # mode == "off": unchanged behavior, no log
+            await _emit_identity_hijack_event(_direct_uuid, "log", _partc_token_aid)
+        # mode == "off": unchanged behavior, no log, no broadcast
 
     # PATH 0 FAST: if the UUID has a live in-process monitor, trust it
     # and skip DB verification entirely. Anyio-deadlock-safe (no awaits).
