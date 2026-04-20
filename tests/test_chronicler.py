@@ -41,6 +41,37 @@ class TestTokeiScraper:
             tokei_unitares_src_code(tmp_path)
 
 
+class TestTestsCountScraper:
+    def test_counts_only_test_prefixed_py_files(self, tmp_path: Path):
+        from agents.chronicler.scrapers import tests_unitares_count
+
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tests / "test_a.py").write_text("")
+        (tests / "test_b.py").write_text("")
+        (tests / "conftest.py").write_text("")        # not test_*.py — excluded
+        (tests / "helper_utils.py").write_text("")    # not test_*.py — excluded
+        (tests / "notes.md").write_text("")           # not python — excluded
+
+        sub = tests / "sub"
+        sub.mkdir()
+        (sub / "test_nested.py").write_text("")       # nested test_*.py — counted
+
+        assert tests_unitares_count(tmp_path) == 3.0
+
+    def test_empty_tests_dir_returns_zero(self, tmp_path: Path):
+        from agents.chronicler.scrapers import tests_unitares_count
+
+        (tmp_path / "tests").mkdir()
+        assert tests_unitares_count(tmp_path) == 0.0
+
+    def test_missing_tests_dir_raises(self, tmp_path: Path):
+        from agents.chronicler.scrapers import tests_unitares_count
+
+        with pytest.raises(FileNotFoundError):
+            tests_unitares_count(tmp_path)
+
+
 # ---------------------------------------------------------------------------
 # agent.run
 # ---------------------------------------------------------------------------
