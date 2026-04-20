@@ -4,38 +4,37 @@
 //   GET /v1/metrics/catalog       — available series (name, description, unit)
 //   GET /v1/metrics/series?name=X — points for the selected series
 //
-// Surfaces Chronicler's scrape effect via a "Last scrape" subtitle so the
-// scraper is visible even though it isn't a resident agent with its own
-// identity/check-ins.
+// Theme handling mirrors dashboard/eisv-charts.js::makeChartOptions so
+// axis ticks, grid, tooltip, and fonts are legible on the dark theme —
+// Chart.js defaults are dark-grey-on-dark and render invisible.
+// Auth + fetch go through the shared `authFetch` helper from utils.js so
+// this module stays aligned with the rest of the dashboard.
 
 (function () {
     'use strict';
 
-    var chart = null;          // Chart.js instance
-    var currentName = null;    // selected series name
-    var catalogCache = [];     // last-seen catalog
+    var chart = null;
+    var currentName = null;
+    var catalogCache = [];
 
-    function getAuthToken() {
-        try {
-            return localStorage.getItem('UNITARES_HTTP_API_TOKEN')
-                || localStorage.getItem('unitares_api_token')
-                || null;
-        } catch (_e) {
-            return null;
+    // Set once so subsequent `new Chart()` calls pick up the theme without
+    // repeating the block. Applied at wire() time because the dashboard body
+    // CSS vars must be resolvable.
+    function applyChartDefaults() {
+        if (typeof Chart === 'undefined' || !Chart.defaults) return;
+        var bodyStyle = getComputedStyle(document.body);
+        var textSecondary = (bodyStyle.getPropertyValue('--text-secondary') || '').trim() || '#a0a0b0';
+        var fontFamily = (bodyStyle.getPropertyValue('--font-family') || '').trim() || "'Outfit', sans-serif";
+        Chart.defaults.color = textSecondary;
+        if (Chart.defaults.font) {
+            Chart.defaults.font.family = fontFamily;
         }
-    }
-
-    function authHeaders() {
-        var token = getAuthToken();
-        return token ? { 'Authorization': 'Bearer ' + token } : {};
+        Chart.defaults.borderColor = 'rgba(255,255,255,0.08)';
     }
 
     async function fetchCatalog() {
         try {
-            var resp = await fetch('/v1/metrics/catalog', {
-                credentials: 'same-origin',
-                headers: authHeaders(),
-            });
+            var resp = await authFetch('/v1/metrics/catalog');
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             var data = await resp.json();
             if (!data || data.success === false) {
@@ -50,11 +49,7 @@
 
     async function fetchSeries(name) {
         try {
-            var url = '/v1/metrics/series?name=' + encodeURIComponent(name);
-            var resp = await fetch(url, {
-                credentials: 'same-origin',
-                headers: authHeaders(),
-            });
+            var resp = await authFetch('/v1/metrics/series?name=' + encodeURIComponent(name));
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             var data = await resp.json();
             if (!data || data.success === false) {
@@ -92,7 +87,7 @@
         }
         var newest = points[points.length - 1];
         el.textContent = 'last scrape: ' + formatRelative(newest.ts)
-            + ' (' + points.length + ' point' + (points.length === 1 ? '' : 's') + ')';
+            + ' · ' + points.length + ' pt' + (points.length === 1 ? '' : 's');
         el.title = newest.ts;
     }
 
@@ -110,12 +105,50 @@
         if (chart) { chart.destroy(); chart = null; }
     }
 
+    // Theme-aware chart options, patterned on eisv-charts.js:makeChartOptions.
+    function chartOptionsFor(metric) {
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 300 },
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: 'rgba(13,13,18,0.9)',
+                    titleFont: { family: "'Inter', sans-serif" },
+                    bodyFont: { family: "'JetBrains Mono', monospace", size: 12 },
+                    padding: 10,
+                    borderColor: '#333',
+                    borderWidth: 1,
+                },
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: { tooltipFormat: 'yyyy-MM-dd HH:mm' },
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    ticks: { color: '#a0a0b0', font: { size: 11 }, maxRotation: 0 },
+                },
+                y: {
+                    beginAtZero: false,
+                    title: { display: !!metric.unit, text: metric.unit || '', color: '#a0a0b0' },
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    ticks: {
+                        color: '#a0a0b0',
+                        font: { family: "'JetBrains Mono', monospace", size: 11 },
+                    },
+                },
+            },
+        };
+    }
+
     function renderChart(metric, points) {
         var canvas = document.getElementById('fleet-metrics-chart');
         if (!canvas) return;
 
         if (points.length === 0) {
-            renderEmpty('No data for "' + metric.name + '" yet. Chronicler runs daily — try Refresh after the next cycle.');
+            renderEmpty('No data for "' + metric.name + '" yet. Chronicler runs daily — Refresh after the next cycle.');
             return;
         }
 
@@ -123,6 +156,12 @@
         var data = points.map(function (p) {
             return { x: new Date(p.ts), y: p.value };
         });
+
+        var lineColor = (typeof MetricColors !== 'undefined'
+            && MetricColors.HEX
+            && MetricColors.HEX.chartCoherence)
+            ? MetricColors.HEX.chartCoherence
+            : '#06b6d4';
 
         if (chart) chart.destroy();
         // eslint-disable-next-line no-undef
@@ -132,31 +171,14 @@
                 datasets: [{
                     label: metric.name + (metric.unit ? ' (' + metric.unit + ')' : ''),
                     data: data,
-                    borderColor: '#4a9eff',
-                    backgroundColor: 'rgba(74, 158, 255, 0.12)',
+                    borderColor: lineColor,
+                    backgroundColor: lineColor + '22',   // 0x22 alpha — subtle fill
                     fill: true,
                     tension: 0.2,
                     pointRadius: 3,
                 }],
             },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: { mode: 'index', intersect: false },
-                },
-                scales: {
-                    x: {
-                        type: 'time',
-                        time: { tooltipFormat: 'yyyy-MM-dd HH:mm' },
-                    },
-                    y: {
-                        beginAtZero: false,
-                        title: { display: !!metric.unit, text: metric.unit || '' },
-                    },
-                },
-            },
+            options: chartOptionsFor(metric),
         });
     }
 
@@ -175,7 +197,7 @@
             var m = metrics[i];
             var o = document.createElement('option');
             o.value = m.name;
-            o.textContent = m.name;          // terse — description goes in subtitle
+            o.textContent = m.name;
             if (m.description) o.title = m.description;
             select.appendChild(o);
         }
@@ -203,6 +225,7 @@
     }
 
     function wire() {
+        applyChartDefaults();
         var select = document.getElementById('fleet-metrics-select');
         var refreshBtn = document.getElementById('fleet-metrics-refresh');
         if (select) {

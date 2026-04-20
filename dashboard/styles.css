@@ -5062,6 +5062,7 @@ body {
     position: relative;
     height: 200px;         /* match peer panels' visual footprint on desktop */
     padding: 4px 0;
+    contain: strict;       /* prevents Chart.js resize-observer from thrashing parent layout */
 }
 
 .fleet-metrics-chart-wrap canvas {
