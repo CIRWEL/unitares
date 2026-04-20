@@ -389,64 +389,127 @@ async def resolve_session_identity(
                     # See docs/specs/2026-04-16-sever-fingerprint-eisv-inheritance-design.md
                     if resume:
 
-                        # Check if persisted in PostgreSQL
+                        # PATH 1 fingerprint cross-check (2026-04-20 council follow-up
+                        # to identity-honesty Part C). Session IDs of form
+                        # `agent-{uuid[:12]}` are UUID-derivable; PATH 1 resume by
+                        # session_id alone has no ownership proof. Compare the
+                        # binding-time fingerprint (written by _cache_session) against
+                        # the current request's fingerprint. Mismatch fires
+                        # identity_hijack_suspected with path="path1_session_id" and,
+                        # in strict mode, falls through to a fresh session.
+                        cached_bind_fp = cached.get("bind_ip_ua")
+                        if cached_bind_fp:
+                            try:
+                                from ..context import get_session_signals
+                                _sig = get_session_signals()
+                                current_fp = getattr(_sig, "ip_ua_fingerprint", None) if _sig else None
+                            except Exception:
+                                current_fp = None
+                            if current_fp and current_fp != cached_bind_fp:
+                                from config.governance_config import session_fingerprint_check_mode
+                                _fp_mode = session_fingerprint_check_mode()
+                                if _fp_mode != "off":
+                                    logger.warning(
+                                        "[PATH1_FINGERPRINT_MISMATCH] session_key=%s... "
+                                        "bound_fp=%s current_fp=%s — suspected hijack of "
+                                        "agent=%s... (mode=%s)",
+                                        session_key[:20],
+                                        cached_bind_fp[:16],
+                                        current_fp[:16],
+                                        agent_uuid[:8],
+                                        _fp_mode,
+                                    )
+                                    try:
+                                        from .handlers import _broadcaster
+                                        _b = _broadcaster()
+                                        if _b is not None:
+                                            await _b.broadcast_event(
+                                                event_type="identity_hijack_suspected",
+                                                agent_id=agent_uuid,
+                                                payload={
+                                                    "path": "path1_session_id",
+                                                    "mode": _fp_mode,
+                                                    "source": "path1_fingerprint_mismatch",
+                                                    "bind_fp_prefix": cached_bind_fp[:8],
+                                                    "current_fp_prefix": current_fp[:8],
+                                                },
+                                            )
+                                    except Exception as _be:
+                                        logger.warning(
+                                            f"[PATH1_FINGERPRINT_MISMATCH] broadcast failed: {_be}"
+                                        )
+                                    if _fp_mode == "strict":
+                                        # Fall through to PATH 3 (fresh session).
+                                        # Do NOT delete the cache entry — the
+                                        # legitimate owner can still resume from
+                                        # the correct fingerprint.
+                                        resume = False
 
-                        persisted = await _agent_exists_in_postgres(agent_uuid)
+                        # If strict-mode fingerprint mismatch set resume=False
+                        # above, skip the cached-resume return and fall through
+                        # to PATH 2/3 so a fresh binding is established under
+                        # the current fingerprint.
+                        if not resume:
+                            pass  # drops out of the `if cached ...:` block; PATH 2 continues below
+                        else:
+                            # Check if persisted in PostgreSQL
 
-                        # Fetch label (DB first, then Redis cache fallback)
+                            persisted = await _agent_exists_in_postgres(agent_uuid)
 
-                        label = await _get_agent_label(agent_uuid) if persisted else None
-                        if not label:
-                            label = cached.get("label")
+                            # Fetch label (DB first, then Redis cache fallback)
 
-                        # Check archived status (prevents silent binding to archived agents)
-                        agent_status = await _get_agent_status(agent_uuid) if persisted else None
-                        is_archived = agent_status == "archived"
+                            label = await _get_agent_label(agent_uuid) if persisted else None
+                            if not label:
+                                label = cached.get("label")
 
-                        # Soft trajectory verification (v2.8)
-                        traj_result = await _soft_verify_trajectory(agent_uuid, trajectory_signature, "redis")
+                            # Check archived status (prevents silent binding to archived agents)
+                            agent_status = await _get_agent_status(agent_uuid) if persisted else None
+                            is_archived = agent_status == "archived"
 
-                        # SLIDING TTL: Refresh Redis expiry on every hit (v2.5.5)
+                            # Soft trajectory verification (v2.8)
+                            traj_result = await _soft_verify_trajectory(agent_uuid, trajectory_signature, "redis")
 
-                        try:
+                            # SLIDING TTL: Refresh Redis expiry on every hit (v2.5.5)
 
-                            from src.cache.redis_client import get_redis
+                            try:
 
-                            raw_redis = await get_redis()
+                                from src.cache.redis_client import get_redis
 
-                            if raw_redis:
-                                await raw_redis.expire(f"session:{session_key}", GovernanceConfig.SESSION_TTL_SECONDS)
+                                raw_redis = await get_redis()
 
-                        except Exception:
+                                if raw_redis:
+                                    await raw_redis.expire(f"session:{session_key}", GovernanceConfig.SESSION_TTL_SECONDS)
 
-                            pass
+                            except Exception:
+
+                                pass
 
 
 
-                        return {
+                            return {
 
-                            "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
-                            "public_agent_id": agent_id,
+                                "agent_id": agent_id,   # Human-readable (model+date). UUID for lookup is agent_uuid.
+                                "public_agent_id": agent_id,
 
-                            "agent_uuid": agent_uuid,
+                                "agent_uuid": agent_uuid,
 
-                            "display_name": label,
+                                "display_name": label,
 
-                            "label": label,  # backward compat
+                                "label": label,  # backward compat
 
-                            "created": False,
+                                "created": False,
 
-                            "persisted": persisted,
+                                "persisted": persisted,
 
-                            "archived": is_archived,
+                                "archived": is_archived,
 
-                            "source": "redis",
+                                "source": "redis",
 
-                            "trajectory_verified": traj_result.get("verified"),
+                                "trajectory_verified": traj_result.get("verified"),
 
-                            "trajectory_warning": traj_result.get("warning"),
+                                "trajectory_warning": traj_result.get("warning"),
 
-                        }
+                            }
 
             except Exception as e:
                 # INFO level (v2.5.7): Redis lookup failures are recoverable but should be visible

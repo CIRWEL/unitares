@@ -905,3 +905,43 @@ def identity_strict_mode() -> str:
     """Runtime accessor — respects env changes set after module load (tests)."""
     m = os.getenv("UNITARES_IDENTITY_STRICT", IDENTITY_STRICT_MODE).strip().lower()
     return m if m in _VALID_STRICT_MODES else "log"
+
+
+# =============================================================================
+# PATH 1 FINGERPRINT CHECK (2026-04-20, council follow-up to identity-honesty)
+# =============================================================================
+#
+# `client_session_id` values of form `agent-{uuid[:12]}` are algorithmically
+# derivable from any UUID a caller can observe (logs, check-ins, KG metadata,
+# leaked anchor files). PATH 1 (Redis cache hit) resolves that shape to the
+# bound UUID with no ownership proof, so any caller who learns a UUID can
+# hijack the binding.
+#
+# This flag controls the fingerprint cross-check added at the PATH 1 cache
+# hit site. Binding-time fingerprint is written by `_cache_session`;
+# resume-time fingerprint is read from the request's SessionSignals.
+#
+# Modes:
+#   "off"    — skip the check entirely
+#   "log"    — emit [PATH1_FINGERPRINT_MISMATCH] + identity_hijack_suspected
+#              broadcast when the fingerprints differ; resume still proceeds
+#              (default — observation phase)
+#   "strict" — same events, but the mismatched resume falls through to
+#              PATH 3 (new session) instead of returning the cached UUID
+#
+# Override: UNITARES_SESSION_FINGERPRINT_CHECK env var.
+SESSION_FINGERPRINT_CHECK_MODE: str = os.getenv(
+    "UNITARES_SESSION_FINGERPRINT_CHECK", "log"
+).strip().lower()
+
+_VALID_FINGERPRINT_MODES = frozenset({"off", "log", "strict"})
+if SESSION_FINGERPRINT_CHECK_MODE not in _VALID_FINGERPRINT_MODES:
+    SESSION_FINGERPRINT_CHECK_MODE = "log"
+
+
+def session_fingerprint_check_mode() -> str:
+    """Runtime accessor — respects env changes set after module load (tests)."""
+    m = os.getenv(
+        "UNITARES_SESSION_FINGERPRINT_CHECK", SESSION_FINGERPRINT_CHECK_MODE
+    ).strip().lower()
+    return m if m in _VALID_FINGERPRINT_MODES else "log"
