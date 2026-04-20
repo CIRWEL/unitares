@@ -874,45 +874,12 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             # because kg_full_text_search now defaults to OR for multi-term queries
             # via _or_default_query(). The primary FTS query already matches any term.
 
-            # Strategy 3: If semantic returned 0 and FTS fallback also returned 0, try semantic with lower threshold
-            if len(results) == 0 and search_mode in ["semantic", "semantic_fallback_fts"] and hasattr(graph, "semantic_search"):
-                try:
-                    # Lower similarity threshold for fallback
-                    lower_threshold = 0.2  # More permissive
-                    logger.debug(f"Trying semantic search with lower threshold ({lower_threshold}) for '{query_text}'")
-                    semantic_results = await graph.semantic_search(
-                        str(query_text),
-                        limit=limit * 2,
-                        min_similarity=lower_threshold
-                    )
-                    # Apply filters
-                    for d, score in semantic_results:
-                        if agent_id and d.agent_id != agent_id:
-                            continue
-                        if dtype and d.type != dtype:
-                            continue
-                        if severity and d.severity != severity:
-                            continue
-                        if status and d.status != status:
-                            continue
-                        if tags:
-                            d_tags = set(d.tags or [])
-                            if not any(t in d_tags for t in tags):
-                                continue
-                        results.append(d)
-                        semantic_scores_dict[d.id] = score
-                        if len(results) >= limit:
-                            break
-                    if len(results) > 0:
-                        fallback_used = True
-                        search_mode = "semantic_fallback_lower_threshold"
-                        operator_used = "N/A"
-                        fallback_explanation = (
-                            f"No matches found with default similarity threshold ({min_similarity}). "
-                            f"Retrying with lower threshold ({lower_threshold}) for more permissive semantic matching."
-                        )
-                except Exception as e:
-                    logger.debug(f"Semantic lower-threshold fallback failed: {e}")
+            # Strategy 3 (removed 2026-04-20): Previously retried semantic search at
+            # threshold 0.2, which is near cosine noise floor for our embedder. This
+            # confidently returned random-looking results on genuine misses, which is
+            # worse than returning nothing — callers couldn't tell a real hit from a
+            # noise hit. If semantic + FTS both return zero, an honest empty result
+            # is the correct answer. Tracked in docs/plans/2026-04-20-kg-retrieval-rebuild.md.
         
         dt_ms = (time.perf_counter() - t0) * 1000.0
         record_ms(f"knowledge.search.{search_mode}", dt_ms)
@@ -1052,8 +1019,9 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         if len(results) == limit:
             response_data["_more_available"] = f"Results may be limited to {limit}. Use limit=N (max 100) to get more."
         
-        # Add similarity scores if semantic search was used
-        if search_mode in ["semantic", "semantic_fallback_lower_threshold"] and query_text and use_semantic:
+        # Surface similarity scores whenever we have them, regardless of search
+        # mode — helps agents calibrate "is this a real match or noise?"
+        if semantic_scores_dict and query_text:
             similarity_scores = {
                 d.id: round(semantic_scores_dict[d.id], 3)
                 for d in results

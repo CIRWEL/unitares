@@ -1013,38 +1013,28 @@ class TestSearchKnowledgeGraphAdditional:
         assert data.get("fallback_used") is not True
 
     @pytest.mark.asyncio
-    async def test_search_semantic_lower_threshold_fallback(self, patch_common):
-        """Search semantic falls back to lower threshold (lines 678-714)."""
+    async def test_search_returns_empty_when_all_fallbacks_miss(self, patch_common):
+        """When semantic AND FTS both return zero, search returns an honest empty
+        result rather than retrying semantic at a noise-floor threshold. The old
+        lower-threshold fallback (min_similarity=0.2) confidently surfaced random
+        results on genuine misses; removed 2026-04-20."""
         mock_mcp_server, mock_graph = patch_common
         from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
 
-        disc = make_discovery(id="low-thresh-1", summary="Low threshold match")
-        # First call: normal threshold returns empty
-        # Second call (lower threshold): returns result
-        call_count = 0
-
-        async def semantic_side_effect(query, limit=10, min_similarity=0.25):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return []  # Normal threshold: no results
-            else:
-                return [(disc, 0.22)]  # Lower threshold: found
-
-        mock_graph.semantic_search = AsyncMock(side_effect=semantic_side_effect)
-        # FTS fallback also returns empty
+        mock_graph.semantic_search = AsyncMock(return_value=[])
         mock_graph.full_text_search = AsyncMock(return_value=[])
 
         result = await handle_search_knowledge_graph({
-            "query": "obscure search concept",
+            "query": "obscure search concept with no matches",
             "semantic": True,
         })
 
         data = parse_result(result)
         assert data["success"] is True
-        if data["count"] > 0:
-            assert data["fallback_used"] is True
-            assert "lower_threshold" in data["search_mode_used"]
+        assert data["count"] == 0
+        # Semantic was called exactly once — no lower-threshold retry
+        assert mock_graph.semantic_search.await_count == 1
+        assert "lower_threshold" not in data["search_mode_used"]
 
     @pytest.mark.asyncio
     async def test_search_fts_with_agent_filter(self, patch_common):
