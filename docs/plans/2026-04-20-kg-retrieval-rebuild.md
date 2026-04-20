@@ -111,28 +111,48 @@ Each step lands in isolation, behind a flag where sensible, measured against the
 
 **Progression (20-pair seed corpus):**
 
-| Metric | V1 (MiniLM, baseline) | **V2 (BGE-M3, Phase 2)** | Target |
-|---|---|---|---|
-| nDCG@10 (mean) | 0.826 | **0.861** | ≥ 0.90 |
-| Recall@20 (mean) | 0.875 | **0.925** | ≥ 0.95 |
-| MRR (mean) | 0.825 | **0.867** | ≥ 0.90 |
-| **Flat misses** (nDCG=0) | 2/20 (10%) | **1/20 (5%)** | 0/20 |
-| Latency p50 (steady-state) | 28–40ms | 80–180ms | ≤ 100ms w/o rerank; ≤ 500ms with |
+| Metric | V1 (MiniLM) | V2 (BGE-M3) | V3 (BGE-M3 + rerank) | Target |
+|---|---|---|---|---|
+| nDCG@10 (mean) | 0.826 | **0.861** | 0.853 | ≥ 0.90 |
+| Recall@20 (mean) | 0.875 | 0.925 | **0.950** | ≥ 0.95 |
+| MRR (mean) | 0.825 | **0.867** | 0.823 | ≥ 0.90 |
+| **Flat misses** (nDCG=0) | 2/20 | 1/20 | 1/20 | 0/20 |
+| Latency p50 (steady-state) | 28–40ms | 80–180ms | 3000–4500ms | ≤ 500ms |
 
-**Phase 2 landed 2026-04-20.** BGE-M3 (1024d) replaces MiniLM-L6-v2 (384d) behind `UNITARES_EMBEDDING_MODEL=bge-m3`. Wins:
+**Phase 2 landed 2026-04-20.** BGE-M3 (1024d) replaces MiniLM-L6-v2 (384d) behind `UNITARES_EMBEDDING_MODEL=bge-m3`.
 
-- The **"burst 503" flat miss is fixed** — went from top score 0.137 (noise) to rank-1 at 0.430.
-- Two queries that previously hit at rank 2 (`"anyio deadlock"`, `"Watcher false positive triage"`) now hit at rank 1.
-- Top scores across the corpus sit at ~0.35–0.60 instead of ~0.14–0.55. Clearly off the noise floor.
+- The **"burst 503" flat miss is fixed** — top score 0.137 (noise) → rank-1 at 0.430.
+- Two queries that previously hit at rank 2 (`"anyio deadlock"`, `"Watcher false positive"`) now hit at rank 1.
+- Top scores across the corpus sit at ~0.35–0.60 (v. ~0.14–0.55 on V1). Clearly off the noise floor.
 
-Remaining single flat miss: `"knowledge graph ephemeral tag auto archive"` — top score rose to 0.416 but the wrong doc is at rank 1. This is the class of miss the Phase 3 cross-encoder reranker is specifically designed to fix.
+**Phase 3 landed 2026-04-20 as opt-in (default OFF).** `UNITARES_ENABLE_RERANKER=1` adds the `bge-reranker-v2-m3` cross-encoder over the top-50 first-stage candidates. The infrastructure lands clean; on this seed corpus, **aggregate nDCG@10 dropped 0.008 and MRR dropped 0.044** vs V2 alone, while Recall@20 rose 0.025.
 
-- **Dogfood check**: `"hybrid search retrieval rebuild"` returns the Dec-2025 ticket at top-1 under both V1 and V2.
-- **Honest failure mode**: "no match" when there truly is no match. Zero 0.2-threshold garbage. (Landed in Phase 0.)
+Why V3 underperforms on this corpus:
 
-Baselines pinned: `tests/retrieval_eval/baseline_2026-04-20.json` (V1), `tests/retrieval_eval/baseline_2026-04-20_bge_m3.json` (V2). Re-run:
+- The seed labels were hand-crafted with knowledge of the documents — queries share surface vocabulary with their targets, which favors the first-stage embedder.
+- In a ~600-doc corpus where V2 already achieves Recall@20 of 0.925, the reranker's headroom is narrow.
+- Two queries regressed (rank 1→2 or rank 1→3) while one improved (rank 2→1). Net negative on aggregate at this scale.
+- Latency: p50 3–4 seconds on MPS. This is the killer. Loading the 568M cross-encoder and scoring 50 pairs per query dominates.
+
+The reranker is expected to start paying off (per the 2026 SOTA survey) when corpus size pushes first-stage recall down and the reranker has more room to re-sort. For now it ships as opt-in so Kenny can flip when the corpus grows (>5k discoveries) or when specific users want it.
+
+**What's still needed to clear the ≥0.90 nDCG target**: Phase 4 hybrid fusion (BM25 + dense with RRF) is the next real lever. Tags-as-boost + graph expansion (Phase 5) also still to come.
+
+- **Dogfood check**: `"hybrid search retrieval rebuild"` returns the Dec-2025 ticket at top-1 under V1, V2, and V3.
+- **Honest failure mode**: "no match" when nothing matches. Zero 0.2-threshold garbage. (Phase 0.)
+
+Baselines pinned:
+- `tests/retrieval_eval/baseline_2026-04-20.json` (V1)
+- `tests/retrieval_eval/baseline_2026-04-20_bge_m3.json` (V2)
+- `tests/retrieval_eval/baseline_2026-04-20_bge_m3_reranked.json` (V3)
+
+Re-run:
 ```bash
+# V2
 UNITARES_EMBEDDING_MODEL=bge-m3 UNITARES_KNOWLEDGE_BACKEND=age python scripts/eval/retrieval_eval.py
+
+# V3
+UNITARES_EMBEDDING_MODEL=bge-m3 UNITARES_KNOWLEDGE_BACKEND=age python scripts/eval/retrieval_eval.py --rerank
 ```
 
 ## Non-goals
