@@ -58,13 +58,35 @@ def mrr(ranked_ids: List[str], relevant_set: set) -> float:
     return 0.0
 
 
-async def run_query(graph, query: str, top_k: int) -> tuple[List[str], List[float], float]:
-    """Run a single query against the current retrieval stack. Returns (ids, scores, latency_ms)."""
+async def run_query(
+    graph,
+    query: str,
+    top_k: int,
+    rerank: bool = False,
+    rerank_pool_size: int = 50,
+) -> tuple[List[str], List[float], float]:
+    """Run a single query against the current retrieval stack.
+
+    Returns (ids, scores, latency_ms). When `rerank=True`, a cross-encoder
+    reorders the top `rerank_pool_size` candidates before truncating to `top_k`.
+    Latency is wallclock of the full pipeline, including rerank.
+    """
     t0 = time.perf_counter()
-    results = await graph.semantic_search(query, limit=top_k, min_similarity=0.0)
+    pool_size = max(top_k, rerank_pool_size) if rerank else top_k
+    first_stage = await graph.semantic_search(query, limit=pool_size, min_similarity=0.0)
+    if rerank and first_stage:
+        from src.reranker import rerank as _rerank
+        pairs = [
+            (d.id, f"{d.summary}\n{(d.details or '')[:2000]}")
+            for d, _ in first_stage
+        ]
+        reranked = await _rerank(query, pairs, top_k=top_k, max_rerank_size=rerank_pool_size)
+        ranked_ids = [doc_id for doc_id, _ in reranked]
+        scores = [float(score) for _, score in reranked]
+    else:
+        ranked_ids = [d.id for d, _ in first_stage[:top_k]]
+        scores = [float(s) for _, s in first_stage[:top_k]]
     dt_ms = (time.perf_counter() - t0) * 1000.0
-    ranked_ids = [d.id for d, _ in results]
-    scores = [float(score) for _, score in results]
     return ranked_ids, scores, dt_ms
 
 
@@ -74,6 +96,8 @@ async def evaluate(
     recall_k: int = 20,
     top_k_fetch: int = 20,
     limit_queries: int | None = None,
+    rerank: bool = False,
+    rerank_pool_size: int = 50,
 ) -> Dict[str, Any]:
     with labels_path.open() as f:
         corpus = json.load(f)
@@ -90,7 +114,13 @@ async def evaluate(
     for pair in pairs:
         query = pair["query"]
         relevant = set(pair["relevant_ids"])
-        ranked, scores, dt_ms = await run_query(graph, query, max(top_k_fetch, recall_k))
+        ranked, scores, dt_ms = await run_query(
+            graph,
+            query,
+            max(top_k_fetch, recall_k),
+            rerank=rerank,
+            rerank_pool_size=rerank_pool_size,
+        )
         ndcg = ndcg_at_k(ranked, relevant, ndcg_k)
         rec = recall_at_k(ranked, relevant, recall_k)
         m = mrr(ranked, relevant)
@@ -156,6 +186,8 @@ async def evaluate(
             "ndcg_k": ndcg_k,
             "recall_k": recall_k,
             "top_k_fetch": top_k_fetch,
+            "rerank": rerank,
+            "rerank_pool_size": rerank_pool_size if rerank else None,
         },
         "aggregate": {
             f"ndcg@{ndcg_k}": agg(ndcgs),
@@ -206,6 +238,9 @@ def main():
     parser.add_argument("--recall-k", type=int, default=20)
     parser.add_argument("--top-k-fetch", type=int, default=20)
     parser.add_argument("--limit-queries", type=int, default=None)
+    parser.add_argument("--rerank", action="store_true",
+                        help="Apply cross-encoder reranker to the first-stage top-K")
+    parser.add_argument("--rerank-pool-size", type=int, default=50)
     parser.add_argument("--json", action="store_true", help="emit JSON instead of human-readable output")
     args = parser.parse_args()
 
@@ -215,6 +250,8 @@ def main():
         recall_k=args.recall_k,
         top_k_fetch=max(args.top_k_fetch, args.recall_k),
         limit_queries=args.limit_queries,
+        rerank=args.rerank,
+        rerank_pool_size=args.rerank_pool_size,
     ))
 
     if args.json:

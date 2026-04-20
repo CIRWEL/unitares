@@ -703,7 +703,16 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
 
         # Track semantic scores if semantic search is used
         semantic_scores_dict = {}
+        rerank_scores_dict = {}
         search_degraded_warning = None
+
+        # Phase 3: cross-encoder reranker. When enabled, first-stage retrieval
+        # fetches a wider pool (up to rerank_pool_size) so the reranker has
+        # something to work with before we truncate to the caller's `limit`.
+        from src.reranker import reranker_enabled as _reranker_enabled
+        rerank_on = _reranker_enabled()
+        rerank_pool_size = 50 if rerank_on else 0
+        first_stage_limit = max(limit * 2, rerank_pool_size) if rerank_on else limit * 2
 
         t0 = time.perf_counter()
         if query_text:
@@ -714,7 +723,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             #   (queries with 2+ words are likely conceptual, benefit from semantic)
             has_semantic = hasattr(graph, "semantic_search")
             explicit_semantic = arguments.get("semantic")
-            
+
             if explicit_semantic is not None:
                 # User explicitly chose - respect their choice
                 use_semantic = explicit_semantic and has_semantic
@@ -729,7 +738,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 min_similarity = arguments.get("min_similarity", 0.3)
                 semantic_results = await graph.semantic_search(
                     str(query_text),
-                    limit=limit * 2,  # Get extra for filtering
+                    limit=first_stage_limit,  # wider pool when reranker is on
                     min_similarity=min_similarity
                 )
                 # Check for degraded response: ([], error_info_dict)
@@ -749,7 +758,9 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                     search_mode = "semantic"
             if not use_semantic and hasattr(graph, "full_text_search"):
                 # Prefer DB-native FTS when available (fallback from degraded semantic or no semantic)
-                candidate_limit = int(min(max(limit * 5, limit), 500))
+                # When reranker is on, use a wider pool so the cross-encoder has candidates.
+                base_fts_limit = int(min(max(limit * 5, limit), 500))
+                candidate_limit = max(base_fts_limit, rerank_pool_size) if rerank_on else base_fts_limit
                 candidates = await graph.full_text_search(str(query_text), limit=candidate_limit)
                 search_mode = "fts"
             elif not use_semantic:
@@ -763,6 +774,10 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             # For substring_scan: also require query term matches (OR-default)
             filtered = []
             q_terms = str(query_text).lower().split() if search_mode == "substring_scan" else None
+
+            # When reranker is on, keep up to rerank_pool_size candidates so the
+            # cross-encoder sees more than just the first-stage top-limit.
+            filter_cap = rerank_pool_size if rerank_on else limit
 
             for d in candidates:
                 # Substring filter only for non-FTS backends (OR-default)
@@ -788,8 +803,29 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                     if not any(t in d_tags for t in tags):
                         continue
                 filtered.append(d)
-                if len(filtered) >= limit:
+                if len(filtered) >= filter_cap:
                     break
+
+            # Phase 3: cross-encoder rerank. Score (query, doc) pairs jointly
+            # and reorder. Reranker input text mirrors what the embedder sees.
+            if rerank_on and filtered:
+                try:
+                    from src.reranker import rerank as _rerank
+                    pairs = [
+                        (d.id, f"{d.summary}\n{(d.details or '')[:2000]}")
+                        for d in filtered
+                    ]
+                    reranked = await _rerank(str(query_text), pairs, top_k=limit,
+                                             max_rerank_size=rerank_pool_size)
+                    rerank_scores_dict = {doc_id: score for doc_id, score in reranked}
+                    id_to_doc = {d.id: d for d in filtered}
+                    filtered = [id_to_doc[doc_id] for doc_id, _ in reranked if doc_id in id_to_doc]
+                    search_mode = search_mode + "_reranked" if search_mode else "reranked"
+                except Exception as exc:
+                    logger.warning(f"[KG_SEARCH] reranker failed; keeping first-stage order: {exc}")
+                    filtered = filtered[:limit]
+            else:
+                filtered = filtered[:limit]
 
             results = filtered
             # search_mode already set above
@@ -1029,6 +1065,17 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             }
             if similarity_scores:
                 response_data["similarity_scores"] = similarity_scores
+
+        # Surface rerank scores when the cross-encoder ran, so agents can see
+        # the ordering came from joint (query, doc) scoring rather than cosine.
+        if rerank_scores_dict and query_text:
+            rerank_scores = {
+                d.id: round(rerank_scores_dict[d.id], 3)
+                for d in results
+                if d.id in rerank_scores_dict
+            }
+            if rerank_scores:
+                response_data["rerank_scores"] = rerank_scores
         
         # UX FIX (Dec 2025): Add helpful hint when substring scan returns no results
         if search_mode == "substring_scan" and len(results) == 0 and query_text:
