@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "notes": "Seed labels for KG retrieval eval. Each entry: a query an agent might plausibly issue, and the discovery IDs that a correct retrieval system should surface in the top results. Labels are 'relevant enough to be in top-10' — ties broken by closeness. Extend via hand-labeling or LLM-assisted labeling; aim for 100+ pairs over time.",
+  "labeled_at": "2026-04-20",
+  "labeled_by": "cirwel+claude (scoping session)",
+  "pairs": [
+    {
+      "query": "hybrid search retrieval rebuild",
+      "relevant_ids": [
+        "2026-04-19T19:12:09.075003",
+        "2025-12-29T00:10:19.967967",
+        "2026-04-18T03:06:53.121325"
+      ],
+      "rationale": "The scoping decision, the open ticket it supersedes, and the dogfood evidence feeding it."
+    },
+    {
+      "query": "semantic search noise floor scores",
+      "relevant_ids": [
+        "2026-04-18T03:06:53.121325",
+        "2026-04-19T19:12:09.075003"
+      ]
+    },
+    {
+      "query": "tag filter doesn't affect ranking",
+      "relevant_ids": [
+        "2026-04-18T03:06:53.121325",
+        "2026-04-19T19:12:09.075003"
+      ]
+    },
+    {
+      "query": "multi-agent git reset destroyed my WIP",
+      "relevant_ids": [
+        "2026-04-14T23:37:36.237416"
+      ]
+    },
+    {
+      "query": "anyio asyncio deadlock in MCP handler",
+      "relevant_ids": [
+        "2026-04-11T20:27:09.742009"
+      ]
+    },
+    {
+      "query": "EISV bounds should not be widened",
+      "relevant_ids": [
+        "2026-04-16T01:51:51.954107"
+      ]
+    },
+    {
+      "query": "why is V range 0 1 not 0 2",
+      "relevant_ids": [
+        "2026-04-16T01:51:51.954107"
+      ]
+    },
+    {
+      "query": "migration drift schema missing",
+      "relevant_ids": [
+        "2026-04-19T15:35:46.642716",
+        "2026-04-19T15:35:24.960945"
+      ]
+    },
+    {
+      "query": "dialectic auto-assigns reviewers who can't respond",
+      "relevant_ids": [
+        "2026-04-19T15:35:46.456602",
+        "2026-04-19T15:35:24.572183"
+      ]
+    },
+    {
+      "query": "reviewer_mode parameter pydantic schema missing",
+      "relevant_ids": [
+        "2026-04-19T15:35:46.556579",
+        "2026-04-19T15:35:24.783997"
+      ]
+    },
+    {
+      "query": "Watcher false positive triage",
+      "relevant_ids": [
+        "2026-04-15T22:39:38.223779"
+      ]
+    },
+    {
+      "query": "AsyncMock coroutine leaks in tests",
+      "relevant_ids": [
+        "2026-04-10T06:27:53.491810",
+        "2026-04-10T06:27:12.508879",
+        "2026-04-11T11:27:23.501679"
+      ]
+    },
+    {
+      "query": "test hygiene lifecycle agents rebind",
+      "relevant_ids": [
+        "2026-04-10T06:27:53.491810",
+        "2026-04-10T06:27:12.508879"
+      ]
+    },
+    {
+      "query": "dogfood session report agent experience",
+      "relevant_ids": [
+        "2026-04-15T23:51:29.895577"
+      ]
+    },
+    {
+      "query": "onboard timed out during burst 503",
+      "relevant_ids": [
+        "2026-04-15T23:51:29.895577"
+      ]
+    },
+    {
+      "query": "identity cross reference HTTP mobile drift",
+      "relevant_ids": [
+        "2026-04-18T03:15:24.529567"
+      ]
+    },
+    {
+      "query": "knowledge graph ephemeral tag auto archive",
+      "relevant_ids": [
+        "2026-04-19T19:12:09.075003"
+      ]
+    },
+    {
+      "query": "cross encoder reranker for retrieval",
+      "relevant_ids": [
+        "2026-04-19T19:12:09.075003"
+      ]
+    },
+    {
+      "query": "paper v6 fleet learning corpus maturity",
+      "relevant_ids": [
+        "2026-04-19T19:12:09.075003"
+      ]
+    },
+    {
+      "query": "Graphiti typed edge expansion retrieval pattern",
+      "relevant_ids": [
+        "2026-04-19T19:12:09.075003"
+      ]
+    }
+  ]
+}
