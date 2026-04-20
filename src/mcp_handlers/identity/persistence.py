@@ -88,6 +88,21 @@ async def _cache_session(
     except Exception as e:
         logger.debug(f"In-memory session cache update failed for {session_key[:20]}...: {e}")
 
+    # Capture binding-time fingerprint for PATH 1 cross-check.
+    # Council follow-up to identity-honesty (KG 2026-04-20T00:57:45): session
+    # IDs of shape `agent-{uuid[:12]}` are UUID-derivable, so PATH 1 resume
+    # by session_id alone has no ownership proof. Writing the bind fingerprint
+    # here lets the PATH 1 lookup site compare against the resume-time
+    # fingerprint and emit `identity_hijack_suspected` when they diverge.
+    bind_ip_ua = None
+    try:
+        from ..context import get_session_signals
+        _sig = get_session_signals()
+        if _sig is not None:
+            bind_ip_ua = getattr(_sig, "ip_ua_fingerprint", None)
+    except Exception:
+        bind_ip_ua = None
+
     session_cache = _get_redis()
     if session_cache:
         try:
@@ -105,6 +120,8 @@ async def _cache_session(
                     }
                     if label:
                         data["label"] = label
+                    if bind_ip_ua:
+                        data["bind_ip_ua"] = bind_ip_ua
                     key = f"session:{session_key}"
                     await redis.setex(key, GovernanceConfig.SESSION_TTL_SECONDS, json.dumps(data))
                     # Keep SessionCache's in-memory fallback coherent with the richer
