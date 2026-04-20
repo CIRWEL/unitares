@@ -704,6 +704,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         # Track semantic scores if semantic search is used
         semantic_scores_dict = {}
         rerank_scores_dict = {}
+        rrf_scores_dict = {}
         search_degraded_warning = None
 
         # Phase 3: cross-encoder reranker. When enabled, first-stage retrieval
@@ -713,6 +714,12 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         rerank_on = _reranker_enabled()
         rerank_pool_size = 50 if rerank_on else 0
         first_stage_limit = max(limit * 2, rerank_pool_size) if rerank_on else limit * 2
+
+        # Phase 4: hybrid RRF fusion. When enabled, fetch semantic + FTS in
+        # parallel and fuse via Reciprocal Rank Fusion (k=60). Tags, if passed,
+        # act as a small boost in the fused space rather than a hard post-filter.
+        from src.retrieval import hybrid_enabled as _hybrid_enabled, rrf_fuse, apply_tag_boost
+        hybrid_on = _hybrid_enabled()
 
         t0 = time.perf_counter()
         if query_text:
@@ -732,7 +739,47 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 # Single-word queries benefit from semantic search too (substring_scan
                 # is limited to 50 recent entries and misses most results)
                 use_semantic = has_semantic
-            if use_semantic:
+            has_fts = hasattr(graph, "full_text_search")
+            # Phase 4 hybrid path: fires when hybrid flag on, semantic usable, FTS
+            # available. Skips the sequential single-mode branches below.
+            hybrid_path = hybrid_on and use_semantic and has_fts
+            if hybrid_path:
+                import asyncio as _asyncio
+                min_similarity = arguments.get("min_similarity", 0.3)
+                hybrid_fetch_limit = max(first_stage_limit, 50)
+                sem_task = graph.semantic_search(
+                    str(query_text), limit=hybrid_fetch_limit, min_similarity=min_similarity
+                )
+                fts_task = graph.full_text_search(str(query_text), limit=hybrid_fetch_limit)
+                sem_raw, fts_raw = await _asyncio.gather(sem_task, fts_task)
+                sem_res = []
+                if isinstance(sem_raw, tuple) and len(sem_raw) == 2 and isinstance(sem_raw[1], dict):
+                    search_degraded_warning = (
+                        f"Semantic search unavailable: {sem_raw[1].get('message', 'unknown error')}. "
+                        f"Falling back to FTS-only in fusion."
+                    )
+                    logger.warning(f"[KG_SEARCH] {search_degraded_warning}")
+                else:
+                    sem_res = list(sem_raw)
+                fts_res = list(fts_raw)
+
+                sem_ids = [d.id for d, _ in sem_res]
+                fts_ids = [d.id for d in fts_res]
+                fused = rrf_fuse([sem_ids, fts_ids], k=60)
+
+                pool: Dict[str, Any] = {d.id: d for d, _ in sem_res}
+                for d in fts_res:
+                    pool.setdefault(d.id, d)
+
+                if tags:
+                    doc_tags_map = {doc_id: (doc.tags or []) for doc_id, doc in pool.items()}
+                    fused = apply_tag_boost(fused, doc_tags_map, tags)
+
+                candidates = [pool[did] for did, _ in fused if did in pool]
+                semantic_scores_dict = {d.id: score for d, score in sem_res}
+                rrf_scores_dict = {did: score for did, score in fused}
+                search_mode = "hybrid_rrf"
+            elif use_semantic:
                 # Semantic search using vector embeddings
                 # Default 0.3 for precision; auto-fallback to 0.2 catches edge cases
                 min_similarity = arguments.get("min_similarity", 0.3)
@@ -756,14 +803,14 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                     candidates = [d for d, _ in semantic_results]
                     semantic_scores_dict = {d.id: score for d, score in semantic_results}
                     search_mode = "semantic"
-            if not use_semantic and hasattr(graph, "full_text_search"):
+            if not hybrid_path and not use_semantic and hasattr(graph, "full_text_search"):
                 # Prefer DB-native FTS when available (fallback from degraded semantic or no semantic)
                 # When reranker is on, use a wider pool so the cross-encoder has candidates.
                 base_fts_limit = int(min(max(limit * 5, limit), 500))
                 candidate_limit = max(base_fts_limit, rerank_pool_size) if rerank_on else base_fts_limit
                 candidates = await graph.full_text_search(str(query_text), limit=candidate_limit)
                 search_mode = "fts"
-            elif not use_semantic:
+            elif not hybrid_path and not use_semantic:
                 # JSON backend fallback: bounded scan of most recent entries.
                 # 200 balances coverage vs context size (post-hoc substring filter
                 # reduces this to at most `limit` results).
@@ -775,9 +822,9 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             filtered = []
             q_terms = str(query_text).lower().split() if search_mode == "substring_scan" else None
 
-            # When reranker is on, keep up to rerank_pool_size candidates so the
-            # cross-encoder sees more than just the first-stage top-limit.
-            filter_cap = rerank_pool_size if rerank_on else limit
+            # When reranker OR hybrid is on, keep up to rerank_pool_size candidates
+            # so the cross-encoder / hybrid fuse sees more than the first-stage top-limit.
+            filter_cap = rerank_pool_size if rerank_on else (50 if hybrid_on else limit)
 
             for d in candidates:
                 # Substring filter only for non-FTS backends (OR-default)
@@ -798,7 +845,10 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 # Exclude archived entries by default (unless status filter or include_archived)
                 if not status and not include_archived and d.status == "archived":
                     continue
-                if tags:
+                if tags and search_mode != "hybrid_rrf":
+                    # In hybrid mode, tags are a score boost in RRF space (handled
+                    # upstream via apply_tag_boost). Everywhere else, they remain a
+                    # hard post-filter — preserves pre-Phase-4 behavior.
                     d_tags = set(d.tags or [])
                     if not any(t in d_tags for t in tags):
                         continue
@@ -1076,7 +1126,20 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             }
             if rerank_scores:
                 response_data["rerank_scores"] = rerank_scores
-        
+
+        # Surface RRF scores when hybrid fusion ran. These are on a different
+        # scale than cosine similarity (typically 0.01-0.05 per rank-1 hit),
+        # but comparable across queries and usefully diagnostic.
+        if rrf_scores_dict and query_text:
+            rrf_scores = {
+                d.id: round(rrf_scores_dict[d.id], 4)
+                for d in results
+                if d.id in rrf_scores_dict
+            }
+            if rrf_scores:
+                response_data["rrf_scores"] = rrf_scores
+
+
         # UX FIX (Dec 2025): Add helpful hint when substring scan returns no results
         if search_mode == "substring_scan" and len(results) == 0 and query_text:
             response_data["search_hint"] = (

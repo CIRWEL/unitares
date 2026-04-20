@@ -111,13 +111,13 @@ Each step lands in isolation, behind a flag where sensible, measured against the
 
 **Progression (20-pair seed corpus):**
 
-| Metric | V1 (MiniLM) | V2 (BGE-M3) | V3 (BGE-M3 + rerank) | Target |
-|---|---|---|---|---|
-| nDCG@10 (mean) | 0.826 | **0.861** | 0.853 | ≥ 0.90 |
-| Recall@20 (mean) | 0.875 | 0.925 | **0.950** | ≥ 0.95 |
-| MRR (mean) | 0.825 | **0.867** | 0.823 | ≥ 0.90 |
-| **Flat misses** (nDCG=0) | 2/20 | 1/20 | 1/20 | 0/20 |
-| Latency p50 (steady-state) | 28–40ms | 80–180ms | 3000–4500ms | ≤ 500ms |
+| Metric | V1 (MiniLM) | V2 (BGE-M3) | V3 (+ rerank) | **V4 (hybrid RRF)** | Target |
+|---|---|---|---|---|---|
+| nDCG@10 (mean) | 0.826 | 0.861 | 0.853 | **0.872** ← best | ≥ 0.90 |
+| Recall@20 (mean) | 0.875 | 0.925 | 0.950 | **0.950** | ≥ 0.95 ✓ |
+| MRR (mean) | 0.825 | 0.867 | 0.823 | 0.850 | ≥ 0.90 |
+| **Flat misses** | 2/20 | 1/20 | 1/20 | 1/20 | 0/20 |
+| Latency p50 (steady) | 28–40ms | 80–180ms | 3000–4500ms | **~100ms** | ≤ 500ms |
 
 **Phase 2 landed 2026-04-20.** BGE-M3 (1024d) replaces MiniLM-L6-v2 (384d) behind `UNITARES_EMBEDDING_MODEL=bge-m3`.
 
@@ -136,23 +136,36 @@ Why V3 underperforms on this corpus:
 
 The reranker is expected to start paying off (per the 2026 SOTA survey) when corpus size pushes first-stage recall down and the reranker has more room to re-sort. For now it ships as opt-in so Kenny can flip when the corpus grows (>5k discoveries) or when specific users want it.
 
-**What's still needed to clear the ≥0.90 nDCG target**: Phase 4 hybrid fusion (BM25 + dense with RRF) is the next real lever. Tags-as-boost + graph expansion (Phase 5) also still to come.
+**Phase 4 landed 2026-04-20. Hybrid RRF (BM25+dense fusion) is on-by-default when `UNITARES_ENABLE_HYBRID=1`.**
 
-- **Dogfood check**: `"hybrid search retrieval rebuild"` returns the Dec-2025 ticket at top-1 under V1, V2, and V3.
+Wins vs V2 (dense-only):
+- `"paper v6 fleet learning corpus maturity"` — rank 3 (V2) / rank 8 (V3) → **rank 1** (V4). Hybrid rescued the paraphrase miss the reranker couldn't.
+- `"tag filter doesn't affect ranking"` — 0.61 (V2) → 0.92 (V4). FTS contribution helped.
+- Tags still provide a signal when passed, now as an RRF-space boost rather than a hard post-filter.
+
+Trade-offs — three V2 rank-1 hits slipped to rank 2 under V4 RRF. FTS brought neighbors into the fused top-10 that diluted strong-semantic wins. On aggregate net positive (+0.011 nDCG, +0.025 Recall); MRR dropped −0.017 as the visible cost.
+
+**FTS upgrade**: `ts_rank` → `ts_rank_cd` (cover density) — bundled with Phase 4.
+
+- **Dogfood check**: `"hybrid search retrieval rebuild"` returns the Dec-2025 ticket at top-1 under V1–V4.
 - **Honest failure mode**: "no match" when nothing matches. Zero 0.2-threshold garbage. (Phase 0.)
 
 Baselines pinned:
 - `tests/retrieval_eval/baseline_2026-04-20.json` (V1)
 - `tests/retrieval_eval/baseline_2026-04-20_bge_m3.json` (V2)
 - `tests/retrieval_eval/baseline_2026-04-20_bge_m3_reranked.json` (V3)
+- `tests/retrieval_eval/baseline_2026-04-20_hybrid_rrf.json` (V4)
 
 Re-run:
 ```bash
-# V2
+# V2 (dense-only)
 UNITARES_EMBEDDING_MODEL=bge-m3 UNITARES_KNOWLEDGE_BACKEND=age python scripts/eval/retrieval_eval.py
 
-# V3
+# V3 (dense + rerank)
 UNITARES_EMBEDDING_MODEL=bge-m3 UNITARES_KNOWLEDGE_BACKEND=age python scripts/eval/retrieval_eval.py --rerank
+
+# V4 (hybrid RRF)
+UNITARES_EMBEDDING_MODEL=bge-m3 UNITARES_KNOWLEDGE_BACKEND=age python scripts/eval/retrieval_eval.py --hybrid
 ```
 
 ## Non-goals

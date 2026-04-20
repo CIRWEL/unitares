@@ -64,28 +64,54 @@ async def run_query(
     top_k: int,
     rerank: bool = False,
     rerank_pool_size: int = 50,
+    hybrid: bool = False,
 ) -> tuple[List[str], List[float], float]:
     """Run a single query against the current retrieval stack.
 
-    Returns (ids, scores, latency_ms). When `rerank=True`, a cross-encoder
-    reorders the top `rerank_pool_size` candidates before truncating to `top_k`.
-    Latency is wallclock of the full pipeline, including rerank.
+    Returns (ids, scores, latency_ms). Supports:
+    - `hybrid=True`: fan out semantic + FTS, fuse via RRF (k=60). Phase 4.
+    - `rerank=True`: apply cross-encoder to top `rerank_pool_size` candidates. Phase 3.
+    - Combined: hybrid fuse first, then rerank the fused pool.
+    Latency is wallclock of the full pipeline.
     """
+    import asyncio as _asyncio
     t0 = time.perf_counter()
-    pool_size = max(top_k, rerank_pool_size) if rerank else top_k
-    first_stage = await graph.semantic_search(query, limit=pool_size, min_similarity=0.0)
-    if rerank and first_stage:
+
+    # First-stage retrieval
+    if hybrid:
+        from src.retrieval import rrf_fuse
+        fetch = max(top_k, rerank_pool_size if rerank else 50)
+        sem_task = graph.semantic_search(query, limit=fetch, min_similarity=0.0)
+        fts_task = graph.full_text_search(query, limit=fetch)
+        sem_res, fts_res = await _asyncio.gather(sem_task, fts_task)
+        sem_ids = [d.id for d, _ in sem_res]
+        fts_ids = [d.id for d in fts_res]
+        fused = rrf_fuse([sem_ids, fts_ids], k=60)
+        # Build a doc pool for potential rerank
+        pool = {d.id: d for d, _ in sem_res}
+        for d in fts_res:
+            pool.setdefault(d.id, d)
+        fused_docs = [pool[did] for did, _ in fused if did in pool]
+    else:
+        pool_size = max(top_k, rerank_pool_size) if rerank else top_k
+        first_stage = await graph.semantic_search(query, limit=pool_size, min_similarity=0.0)
+        fused_docs = [d for d, _ in first_stage]
+        fused = [(d.id, s) for d, s in first_stage]
+
+    # Optional rerank on the first-stage top
+    if rerank and fused_docs:
         from src.reranker import rerank as _rerank
         pairs = [
             (d.id, f"{d.summary}\n{(d.details or '')[:2000]}")
-            for d, _ in first_stage
+            for d in fused_docs
         ]
         reranked = await _rerank(query, pairs, top_k=top_k, max_rerank_size=rerank_pool_size)
         ranked_ids = [doc_id for doc_id, _ in reranked]
         scores = [float(score) for _, score in reranked]
     else:
-        ranked_ids = [d.id for d, _ in first_stage[:top_k]]
-        scores = [float(s) for _, s in first_stage[:top_k]]
+        ranked_ids = [did for did, _ in fused[:top_k]]
+        scores = [float(s) for _, s in fused[:top_k]]
+
     dt_ms = (time.perf_counter() - t0) * 1000.0
     return ranked_ids, scores, dt_ms
 
@@ -98,6 +124,7 @@ async def evaluate(
     limit_queries: int | None = None,
     rerank: bool = False,
     rerank_pool_size: int = 50,
+    hybrid: bool = False,
 ) -> Dict[str, Any]:
     with labels_path.open() as f:
         corpus = json.load(f)
@@ -120,6 +147,7 @@ async def evaluate(
             max(top_k_fetch, recall_k),
             rerank=rerank,
             rerank_pool_size=rerank_pool_size,
+            hybrid=hybrid,
         )
         ndcg = ndcg_at_k(ranked, relevant, ndcg_k)
         rec = recall_at_k(ranked, relevant, recall_k)
@@ -188,6 +216,7 @@ async def evaluate(
             "top_k_fetch": top_k_fetch,
             "rerank": rerank,
             "rerank_pool_size": rerank_pool_size if rerank else None,
+            "hybrid": hybrid,
         },
         "aggregate": {
             f"ndcg@{ndcg_k}": agg(ndcgs),
@@ -241,6 +270,8 @@ def main():
     parser.add_argument("--rerank", action="store_true",
                         help="Apply cross-encoder reranker to the first-stage top-K")
     parser.add_argument("--rerank-pool-size", type=int, default=50)
+    parser.add_argument("--hybrid", action="store_true",
+                        help="Run hybrid RRF fusion (semantic + FTS)")
     parser.add_argument("--json", action="store_true", help="emit JSON instead of human-readable output")
     args = parser.parse_args()
 
@@ -252,6 +283,7 @@ def main():
         limit_queries=args.limit_queries,
         rerank=args.rerank,
         rerank_pool_size=args.rerank_pool_size,
+        hybrid=args.hybrid,
     ))
 
     if args.json:
