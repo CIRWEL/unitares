@@ -198,6 +198,17 @@ async def _find_agent_by_label(label: str) -> Optional[str]:
     except Exception:
         return None
 
+
+def _broadcaster():
+    """Lazy accessor for the shared broadcaster. Returns None when broadcaster
+    isn't importable (e.g., unit tests without a live server). Kept as a
+    module-level function so tests can patch persistence._broadcaster."""
+    try:
+        from src.broadcaster import broadcaster as _b
+        return _b
+    except Exception:
+        return None
+
 # =============================================================================
 # LAZY CREATION HELPERS (v2.4.1+)
 # =============================================================================
@@ -378,12 +389,45 @@ async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str
         existing_metadata = getattr(identity_record, "metadata", None) or {}
         existing_public_agent_id = _metadata_public_agent_id(existing_metadata)
 
-        # Check for duplicate labels
+        # Check for duplicate labels.
+        # Resident-fork detector (2026-04-19, see
+        # docs/superpowers/plans/2026-04-19-anchor-resilience-series.md):
+        # when the existing label-holder is tagged 'persistent', the rename
+        # is suppressing a resident fork — emit a governance event so
+        # dashboards and Discord surface it within one broadcast cycle.
+        # The rename still happens (can't block onboard).
         existing = await _find_agent_by_label(label)
         if existing and existing != agent_uuid:
-            # Append UUID suffix to make unique
-            label = f"{label}_{agent_uuid[:8]}"
-            logger.info(f"Label collision, using: {label}")
+            new_label = f"{label}_{agent_uuid[:8]}"
+            existing_is_resident = await db.agent_has_tag(existing, "persistent")
+            if existing_is_resident:
+                logger.warning(
+                    "[RESIDENT_FORK] label collision: existing agent %s is "
+                    "persistent but onboard minted %s with same label %r — "
+                    "renaming new agent to %r. Likely rotation wipe, anchor "
+                    "corruption, or misconfigured bootstrap. See "
+                    "memory/project_identity-audit-2026-04-19.md.",
+                    existing[:8], agent_uuid[:8], label, new_label,
+                )
+                b = _broadcaster()
+                if b is not None:
+                    try:
+                        await b.broadcast_event(
+                            event_type="resident_fork_detected",
+                            agent_id=agent_uuid,
+                            payload={
+                                "existing_agent_id": existing,
+                                "label": label,
+                                "new_label": new_label,
+                            },
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"[RESIDENT_FORK] broadcast_event failed: {e}"
+                        )
+            else:
+                logger.info(f"Label collision, using: {new_label}")
+            label = new_label
 
         # Update agent label using the proper backend method
         success = await db.update_agent_fields(agent_uuid, label=label)
