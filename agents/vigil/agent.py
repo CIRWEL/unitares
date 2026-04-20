@@ -273,6 +273,7 @@ class VigilAgent(GovernanceAgent):
             state_dir=STATE_FILE.parent,
             timeout=30.0,
             persistent=True,
+            refuse_fresh_onboard=True,
         )
         self.heartbeat_interval = heartbeat_interval
         self.with_tests = with_tests

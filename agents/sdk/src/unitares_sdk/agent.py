@@ -1,9 +1,17 @@
-"""GovernanceAgent — lifecycle base class for long-running UNITARES agents."""
+"""GovernanceAgent — lifecycle base class for long-running UNITARES agents.
+
+First-time resident bootstrap:
+    UNITARES_FIRST_RUN=1 python3 -m agents.vigil  # or sentinel, watcher
+This is the ONLY path that mints a new UUID for a resident with
+refuse_fresh_onboard=True. Every other path must resume the stored
+anchor UUID.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 import time
 from dataclasses import dataclass, field
@@ -76,6 +84,7 @@ class GovernanceAgent:
         parent_agent_id: str | None = None,
         spawn_reason: str | None = None,
         persistent: bool = False,
+        refuse_fresh_onboard: bool = False,
     ):
         self.name = name
         self.mcp_url = mcp_url
@@ -86,6 +95,12 @@ class GovernanceAgent:
         # skips this identity. Resident agents (Vigil, Sentinel, etc.) should
         # set this to True to avoid sweep false-positives.
         self.persistent = persistent
+        # Residents (Vigil, Sentinel, Watcher) set this True. When True,
+        # _ensure_identity refuses to fresh-onboard if the anchor is
+        # missing; the operator must set UNITARES_FIRST_RUN=1 to bootstrap
+        # a new identity. Prevents the 2026-04-19 rotation-wipe silent-fork
+        # class. See docs/superpowers/plans/2026-04-19-anchor-resilience-series.md
+        self.refuse_fresh_onboard = refuse_fresh_onboard
 
         # Defaults based on name
         name_lower = name.lower()
@@ -195,6 +210,15 @@ class GovernanceAgent:
                 raise
 
         # First run — onboard, get a UUID, save it
+        if self.refuse_fresh_onboard and os.environ.get("UNITARES_FIRST_RUN") != "1":
+            from .errors import IdentityBootstrapRefused
+            raise IdentityBootstrapRefused(
+                f"{self.name}: anchor missing at {self.session_file}, and "
+                "refuse_fresh_onboard=True. Either restore the anchor from a "
+                "rotation backup, or run this agent once with UNITARES_FIRST_RUN=1 "
+                "to explicitly bootstrap a new identity. Never silent-swap."
+            )
+
         onboard_kwargs: dict[str, Any] = {}
         if self.parent_agent_id is not None:
             onboard_kwargs["parent_agent_id"] = self.parent_agent_id

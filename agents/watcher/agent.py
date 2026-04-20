@@ -209,6 +209,19 @@ def resolve_identity(client) -> None:
             log(f"token resume failed: {e}", "warning")
 
     # Step 2: Fresh onboard — only when nothing else works.
+    # Silent-fork guard (added 2026-04-19 anchor-resilience series): Watcher
+    # is a resident; missing anchor + no UNITARES_FIRST_RUN means the
+    # operator did not authorize a fresh identity. Refuse loudly rather
+    # than silently forking.
+    if os.environ.get("UNITARES_FIRST_RUN") != "1":
+        log(
+            "anchor missing and UNITARES_FIRST_RUN not set — refusing to fresh-onboard. "
+            "Restore the anchor from a rotation backup, or set UNITARES_FIRST_RUN=1 "
+            "to explicitly bootstrap a new Watcher identity.",
+            "error",
+        )
+        _watcher_identity = None
+        return
     try:
         client.onboard("Watcher", spawn_reason="resident_observer")
         _sync_identity(client)

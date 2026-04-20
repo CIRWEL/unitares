@@ -1924,9 +1924,14 @@ class TestWatcherIdentity:
     """
 
     def test_fresh_onboard_when_no_session_file(self, watcher_module, tmp_path, monkeypatch):
-        """First-ever invocation: no .watcher_session → fresh onboard."""
+        """First-ever invocation: no .watcher_session → fresh onboard.
+
+        refuse_fresh_onboard guard (Phase 3, 2026-04-19) requires
+        UNITARES_FIRST_RUN=1 to authorize a fresh mint.
+        """
         session_file = tmp_path / SESSION_FILE_NAME
         monkeypatch.setattr(watcher_module, "SESSION_FILE", session_file)
+        monkeypatch.setenv("UNITARES_FIRST_RUN", "1")
 
         onboard_called = {}
 
@@ -2040,13 +2045,18 @@ class TestWatcherIdentity:
         assert len(calls) == 2  # no onboard needed
 
     def test_fresh_onboard_when_both_uuid_direct_and_token_fail(self, watcher_module, tmp_path, monkeypatch):
-        """Both UUID-direct AND token fail → fresh onboard (Step 2)."""
+        """Both UUID-direct AND token fail → fresh onboard (Step 2).
+
+        refuse_fresh_onboard guard (Phase 3, 2026-04-19) requires
+        UNITARES_FIRST_RUN=1 to authorize a fresh mint.
+        """
         session_file = tmp_path / SESSION_FILE_NAME
         session_file.write_text(json.dumps({
             "continuity_token": "stale-tok",
             "agent_uuid": "uuid-archived",
         }))
         monkeypatch.setattr(watcher_module, "SESSION_FILE", session_file)
+        monkeypatch.setenv("UNITARES_FIRST_RUN", "1")
 
         calls = []
 
@@ -2069,9 +2079,14 @@ class TestWatcherIdentity:
         assert calls[2] == ("onboard", "Watcher")
 
     def test_governance_down_leaves_identity_none(self, watcher_module, tmp_path, monkeypatch):
-        """If governance is unreachable, identity is None — scanning still works."""
+        """If governance is unreachable, identity is None — scanning still works.
+
+        Test sets UNITARES_FIRST_RUN=1 to reach the onboard path; the point
+        is to verify ConnectionError from onboard is caught cleanly.
+        """
         session_file = tmp_path / SESSION_FILE_NAME
         monkeypatch.setattr(watcher_module, "SESSION_FILE", session_file)
+        monkeypatch.setenv("UNITARES_FIRST_RUN", "1")
 
         class FakeClient:
             def onboard(self, *a, **kw):
@@ -2532,6 +2547,8 @@ class TestWatcherLifecycleIntegration:
         """Identity → persist finding → surface (triggers check-in) → resolve (posts event)."""
         session_file = tmp_path / ".watcher_session"
         monkeypatch.setattr(watcher_module, "SESSION_FILE", session_file)
+        # Phase 3 silent-fork guard requires explicit bootstrap env var.
+        monkeypatch.setenv("UNITARES_FIRST_RUN", "1")
 
         # Track all governance interactions
         gov_calls = []

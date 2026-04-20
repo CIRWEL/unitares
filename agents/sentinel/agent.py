@@ -424,6 +424,7 @@ class SentinelAgent(GovernanceAgent):
             state_dir=STATE_FILE.parent,
             timeout=30.0,
             persistent=True,
+            refuse_fresh_onboard=True,
         )
         self.ws_url = ws_url
         self.analysis_interval = analysis_interval

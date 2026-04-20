@@ -35,3 +35,14 @@ class VerdictError(GovernanceError):
         if guidance:
             msg += f" — {guidance}"
         super().__init__(msg)
+
+
+class IdentityBootstrapRefused(GovernanceError):
+    """Raised when a resident agent's anchor is missing and the agent was
+    configured with refuse_fresh_onboard=True (the default for Vigil,
+    Sentinel, Watcher).
+
+    Fix: either restore the anchor from a rotation backup, or explicitly
+    bootstrap a new identity by running the agent once with the
+    UNITARES_FIRST_RUN=1 environment variable set. Never silently swap
+    identities."""
