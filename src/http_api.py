@@ -925,19 +925,30 @@ async def http_events(request):
                 )
                 # Merge: use in-memory event_ids to deduplicate
                 mem_ids = {e.get("event_id") for e in events if e.get("event_id")}
+                # When `since` is given, audit rows with non-int event_ids (UUIDs)
+                # are unreachable via the int-cursor protocol and would replay
+                # every poll — drop them. See CIRWEL/unitares#25.
+                int_cursor = since is not None
                 for de in db_events:
-                    if de.get("event_id") not in mem_ids:
-                        # Reshape audit row → dashboard event shape
-                        payload = de.get("details", {})
-                        events.append({
-                            "type": payload.get("type", de.get("event_type", "")),
-                            "severity": payload.get("severity", "info"),
-                            "message": payload.get("message", de.get("event_type", "")),
-                            "agent_id": de.get("agent_id"),
-                            "agent_name": payload.get("agent_name", ""),
-                            "timestamp": de.get("timestamp"),
-                            "event_id": de.get("event_id"),
-                        })
+                    de_id = de.get("event_id")
+                    if de_id in mem_ids:
+                        continue
+                    if int_cursor:
+                        try:
+                            int(de_id)
+                        except (TypeError, ValueError):
+                            continue
+                    # Reshape audit row → dashboard event shape
+                    payload = de.get("details", {})
+                    events.append({
+                        "type": payload.get("type", de.get("event_type", "")),
+                        "severity": payload.get("severity", "info"),
+                        "message": payload.get("message", de.get("event_type", "")),
+                        "agent_id": de.get("agent_id"),
+                        "agent_name": payload.get("agent_name", ""),
+                        "timestamp": de.get("timestamp"),
+                        "event_id": de_id,
+                    })
                 events.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
                 events = events[:limit]
             except Exception as db_err:
