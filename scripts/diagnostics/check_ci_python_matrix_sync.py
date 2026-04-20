@@ -15,7 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
 TEST_WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "tests.yml"
 

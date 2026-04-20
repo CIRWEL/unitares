@@ -1,6 +1,6 @@
 #!/bin/bash
-# Combined pre-commit hook: Markdown checks + auto-documentation
-# Install: ln -s ../../scripts/git-hooks/pre-commit-combined .git/hooks/pre-commit
+# Combined pre-commit hook: markdown policy + version sync
+# Install: make install-hooks
 
 set -e
 
@@ -9,48 +9,67 @@ cd "$PROJECT_ROOT"
 
 echo "🔍 Pre-commit checks..."
 
-# ============================================================
-# PART 1: Auto-generate tool documentation (if handlers changed)
-# ============================================================
-if git diff --cached --name-only | grep -q 'src/mcp_handlers/.*\.py'; then
-    echo "📝 Handler files changed, regenerating documentation..."
-    python3 scripts/generate_tool_docs.py
-    # Add generated docs to commit
-    git add tools/README.md
-    echo "✅ Documentation updated and staged"
+# HARD LIMIT: Total tracked markdown files.
+# Uses git ls-files so worktrees, caches, and gitignored dirs are
+# automatically excluded — no brittle find-exclusion list needed.
+MAX_MARKDOWN_FILES=80
+TOTAL_MD=$(git ls-files '*.md' | wc -l | tr -d ' ')
+
+if [ "$TOTAL_MD" -gt "$MAX_MARKDOWN_FILES" ]; then
+    echo ""
+    echo "❌ MARKDOWN PROLIFERATION BLOCKED!"
+    echo "   Total: $TOTAL_MD files (max: $MAX_MARKDOWN_FILES)"
+    echo ""
+    echo "   Run: python3 scripts/audit_markdown_proliferation.py --stats"
+    echo "   Then consolidate or delete before committing."
+    exit 1
 fi
 
-# ============================================================
-# PART 2: Markdown proliferation check
-# ============================================================
+echo "📄 Markdown count: $TOTAL_MD / $MAX_MARKDOWN_FILES"
+
+# Check for new markdown files
 NEW_MARKDOWN_FILES=$(git diff --cached --name-only --diff-filter=A | grep '\.md$' || true)
 
 if [ -n "$NEW_MARKDOWN_FILES" ]; then
     echo ""
     echo "📄 Checking new markdown files..."
-    
+
     VIOLATIONS=0
-    
+
     for file in $NEW_MARKDOWN_FILES; do
-        # Skip approved files
+        # Skip approved files and directories
         if [[ "$file" == "README.md" ]] || \
+           [[ "$file" == "CLAUDE.md" ]] || \
+           [[ "$file" == "AGENTS.md" ]] || \
+           [[ "$file" == "CHANGELOG.md" ]] || \
+           [[ "$file" == "START_HERE.md" ]] || \
+           [[ "$file" == "CODEX_START.md" ]] || \
            [[ "$file" == "docs/CHANGELOG.md" ]] || \
-           [[ "$file" == "docs/guides/START_HERE.md" ]] || \
            [[ "$file" == "docs/README.md" ]] || \
            [[ "$file" == "docs/QUICK_REFERENCE.md" ]] || \
            [[ "$file" == "docs/DOC_MAP.md" ]] || \
            [[ "$file" == docs/MARKDOWN_*.md ]] || \
            [[ "$file" == docs/guides/*.md ]] || \
            [[ "$file" == docs/architecture/*.md ]] || \
-           [[ "$file" == "tools/README.md" ]]; then  # Auto-generated docs are OK
+           [[ "$file" == docs/specs/*.md ]] || \
+           [[ "$file" == docs/plans/*.md ]] || \
+           [[ "$file" == docs/handoffs/*.md ]] || \
+           [[ "$file" == docs/operations/*.md ]] || \
+           [[ "$file" == */archive/* ]] || \
+           [[ "$file" == .agent-guides/* ]] || \
+           [[ "$file" == scripts/age/*.md ]] || \
+           [[ "$file" == specs/*.md ]] || \
+           [[ "$file" == commands/*.md ]] || \
+           [[ "$file" == skills/*/SKILL.md ]] || \
+           [[ "$file" == agents/*.md ]]; then
             echo "  ✅ $file - Approved"
             continue
         fi
-        
+
         # Check file size
         if [ -f "$file" ]; then
             WORD_COUNT=$(wc -w < "$file" 2>/dev/null || echo "0")
-            
+
             if [ "$WORD_COUNT" -lt 500 ]; then
                 echo "  ❌ $file - Too small ($WORD_COUNT words, need 500+)"
                 echo "     → Consider consolidating into existing doc or using store_knowledge()"
@@ -63,7 +82,7 @@ if [ -n "$NEW_MARKDOWN_FILES" ]; then
             fi
         fi
     done
-    
+
     if [ $VIOLATIONS -gt 0 ]; then
         echo ""
         echo "❌ Markdown proliferation policy violation!"
@@ -78,9 +97,7 @@ if [ -n "$NEW_MARKDOWN_FILES" ]; then
     fi
 fi
 
-# ============================================================
-# PART 3: Validate markdown formatting
-# ============================================================
+# Validate markdown formatting (warn-only)
 if command -v python3 &> /dev/null; then
     if [ -f "$PROJECT_ROOT/scripts/validate_markdown_formatting.py" ]; then
         echo ""
@@ -95,8 +112,7 @@ if command -v python3 &> /dev/null; then
     fi
 fi
 
-# Version sync check: fire when VERSION or pyproject.toml is staged, so drift
-# in either direction trips the check.
+# Version sync check: fire when VERSION or pyproject.toml is staged.
 if git diff --cached --name-only | grep -qE '^(VERSION|pyproject\.toml)$'; then
     echo ""
     echo "🔢 Version-tracked file changed — checking sync..."

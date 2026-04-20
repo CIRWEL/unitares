@@ -36,6 +36,10 @@ jobs:
       run: |
         python scripts/dev/check_ci_python_version_sync.py
 
+    - name: Validate CI matrix matches pyproject requires-python
+      run: |
+        python scripts/diagnostics/check_ci_python_matrix_sync.py
+
     - name: Check doc drift
       run: |
         python scripts/diagnostics/check_doc_drift.py
@@ -79,6 +83,10 @@ jobs:
     - name: Validate CI/Python version sync
       run: |
         python scripts/dev/check_ci_python_version_sync.py
+
+    - name: Validate CI matrix matches pyproject requires-python
+      run: |
+        python scripts/diagnostics/check_ci_python_matrix_sync.py
 
     - name: Check doc drift
       run: |
