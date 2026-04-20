@@ -216,6 +216,55 @@ class TestPattern7SlowProceedLoop:
             assert "Decision loop" not in reason
             assert "Slow proceed loop" not in reason
 
+    def test_stale_timestamps_do_not_trigger_pattern7(self):
+        """8 proceeds in a tight window but all >1h old should NOT re-trigger.
+
+        Regression: a dormant agent with an 8-update burst from days ago would
+        re-fire Pattern 7 (and Pattern 4) whenever a new update arrived, because
+        the last 10 timestamps still fit within 300s — the detector had no
+        freshness floor. Real-world repro: agent 2aa0ec9e burst on 2026-04-17,
+        sat idle, then a new update on 2026-04-20 re-flagged the stale 8.
+        """
+        # 8 timestamps over 200s, but the newest is 2 days old
+        timestamps = _timestamps_spaced(
+            10, spacing_seconds=25, start_offset_seconds=2 * 86400
+        )
+        decisions = ["proceed"] * 10
+
+        meta = _make_metadata(recent_timestamps=timestamps, recent_decisions=decisions)
+
+        with (
+            patch("src.agent_loop_detection.agent_metadata", {"test-agent": meta}),
+            patch("src.agent_process_mgmt.SERVER_START_TIME", datetime.now() - timedelta(hours=1)),
+        ):
+            from src.agent_loop_detection import detect_loop_pattern
+            is_loop, reason = detect_loop_pattern("test-agent")
+
+        assert not is_loop, (
+            f"Stale proceed burst (newest 2 days old) should not trigger Pattern 7, "
+            f"got: {reason}"
+        )
+
+    def test_stale_timestamps_do_not_trigger_pattern4_proceed(self):
+        """Same freshness guard should cover Pattern 4's 10-proceed-in-5-min branch."""
+        timestamps = _timestamps_spaced(
+            10, spacing_seconds=25, start_offset_seconds=2 * 86400
+        )
+        decisions = ["proceed"] * 10
+
+        meta = _make_metadata(recent_timestamps=timestamps, recent_decisions=decisions)
+
+        with (
+            patch("src.agent_loop_detection.agent_metadata", {"test-agent": meta}),
+            patch("src.agent_process_mgmt.SERVER_START_TIME", datetime.now() - timedelta(hours=1)),
+        ):
+            from src.agent_loop_detection import detect_loop_pattern
+            is_loop, reason = detect_loop_pattern("test-agent")
+
+        assert not is_loop, (
+            f"Stale proceed burst should not trigger Pattern 4 either, got: {reason}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # _safety_net_resume

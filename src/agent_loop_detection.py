@@ -24,6 +24,14 @@ from src.agent_metadata_persistence import load_metadata_async
 
 logger = get_logger(__name__)
 
+# Proceed-based loop patterns (P4 proceed branch, P7) count the last 10
+# decisions but have tiny time windows (≤300s). A dormant agent whose last
+# burst of 10 proceeds happened days ago still has a window that fits the
+# threshold, so any new update re-fires the alert. Require the newest
+# timestamp to be within this horizon — if the burst isn't recent, it isn't
+# a live loop.
+PROCEED_LOOP_FRESHNESS_SECONDS = 600
+
 # Telemetry: ring buffer of governance circuit breaker pause timestamps
 _governance_pause_timestamps: deque[datetime] = deque(maxlen=100)
 
@@ -224,7 +232,8 @@ def detect_loop_pattern(agent_id: str) -> tuple[bool, str]:
             try:
                 window_timestamps = [datetime.fromisoformat(ts) for ts in recent_timestamps[-10:]]
                 window_span = (window_timestamps[-1] - window_timestamps[0]).total_seconds()
-                if window_span <= 300:  # 10 proceeds in 5 minutes = suspicious
+                newest_age = (now - window_timestamps[-1]).total_seconds()
+                if window_span <= 300 and newest_age <= PROCEED_LOOP_FRESHNESS_SECONDS:
                     return True, f"Decision loop detected: {proceed_count} 'proceed' decisions in {window_span:.0f}s (agent may be stuck in feedback loop)"
             except (ValueError, TypeError, IndexError):
                 pass  # Can't parse timestamps — skip this pattern
@@ -270,8 +279,9 @@ def detect_loop_pattern(agent_id: str) -> tuple[bool, str]:
         try:
             timestamps = [datetime.fromisoformat(ts) for ts in window_timestamps]
             time_span = (timestamps[-1] - timestamps[0]).total_seconds()
+            newest_age = (now - timestamps[-1]).total_seconds()
 
-            if time_span <= 300.0:  # 5 minutes
+            if time_span <= 300.0 and newest_age <= PROCEED_LOOP_FRESHNESS_SECONDS:
                 proceed_count = sum(
                     1 for d in window_decisions
                     if d in ["proceed", "approve", "reflect", "revise"]
