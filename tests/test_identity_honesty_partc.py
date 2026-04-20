@@ -149,6 +149,165 @@ class TestPath0RequiresOwnershipProof:
         assert data.get("success") is True, f"Matching token must pass strict. Got: {data}"
 
 
+class TestPath0EmitsHijackEvent:
+    """When PATH 0 detects a bare-UUID resume (ownership proof missing), emit
+    a broadcast event so dashboards + Discord bridge surface the attempt.
+
+    Rationale: the Part C gate already *decides* (reject vs warn vs pass). The
+    missing piece post-2026-04-20 is *visibility* — a log line only reaches
+    the MCP server logs, which operators rarely tail. A broadcast event
+    flows through the same pipeline as `resident_fork_detected` (#70), landing
+    in the dashboard and Discord within one broadcast cycle.
+
+    Fires in `strict` and `log` modes; silent in `off` mode and when the
+    caller provides a matching continuity_token.
+
+    See KG bug 2026-04-20T00:09:51 (SessionStart-hook hijack vector).
+    """
+
+    @pytest.fixture
+    def captured_events(self):
+        return []
+
+    @pytest.fixture
+    def broadcaster_stub(self, captured_events):
+        b = MagicMock()
+
+        async def _record(**kwargs):
+            captured_events.append(kwargs)
+
+        b.broadcast_event = AsyncMock(side_effect=_record)
+        return b
+
+    @pytest.mark.asyncio
+    async def test_log_mode_bare_uuid_emits_hijack_event(
+        self, monkeypatch, captured_events, broadcaster_stub
+    ):
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "log")
+
+        from src.mcp_handlers.identity import handlers as h_mod
+
+        fake_server = MagicMock(
+            monitors={"aaaaaaaa-1111-2222-3333-444444444444": MagicMock()},
+            agent_metadata={},
+        )
+        with patch(
+            "src.mcp_handlers.shared.get_mcp_server",
+            return_value=fake_server,
+        ), patch.object(h_mod, "_broadcaster", return_value=broadcaster_stub):
+            result = await h_mod.handle_identity_adapter({
+                "agent_uuid": "aaaaaaaa-1111-2222-3333-444444444444",
+                "resume": True,
+            })
+
+        assert json.loads(result[0].text).get("success") is True
+        hijack_events = [
+            e for e in captured_events
+            if e.get("event_type") == "identity_hijack_suspected"
+        ]
+        assert hijack_events, (
+            f"Log mode must emit identity_hijack_suspected. Got: {captured_events}"
+        )
+        evt = hijack_events[0]
+        assert evt.get("agent_id") == "aaaaaaaa-1111-2222-3333-444444444444"
+        payload = evt.get("payload") or {}
+        assert payload.get("mode") == "log"
+        assert payload.get("proof") == "none"
+
+    @pytest.mark.asyncio
+    async def test_strict_mode_bare_uuid_still_emits_event(
+        self, monkeypatch, captured_events, broadcaster_stub
+    ):
+        """Even when strict mode rejects the call, the event still fires so
+        operators can see rejected-hijack attempts in the dashboard."""
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "strict")
+
+        from src.mcp_handlers.identity import handlers as h_mod
+
+        with patch.object(h_mod, "_broadcaster", return_value=broadcaster_stub):
+            result = await h_mod.handle_identity_adapter({
+                "agent_uuid": "bbbbbbbb-1111-2222-3333-444444444444",
+                "resume": True,
+            })
+
+        # Strict mode rejects.
+        assert json.loads(result[0].text).get("success") is False
+        hijack_events = [
+            e for e in captured_events
+            if e.get("event_type") == "identity_hijack_suspected"
+        ]
+        assert hijack_events, (
+            "Strict-mode rejections must still emit the event for visibility"
+        )
+        assert (hijack_events[0].get("payload") or {}).get("mode") == "strict"
+
+    @pytest.mark.asyncio
+    async def test_off_mode_does_not_emit_event(
+        self, monkeypatch, captured_events, broadcaster_stub
+    ):
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "off")
+
+        from src.mcp_handlers.identity import handlers as h_mod
+
+        fake_server = MagicMock(
+            monitors={"cccccccc-1111-2222-3333-444444444444": MagicMock()},
+            agent_metadata={},
+        )
+        with patch(
+            "src.mcp_handlers.shared.get_mcp_server",
+            return_value=fake_server,
+        ), patch.object(h_mod, "_broadcaster", return_value=broadcaster_stub):
+            await h_mod.handle_identity_adapter({
+                "agent_uuid": "cccccccc-1111-2222-3333-444444444444",
+                "resume": True,
+            })
+
+        hijack_events = [
+            e for e in captured_events
+            if e.get("event_type") == "identity_hijack_suspected"
+        ]
+        assert hijack_events == [], (
+            "Off mode is explicit opt-out of the whole Part C machinery — "
+            "no event should fire"
+        )
+
+    @pytest.mark.asyncio
+    async def test_matching_token_does_not_emit_event(
+        self, monkeypatch, captured_events, broadcaster_stub
+    ):
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "log")
+        monkeypatch.setenv("UNITARES_CONTINUITY_TOKEN_SECRET", "test-secret-hijack-evt")
+
+        from src.mcp_handlers.identity.session import create_continuity_token
+        agent_uuid = "dddddddd-1111-2222-3333-444444444444"
+        token = create_continuity_token(agent_uuid, "test-session")
+        assert token is not None
+
+        from src.mcp_handlers.identity import handlers as h_mod
+
+        fake_server = MagicMock(
+            monitors={agent_uuid: MagicMock()},
+            agent_metadata={},
+        )
+        with patch(
+            "src.mcp_handlers.shared.get_mcp_server",
+            return_value=fake_server,
+        ), patch.object(h_mod, "_broadcaster", return_value=broadcaster_stub):
+            await h_mod.handle_identity_adapter({
+                "agent_uuid": agent_uuid,
+                "continuity_token": token,
+                "resume": True,
+            })
+
+        hijack_events = [
+            e for e in captured_events
+            if e.get("event_type") == "identity_hijack_suspected"
+        ]
+        assert hijack_events == [], (
+            "Matching token proves ownership — no hijack suspicion"
+        )
+
+
 class TestMiddlewarePath0Gate:
     """Middleware PATH 0 passthrough must enforce the same ownership proof."""
 
