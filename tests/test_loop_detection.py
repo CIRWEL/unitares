@@ -267,6 +267,78 @@ class TestPattern7SlowProceedLoop:
 
 
 # ---------------------------------------------------------------------------
+# Pattern 4 pause branch: freshness guard
+# ---------------------------------------------------------------------------
+
+
+class TestPattern4PauseFreshness:
+    """Pause branch must not fire on stale histories.
+
+    Regression: once Pattern 4's pause branch fires, the next update is
+    rejected before it can be recorded, so the pause-heavy window never rolls
+    over. The agent is blocked indefinitely on a static 5-pause history.
+    Seen with Steward (9a6681ec): last successful DB update 2026-04-19 06:49,
+    followed by 13+ hours of rejected retries.
+    """
+
+    def test_5_pauses_recent_triggers(self):
+        """Fresh 5-pause burst still fires — preserves existing behavior."""
+        timestamps = _timestamps_spaced(10, spacing_seconds=30)
+        decisions = ["pause"] * 5 + ["proceed"] * 5
+
+        meta = _make_metadata(recent_timestamps=timestamps, recent_decisions=decisions)
+
+        with (
+            patch("src.agent_loop_detection.agent_metadata", {"test-agent": meta}),
+            patch("src.agent_process_mgmt.SERVER_START_TIME", datetime.now() - timedelta(hours=1)),
+        ):
+            from src.agent_loop_detection import detect_loop_pattern
+            is_loop, reason = detect_loop_pattern("test-agent")
+
+        assert is_loop
+        assert "pause" in reason.lower()
+
+    def test_5_pauses_stale_does_not_trigger(self):
+        """Old pause burst (newest timestamp >1h old) should NOT block the agent."""
+        timestamps = _timestamps_spaced(
+            10, spacing_seconds=30, start_offset_seconds=6 * 3600
+        )
+        decisions = ["pause"] * 5 + ["proceed"] * 5
+
+        meta = _make_metadata(recent_timestamps=timestamps, recent_decisions=decisions)
+
+        with (
+            patch("src.agent_loop_detection.agent_metadata", {"test-agent": meta}),
+            patch("src.agent_process_mgmt.SERVER_START_TIME", datetime.now() - timedelta(hours=12)),
+        ):
+            from src.agent_loop_detection import detect_loop_pattern
+            is_loop, reason = detect_loop_pattern("test-agent")
+
+        assert not is_loop, (
+            f"Stale pause burst (newest 6h old) should not lock the agent out, "
+            f"got: {reason}"
+        )
+
+    def test_unparseable_timestamps_fallback_preserves_detection(self):
+        """If timestamps can't be parsed, fall back to firing — rather a false
+        positive than silently suppressing a real pause loop."""
+        timestamps = ["not-a-timestamp"] * 10
+        decisions = ["pause"] * 5 + ["proceed"] * 5
+
+        meta = _make_metadata(recent_timestamps=timestamps, recent_decisions=decisions)
+
+        with (
+            patch("src.agent_loop_detection.agent_metadata", {"test-agent": meta}),
+            patch("src.agent_process_mgmt.SERVER_START_TIME", datetime.now() - timedelta(hours=1)),
+        ):
+            from src.agent_loop_detection import detect_loop_pattern
+            is_loop, reason = detect_loop_pattern("test-agent")
+
+        assert is_loop
+        assert "pause" in reason.lower()
+
+
+# ---------------------------------------------------------------------------
 # _safety_net_resume
 # ---------------------------------------------------------------------------
 
