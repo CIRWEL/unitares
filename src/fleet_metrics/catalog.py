@@ -70,3 +70,9 @@ register(Metric(
     description="Lines of code (excluding comments/blanks) in unitares/src/ — Python only.",
     unit="lines",
 ))
+
+register(Metric(
+    name="tests.unitares.count",
+    description="Number of `test_*.py` files in unitares/tests/ — rough proxy for test-surface breadth.",
+    unit="files",
+))

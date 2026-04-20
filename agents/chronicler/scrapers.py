@@ -50,6 +50,24 @@ def tokei_unitares_src_code(repo_root: Path) -> float:
     return float(parts[0])
 
 
+def tests_unitares_count(repo_root: Path) -> float:
+    """Count `test_*.py` files under unitares/tests/.
+
+    Uses `find` and relies on its exit code to catch missing directories.
+    Includes tests under subdirectories (e.g. agents/*/tests/ are excluded
+    — only unitares/tests/ so the signal stays interpretable).
+    """
+    tests = repo_root / "tests"
+    if not tests.is_dir():
+        raise FileNotFoundError(f"tests/ not found at {tests}")
+    find = subprocess.run(
+        ["find", str(tests), "-type", "f", "-name", "test_*.py"],
+        check=True, capture_output=True, text=True,
+    )
+    files = [f for f in find.stdout.splitlines() if f]
+    return float(len(files))
+
+
 # Registry: metric name → scrape callable. Chronicler iterates this on each run.
 #
 # Keep this in sync with the server-side catalog in
@@ -58,4 +76,5 @@ def tokei_unitares_src_code(repo_root: Path) -> float:
 # the POST endpoint.
 SCRAPERS: dict[str, Callable[[Path], float]] = {
     "tokei.unitares.src.code": tokei_unitares_src_code,
+    "tests.unitares.count": tests_unitares_count,
 }
