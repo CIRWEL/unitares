@@ -5024,3 +5024,47 @@ body {
 .resident-highlight {
     animation: residentHighlight 1.5s ease-out;
 }
+
+/* ---------------------------------------------------------------------------
+ * Fleet Metrics panel
+ * ------------------------------------------------------------------------- */
+
+#fleet-metrics-select {
+    max-width: 340px;
+}
+
+.fleet-metrics-meta {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
+.fleet-metrics-description {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fleet-metrics-scrape-status {
+    flex: 0 0 auto;
+    font-family: 'JetBrains Mono', monospace;
+    opacity: 0.85;
+}
+
+.fleet-metrics-chart-wrap {
+    position: relative;
+    height: 320px;
+    padding: 4px 0;
+}
+
+.fleet-metrics-chart-wrap canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
