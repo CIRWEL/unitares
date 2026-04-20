@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [2.12.0] - 2026-04-20
+
+### Added
+
+- **KG retrieval rebuild — Phase 1 / eval harness** (#56) — retrieval evaluation harness plus a 20-pair seed corpus and baseline pin under `tests/retrieval_eval/`. Locks in V0 metrics so later phases have a reference point. (`scripts/eval/retrieval_eval.py`)
+- **KG retrieval rebuild — Phase 2 / BGE-M3 embedder** (#58) — new embedder selectable via `UNITARES_EMBEDDING_MODEL=bge-m3`. Keeps the previous model as default; flip per-deployment. BGE-M3's 8192-token budget is what motivates the Phase-6 embed-window widening below.
+- **KG retrieval rebuild — Phase 3 / cross-encoder reranker** (#60) — opt-in reranker infrastructure, default off. Scores the filtered pool after fusion when enabled.
+- **KG retrieval rebuild — Phase 4 / hybrid RRF fusion** (#62) — RRF fusion of BM25 + dense retrieval behind `UNITARES_ENABLE_HYBRID`. Adds `full_text_search()` on the AGE store, switches `ts_rank` → `ts_rank_cd`, and treats tags as an RRF boost rather than a hard filter. `rrf_scores` surfaced alongside `similarity_scores` / `rerank_scores`. Compose order when both Phase 3 and Phase 4 are on: hybrid fuses first, then rerank scores the filtered pool.
+- **KG retrieval rebuild — Phase 5 / 1-hop typed-edge graph expansion** (#63) — behind `UNITARES_ENABLE_GRAPH_EXPANSION`. After RRF fuse, pull 1-hop neighbors (`related_to` / `responses_from` / `response_to`) from the top-10 seeds at discounted score, hydrate missing neighbors via `graph.get_discovery` (capped at 30 DB trips). Tag-filter guard extended to all `hybrid_rrf*` modes. Infrastructure only — the 20-pair seed corpus is too sparse to move the needle today; payoff scales with corpus size and response threading.
+- **KG text limits raised** (#73) — write caps 1000/5000 → 4000/20000 chars (summary/details); embed-text window 500 → 6000 chars (closes a quiet retrieval gap where details past char 500 were dead weight for semantic search); read-side preview 100 → 500 chars with `has_more_details` and `details_length` hints so agents can decide whether to round-trip for the full body. Limits consolidated in `src/mcp_handlers/knowledge/limits.py` (previously duplicated inline in three handler call sites). Existing discoveries keep their legacy embeds until edited; backfill is out of scope.
+- **Fleet metrics substrate** (#68) — Postgres-backed catalog-gated time-series store. Single `metrics.series (ts, name, value)` table; dotted names (`tokei.unitares.src.code`); writes gated by an in-code catalog (`src/fleet_metrics/catalog.py`) so a leaked bearer token cannot inject arbitrary series names. Three bearer-authed endpoints: `POST /v1/metrics`, `GET /v1/metrics/series`, `GET /v1/metrics/catalog`.
+- **Chronicler resident** (#71) — daily scraper agent populating fleet metrics via the catalog.
+- **Fleet Metrics dashboard panel** (#75) — catalog-driven time-series line chart (Chart.js 4.4 + `chartjs-adapter-date-fns`, both already loaded). Dropdown auto-populates from the catalog; polling on demand (refresh button + dropdown change); empty-state rendering for series with no points yet. Completes the three-PR track (substrate → Chronicler → dashboard).
+- **Resident-fork detector** (#70) — when onboard detects a label collision with an agent carrying the `persistent` tag, log at WARNING and emit `resident_fork_detected` via the broadcaster. Rename behavior preserved (fork still completes; onboard is not blocked) but the fork now announces itself instead of absorbing silently. Closes the detection-gap blindspot surfaced in the 2026-04-19 anchor-resilience council review. Adds `db.agent_has_tag` on `AgentMixin`. Phase 1 of 3.
+- **SDK `refuse_fresh_onboard` opt-in for residents** (#74) — residents can refuse a fresh onboard, forcing the client to resume an existing identity instead of silently creating a new one.
+- **Dashboard residents precedence** — `/v1/residents` now supports a third fallback: `KNOWN_RESIDENT_LABELS ∩ fleet` when neither `UNITARES_RESIDENT_AGENTS` nor `meta.resident=True` is set. Reuses the canonical list from `grounding/class_indicator.py` so operators don't have to duplicate it in plist env vars. Precedence: env → metadata flag → known-residents ∩ fleet → none. `_resolve_resident_labels` now returns `(labels, source)`.
+
+### Changed
+
+- **`ship.sh` runtime-path branch prefix is now agent-scoped** — `claude/auto/...` when `CLAUDECODE=1`, `codex/auto/...` otherwise (backward-compatible default); override with `UNITARES_SHIP_AGENT=<name>`. Rationale: multiple concurrent agents auto-ship to the repo; self-identifying branch names make the audit trail honest.
+- **README** — paper reference bumped v6.7 → v6.8.
+
 ### Fixed
 
 - **Identity Honesty Part C — strict-mode gates** (2026-04-18) — closes the three ghost-creation paths that PR #35 revert called out. One env flag (`UNITARES_IDENTITY_STRICT`) gates all three at their source instead of layering more archive/resurrect guards on top:
@@ -18,10 +42,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Modes:** `off` (emergency rollback), `log` (warn `[IDENTITY_STRICT]`, do nothing else — **default**), `strict` (reject with recovery guidance). Default `log` surfaces the magnitude of the problem via warnings without breaking any caller; operator flips to `strict` after external-client audit.
   - **Residents updated:** SDK `GovernanceAgent` and Watcher now load their saved `continuity_token` into the client before the PATH 0 resume call so they keep working in strict mode without anchor-file schema changes.
   - **Follow-up (out of scope this PR):** audit external clients (Codex plugin, Pi/Anima, Discord bridge, dashboard, raw REST callers); flip default `log → strict`; delete the dead bare-UUID / FALLBACK 2 / onboard-sweep code paths.
+- **`call_model` — empty content fallback to `message.reasoning`** (#72, partial #66) — gemma4 / deepseek-r1 via Ollama's OpenAI-compat adapter split the final answer and thinking trace into separate fields; a truncated reply left `content=""` and hid the whole response. Now falls back to `message.reasoning` when content is empty.
+- **`call_model` — stop silently rewriting `llama-3.1-8b` → `llama3:70b`** (#69, partial #66) — local auto-default now honors `UNITARES_LLM_MODEL` (`gemma4:latest` fallback); recovery hint points at `ollama list` instead of stale model names.
+- **Dialectic reviewer auto-select gated** (#65) — behind `UNITARES_AUTOSELECT_REVIEWER` (default off). The candidate pool is ghost sessions + non-reasoning scripts, so auto-assign was dishonest until a real summonable reasoner is wired in. Callers already handle `None` cleanly (self-review / awaiting-facilitation / `NO_REVIEWER`).
+- **Stuck-recovery self-review fallback closed** (#59) — `_trigger_dialectic_for_stuck_agent` now passes `agent_metadata` + paused tags to `select_reviewer`. Prior behavior called it without metadata, `select_reviewer` returned `None`, and the caller's self-review fallback assigned the paused agent as its own reviewer on every sweep — producing dozens of doomed `reviewer: 9a6681ec...` sessions for Steward. When no peer is eligible, return `None` and let `auto_initiate_dialectic_recovery` own the LLM-assisted fallback for single-agent deployments.
+- **`/api/events` int-cursor replay** (#67, closes #25) — dropped UUID audit rows from `/api/events` when clients pass `?since=N`. They were unreachable via the int-cursor protocol and replayed on every poll. Dashboard (no `since`) still sees them.
+- **Loop-detect Pattern 4 pause branch freshness guard** (#61) — `PAUSE_LOOP_FRESHNESS_SECONDS=3600`. Pattern 4's pause branch counted `pause` entries in the last 10 decisions with no time window; once it fired, every subsequent update was rejected before it could be recorded, so the pause-heavy window never rolled over and the agent was locked out indefinitely on a static history. Seen in production: Steward (`9a6681ec`) flapped for 13+ hours on a frozen meta. Unparseable timestamps fall back to firing so bad metadata can't silently suppress a real loop.
+- **Loop-detect Pattern 4 / Pattern 7 proceed-branch freshness guard** (#57) — `PROCEED_LOOP_FRESHNESS_SECONDS=600`. The 10-proceed window had no floor on how old the newest timestamp could be, so a dormant agent whose last proceed burst happened days ago kept re-firing. Seen in production as a stale 2026-04-17 burst on `2aa0ec9e` re-flagging itself on 2026-04-20.
+- **KG search noise-floor fallback removed** (#55) — removed the 0.2-threshold fallback; surface scores unconditionally.
 
 ### Removed
 
 - **Neighbor coupling** (2026-04-17) — deleted `AdaptiveGovernor.apply_neighbor_pressure` / `decay_neighbor_pressure` and the `neighbor_pressure` / `agents_in_resonance` state fields from `unitares-core`. Deleted `cirs.hooks.maybe_apply_neighbor_pressure`, `auto_emit_coherence_reports`, `_lookup_similarity` and all re-exports. The production call site has been disabled since the `phases.py:1005` comment landed; this commit removes the dormant scaffolding so the code reflects actual runtime behavior. Rationale: agent-to-agent threshold coupling undermined independent per-agent judgment and produced correlated EISV drift that confounded fleet anomaly detection. Forward-compatible: persisted `GovernorState` snapshots carrying `neighbor_pressure` keys continue to load (unknown keys ignored).
+
+### Tests
+
+- **`monitor_phi` / `monitor_calibration` unit coverage** (#64) — direct coverage lifted from 63%/60% to 100%. Task-type risk adjustment branches and trajectory/strategic/tactical calibration paths were previously exercised only transitively via `test_governance_monitor*.py`. No production changes.
 
 ---
 
