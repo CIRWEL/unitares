@@ -763,25 +763,10 @@ class TestResponseContent:
         assert "task_type" in parsed
         assert "message" in parsed
 
-    @pytest.mark.asyncio
-    async def test_energy_cost_free_tier_flash(self):
-        """Free tier models (flash) get low energy cost."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.chat.completions.create.return_value = _make_mock_response(
-            model="gemini-flash"
-        )
-
-        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance):
-            from src.mcp_handlers.support.model_inference import handle_call_model
-            result = await handle_call_model({
-                "prompt": "test",
-                "provider": "ollama",
-                "model": "gemini-flash",
-            })
-
-        parsed = _parse_text_content(result)
-        assert parsed["energy_cost"] == 0.01
+    # `test_energy_cost_free_tier_flash` removed: gemini-flash is no longer a
+    # supported model after #80 dropped the Gemini provider; the free-tier
+    # classifier now only matches llama/qwen/gemma. The llama variant below
+    # exercises the same free-tier branch.
 
     @pytest.mark.asyncio
     async def test_energy_cost_free_tier_llama(self):
@@ -803,25 +788,10 @@ class TestResponseContent:
         parsed = _parse_text_content(result)
         assert parsed["energy_cost"] == 0.01
 
-    @pytest.mark.asyncio
-    async def test_energy_cost_pro_tier(self):
-        """Pro tier models get medium energy cost."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.chat.completions.create.return_value = _make_mock_response(
-            model="gemini-pro"
-        )
-
-        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance):
-            from src.mcp_handlers.support.model_inference import handle_call_model
-            result = await handle_call_model({
-                "prompt": "test",
-                "provider": "ollama",
-                "model": "gemini-pro",
-            })
-
-        parsed = _parse_text_content(result)
-        assert parsed["energy_cost"] == 0.02
+    # `test_energy_cost_pro_tier` removed: the 0.02 "pro tier" branch no
+    # longer exists. After #80 dropped Gemini, the energy cost has two tiers:
+    # free (0.01) for llama/qwen/gemma, default (0.03) otherwise. The default
+    # tier is covered by `test_energy_cost_default_tier` below.
 
     @pytest.mark.asyncio
     async def test_energy_cost_default_tier(self):
@@ -1132,7 +1102,12 @@ class TestRoutingViaDetection:
 
     @pytest.mark.asyncio
     async def test_routed_via_direct_for_custom_endpoint(self):
-        """Detects direct routing for non-standard endpoints."""
+        """Detects direct routing for non-standard endpoints.
+
+        Post-#80 custom endpoints require an explicit `model` (the Gemini
+        fallback was removed), so the test passes one that the caller's
+        endpoint would serve.
+        """
         mock_client_instance = MagicMock()
         mock_client_instance.chat.completions.create.return_value = _make_mock_response()
 
@@ -1145,6 +1120,7 @@ class TestRoutingViaDetection:
                 "prompt": "test",
                 "provider": "openai",
                 "privacy": "cloud",
+                "model": "gpt-4o-mini",
             })
 
         parsed = _parse_text_content(result)

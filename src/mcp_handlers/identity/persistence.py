@@ -7,6 +7,7 @@ and DB helper functions for identity resolution.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 import json
@@ -23,6 +24,14 @@ from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 # =============================================================================
 
 _redis_cache = None
+
+# Tight timeout for Redis writes from inside MCP handler paths. The MCP SDK's
+# anyio task group can deadlock against asyncpg/Redis async calls (see
+# CLAUDE.md "Known Issue: anyio-asyncio Conflict"); on deadlock we bail out
+# and leave the in-memory session cache as the source of truth rather than
+# hanging the request. Matches `_REDIS_RECOVERY_TIMEOUT` in
+# src/mcp_handlers/middleware/identity_step.py.
+_REDIS_WRITE_TIMEOUT = 0.5
 
 
 def _metadata_public_agent_id(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -106,55 +115,93 @@ async def _cache_session(
     session_cache = _get_redis()
     if session_cache:
         try:
-            # Store both UUID and display agent_id if provided
-            if display_agent_id and display_agent_id != agent_uuid:
-                # Get raw Redis client for custom write
-                from src.cache.redis_client import get_redis
-                redis = await get_redis()
-                if redis:
-                    data = {
-                        "agent_id": agent_uuid,
-                        "display_agent_id": display_agent_id,
-                        "bound_at": datetime.now(timezone.utc).isoformat(),
-                        "trajectory_required": trajectory_required,
-                    }
-                    if label:
-                        data["label"] = label
-                    if bind_ip_ua:
-                        data["bind_ip_ua"] = bind_ip_ua
-                    key = f"session:{session_key}"
-                    await redis.setex(key, GovernanceConfig.SESSION_TTL_SECONDS, json.dumps(data))
-                    # Keep SessionCache's in-memory fallback coherent with the richer
-                    # raw Redis payload so subsequent lookups see the same binding
-                    # even if they fall back from Redis during this process lifetime.
-                    try:
-                        from src.cache import session_cache as _session_cache_mod
-                        _session_cache_mod._fallback_cache[session_key] = data
-                    except Exception:
-                        pass
-                else:
-                    # Raw Redis unavailable but degraded-local cache is still usable.
-                    await session_cache.bind(session_key, agent_uuid)
-                    try:
-                        from src.cache import session_cache as _session_cache_mod
-                        existing = _session_cache_mod._fallback_cache.get(session_key, {})
-                        data = {
-                            "agent_id": agent_uuid,
-                            "display_agent_id": display_agent_id,
-                            "public_agent_id": display_agent_id,
-                            "bound_at": existing.get("bound_at") or datetime.now(timezone.utc).isoformat(),
-                            "bind_count": existing.get("bind_count", 0),
-                        }
-                        if label:
-                            data["label"] = label
-                        _session_cache_mod._fallback_cache[session_key] = data
-                    except Exception:
-                        pass
-            else:
-                await session_cache.bind(session_key, agent_uuid)
+            await asyncio.wait_for(
+                _cache_session_redis_write(
+                    session_cache,
+                    session_key,
+                    agent_uuid,
+                    display_agent_id,
+                    trajectory_required,
+                    label,
+                    bind_ip_ua,
+                ),
+                timeout=_REDIS_WRITE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            # Likely the anyio-asyncio deadlock described in CLAUDE.md.
+            # Bail out — the in-memory _session_identities write above is
+            # still honored for this session; later reads miss Redis and
+            # fall through to PostgreSQL resolution.
+            logger.warning(
+                f"[IDENTITY] Redis cache write timed out after "
+                f"{_REDIS_WRITE_TIMEOUT}s for {session_key[:20]}... "
+                f"— in-memory only (anyio-asyncio guard)"
+            )
         except Exception as e:
             # WARNING level (v2.5.7): Cache failures can cause identity loss
             logger.warning(f"Redis cache write failed for session {session_key[:20]}...: {e}")
+
+
+async def _cache_session_redis_write(
+    session_cache,
+    session_key: str,
+    agent_uuid: str,
+    display_agent_id: Optional[str],
+    trajectory_required: bool,
+    label: Optional[str],
+    bind_ip_ua: Optional[str],
+) -> None:
+    """Inner: Redis writes for _cache_session, wrapped by asyncio.wait_for.
+
+    Separated so the caller can bound execution time with a tight timeout
+    to avoid hanging MCP handlers when the anyio-asyncio deadlock triggers.
+    """
+    # Store both UUID and display agent_id if provided
+    if display_agent_id and display_agent_id != agent_uuid:
+        # Get raw Redis client for custom write
+        from src.cache.redis_client import get_redis
+        redis = await get_redis()
+        if redis:
+            data = {
+                "agent_id": agent_uuid,
+                "display_agent_id": display_agent_id,
+                "bound_at": datetime.now(timezone.utc).isoformat(),
+                "trajectory_required": trajectory_required,
+            }
+            if label:
+                data["label"] = label
+            if bind_ip_ua:
+                data["bind_ip_ua"] = bind_ip_ua
+            key = f"session:{session_key}"
+            await redis.setex(key, GovernanceConfig.SESSION_TTL_SECONDS, json.dumps(data))
+            # Keep SessionCache's in-memory fallback coherent with the richer
+            # raw Redis payload so subsequent lookups see the same binding
+            # even if they fall back from Redis during this process lifetime.
+            try:
+                from src.cache import session_cache as _session_cache_mod
+                _session_cache_mod._fallback_cache[session_key] = data
+            except Exception:
+                pass
+        else:
+            # Raw Redis unavailable but degraded-local cache is still usable.
+            await session_cache.bind(session_key, agent_uuid)
+            try:
+                from src.cache import session_cache as _session_cache_mod
+                existing = _session_cache_mod._fallback_cache.get(session_key, {})
+                data = {
+                    "agent_id": agent_uuid,
+                    "display_agent_id": display_agent_id,
+                    "public_agent_id": display_agent_id,
+                    "bound_at": existing.get("bound_at") or datetime.now(timezone.utc).isoformat(),
+                    "bind_count": existing.get("bind_count", 0),
+                }
+                if label:
+                    data["label"] = label
+                _session_cache_mod._fallback_cache[session_key] = data
+            except Exception:
+                pass
+    else:
+        await session_cache.bind(session_key, agent_uuid)
 
 # =============================================================================
 # DB HELPERS
