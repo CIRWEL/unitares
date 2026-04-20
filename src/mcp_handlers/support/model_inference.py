@@ -248,7 +248,26 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             temperature=temperature
         )
         
-        result_text = response.choices[0].message.content
+        message = response.choices[0].message
+        result_text = message.content or ""
+        # Ollama's OpenAI-compat adapter surfaces a non-standard `reasoning`
+        # field for thinking-style models (gemma4, deepseek-r1, etc.). When a
+        # model exhausts max_tokens while reasoning and never emits a final
+        # answer, `content` comes back empty but `reasoning` holds the trace.
+        # Returning empty would hide the model's output entirely; surface the
+        # reasoning instead so callers can see what the model was working on.
+        reasoning_text = getattr(message, "reasoning", None) or ""
+        if not result_text and reasoning_text:
+            logger.warning(
+                f"Model '{model}' returned empty content with "
+                f"{len(reasoning_text)} chars of reasoning — likely hit "
+                "max_tokens mid-thought. Returning reasoning trace."
+            )
+            result_text = (
+                "[Model hit token limit before emitting a final answer; "
+                "returning the thinking trace it produced.]\n\n"
+                + reasoning_text
+            )
         tokens_used = response.usage.total_tokens if hasattr(response, 'usage') else 0
         model_used = getattr(response, 'model', model)
         
