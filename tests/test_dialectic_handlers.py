@@ -1655,6 +1655,22 @@ class TestGetDialecticNextSteps:
 class TestSelectQuorumReviewers:
     """Tests for select_quorum_reviewers from reviewer.py."""
 
+    @pytest.fixture(autouse=True)
+    def _enable_autoselect(self, monkeypatch):
+        # Quorum auto-select is gated off by default (ghost-reviewer fix);
+        # these tests exercise the filter logic and opt in via the env flag.
+        monkeypatch.setenv("UNITARES_AUTOSELECT_REVIEWER", "1")
+
+    @pytest.mark.asyncio
+    async def test_disabled_by_default(self, monkeypatch):
+        """When the env flag is unset, quorum selection returns [] immediately."""
+        from src.mcp_handlers.dialectic.reviewer import select_quorum_reviewers
+        monkeypatch.delenv("UNITARES_AUTOSELECT_REVIEWER", raising=False)
+        session = _make_session(phase=DialecticPhase.ESCALATED)
+        metadata = {f"agent-{i}": _make_agent_meta() for i in range(8)}
+        result = await select_quorum_reviewers(session, metadata)
+        assert result == []
+
     @pytest.mark.asyncio
     async def test_not_enough_agents(self):
         """Returns empty list when fewer than 3 candidates exist."""

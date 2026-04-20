@@ -983,6 +983,13 @@ class TestIsAgentInActiveSession:
 
 
 class TestSelectReviewer:
+    @pytest.fixture(autouse=True)
+    def _enable_autoselect(self, monkeypatch):
+        # Existing coverage asserts the ranking / filtering behavior of
+        # select_reviewer; the feature is gated off by default as of the
+        # ghost-reviewer fix, so these tests opt in via the env flag.
+        monkeypatch.setenv("UNITARES_AUTOSELECT_REVIEWER", "1")
+
     @pytest.mark.asyncio
     async def test_no_metadata(self):
         result = await select_reviewer("agent-1", metadata=None)
@@ -991,6 +998,30 @@ class TestSelectReviewer:
     @pytest.mark.asyncio
     async def test_empty_metadata(self):
         result = await select_reviewer("agent-1", metadata={})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_disabled_by_default(self, monkeypatch):
+        # Overrides the class-level autouse fixture for this case.
+        monkeypatch.delenv("UNITARES_AUTOSELECT_REVIEWER", raising=False)
+        metadata = {
+            "agent-1": {"status": "active"},
+            "agent-2": {"status": "active"},
+        }
+        # No patches on is_agent_in_active_session / _has_recently_reviewed —
+        # the gate must short-circuit before any candidate inspection happens.
+        result = await select_reviewer("agent-1", metadata=metadata)
+        assert result is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", ["0", "false", "no", "off", ""])
+    async def test_disabled_when_flag_falsy(self, monkeypatch, value):
+        monkeypatch.setenv("UNITARES_AUTOSELECT_REVIEWER", value)
+        metadata = {
+            "agent-1": {"status": "active"},
+            "agent-2": {"status": "active"},
+        }
+        result = await select_reviewer("agent-1", metadata=metadata)
         assert result is None
 
     @pytest.mark.asyncio
