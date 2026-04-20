@@ -1,5 +1,7 @@
 # UNITARES Identity Threat Model (2026-04-19)
 
+> **Status: DRAFT, unsigned, unadopted.** Subjected to a 4-agent adversarial council review on 2026-04-19 which found material honesty gaps in the body below. **Read the "Council Review Findings" section at the end before relying on any claim in this document.** The core scope declaration (threat class E out of scope) is defensible and aligns with prior art (Vault, MCP STDIO spec, AWS IMDSv2); the *application* of the scope to "closed" claims and in-scope handling is weaker than the body suggests.
+
 Load-bearing scope declaration for the identity & authentication stack. Decides what the current implementation is designed to defend against, what it explicitly does not attempt to defend against, and why.
 
 This doc is operator-facing. It exists because the 2026-04-19 identity audit revealed that the code had been accumulating "defense in depth" against threats the deployment cannot realistically close on a solo-operator single-host footprint, while leaving in-scope threats unaddressed. Without a declared scope, every new hardening proposal re-litigates the same question; with a declared scope, we can say "this attack is out of scope by design" and stop building theater.
@@ -113,8 +115,83 @@ Order-of-magnitude estimate: 1500–2500 LOC across three repos, 4–8 weeks of 
 
 ## Signing off
 
-Adopted by: [operator signature — Kenny]
-Date: 2026-04-19
-Next review: on any of (a) the deployment shape changes (untrusted-network peers, multi-UID hosts, shared-tenant infrastructure), (b) a new same-UID attack is observed in the wild against this class of system, (c) 12 months elapse.
+**Not signed.** The audit that produced this doc closed on 2026-04-19 with Option 2 (incident hardening only, no identity redesign). The scope declaration is captured here as an artifact for future reference, not as an adopted policy. A future operator who wants to adopt the scope should either sign this doc after addressing the council findings below, or supersede it with a revised document.
 
-Until then, "is this defending against a same-UID rogue process?" is a test an incoming proposal must answer "no" to or be rewritten. Proposals that answer "yes" require reopening this scope first.
+Proposed review triggers if adopted: (a) deployment shape changes (untrusted-network peers, multi-UID hosts, shared-tenant infrastructure), (b) a new same-UID attack is observed in the wild against this class of system, (c) 12 months elapse.
+
+---
+
+## Council Review Findings (2026-04-19)
+
+Four independent subagents reviewed this doc: red-team (try to break the scope), prior-art (compare to industry), priority (stress-test the deferred queue), philosophical (self-consistency). Their convergent findings — **any one of which should be fixed before signing**:
+
+### 1. "Closed" claims are operationally optimistic
+
+Three rows in the "Post-audit attack surfaces — closed" table contradict entries in the "open" table:
+
+- **Plist 0644**: closed row says "Rotation + chmod 600 on 2026-04-19" but open row 7 says "operator remembering to `chmod`" is the only guard against re-install regression. Not closed — closed for this instance.
+- **Rotation**: one-time event; open row 1 admits cadence is deferred. Closure is a moment, not a state.
+- **Anchor-perm writes** (PRs #52, #11, pi-plugin #1): code path is structurally fixed, but pre-existing 0644 files persist on disk until the next overwrite. No explicit sweep was prescribed.
+
+Rewrite these as **"structurally fixed, operationally incomplete"** with a concrete operational tail-off condition.
+
+### 2. D → E smuggling is a shell game
+
+The threat-actors table places D (third-party dep) in-scope with "reasonable diligence," but the rationale section explicitly concedes "Threat class D, but rigorous defense reduces to E. Mitigation is upstream." This lets anything in D slip to out-of-scope via relabeling. Concretely: `pip install langchain` is outside "reasonable diligence" today and nothing in the repo detects or stops it; D is in-scope on paper, undefended in code.
+
+Needs either: (a) define "reasonable diligence" as concrete controls (pinned hashes, SBOM check, CI audit), or (b) promote supply-chain to its own row with named controls, or (c) honestly move D to out-of-scope with rationale.
+
+### 3. Missing threat surfaces entirely
+
+The red-team agent found attack surfaces not enumerated in any category:
+
+- **Watcher's `patterns.md`** — committed-prompt-data with privileged LLM ingestion. Contributor with push access modifies the file; Watcher reads it on next invocation; LLM response can be crafted to exfiltrate filesystem contents. Neither D nor E cleanly — "committed data with execution-relevant ingestion" is a class the doc doesn't name.
+- **In-process import bypass** — `from src.mcp_handlers.identity.handlers import handle_onboard_v2` from Steward or any same-process caller bypasses HMAC auth entirely. The "Authorization" invariant is silent about this parallel channel.
+- **HMAC-secret fallback chain** — `src/mcp_handlers/identity/session.py:45-54` reads `UNITARES_CONTINUITY_TOKEN_SECRET` OR `UNITARES_HTTP_API_TOKEN` OR `UNITARES_API_TOKEN`. Rotating one without the others leaves a live forgery oracle. The "closed" claim for rotation should specify *which* of the three was rotated (on 2026-04-19 only `UNITARES_CONTINUITY_TOKEN_SECRET` was rotated; the others should be audited).
+- **`extract_token_agent_uuid` skips `exp` intentionally** — `session.py:86-121` docstring argues this is correct for resident long-idle resume. Every caller of this function is a replay oracle against old-secret backups for as long as that secret isn't rotated. Not a bug to fix, but needs calling out.
+- **Audit log integrity** — doc declares audit log as "ground truth for forensics" but any agent with DB write access can UPDATE historical rows. Append-only constraint (trigger or hash-chain) missing.
+- **Pi-side parity** — doc is Mac-only. Lumen on Pi has its own `~/.unitares/` state under user `pi`, and threats A-E apply symmetrically. Needs either parity analysis or explicit Pi-out-of-scope rationale.
+- **Discord Dispatch lifecycle** — separate auth surface per `discord-dispatch.md` memory; not covered.
+
+### 4. Queue priority is inverted
+
+The priority-review agent's proposed reordering:
+
+1. **`jti` claim + `core.revoked_tokens` blocklist + anomaly counters + HTTP-layer rate limit** (bundled). Today the only remediation for any compromised token is global rotation (fleet-wide blast radius). Blocklist enables surgical response. Anomaly counters (`unitares_token_verify_fail_total`, `unitares_token_used_from_new_peer_total`) are the trigger for revocation. `rate_limit_step.py:55` keys on caller-supplied `agent_id` — trivially bypassed by anyone with the HMAC secret, so rate-limiting needs to happen pre-identity-resolution.
+2. **Scoped tokens** (Watcher → `checkin`-only). Not low-priority — Watcher runs arbitrary code on every edit. Scoping bounds blast radius of Watcher compromise.
+3. **Rotation cadence** — extend to 90 days, not 30. Event-driven rotation on suspicion (once blocklist exists) replaces preemptive churn. Current 30-day proposal creates ops churn without matching security gain.
+
+Demote: installer pre-exec refuse-to-start check → ship as preflight script, not hard server gate (risks bricking 2am startup on misconfigured hosts).
+
+### 5. Prior-art lineage should be named
+
+The E-out-of-scope declaration aligns with accepted industry positions — this doc should cite them rather than appearing to invent the position:
+
+- **HashiCorp Vault Security Model**: "Vault should be the sole user process running on a machine" — explicitly declares same-host co-tenancy out of scope via operator discipline.
+- **MCP Authorization Spec (draft)**: "Implementations using STDIO transport SHOULD NOT follow this specification, and instead retrieve credentials from the environment" — MCP itself concedes same-UID is the OS's problem.
+- **AWS IMDSv2 design**: "An adversary who has gained code execution on the EC2 instance can retrieve credentials from the IMDS regardless of the version" — AWS explicitly accepts this.
+- **MITRE ATT&CK T1098.004**: treats same-user key theft as a technique to *detect*, not prevent.
+- **SPIFFE/SPIRE**: the one system that addresses same-UID separation seriously, via binary-cdhash / cgroup / container-ID selectors — confirms the three mitigations this doc identifies (app sandbox / Secure Enclave / distinct UIDs) are the real cost.
+
+The doc is above industry median for honesty when it does these things; it should own that lineage.
+
+### 6. "When E is realized, everything collapses" should be explicit
+
+The three protected properties (authenticity, authorization, audit integrity) all bottom out on bearer-token validity. When E is realized (rogue same-UID process), bearer tokens can be forged and all three properties fail *simultaneously*. The doc describes them as independently defended. A future reader should know that E-realization is total failure, not graceful degradation.
+
+### 7. Philosophical-agent verdict (harsh but worth recording)
+
+> "It's a rationalization dressed as a threat model — technical reasoning about E is sound, but the taxonomy routes hard cases out, marks surfaces closed that it concurrently lists as open, suppresses that bearer tokens assume E never happens, and presents opinion-grade claims as settled; it reaches a conclusion the author already held and constructs a scope to fit it, rather than letting the scope fall out of adversarial analysis."
+
+This verdict is preserved verbatim as the stress-test of last resort. A revised version of this doc should be able to withstand it.
+
+### What to do with this
+
+If a future operator revives this scope question:
+1. Rewrite "closed" table as "structurally fixed / operationally incomplete" with tail-off conditions.
+2. Fix D taxonomy: either define diligence as code-enforced controls or supply-chain gets its own row.
+3. Add missing surfaces (patterns.md, in-process bypass, fallback chain, audit integrity, Pi parity, Discord Dispatch).
+4. Reorder the deferred queue per council priority.
+5. Cite Vault / MCP / IMDSv2 / SPIFFE as prior art.
+6. Make the E-realization total-failure property explicit.
+7. Only then attempt to sign.
