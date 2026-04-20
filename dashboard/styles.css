@@ -787,6 +787,15 @@ body {
 /* ============================================
    Main Content Layout
    ============================================ */
+/* `<main>` is the outermost container below the header/nav. Explicit
+ * horizontal padding prevents the full-viewport panels (Activity,
+ * Fleet Metrics, Residents strip) from hugging the screen edges on
+ * desktop; mobile media queries override this with tighter spacing. */
+main {
+    padding-left: 20px;
+    padding-right: 20px;
+}
+
 .main-content {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -3782,13 +3791,17 @@ body {
 /* ============================================
    Responsive
    ============================================ */
+/* 960px: collapse all 2+ column grids to single column (except
+ * .stats-grid which steps 3→2 first — 3 cards in a row gets cramped).
+ * Bumped .main-content / .eisv-chart-row / .pulse-grid up from 900px so
+ * tablets in landscape (820–960px) and narrow desktop windows don't sit
+ * in a squashed 2-column state — content gets too tight between 760 and
+ * 900px, which is exactly the tablet-landscape band. */
 @media (max-width: 960px) {
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
     }
-}
 
-@media (max-width: 900px) {
     .main-content {
         grid-template-columns: 1fr;
     }
@@ -3891,6 +3904,19 @@ body {
 @media (max-width: 600px) {
     body {
         padding: var(--spacing-md);
+    }
+
+    /* Phone-sized viewports: tighter outer gutter + relaxed panel cap so
+     * panels shrink to fit the screen instead of creating tall internal
+     * scroll areas that dominate the viewport. Previously only handled
+     * at 480px — leaving 481–599px stuck with a full 800px panel. */
+    main {
+        padding-left: 12px;
+        padding-right: 12px;
+    }
+
+    .panel {
+        max-height: min(70vh, 600px);
     }
 
     .stats-grid {
