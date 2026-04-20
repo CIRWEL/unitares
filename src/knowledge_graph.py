@@ -141,10 +141,19 @@ class DiscoveryNode:
         if include_details:
             result["details"] = self.details
         else:
-            # Include truncated hint if details exist
+            # Include preview + has_more hint so the agent can decide whether
+            # to fetch full details via knowledge(action='get', id=...).
             if self.details:
+                # Function-local import to avoid a cycle with mcp_handlers.
+                from src.mcp_handlers.knowledge.limits import DETAILS_PREVIEW_CHARS
                 result["has_details"] = True
-                result["details_preview"] = self.details[:100] + "..." if len(self.details) > 100 else self.details
+                if len(self.details) > DETAILS_PREVIEW_CHARS:
+                    result["details_preview"] = self.details[:DETAILS_PREVIEW_CHARS] + "..."
+                    result["details_length"] = len(self.details)
+                    result["has_more_details"] = True
+                else:
+                    result["details_preview"] = self.details
+                    result["has_more_details"] = False
         return result
 
     @classmethod

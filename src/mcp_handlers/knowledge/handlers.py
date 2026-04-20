@@ -20,6 +20,7 @@ from ..utils import success_response, error_response, require_argument, require_
 from ..decorators import mcp_tool
 from ..validators import apply_param_aliases
 from src.knowledge_graph import get_knowledge_graph, DiscoveryNode, ResponseTo, normalize_tags
+from src.mcp_handlers.knowledge.limits import MAX_SUMMARY_LEN, MAX_DETAILS_LEN
 from config.governance_config import config
 from src.logging_utils import get_logger
 from src.perf_monitor import record_ms
@@ -399,12 +400,9 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
         # No need for inefficient O(n) query here - let graph handle it
         graph = await get_knowledge_graph()
         
-        # Truncate fields to prevent context overflow
-        # Summary: concise but complete thoughts (1000 chars ≈ 160 words)
-        # Details: substantive content, allow more space (5000 chars ≈ 800 words)
-        MAX_SUMMARY_LEN = 1000
-        MAX_DETAILS_LEN = 5000
-
+        # Truncate fields to prevent context overflow. Limits are imported
+        # from limits.py; see that module for how they relate to the BGE-M3
+        # embed budget.
         raw_summary = summary
         # Accept both 'details' and 'content' as parameter names
         raw_details = arguments.get("details") or arguments.get("content") or ""
@@ -1601,10 +1599,7 @@ async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_i
                     errors.append(f"Discovery {idx}: summary is required")
                     continue
                 
-                # Truncate fields (match single-discovery limits)
-                MAX_SUMMARY_LEN = 1000
-                MAX_DETAILS_LEN = 5000
-
+                # Truncate fields (limits imported at module top).
                 truncated_fields = []
                 if len(summary) > MAX_SUMMARY_LEN:
                     truncated_fields.append(f"summary ({len(summary)} → {MAX_SUMMARY_LEN})")
@@ -1879,9 +1874,7 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     try:
         graph = await get_knowledge_graph()
         
-        # Notes use the same limits as store_knowledge_graph
-        MAX_SUMMARY_LEN = 1000
-        MAX_DETAILS_LEN = 5000
+        # Notes use the same limits as store_knowledge_graph (imported at top).
         MAX_NOTE_TOTAL = MAX_SUMMARY_LEN + MAX_DETAILS_LEN
         if len(text) > MAX_NOTE_TOTAL:
             text = text[:MAX_NOTE_TOTAL] + "... [truncated]"
