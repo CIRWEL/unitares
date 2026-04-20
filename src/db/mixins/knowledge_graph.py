@@ -172,10 +172,12 @@ class KnowledgeGraphMixin:
         """
         # Default to OR for multi-term queries so "bug database" finds
         # documents matching either term, not just both.
+        # Use ts_rank_cd (cover density) — considers term proximity and is
+        # generally better than vanilla ts_rank on short structured docs.
         or_query = _or_default_query(query)
         async with self.acquire() as conn:
             rows = await conn.fetch("""
-                SELECT *, ts_rank(search_vector, websearch_to_tsquery('english', $1)) as rank
+                SELECT *, ts_rank_cd(search_vector, websearch_to_tsquery('english', $1)) as rank
                 FROM knowledge.discoveries
                 WHERE search_vector @@ websearch_to_tsquery('english', $1)
                 ORDER BY rank DESC, created_at DESC

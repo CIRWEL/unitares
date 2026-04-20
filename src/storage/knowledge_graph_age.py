@@ -1601,6 +1601,28 @@ class KnowledgeGraphAGE:
         # Apply limit
         return blended_results[:limit]
 
+    async def full_text_search(
+        self,
+        query: str,
+        limit: int = 20,
+    ) -> List[DiscoveryNode]:
+        """Full-text search using PostgreSQL tsvector (ts_rank_cd ranking).
+
+        AGE and PG backends share the same underlying `knowledge.discoveries`
+        table, so we can reuse the DB mixin's kg_full_text_search. This keeps
+        hybrid retrieval (RRF over semantic + FTS) identical across backends.
+        """
+        db = await self._get_db()
+        rows = await db.kg_full_text_search(query, limit)
+        # Hydrate via get_discovery so edge/response metadata is consistent
+        # with what the rest of AGE returns. Row count is small (<= limit).
+        results: List[DiscoveryNode] = []
+        for row in rows:
+            doc = await self.get_discovery(row["id"])
+            if doc is not None:
+                results.append(doc)
+        return results
+
     async def semantic_search(
         self,
         query: str,
