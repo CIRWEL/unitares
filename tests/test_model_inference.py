@@ -43,10 +43,18 @@ def _parse_text_content(result):
     return json.loads(text)
 
 
-def _make_mock_response(content="Test response", tokens=42, model="gemini-flash"):
-    """Create a mock OpenAI-style chat completion response."""
+def _make_mock_response(content="Test response", tokens=42, model="gemini-flash", reasoning=None):
+    """Create a mock OpenAI-style chat completion response.
+
+    Ollama's OpenAI-compat adapter adds a `reasoning` field for
+    thinking-style models (gemma4, deepseek-r1, etc.). Tests that exercise
+    the reasoning fallback set reasoning=<str>. Default None ensures
+    `getattr(message, "reasoning", None) or ""` evaluates to "" so
+    non-reasoning-path tests behave as before.
+    """
     mock_message = MagicMock()
     mock_message.content = content
+    mock_message.reasoning = reasoning
 
     mock_choice = MagicMock()
     mock_choice.message = mock_message
@@ -649,6 +657,94 @@ class TestDefaultProvider:
 
         call_kwargs = mock_client_instance.chat.completions.create.call_args[1]
         assert call_kwargs["model"] == "gemini-flash"
+
+
+# =============================================================================
+# Tests: Reasoning-field fallback (thinking-style models)
+# =============================================================================
+
+class TestReasoningFallback:
+    """Tests for the Ollama/gemma4 empty-content + reasoning fallback.
+
+    When a thinking-style model (gemma4, deepseek-r1) runs out of max_tokens
+    while reasoning, `message.content` is empty but `message.reasoning` holds
+    the trace. The router should surface the reasoning so callers see
+    something instead of an empty string.
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_content_with_reasoning_returns_reasoning(self):
+        mock_client_instance = MagicMock()
+        mock_client_instance.chat.completions.create.return_value = _make_mock_response(
+            content="",
+            reasoning="Step 1: Analyze the problem. Step 2: ...",
+            model="gemma4:latest",
+        )
+
+        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
+             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance):
+            from src.mcp_handlers.support.model_inference import handle_call_model
+            result = await handle_call_model({
+                "prompt": "Hello",
+                "provider": "ollama",
+                "model": "gemma4:latest",
+            })
+
+        parsed = _parse_text_content(result)
+        assert parsed["success"] is True
+        assert "Step 1: Analyze the problem" in parsed["response"]
+        # The fallback prepends a marker so callers can tell they got thinking,
+        # not a final answer.
+        assert "token limit" in parsed["response"].lower()
+
+    @pytest.mark.asyncio
+    async def test_empty_content_with_no_reasoning_returns_empty(self):
+        """If both content and reasoning are empty, pass through empty (don't fabricate)."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.chat.completions.create.return_value = _make_mock_response(
+            content="",
+            reasoning=None,
+            model="gemma4:latest",
+        )
+
+        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
+             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance):
+            from src.mcp_handlers.support.model_inference import handle_call_model
+            result = await handle_call_model({
+                "prompt": "Hello",
+                "provider": "ollama",
+                "model": "gemma4:latest",
+            })
+
+        parsed = _parse_text_content(result)
+        assert parsed["success"] is True
+        assert parsed["response"] == ""
+
+    @pytest.mark.asyncio
+    async def test_content_present_reasoning_ignored(self):
+        """When content is non-empty, reasoning is ignored (no concatenation)."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.chat.completions.create.return_value = _make_mock_response(
+            content="The answer is 42.",
+            reasoning="I considered many options before landing on 42.",
+            model="gemma4:latest",
+        )
+
+        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
+             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance):
+            from src.mcp_handlers.support.model_inference import handle_call_model
+            result = await handle_call_model({
+                "prompt": "What is the answer?",
+                "provider": "ollama",
+                "model": "gemma4:latest",
+            })
+
+        parsed = _parse_text_content(result)
+        assert parsed["success"] is True
+        assert parsed["response"] == "The answer is 42."
+        # Reasoning trace must not leak into the visible response when content
+        # is the authoritative answer.
+        assert "I considered many options" not in parsed["response"]
 
 
 # =============================================================================
