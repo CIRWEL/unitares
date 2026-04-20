@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.unitares.chronicler</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>/Users/cirwel/projects/unitares/agents/chronicler/agent.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/cirwel/projects/unitares</string>
+
+    <!-- Daily — one scrape per day is enough for slow-moving metrics like LOC. -->
+    <key>StartInterval</key>
+    <integer>86400</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/cirwel/Library/Logs/unitares-chronicler-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/cirwel/Library/Logs/unitares-chronicler-launchd.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>/Users/cirwel/projects/unitares</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+        <key>UNITARES_METRICS_URL</key>
+        <string>http://127.0.0.1:8767</string>
+        <key>CHRONICLER_REPO_ROOT</key>
+        <string>/Users/cirwel/projects/unitares</string>
+    </dict>
+</dict>
+</plist>
