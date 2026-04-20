@@ -24,13 +24,15 @@ from src.agent_metadata_persistence import load_metadata_async
 
 logger = get_logger(__name__)
 
-# Proceed-based loop patterns (P4 proceed branch, P7) count the last 10
-# decisions but have tiny time windows (≤300s). A dormant agent whose last
-# burst of 10 proceeds happened days ago still has a window that fits the
-# threshold, so any new update re-fires the alert. Require the newest
-# timestamp to be within this horizon — if the burst isn't recent, it isn't
-# a live loop.
+# Loop-pattern freshness guards. Both decision-based branches of Pattern 4
+# (proceed-count, pause-count) and Pattern 7 count entries in fixed-size
+# windows over recent_decisions. Without a "newest timestamp is recent"
+# floor, a dormant history keeps re-firing: any new update sees the old
+# burst, gets rejected, and the burst never rolls off. Proceeds naturally
+# fire in tight bursts (<300s window), pauses spread out more, so the
+# pause guard is deliberately wider.
 PROCEED_LOOP_FRESHNESS_SECONDS = 600
+PAUSE_LOOP_FRESHNESS_SECONDS = 3600
 
 # Telemetry: ring buffer of governance circuit breaker pause timestamps
 _governance_pause_timestamps: deque[datetime] = deque(maxlen=100)
@@ -222,7 +224,19 @@ def detect_loop_pattern(agent_id: str) -> tuple[bool, str]:
 
         pause_count = decision_counts.get("pause", 0) + decision_counts.get("reject", 0)
         if pause_count >= 5:
-            return True, f"Decision loop detected: {pause_count} 'pause' decisions in recent history (stuck state)"
+            # Don't fire on stale pause histories — they'd block updates
+            # forever, keeping recent_decisions frozen with the same pauses.
+            try:
+                window_span = min(len(decision_window), len(recent_timestamps))
+                if window_span > 0:
+                    newest_pause_ts = datetime.fromisoformat(recent_timestamps[-1])
+                    newest_age = (now - newest_pause_ts).total_seconds()
+                    if newest_age <= PAUSE_LOOP_FRESHNESS_SECONDS:
+                        return True, f"Decision loop detected: {pause_count} 'pause' decisions in recent history (stuck state)"
+            except (ValueError, TypeError, IndexError):
+                # Can't parse timestamps — fall back to original behavior to
+                # avoid masking a real loop because of bad metadata.
+                return True, f"Decision loop detected: {pause_count} 'pause' decisions in recent history (stuck state)"
 
         proceed_count = decision_counts.get("proceed", 0) + decision_counts.get("approve", 0) + decision_counts.get("reflect", 0) + decision_counts.get("revise", 0)
         if proceed_count >= 10:
