@@ -310,6 +310,36 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
         if not _partc_owned:
             from config.governance_config import identity_strict_mode
             _partc_mode = identity_strict_mode()
+
+            async def _emit_middleware_hijack(mode: str) -> None:
+                """Mirror the handlers.py event emission so middleware-path
+                hijack attempts surface on the same broadcast channel as
+                handler-path attempts. Source tag distinguishes them."""
+                try:
+                    from ..identity.handlers import _broadcaster
+                except Exception:
+                    return
+                b = _broadcaster()
+                if b is None:
+                    return
+                try:
+                    await b.broadcast_event(
+                        event_type="identity_hijack_suspected",
+                        agent_id=_direct_uuid,
+                        payload={
+                            "mode": mode,
+                            "source": "middleware",
+                            "proof": "matching_token" if _partc_token_aid == _direct_uuid else "none",
+                            "token_aid_mismatch": (
+                                _partc_token_aid
+                                if (_partc_token_aid and _partc_token_aid != _direct_uuid)
+                                else None
+                            ),
+                        },
+                    )
+                except Exception as e:
+                    logger.warning(f"[IDENTITY_HIJACK] middleware broadcast_event failed: {e}")
+
             if _partc_mode == "strict":
                 ctx.strict_reject = True
                 ctx.identity_result = {
@@ -325,6 +355,7 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
                     "agent_uuid=%s... without matching token",
                     _direct_uuid[:8],
                 )
+                await _emit_middleware_hijack("strict")
                 return name, arguments, ctx
             elif _partc_mode == "log":
                 logger.warning(
@@ -333,6 +364,8 @@ async def resolve_identity(name: str, arguments: Dict[str, Any], ctx) -> Any:
                     _direct_uuid[:8],
                     (_partc_token_aid[:8] + "...") if _partc_token_aid else "none",
                 )
+                await _emit_middleware_hijack("log")
+            # mode == "off": unchanged behavior, no log, no broadcast
 
         from ..context import set_session_context
         client_hint = arguments.get("client_hint") if arguments else None

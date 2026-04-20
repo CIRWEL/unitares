@@ -349,6 +349,122 @@ class TestMiddlewarePath0Gate:
         assert ret_ctx.identity_result.get("reason") == "bare_uuid_resume_denied"
 
     @pytest.mark.asyncio
+    async def test_middleware_strict_emits_hijack_event(self, monkeypatch):
+        """Middleware strict-mode rejection must emit identity_hijack_suspected
+        broadcast — closes the asymmetry where handlers.py emitted but the
+        middleware passthrough path stayed invisible on dashboards."""
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "strict")
+
+        from src.mcp_handlers.middleware import identity_step as mw
+
+        captured = []
+
+        async def _record(**kwargs):
+            captured.append(kwargs)
+
+        broadcaster_stub = MagicMock()
+        broadcaster_stub.broadcast_event = AsyncMock(side_effect=_record)
+
+        signals = MagicMock(
+            transport="http",
+            user_agent="claude-test",
+            ip_ua_fingerprint="ua:deadbe",
+            x_session_id=None,
+            x_agent_id=None,
+            mcp_session_id=None,
+            oauth_client_id=None,
+            x_client_id=None,
+            client_hint=None,
+        )
+        with patch(
+            "src.mcp_handlers.context.get_session_signals",
+            return_value=signals,
+        ), patch(
+            "src.mcp_handlers.identity.handlers._broadcaster",
+            return_value=broadcaster_stub,
+        ):
+            ctx = MagicMock()
+            ctx.strict_reject = False
+            ctx.identity_result = None
+            await mw.resolve_identity(
+                "identity",
+                {
+                    "agent_uuid": "eeeeeeee-1111-2222-3333-444444444444",
+                    "resume": True,
+                },
+                ctx,
+            )
+
+        hijack_events = [
+            e for e in captured
+            if e.get("event_type") == "identity_hijack_suspected"
+        ]
+        assert hijack_events, (
+            f"Middleware strict mode must emit identity_hijack_suspected. Got: {captured}"
+        )
+        evt = hijack_events[0]
+        assert evt.get("agent_id") == "eeeeeeee-1111-2222-3333-444444444444"
+        payload = evt.get("payload") or {}
+        assert payload.get("mode") == "strict"
+        assert payload.get("source") == "middleware"
+
+    @pytest.mark.asyncio
+    async def test_middleware_log_mode_emits_hijack_event(self, monkeypatch, caplog):
+        """Log mode also emits — operators need to see attempts even when allowed."""
+        import logging
+        monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "log")
+        caplog.set_level(logging.WARNING)
+
+        from src.mcp_handlers.middleware import identity_step as mw
+
+        captured = []
+
+        async def _record(**kwargs):
+            captured.append(kwargs)
+
+        broadcaster_stub = MagicMock()
+        broadcaster_stub.broadcast_event = AsyncMock(side_effect=_record)
+
+        signals = MagicMock(
+            transport="http",
+            user_agent="claude-test",
+            ip_ua_fingerprint="ua:deadbe",
+            x_session_id=None,
+            x_agent_id=None,
+            mcp_session_id=None,
+            oauth_client_id=None,
+            x_client_id=None,
+            client_hint=None,
+        )
+        with patch(
+            "src.mcp_handlers.context.get_session_signals",
+            return_value=signals,
+        ), patch(
+            "src.mcp_handlers.identity.handlers._broadcaster",
+            return_value=broadcaster_stub,
+        ):
+            ctx = MagicMock()
+            ctx.strict_reject = False
+            await mw.resolve_identity(
+                "identity",
+                {
+                    "agent_uuid": "ffffffff-1111-2222-3333-444444444444",
+                    "resume": True,
+                },
+                ctx,
+            )
+
+        hijack_events = [
+            e for e in captured
+            if e.get("event_type") == "identity_hijack_suspected"
+        ]
+        assert hijack_events, (
+            "Log mode middleware must also emit; operators need visibility "
+            "into attempts that bypass the gate by mode-config alone"
+        )
+        assert (hijack_events[0].get("payload") or {}).get("source") == "middleware"
+
+    @pytest.mark.asyncio
     async def test_middleware_log_mode_passes_through(self, monkeypatch, caplog):
         import logging
         monkeypatch.setenv("UNITARES_IDENTITY_STRICT", "log")
