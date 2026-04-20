@@ -1419,7 +1419,15 @@ body {
 
 /* Activity Timeline */
 .timeline-list {
-    max-height: 400px;
+    /* Flex child of .panel (flex column, max-height 800px): grow to fill
+       the available panel budget on desktop instead of stopping at a hard
+       400px cap that makes Activity look too short on big monitors.
+       `min-height: 0` is required for overflow-y to scroll inside a flex
+       child. Floor of 260px keeps mobile readable; ceiling of min(72vh,
+       700px) prevents the panel from dominating the viewport. */
+    flex: 1 1 auto;
+    min-height: 260px;
+    max-height: min(72vh, 700px);
     overflow-y: auto;
     padding: 0 12px;
 }
@@ -3849,6 +3857,28 @@ body {
 
     .eisv-threshold-legend {
         justify-content: center;
+    }
+
+    /* Phone tweaks for panels added outside .main-content.
+       Activity timeline cap shrinks so the scroll area still feels
+       readable without pushing Fleet Metrics way below the fold.
+       Fleet Metrics chart gets a smaller fixed footprint. */
+    .timeline-list {
+        max-height: min(60vh, 440px);
+        min-height: 220px;
+    }
+    .fleet-metrics-chart-wrap {
+        flex: 0 0 180px;
+        height: 180px;
+    }
+    .fleet-metrics-meta {
+        gap: 6px;
+    }
+    .fleet-metrics-description {
+        white-space: normal;           /* allow wrap on narrow screens */
+    }
+    #fleet-metrics-select {
+        max-width: 100%;               /* use all available header width */
     }
 
     .shortcuts-hint {
