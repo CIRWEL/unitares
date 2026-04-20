@@ -312,12 +312,20 @@ class VigilAgent(GovernanceAgent):
             return []
         return _filter_sentinel_findings(result.results or [], since_iso)
 
-    async def _run_groundskeeper(self, client: GovernanceClient) -> Dict[str, Any]:
+    async def _run_groundskeeper(
+        self,
+        client: GovernanceClient,
+        prev_state: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
         """KG audit + lifecycle cleanup.
 
         Orphan agent archival is no longer part of the Groundskeeper cycle —
         the auto-sweep was hiding initializing-agent bugs behind archival.
         Operators can still invoke ``archive_orphan_agents`` manually.
+
+        ``prev_state`` is the previous cycle's state dict; when supplied, the
+        summary KG note is suppressed if (stale_found, archived) is unchanged
+        from the prior cycle. Local log + findings still surface every cycle.
         """
         summary: Dict[str, Any] = {
             "audit_run": False,
@@ -361,14 +369,23 @@ class VigilAgent(GovernanceAgent):
                 f"Groundskeeper: {summary['stale_found']} stale, "
                 f"{summary['archived']} archived"
             )
-            try:
-                await client.leave_note(
-                    summary=note_text,
-                    tags=["vigil", "groundskeeper", "audit"],
-                )
-            except Exception:
-                pass
-            log(f"GROUNDSKEEPER: {note_text}")
+            prev = prev_state or {}
+            unchanged = (
+                prev.get("groundskeeper_stale") == summary["stale_found"]
+                and prev.get("groundskeeper_archived") == summary["archived"]
+            )
+            if unchanged and prev:
+                summary["note_suppressed"] = True
+                log(f"GROUNDSKEEPER: {note_text} (note suppressed — unchanged)")
+            else:
+                try:
+                    await client.leave_note(
+                        summary=note_text,
+                        tags=["vigil", "groundskeeper", "audit"],
+                    )
+                except Exception:
+                    pass
+                log(f"GROUNDSKEEPER: {note_text}")
 
         return summary
 
@@ -461,7 +478,7 @@ class VigilAgent(GovernanceAgent):
         effective_audit = self.with_audit or sentinel_force_audit
         groundskeeper_summary: Dict[str, Any] = {}
         if effective_audit:
-            groundskeeper_summary = await self._run_groundskeeper(client)
+            groundskeeper_summary = await self._run_groundskeeper(client, prev_state)
             if groundskeeper_summary.get("stale_found", 0) > 0:
                 findings.append(
                     f"KG: {groundskeeper_summary['stale_found']} stale, "

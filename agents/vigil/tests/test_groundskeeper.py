@@ -150,6 +150,51 @@ class TestRunGroundskeeper:
         assert "vigil" in call_kwargs["tags"]
 
     @pytest.mark.asyncio
+    async def test_groundskeeper_suppresses_note_when_unchanged(self):
+        """When stale/archived counts match prev_state, skip leave_note.
+
+        Regression for the KG spam where Vigil posted an identical
+        'Groundskeeper: 134 stale, 4 archived' note every 30 minutes
+        because the audit/cleanup mismatch keeps the numbers pinned.
+        """
+        agent = _make_agent()
+        client = _make_mock_client(
+            audit_result=AuditResult(
+                success=True,
+                audit={"buckets": {"healthy": 2, "stale": 1, "candidate_for_archive": 3}},
+            ),
+            cleanup_result=CleanupResult(success=True, cleaned=3),
+        )
+        prev = {"groundskeeper_stale": 4, "groundskeeper_archived": 3}
+        result = await agent._run_groundskeeper(client, prev_state=prev)
+
+        client.leave_note.assert_not_called()
+        assert result["note_suppressed"] is True
+
+    @pytest.mark.asyncio
+    async def test_groundskeeper_posts_note_on_change(self):
+        """When numbers differ from prev_state, leave_note must fire."""
+        agent = _make_agent()
+        client = _make_mock_client(
+            audit_result=AuditResult(
+                success=True,
+                audit={"buckets": {"healthy": 2, "stale": 1, "candidate_for_archive": 3}},
+            ),
+            cleanup_result=CleanupResult(success=True, cleaned=3),
+        )
+        prev = {"groundskeeper_stale": 100, "groundskeeper_archived": 0}
+        await agent._run_groundskeeper(client, prev_state=prev)
+        client.leave_note.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_groundskeeper_posts_note_on_first_cycle(self):
+        """No prev_state (cold start) must still post the inaugural note."""
+        agent = _make_agent()
+        client = _make_mock_client()
+        await agent._run_groundskeeper(client, prev_state=None)
+        client.leave_note.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_groundskeeper_handles_audit_failure(self):
         """Gracefully handles audit tool failure."""
         agent = _make_agent()

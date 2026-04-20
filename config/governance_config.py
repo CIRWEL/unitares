@@ -945,3 +945,41 @@ def session_fingerprint_check_mode() -> str:
         "UNITARES_SESSION_FINGERPRINT_CHECK", SESSION_FINGERPRINT_CHECK_MODE
     ).strip().lower()
     return m if m in _VALID_FINGERPRINT_MODES else "log"
+
+
+# =============================================================================
+# IP:UA ONBOARD PIN CHECK MODE (PATH 2 — council follow-up to #83)
+# =============================================================================
+# `derive_session_key` step 7 resolves an unauthenticated `onboard()` call
+# (no continuity_token, no client_session_id, no mcp/oauth/x- session headers)
+# to a previously-pinned session by IP:UA fingerprint alone. On shared hosts or
+# when multiple same-family agents run on one machine this silently resumes
+# the prior agent's UUID — the PATH 2 analogue of the PATH 0/1 bleeds already
+# closed by #78/#81/#83.
+#
+# Modes (mirror UNITARES_SESSION_FINGERPRINT_CHECK):
+#   "off"    — skip the check entirely; pin-fallback resume proceeds silently
+#   "log"    — emit [PATH2_IPUA_PIN_RESUME] + identity_hijack_suspected
+#              broadcast when onboard() hits the pin fallback with no proof;
+#              resume still proceeds (default — observation phase)
+#   "strict" — same events, plus force resume=False so the onboard mints a
+#              fresh identity instead of silently adopting the pinned UUID.
+#              The pin itself is NOT deleted — the legitimate owner can still
+#              resume by presenting a continuity_token or agent_uuid.
+#
+# Override: UNITARES_IPUA_PIN_CHECK env var.
+IPUA_PIN_CHECK_MODE: str = os.getenv(
+    "UNITARES_IPUA_PIN_CHECK", "log"
+).strip().lower()
+
+_VALID_IPUA_PIN_MODES = frozenset({"off", "log", "strict"})
+if IPUA_PIN_CHECK_MODE not in _VALID_IPUA_PIN_MODES:
+    IPUA_PIN_CHECK_MODE = "log"
+
+
+def ipua_pin_check_mode() -> str:
+    """Runtime accessor — respects env changes set after module load (tests)."""
+    m = os.getenv(
+        "UNITARES_IPUA_PIN_CHECK", IPUA_PIN_CHECK_MODE
+    ).strip().lower()
+    return m if m in _VALID_IPUA_PIN_MODES else "log"
