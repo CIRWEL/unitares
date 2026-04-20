@@ -225,22 +225,29 @@ def resolve_identity(client) -> None:
     try:
         client.onboard("Watcher", spawn_reason="resident_observer")
         _sync_identity(client)
-        # Stamp 'persistent' tag so auto_archive_orphan_agents skips this
-        # identity (is_agent_protected in src/agent_lifecycle.py). Without
-        # this, low-activity windows cause orphan-sweep false-positives and
-        # the Watcher gets archived-then-silently-resurrected every cycle.
+        # Stamp the resident tag set:
+        #   - 'persistent':  auto_archive_orphan_agents skips this identity
+        #                    (is_agent_protected in src/agent_lifecycle.py).
+        #                    Without it, low-activity windows cause orphan-sweep
+        #                    false-positives and Watcher gets archived-then-
+        #                    silently-resurrected every cycle.
+        #   - 'autonomous':  exempts from loop-detection pattern 4
+        #                    (agent_loop_detection.py:216). Watcher runs on
+        #                    every edit — pattern-4 rejection would starve its
+        #                    state writes (Steward 2026-04-20 regression).
         if _watcher_identity and _watcher_identity.get("agent_uuid"):
+            from unitares_sdk.agent import RESIDENT_TAGS
             try:
                 client.call_tool(
                     "update_agent_metadata",
                     {
                         "agent_id": _watcher_identity["agent_uuid"],
-                        "tags": ["persistent"],
+                        "tags": RESIDENT_TAGS,
                     },
                 )
-                log("stamped 'persistent' tag — protected from orphan sweep")
+                log(f"stamped resident tags {RESIDENT_TAGS}")
             except Exception as e:
-                log(f"failed to stamp 'persistent' tag: {e}", "warning")
+                log(f"failed to stamp resident tags: {e}", "warning")
     except GovernanceTimeoutError as e:
         # Onboard timeout is the worst case — don't assume it failed, it may
         # have partial-committed on the server side (which is exactly how

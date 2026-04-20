@@ -166,13 +166,19 @@ class TestIdentityResolution:
         assert "spawn_reason" not in call_kwargs
 
     @pytest.mark.asyncio
-    async def test_persistent_tag_stamped_on_fresh_onboard(self, tmp_path):
-        """persistent=True agents stamp the 'persistent' tag after fresh onboard.
+    async def test_resident_tags_stamped_on_fresh_onboard(self, tmp_path):
+        """persistent=True agents stamp the full resident tag set after fresh onboard.
 
-        Protects residents (Vigil, Sentinel) from orphan-sweep false-positives.
-        Root cause: low-activity windows caused sweep to archive live residents,
-        and auto-resume silently revived them, masking the problem.
+        Residents need BOTH 'persistent' (exempts orphan-sweep) AND 'autonomous'
+        (exempts loop-detection pattern 4). Steward hit the pattern-4 gap on
+        2026-04-20 because this path stamped only 'persistent'; once every 5min
+        its sync was rejected, starving core.agent_state. RESIDENT_TAGS is the
+        single source of truth.
         """
+        from unitares_sdk.agent import RESIDENT_TAGS
+        assert "persistent" in RESIDENT_TAGS
+        assert "autonomous" in RESIDENT_TAGS
+
         agent = SimpleAgent(session_file=tmp_path / ".test_session", persistent=True)
 
         client = _mock_client_connected()
@@ -182,7 +188,7 @@ class TestIdentityResolution:
         client.onboard.assert_called_once()
         client.call_tool.assert_awaited_once_with(
             "update_agent_metadata",
-            {"agent_id": "uuid-test", "tags": ["persistent"]},
+            {"agent_id": "uuid-test", "tags": RESIDENT_TAGS},
         )
 
     @pytest.mark.asyncio
