@@ -179,11 +179,12 @@ class TestOllamaRouting:
         assert parsed["routed_via"] == "ollama"
 
     @pytest.mark.asyncio
-    async def test_ollama_uses_default_model_for_auto(self):
-        """Ollama with model=auto defaults to llama3:70b."""
+    async def test_ollama_uses_default_model_for_auto(self, monkeypatch):
+        """Ollama with model=auto defaults to gemma4:latest (UNITARES_LLM_MODEL fallback)."""
+        monkeypatch.delenv("UNITARES_LLM_MODEL", raising=False)
         mock_client_instance = MagicMock()
         mock_client_instance.chat.completions.create.return_value = _make_mock_response(
-            model="llama3:70b"
+            model="gemma4:latest"
         )
 
         with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
@@ -195,13 +196,53 @@ class TestOllamaRouting:
                 "model": "auto",
             })
 
-        # Verify model passed to create
         call_kwargs = mock_client_instance.chat.completions.create.call_args[1]
-        assert call_kwargs["model"] == "llama3:70b"
+        assert call_kwargs["model"] == "gemma4:latest"
+
+    @pytest.mark.asyncio
+    async def test_ollama_auto_respects_unitares_llm_model_env(self, monkeypatch):
+        """UNITARES_LLM_MODEL env var overrides the gemma4:latest default."""
+        monkeypatch.setenv("UNITARES_LLM_MODEL", "qwen3-coder-next:latest")
+        mock_client_instance = MagicMock()
+        mock_client_instance.chat.completions.create.return_value = _make_mock_response(
+            model="qwen3-coder-next:latest"
+        )
+
+        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
+             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance):
+            from src.mcp_handlers.support.model_inference import handle_call_model
+            result = await handle_call_model({
+                "prompt": "Hello",
+                "provider": "ollama",
+                "model": "auto",
+            })
+
+        call_kwargs = mock_client_instance.chat.completions.create.call_args[1]
+        assert call_kwargs["model"] == "qwen3-coder-next:latest"
+
+    @pytest.mark.asyncio
+    async def test_ollama_preserves_llama_3_1_8b_model(self):
+        """llama-3.1-8b is NOT silently rewritten to llama3:70b (was a router bug)."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.chat.completions.create.return_value = _make_mock_response(
+            model="llama-3.1-8b"
+        )
+
+        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
+             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance):
+            from src.mcp_handlers.support.model_inference import handle_call_model
+            result = await handle_call_model({
+                "prompt": "Hello",
+                "privacy": "local",
+                "model": "llama-3.1-8b",
+            })
+
+        call_kwargs = mock_client_instance.chat.completions.create.call_args[1]
+        assert call_kwargs["model"] == "llama-3.1-8b"
 
     @pytest.mark.asyncio
     async def test_ollama_preserves_specified_model(self):
-        """Ollama preserves a specific model name when not 'auto' or 'llama-3.1-8b'."""
+        """Ollama preserves a specific model name when not 'auto'."""
         mock_client_instance = MagicMock()
         mock_client_instance.chat.completions.create.return_value = _make_mock_response(
             model="my-custom-model"
@@ -218,6 +259,33 @@ class TestOllamaRouting:
 
         call_kwargs = mock_client_instance.chat.completions.create.call_args[1]
         assert call_kwargs["model"] == "my-custom-model"
+
+    @pytest.mark.asyncio
+    async def test_ollama_model_not_found_error_points_at_ollama_list(self):
+        """Model-not-found recovery hint mentions `ollama list`, not stale model names."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.chat.completions.create.side_effect = Exception(
+            "model 'nonexistent-model' not found"
+        )
+
+        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
+             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance):
+            from src.mcp_handlers.support.model_inference import handle_call_model
+            result = await handle_call_model({
+                "prompt": "test",
+                "provider": "ollama",
+                "model": "nonexistent-model",
+            })
+
+        parsed = _parse_text_content(result)
+        assert parsed["success"] is False
+        assert parsed.get("error_code") == "MODEL_NOT_AVAILABLE"
+        recovery_action = parsed["recovery"]["action"]
+        assert "ollama list" in recovery_action
+        assert "nonexistent-model" in recovery_action
+        # Stale recommendations must be gone
+        assert "qwen2.5:14b" not in recovery_action
+        assert "llama-3.1-8b" not in recovery_action
 
 
 # =============================================================================
