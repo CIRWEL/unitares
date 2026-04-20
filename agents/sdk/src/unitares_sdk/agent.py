@@ -33,6 +33,12 @@ from unitares_sdk.utils import (
 
 logger = logging.getLogger(__name__)
 
+# Tag set stamped on every resident identity when persistent=True.
+#   - 'persistent':  exempts from auto_archive_orphan_agents
+#   - 'autonomous':  exempts from loop-detection pattern 4 (agent_loop_detection.py:216)
+# Keep in sync with server-side KNOWN_RESIDENT_LABELS in grounding/class_indicator.py.
+RESIDENT_TAGS: list[str] = ["persistent", "autonomous"]
+
 
 @dataclass
 class CycleResult:
@@ -230,20 +236,27 @@ class GovernanceAgent:
         logger.info("%s: onboarded fresh (UUID %s)", self.name, self.agent_uuid[:12] if self.agent_uuid else "?")
 
         if self.persistent and self.agent_uuid:
+            # Residents need BOTH tags:
+            #   - 'persistent':  protects from auto_archive_orphan_agents
+            #   - 'autonomous':  exempts from loop-detection pattern 4
+            #                    (agent_loop_detection.py:216). Resident cadences
+            #                    can't respond to pause verdicts within the 30s
+            #                    cooldown, so pattern-4 rejection silently starves
+            #                    their state writes (Steward 2026-04-20 regression).
             try:
                 await client.call_tool(
                     "update_agent_metadata",
-                    {"agent_id": self.agent_uuid, "tags": ["persistent"]},
+                    {"agent_id": self.agent_uuid, "tags": RESIDENT_TAGS},
                 )
                 logger.info(
-                    "%s: stamped 'persistent' tag to protect from orphan sweep",
-                    self.name,
+                    "%s: stamped resident tags %s",
+                    self.name, RESIDENT_TAGS,
                 )
             except Exception as e:
                 # Non-fatal. The agent still runs; it's just vulnerable to
-                # archive_orphan_agents until someone tags it manually.
+                # archive_orphan_agents AND loop-detection until someone tags it.
                 logger.warning(
-                    "%s: failed to stamp 'persistent' tag: %s "
+                    "%s: failed to stamp resident tags: %s "
                     "(will retry on next fresh onboard; manual tagging may be needed)",
                     self.name, e,
                 )
