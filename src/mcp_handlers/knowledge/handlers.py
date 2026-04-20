@@ -718,8 +718,15 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         # Phase 4: hybrid RRF fusion. When enabled, fetch semantic + FTS in
         # parallel and fuse via Reciprocal Rank Fusion (k=60). Tags, if passed,
         # act as a small boost in the fused space rather than a hard post-filter.
-        from src.retrieval import hybrid_enabled as _hybrid_enabled, rrf_fuse, apply_tag_boost
+        from src.retrieval import (
+            hybrid_enabled as _hybrid_enabled,
+            graph_expansion_enabled as _graph_expansion_enabled,
+            rrf_fuse,
+            apply_tag_boost,
+            expand_with_neighbors,
+        )
         hybrid_on = _hybrid_enabled()
+        graph_expand_on = _graph_expansion_enabled()
 
         t0 = time.perf_counter()
         if query_text:
@@ -775,10 +782,37 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                     doc_tags_map = {doc_id: (doc.tags or []) for doc_id, doc in pool.items()}
                     fused = apply_tag_boost(fused, doc_tags_map, tags)
 
+                # Phase 5: 1-hop graph expansion. Top seeds pull their typed-edge
+                # neighbors (related_to / responses_from / response_to) into the
+                # pool at a discounted score.
+                if graph_expand_on:
+                    seed_neighbors: Dict[str, set] = {}
+                    for seed_id, _ in fused[:10]:
+                        seed_doc = pool.get(seed_id)
+                        if seed_doc is None:
+                            continue
+                        nbrs: set = set()
+                        nbrs.update(seed_doc.related_to or [])
+                        nbrs.update(getattr(seed_doc, "responses_from", None) or [])
+                        if seed_doc.response_to:
+                            nbrs.add(seed_doc.response_to.discovery_id)
+                        nbrs.discard(seed_id)
+                        seed_neighbors[seed_id] = nbrs
+
+                    fused = expand_with_neighbors(
+                        fused, seed_neighbors, edge_weight=0.5, max_seeds=10,
+                    )
+                    missing_ids = [did for did, _ in fused if did not in pool]
+                    if missing_ids:
+                        for nid in missing_ids[:30]:
+                            doc = await graph.get_discovery(nid)
+                            if doc is not None:
+                                pool[nid] = doc
+
                 candidates = [pool[did] for did, _ in fused if did in pool]
                 semantic_scores_dict = {d.id: score for d, score in sem_res}
                 rrf_scores_dict = {did: score for did, score in fused}
-                search_mode = "hybrid_rrf"
+                search_mode = "hybrid_rrf_graph" if graph_expand_on else "hybrid_rrf"
             elif use_semantic:
                 # Semantic search using vector embeddings
                 # Default 0.3 for precision; auto-fallback to 0.2 catches edge cases
@@ -845,7 +879,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 # Exclude archived entries by default (unless status filter or include_archived)
                 if not status and not include_archived and d.status == "archived":
                     continue
-                if tags and search_mode != "hybrid_rrf":
+                if tags and not search_mode.startswith("hybrid_rrf"):
                     # In hybrid mode, tags are a score boost in RRF space (handled
                     # upstream via apply_tag_boost). Everywhere else, they remain a
                     # hard post-filter — preserves pre-Phase-4 behavior.

@@ -1,9 +1,9 @@
-"""Tests for src/retrieval.py — RRF fusion and tag-overlap boosts."""
+"""Tests for src/retrieval.py — RRF fusion, tag-overlap boosts, graph expansion."""
 
 import math
 import pytest
 
-from src.retrieval import rrf_fuse, apply_tag_boost
+from src.retrieval import rrf_fuse, apply_tag_boost, expand_with_neighbors
 
 
 class TestRRFFuse:
@@ -81,3 +81,56 @@ class TestTagBoost:
             boost_per_match=0.01,
         )
         assert result[0][1] == pytest.approx(0.53)
+
+
+class TestGraphExpansion:
+
+    def test_empty_scored_returns_empty(self):
+        assert expand_with_neighbors([], {}) == []
+
+    def test_no_neighbors_passthrough(self):
+        scored = [("a", 0.5), ("b", 0.3)]
+        result = expand_with_neighbors(scored, {})
+        assert dict(result) == dict(scored)
+
+    def test_neighbor_gets_discounted_seed_score(self):
+        scored = [("a", 0.5)]
+        result = expand_with_neighbors(scored, {"a": ["x"]}, edge_weight=0.5)
+        scores = dict(result)
+        assert scores["a"] == pytest.approx(0.5)
+        assert scores["x"] == pytest.approx(0.25)
+
+    def test_expansion_can_surface_new_docs_above_originals(self):
+        scored = [("a", 0.5), ("b", 0.4), ("c", 0.1)]
+        result = expand_with_neighbors(scored, {"a": ["z"]}, edge_weight=0.5)
+        ids = [doc_id for doc_id, _ in result]
+        assert ids[0] == "a"
+        assert ids.index("z") < ids.index("c")
+
+    def test_existing_score_takes_max_not_sum(self):
+        scored = [("a", 0.5), ("b", 0.4)]
+        result = expand_with_neighbors(scored, {"a": ["b"]}, edge_weight=0.5)
+        assert dict(result)["b"] == pytest.approx(0.4)
+
+    def test_self_loop_is_ignored(self):
+        scored = [("a", 0.5)]
+        result = expand_with_neighbors(scored, {"a": ["a"]}, edge_weight=0.5)
+        assert dict(result) == {"a": 0.5}
+
+    def test_max_seeds_caps_expansion(self):
+        scored = [("s1", 0.9), ("s2", 0.7), ("s3", 0.5)]
+        neighbors = {"s1": ["z1"], "s2": ["z2"], "s3": ["z3"]}
+        result = expand_with_neighbors(scored, neighbors, edge_weight=0.5, max_seeds=2)
+        ids = {doc_id for doc_id, _ in result}
+        assert "z1" in ids and "z2" in ids
+        assert "z3" not in ids
+
+    def test_multiple_neighbors_all_get_boost(self):
+        scored = [("a", 0.4)]
+        result = expand_with_neighbors(
+            scored, {"a": ["x", "y", "z"]}, edge_weight=0.5
+        )
+        scores = dict(result)
+        assert scores["x"] == pytest.approx(0.2)
+        assert scores["y"] == pytest.approx(0.2)
+        assert scores["z"] == pytest.approx(0.2)

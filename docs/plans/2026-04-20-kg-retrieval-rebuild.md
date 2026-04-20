@@ -111,13 +111,13 @@ Each step lands in isolation, behind a flag where sensible, measured against the
 
 **Progression (20-pair seed corpus):**
 
-| Metric | V1 (MiniLM) | V2 (BGE-M3) | V3 (+ rerank) | **V4 (hybrid RRF)** | Target |
-|---|---|---|---|---|---|
-| nDCG@10 (mean) | 0.826 | 0.861 | 0.853 | **0.872** ← best | ≥ 0.90 |
-| Recall@20 (mean) | 0.875 | 0.925 | 0.950 | **0.950** | ≥ 0.95 ✓ |
-| MRR (mean) | 0.825 | 0.867 | 0.823 | 0.850 | ≥ 0.90 |
-| **Flat misses** | 2/20 | 1/20 | 1/20 | 1/20 | 0/20 |
-| Latency p50 (steady) | 28–40ms | 80–180ms | 3000–4500ms | **~100ms** | ≤ 500ms |
+| Metric | V1 | V2 | V3 (rerank) | V4 (hybrid) | **V5 (+ graph)** | Target |
+|---|---|---|---|---|---|---|
+| nDCG@10 | 0.826 | 0.861 | 0.853 | **0.872** | **0.872** | ≥ 0.90 |
+| Recall@20 | 0.875 | 0.925 | 0.950 | 0.950 | **0.950** ✓ | ≥ 0.95 |
+| MRR | 0.825 | 0.867 | 0.823 | 0.850 | **0.850** | ≥ 0.90 |
+| **Flat misses** | 2/20 | 1/20 | 1/20 | 1/20 | **1/20** | 0/20 |
+| Latency p50 | 28–40ms | 80–180ms | 3000–4500ms | ~100ms | **~140ms** | ≤ 500ms |
 
 **Phase 2 landed 2026-04-20.** BGE-M3 (1024d) replaces MiniLM-L6-v2 (384d) behind `UNITARES_EMBEDDING_MODEL=bge-m3`.
 
@@ -147,7 +147,15 @@ Trade-offs — three V2 rank-1 hits slipped to rank 2 under V4 RRF. FTS brought 
 
 **FTS upgrade**: `ts_rank` → `ts_rank_cd` (cover density) — bundled with Phase 4.
 
-- **Dogfood check**: `"hybrid search retrieval rebuild"` returns the Dec-2025 ticket at top-1 under V1–V4.
+**Phase 5 landed 2026-04-20 as opt-in (`UNITARES_ENABLE_GRAPH_EXPANSION=1`).** 1-hop expansion along `related_to` / `responses_from` / `response_to` edges. On this seed corpus, metrics are identical to V4 — **graph expansion was a no-op**. Why:
+
+- Expansion promotes a seed's neighbors, not the seed itself. The one remaining flat miss target isn't a seed, and its inbound edges don't point from any current seed.
+- Our `related_to` pointers are one-directional. The scoping doc links backward to the Dec-2025 ticket, not the other way.
+- TL;DR: the edge graph in this corpus is too sparse to exercise the mechanism. Should pay off as agents thread replies with explicit `response_to` and corpus size grows.
+
+Infrastructure lands clean: pure-function `expand_with_neighbors` (8 unit tests), handler wires it behind flag, eval harness supports `--graph-expand`, hydrates missing neighbors via `graph.get_discovery`. Zero risk default-off.
+
+- **Dogfood check**: `"hybrid search retrieval rebuild"` returns the Dec-2025 ticket at top-1 under V1–V5.
 - **Honest failure mode**: "no match" when nothing matches. Zero 0.2-threshold garbage. (Phase 0.)
 
 Baselines pinned:
@@ -155,6 +163,7 @@ Baselines pinned:
 - `tests/retrieval_eval/baseline_2026-04-20_bge_m3.json` (V2)
 - `tests/retrieval_eval/baseline_2026-04-20_bge_m3_reranked.json` (V3)
 - `tests/retrieval_eval/baseline_2026-04-20_hybrid_rrf.json` (V4)
+- `tests/retrieval_eval/baseline_2026-04-20_hybrid_graph.json` (V5)
 
 Re-run:
 ```bash
@@ -166,6 +175,9 @@ UNITARES_EMBEDDING_MODEL=bge-m3 UNITARES_KNOWLEDGE_BACKEND=age python scripts/ev
 
 # V4 (hybrid RRF)
 UNITARES_EMBEDDING_MODEL=bge-m3 UNITARES_KNOWLEDGE_BACKEND=age python scripts/eval/retrieval_eval.py --hybrid
+
+# V5 (hybrid + graph expansion)
+UNITARES_EMBEDDING_MODEL=bge-m3 UNITARES_KNOWLEDGE_BACKEND=age python scripts/eval/retrieval_eval.py --hybrid --graph-expand
 ```
 
 ## Non-goals

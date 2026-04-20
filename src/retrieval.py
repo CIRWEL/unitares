@@ -29,6 +29,11 @@ def hybrid_enabled() -> bool:
     return _flag_enabled("UNITARES_ENABLE_HYBRID", default=False)
 
 
+def graph_expansion_enabled() -> bool:
+    """True when 1-hop typed-edge expansion should run. UNITARES_ENABLE_GRAPH_EXPANSION."""
+    return _flag_enabled("UNITARES_ENABLE_GRAPH_EXPANSION", default=False)
+
+
 def rrf_fuse(
     ranked_lists: Sequence[Sequence[str]],
     k: int = 60,
@@ -90,3 +95,31 @@ def apply_tag_boost(
         boosted.append((doc_id, score))
     boosted.sort(key=lambda kv: kv[1], reverse=True)
     return boosted
+
+
+def expand_with_neighbors(
+    scored: Sequence[Tuple[str, float]],
+    seed_neighbors: Dict[str, Iterable[str]],
+    edge_weight: float = 0.5,
+    max_seeds: int = 10,
+) -> List[Tuple[str, float]]:
+    """1-hop graph expansion on typed edges.
+
+    For each of the top `max_seeds` scored docs, promote its neighbors (from
+    `seed_neighbors[seed_id]`) into the candidate pool with a score inherited
+    from the seed, discounted by `edge_weight`. Neighbors already in `scored`
+    keep the max of their existing score and the inherited boost.
+    """
+    expanded: Dict[str, float] = {doc_id: score for doc_id, score in scored}
+    seeds = list(scored[:max_seeds])
+    for seed_id, seed_score in seeds:
+        neighbors = seed_neighbors.get(seed_id) or []
+        for nid in neighbors:
+            if not nid or nid == seed_id:
+                continue
+            inherited = seed_score * edge_weight
+            if inherited > expanded.get(nid, 0.0):
+                expanded[nid] = inherited
+    items = list(expanded.items())
+    items.sort(key=lambda kv: kv[1], reverse=True)
+    return items
