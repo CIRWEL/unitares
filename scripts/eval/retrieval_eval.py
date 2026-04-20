@@ -65,21 +65,23 @@ async def run_query(
     rerank: bool = False,
     rerank_pool_size: int = 50,
     hybrid: bool = False,
+    graph_expand: bool = False,
 ) -> tuple[List[str], List[float], float]:
     """Run a single query against the current retrieval stack.
 
     Returns (ids, scores, latency_ms). Supports:
     - `hybrid=True`: fan out semantic + FTS, fuse via RRF (k=60). Phase 4.
+    - `graph_expand=True` (requires hybrid): pull 1-hop typed-edge neighbors
+      from top seeds into the pool at a discounted RRF score. Phase 5.
     - `rerank=True`: apply cross-encoder to top `rerank_pool_size` candidates. Phase 3.
-    - Combined: hybrid fuse first, then rerank the fused pool.
-    Latency is wallclock of the full pipeline.
+    - Combined: hybrid fuse → graph expand → rerank the fused/expanded pool.
     """
     import asyncio as _asyncio
     t0 = time.perf_counter()
 
     # First-stage retrieval
     if hybrid:
-        from src.retrieval import rrf_fuse
+        from src.retrieval import rrf_fuse, expand_with_neighbors
         fetch = max(top_k, rerank_pool_size if rerank else 50)
         sem_task = graph.semantic_search(query, limit=fetch, min_similarity=0.0)
         fts_task = graph.full_text_search(query, limit=fetch)
@@ -87,10 +89,25 @@ async def run_query(
         sem_ids = [d.id for d, _ in sem_res]
         fts_ids = [d.id for d in fts_res]
         fused = rrf_fuse([sem_ids, fts_ids], k=60)
-        # Build a doc pool for potential rerank
         pool = {d.id: d for d, _ in sem_res}
         for d in fts_res:
             pool.setdefault(d.id, d)
+        if graph_expand:
+            seed_neighbors: Dict[str, set] = {}
+            for seed_id, _ in fused[:10]:
+                seed_doc = pool.get(seed_id)
+                if seed_doc is None:
+                    continue
+                nbrs: set = set()
+                nbrs.update(seed_doc.related_to or [])
+                nbrs.update(getattr(seed_doc, "responses_from", None) or [])
+                if seed_doc.response_to:
+                    nbrs.add(seed_doc.response_to.discovery_id)
+                nbrs.discard(seed_id)
+                seed_neighbors[seed_id] = nbrs
+            fused = expand_with_neighbors(
+                fused, seed_neighbors, edge_weight=0.5, max_seeds=10,
+            )
         fused_docs = [pool[did] for did, _ in fused if did in pool]
     else:
         pool_size = max(top_k, rerank_pool_size) if rerank else top_k
@@ -125,6 +142,7 @@ async def evaluate(
     rerank: bool = False,
     rerank_pool_size: int = 50,
     hybrid: bool = False,
+    graph_expand: bool = False,
 ) -> Dict[str, Any]:
     with labels_path.open() as f:
         corpus = json.load(f)
@@ -148,6 +166,7 @@ async def evaluate(
             rerank=rerank,
             rerank_pool_size=rerank_pool_size,
             hybrid=hybrid,
+            graph_expand=graph_expand,
         )
         ndcg = ndcg_at_k(ranked, relevant, ndcg_k)
         rec = recall_at_k(ranked, relevant, recall_k)
@@ -217,6 +236,7 @@ async def evaluate(
             "rerank": rerank,
             "rerank_pool_size": rerank_pool_size if rerank else None,
             "hybrid": hybrid,
+            "graph_expand": graph_expand,
         },
         "aggregate": {
             f"ndcg@{ndcg_k}": agg(ndcgs),
@@ -272,6 +292,8 @@ def main():
     parser.add_argument("--rerank-pool-size", type=int, default=50)
     parser.add_argument("--hybrid", action="store_true",
                         help="Run hybrid RRF fusion (semantic + FTS)")
+    parser.add_argument("--graph-expand", action="store_true",
+                        help="After RRF, pull 1-hop typed-edge neighbors into the pool (requires --hybrid)")
     parser.add_argument("--json", action="store_true", help="emit JSON instead of human-readable output")
     args = parser.parse_args()
 
@@ -284,6 +306,7 @@ def main():
         rerank=args.rerank,
         rerank_pool_size=args.rerank_pool_size,
         hybrid=args.hybrid,
+        graph_expand=args.graph_expand,
     ))
 
     if args.json:
