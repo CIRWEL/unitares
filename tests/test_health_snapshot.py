@@ -111,7 +111,7 @@ class TestHealthCheckHandlerCached:
         from src.mcp_handlers.admin.handlers import handle_health_check
         await set_snapshot({
             "status": "healthy",
-            "version": "2.11.0",
+            "version": "2.12.0",
             "redis_present": True,
             "identity_continuity_mode": "redis",
             "status_breakdown": {"healthy": 5, "warning": 0, "error": 0, "deprecated": 0, "unavailable": 0},
@@ -140,7 +140,7 @@ class TestHealthCheckHandlerCached:
         from src.mcp_handlers.admin.handlers import handle_health_check
         await set_snapshot({
             "status": "healthy",
-            "version": "2.11.0",
+            "version": "2.12.0",
             "redis_present": True,
             "checks": {
                 "primary_db": {"status": "healthy", "info": {"pool_size": 5}, "configured_backend": "postgres"},
