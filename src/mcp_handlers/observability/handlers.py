@@ -627,16 +627,23 @@ async def handle_detect_anomalies(arguments: Dict[str, Any]) -> Sequence[TextCon
     if new_anomalies:
         from src.audit_log import audit_logger, AuditEntry
         from datetime import datetime
-        audit_logger._write_entry(AuditEntry(
-            timestamp=datetime.now().isoformat(),
-            agent_id="system",
-            event_type="anomaly_detected",
-            confidence=1.0,
-            details={
-                "count": len(new_anomalies),
-                "anomalies": [{"agent_id": a.get("agent_id"), "type": a.get("type"), "severity": a.get("severity"), "description": a.get("description", "")} for a in new_anomalies[:10]],
-            }
-        ))
+        # Fan out per-agent so audit.events.agent_id matches the affected agent.
+        # Prior shape wrote one batch entry with agent_id='system' and a
+        # truncated details.anomalies[:10] list — unjoinable in SQL and
+        # silently dropped anomalies 11+.
+        ts = datetime.now().isoformat()
+        for a in new_anomalies:
+            audit_logger._write_entry(AuditEntry(
+                timestamp=ts,
+                agent_id=a.get("agent_id") or "system",
+                event_type="anomaly_detected",
+                confidence=1.0,
+                details={
+                    "type": a.get("type"),
+                    "severity": a.get("severity"),
+                    "description": a.get("description", ""),
+                },
+            ))
 
     # Sort by severity (high first)
     all_anomalies.sort(key=lambda x: severity_levels.get(x.get("severity", "low"), 0), reverse=True)
