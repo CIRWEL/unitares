@@ -65,7 +65,17 @@ case "$KIND" in
         exit 2 ;;
     runtime)
         SLUG=$(printf '%s' "$MESSAGE" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-40)
-        NEW_BRANCH="codex/auto/$(date +%Y%m%d-%H%M%S)-${SLUG}"
+        # Agent-scoped prefix so concurrent agents' auto-branches are self-identifying.
+        # Override with UNITARES_SHIP_AGENT=<name>; otherwise detect from env.
+        AGENT_PREFIX="${UNITARES_SHIP_AGENT:-}"
+        if [[ -z "$AGENT_PREFIX" ]]; then
+            if [[ -n "${CLAUDECODE:-}" ]]; then
+                AGENT_PREFIX="claude"
+            else
+                AGENT_PREFIX="codex"
+            fi
+        fi
+        NEW_BRANCH="${AGENT_PREFIX}/auto/$(date +%Y%m%d-%H%M%S)-${SLUG}"
         echo "[ship] runtime path → $NEW_BRANCH (PR + auto-merge)"
         git checkout -b "$NEW_BRANCH"
         git commit -m "$MESSAGE"
