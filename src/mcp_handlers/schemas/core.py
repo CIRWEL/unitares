@@ -189,8 +189,8 @@ class GetWorkspaceHealthParams(AgentIdentityMixin):
 class CallModelParams(AgentIdentityMixin):
     """Parameters for call_model"""
     prompt: str = Field(..., description="The prompt/question to send to the model (required)")
-    model: str = Field("auto", description="Model to use. Options: auto (HF default), deepseek-ai/DeepSeek-R1 (HF, free), gemini-flash (Google, free), llama-3.1-8b (Ollama, local). Default: auto")
-    provider: Literal["auto", "hf", "gemini", "ollama"] = Field("auto", description="Provider to use. Options: auto (HF first), hf (Hugging Face), gemini (Google), ollama (local). Default: auto")
+    model: str = Field("auto", description="Model to use. For ollama: any model pulled locally (default UNITARES_LLM_MODEL or gemma4:latest). For hf: model IDs like 'deepseek-ai/DeepSeek-R1' or 'Qwen/Qwen2.5-72B-Instruct'. Default: auto")
+    provider: Literal["auto", "hf", "ollama"] = Field("auto", description="Provider to use. Options: auto (ollama first, hf fallback), hf (Hugging Face Inference Providers), ollama (local). Default: auto")
     task_type: Literal["reasoning", "generation", "analysis"] = Field("reasoning", description="Type of task. Options: reasoning, generation, analysis. Default: reasoning")
     max_tokens: float = Field(500, description="Maximum tokens in response. Default: 500")
     temperature: float = Field(0.7, description="Temperature (creativity). Range: 0.0-1.0. Default: 0.7")
