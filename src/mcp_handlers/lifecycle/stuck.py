@@ -61,8 +61,8 @@ async def _trigger_dialectic_for_stuck_agent(
     """
     Create a dialectic session for a stuck agent.
 
-    Returns recovery info dict on success, None on failure or if agent
-    already has an active session.
+    Returns recovery info dict on success, None on failure, if the agent
+    already has an active session, or if no peer reviewer is available.
     """
     from src.dialectic_protocol import DialecticSession
     from src.mcp_handlers.dialectic.reviewer import select_reviewer
@@ -74,9 +74,25 @@ async def _trigger_dialectic_for_stuck_agent(
         logger.debug(f"[STUCK_AGENT_RECOVERY] Agent {agent_id[:8]}... already has active dialectic session")
         return None
 
-    reviewer_id = await select_reviewer(paused_agent_id=agent_id)
+    paused_tags = paused_agent_state.get("tags") or []
+    reviewer_id = await select_reviewer(
+        paused_agent_id=agent_id,
+        metadata=mcp_server.agent_metadata,
+        paused_agent_state=paused_agent_state,
+        paused_agent_tags=paused_tags,
+    )
+
+    # No self-review. A session whose reviewer is the paused agent can never
+    # resolve via peer review, and the stuck detector then re-fires and creates
+    # another doomed session and another. If no peer is eligible, skip this
+    # cycle — auto_initiate_dialectic_recovery (in agent_loop_detection) owns
+    # the LLM-assisted fallback for single-agent deployments.
     if reviewer_id is None:
-        reviewer_id = agent_id  # Self-review fallback
+        logger.info(
+            f"[STUCK_AGENT_RECOVERY] No peer reviewer available for {agent_id[:8]}... "
+            f"— skipping dialectic this cycle"
+        )
+        return None
 
     session = DialecticSession(
         paused_agent_id=agent_id,
