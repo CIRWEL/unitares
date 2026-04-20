@@ -161,7 +161,8 @@
         }
         if (orderedLabels.length === 0) {
             container.innerHTML = '<span class="residents-strip-empty">' +
-                'No residents configured — set <code>UNITARES_RESIDENT_AGENTS</code>' +
+                'No residents detected — known residents auto-surface once they check in, or set ' +
+                '<code>UNITARES_RESIDENT_AGENTS</code> to override' +
                 '</span>';
             return;
         }

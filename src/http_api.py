@@ -1168,25 +1168,50 @@ _DEFAULT_RESIDENT_SILENCE_SECONDS: Dict[str, int] = {
 }
 
 
-def _resolve_resident_labels(mcp_server_obj) -> list[str]:
+def _resolve_resident_labels(mcp_server_obj) -> tuple[list[str], str]:
     """Figure out which agent labels to treat as residents.
 
     Precedence (operator choice wins):
-    1. ``UNITARES_RESIDENT_AGENTS`` env var — comma-separated labels
-    2. Agent metadata with a ``resident`` attribute set to True
-    3. Empty list — dashboard will show a "no residents configured" state
+    1. ``UNITARES_RESIDENT_AGENTS`` env var — comma-separated labels  → "env"
+    2. Agent metadata with a ``resident`` attribute set to True       → "metadata"
+    3. ``KNOWN_RESIDENT_LABELS`` ∩ labels present in agent_metadata   → "known-residents"
+       (the canonical resident list used by grounding/class_indicator
+       is the source of truth; dashboard reuses it rather than re-declaring)
+    4. Empty list                                                     → "none"
+
+    Returns ``(labels, source)`` so the caller can label the response without
+    re-deriving the precedence state.
     """
     env_value = os.getenv("UNITARES_RESIDENT_AGENTS", "").strip()
     if env_value:
-        return [lbl.strip() for lbl in env_value.split(",") if lbl.strip()]
+        labels = [lbl.strip() for lbl in env_value.split(",") if lbl.strip()]
+        return labels, "env"
 
-    labels: list[str] = []
+    flagged: list[str] = []
     for meta in getattr(mcp_server_obj, "agent_metadata", {}).values():
         if getattr(meta, "resident", False):
             label = getattr(meta, "label", None) or getattr(meta, "display_name", None)
             if label:
-                labels.append(label)
-    return labels
+                flagged.append(label)
+    if flagged:
+        return flagged, "metadata"
+
+    # Path 3: auto-detect from the canonical resident list, intersected with
+    # the actual fleet so a fresh install doesn't advertise absent residents.
+    from src.grounding.class_indicator import KNOWN_RESIDENT_LABELS
+    present: set[str] = set()
+    for meta in getattr(mcp_server_obj, "agent_metadata", {}).values():
+        label = getattr(meta, "label", None) or getattr(meta, "display_name", None)
+        if label and label in KNOWN_RESIDENT_LABELS:
+            present.add(label)
+    if present:
+        # Canonical order is stable (Vigil, Sentinel, Watcher, Steward, Lumen)
+        # so dashboard layout doesn't jitter when the dict ordering shifts.
+        canonical_order = ["Vigil", "Sentinel", "Watcher", "Steward", "Lumen"]
+        ordered = [lbl for lbl in canonical_order if lbl in present]
+        return ordered, "known-residents"
+
+    return [], "none"
 
 
 def _latest_eisv_for_agent(agent_id: str) -> Optional[dict]:
@@ -1313,7 +1338,7 @@ async def http_residents(request):
                 },
                 ...
             ],
-            "source": "env" | "metadata" | "none"
+            "source": "env" | "metadata" | "known-residents" | "none"
         }
     """
     http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
@@ -1324,12 +1349,7 @@ async def http_residents(request):
         from src.mcp_handlers.shared import lazy_mcp_server
         mcp_server_obj = lazy_mcp_server
 
-        labels = _resolve_resident_labels(mcp_server_obj)
-        source = (
-            "env"
-            if os.getenv("UNITARES_RESIDENT_AGENTS", "").strip()
-            else ("metadata" if labels else "none")
-        )
+        labels, source = _resolve_resident_labels(mcp_server_obj)
 
         # Index agent_metadata by label for O(1) lookup. When the same label
         # appears multiple times (e.g. archived + active duplicates created
