@@ -784,6 +784,81 @@ class TestHandleDetectAnomalies:
         assert data["summary"]["by_severity"]["medium"] == 1
 
     @pytest.mark.asyncio
+    async def test_audit_writes_per_agent_fanout(self):
+        """Each detected anomaly writes its own audit entry with the affected
+        agent_id — not a single batch entry with agent_id='system'.
+
+        Regression guard for the PPV pipeline: the Schmidt-proposal figure
+        and future v7 correlation work join audit.events.agent_id against
+        lifecycle_paused. The prior batched-write shape collapsed every
+        anomaly into one `agent_id='system'` row and truncated details at 10.
+        """
+        ids = [
+            "aaaaaaaa-bbbb-cccc-dddd-000000000001",
+            "aaaaaaaa-bbbb-cccc-dddd-000000000002",
+            "aaaaaaaa-bbbb-cccc-dddd-000000000003",
+        ]
+        server = _build_mock_server(agent_ids=ids)
+
+        # Fresh anomaly dicts per call — handlers.py mutates anomaly["agent_id"]
+        # in-place (line ~581), so a shared dict would get overwritten.
+        # Types must match the filter accepted by the handler (risk_spike /
+        # coherence_drop).
+        def patterns_side_effect(*_args, **_kwargs):
+            return {
+                "anomalies": [
+                    {"type": "risk_spike", "severity": "high",
+                     "description": "spike 1"},
+                    {"type": "risk_spike", "severity": "high",
+                     "description": "spike 2"},
+                    {"type": "coherence_drop", "severity": "high",
+                     "description": "drop 1"},
+                    {"type": "coherence_drop", "severity": "high",
+                     "description": "drop 2"},
+                ]
+            }
+
+        from src.audit_log import AuditEntry
+
+        written: list[AuditEntry] = []
+
+        with patch(_PATCH_SERVER, server), \
+             patch(_PATCH_CTX, return_value=None), \
+             patch(
+                 "src.pattern_analysis.analyze_agent_patterns",
+                 side_effect=patterns_side_effect,
+             ), \
+             patch("src.event_detector.event_detector.record_event",
+                   side_effect=lambda ev: ev), \
+             patch("src.audit_log.audit_logger._write_entry",
+                   side_effect=lambda entry: written.append(entry)):
+            from src.mcp_handlers.observability.handlers import handle_detect_anomalies
+            result = await handle_detect_anomalies({})
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["summary"]["total_anomalies"] == 12  # 3 agents × 4
+
+        # One audit entry per anomaly — no truncation at 10.
+        assert len(written) == 12, f"expected 12 fan-out entries, got {len(written)}"
+
+        # Every entry carries the real affected agent_id, not 'system'.
+        assert all(e.event_type == "anomaly_detected" for e in written)
+        assert all(e.agent_id in ids for e in written), (
+            f"audit entries must carry the affected agent_id: "
+            f"{[e.agent_id for e in written]}"
+        )
+        assert not any(e.agent_id == "system" for e in written)
+
+        # Each entry's details describe a single anomaly (not a list).
+        for e in written:
+            assert "type" in e.details
+            assert "severity" in e.details
+            assert "anomalies" not in e.details, (
+                "details should be per-anomaly, not a batch list"
+            )
+
+    @pytest.mark.asyncio
     async def test_specific_agent_ids(self):
         """Scan only specified agent_ids."""
         id1 = "aaaaaaaa-bbbb-cccc-dddd-111111111111"

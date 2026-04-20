@@ -2240,16 +2240,34 @@ if (anomaliesCard) {
                     const relative = !isNaN(tsMs) && formatRelativeTime ? formatRelativeTime(tsMs) : null;
                     const absolute = formatTimestamp(inc.timestamp);
                     const when = relative ? relative + ' — ' + absolute : (absolute || inc.timestamp);
-                    const anomalyDetails = (d.anomalies || []).map(function (a) {
-                        const agentName = a.agent_name || (a.agent_id ? a.agent_id.substring(0, 8) + '...' : '');
-                        const desc = a.description || '';
-                        return escapeHtml(a.type || '?') + ' (' + escapeHtml(a.severity || '') + ')' +
+                    // Two shapes coexist: legacy batch entries (agent_id='system',
+                    // details.anomalies is an array) and per-agent entries
+                    // (inc.agent_id is the affected agent, details has scalar
+                    // type/severity/description).
+                    let count;
+                    let anomalyDetails;
+                    if (Array.isArray(d.anomalies)) {
+                        count = d.count || d.anomalies.length || 0;
+                        anomalyDetails = d.anomalies.map(function (a) {
+                            const agentName = a.agent_name || (a.agent_id ? a.agent_id.substring(0, 8) + '...' : '');
+                            const desc = a.description || '';
+                            return escapeHtml(a.type || '?') + ' (' + escapeHtml(a.severity || '') + ')' +
+                                (agentName ? ' <code>' + escapeHtml(agentName) + '</code>' : '') +
+                                (desc ? ' — ' + escapeHtml(desc) : '');
+                        }).join('; ');
+                    } else {
+                        count = 1;
+                        const agentName = inc.agent_id && inc.agent_id !== 'system'
+                            ? inc.agent_id.substring(0, 8) + '...'
+                            : '';
+                        const desc = d.description || '';
+                        anomalyDetails = escapeHtml(d.type || '?') + ' (' + escapeHtml(d.severity || '') + ')' +
                             (agentName ? ' <code>' + escapeHtml(agentName) + '</code>' : '') +
                             (desc ? ' — ' + escapeHtml(desc) : '');
-                    }).join('; ');
+                    }
                     return '<div style="padding:6px 8px; border-left:2px solid var(--accent-orange); margin-bottom:4px; font-size:12px;">' +
                         '<span style="opacity:0.5;">' + when + '</span> &mdash; ' +
-                        '<strong>' + (d.count || '?') + ' anomal' + ((d.count || 0) === 1 ? 'y' : 'ies') + '</strong>' +
+                        '<strong>' + count + ' anomal' + (count === 1 ? 'y' : 'ies') + '</strong>' +
                         (anomalyDetails ? '<br><span style="opacity:0.7;">' + anomalyDetails + '</span>' : '') +
                         '</div>';
                 }).join('');
