@@ -173,3 +173,16 @@ class AgentMixin:
             except Exception as e:
                 logger.debug(f"Failed to find agent by label {label}: {e}")
                 return None
+
+    async def agent_has_tag(self, agent_id: str, tag: str) -> bool:
+        """Return True iff agent exists in core.agents with `tag` in tags[]."""
+        async with self.acquire() as conn:
+            try:
+                row = await conn.fetchrow(
+                    "SELECT 1 FROM core.agents WHERE id = $1 AND $2 = ANY(tags)",
+                    agent_id, tag,
+                )
+                return row is not None
+            except Exception as e:
+                logger.debug(f"Failed to check tag {tag} on {agent_id}: {e}")
+                return False
