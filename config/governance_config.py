@@ -726,17 +726,21 @@ class ScaleConstant:
       - "placeholder": initial guess, Phase 1; must be replaced before production
       - "measured":    measured on a named reference corpus per spec §3.4
       - "derived":     derived analytically from other quantities
+      - "alias":       intentionally mirrors another class's value when the
+                       agent is a known resident but has no independent corpus
+                       yet (makes the fallback explicit in config instead of
+                       relying on silent get(…, DEFAULT) at lookup time)
     """
     name: str
     value: float
     measured_on: str          # ISO date (YYYY-MM-DD) when set; Phase 1 = plan date
-    corpus_size: int          # agent-turn count when measured; 0 for placeholder
+    corpus_size: int          # agent-turn count when measured; 0 for placeholder/alias
     percentile: Optional[int] # 90, 95, 99, etc.; None for non-percentile-derived
-    provenance: str           # "placeholder" | "measured" | "derived"
+    provenance: str           # "placeholder" | "measured" | "derived" | "alias"
     notes: str = ""
 
     def __post_init__(self) -> None:
-        if self.provenance not in {"placeholder", "measured", "derived"}:
+        if self.provenance not in {"placeholder", "measured", "derived", "alias"}:
             raise ValueError(f"unknown provenance {self.provenance!r}")
         if self.value <= 0:
             raise ValueError(f"scale constant {self.name} must be positive")
@@ -834,6 +838,12 @@ DELTA_NORM_MAX_BY_CLASS: Dict[str, ScaleConstant] = {
         name="DELTA_NORM_MAX[Watcher]", value=0.3948, measured_on="2026-04-18",
         corpus_size=283, percentile=95, provenance="measured",
         notes="Class-conditional manifold radius from healthy slice."),
+    "Steward": ScaleConstant(
+        name="DELTA_NORM_MAX[Steward]", value=0.2018, measured_on="2026-04-18",
+        corpus_size=0, percentile=None, provenance="alias",
+        notes="Alias to default. Steward created 2026-04-17, blocked by "
+              "loop-detection on calibration day so 0 rows in core.agent_state. "
+              "Re-run scripts/calibrate_class_conditional.py once corpus exists."),
 }
 
 # Healthy operating points per class — median (E, I, S) on healthy-regime
@@ -845,6 +855,7 @@ HEALTHY_OPERATING_POINT_BY_CLASS: Dict[str, Tuple[float, float, float]] = {
     "Sentinel": (0.7506, 0.7981, 0.1934),   # N=1870
     "Vigil":    (0.7371, 0.7896, 0.2404),   # N=384
     "Watcher":  (0.7482, 0.7686, 0.2477),   # N=283
+    "Steward":  (0.7264, 0.7934, 0.2364),   # alias=default (N=0; see DELTA_NORM_MAX[Steward])
 }
 
 # Default healthy operating point (fleet fallback for unclassified agents).

@@ -23,7 +23,24 @@ def test_scale_constant_has_required_fields():
     assert sc.measured_on
     assert sc.corpus_size >= 0
     assert sc.percentile in {50, 75, 90, 95, 99, None}
-    assert sc.provenance in {"measured", "placeholder", "derived"}
+    assert sc.provenance in {"measured", "placeholder", "derived", "alias"}
+
+
+def test_scale_constant_rejects_unknown_provenance():
+    with pytest.raises(ValueError, match="unknown provenance"):
+        ScaleConstant(
+            name="BOGUS", value=1.0, measured_on="2026-04-20",
+            corpus_size=0, percentile=None, provenance="guess",
+        )
+
+
+def test_scale_constant_accepts_alias_provenance():
+    sc = ScaleConstant(
+        name="DELTA_NORM_MAX[TestAlias]", value=0.2018, measured_on="2026-04-20",
+        corpus_size=0, percentile=None, provenance="alias",
+        notes="Alias to default for testing.",
+    )
+    assert sc.provenance == "alias"
 
 
 def test_all_constants_registered_in_manifest():
@@ -51,16 +68,59 @@ def test_fleet_defaults_remain_placeholder():
     assert len(placeholders) == len(ALL_SCALE_CONSTANTS)
 
 
-def test_class_conditional_delta_norm_max_is_measured():
-    """Phase 2 measurement populated DELTA_NORM_MAX_BY_CLASS with measured values."""
-    from config.governance_config import DELTA_NORM_MAX_BY_CLASS
+def test_class_conditional_delta_norm_max_is_measured_or_alias():
+    """Phase 2 measurement populated DELTA_NORM_MAX_BY_CLASS with measured
+    values. 'alias' entries are permitted only when they mirror DEFAULT —
+    they exist so residents with no corpus yet don't silently fall back.
+    """
+    from config.governance_config import (
+        DELTA_NORM_MAX_BY_CLASS, DELTA_NORM_MAX_DEFAULT,
+    )
     assert len(DELTA_NORM_MAX_BY_CLASS) >= 5  # Lumen, default, Sentinel, Vigil, Watcher
     for cls_name, sc in DELTA_NORM_MAX_BY_CLASS.items():
-        assert sc.provenance == "measured", (
-            f"class-conditional {cls_name} should be measured, got {sc.provenance}"
+        assert sc.provenance in {"measured", "alias"}, (
+            f"class-conditional {cls_name} should be measured or alias, got {sc.provenance}"
         )
-        assert sc.corpus_size > 0
-        assert sc.percentile == 95
+        if sc.provenance == "measured":
+            assert sc.corpus_size > 0
+            assert sc.percentile == 95
+        else:  # alias
+            assert sc.corpus_size == 0, (
+                f"alias entry {cls_name} must declare corpus_size=0"
+            )
+            # Alias must mirror another class's value exactly — not a free guess.
+            # Acceptable targets: the fleet placeholder DEFAULT, or any measured
+            # class in the same dict.
+            peers = {s.value for k, s in DELTA_NORM_MAX_BY_CLASS.items() if k != cls_name}
+            allowed = peers | {DELTA_NORM_MAX_DEFAULT.value}
+            assert sc.value in allowed, (
+                f"alias entry {cls_name} value {sc.value} does not mirror any "
+                f"peer or DEFAULT — aliases must not introduce new numeric values"
+            )
+
+
+def test_known_residents_have_explicit_class_entries():
+    """Every KNOWN_RESIDENT_LABELS member must appear as a key in the
+    class-conditional maps — measured or aliased, but never silently absent.
+
+    Silent absence caused Steward's class baseline to fall back to 'default'
+    undetected on the 2026-04-18 calibration run (Steward had 0 state rows
+    due to a loop-detection bug; the calibrator skipped it without comment).
+    """
+    from config.governance_config import (
+        DELTA_NORM_MAX_BY_CLASS, HEALTHY_OPERATING_POINT_BY_CLASS,
+    )
+    from src.grounding.class_indicator import KNOWN_RESIDENT_LABELS
+    missing_delta = KNOWN_RESIDENT_LABELS - DELTA_NORM_MAX_BY_CLASS.keys()
+    missing_hop = KNOWN_RESIDENT_LABELS - HEALTHY_OPERATING_POINT_BY_CLASS.keys()
+    assert not missing_delta, (
+        f"Residents missing from DELTA_NORM_MAX_BY_CLASS: {missing_delta}. "
+        f"Add an explicit entry (measured or provenance='alias')."
+    )
+    assert not missing_hop, (
+        f"Residents missing from HEALTHY_OPERATING_POINT_BY_CLASS: {missing_hop}. "
+        f"Add an explicit entry (measured or alias tuple mirroring default)."
+    )
 
 
 def test_class_conditional_lookup_falls_back_for_unknown_classes():
