@@ -36,7 +36,7 @@ jobs:
     - name: Validate version consistency
       run: |
         echo "🔍 Checking version consistency..."
-        python scripts/dev/version_manager.py --check
+        python scripts/ops/version_manager.py --check
 
     - name: Display tool count breakdown
       if: success()
@@ -59,7 +59,7 @@ jobs:
 
           // Get tool count
           const toolCount = execSync('python scripts/analysis/count_tools.py').toString().trim();
-          const version = execSync('python scripts/dev/version_manager.py').toString().trim().split('\n')[0].replace('Current version: ', '');
+          const version = execSync('python scripts/ops/version_manager.py').toString().trim().split('\n')[0].replace('Current version: ', '');
 
           // Create comment
           const comment = `## ✅ Documentation Validation Passed

@@ -95,5 +95,18 @@ if command -v python3 &> /dev/null; then
     fi
 fi
 
+# Version sync check: fire when VERSION or pyproject.toml is staged, so drift
+# in either direction trips the check.
+if git diff --cached --name-only | grep -qE '^(VERSION|pyproject\.toml)$'; then
+    echo ""
+    echo "🔢 Version-tracked file changed — checking sync..."
+    python3 "$PROJECT_ROOT/scripts/ops/version_manager.py" --check || {
+        echo ""
+        echo "❌ Version mismatch! Run: make version-bump PART=minor"
+        echo "   Or: python3 scripts/ops/version_manager.py --update"
+        exit 1
+    }
+fi
+
 echo ""
 echo "✅ Pre-commit checks passed"

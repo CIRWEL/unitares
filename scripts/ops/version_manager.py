@@ -56,22 +56,14 @@ def bump_version(part: str) -> str:
     return new_version
 
 
-# Files and patterns to check/update
-# NOTE: admin.py health_check now uses dynamic SERVER_VERSION, no longer hardcoded.
+# Files and patterns to check/update.
+# Keep this list tight — every entry runs on --check and must match real text in
+# the named file, or --update silently no-ops. Historical entries for README.md
+# and src/tool_schemas.py were removed after the README was restructured to a
+# badge/hero layout and admin.py moved to dynamic SERVER_VERSION.
 VERSION_REFERENCES = [
-    # Package metadata
     ("pyproject.toml", [
         (r'version = "([\d.]+)"', r'version = "{version}"'),
-    ]),
-    # README.md - title and footer
-    ("README.md", [
-        (r'# UNITARES Governance Framework v([\d.]+)', r'# UNITARES Governance Framework v{version}'),
-        (r'\*\*Version:\*\* ([\d.]+)', r'**Version:** {version}'),
-    ]),
-    # Tool schemas - example response versions
-    ("src/tool_schemas.py", [
-        (r'"version": "([\d.]+)"', r'"version": "{version}"'),
-        (r'"server_version": "([\d.]+)"', r'"server_version": "{version}"'),
     ]),
 ]
 
