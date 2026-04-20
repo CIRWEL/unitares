@@ -11,6 +11,7 @@ is the source of truth for queries that need cross-process visibility.
 
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
+import os
 import random
 import json
 import asyncio
@@ -31,6 +32,25 @@ from src.dialectic_db import (
 )
 
 logger = get_logger(__name__)
+
+
+def _autoselect_enabled() -> bool:
+    """Gate for reviewer auto-selection.
+
+    Off by default. The candidate pool is dominated by ephemeral sessions that
+    are still flagged active in metadata long after their process exited, plus
+    resident agents that are deterministic scripts (pytest, threshold checks,
+    regex matching) and cannot perform dialectic reasoning. Assigning either
+    kind as a reviewer is dishonest. Callers receiving ``None`` fall through
+    to self-review, awaiting-facilitation, or an explicit NO_REVIEWER error.
+
+    Set ``UNITARES_AUTOSELECT_REVIEWER=1`` once a real reasoner is wired in
+    (e.g. call_model with a capable backend, or a live pool of summonable
+    agents).
+    """
+    return os.environ.get("UNITARES_AUTOSELECT_REVIEWER", "").lower() in (
+        "1", "true", "yes", "on",
+    )
 
 async def _has_recently_reviewed(reviewer_id: str, paused_agent_id: str, hours: int = 24) -> bool:
     """
@@ -254,6 +274,14 @@ async def select_reviewer(paused_agent_id: str,
     Returns:
         Selected reviewer agent_id, or None if no reviewer available
     """
+    if not _autoselect_enabled():
+        logger.info(
+            "[DIALECTIC] Reviewer auto-select disabled "
+            "(UNITARES_AUTOSELECT_REVIEWER unset). Returning None — caller "
+            "should self-review, await facilitation, or accept manual assignment."
+        )
+        return None
+
     if not metadata or not isinstance(metadata, dict):
         return None
 
@@ -356,6 +384,14 @@ async def select_quorum_reviewers(
         List of (agent_id, authority_score) tuples sorted by score descending,
         or empty list if fewer than min_reviewers are eligible.
     """
+    if not _autoselect_enabled():
+        logger.info(
+            "[DIALECTIC] Quorum auto-select disabled "
+            "(UNITARES_AUTOSELECT_REVIEWER unset). Returning empty list — "
+            "caller should escalate or assign quorum manually."
+        )
+        return []
+
     if not metadata or not isinstance(metadata, dict):
         return []
 
