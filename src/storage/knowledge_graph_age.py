@@ -16,6 +16,7 @@ from pathlib import Path
 
 from src.logging_utils import get_logger
 from src.knowledge_graph import DiscoveryNode, ResponseTo
+from src.mcp_handlers.knowledge.limits import EMBED_DETAILS_WINDOW
 from src.db import get_db
 from src.db.age_queries import (
     create_discovery_node,
@@ -470,7 +471,7 @@ class KnowledgeGraphAGE:
                 from src.embeddings import get_embeddings_service, embeddings_available
                 if embeddings_available():
                     embeddings = await get_embeddings_service()
-                    text = f"{discovery.summary}\n{discovery.details[:500] if discovery.details else ''}"
+                    text = f"{discovery.summary}\n{discovery.details[:EMBED_DETAILS_WINDOW] if discovery.details else ''}"
                     emb = await embeddings.embed(text)
                     if emb is not None:
                         task = asyncio.create_task(self._store_embedding(discovery.id, emb))
@@ -1402,7 +1403,7 @@ class KnowledgeGraphAGE:
             if not discovery:
                 return
             embeddings = await get_embeddings_service()
-            text = f"{discovery.summary}\n{discovery.details[:500] if discovery.details else ''}"
+            text = f"{discovery.summary}\n{discovery.details[:EMBED_DETAILS_WINDOW] if discovery.details else ''}"
             emb = await embeddings.embed(text)
             if emb is None:
                 return
@@ -1739,7 +1740,7 @@ class KnowledgeGraphAGE:
         
         # Embed candidates
         candidate_texts = [
-            f"{d.summary}\n{d.details[:500] if d.details else ''}"
+            f"{d.summary}\n{d.details[:EMBED_DETAILS_WINDOW] if d.details else ''}"
             for d in candidates
         ]
         

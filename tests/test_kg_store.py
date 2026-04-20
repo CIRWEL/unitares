@@ -213,11 +213,12 @@ class TestStoreKnowledgeGraph:
 
     @pytest.mark.asyncio
     async def test_store_truncates_long_summary(self, patch_common, registered_agent):
-        """Long summaries are truncated to 1000 chars."""
+        """Long summaries are truncated at MAX_SUMMARY_LEN."""
         mock_mcp_server, mock_graph = patch_common
         from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+        from src.mcp_handlers.knowledge.limits import MAX_SUMMARY_LEN
 
-        long_summary = "A" * 1100  # Exceeds 1000 char limit
+        long_summary = "A" * (MAX_SUMMARY_LEN + 100)
         result = await handle_store_knowledge_graph({
             "agent_id": registered_agent,
             "summary": long_summary,
@@ -230,11 +231,12 @@ class TestStoreKnowledgeGraph:
 
     @pytest.mark.asyncio
     async def test_store_truncates_long_details(self, patch_common, registered_agent):
-        """Long details are truncated to 5000 chars."""
+        """Long details are truncated at MAX_DETAILS_LEN."""
         mock_mcp_server, mock_graph = patch_common
         from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+        from src.mcp_handlers.knowledge.limits import MAX_DETAILS_LEN
 
-        long_details = "B" * 5500  # Exceeds 5000 char limit
+        long_details = "B" * (MAX_DETAILS_LEN + 500)
         result = await handle_store_knowledge_graph({
             "agent_id": registered_agent,
             "summary": "Test",
