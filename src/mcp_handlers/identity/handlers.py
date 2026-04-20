@@ -101,6 +101,75 @@ async def _emit_identity_hijack_event(
     except Exception as e:
         logger.warning(f"[IDENTITY_HIJACK] broadcast_event failed: {e}")
 
+
+async def _path2_ipua_pin_check(
+    *,
+    arguments: Dict[str, Any],
+    base_session_key: str,
+    force_new: bool,
+    resume: bool,
+) -> bool:
+    """PATH 2 IP:UA pin cross-check.
+
+    `derive_session_key` step 7 resolves an unauthenticated onboard() call to
+    a previously-pinned session by IP:UA fingerprint alone. Multiple same-
+    family agents on one machine silently adopt the first agent's UUID.
+    Observation phase emits `identity_hijack_suspected` with
+    `path="path2_ipua_pin"`; strict mode additionally forces a fresh mint by
+    returning resume=False. Suppressed when the caller supplied any ownership
+    proof (token, explicit session id, agent_uuid) or when force_new is set
+    (a deliberate fresh ask).
+
+    Returns the (possibly-flipped) `resume` flag the caller should use.
+    """
+    from ..context import get_session_resolution_source
+    if get_session_resolution_source() != "pinned_onboard_session":
+        return resume
+
+    has_proof = bool(
+        arguments.get("continuity_token")
+        or arguments.get("client_session_id")
+        or arguments.get("agent_id")
+        or arguments.get("agent_uuid")
+    )
+    if has_proof or force_new:
+        return resume
+
+    from config.governance_config import ipua_pin_check_mode
+    pin_mode = ipua_pin_check_mode()
+    if pin_mode == "off":
+        return resume
+
+    logger.warning(
+        "[PATH2_IPUA_PIN_RESUME] onboard() with no ownership proof resolved "
+        "to pinned session via IP:UA fingerprint — session_key=%s... (mode=%s)",
+        str(base_session_key)[:20],
+        pin_mode,
+    )
+    try:
+        b = _broadcaster()
+        if b is not None:
+            await b.broadcast_event(
+                event_type="identity_hijack_suspected",
+                agent_id=None,
+                payload={
+                    "path": "path2_ipua_pin",
+                    "mode": pin_mode,
+                    "source": "onboard_pin_fallback",
+                    "session_key_prefix": str(base_session_key)[:16],
+                },
+            )
+    except Exception as _be:
+        logger.warning(f"[PATH2_IPUA_PIN_RESUME] broadcast failed: {_be}")
+
+    # Strict mode: force fresh mint. The pin entry is left intact so the
+    # legitimate owner can still resume by presenting a continuity_token or
+    # agent_uuid.
+    if pin_mode == "strict":
+        return False
+    return resume
+
+
 # --- identity_resolution ---
 from .resolution import (
     _generate_agent_id,
@@ -1136,6 +1205,14 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     # Session continuity: resume existing identity by default.
     # Agents can pass resume=false for a new identity, or force_new=true for a clean break.
     resume = coerce_bool(arguments.get("resume"), default=True)
+
+    # PATH 2 IP:UA pin cross-check (2026-04-20 council follow-up to #83).
+    resume = await _path2_ipua_pin_check(
+        arguments=arguments,
+        base_session_key=base_session_key,
+        force_new=force_new,
+        resume=resume,
+    )
 
     # Extract agent UUID from continuity token for direct lookup fallback (PATH 2.8).
     # Token is a cryptographic proof of identity — stronger than name claim.
