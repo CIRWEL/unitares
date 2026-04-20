@@ -875,16 +875,18 @@ class TestHandleCallModel:
             assert data["success"] is False
 
     @pytest.mark.asyncio
-    async def test_gemini_missing_key(self):
+    async def test_unknown_provider_requires_openai_key(self):
+        # Gemini provider was removed; any unknown provider now falls into the
+        # custom-endpoint branch, which requires NGROK_API_KEY / OPENAI_API_KEY.
         env_clean = {
             k: v for k, v in os.environ.items()
-            if k not in ("GOOGLE_AI_API_KEY", "NGROK_API_KEY")
+            if k not in ("NGROK_API_KEY", "OPENAI_API_KEY")
         }
         with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
              patch.dict(os.environ, env_clean, clear=True):
             result = await handle_call_model({
                 "prompt": "test",
-                "provider": "gemini",
+                "provider": "custom",
                 "privacy": "cloud",
             })
             data = json.loads(result[0].text)

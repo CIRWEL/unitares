@@ -158,8 +158,7 @@ The system provides internal LLM delegation via `src/mcp_handlers/support/llm_de
 **Model routing via `call_model` tool:**
 - `provider=ollama` — force local Ollama
 - `provider=hf` — Hugging Face Inference Providers (free tier)
-- `provider=gemini` — Google Gemini Flash (free tier)
-- `provider=auto` — auto-select best available
+- `provider=auto` — auto-select (Ollama first, HF fallback)
 
 ---
 

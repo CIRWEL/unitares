@@ -1,14 +1,12 @@
 """
 Model Inference Tool - Free/low-cost LLM access for agents.
 
-Supports multiple providers:
-- Hugging Face Inference Providers (free tier, OpenAI-compatible)
-- Google Gemini Flash (free tier)
-- Ollama (local, free)
+Supports two providers:
+- Ollama (local, free) — default when privacy="local"
+- Hugging Face Inference Providers (free tier, OpenAI-compatible) — requires
+  HF_TOKEN
 
-Uses ngrok.ai for routing, failover, and cost optimization.
-Agents can call models for reasoning, generation, or analysis.
-
+Agents call models for reasoning, generation, or analysis.
 Usage tracked in EISV (Energy consumption) for self-regulation.
 """
 
@@ -43,8 +41,6 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     - Hugging Face Inference Providers (privacy="cloud", provider="hf")
       — requires HF_TOKEN or HUGGINGFACE_TOKEN. Model names like
       "deepseek-ai/DeepSeek-R1" or "Qwen/Qwen2.5-72B-Instruct" route here.
-    - Google Gemini (privacy="cloud", provider="gemini") — requires
-      GOOGLE_AI_API_KEY. Default model is "gemini-flash".
 
     Usage tracked in EISV (Energy consumption):
     - Model calls consume Energy
@@ -81,12 +77,12 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         return [error]
     
     # Get optional parameters
-    model = arguments.get("model", "auto")  # auto, hf, gemini-flash, llama-3.1-8b, etc.
+    model = arguments.get("model", "auto")  # auto, or any Ollama/HF model name
     task_type = arguments.get("task_type", "reasoning")  # reasoning, generation, analysis
     max_tokens = int(arguments.get("max_tokens", 2048))  # Must be int for Ollama
     temperature = float(arguments.get("temperature", 0.7))
     privacy = arguments.get("privacy", "local")  # local (Ollama default), auto, cloud
-    provider = arguments.get("provider", "auto")  # auto, hf, gemini, ollama
+    provider = arguments.get("provider", "auto")  # auto, hf, ollama
     
     # Privacy routing: Force local if requested
     if privacy == "local" or provider == "ollama":
@@ -132,29 +128,6 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         elif ":" not in model:
             model = f"{model}:fastest"  # Auto-select fastest provider
         logger.info(f"Using Hugging Face Inference Providers: {model}")
-    elif provider == "gemini" or (provider == "auto" and model.startswith("gemini")):
-        # Google Gemini (free tier)
-        base_url = os.getenv("NGROK_AI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta")
-        api_key = os.getenv("GOOGLE_AI_API_KEY") or os.getenv("NGROK_API_KEY")
-        if not api_key:
-            return [error_response(
-                "GOOGLE_AI_API_KEY or NGROK_API_KEY required for Gemini",
-                error_code="MISSING_CONFIG",
-                error_category="system_error",
-                recovery={
-                    "action": "Set GOOGLE_AI_API_KEY (get from https://aistudio.google.com/app/apikey)",
-                    "related_tools": ["health_check"],
-                    "workflow": [
-                        "1. Get free API key: https://aistudio.google.com/app/apikey",
-                        "2. Set: export GOOGLE_AI_API_KEY=your_key",
-                        "3. Restart MCP server",
-                        "4. Retry call_model tool"
-                    ]
-                }
-            )]
-        if model == "auto":
-            model = "gemini-flash"
-        logger.info(f"Using Google Gemini: {model}")
     elif provider == "auto":
         # Auto-select: Try Ollama first (local, free), then Gemini, then HF
         # Check if Ollama is available
@@ -177,17 +150,10 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             provider = "ollama"
             logger.info(f"Auto-selected Ollama (local): {model}")
         else:
-            # Fallback to Gemini or HF
-            google_key = os.getenv("GOOGLE_AI_API_KEY") or os.getenv("NGROK_API_KEY")
+            # Fallback: HF if a token is configured; otherwise give up.
             hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
 
-            if google_key:
-                base_url = os.getenv("NGROK_AI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta")
-                api_key = google_key
-                model = "gemini-flash" if model == "auto" else model
-                provider = "gemini"
-                logger.info(f"Auto-selected Google Gemini: {model}")
-            elif hf_token:
+            if hf_token:
                 base_url = "https://router.huggingface.co/v1"
                 api_key = hf_token
                 model = "deepseek-ai/DeepSeek-R1:fastest" if model == "auto" else model
@@ -197,22 +163,26 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                 logger.info(f"Auto-selected Hugging Face: {model}")
             else:
                 return [error_response(
-                    "No provider available. Ollama not running and no cloud API keys configured.",
+                    "No provider available. Ollama not running and HF_TOKEN not configured.",
                     error_code="MISSING_CONFIG",
                     error_category="system_error",
                     recovery={
-                        "action": "Start Ollama (recommended) or configure cloud API keys",
+                        "action": "Start Ollama (recommended) or set HF_TOKEN",
                         "related_tools": ["health_check"],
                         "workflow": [
                             "1. Install & run Ollama: ollama serve (recommended - free, local)",
-                            "2. Or get Google key: https://aistudio.google.com/app/apikey",
-                            "3. Or get HF token: https://huggingface.co/settings/tokens",
-                            "4. Retry call_model tool"
+                            "2. Or get HF token: https://huggingface.co/settings/tokens",
+                            "3. Retry call_model tool"
                         ]
                     }
                 )]
     else:
-        # Default: ngrok.ai gateway or OpenAI-compatible endpoint
+        # Default branch: custom OpenAI-compatible endpoint (ngrok gateway,
+        # self-hosted router, etc.). Reached when a caller passes a provider
+        # value outside the schema enum — the Pydantic layer normally blocks
+        # this, so this path only fires via direct handler calls or when the
+        # enum is widened. No hard-coded default model here: the caller must
+        # name a model the target endpoint actually serves.
         base_url = os.getenv("NGROK_AI_ENDPOINT", "https://api.openai.com/v1")
         api_key = os.getenv("NGROK_API_KEY") or os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -232,8 +202,21 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                 }
             )]
         if model == "auto":
-            model = "gemini-flash"  # Default to free tier
-        logger.info(f"Using ngrok.ai gateway or OpenAI-compatible endpoint: {model}")
+            return [error_response(
+                "Custom provider requires an explicit model name; 'auto' is not supported here.",
+                error_code="MISSING_PARAM",
+                error_category="validation_error",
+                recovery={
+                    "action": "Pass an explicit model name that your endpoint serves",
+                    "related_tools": ["health_check"],
+                    "workflow": [
+                        "1. Identify a model your custom endpoint exposes",
+                        "2. Pass it via the 'model' parameter",
+                        "3. Retry call_model tool"
+                    ]
+                }
+            )]
+        logger.info(f"Using custom OpenAI-compatible endpoint: {model}")
     
     try:
         client = OpenAI(base_url=base_url, api_key=api_key)
@@ -271,13 +254,11 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         tokens_used = response.usage.total_tokens if hasattr(response, 'usage') else 0
         model_used = getattr(response, 'model', model)
         
-        # Estimate Energy cost (simple: +0.01 per call, can refine later based on tokens)
-        # Free models (gemini-flash, llama-3.1-8b): minimal cost
-        # Low-cost models (gemini-pro): slightly higher
-        if "flash" in model.lower() or "llama" in model.lower() or "qwen" in model.lower():
+        # Estimate Energy cost (simple: +0.01 per call; refine later based on tokens)
+        # Free/local models (llama, qwen, gemma): minimal cost.
+        # Everything else gets the default estimate.
+        if "llama" in model.lower() or "qwen" in model.lower() or "gemma" in model.lower():
             energy_cost = 0.01  # Free tier
-        elif "pro" in model.lower():
-            energy_cost = 0.02  # Low-cost tier
         else:
             energy_cost = 0.03  # Default estimate
         
@@ -318,8 +299,6 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             routed_via = "ollama"
         elif "ngrok" in base_url.lower():
             routed_via = "ngrok.ai"
-        elif "generativelanguage.googleapis.com" in base_url:
-            routed_via = "gemini-direct"
         else:
             routed_via = "direct"
         
@@ -374,9 +353,9 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                 "action": recovery_hint,
                 "related_tools": ["health_check", "get_connection_status"],
                 "workflow": [
-                    "1. Check ngrok.ai configuration (if using gateway)",
-                    "2. Verify model is available",
-                    "3. Try a different model (gemini-flash, llama-3.1-8b)",
+                    "1. Check provider configuration",
+                    "2. Verify model is available (`ollama list` for local)",
+                    "3. Try a different model",
                     "4. Check server logs for details"
                 ]
             }

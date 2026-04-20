@@ -440,101 +440,11 @@ class TestHuggingFaceRouting:
 
 
 # =============================================================================
-# Tests: Provider routing - Gemini
+# Tests: Gemini provider removed
 # =============================================================================
-
-class TestGeminiRouting:
-    """Tests for Google Gemini provider routing.
-
-    All Gemini tests must use privacy="cloud" to bypass default privacy="local".
-    """
-
-    @pytest.mark.asyncio
-    async def test_gemini_provider_requires_api_key(self):
-        """Gemini provider returns error when no API key is set."""
-        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch.dict("os.environ", {}, clear=True):
-            from src.mcp_handlers.support.model_inference import handle_call_model
-            result = await handle_call_model({
-                "prompt": "Hello",
-                "provider": "gemini",
-                "privacy": "cloud",
-            })
-
-        parsed = _parse_text_content(result)
-        assert parsed["success"] is False
-        assert "GOOGLE_AI_API_KEY" in parsed["error"]
-
-    @pytest.mark.asyncio
-    async def test_gemini_provider_with_api_key(self):
-        """Gemini provider works with API key."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.chat.completions.create.return_value = _make_mock_response(
-            content="gemini response", model="gemini-flash"
-        )
-
-        env = {"GOOGLE_AI_API_KEY": "test_google_key"}
-        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance) as mock_openai, \
-             patch.dict("os.environ", env, clear=False):
-            from src.mcp_handlers.support.model_inference import handle_call_model
-            result = await handle_call_model({
-                "prompt": "Hello",
-                "provider": "gemini",
-                "privacy": "cloud",
-            })
-
-        mock_openai.assert_called_once()
-        call_kwargs = mock_openai.call_args[1]
-        assert call_kwargs["api_key"] == "test_google_key"
-
-        parsed = _parse_text_content(result)
-        assert parsed["success"] is True
-        assert parsed["routed_via"] == "gemini-direct"
-
-    @pytest.mark.asyncio
-    async def test_gemini_auto_detection_by_model_prefix(self):
-        """Auto-detects Gemini provider when model starts with 'gemini'."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.chat.completions.create.return_value = _make_mock_response(
-            model="gemini-pro"
-        )
-
-        env = {"GOOGLE_AI_API_KEY": "test_google_key"}
-        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance), \
-             patch.dict("os.environ", env, clear=False):
-            from src.mcp_handlers.support.model_inference import handle_call_model
-            result = await handle_call_model({
-                "prompt": "Hello",
-                "provider": "auto",
-                "model": "gemini-pro",
-                "privacy": "cloud",
-            })
-
-        parsed = _parse_text_content(result)
-        assert parsed["success"] is True
-
-    @pytest.mark.asyncio
-    async def test_gemini_defaults_to_flash_for_auto_model(self):
-        """Gemini with model=auto defaults to gemini-flash."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.chat.completions.create.return_value = _make_mock_response()
-
-        env = {"GOOGLE_AI_API_KEY": "test_key"}
-        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance), \
-             patch.dict("os.environ", env, clear=False):
-            from src.mcp_handlers.support.model_inference import handle_call_model
-            result = await handle_call_model({
-                "prompt": "Hello",
-                "provider": "gemini",
-                "privacy": "cloud",
-                "model": "auto",
-            })
-
-        call_kwargs = mock_client_instance.chat.completions.create.call_args[1]
-        assert call_kwargs["model"] == "gemini-flash"
+# The Gemini provider was removed in fix/drop-gemini-provider. The router
+# exposes only "ollama", "hf", and "auto" now. If Gemini support is restored
+# later, restore TestGeminiRouting and routed_via="gemini-direct" coverage.
 
 
 # =============================================================================
@@ -576,36 +486,8 @@ class TestAutoProviderSelection:
         assert parsed["routed_via"] == "ollama"
 
     @pytest.mark.asyncio
-    async def test_auto_falls_back_to_gemini_when_ollama_down(self):
-        """Auto provider falls back to Gemini when Ollama is not running."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.chat.completions.create.return_value = _make_mock_response(
-            model="gemini-flash"
-        )
-
-        mock_socket = MagicMock()
-        mock_socket.connect_ex.return_value = 1  # Connection refused
-
-        env = {"GOOGLE_AI_API_KEY": "test_key"}
-        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance), \
-             patch("socket.socket", return_value=mock_socket), \
-             patch.dict("os.environ", env, clear=False):
-            from src.mcp_handlers.support.model_inference import handle_call_model
-            result = await handle_call_model({
-                "prompt": "Hello",
-                "provider": "auto",
-                "privacy": "cloud",
-                "model": "auto",
-            })
-
-        parsed = _parse_text_content(result)
-        assert parsed["success"] is True
-        assert parsed["routed_via"] == "gemini-direct"
-
-    @pytest.mark.asyncio
-    async def test_auto_falls_back_to_hf_when_no_google_key(self):
-        """Auto provider falls back to HF when no Ollama and no Google key."""
+    async def test_auto_falls_back_to_hf_when_ollama_down(self):
+        """Auto provider falls back to HF when Ollama is not running and HF_TOKEN is set."""
         mock_client_instance = MagicMock()
         mock_client_instance.chat.completions.create.return_value = _make_mock_response(
             model="deepseek-ai/DeepSeek-R1:fastest"
@@ -614,7 +496,6 @@ class TestAutoProviderSelection:
         mock_socket = MagicMock()
         mock_socket.connect_ex.return_value = 1  # No Ollama
 
-        # Only set HF_TOKEN, ensure Google keys are absent
         env = {"HF_TOKEN": "hf_test_token"}
         with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
              patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance), \
@@ -633,14 +514,49 @@ class TestAutoProviderSelection:
         assert parsed["routed_via"] == "huggingface"
 
     @pytest.mark.asyncio
-    async def test_auto_returns_error_when_nothing_available(self):
-        """Auto provider returns error when no providers are available."""
+    async def test_auto_ignores_google_key_when_set(self, monkeypatch):
+        """GOOGLE_AI_API_KEY is not consulted by the auto fallback anymore."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.chat.completions.create.return_value = _make_mock_response(
+            model="deepseek-ai/DeepSeek-R1:fastest"
+        )
+
         mock_socket = MagicMock()
         mock_socket.connect_ex.return_value = 1  # No Ollama
 
+        # Google key present but should be ignored; HF should win.
+        monkeypatch.delenv("UNITARES_LLM_MODEL", raising=False)
+        env = {"GOOGLE_AI_API_KEY": "ignored_key", "HF_TOKEN": "hf_test_token"}
+        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
+             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance), \
+             patch("socket.socket", return_value=mock_socket), \
+             patch.dict("os.environ", env, clear=True):
+            from src.mcp_handlers.support.model_inference import handle_call_model
+            result = await handle_call_model({
+                "prompt": "Hello",
+                "provider": "auto",
+                "privacy": "cloud",
+                "model": "auto",
+            })
+
+        parsed = _parse_text_content(result)
+        assert parsed["success"] is True
+        assert parsed["routed_via"] == "huggingface"
+
+    @pytest.mark.asyncio
+    async def test_auto_returns_error_when_nothing_available(self):
+        """Auto provider returns error when Ollama is down and HF_TOKEN absent.
+
+        GOOGLE_AI_API_KEY no longer counts — Gemini was removed.
+        """
+        mock_socket = MagicMock()
+        mock_socket.connect_ex.return_value = 1  # No Ollama
+
+        # Even with GOOGLE_AI_API_KEY set, there's no provider available.
+        env = {"GOOGLE_AI_API_KEY": "test_key"}
         with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
              patch("socket.socket", return_value=mock_socket), \
-             patch.dict("os.environ", {}, clear=True):
+             patch.dict("os.environ", env, clear=True):
             from src.mcp_handlers.support.model_inference import handle_call_model
             result = await handle_call_model({
                 "prompt": "Hello",
@@ -652,6 +568,7 @@ class TestAutoProviderSelection:
         parsed = _parse_text_content(result)
         assert parsed["success"] is False
         assert "No provider available" in parsed["error"]
+        assert "HF_TOKEN" in parsed["error"]
 
 
 # =============================================================================
@@ -706,14 +623,10 @@ class TestDefaultProvider:
         assert parsed["routed_via"] == "direct"
 
     @pytest.mark.asyncio
-    async def test_default_provider_defaults_model_to_gemini_flash(self):
-        """Default provider with model=auto defaults to gemini-flash."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.chat.completions.create.return_value = _make_mock_response()
-
+    async def test_default_provider_rejects_auto_model(self):
+        """Custom endpoints must specify a model — 'auto' is rejected."""
         env = {"OPENAI_API_KEY": "sk-test-key"}
         with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance), \
              patch.dict("os.environ", env, clear=False):
             from src.mcp_handlers.support.model_inference import handle_call_model
             result = await handle_call_model({
@@ -723,8 +636,10 @@ class TestDefaultProvider:
                 "model": "auto",
             })
 
-        call_kwargs = mock_client_instance.chat.completions.create.call_args[1]
-        assert call_kwargs["model"] == "gemini-flash"
+        parsed = _parse_text_content(result)
+        assert parsed["success"] is False
+        assert parsed.get("error_code") == "MISSING_PARAM"
+        assert "explicit model" in parsed["error"].lower()
 
 
 # =============================================================================
@@ -1213,25 +1128,7 @@ class TestRoutingViaDetection:
         parsed = _parse_text_content(result)
         assert parsed["routed_via"] == "huggingface"
 
-    @pytest.mark.asyncio
-    async def test_routed_via_gemini_direct(self):
-        """Detects gemini-direct routing."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.chat.completions.create.return_value = _make_mock_response()
-
-        env = {"GOOGLE_AI_API_KEY": "test"}
-        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance), \
-             patch.dict("os.environ", env, clear=False):
-            from src.mcp_handlers.support.model_inference import handle_call_model
-            result = await handle_call_model({
-                "prompt": "test",
-                "provider": "gemini",
-                "privacy": "cloud",
-            })
-
-        parsed = _parse_text_content(result)
-        assert parsed["routed_via"] == "gemini-direct"
+    # Gemini provider and its routed_via="gemini-direct" label were removed.
 
     @pytest.mark.asyncio
     async def test_routed_via_direct_for_custom_endpoint(self):
