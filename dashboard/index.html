@@ -465,9 +465,8 @@
             </div>
         </div>
 
-        <!-- Fleet Metrics — catalog-driven time-series from metrics.series.
-             One line chart per selected metric (e.g. LOC, test count, KG
-             discoveries) fed daily by the Chronicler resident agent. -->
+        <!-- Fleet Metrics — catalog-driven time-series from metrics.series,
+             fed daily by the Chronicler scraper. -->
         <div class="panel" id="fleet-metrics-section">
             <div class="panel-header">
                 <h2>Fleet Metrics</h2>
@@ -478,11 +477,13 @@
                     <button id="fleet-metrics-refresh" class="panel-button" type="button">Refresh</button>
                 </div>
             </div>
-            <div id="fleet-metrics-container" style="position:relative; height:320px; padding:12px;">
+            <div class="fleet-metrics-meta">
+                <span id="fleet-metrics-description" class="fleet-metrics-description"></span>
+                <span id="fleet-metrics-scrape-status" class="fleet-metrics-scrape-status"></span>
+            </div>
+            <div class="fleet-metrics-chart-wrap">
                 <canvas id="fleet-metrics-chart"></canvas>
-                <div id="fleet-metrics-empty" class="timeline-empty" style="display:none;">
-                    Loading metrics…
-                </div>
+                <div id="fleet-metrics-empty" class="timeline-empty">Loading metrics…</div>
             </div>
         </div>
 

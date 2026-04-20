@@ -1,24 +1,25 @@
 // fleet-metrics.js — render `metrics.series` time-series on the dashboard.
 //
 // Consumes:
-//   GET /v1/metrics/catalog       — list of available series names
+//   GET /v1/metrics/catalog       — available series (name, description, unit)
 //   GET /v1/metrics/series?name=X — points for the selected series
 //
-// Deliberately small surface: one line chart, a dropdown of series, a
-// refresh button. No WS subscription (these metrics move on daily cadence,
-// so polling-on-demand is right-sized). Extends naturally as the catalog
-// grows — no code change needed to see new series, just pick them from
-// the dropdown.
+// Surfaces Chronicler's scrape effect via a "Last scrape" subtitle so the
+// scraper is visible even though it isn't a resident agent with its own
+// identity/check-ins.
 
 (function () {
     'use strict';
 
     var chart = null;          // Chart.js instance
     var currentName = null;    // selected series name
+    var catalogCache = [];     // last-seen catalog
 
     function getAuthToken() {
         try {
-            return localStorage.getItem('UNITARES_HTTP_API_TOKEN') || null;
+            return localStorage.getItem('UNITARES_HTTP_API_TOKEN')
+                || localStorage.getItem('unitares_api_token')
+                || null;
         } catch (_e) {
             return null;
         }
@@ -66,40 +67,64 @@
         }
     }
 
+    function formatRelative(isoStr) {
+        if (!isoStr) return '';
+        var then = new Date(isoStr);
+        var secs = Math.floor((Date.now() - then.getTime()) / 1000);
+        if (secs < 60) return 'just now';
+        if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+        if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
+        return Math.floor(secs / 86400) + 'd ago';
+    }
+
+    function setDescription(text) {
+        var el = document.getElementById('fleet-metrics-description');
+        if (el) el.textContent = text || '';
+    }
+
+    function setScrapeStatus(points) {
+        var el = document.getElementById('fleet-metrics-scrape-status');
+        if (!el) return;
+        if (!points || points.length === 0) {
+            el.textContent = 'no data — awaiting first scrape';
+            el.title = '';
+            return;
+        }
+        var newest = points[points.length - 1];
+        el.textContent = 'last scrape: ' + formatRelative(newest.ts)
+            + ' (' + points.length + ' point' + (points.length === 1 ? '' : 's') + ')';
+        el.title = newest.ts;
+    }
+
+    function showChart(show) {
+        var canvas = document.getElementById('fleet-metrics-chart');
+        var empty = document.getElementById('fleet-metrics-empty');
+        if (canvas) canvas.style.display = show ? '' : 'none';
+        if (empty) empty.style.display = show ? 'none' : '';
+    }
+
     function renderEmpty(message) {
         var empty = document.getElementById('fleet-metrics-empty');
-        var canvas = document.getElementById('fleet-metrics-chart');
-        if (!empty || !canvas) return;
-        empty.textContent = message;
-        empty.style.display = '';
-        canvas.style.display = 'none';
-        if (chart) {
-            chart.destroy();
-            chart = null;
-        }
+        if (empty) empty.textContent = message;
+        showChart(false);
+        if (chart) { chart.destroy(); chart = null; }
     }
 
     function renderChart(metric, points) {
-        var empty = document.getElementById('fleet-metrics-empty');
         var canvas = document.getElementById('fleet-metrics-chart');
         if (!canvas) return;
 
         if (points.length === 0) {
-            renderEmpty('No data yet for "' + metric.name + '" — wait for the next Chronicler cycle.');
+            renderEmpty('No data for "' + metric.name + '" yet. Chronicler runs daily — try Refresh after the next cycle.');
             return;
         }
 
-        empty.style.display = 'none';
-        canvas.style.display = '';
-
+        showChart(true);
         var data = points.map(function (p) {
             return { x: new Date(p.ts), y: p.value };
         });
 
-        if (chart) {
-            chart.destroy();
-        }
-
+        if (chart) chart.destroy();
         // eslint-disable-next-line no-undef
         chart = new Chart(canvas.getContext('2d'), {
             type: 'line',
@@ -108,7 +133,7 @@
                     label: metric.name + (metric.unit ? ' (' + metric.unit + ')' : ''),
                     data: data,
                     borderColor: '#4a9eff',
-                    backgroundColor: 'rgba(74, 158, 255, 0.1)',
+                    backgroundColor: 'rgba(74, 158, 255, 0.12)',
                     fill: true,
                     tension: 0.2,
                     pointRadius: 3,
@@ -118,18 +143,17 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: { display: true, position: 'top' },
+                    legend: { display: false },
                     tooltip: { mode: 'index', intersect: false },
                 },
                 scales: {
                     x: {
                         type: 'time',
                         time: { tooltipFormat: 'yyyy-MM-dd HH:mm' },
-                        title: { display: false },
                     },
                     y: {
                         beginAtZero: false,
-                        title: { display: !!metric.unit, text: metric.unit },
+                        title: { display: !!metric.unit, text: metric.unit || '' },
                     },
                 },
             },
@@ -151,25 +175,30 @@
             var m = metrics[i];
             var o = document.createElement('option');
             o.value = m.name;
-            o.textContent = m.name + (m.description ? '  —  ' + m.description : '');
+            o.textContent = m.name;          // terse — description goes in subtitle
+            if (m.description) o.title = m.description;
             select.appendChild(o);
         }
         if (!currentName || !metrics.some(function (m) { return m.name === currentName; })) {
             currentName = metrics[0].name;
-            select.value = currentName;
         }
+        select.value = currentName;
     }
 
     async function refresh() {
-        var metrics = await fetchCatalog();
-        populateDropdown(metrics);
-        if (metrics.length === 0) {
+        catalogCache = await fetchCatalog();
+        populateDropdown(catalogCache);
+        if (catalogCache.length === 0) {
+            setDescription('');
+            setScrapeStatus(null);
             renderEmpty('No metrics registered yet.');
             return;
         }
-        var metric = metrics.find(function (m) { return m.name === currentName; }) || metrics[0];
+        var metric = catalogCache.find(function (m) { return m.name === currentName; }) || catalogCache[0];
         currentName = metric.name;
+        setDescription(metric.description || '');
         var points = await fetchSeries(metric.name);
+        setScrapeStatus(points);
         renderChart(metric, points);
     }
 
@@ -194,7 +223,6 @@
         wire();
     }
 
-    // Expose for console debugging / tests
     window.FleetMetricsPanel = {
         refresh: refresh,
         _fetchCatalog: fetchCatalog,
