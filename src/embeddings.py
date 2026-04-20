@@ -4,33 +4,60 @@ Embeddings Service for Semantic Search
 Provides text embeddings using sentence-transformers for semantic similarity
 queries over the knowledge graph.
 
-Model: all-MiniLM-L6-v2 (fast, small, good quality)
-- 384 dimensions
-- ~80MB model size
-- ~10ms per embedding on CPU
+Model selection (UNITARES_EMBEDDING_MODEL env var):
+- `minilm` (default) — sentence-transformers/all-MiniLM-L6-v2, 384d
+- `bge-m3`           — BAAI/bge-m3, 1024d
+
+Both load via SentenceTransformer. BGE-M3 is symmetric (no query/passage
+asymmetry), so the same encode path is used for both sides.
 
 Usage:
     from src.embeddings import get_embeddings_service
-    
+
     service = await get_embeddings_service()
     embedding = await service.embed("circuit breaker triggered")
-    similar = await service.find_similar(embedding, top_k=5)
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
-from typing import Any, Dict, List, Optional, Tuple
-from pathlib import Path
+import os
+from typing import Dict, List, Optional, Tuple
 
 from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
-# Model configuration
-DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-EMBEDDING_DIM = 384
+
+# Model registry. Add entries here when introducing new embedders.
+# `table_suffix` is appended to `core.discovery_embeddings` when a model
+# differs in dimension; empty string means the default table.
+KNOWN_MODELS: Dict[str, Dict[str, object]] = {
+    "minilm": {
+        "hf_name": "sentence-transformers/all-MiniLM-L6-v2",
+        "dim": 384,
+        "table_suffix": "",
+    },
+    "bge-m3": {
+        "hf_name": "BAAI/bge-m3",
+        "dim": 1024,
+        "table_suffix": "_bge_m3",
+    },
+}
+
+DEFAULT_MODEL_KEY = os.getenv("UNITARES_EMBEDDING_MODEL", "minilm").strip().lower()
+if DEFAULT_MODEL_KEY not in KNOWN_MODELS:
+    logger.warning(
+        f"Unknown UNITARES_EMBEDDING_MODEL={DEFAULT_MODEL_KEY!r}; "
+        f"falling back to 'minilm'. Known: {list(KNOWN_MODELS)}"
+    )
+    DEFAULT_MODEL_KEY = "minilm"
+
+_DEFAULT_ENTRY = KNOWN_MODELS[DEFAULT_MODEL_KEY]
+DEFAULT_MODEL: str = str(_DEFAULT_ENTRY["hf_name"])
+EMBEDDING_DIM: int = int(_DEFAULT_ENTRY["dim"])
+EMBEDDINGS_TABLE: str = f"core.discovery_embeddings{_DEFAULT_ENTRY['table_suffix']}"
+
 
 # Check if sentence-transformers is available
 try:
@@ -48,16 +75,23 @@ except ImportError:
 class EmbeddingsService:
     """
     Embeddings service with lazy model loading.
-    
+
     Thread-safe, async-compatible via run_in_executor.
     Model loaded on first use to avoid startup overhead.
     """
-    
-    def __init__(self, model_name: str = DEFAULT_MODEL):
-        self.model_name = model_name
+
+    def __init__(self, model_key: str = DEFAULT_MODEL_KEY):
+        if model_key not in KNOWN_MODELS:
+            logger.warning(f"Unknown model_key={model_key!r}; using 'minilm'")
+            model_key = "minilm"
+        entry = KNOWN_MODELS[model_key]
+        self.model_key = model_key
+        self.model_name: str = str(entry["hf_name"])
+        self.dim: int = int(entry["dim"])
+        self.table_name: str = f"core.discovery_embeddings{entry['table_suffix']}"
         self._model: Optional[SentenceTransformer] = None
         self._load_lock: Optional[asyncio.Lock] = None
-    
+
     async def _ensure_model(self) -> SentenceTransformer:
         """Lazy load model on first use."""
         if not SENTENCE_TRANSFORMERS_AVAILABLE:
@@ -65,68 +99,50 @@ class EmbeddingsService:
                 "sentence-transformers not installed. "
                 "Install with: pip install sentence-transformers"
             )
-        
+
         if self._model is not None:
             return self._model
-        
+
         # Create lock lazily to avoid event loop binding issues
         if self._load_lock is None:
             self._load_lock = asyncio.Lock()
-        
+
         async with self._load_lock:
             # Double-check after acquiring lock
             if self._model is not None:
                 return self._model
-            
+
             # Load model in executor (blocking I/O)
             loop = asyncio.get_running_loop()
-            
+
             def _load_model():
-                logger.info(f"Loading embedding model: {self.model_name}")
+                logger.info(f"Loading embedding model: {self.model_name} (key={self.model_key}, dim={self.dim})")
                 model = SentenceTransformer(self.model_name)
                 logger.info(f"Embedding model loaded: {self.model_name}")
                 return model
-            
+
             self._model = await loop.run_in_executor(None, _load_model)
             return self._model
-    
+
     async def embed(self, text: str) -> List[float]:
-        """
-        Generate embedding for a single text.
-        
-        Args:
-            text: Text to embed
-            
-        Returns:
-            List of floats (384 dimensions for MiniLM-L6-v2)
-        """
+        """Generate embedding for a single text."""
         model = await self._ensure_model()
         loop = asyncio.get_running_loop()
-        
+
         def _encode():
-            # normalize_embeddings=True for cosine similarity
             embedding = model.encode(text, normalize_embeddings=True)
             return embedding.tolist()
-        
+
         return await loop.run_in_executor(None, _encode)
-    
+
     async def embed_batch(self, texts: List[str], batch_size: int = 32) -> List[List[float]]:
-        """
-        Generate embeddings for multiple texts.
-        
-        Args:
-            texts: List of texts to embed
-            batch_size: Batch size for encoding
-            
-        Returns:
-            List of embeddings (each 384 dimensions)
-        """
+        """Generate embeddings for multiple texts."""
         if not texts:
             return []
-        
+
         model = await self._ensure_model()
         loop = asyncio.get_running_loop()
-        
+
         def _encode_batch():
             embeddings = model.encode(
                 texts,
@@ -135,50 +151,34 @@ class EmbeddingsService:
                 show_progress_bar=len(texts) > 100
             )
             return [emb.tolist() for emb in embeddings]
-        
+
         return await loop.run_in_executor(None, _encode_batch)
-    
+
     async def similarity(self, embedding1: List[float], embedding2: List[float]) -> float:
-        """
-        Compute cosine similarity between two embeddings.
-        
-        Since embeddings are normalized, dot product = cosine similarity.
-        """
+        """Cosine similarity via dot product on normalized vectors."""
         if not SENTENCE_TRANSFORMERS_AVAILABLE:
             raise RuntimeError("numpy not available")
-        
         arr1 = np.array(embedding1)
         arr2 = np.array(embedding2)
         return float(np.dot(arr1, arr2))
-    
+
     async def rank_by_similarity(
         self,
         query_embedding: List[float],
         candidate_embeddings: List[Tuple[str, List[float]]],
         top_k: int = 10
     ) -> List[Tuple[str, float]]:
-        """
-        Rank candidates by similarity to query.
-        
-        Args:
-            query_embedding: Query embedding
-            candidate_embeddings: List of (id, embedding) tuples
-            top_k: Number of results to return
-            
-        Returns:
-            List of (id, similarity_score) tuples, sorted by score descending
-        """
+        """Rank candidates by similarity to query."""
         if not candidate_embeddings:
             return []
-        
+
         if not SENTENCE_TRANSFORMERS_AVAILABLE:
             raise RuntimeError("numpy not available")
-        
+
         loop = asyncio.get_running_loop()
-        
+
         def _rank():
             query = np.array(query_embedding)
-            
             scores = []
             for doc_id, emb in candidate_embeddings:
                 if emb is None:
@@ -186,16 +186,13 @@ class EmbeddingsService:
                 candidate = np.array(emb)
                 if candidate.ndim == 0:
                     continue
-                # Dot product of normalized vectors = cosine similarity
                 score = float(np.dot(query, candidate))
                 scores.append((doc_id, score))
-            
-            # Sort by score descending
             scores.sort(key=lambda x: x[1], reverse=True)
             return scores[:top_k]
-        
+
         return await loop.run_in_executor(None, _rank)
-    
+
     def is_available(self) -> bool:
         """Check if embeddings service is available."""
         return SENTENCE_TRANSFORMERS_AVAILABLE
@@ -213,7 +210,6 @@ async def get_embeddings_service() -> EmbeddingsService:
     if _embeddings_service is not None:
         return _embeddings_service
 
-    # Lazy-create lock inside the running event loop (not at import time)
     if _service_lock is None:
         _service_lock = asyncio.Lock()
 
@@ -226,3 +222,13 @@ async def get_embeddings_service() -> EmbeddingsService:
 def embeddings_available() -> bool:
     """Check if embeddings are available (sentence-transformers installed)."""
     return SENTENCE_TRANSFORMERS_AVAILABLE
+
+
+def get_active_table_name() -> str:
+    """Return the PG table storing embeddings for the active model.
+
+    Exposed so the storage layer can select the right table without hard-coding
+    `core.discovery_embeddings`. Different embedding dimensions live in
+    different tables so pgvector's per-column dimension is respected.
+    """
+    return EMBEDDINGS_TABLE

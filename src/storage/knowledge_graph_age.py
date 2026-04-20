@@ -1282,27 +1282,33 @@ class KnowledgeGraphAGE:
         return similar[:limit]
 
     async def _pgvector_available(self) -> bool:
-        """Check if pgvector extension and embeddings table exist."""
+        """Check if pgvector extension and the active embeddings table exist."""
         db = await self._get_db()
         if not hasattr(db, '_pool') or db._pool is None:
             return False
 
         try:
+            from src.embeddings import get_active_table_name
+            # Table name is schema-qualified (e.g. "core.discovery_embeddings_bge_m3");
+            # split for information_schema lookup.
+            qualified = get_active_table_name()
+            schema, _, table = qualified.partition(".")
             async with db.acquire() as conn:
-                # Check if vector extension exists
                 ext_exists = await conn.fetchval(
                     "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')"
                 )
                 if not ext_exists:
                     return False
-                
-                # Check if embeddings table exists
-                table_exists = await conn.fetchval("""
+
+                table_exists = await conn.fetchval(
+                    """
                     SELECT EXISTS (
-                        SELECT 1 FROM information_schema.tables 
-                        WHERE table_schema = 'core' AND table_name = 'discovery_embeddings'
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = $1 AND table_name = $2
                     )
-                """)
+                    """,
+                    schema, table,
+                )
                 return table_exists
         except Exception as e:
             logger.debug(f"pgvector check failed: {e}")
@@ -1320,52 +1326,66 @@ class KnowledgeGraphAGE:
 
         Returns list of (discovery_id, similarity_score) tuples.
         """
+        from src.embeddings import get_active_table_name
         db = await self._get_db()
+        table = get_active_table_name()
 
         # Convert list to pgvector string format: '[0.1, 0.2, ...]'
         embedding_str = '[' + ','.join(str(x) for x in query_embedding) + ']'
 
         async with db.acquire() as conn:
-            # Build query with optional agent filter
             if agent_id:
-                # Join with AGE graph to filter by agent
-                # Note: This is a hybrid query - pgvector for similarity, then filter
-                rows = await conn.fetch("""
+                # Hybrid query: pgvector for similarity, later filter by agent via AGE
+                rows = await conn.fetch(
+                    f"""
                     SELECT de.discovery_id, (1 - (de.embedding <=> $1::vector)) AS similarity
-                    FROM core.discovery_embeddings de
+                    FROM {table} de
                     WHERE de.embedding IS NOT NULL
                       AND (1 - (de.embedding <=> $1::vector)) >= $2
                     ORDER BY de.embedding <=> $1::vector
                     LIMIT $3
-                """, embedding_str, min_similarity, limit * 3)
+                    """,
+                    embedding_str, min_similarity, limit * 3,
+                )
             else:
-                rows = await conn.fetch("""
+                rows = await conn.fetch(
+                    f"""
                     SELECT discovery_id, (1 - (embedding <=> $1::vector)) AS similarity
-                    FROM core.discovery_embeddings
+                    FROM {table}
                     WHERE embedding IS NOT NULL
                       AND (1 - (embedding <=> $1::vector)) >= $2
                     ORDER BY embedding <=> $1::vector
                     LIMIT $3
-                """, embedding_str, min_similarity, limit)
+                    """,
+                    embedding_str, min_similarity, limit,
+                )
 
             return [(row['discovery_id'], float(row['similarity'])) for row in rows]
 
     async def _store_embedding(self, discovery_id: str, embedding: List[float]) -> None:
-        """Store embedding in pgvector table."""
+        """Store embedding in the pgvector table for the active model."""
+        from src.embeddings import get_active_table_name, get_embeddings_service
         db = await self._get_db()
+        table = get_active_table_name()
+        svc = await get_embeddings_service()
+        model_name = svc.model_name
 
         # Convert list to pgvector string format: '[0.1, 0.2, ...]'
         embedding_str = '[' + ','.join(str(x) for x in embedding) + ']'
 
         try:
             async with db.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO core.discovery_embeddings (discovery_id, embedding, model_name)
-                    VALUES ($1, $2::vector, 'all-MiniLM-L6-v2')
+                await conn.execute(
+                    f"""
+                    INSERT INTO {table} (discovery_id, embedding, model_name)
+                    VALUES ($1, $2::vector, $3)
                     ON CONFLICT (discovery_id) DO UPDATE SET
                         embedding = EXCLUDED.embedding,
+                        model_name = EXCLUDED.model_name,
                         updated_at = now()
-                """, discovery_id, embedding_str)
+                    """,
+                    discovery_id, embedding_str, model_name,
+                )
         except Exception as e:
             logger.debug(f"Failed to store embedding for {discovery_id}: {e}")
 

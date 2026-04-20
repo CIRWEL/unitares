@@ -146,9 +146,12 @@ class ConceptExtractor:
     async def _fetch_embeddings(
         self, discovery_ids: Set[str]
     ) -> Dict[str, np.ndarray]:
-        """Phase 2: Fetch embeddings from core.discovery_embeddings."""
+        """Fetch embeddings from the active pgvector table."""
         if not discovery_ids:
             return {}
+
+        from src.embeddings import get_active_table_name
+        table = get_active_table_name()
 
         db = get_db()
         result: Dict[str, np.ndarray] = {}
@@ -160,7 +163,7 @@ class ConceptExtractor:
             placeholders = ", ".join(f"${j + 1}" for j in range(len(chunk)))
             async with db.acquire() as conn:
                 rows = await conn.fetch(
-                    f"SELECT discovery_id, embedding::text FROM core.discovery_embeddings "
+                    f"SELECT discovery_id, embedding::text FROM {table} "
                     f"WHERE discovery_id IN ({placeholders})",
                     *chunk,
                 )

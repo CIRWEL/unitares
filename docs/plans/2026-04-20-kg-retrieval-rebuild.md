@@ -109,29 +109,30 @@ Each step lands in isolation, behind a flag where sensible, measured against the
 
 ## Success criteria
 
-**Baseline (current system, 20-pair seed corpus, captured 2026-04-20 via Phase 1 harness):**
+**Progression (20-pair seed corpus):**
 
-| Metric | Baseline | Target (post-rebuild) |
-|---|---|---|
-| nDCG@10 (mean) | 0.826 | ≥ 0.90 |
-| Recall@20 (mean) | 0.875 | ≥ 0.95 |
-| MRR (mean) | 0.825 | ≥ 0.90 |
-| **Flat misses** (nDCG=0) | **2/20 (10%)** | **0/20** |
-| Latency p50 (steady-state) | 28–40ms | ≤ 100ms w/o rerank; ≤ 500ms with |
+| Metric | V1 (MiniLM, baseline) | **V2 (BGE-M3, Phase 2)** | Target |
+|---|---|---|---|
+| nDCG@10 (mean) | 0.826 | **0.861** | ≥ 0.90 |
+| Recall@20 (mean) | 0.875 | **0.925** | ≥ 0.95 |
+| MRR (mean) | 0.825 | **0.867** | ≥ 0.90 |
+| **Flat misses** (nDCG=0) | 2/20 (10%) | **1/20 (5%)** | 0/20 |
+| Latency p50 (steady-state) | 28–40ms | 80–180ms | ≤ 100ms w/o rerank; ≤ 500ms with |
 
-The aggregate numbers are higher than my original "expect ~0.20–0.30" estimate
-because seed labels tend to share surface vocabulary with their targets. The
-honest signal is the **flat-miss rate**: two queries return top scores of
-0.137 and 0.175 (noise floor) for content that genuinely exists in the target
-documents. This matches the 2026-04-18 dogfood complaint exactly. Target:
-zero flat misses after Phase 3 (reranker + new embedder).
+**Phase 2 landed 2026-04-20.** BGE-M3 (1024d) replaces MiniLM-L6-v2 (384d) behind `UNITARES_EMBEDDING_MODEL=bge-m3`. Wins:
 
-- **Dogfood check**: `"hybrid search retrieval rebuild"` returns the Dec-2025 ticket at top-1 (baseline preserves this).
-- **Honest failure mode**: "no match" is returned when there truly is no match. Zero 0.2-threshold garbage. (Landed in Phase 0.)
+- The **"burst 503" flat miss is fixed** — went from top score 0.137 (noise) to rank-1 at 0.430.
+- Two queries that previously hit at rank 2 (`"anyio deadlock"`, `"Watcher false positive triage"`) now hit at rank 1.
+- Top scores across the corpus sit at ~0.35–0.60 instead of ~0.14–0.55. Clearly off the noise floor.
 
-Baseline is pinned at `tests/retrieval_eval/baseline_2026-04-20.json`. Re-run anytime:
+Remaining single flat miss: `"knowledge graph ephemeral tag auto archive"` — top score rose to 0.416 but the wrong doc is at rank 1. This is the class of miss the Phase 3 cross-encoder reranker is specifically designed to fix.
+
+- **Dogfood check**: `"hybrid search retrieval rebuild"` returns the Dec-2025 ticket at top-1 under both V1 and V2.
+- **Honest failure mode**: "no match" when there truly is no match. Zero 0.2-threshold garbage. (Landed in Phase 0.)
+
+Baselines pinned: `tests/retrieval_eval/baseline_2026-04-20.json` (V1), `tests/retrieval_eval/baseline_2026-04-20_bge_m3.json` (V2). Re-run:
 ```bash
-UNITARES_KNOWLEDGE_BACKEND=age python scripts/eval/retrieval_eval.py
+UNITARES_EMBEDDING_MODEL=bge-m3 UNITARES_KNOWLEDGE_BACKEND=age python scripts/eval/retrieval_eval.py
 ```
 
 ## Non-goals
