@@ -5058,14 +5058,36 @@ body {
     opacity: 0.85;
 }
 
+/* Chart.js grow-loop guard (GitHub chartjs/Chart.js#11821, #1798, #5805).
+ *
+ * `responsive: true` + `maintainAspectRatio: false` inside a flex-column
+ * parent without `overflow: hidden` creates an infinite ResizeObserver
+ * cycle: the canvas resizes to the parent, which causes the parent to
+ * resize, which fires the observer again, each pass adding a few pixels.
+ *
+ * The combination required to stop this on a flex-column `.panel`:
+ *   1. `flex: 0 0 200px` — wrapper has a fixed main-axis size and is
+ *      NOT allowed to stretch (flex-grow:0) or shrink (flex-shrink:0)
+ *      based on sibling content.
+ *   2. `overflow: hidden` — absorbs the grow-cycle; without it the
+ *      canvas's over-measurement propagates back into the parent.
+ *   3. Canvas `box-sizing: border-box` — including border/padding in
+ *      the canvas's own measured size is required for Chart.js to
+ *      converge instead of oscillate.
+ *   4. `contain: strict` — tells the browser to skip layout recalcs
+ *      outside this box on resize.
+ */
 .fleet-metrics-chart-wrap {
     position: relative;
-    height: 200px;         /* match peer panels' visual footprint on desktop */
+    flex: 0 0 200px;
+    height: 200px;
+    overflow: hidden;
     padding: 4px 0;
-    contain: strict;       /* prevents Chart.js resize-observer from thrashing parent layout */
+    contain: strict;
 }
 
 .fleet-metrics-chart-wrap canvas {
+    box-sizing: border-box;
     width: 100% !important;
     height: 100% !important;
 }
