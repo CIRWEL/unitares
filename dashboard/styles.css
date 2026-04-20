@@ -4851,9 +4851,11 @@ body {
     margin-right: auto;
 }
 
-/* Activity timeline sits outside .main-content, so .panel's default
-   (no max-width) makes it stretch full viewport. Match the 1400px column. */
-#activity-timeline-section {
+/* Activity timeline and Fleet Metrics sit outside .main-content, so
+   .panel's default (no max-width) makes them stretch the full viewport.
+   Match the 1400px column used by .main-content above. */
+#activity-timeline-section,
+#fleet-metrics-section {
     max-width: 1400px;
     margin-left: auto;
     margin-right: auto;
