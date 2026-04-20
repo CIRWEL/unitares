@@ -109,11 +109,30 @@ Each step lands in isolation, behind a flag where sensible, measured against the
 
 ## Success criteria
 
-- **nDCG@10 ≥ 0.50** on the 100-pair eval set (baseline TBD after Phase 1; expect ~0.20–0.30).
-- **Recall@20 ≥ 0.80** — when the right doc exists, it's reachable for the reranker.
-- **p95 search latency ≤ 500ms** including rerank (250ms target without rerank).
-- **Dogfood check**: the original complaint query `"hybrid search"` returns the Dec-2025 ticket as the #1 result, not as one of several 0.14-scored hits.
-- **Honest failure mode**: "no match" is returned when there truly is no match. Zero 0.2-threshold garbage.
+**Baseline (current system, 20-pair seed corpus, captured 2026-04-20 via Phase 1 harness):**
+
+| Metric | Baseline | Target (post-rebuild) |
+|---|---|---|
+| nDCG@10 (mean) | 0.826 | ≥ 0.90 |
+| Recall@20 (mean) | 0.875 | ≥ 0.95 |
+| MRR (mean) | 0.825 | ≥ 0.90 |
+| **Flat misses** (nDCG=0) | **2/20 (10%)** | **0/20** |
+| Latency p50 (steady-state) | 28–40ms | ≤ 100ms w/o rerank; ≤ 500ms with |
+
+The aggregate numbers are higher than my original "expect ~0.20–0.30" estimate
+because seed labels tend to share surface vocabulary with their targets. The
+honest signal is the **flat-miss rate**: two queries return top scores of
+0.137 and 0.175 (noise floor) for content that genuinely exists in the target
+documents. This matches the 2026-04-18 dogfood complaint exactly. Target:
+zero flat misses after Phase 3 (reranker + new embedder).
+
+- **Dogfood check**: `"hybrid search retrieval rebuild"` returns the Dec-2025 ticket at top-1 (baseline preserves this).
+- **Honest failure mode**: "no match" is returned when there truly is no match. Zero 0.2-threshold garbage. (Landed in Phase 0.)
+
+Baseline is pinned at `tests/retrieval_eval/baseline_2026-04-20.json`. Re-run anytime:
+```bash
+UNITARES_KNOWLEDGE_BACKEND=age python scripts/eval/retrieval_eval.py
+```
 
 ## Non-goals
 
