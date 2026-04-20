@@ -1060,6 +1060,113 @@ _FINDING_TYPE_SUFFIX = "_finding"
 _FINDING_REQUIRED_FIELDS = ("type", "severity", "message", "agent_id", "agent_name", "fingerprint")
 
 
+async def http_post_metric(request):
+    """POST /v1/metrics — write one `(name, value)` point into `metrics.series`.
+
+    Body: `{"name": "...", "value": 1.23, "ts"?: "2026-04-20T..."}`
+    Name must be registered in `src.fleet_metrics.catalog`; a leaked bearer
+    token therefore cannot inject arbitrary metric names.
+    """
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    if not _check_http_auth(request, http_api_token=http_api_token):
+        return _http_unauthorized()
+    try:
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse({"success": False, "error": "Invalid JSON"}, status_code=400)
+
+        if not isinstance(payload, dict):
+            return JSONResponse({"success": False, "error": "Body must be a JSON object"}, status_code=400)
+
+        name = payload.get("name")
+        value = payload.get("value")
+        ts_raw = payload.get("ts")
+        if not isinstance(name, str) or not name:
+            return JSONResponse({"success": False, "error": "Missing or invalid 'name'"}, status_code=400)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return JSONResponse({"success": False, "error": "Missing or invalid 'value' (number required)"}, status_code=400)
+
+        ts = None
+        if ts_raw is not None:
+            if not isinstance(ts_raw, str):
+                return JSONResponse({"success": False, "error": "'ts' must be ISO8601 string"}, status_code=400)
+            try:
+                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            except ValueError:
+                return JSONResponse({"success": False, "error": "'ts' is not valid ISO8601"}, status_code=400)
+
+        from src.fleet_metrics import record
+        try:
+            await record(name, float(value), ts=ts)
+        except KeyError as exc:
+            return JSONResponse(
+                {"success": False, "error": str(exc)},
+                status_code=404,
+            )
+        return JSONResponse({"success": True}, status_code=201)
+    except Exception as e:
+        logger.error(f"Error recording metric: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
+async def http_get_metrics(request):
+    """GET /v1/metrics?name=...&since=...&until=...&limit=... — return a series."""
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    if not _check_http_auth(request, http_api_token=http_api_token):
+        return _http_unauthorized()
+    try:
+        params = request.query_params
+        name = params.get("name")
+        if not name:
+            return JSONResponse({"success": False, "error": "'name' query param required"}, status_code=400)
+
+        def _parse_ts(raw: str | None):
+            if raw is None:
+                return None
+            try:
+                return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                return "INVALID"
+
+        since = _parse_ts(params.get("since"))
+        until = _parse_ts(params.get("until"))
+        if since == "INVALID" or until == "INVALID":
+            return JSONResponse({"success": False, "error": "'since'/'until' must be ISO8601"}, status_code=400)
+
+        try:
+            limit = int(params.get("limit", "10000"))
+        except ValueError:
+            return JSONResponse({"success": False, "error": "'limit' must be integer"}, status_code=400)
+
+        from src.fleet_metrics import query
+        points = await query(name=name, since=since, until=until, limit=limit)
+        return JSONResponse({
+            "success": True,
+            "name": name,
+            "points": [{"ts": p.ts.isoformat(), "value": p.value} for p in points],
+            "count": len(points),
+        })
+    except Exception as e:
+        logger.error(f"Error querying metrics: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
+async def http_get_metrics_catalog(request):
+    """GET /v1/metrics/catalog — list all registered metric names and descriptions."""
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    if not _check_http_auth(request, http_api_token=http_api_token):
+        return _http_unauthorized()
+    from src.fleet_metrics import catalog as _catalog
+    return JSONResponse({
+        "success": True,
+        "metrics": [
+            {"name": m.name, "description": m.description, "unit": m.unit}
+            for m in sorted(_catalog.values(), key=lambda x: x.name)
+        ],
+    })
+
+
 async def http_record_finding(request):
     """POST /api/findings — ingest an external finding into the event ring buffer."""
     http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
@@ -1670,6 +1777,9 @@ def register_http_routes(
     app.routes.append(Route("/v1/lifecycle/recent", http_lifecycle_recent, methods=["GET"]))
     app.routes.append(Route("/api/events", http_events, methods=["GET"]))
     app.routes.append(Route("/api/findings", http_record_finding, methods=["POST"]))
+    app.routes.append(Route("/v1/metrics", http_post_metric, methods=["POST"]))
+    app.routes.append(Route("/v1/metrics/series", http_get_metrics, methods=["GET"]))
+    app.routes.append(Route("/v1/metrics/catalog", http_get_metrics_catalog, methods=["GET"]))
     app.routes.append(Route("/api/activity", http_activity, methods=["GET"]))
     app.routes.append(Route("/api/incidents", http_incidents, methods=["GET"]))
     app.routes.append(Route("/v1/residents", http_residents, methods=["GET"]))
