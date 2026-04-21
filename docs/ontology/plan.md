@@ -35,11 +35,13 @@ Every item from `identity.md` that requires work, what "resolved" means for it, 
 | S1 | `continuity_token` as resume-credential | **Deprecate with grace period** (external user count unknown as of 2026-04-21; treat retirement as deprecation, not hard remove) | None. Scope clear. | Token accepts + emits `deprecated` warning for one release cycle; then repurposes as lineage-declaration credential. Codex plugin + `bind_session` updated. External-client migration note published. |
 | S2 | `.unitares/session.json` auto-resume | Retire (Claude Code channel) | S1 | Auto-resume removed from Codex plugin + Claude Code harness hooks. Fresh processes mint fresh identities with declared lineage. |
 | S3 | Cross-channel token acceptance | Retire | S1 | Token's `ch` claim enforced; mismatch = force-new with lineage. |
-| S4 | Label-as-identifier flows | Audit + retire | None | Grep for places that resolve agents by label; each replaced with role-lookup (where cosmetic) or UUID-lookup (where load-bearing). |
+| S4 | Label-as-identifier flows | **Mostly resolved** (2026-04-17 `resolve_by_name_claim` cleanup + 2026-04-21 audit in `audit-notes.md`) | None | Outstanding effective action narrows to S5; remaining sites are cosmetic label-to-UUID translation. Verify no regressions. |
 | S5 | `resident_fork_detected` event | Invert | R4 (needs substrate-earned pattern) | Event fires when a resident restart lacks declared lineage, not when it has one. |
 | S6 | Trust-tier calculation (`compute_trust_tier`) | Re-interpret + calibration-window adjustment | R3 | Window norms adjusted for typical process-instance lifetime. Substrate-anchored agents (Lumen) use separate calibration pool per R4. |
 | S7 | KG provenance (`agent_id` stamping) | Audit + shift aggregation | R3 | Queries and aggregations that assume multi-session UUID continuity migrated to role or lineage-chain. Schema audit of `knowledge_graph_postgres.py` and `knowledge_graph.py`. |
-| S8 | Orphan archival heuristics (`classify_for_archival`) | Re-calibrate | None urgent | Heuristic adjusted for the new norm (many short-lived process-instances per role). Thresholds re-tuned on actual data. |
+| S8 | Orphan archival heuristics (`classify_for_archival`) | **Re-scoped** (2026-04-21 audit in `audit-notes.md` — thresholds are fine; real gap is tag discipline) | None urgent | Split into S8a (tag-discipline audit) + S8b (class-tag backfill). Heuristic thresholds remain as-is. |
+| S8a | Tag-discipline audit — 96% of active agents lack class tags | Audit | None | Understand why onboard flow isn't stamping class tags (pipeline broken? Agents not declaring? Something else?). Produces findings doc. |
+| S8b | Class-tag backfill on active agents | Data ops | S8a findings | Backfill class tags on active agents where class is inferable (resident-labelled, `Claude_*`-labelled, etc.). |
 | S9 | PATH 1/2 anti-hijack machinery | Re-scope or retire | R1 | Under R1, external verification replaces continuity-enforcement. PATH 1/2 flip to lineage-plausibility checks or retire. |
 | S10 | Fleet calibration aggregation paths | Shift default unit | R3, S7 | Default aggregation unit shifts from UUID to role. Dashboards + external-consumer contracts updated. |
 
@@ -117,3 +119,64 @@ This plan is done when:
 Rows are cheap. Add one per surfaced item. Remove rows that are explicitly cancelled. Dependency graph should stay consistent with rows.
 
 Do not promote items out of "research" (R) into "implications" (S) without first resolving the R item — otherwise we re-introduce performative stance.
+
+---
+
+## Appendix: Audit notes
+
+Running log of descriptive-stance findings. Inventories and measurements only — no code changes, no commitments.
+
+### 2026-04-21 — A2: Label-as-identifier inventory (S4)
+
+**Scope:** Grep for code paths that resolve agents by label rather than UUID; classify each by whether load-bearing (identity-conferring) or cosmetic (UX lookup).
+
+**Live call sites** (post-2026-04-17 `resolve_by_name_claim` cleanup):
+
+- `src/db/base.py:224` + `src/db/mixins/agent.py:158` — `find_agent_by_label(label) -> Optional[str]`. DB primitive.
+- `src/mcp_handlers/identity/persistence.py:257` — `_find_agent_by_label` handler wrapper. Re-exported from `identity/{handlers,resolution,core}.py`.
+- `src/mcp_handlers/observability/handlers.py:59-60,171-172` — `observe_agent` target resolution fallback.
+- `src/mcp_handlers/identity/persistence.py:463` — resident-fork detection (`structured_agent_id` collision check).
+- `structured_agent_id` usages across 4 files / 8 sites: `identity_payloads.py`, `runtime_queries.py`, `agent_auth.py`, `identity/handlers.py`.
+
+**Classification:**
+
+| Site | Role | Classification |
+|---|---|---|
+| `find_agent_by_label` (DB + mixin + handler wrapper) | Primitive label → UUID translation | Cosmetic. Callers treat the returned UUID as identity. |
+| `observe_agent` target resolution | Accepts label or UUID for "which agent" argument | Cosmetic. UX sugar; internals operate on UUIDs. |
+| Resident-fork detection (`persistence.py:463`) | "Two agents with same label ⇒ fork" | **Load-bearing + performative.** Locus of S5 inversion. |
+| `structured_agent_id` surfacings (payloads, queries) | Label carried through response layers | Mostly cosmetic; `agent_auth.py` flagged for B-track closer read. |
+
+**Summary:** 4 of 5 active sites are cosmetic. Single load-bearing performative site is resident-fork detection, already scoped as S5. S4 downgraded; effective outstanding action is S5 alone.
+
+### 2026-04-21 — A3: Orphan archival data check (S8)
+
+**Scope:** Inspect `classify_for_archival` thresholds against production distribution; decide whether thresholds fit the new ontology's norm of many short-lived process-instances.
+
+**Heuristic** (`src/agent_lifecycle.py:100-136`): `low_update_hours=3`, `unlabeled_hours=6`, `ephemeral_hours=6`, `ephemeral_max_updates=5`. Initializing agents (0 updates) never auto-archived.
+
+**Production state (2026-04-21):**
+
+| | Active | Archived |
+|---|---|---|
+| Total | 169 | 2761 |
+| Persistent-tagged | 6 | — |
+| Ephemeral-tagged | 0 | — |
+| Embodied-tagged | 1 | — |
+| Unclassified | 163 | 2761 |
+
+Lifetime — unclassified archived avg 761hr (~32d, max 3449hr/~144d); unclassified active avg 273hr (~11d); persistent active avg 408hr (~17d).
+
+Labels (active): 155 "other", 7 null, 5 residents (Lumen/Vigil/Sentinel/Watcher/Steward), 2 `Claude_*`.
+
+Lineage: 81/169 active agents (48%) have `parent_agent_id`. Archived-rate 0.3% (pre-lineage-era agents).
+
+**Observations:**
+
+1. **Tag discipline is poor** — 96% of active agents lack class tags, despite paper §4 framework. The real gap.
+2. **Lineage plumbing is actively used** — 48% of fresh agents declaring parent. Healthy.
+3. **Archive aggressiveness matches new-ontology expectation** — 94% archival rate aligns with ephemeral-by-construction process-instances.
+4. **Substrate-anchored agents underrepresented in calibration pool** — with only 1 `embodied`-tagged agent, Lumen's EISV norms are being averaged out.
+
+**Action:** Thresholds remain. Real gap is tag discipline — see S8a/S8b.
+
