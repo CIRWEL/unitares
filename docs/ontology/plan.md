@@ -83,7 +83,7 @@ Three tracks that can progress independently.
 ### Track B: research primitives
 *Goal: get the inventive-stance items far enough along that the descriptive-stance items can depend on them.*
 
-- **B1 (R4):** Write `docs/ontology/patterns/substrate-earned-identity.md`. Formalize Lumen's pattern. Most tractable of the research items.
+- **B1 (R4):** ~~Write `patterns/substrate-earned-identity.md`.~~ **Done 2026-04-21** — landed inline as appendix of `docs/ontology/identity.md` ("Pattern — Substrate-Earned Identity"). Formalizes Lumen's pattern with three conditions, test cases, open questions.
 - **B2 (R3):** Annotate `src/trajectory_identity.py compute_trust_tier` — what already implements statistical lineage, what assumes UUID-identity. Produces migration notes for S6/S7/S10.
 - **B3 (R1):** Design spike for `verify_lineage_claim`. Signature + confidence output + threshold analysis. One-page design doc; no implementation yet.
 
@@ -195,7 +195,7 @@ Running log of descriptive-stance findings. Inventories and measurements only �
 
 - `src/db/base.py:224` + `src/db/mixins/agent.py:158` — `find_agent_by_label(label) -> Optional[str]`. DB primitive.
 - `src/mcp_handlers/identity/persistence.py:257` — `_find_agent_by_label` handler wrapper. Re-exported from `identity/{handlers,resolution,core}.py`.
-- `src/mcp_handlers/observability/handlers.py:59-60,171-172` — `observe_agent` target resolution fallback.
+- `src/mcp_handlers/observability/handlers.py:59-60` and `src/mcp_handlers/observability/handlers.py:171-172` — `observe_agent` target resolution fallback.
 - `src/mcp_handlers/identity/persistence.py:463` — resident-fork detection (`structured_agent_id` collision check).
 - `structured_agent_id` usages across 4 files / 8 sites: `identity_payloads.py`, `runtime_queries.py`, `agent_auth.py`, `identity/handlers.py`.
 

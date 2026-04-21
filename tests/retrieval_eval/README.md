@@ -1,8 +1,9 @@
 # KG Retrieval Eval Harness
 
 Measures retrieval quality of the KG search pipeline against a labeled corpus.
-Used as the objective floor for the Phase 2–5 rebuild in
-`docs/plans/2026-04-20-kg-retrieval-rebuild.md`.
+Was the objective floor for the Phase 2–5 KG retrieval rebuild (shipped via
+PR #55–#63, 2026-04-20; live behind `UNITARES_EMBEDDING_MODEL=bge-m3` +
+`UNITARES_ENABLE_HYBRID=1`). Now serves as the regression baseline.
 
 ## Running
 
