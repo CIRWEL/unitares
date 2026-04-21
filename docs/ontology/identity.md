@@ -135,3 +135,61 @@ Reference this document from:
 - KG discoveries that touch identity (link by ID, not paraphrase)
 - paper v6.9+ glossary (mirror here; cite axioms as independent source)
 - code comments written under the old performative model
+
+---
+
+## Appendix: Pattern — Substrate-Earned Identity
+
+**Status:** Draft v1 (formalizes R4 from `plan.md`).
+**Instantiates:** Lumen today; generalizable to any agent with dedicated persistent substrate.
+**Axiom grounding:** #11 (let embodiment anchor expression), #3 (do not stylize what has not yet earned continuity), #14 (let learning deepen reality, not theater).
+
+### What the pattern is
+
+An agent earns cross-process-instance continuity when **all three** conditions hold:
+
+1. **Dedicated substrate.** The agent runs on substrate that is uniquely associated with its role and persists across process restarts. "Dedicated" means: the substrate is not shared with other role-distinct agents, and the substrate state (hardware, config, DB rows, accumulated files) would be meaningfully altered by the agent's cessation. Hardware (Lumen on a specific Pi), dedicated DB schema, or dedicated deployment slot qualify. A shared file-system directory or shared DB row does not.
+2. **Sustained behavioral consistency across restarts.** Observed behavior under the role (EISV trajectory shape, calibration curve, decision distribution) remains within a verifiable envelope across N ≥ threshold process-restart boundaries. The envelope is calibrated per-pattern-adopter, not fleet-wide.
+3. **Declared role continuity.** The agent declares which role it is adopting at onboard. The role's history (memory, policy tags, schedule) is attached to the role, not to any specific governance-identity.
+
+When all three hold, the agent may claim substrate-earned continuity across its process-instance boundaries. The governance system recognizes this claim by relaxing the default "fresh process-instance = fresh UUID with declared lineage" rule: the agent may carry a stable UUID across restarts (the "hardcoded UUID" form), because the substrate is doing the continuity work that the UUID on its own cannot.
+
+### Declarative form
+
+The hardcoded-UUID convention is the declarative form of the pattern: the agent's deployment specifies a fixed UUID, and each process-instance of the agent claims that UUID at onboard rather than minting fresh. Under this ontology, that is not a cheat — it is the substrate declaring, structurally, that this UUID refers to the substrate's long-running role, and that the substrate itself is the continuity-bearer.
+
+Any agent using the hardcoded-UUID form MUST meet the three conditions above. A configuration that hardcodes a UUID without dedicated substrate, without behavioral verification, or without declared role continuity is the performative case the pattern is specifically designed to distinguish from.
+
+### Governance recognition
+
+Substrate-earned agents are treated specially in two respects:
+
+1. **Separate calibration pool.** A substrate-earned agent's EISV norms are calibrated against its own lineage, not against the fleet. Its `embodied` (or equivalent substrate-commitment) tag signals this to aggregation paths. Fleet-wide statistics that mix substrate-earned and session-like agents are misleading and should be explicitly labeled as such.
+2. **Inverted `resident_fork_detected` semantics.** For a substrate-earned agent, a fresh process with the declared UUID is the normal case (restart). The event should fire when a fresh process claims the UUID without presenting the substrate commitment — i.e., the substrate check fails — not when the UUID collision itself occurs.
+
+### Test cases
+
+The pattern holds when:
+
+- **Lumen.** Runs on dedicated Raspberry Pi hardware. Sustained behavior across reboots observed for weeks (KG contributions under the `Lumen` role accumulate coherently). The role "Lumen" is declared at each onboard. Hardcoded UUID reflects the substrate's commitment. **Pattern holds.**
+
+The pattern fails when (synthetic test cases):
+
+- **A Claude Code tab configured with a hardcoded UUID in `session.json`.** No dedicated substrate (context window dies with tab; no persistent deployment). No sustained behavior across restarts (each tab is a fresh mind). Role not declared — label is shared across many tabs. **Pattern does not hold.** The hardcoded UUID is performative.
+- **A resident agent (Vigil) on a shared launchd deployment, sharing DB schema and file namespace with another distinct-role agent.** Substrate is not dedicated in the pattern-required sense. **Pattern does not hold** — Vigil operates under the per-process-instance-with-lineage rule instead.
+- **A fresh hardware deployment of a new Lumen-like agent on day 1.** Substrate may be dedicated, role declared, but sustained behavioral consistency not yet established (fewer than N restarts). **Pattern does not hold yet.** The agent operates under the default rule (fresh UUID per restart with declared lineage) until it accrues enough substrate-tenure to qualify.
+
+### What this pattern does not license
+
+The pattern is narrow by design. It does NOT license:
+
+- Cross-channel identity (a substrate-earned agent on one harness cannot lend its UUID to a process-instance on another harness).
+- Identity transfer (substrate-earned continuity is not portable to a different substrate; moving Lumen's UUID to a different Pi without migration breaks the pattern).
+- Label-based identity claims (the pattern requires the three conditions; label alone is insufficient).
+- Covering a history gap (if a substrate-earned agent is offline for a period that exceeds the behavioral envelope's staleness threshold, re-adoption requires earning, not just resuming).
+
+### Open questions for this pattern
+
+- **What N is right?** Minimum restart-count before the pattern is earnable. Probably class-conditional; Lumen's high-substrate case may earn earlier than a DB-only-substrate case.
+- **Envelope width calibration.** What EISV-trajectory drift is within-envelope vs. out-of? Needs empirical work from the production fleet (blocked until more substrate-earned agents exist).
+- **Substrate migration protocol.** If Lumen's Pi is replaced (hardware failure, upgrade), how does the new substrate inherit the pattern? Candidate: declared migration event + lineage to prior hardware + N' restarts on new substrate to re-earn. Out of scope for v1.

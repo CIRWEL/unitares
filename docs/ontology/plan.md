@@ -16,7 +16,7 @@ Every item from `identity.md` that requires work, what "resolved" means for it, 
 |---|---|---|---|
 | Q1 | Trajectory portability — inheriting identity or data? | R2 (honest memory integration must be defined) | A mechanical definition of "integration" exists; Q1 answerable as a function of whether a given inheritance path uses that mechanism. |
 | Q2 | Subagent ephemerality — principled or pragmatic? | R1 (behavioral-continuity verification — sets the "N observations" threshold) | Once R1 defines a minimum observation count for earned lineage, subagents measurably fall below it; parent-verification substitute is then formally principled. |
-| Q3 | Paper positioning — v7 thesis or implementation detail? | Nothing. Pure re-read. | A 1-page comparison of v6.8.1 §6.7 against the ontology, with a recommendation. |
+| Q3 | Paper positioning — v7 thesis or implementation detail? | Nothing. Pure re-read. | **Resolved 2026-04-21** — recommendation (v7 animating thesis) at `docs/ontology/paper-positioning.md` accepted by Kenny. Downstream work: v7 outline draft in `unitares-paper-v6` repo, timing TBD. |
 
 ### Research agenda (inventive stance)
 
@@ -25,7 +25,7 @@ Every item from `identity.md` that requires work, what "resolved" means for it, 
 | R1 | Behavioral-continuity verification as primary identity primitive | None (design from scratch) | Candidate tool spec (`verify_lineage_claim`) exists with: input signature, confidence output, threshold analysis, implementation sketch, and a test fixture showing it distinguishes genuine from forged lineage on synthetic data. |
 | R2 | Honest memory integration | R1 (verification underpins integration checks) | Structural posture defined: when a fresh process declares inheritance, what it reads, what it integrates, what behavior change is required before identity is claimable retroactively. One-page design doc. |
 | R3 | Statistical lineage (identity as integral) | None. Partly already present in trust-tier logic. | Trust-tier logic re-read and annotated: which pieces already implement statistical lineage, which assume UUID-identity. Migration path from UUID-aggregated to role-aggregated trust defined. |
-| R4 | Substrate-earned identity (Lumen's pattern, formalized) | None. Tractable first. | Written pattern doc: what counts as dedicated substrate; what sustained behavior is required; how the hardcoded-UUID declarative form works; test case for Lumen passes, test case for "fake hardcoded UUID without substrate" fails. |
+| R4 | Substrate-earned identity (Lumen's pattern, formalized) | None. Tractable first. | **Draft v1 landed 2026-04-21** as appendix of `docs/ontology/identity.md` ("Pattern — Substrate-Earned Identity"). Three conditions (dedicated substrate, sustained behavior, declared role); test cases (Lumen passes; synthetic fakes fail); open questions on N, envelope width, substrate migration. Open for revision. |
 | R5 | Memory-deepening-reality tooling (axiom #14) | R2 (integration must be defined before deepening it) | Three candidate mechanisms prototyped: forced re-derivation, behavioral backtests, self-knowledge reflection. Each has a minimal implementation + one passing test. |
 
 ### System implications (descriptive stance)
