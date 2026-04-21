@@ -144,7 +144,7 @@ This plan is a dispatch queue. Each row is a scoped task, each task is handled b
 
 ### Recommended priority (snapshot 2026-04-21)
 
-1. **S11 synthesized PR** — the consolidation plan exists at `docs/ontology/s11-consolidation.md`; one session executes the three changes (banner inversion; stop writing continuity_token to `.unitares/session.json`; S1 deprecation note in `onboard_helper.py`) and ships. Highest-leverage single action — makes the ontology self-enforcing.
+1. **S11 synthesized PR** — the consolidation audit lives in this file's Appendix entry "2026-04-21 — S11"; one session executes the three changes (banner inversion; stop writing continuity_token to `.unitares/session.json`; S1 deprecation note in `onboard_helper.py`) in the `unitares-governance-plugin` repo and ships. Highest-leverage single action — makes the ontology self-enforcing.
 2. **S5 inversion** — `resident_fork_detected` semantics flip (fire when restart *lacks* lineage, not when present). Small, localized. Pairs with R4 (Lumen is the primary beneficiary).
 3. **v7 outline draft** — fresh session in `unitares-paper-v6` repo. Produces a `.tex` skeleton the operator can read and redirect.
 4. **R3 annotation pass** — read `src/trajectory_identity.py compute_trust_tier` against the ontology; annotate what already implements statistical lineage vs. what assumes UUID-identity. Pure reading task.
@@ -262,8 +262,8 @@ Lineage: 81/169 active agents (48%) have `parent_agent_id`. Archived-rate 0.3% (
 **Recommendation — close all five branches; synthesize one new PR** (`feat/s11-force-new-lineage-default`) against current master with four changes:
 
 1. **Banner inversion (`hooks/session-start`).** Lead with `onboard(force_new=true, parent_agent_id=<cached UUID>, spawn_reason="new_session")` as THE recommendation. Reframe workspace-cache hint: present cached UUID as *lineage candidate*, not resume credential ("this workspace was last run by `<UUID>` — if you inherit, declare `parent_agent_id=<UUID>`"). Drop the pin-resume warning (PR #16 repaired that footgun). Cite `docs/ontology/identity.md` in the banner.
-2. **Workspace cache becomes lineage-only (`hooks/post-identity`, `scripts/session_cache.py`).** Stop writing `continuity_token`. Write `uuid`, `agent_id`, `updated_at`, `parent_agent_id` only. Version-bump schema; legacy v1 token is ignored on read. Intersects S2 but ship under S11 since S2's prerequisite (S1 external-client grace) applies to server-side emit, not plugin-internal cache.
-3. **S1 deprecation breadcrumb (`scripts/onboard_helper.py`).** One-line comment where `continuity_token` is read: "compatibility surface for external clients; plugin-internal flows should declare lineage." No behavior change — S1 owns the full deprecation window.
+2. **Workspace cache becomes lineage-only** (in `unitares-governance-plugin`: `hooks/post-identity` + `session_cache.py`). Stop writing `continuity_token`. Write `uuid`, `agent_id`, `updated_at`, `parent_agent_id` only. Version-bump schema; legacy v1 token is ignored on read. Intersects S2 but ship under S11 since S2's prerequisite (S1 external-client grace) applies to server-side emit, not plugin-internal cache.
+3. **S1 deprecation breadcrumb** (in `unitares-governance-plugin`: `onboard_helper.py`). One-line comment where `continuity_token` is read: "compatibility surface for external clients; plugin-internal flows should declare lineage." No behavior change — S1 owns the full deprecation window.
 4. **Tests.** Banner shape, token-free cache write, v1-cache-read ignores token.
 
 **What this PR does NOT do:** retire `continuity_token` server-side (S1), change `bind_session`, implement R1 verification, touch S6/S7/S10. Single-concern.
