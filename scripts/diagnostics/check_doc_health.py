@@ -16,10 +16,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Directories to skip when scanning .md files
+# Directories to skip when scanning .md files.
+# `.worktrees` lives inside the parent checkout but belongs to parallel branches;
+# auditing it double-counts every other worktree's in-flight docs as "dead refs"
+# against the current branch's tree.
 SKIP_DIRS = {".git", ".venv", "venv", ".pytest_cache", "node_modules",
              ".claude", "archive", "__pycache__", ".hypothesis",
-             ".agent-guides", "plans", "superpowers"}
+             ".agent-guides", "plans", "superpowers", ".worktrees"}
 
 # Files to skip (historical records — dead refs are expected)
 SKIP_FILES = {"docs/CHANGELOG.md", "CHANGELOG.md"}
@@ -34,11 +37,21 @@ _PATH_PATTERNS = [
     re.compile(r'\]\(((?:src|config|scripts|docs|db|dashboard)/[^\)#\s]+)\)'),
 ]
 
+# Directories where dead refs are expected: historical planning records, not
+# current documentation. Specs/handoffs/plans describe intent at a moment in
+# time; implementation often lands under different names, so refs drift by
+# design. Keep these files auditable for hardcoded IPs/counts (which DO need
+# to stay current) but skip the dead-ref check.
+_DEAD_REF_SKIP_DIRS = {"specs", "handoffs", "plans"}
+
 
 def check_dead_refs(md_files: list[Path]) -> list[str]:
     warnings = []
     seen = set()
     for fpath in md_files:
+        rel = fpath.relative_to(REPO_ROOT)
+        if any(d in rel.parts for d in _DEAD_REF_SKIP_DIRS):
+            continue
         for i, line in enumerate(fpath.read_text(errors="replace").splitlines(), 1):
             for pat in _PATH_PATTERNS:
                 for match in pat.finditer(line):
@@ -59,7 +72,6 @@ def check_dead_refs(md_files: list[Path]) -> list[str]:
                     # Check if file or directory exists
                     candidate = REPO_ROOT / ref_path
                     if not candidate.exists():
-                        rel = fpath.relative_to(REPO_ROOT)
                         warnings.append(f"  {rel}:{i}: dead ref `{ref}`")
     return warnings
 

@@ -18,7 +18,7 @@ Status: thin operational registry. Keep this file small and factual.
 ## Files That Must Stay Aligned
 
 - `src/mcp_server.py`
-- `src/mcp_handlers/observability/pi_orchestration.py`
+- `src/services/runtime_queries.py` (calls the Pi via `unitares_pi_plugin.call_pi_tool`)
 - Pi-side anima service configuration
 
 ## Verification

@@ -128,7 +128,7 @@ The exact mapping between the behavioral `verdict` field in `runtime_queries.py`
 | UUID-named LLM dev agents | `69a1a4f7-...`, `7d9966bb-...`, `85e15f04-...` | Claude Code sessions that were actively constructing UNITARES during the deployment window. The system governed its own construction crew. | No — co-constructed |
 | Lumen | `eisv-sync-task` (via sync) + direct Pi agent | Embodied agent on Raspberry Pi with physical sensors. Sensor readings provide independent ground truth regardless of the governance layer. | Yes — clean instrument |
 
-For the seesaw caveat (the circular dependency between the governed population and the governing system), see `docs/DEPLOYMENT_DATA_CAVEAT.md`.
+For the seesaw caveat (the circular dependency between the governed population and the governing system), see `docs/operations/DEPLOYMENT_DATA_CAVEAT.md`.
 
 ---
 

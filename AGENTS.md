@@ -104,7 +104,7 @@ The MCP SDK's anyio task group conflicts with asyncpg/Redis async operations. MC
 **Mitigated (Option F):** `health_check` reads a cached snapshot produced by a background probe task. No DB calls in the handler path. Any *new* MCP handler that needs DB access must use one of three patterns:
 
 1. **Read cached data** populated by a background task (e.g., `health_check` reads `deep_health_probe_task`'s snapshot; sticky identity reads a cache pre-warmed by `transport_binding_cache_warmup`).
-2. **`run_in_executor` with a sync client** — see `call_pi_tool` at `src/mcp_handlers/observability/pi_orchestration.py:221`.
+2. **`run_in_executor` with a sync client** — see `verify_agent_ownership` dispatch at `src/agent_loop_detection.py:374` (synchronous DB-touching function pushed to an executor thread so the anyio task group stays unblocked). The same pattern is used externally by `call_pi_tool` in the `unitares_pi_plugin` package.
 3. **`asyncio.wait_for` with a tight timeout** — degrade to a fallback on deadlock instead of hanging the pipeline. See `deep_health_probe_task` at `src/background_tasks.py:380` and `_load_binding_from_redis` at `src/mcp_handlers/middleware/identity_step.py` (500ms budget, returns `None` on timeout).
 
 ## Known Test Notes
