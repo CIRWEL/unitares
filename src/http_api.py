@@ -1588,6 +1588,81 @@ async def http_residents(request):
 
 
 # ---------------------------------------------------------------------------
+# Resident tag-hygiene audit — Vigil consumes this to detect tag drift
+# ---------------------------------------------------------------------------
+
+# Tags every active resident must carry. Keep in sync with
+# agents/sdk/src/unitares_sdk/agent.py::RESIDENT_TAGS. The Steward regression
+# of 2026-04-20 was caused by this set drifting across onboarding paths —
+# this endpoint exists so future drift is detectable in production.
+RESIDENT_REQUIRED_TAGS: frozenset[str] = frozenset({"persistent", "autonomous"})
+
+
+async def http_resident_tag_audit(request):
+    """Report which active residents are missing required tags.
+
+    Response shape::
+
+        {
+            "success": true,
+            "required_tags": ["persistent", "autonomous"],
+            "checked": ["Vigil", "Sentinel", "Watcher", "Steward", "Lumen"],
+            "missing": {
+                "Watcher": ["autonomous"],
+                ...
+            },
+            "ok_count": 4
+        }
+
+    `missing` is empty when the fleet is healthy. Each entry is a sorted list
+    of tags that the resident SHOULD carry but doesn't. Residents absent from
+    the running fleet are absent from both ``checked`` and ``missing``.
+    """
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    if not _check_http_auth(request, http_api_token=http_api_token):
+        return _http_unauthorized()
+
+    try:
+        from src.mcp_handlers.shared import lazy_mcp_server
+        from src.grounding.class_indicator import KNOWN_RESIDENT_LABELS
+
+        mcp_server_obj = lazy_mcp_server
+        checked: list[str] = []
+        missing: dict[str, list[str]] = {}
+
+        for meta in getattr(mcp_server_obj, "agent_metadata", {}).values():
+            label = getattr(meta, "label", None)
+            if not label or label not in KNOWN_RESIDENT_LABELS:
+                continue
+            if getattr(meta, "status", None) != "active":
+                continue
+            if label in checked:
+                # Duplicate rows for the same label (ghost identities) — only
+                # audit the first active one we encounter. Consistent with
+                # the label_to_meta deduplication http_residents does.
+                continue
+            checked.append(label)
+            have = set(getattr(meta, "tags", None) or [])
+            gap = sorted(RESIDENT_REQUIRED_TAGS - have)
+            if gap:
+                missing[label] = gap
+
+        return JSONResponse({
+            "success": True,
+            "required_tags": sorted(RESIDENT_REQUIRED_TAGS),
+            "checked": sorted(checked),
+            "missing": missing,
+            "ok_count": len(checked) - len(missing),
+        })
+    except Exception as exc:
+        logger.error("http_resident_tag_audit error: %s", exc)
+        return JSONResponse({
+            "success": False,
+            "error": str(exc),
+        }, status_code=500)
+
+
+# ---------------------------------------------------------------------------
 # Violation taxonomy endpoint — surface vocabulary for dashboards/bridges
 # ---------------------------------------------------------------------------
 
@@ -1783,6 +1858,7 @@ def register_http_routes(
     app.routes.append(Route("/api/activity", http_activity, methods=["GET"]))
     app.routes.append(Route("/api/incidents", http_incidents, methods=["GET"]))
     app.routes.append(Route("/v1/residents", http_residents, methods=["GET"]))
+    app.routes.append(Route("/v1/residents/tag_audit", http_resident_tag_audit, methods=["GET"]))
     app.routes.append(Route("/v1/taxonomy", http_taxonomy, methods=["GET"]))
     app.routes.append(WebSocketRoute("/ws/eisv", websocket_eisv_stream))
     app.routes.append(Route("/debug/memory", http_debug_memory, methods=["GET"]))

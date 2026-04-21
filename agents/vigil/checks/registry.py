@@ -41,6 +41,8 @@ def load_plugins() -> None:
     # Python's module cache doesn't swallow registration on re-load (test harness).
     from .governance_health import GovernanceHealth
     register(GovernanceHealth())
+    from .resident_tag_hygiene import ResidentTagHygiene
+    register(ResidentTagHygiene())
 
     raw = os.getenv("VIGIL_CHECK_PLUGINS", "") or ""
     for mod_path in raw.split(":"):
