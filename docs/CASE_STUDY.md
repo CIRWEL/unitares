@@ -4,7 +4,7 @@
 
 Status: specialized project case study. Use this when evaluating the project scope, engineering decisions, and evidence in the repo rather than the runtime docs alone.
 
-This document is framing, not specification. For live behavior, trust `src/`, `tests/`, [README.md](README.md), [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md), and [docs/CANONICAL_SOURCES.md](docs/CANONICAL_SOURCES.md) first.
+This document is framing, not specification. For live behavior, trust `src/`, `tests/`, [README.md](README.md), and [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md) first.
 
 ## One-Line Summary
 
@@ -59,7 +59,7 @@ Core capabilities:
 - `get_governance_metrics()` exposes current state
 - lifecycle, dialectic, observability, and knowledge tools support recovery and collaboration
 
-For the project overview, see [README.md](README.md). For architecture truth, see [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md) and [docs/CANONICAL_SOURCES.md](docs/CANONICAL_SOURCES.md).
+For the project overview, see [README.md](README.md). For architecture truth, see [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md).
 
 ## Engineering Scope
 

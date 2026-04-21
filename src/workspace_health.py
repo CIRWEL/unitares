@@ -99,7 +99,7 @@ def check_documentation_coherence() -> Dict[str, Any]:
     key_docs = [
         "README.md",
         "docs/guides/START_HERE.md",
-        "docs/CANONICAL_SOURCES.md",
+        "docs/dev/CANONICAL_SOURCES.md",
         "docs/UNIFIED_ARCHITECTURE.md",
     ]
     
