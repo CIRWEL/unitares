@@ -24,7 +24,7 @@ Every item from `identity.md` that requires work, what "resolved" means for it, 
 |---|---|---|---|
 | R1 | Behavioral-continuity verification as primary identity primitive | None (design from scratch) | Candidate tool spec (`verify_lineage_claim`) exists with: input signature, confidence output, threshold analysis, implementation sketch, and a test fixture showing it distinguishes genuine from forged lineage on synthetic data. |
 | R2 | Honest memory integration | R1 (verification underpins integration checks) | Structural posture defined: when a fresh process declares inheritance, what it reads, what it integrates, what behavior change is required before identity is claimable retroactively. One-page design doc. |
-| R3 | Statistical lineage (identity as integral) | None. Partly already present in trust-tier logic. | Trust-tier logic re-read and annotated: which pieces already implement statistical lineage, which assume UUID-identity. Migration path from UUID-aggregated to role-aggregated trust defined. |
+| R3 | Statistical lineage (identity as integral) | None. Partly already present in trust-tier logic. | **Annotation pass landed 2026-04-21** — `src/trajectory_identity.py` audited; classification + migration path in this file's Appendix entry "2026-04-21 — R3: Trust-tier annotation". Math primitives are subject-agnostic; storage + tier computation assume UUID continuity. Migration unblocks S6/S7/S10. |
 | R4 | Substrate-earned identity (Lumen's pattern, formalized) | None. Tractable first. | **Draft v1 landed 2026-04-21** as appendix of `docs/ontology/identity.md` ("Pattern — Substrate-Earned Identity"). Three conditions (dedicated substrate, sustained behavior, declared role); test cases (Lumen passes; synthetic fakes fail); open questions on N, envelope width, substrate migration. Open for revision. |
 | R5 | Memory-deepening-reality tooling (axiom #14) | R2 (integration must be defined before deepening it) | Three candidate mechanisms prototyped: forced re-derivation, behavioral backtests, self-knowledge reflection. Each has a minimal implementation + one passing test. |
 
@@ -280,4 +280,62 @@ git push origin --delete fix/onboard-force-new-suggestion claude/auto/skill-onbo
 Branch deletion not executed without operator approval — shared remote, reflog-only recovery.
 
 **Dogfood note:** this audit was produced by a process-instance that onboarded via `continuity_token` resume from `.unitares/session.json` — the performative path §4.1 proposes to retire. The SessionStart banner *suggested* the token path; §4.1 would have suggested `force_new + parent_agent_id=da300b4a`. Same author-by-behavior, different author-by-ontology. The plan is self-instantiating evidence of the gap it closes.
+
+### 2026-04-21 — R3: Trust-tier annotation
+
+**Scope:** Read `src/trajectory_identity.py` end-to-end against ontology v2; classify each meaningful piece as statistical-lineage compatible, UUID-identity assuming, or mixed; sketch migration path for shifting aggregation unit from UUID to role.
+
+**Functions / sections inspected:**
+
+- `src/trajectory_identity.py:34-73` — `bhattacharyya_similarity`
+- `src/trajectory_identity.py:76-116` — `_det`, `_inv` linear-algebra helpers
+- `src/trajectory_identity.py:119-172` — `homeostatic_similarity`, `_viability_margin`
+- `src/trajectory_identity.py:175-234` — `_dtw_distance`, `_dtw_similarity`, `_eisv_trajectory_similarity`
+- `src/trajectory_identity.py:237-373` — `TrajectorySignature` dataclass + `.similarity()` + `.trajectory_shape_similarity()` + `_cosine_similarity`
+- `src/trajectory_identity.py:376-449` — `store_genesis_signature`
+- `src/trajectory_identity.py:452-583` — `update_current_signature`
+- `src/trajectory_identity.py:586-681` — `compute_trust_tier` (the named target)
+- `src/trajectory_identity.py:684-725` — `get_trajectory_status`
+- `src/trajectory_identity.py:728-800` — `verify_trajectory_identity` (paper §6.1.2 two-tier)
+
+**Classification:**
+
+| Site | Category | Notes |
+|---|---|---|
+| `bhattacharyya_similarity`, `_det`, `_inv` | Statistical-lineage compatible | Pure math on two distributions. Subject-agnostic. Survives any aggregation regrouping. |
+| `homeostatic_similarity`, `_viability_margin` | Statistical-lineage compatible | Pure math. Compares two `eta` dicts; doesn't care whose. |
+| `_dtw_*`, `_eisv_trajectory_similarity` | Statistical-lineage compatible | DTW on two EISV trajectories; subject-agnostic. Already shaped like a "is this trajectory consistent with that fingerprint" primitive — exactly what R1 (`verify_lineage_claim`) needs. |
+| `TrajectorySignature` dataclass + `.similarity()` + `.trajectory_shape_similarity()` | Statistical-lineage compatible | Pairwise comparison of two signatures, no UUID dependency. The paper's six-component model lives here; it operates on signature-pairs, not on subject-identity. This is the load-bearing primitive that survives ontology migration intact. |
+| `compute_trust_tier` (pure function) | **Mixed** | Takes a single `metadata` dict, reads `trajectory_genesis` + `trajectory_current` + prior `trust_tier` from it, returns tier. The math (compare current to genesis, threshold on observation_count + confidence + lineage similarity) is subject-agnostic *if* genesis and current are both honest signatures of the same subject. The function itself doesn't reach across UUIDs — it's its **input** (`metadata`, scoped to one `agent_id`) that bakes in the UUID assumption. Re-key the input and the function survives. |
+| `compute_trust_tier` thresholds (200 obs / 50 obs) | UUID-assumes | The thresholds were calibrated against a world where one UUID = one long-lived subject. Under v2, most process-instances die before accumulating 50 observations, let alone 200. The numbers are honest only for substrate-earned cases (Lumen) or for role-aggregated input. Already flagged in identity.md §"Implications" — "window norms change since most process-instances will never accumulate 200+ observations." |
+| `store_genesis_signature` | UUID-assumes | Σ₀ is keyed by `agent_id` and gated by per-UUID immutability rules (immutable at tier ≥ 2; reseed allowed at tier ≤ 1). Under v2, "this agent_id's genesis" conflates substrate-anchored agents (where Σ₀ is honest across restarts) with session-like agents (where Σ₀ should be the *role's* historical fingerprint, not this process-instance's first 10 samples). The reseed-when-lineage-low logic at lines 416-426 is a partial admission that genesis-by-UUID isn't quite right. |
+| `update_current_signature` | UUID-assumes | Writes per-UUID `trajectory_current` + computes lineage vs. that UUID's stored Σ₀. Anomaly detection ("trajectory drift") fires when one UUID's behavior diverges from its own past — meaningful for substrate-earned agents, but for session-like agents under one role, a "drift" event may just be a fresh process-instance whose behavior is closer to another sibling under the role than to its own ten-sample genesis. The drift-event broadcast at lines 524-545 will be noisy in the role-aggregated world. |
+| `verify_trajectory_identity` (paper §6.1.2 two-tier) | UUID-assumes | This is the canonical "behavioral-continuity-by-UUID-match" case identity.md §"Performative" calls out by name. Submitted signature is verified against `metadata[trajectory_genesis]` and `metadata[trajectory_current]` keyed by `agent_id`. Under v2, the same verification against role-aggregated norms would be more honest; the math (comparing two signatures) is unchanged, only the reference distribution changes. |
+| `get_trajectory_status` | UUID-assumes (read-only) | Read-side mirror of `update_current_signature`. Same caveat. Cosmetic to migrate. |
+
+**Mixed / unclear:** `compute_trust_tier` is the only genuinely mixed case — its body is honest math but its input shape encodes the UUID assumption. The function is small and simple; the load-bearing decision is upstream (what gets put in `metadata`).
+
+**Migration path (UUID → role aggregation):**
+
+1. **Math survives unchanged.** All six similarity primitives (Bhattacharyya, DTW, cosine, homeostatic, recovery-tau, valence-L1) are pairwise on signatures. Re-keying the storage layer doesn't touch them.
+2. **Storage layer is the migration surface.** `store_genesis_signature` and `update_current_signature` currently write `metadata.trajectory_genesis` and `metadata.trajectory_current` on the agent record (UUID-keyed). Migration: introduce a parallel role-keyed store (`role_trajectory[role].genesis`, `role_trajectory[role].current_distribution`) where "current" is a distribution over recent process-instances under the role rather than one process's snapshot. Per-agent storage stays — substrate-earned agents (Lumen) keep using it; session-like agents read from the role pool.
+3. **`compute_trust_tier` gets a second input mode.** Today: `compute_trust_tier(metadata)`. Tomorrow: `compute_trust_tier(metadata, role_baseline=None)` where `role_baseline` (when provided) replaces or augments the per-UUID genesis. Logic stays — thresholds compare current sig to *some* baseline. Identity of the baseline-source is the open call.
+4. **Threshold recalibration is independent of the keying change.** 200 obs / 50 obs were chosen for long-lived subjects. Even under role-aggregation, the right thresholds depend on per-role data (how fast does a typical role accumulate 50 honest observations across its process-instances?). Empirical work, blocked on tag-discipline (see S8a) — without class tags, role-aggregated calibration has no clean partition.
+5. **Anomaly semantics flip.** Under UUID-keying, "drift" = this subject changed. Under role-keying, "drift" = this subject's behavior left the role's envelope (fresh-process atypicality), which is a different signal entirely. The `trajectory_drift` audit event at line 528 needs its taxonomy revisited; today it implies a single subject changed, tomorrow it might mean "this process-instance is an outlier under its declared role" — those are not the same incident.
+6. **Substrate-earned escape hatch.** Per R4 (substrate-earned identity pattern), agents passing the three conditions keep UUID-keyed trust-tier semantics intact. Migration needs a routing decision at the input layer: substrate-earned → per-UUID metadata path (current); session-like → role-baseline path (new). The `embodied` / `persistent` / `ephemeral` class tags are the routing key — tag-discipline gap (S8a) is the precondition for this routing to work in production.
+
+**What breaks:** `verify_trajectory_identity` callers currently get a per-UUID verdict; under role-aggregation they'd get an under-role verdict, semantically distinct. Drift event consumers (audit + dashboard broadcast) would need to re-interpret incident type. Genesis immutability rules at tier ≥ 2 stop making sense for session-like agents — there's no "this UUID's first signature" in the role-aggregated world; the equivalent is "this role's accumulated distribution," which is by construction not immutable.
+
+**What stays the same:** All six similarity primitives. The `TrajectorySignature` dataclass. The hysteresis margins in `compute_trust_tier`. The threshold *shape* (count + confidence + lineage triple-gate), only the numbers and the input source change.
+
+**Action — what S6 actually needs to do:**
+
+1. **Don't rewrite `compute_trust_tier`.** It's small, pure, honest within its scope. The work is at the storage and routing layers.
+2. **Add a role-baseline storage path** in `store_genesis_signature` / `update_current_signature` — write role-aggregated EISV distributions in parallel with per-UUID metadata. Schema-add, not schema-change.
+3. **Add a routing layer** at handler entry (where these functions are called from MCP) that picks per-UUID vs. role-baseline based on class tag — substrate-earned routes to per-UUID; session-like routes to role-baseline. Default to per-UUID (current behavior) when class tag is absent — preserves backward compatibility during the S8a/S8b tag-discipline rollout.
+4. **Recalibrate thresholds per-class** once tag-discipline is in place. Substrate-earned thresholds can stay near 200/50; session-like thresholds drop to whatever number reflects "enough observations under this role to trust the fingerprint" — empirically derived, not chosen.
+5. **Re-taxonomize `trajectory_drift`** into two events: `subject_drift` (per-UUID, current semantics, fires for substrate-earned agents only) and `role_outlier` (per-role, fires when a process-instance under a role exhibits behavior far from the role's distribution). Audit consumers and dashboard updated. Inverts cleanly with S5's `resident_fork_detected` flip.
+6. **Document `verify_trajectory_identity` as substrate-earned-only** in its docstring until role-aggregated alternative is built. Today it can't honestly verify a session-like agent's identity because there's no honest baseline.
+
+S6 as scoped above is consistent with identity.md §"Implications" — "Re-interpret (not re-derive)" — and consistent with the "math survives within a process lifetime; window norms change" framing. No new math. No deletion. Additive routing + recalibration. Substrate-earned agents get a separate calibration pool (per R4), which the routing layer makes structural rather than ad-hoc.
 
