@@ -37,7 +37,7 @@ APPROVED_FILES = {
     'docs/operations/OPERATOR_RUNBOOK.md',
     'docs/dev/TOOL_REGISTRATION.md',
     'docs/operations/contract-drift-playbook.md',
-    'docs/plans/validation-roadmap.md',
+    'docs/dev/validation-roadmap.md',
     'docs/MARKDOWN_PROLIFERATION_POLICY.md',
     'scripts/README.md',
     'data/README.md',

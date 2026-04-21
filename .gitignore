@@ -45,6 +45,9 @@ data/watcher/
 data/gov-data-preserve/
 *.log
 
+# Superpowers workflow artifacts (brainstorm/spec/plan outputs) — local only
+.local-docs/
+
 # Session history files (archived, not tracked)
 data/*history*.json
 data/*history*.csv
