@@ -181,3 +181,43 @@ Lineage: 81/169 active agents (48%) have `parent_agent_id`. Archived-rate 0.3% (
 
 **Action:** Thresholds remain. Real gap is tag discipline — see S8a/S8b.
 
+### 2026-04-21 — S11: five-branch consolidation audit
+
+**Scope:** The five WIP branches in `unitares-governance-plugin` named in S11's row (`fix/onboard-force-new-suggestion`, `claude/auto/skill-onboard-helper-honesty`, `feat/auto-onboard-flag`, `feat/flip-auto-onboard-default`, `refactor/delete-legacy-onboard`) — diff each against master, evaluate against v2 ontology, recommend next step.
+
+**Finding:** all five are already in master. Tree-identical to PRs #6/#7/#8 (Part-C trio); `fix/onboard-force-new-suggestion` matches PR #16 content; `claude/auto/skill-onboard-helper-honesty` matches PR #14. Branches are squash-merge leftovers. "None merged" premise is wrong; "problem persists" is correct — the merges shipped Part-C scaffolding but none implemented S11's teeth.
+
+**Per-branch ontology verdicts:**
+
+| Branch | Master counterpart | Ontology verdict |
+|---|---|---|
+| `fix/onboard-force-new-suggestion` | #16 `44aaf41` | Compatible. Fixes `force_new` pin-resume footgun server-side. Silent on defaults. |
+| `claude/auto/skill-onboard-helper-honesty` | #14 `73d4c58` | **Wrong direction.** Makes `continuity_token` flow smoother from cache → server. Pulls performative layer forward. Counter to S1. |
+| `feat/auto-onboard-flag` | #6 `dbd45b4` | Partial. Adds `UNITARES_DISABLE_AUTO_ONBOARD` flag with default `0` — performative behavior is still default, ontology-compliant behavior is opt-in. Wrong-sided default. |
+| `feat/flip-auto-onboard-default` | #7 `b57780f` | Partial alignment with S11. Agent must make own first MCP call (consistent with "first MCP call is sole identity source"). Does not retire token, does not invert banner, does not stop cache write. |
+| `refactor/delete-legacy-onboard` | #8 `f83f2f4` | Aligned. Structural cleanup. Does not address defaults. |
+
+**Current master gap:** `hooks/session-start` (44aaf41, 117–162) still frames the agent's first move as two peer alternatives — `onboard(continuity_token=…)` vs `onboard(force_new=true)` — with `force_new=true` presented as a footgun warning, not as ontology-default posture. `hooks/post-identity` still writes `continuity_token` to `./.unitares/session.json`, keeping the performative credential alive across process-instances.
+
+**Recommendation — close all five branches; synthesize one new PR** (`feat/s11-force-new-lineage-default`) against current master with four changes:
+
+1. **Banner inversion (`hooks/session-start`).** Lead with `onboard(force_new=true, parent_agent_id=<cached UUID>, spawn_reason="new_session")` as THE recommendation. Reframe workspace-cache hint: present cached UUID as *lineage candidate*, not resume credential ("this workspace was last run by `<UUID>` — if you inherit, declare `parent_agent_id=<UUID>`"). Drop the pin-resume warning (PR #16 repaired that footgun). Cite `docs/ontology/identity.md` in the banner.
+2. **Workspace cache becomes lineage-only (`hooks/post-identity`, `scripts/session_cache.py`).** Stop writing `continuity_token`. Write `uuid`, `agent_id`, `updated_at`, `parent_agent_id` only. Version-bump schema; legacy v1 token is ignored on read. Intersects S2 but ship under S11 since S2's prerequisite (S1 external-client grace) applies to server-side emit, not plugin-internal cache.
+3. **S1 deprecation breadcrumb (`scripts/onboard_helper.py`).** One-line comment where `continuity_token` is read: "compatibility surface for external clients; plugin-internal flows should declare lineage." No behavior change — S1 owns the full deprecation window.
+4. **Tests.** Banner shape, token-free cache write, v1-cache-read ignores token.
+
+**What this PR does NOT do:** retire `continuity_token` server-side (S1), change `bind_session`, implement R1 verification, touch S6/S7/S10. Single-concern.
+
+**Concrete next step:**
+
+```bash
+cd ~/projects/unitares-governance-plugin
+git push origin --delete fix/onboard-force-new-suggestion claude/auto/skill-onboard-helper-honesty \
+  feat/auto-onboard-flag feat/flip-auto-onboard-default refactor/delete-legacy-onboard
+# then in a fresh worktree from master: open feat/s11-force-new-lineage-default per scope above
+```
+
+Branch deletion not executed without operator approval — shared remote, reflog-only recovery.
+
+**Dogfood note:** this audit was produced by a process-instance that onboarded via `continuity_token` resume from `.unitares/session.json` — the performative path §4.1 proposes to retire. The SessionStart banner *suggested* the token path; §4.1 would have suggested `force_new + parent_agent_id=da300b4a`. Same author-by-behavior, different author-by-ontology. The plan is self-instantiating evidence of the gap it closes.
+
