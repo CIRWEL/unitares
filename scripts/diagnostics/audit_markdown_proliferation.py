@@ -45,7 +45,7 @@ APPROVED_FILES = {
 }
 
 # Max total files allowed (hard limit)
-MAX_MARKDOWN_FILES = 30
+MAX_MARKDOWN_FILES = 50
 
 # Directories that should be mostly migrated
 MIGRATION_TARGET_DIRS = {
