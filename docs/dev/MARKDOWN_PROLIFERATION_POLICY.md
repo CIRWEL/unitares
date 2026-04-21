@@ -27,11 +27,11 @@ The active documentation set is intentionally structured:
 
 - `README.md`: public overview and quick-start framing
 - `docs/UNIFIED_ARCHITECTURE.md`: canonical prose summary of the runtime
-- `docs/CANONICAL_SOURCES.md`: authority ordering and source-of-truth map
+- `docs/dev/CANONICAL_SOURCES.md`: authority ordering and source-of-truth map
 - `docs/guides/START_HERE.md`: thin compatibility entrypoint
 - `docs/guides/TROUBLESHOOTING.md`: live troubleshooting guide
 - `docs/operations/OPERATOR_RUNBOOK.md`: live operator procedures
-- thin infrastructure registries such as `docs/database_architecture.md` and `docs/operations/DEFINITIVE_PORTS.md`
+- thin infrastructure registries such as `docs/operations/database_architecture.md` and `docs/operations/DEFINITIVE_PORTS.md`
 - specialized references for narrow topics such as CIRS, tunnel deployment, tool registration, and contract drift
 
 If a proposed new file does not fit one of those roles clearly, it is probably a sign that the content belongs in an existing doc or in the archive/knowledge layer instead.

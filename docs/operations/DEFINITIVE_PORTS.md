@@ -33,6 +33,6 @@ If anima connectivity is relevant, verify the Pi-side port separately against th
 ## Read Next
 
 - [OPERATOR_RUNBOOK.md](OPERATOR_RUNBOOK.md): operator workflow and failure handling
-- [../CANONICAL_SOURCES.md](../CANONICAL_SOURCES.md): authority ordering
+- [../dev/CANONICAL_SOURCES.md](../dev/CANONICAL_SOURCES.md): authority ordering
 
 **Last Updated:** 2026-04-04 (reduced to thin operational registry)

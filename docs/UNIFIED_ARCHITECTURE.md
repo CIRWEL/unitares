@@ -2,7 +2,7 @@
 
 **How agents check in, how state evolves, how verdicts are issued.**
 
-Status: canonical prose summary. If this file and runtime code disagree, trust [CANONICAL_SOURCES.md](CANONICAL_SOURCES.md) and the referenced runtime files.
+Status: canonical prose summary. If this file and runtime code disagree, trust [dev/CANONICAL_SOURCES.md](dev/CANONICAL_SOURCES.md) and the referenced runtime files.
 
 ```
   Any AI Agent                                    UNITARES Server
@@ -91,7 +91,7 @@ When an agent is paused, recovery follows a structured protocol:
 2. **LLM-assisted dialectic** — local LLM provides antithesis for single-agent reflection
 3. **Peer dialectic** — another agent reviews (thesis -> antithesis -> synthesis)
 
-See [CIRCUIT_BREAKER_DIALECTIC.md](CIRCUIT_BREAKER_DIALECTIC.md) for the full protocol.
+See [dev/CIRCUIT_BREAKER_DIALECTIC.md](dev/CIRCUIT_BREAKER_DIALECTIC.md) for the full protocol.
 
 ## Knowledge Graph
 

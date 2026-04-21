@@ -30,7 +30,7 @@ APPROVED_FILES = {
     'README.md',
     'docs/CHANGELOG.md',
     'docs/guides/START_HERE.md',
-    'docs/CANONICAL_SOURCES.md',
+    'docs/dev/CANONICAL_SOURCES.md',
     'docs/UNIFIED_ARCHITECTURE.md',
 }
 
@@ -248,7 +248,7 @@ def main():
         print("  - Use relative links: [text](docs/path.md)")
         print("  - Add language tags to code blocks: ```python")
         print("  - Remove agent attribution from headers (tracked in git)")
-        print("\n  See: docs/MARKDOWN_PROLIFERATION_POLICY.md")
+        print("\n  See: docs/dev/MARKDOWN_PROLIFERATION_POLICY.md")
     
     if args.strict and total_issues > 0:
         return 1

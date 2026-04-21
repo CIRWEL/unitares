@@ -52,7 +52,7 @@ These docs should stay aligned with the runtime sources above:
 | `docs/guides/TROUBLESHOOTING.md` | live troubleshooting guide | Failure diagnosis and practical remediation |
 | `docs/operations/OPERATOR_RUNBOOK.md` | live operator guide | Startup, health checks, and operator procedures |
 | `docs/guides/START_HERE.md` | thin compatibility entrypoint | Minimal workflow and links outward; should stay short |
-| `docs/database_architecture.md` | thin infrastructure reference | Storage/backend facts only; should not restate runtime semantics |
+| `docs/operations/database_architecture.md` | thin infrastructure reference | Storage/backend facts only; should not restate runtime semantics |
 | `docs/operations/DEFINITIVE_PORTS.md` | thin operational registry | Port assignments only; should stay small and factual |
 
 ## Specialized Active Docs
@@ -62,11 +62,11 @@ These are live but intentionally specialized. They should not be treated as gene
 | Doc | Status | Intended use |
 |-----|--------|--------------|
 | `docs/guides/CIRS_PROTOCOL.md` | specialized protocol reference | CIRS-specific coordination flows |
-| `docs/CIRCUIT_BREAKER_DIALECTIC.md` | specialized recovery reference | Circuit-breaker and dialectic recovery flow |
+| `docs/dev/CIRCUIT_BREAKER_DIALECTIC.md` | specialized recovery reference | Circuit-breaker and dialectic recovery flow |
 | `docs/dev/TOOL_REGISTRATION.md` | specialized developer reference | MCP/tool registration work |
 | `docs/operations/contract-drift-playbook.md` | specialized engineering playbook | Tool-contract and drift-prevention work |
 | `docs/dev/validation-roadmap.md` | specialized engineering roadmap | Empirical validation ladder for groundedness, prediction, and intervention |
-| `docs/MARKDOWN_PROLIFERATION_POLICY.md` | specialized policy reference | Markdown creation policy and consolidation rules |
+| `docs/dev/MARKDOWN_PROLIFERATION_POLICY.md` | specialized policy reference | Markdown creation policy and consolidation rules |
 
 ## Supporting Non-Canonical Artifacts
 

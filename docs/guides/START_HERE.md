@@ -32,7 +32,7 @@ UUID is the ground truth. Store it, pass it on every `identity()` call. No token
 When docs disagree, use this order:
 
 1. Runtime code that computes or returns behavior
-2. [Canonical Sources](../CANONICAL_SOURCES.md)
+2. [Canonical Sources](../dev/CANONICAL_SOURCES.md)
 3. Live docs such as [README.md](../../README.md) and [UNIFIED_ARCHITECTURE.md](../UNIFIED_ARCHITECTURE.md)
 4. Archived docs for historical context only
 
@@ -47,7 +47,7 @@ Important current semantics:
 
 - [README.md](../../README.md): top-level overview and quick start
 - [UNIFIED_ARCHITECTURE.md](../UNIFIED_ARCHITECTURE.md): current architecture summary
-- [CANONICAL_SOURCES.md](../CANONICAL_SOURCES.md): authority ordering and source-of-truth map
+- [CANONICAL_SOURCES.md](../dev/CANONICAL_SOURCES.md): authority ordering and source-of-truth map
 - [OPERATOR_RUNBOOK.md](../operations/OPERATOR_RUNBOOK.md): operational usage and procedures
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): common issues and fixes
 

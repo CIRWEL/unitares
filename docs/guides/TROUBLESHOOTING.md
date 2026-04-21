@@ -267,7 +267,7 @@ launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
 
 1. [START_HERE.md](START_HERE.md) — Thin default workflow and doc map
 2. [Ngrok Deployment](NGROK_DEPLOYMENT.md) — Client configuration and remote access
-3. [database_architecture.md](../database_architecture.md) — Database details
+3. [database_architecture.md](../operations/database_architecture.md) — Database details
 
 ### Health Monitoring
 

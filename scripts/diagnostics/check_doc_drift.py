@@ -24,24 +24,24 @@ ACTIVE_DOC_CHECKS = {
 
 REQUIRED_STATUS_PREFIX = {
     "README.md": "Status:",
-    "docs/CIRCUIT_BREAKER_DIALECTIC.md": "Status:",
+    "docs/dev/CIRCUIT_BREAKER_DIALECTIC.md": "Status:",
     "docs/UNIFIED_ARCHITECTURE.md": "Status:",
     "docs/guides/TROUBLESHOOTING.md": "Status:",
     "docs/guides/START_HERE.md": "Status:",
     "docs/operations/OPERATOR_RUNBOOK.md": "Status:",
-    "docs/CANONICAL_SOURCES.md": "Status:",
-    "docs/database_architecture.md": "Status:",
+    "docs/dev/CANONICAL_SOURCES.md": "Status:",
+    "docs/operations/database_architecture.md": "Status:",
     "docs/operations/DEFINITIVE_PORTS.md": "Status:",
     "docs/guides/CIRS_PROTOCOL.md": "Status:",
     "docs/dev/TOOL_REGISTRATION.md": "Status:",
     "docs/operations/contract-drift-playbook.md": "Status:",
     "docs/dev/validation-roadmap.md": "Status:",
-    "docs/MARKDOWN_PROLIFERATION_POLICY.md": "Status:",
+    "docs/dev/MARKDOWN_PROLIFERATION_POLICY.md": "Status:",
 }
 
 MAX_LINES = {
     "docs/guides/START_HERE.md": 80,
-    "docs/database_architecture.md": 80,
+    "docs/operations/database_architecture.md": 80,
     "docs/operations/DEFINITIVE_PORTS.md": 60,
 }
 
@@ -70,9 +70,9 @@ def main() -> int:
                 f"{rel_path}: too long ({line_count} lines > {max_lines}); keep it as a thin entrypoint"
             )
 
-    canonical_doc = REPO_ROOT / "docs" / "CANONICAL_SOURCES.md"
+    canonical_doc = REPO_ROOT / "docs" / "dev" / "CANONICAL_SOURCES.md"
     if not canonical_doc.exists():
-        failures.append("docs/CANONICAL_SOURCES.md: missing canonical source map")
+        failures.append("docs/dev/CANONICAL_SOURCES.md: missing canonical source map")
 
     if failures:
         print("Doc drift check failed:")

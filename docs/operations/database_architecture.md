@@ -60,8 +60,8 @@ redis-cli PING
 
 ## Read Next
 
-- [UNIFIED_ARCHITECTURE.md](UNIFIED_ARCHITECTURE.md): runtime architecture
-- [operations/OPERATOR_RUNBOOK.md](operations/OPERATOR_RUNBOOK.md): startup, health, triage
-- [CANONICAL_SOURCES.md](CANONICAL_SOURCES.md): authority ordering
+- [../UNIFIED_ARCHITECTURE.md](../UNIFIED_ARCHITECTURE.md): runtime architecture
+- [OPERATOR_RUNBOOK.md](OPERATOR_RUNBOOK.md): startup, health, triage
+- [../dev/CANONICAL_SOURCES.md](../dev/CANONICAL_SOURCES.md): authority ordering
 
 **Last Updated:** 2026-04-04 (reduced to thin infrastructure reference)
