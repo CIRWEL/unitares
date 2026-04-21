@@ -123,6 +123,66 @@ Do not promote items out of "research" (R) into "implications" (S) without first
 
 ---
 
+## Appendix: Operational pattern (how to pursue)
+
+This plan is a dispatch queue. Each row is a scoped task, each task is handled by a fresh process-instance with a handoff prompt, each session ships its output, the operator reviews on GitHub.
+
+### The cycle
+
+1. **Pick a row.** Consult the ledger above; prioritize by current leverage (see "Recommended priority" below).
+2. **Spawn a fresh session** (Claude Code tab, Codex, Discord dispatch, or resident agent if appropriate). Paste the handoff prompt template, customized per row.
+3. **The session works, ships, reports back.** Work lands on master (or an auto-merged PR, per `ship.sh` routing) with KG notes for anything non-obvious.
+4. **Operator reviews the shipped artifact on GitHub.** Accept, reject, or flag for revision. Move on.
+
+### What only the operator can do
+
+- Accept / reject recommendations (e.g., the v7 animating-thesis decision was operator's call; downstream calls same).
+- Decide which row to pick next.
+- Handle external-client communication if/when S1 deprecation lands (unknown external users as of 2026-04-21).
+- Decide when "the ontology is done enough" vs. needs another revision pass.
+- Close the loop on this plan when it reaches its definition-of-done state.
+
+### Recommended priority (snapshot 2026-04-21)
+
+1. **S11 synthesized PR** — the consolidation plan exists at `docs/ontology/s11-consolidation.md`; one session executes the three changes (banner inversion; stop writing continuity_token to `.unitares/session.json`; S1 deprecation note in `onboard_helper.py`) and ships. Highest-leverage single action — makes the ontology self-enforcing.
+2. **S5 inversion** — `resident_fork_detected` semantics flip (fire when restart *lacks* lineage, not when present). Small, localized. Pairs with R4 (Lumen is the primary beneficiary).
+3. **v7 outline draft** — fresh session in `unitares-paper-v6` repo. Produces a `.tex` skeleton the operator can read and redirect.
+4. **R3 annotation pass** — read `src/trajectory_identity.py compute_trust_tier` against the ontology; annotate what already implements statistical lineage vs. what assumes UUID-identity. Pure reading task.
+
+After those four, re-read this plan and decide whether remaining rows still matter or have been superseded.
+
+### Handoff prompt template
+
+```
+Task: [row ID from plan.md, e.g., "S11 synthesized PR execution"]
+
+Authoritative reference:
+- docs/ontology/identity.md (ontology v2 + substrate-earned pattern appendix)
+- docs/ontology/plan.md (this ledger)
+- [any row-specific doc, e.g., docs/ontology/s11-consolidation.md]
+all on master in the unitares repo.
+
+Scope: [specific bounds, e.g., "three changes per s11-consolidation.md §4;
+ship via ship.sh runtime path for PR + auto-merge"].
+
+Output: [shipped PR URL / shipped docs path / plan.md row update with
+status and pointer to artifact].
+
+Optional lineage declaration: parent_agent_id=[prior process-instance
+UUID, if continuity of reasoning matters; otherwise omit].
+
+Report back in under 200 words: what was shipped, what was surprising,
+what the operator needs to decide.
+```
+
+### What this pattern does not license
+
+- **Long-running sessions that accumulate multiple rows.** One session per scoped task, ideally. Accumulation invites session fatigue and the performative-continuity pattern S11 is retiring.
+- **Silent lineage.** If the spawning reason is "continue where prior session left off," declare the prior UUID as `parent_agent_id`. Don't use `continuity_token` to resume — that's the retired path.
+- **Operator-less work.** Someone has to review what ships. Automation closes the loop from branch to master; it doesn't close the loop from artifact to operator intent.
+
+---
+
 ## Appendix: Audit notes
 
 Running log of descriptive-stance findings. Inventories and measurements only — no code changes, no commitments.
