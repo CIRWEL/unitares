@@ -44,6 +44,7 @@ Every item from `identity.md` that requires work, what "resolved" means for it, 
 | S8b | Class-tag backfill on active agents | Data ops | S8a findings | Backfill class tags on active agents where class is inferable (resident-labelled, `Claude_*`-labelled, etc.). |
 | S9 | PATH 1/2 anti-hijack machinery | Re-scope or retire | R1 | Under R1, external verification replaces continuity-enforcement. PATH 1/2 flip to lineage-plausibility checks or retire. |
 | S10 | Fleet calibration aggregation paths | Shift default unit | R3, S7 | Default aggregation unit shifts from UUID to role. Dashboards + external-consumer contracts updated. |
+| S11 | SessionStart / onboard default behavior (the teeth of the ontology) | Revise | None. Concrete, localized. | `SessionStart` hook and onboard banner default to **force_new + lineage declaration** when a cached token exists. Resume becomes explicit opt-in with justification. Rationale: today's session itself demonstrated that presenting resume as an available option when a cached token exists nudges agents to take the performative path, even when they have just written the ontology condemning it. The hook is where the ontology gets teeth. |
 
 ## Dependency graph (text form)
 
