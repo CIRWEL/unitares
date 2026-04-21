@@ -278,6 +278,16 @@ graph LR
 | [Contributing](CONTRIBUTING.md) | Development setup, testing, style |
 | [Changelog](docs/CHANGELOG.md) | Releases |
 
+### Agent bootstrap files (root)
+
+Three files at the repo root orient different AI CLIs. Human readers can skip them.
+
+| File | For |
+|------|-----|
+| [`CLAUDE.md`](CLAUDE.md) | Claude Code sessions — hook lifecycle, Watcher resolution, Claude-specific rules |
+| [`AGENTS.md`](AGENTS.md) | Codex sessions — machine-facing bootstrap (shares a core contract with `CLAUDE.md`) |
+| [`CODEX_START.md`](CODEX_START.md) | Codex users — human-facing quickstart for direct workflow |
+
 ## Paper
 
 [**UNITARES v6**](https://github.com/CIRWEL/unitares-paper-v6) — *Information-Theoretic Governance of Heterogeneous Agent Fleets*. Framework + migration paper (30 pages, latest: `paper-v6.8.1`). Reframes EISV in Shannon + variational free-energy terms, presents class-conditional calibration as a first-class design constraint, and documents the pipeline-ordering migration mechanism used to re-ground the live system. Headline empirical finding: a 13,310-row verdict counterfactual shows 28.9% of governance basin assignments flip under class-conditional grounded coherence relative to the legacy fleet-wide form, with a strong directional bias into the `low` basin — direct empirical support for the homogenization-failure-mode argument. Concept DOI: [10.5281/zenodo.19647159](https://doi.org/10.5281/zenodo.19647159) (resolves to latest version; each tagged release has its own version DOI).
