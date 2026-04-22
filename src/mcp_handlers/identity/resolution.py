@@ -255,6 +255,10 @@ async def resolve_session_identity(
 
     token_agent_uuid: Optional[str] = None,
 
+    parent_agent_id: Optional[str] = None,
+
+    spawn_reason: Optional[str] = None,
+
 ) -> Dict[str, Any]:
 
     """
@@ -713,12 +717,19 @@ async def resolve_session_identity(
         try:
             db = get_db()
 
-            # Create agent in PostgreSQL with UUID as key (label set atomically)
+            # Create agent in PostgreSQL with UUID as key (label set atomically).
+            # parent_agent_id / spawn_reason are the descriptive-stance lineage
+            # declaration (identity ontology v2 §Worked examples). They arrive
+            # from onboard(force_new=true, parent_agent_id=..., spawn_reason=...)
+            # and must be persisted or the ontology's only earned cross-process
+            # signal is theater — dogfood regression 2026-04-21.
             await db.upsert_agent(
                 agent_id=agent_uuid,  # UUID is the primary key
                 api_key="",  # Legacy field, not used
                 status="active",
                 label=label,  # Set auto-label at creation time
+                parent_agent_id=parent_agent_id,
+                spawn_reason=spawn_reason,
             )
 
             if label:
@@ -738,6 +749,7 @@ async def resolve_session_identity(
             await db.upsert_identity(
                 agent_id=agent_uuid,
                 api_key_hash="",
+                parent_agent_id=parent_agent_id,
                 metadata=identity_metadata,
             )
 
