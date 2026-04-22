@@ -142,14 +142,16 @@ This plan is a dispatch queue. Each row is a scoped task, each task is handled b
 - Decide when "the ontology is done enough" vs. needs another revision pass.
 - Close the loop on this plan when it reaches its definition-of-done state.
 
-### Recommended priority (snapshot 2026-04-21)
+### Recommended priority (snapshot 2026-04-21, end of session)
 
-1. **S11 synthesized PR** — the consolidation audit lives in this file's Appendix entry "2026-04-21 — S11"; one session executes the three changes (banner inversion; stop writing continuity_token to `.unitares/session.json`; S1 deprecation note in `onboard_helper.py`) in the `unitares-governance-plugin` repo and ships. Highest-leverage single action — makes the ontology self-enforcing.
-2. **S5 inversion** — `resident_fork_detected` semantics flip (fire when restart *lacks* lineage, not when present). Small, localized. Pairs with R4 (Lumen is the primary beneficiary).
-3. **v7 outline draft** — fresh session in `unitares-paper-v6` repo. Produces a `.tex` skeleton the operator can read and redirect.
-4. **R3 annotation pass** — read `src/trajectory_identity.py compute_trust_tier` against the ontology; annotate what already implements statistical lineage vs. what assumes UUID-identity. Pure reading task.
+Two prior priority items shipped this session: S11 (via `unitares-governance-plugin#17`) and R3 annotation (commit `31d30d9a` + appendix). R4.1 also landed (`unitares#96`, `verify_substrate_earned` operational check). Refreshed priority for the next session:
 
-After those four, re-read this plan and decide whether remaining rows still matter or have been superseded.
+1. **S5 inversion** — `resident_fork_detected` semantics flip (fire when restart *lacks* lineage, not when present). Small, localized. Pairs with R4 (Lumen is the primary beneficiary). Now unblocked: R4 has both the v1 spec (identity.md appendix) and the operational primitive (`src/identity/substrate.py`).
+2. **S6 trust-tier re-interpretation** — operator answers needed for the open questions in this file's "2026-04-21 — R3" appendix (especially Q1: substrate-earned as class-arg or parallel path). Then the module-scope work outlined in the appendix's "Action — what S6 actually needs to do" can ship. Independent of S7/S10.
+3. **v7 outline draft** — fresh session in `unitares-paper-v6` repo. Produces a `.tex` skeleton you can read and redirect. Independent of all code work.
+4. **Pre-dispatch PR-scan checkpoint** — followup candidate noted in the "2026-04-21 — S11 execution" appendix. Lightweight either as a hook or as a `WIP-PR:` field convention on plan.md rows. Closes the "two agents writing the same PR in parallel" failure mode that recurred this session.
+
+After those, re-read this plan and decide whether remaining rows still matter or have been superseded.
 
 ### Handoff prompt template
 
