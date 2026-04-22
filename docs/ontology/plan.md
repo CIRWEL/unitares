@@ -44,7 +44,7 @@ Every item from `identity.md` that requires work, what "resolved" means for it, 
 | S8b | Class-tag backfill on active agents | Data ops | S8a findings | Backfill class tags on active agents where class is inferable (resident-labelled, `Claude_*`-labelled, etc.). |
 | S9 | PATH 1/2 anti-hijack machinery | Re-scope or retire | R1 | Under R1, external verification replaces continuity-enforcement. PATH 1/2 flip to lineage-plausibility checks or retire. |
 | S10 | Fleet calibration aggregation paths | Shift default unit | R3, S7 | Default aggregation unit shifts from UUID to role. Dashboards + external-consumer contracts updated. |
-| S11 | SessionStart / onboard default behavior (the teeth of the ontology) | **Consolidation, not new work** | Read of 5 existing WIP branches | `SessionStart` hook and onboard banner default to **force_new + lineage declaration** when a cached token exists. Resume becomes explicit opt-in with justification. **2026-04-21 audit finding:** the `unitares-governance-plugin` repo has five open WIP branches targeting exactly this problem (`fix/onboard-force-new-suggestion` aaacb44, `claude/auto/skill-onboard-helper-honesty` 8138bd1, `feat/auto-onboard-flag` 73b1bca, `feat/flip-auto-onboard-default` d4a9c5e, `refactor/delete-legacy-onboard` b731ade), none merged. S11's effective action is consolidation — compare approaches against the ontology, pick or synthesize, not add a 6th parallel attempt. Scope this as its own session. |
+| S11 | SessionStart / onboard default behavior (the teeth of the ontology) | **Resolved 2026-04-21** | Audit + plugin PR | Landed as `unitares-governance-plugin#17` (commit `743952ab`) — banner inversion, cache becomes lineage-only (schema_version=2, no continuity_token write), S1 deprecation breadcrumb. Audit + duplicate-PR dogfood story in this file's Appendix entries "2026-04-21 — S11" (initial) and "2026-04-21 — S11 execution" (landing + lesson). |
 
 ## Dependency graph (text form)
 
@@ -339,3 +339,13 @@ Branch deletion not executed without operator approval — shared remote, reflog
 
 S6 as scoped above is consistent with identity.md §"Implications" — "Re-interpret (not re-derive)" — and consistent with the "math survives within a process lifetime; window norms change" framing. No new math. No deletion. Additive routing + recalibration. Substrate-earned agents get a separate calibration pool (per R4), which the routing layer makes structural rather than ad-hoc.
 
+
+### 2026-04-21 — S11 execution: landing + duplicate-PR lesson
+
+**Landed:** `unitares-governance-plugin#17` merged 2026-04-21 23:55 UTC as squash commit `743952ab`. Implements all four S11 spec items per the prior appendix entry (banner inversion citing identity.md; lineage-only cache write with `schema_version: 2`; S1 deprecation comment in `onboard_helper.py`). Author: Codex auto-shipped via plugin's `ship.sh` runtime path.
+
+**Dogfood lesson:** an independent agent (Claude Code subagent dispatched 7+ hours after #17 was opened) wrote the same PR from scratch as #18, file-for-file overlap on the same six files. Both PRs converged on the same banner posture (force_new lead, bare UUID surface for `parent_agent_id` declaration). #18 was closed in favor of #17 (smaller diff, earlier author, equivalent ontological outcome).
+
+**The pattern that was not prevented.** S11's audit was scoped to consolidate the 5 prior parallel WIP branches that triggered this row. The execution session then **spawned a 6th parallel attempt** without first running `gh pr list --state open` to scan for in-flight work. The audit identified the symptom (multiple agents independently reaching for the same problem with no cross-visibility) but did not produce a code-level cure (no pre-dispatch PR-scan checkpoint).
+
+**Followup candidate (not committed):** a small pre-dispatch hook for parallel-work avoidance — when an agent is about to open a PR, scan open PRs in the same repo for matching scope tags and require explicit acknowledgment before proceeding. Lighter alternative: the plan.md row format gains a `WIP-PR:` field that owner-of-row updates when work is in flight, and the dispatcher (Claude/Codex subagent) is instructed to grep for that field before opening a new PR. Either way, the durable fix lives in the dispatcher's pre-flight, not in operator vigilance.
