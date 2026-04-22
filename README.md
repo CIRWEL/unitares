@@ -179,9 +179,9 @@ export UNITARES_KNOWLEDGE_BACKEND=age
 python src/mcp_server.py --port 8767
 ```
 
-**Lean dev install** (venv, lighter dependency set): use `requirements-core.txt` and follow [CONTRIBUTING.md](CONTRIBUTING.md). Database setup (PostgreSQL 17 + AGE + pgvector): [db/postgres/README.md](db/postgres/README.md).
+**Lean dev install**: use `requirements-core.txt` instead of `-full.txt` for tests + handler development (skips server deps). Database setup (PostgreSQL 17 + AGE + pgvector): [db/postgres/README.md](db/postgres/README.md).
 
-The EISV **ODE** engine ships as the compiled **`unitares-core`** package (installed via requirements). See [CONTRIBUTING.md](CONTRIBUTING.md#core-engine-dependency) for CI and local symlinks.
+The EISV **ODE** engine ships as the compiled **`unitares-core`** package (installed via requirements). Source lives in a separate private repo — CI uses a private `UNITARES_CORE_TOKEN` secret, so **fork PRs can't run CI**; a maintainer runs it on the PR author's behalf. To develop against local core source: `pip uninstall unitares-core -y && ln -sf /path/to/unitares-core/governance_core governance_core`.
 
 ### MCP configuration
 
@@ -288,7 +288,6 @@ graph LR
 | [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Common issues |
 | [Dashboard](dashboard/README.md) | Web UI |
 | [Database](docs/operations/database_architecture.md) | PostgreSQL + AGE |
-| [Contributing](CONTRIBUTING.md) | Development setup, testing, style |
 | [Changelog](docs/CHANGELOG.md) | Releases |
 
 ### Agent bootstrap files (root)
@@ -315,6 +314,6 @@ Installable client adapters for Codex and Claude live in the companion [`unitare
 
 ---
 
-**MIT** (server, dashboard, tooling) — see [LICENSE](LICENSE). The ODE dynamics engine ships as a compiled dependency (`unitares-core`); see [CONTRIBUTING.md](CONTRIBUTING.md#core-engine-dependency).
+**MIT** (server, dashboard, tooling) — see [LICENSE](LICENSE). The ODE dynamics engine ships as a compiled dependency (`unitares-core`); source lives in a separate private repo.
 
 Built by [@CIRWEL](https://github.com/CIRWEL)
