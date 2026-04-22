@@ -181,7 +181,7 @@ python src/mcp_server.py --port 8767
 
 **Lean dev install** (venv, lighter dependency set): use `requirements-core.txt` and follow [CONTRIBUTING.md](CONTRIBUTING.md). Database setup (PostgreSQL 17 + AGE + pgvector): [db/postgres/README.md](db/postgres/README.md).
 
-The EISV **ODE** engine ships as the compiled **`unitares-core`** package (installed via requirements). See [CONTRIBUTING.md](CONTRIBUTING.md#compiled-dependency) for CI and local symlinks.
+The EISV **ODE** engine ships as the compiled **`unitares-core`** package (installed via requirements). See [CONTRIBUTING.md](CONTRIBUTING.md#core-engine-dependency) for CI and local symlinks.
 
 ### MCP configuration
 
@@ -315,6 +315,6 @@ Installable client adapters for Codex and Claude live in the companion [`unitare
 
 ---
 
-**MIT** (server, dashboard, tooling) — see [LICENSE](LICENSE). The ODE dynamics engine ships as a compiled dependency (`unitares-core`); see [CONTRIBUTING.md](CONTRIBUTING.md#compiled-dependency).
+**MIT** (server, dashboard, tooling) — see [LICENSE](LICENSE). The ODE dynamics engine ships as a compiled dependency (`unitares-core`); see [CONTRIBUTING.md](CONTRIBUTING.md#core-engine-dependency).
 
 Built by [@CIRWEL](https://github.com/CIRWEL)
