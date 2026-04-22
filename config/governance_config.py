@@ -972,20 +972,22 @@ def session_fingerprint_check_mode() -> str:
 #   "off"    — skip the check entirely; pin-fallback resume proceeds silently
 #   "log"    — emit [PATH2_IPUA_PIN_RESUME] + identity_hijack_suspected
 #              broadcast when onboard() hits the pin fallback with no proof;
-#              resume still proceeds (default — observation phase)
+#              resume still proceeds (observation phase — pre-2026-04-21 default)
 #   "strict" — same events, plus force resume=False so the onboard mints a
 #              fresh identity instead of silently adopting the pinned UUID.
 #              The pin itself is NOT deleted — the legitimate owner can still
 #              resume by presenting a continuity_token or agent_uuid.
+#              (current default — identity ontology v2 §85 retires implicit
+#              cross-process-instance identity via fingerprint pin)
 #
 # Override: UNITARES_IPUA_PIN_CHECK env var.
 IPUA_PIN_CHECK_MODE: str = os.getenv(
-    "UNITARES_IPUA_PIN_CHECK", "log"
+    "UNITARES_IPUA_PIN_CHECK", "strict"
 ).strip().lower()
 
 _VALID_IPUA_PIN_MODES = frozenset({"off", "log", "strict"})
 if IPUA_PIN_CHECK_MODE not in _VALID_IPUA_PIN_MODES:
-    IPUA_PIN_CHECK_MODE = "log"
+    IPUA_PIN_CHECK_MODE = "strict"
 
 
 def ipua_pin_check_mode() -> str:
@@ -993,4 +995,4 @@ def ipua_pin_check_mode() -> str:
     m = os.getenv(
         "UNITARES_IPUA_PIN_CHECK", IPUA_PIN_CHECK_MODE
     ).strip().lower()
-    return m if m in _VALID_IPUA_PIN_MODES else "log"
+    return m if m in _VALID_IPUA_PIN_MODES else "strict"
