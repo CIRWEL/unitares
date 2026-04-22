@@ -179,7 +179,7 @@ export UNITARES_KNOWLEDGE_BACKEND=age
 python src/mcp_server.py --port 8767
 ```
 
-**Lean dev install**: use `requirements-core.txt` instead of `-full.txt` for tests + handler development (skips server deps). Database setup (PostgreSQL 17 + AGE + pgvector): [db/postgres/README.md](db/postgres/README.md).
+`requirements-full.txt` is the default for almost everything — running the local server, running tests (`pytest` is in `full` only), and handler development. `requirements-core.txt` is a 3-package subset (`mcp` + `numpy` + `unitares-core`) for thin stdio/proxy setups where the governance server runs elsewhere and you only need a local client. Database setup (PostgreSQL 17 + AGE + pgvector): [db/postgres/README.md](db/postgres/README.md).
 
 The EISV **ODE** engine ships as the compiled **`unitares-core`** package (installed via requirements). Source lives in a separate private repo — CI uses a private `UNITARES_CORE_TOKEN` secret, so **fork PRs can't run CI**; a maintainer runs it on the PR author's behalf. To develop against local core source: `pip uninstall unitares-core -y && ln -sf /path/to/unitares-core/governance_core governance_core`.
 
