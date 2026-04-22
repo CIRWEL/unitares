@@ -1396,21 +1396,46 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             logger.error(f"[ONBOARD] Failed to persist fresh identity: {e}")
             return error_response(f"Failed to persist identity: {e}")
     else:
-        # STEP 2b: Get or create identity (using v2 logic)
+        # STEP 2b: Get or create identity (using v2 logic).
+        # The force_new branch persists via resolve_session_identity's own
+        # create path, which — before 2026-04-21 — silently dropped declared
+        # lineage. parent_agent_id / spawn_reason are now threaded through so
+        # the create path mirrors ensure_agent_persisted's write.
         try:
-            # resolve_session_identity creates new if needed (PATH 3)
-            # We use force_new=True if requested to bypass cache/DB lookup
             identity = await resolve_session_identity(
                 session_key,
                 persist=True,  # Onboard always persists (it's an explicit "I am here" action)
                 model_type=model_type,
                 client_hint=client_hint,
-                force_new=force_new
+                force_new=force_new,
+                parent_agent_id=_parent_agent_id,
+                spawn_reason=_spawn_reason,
             )
             agent_uuid = identity["agent_uuid"]
             agent_id = identity.get("agent_id", agent_uuid)
             is_new = identity.get("created", False) or force_new
             agent_label = identity.get("label")
+
+            # Mirror the created_fresh_identity branch: sync lineage into
+            # in-memory metadata (EISV inheritance) and create the SPAWNED
+            # edge in AGE. Without this the force_new branch would have DB
+            # lineage but no trajectory/graph continuity.
+            if is_new and _parent_agent_id:
+                try:
+                    from src.agent_metadata_persistence import get_or_create_metadata
+                    meta = get_or_create_metadata(agent_uuid)
+                    meta.parent_agent_id = _parent_agent_id
+                    meta.spawn_reason = _spawn_reason
+                except Exception as e:
+                    logger.debug(f"[ONBOARD] Could not sync parent to metadata (force_new branch): {e}")
+                try:
+                    from src.background_tasks import create_tracked_task
+                    create_tracked_task(
+                        _create_spawned_edge_bg(agent_uuid, _parent_agent_id, _spawn_reason),
+                        name="spawned_edge",
+                    )
+                except Exception as e:
+                    logger.debug(f"[ONBOARD] Could not schedule SPAWNED edge (force_new branch): {e}")
         except Exception as e:
             logger.error(f"onboard() failed to create identity: {e}")
             return error_response(f"Failed to create identity: {e}")

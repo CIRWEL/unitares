@@ -1856,6 +1856,58 @@ class TestHandleOnboardV2:
         assert data["success"] is True
 
     @pytest.mark.asyncio
+    async def test_onboard_force_new_persists_parent_and_spawn_reason(
+        self, patch_onboard_deps, mock_db, mock_redis,
+    ):
+        """onboard(force_new=true, parent_agent_id=..., spawn_reason=...) must land lineage in PostgreSQL.
+
+        The force_new branch goes through resolve_session_identity, which — before
+        this fix — owned its own upsert path and silently dropped parent_agent_id
+        and spawn_reason. Under the identity ontology v2 (docs/ontology/identity.md)
+        lineage declaration at onboard is the **descriptive** floor: a fresh
+        process-instance that declares a predecessor must have that link persisted,
+        or the ontology's only earned cross-process signal (declared lineage) is
+        theater. Regression against dogfood finding 2026-04-21.
+        """
+        from src.mcp_handlers.identity.handlers import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="new-ident", metadata={})
+
+        parent_uuid = "da300b4a-5320-480d-bac3-d029cd062842"
+        spawn_reason = "new_session"
+
+        result = await handle_onboard_v2({
+            "client_session_id": "onboard-force-lineage",
+            "force_new": True,
+            "parent_agent_id": parent_uuid,
+            "spawn_reason": spawn_reason,
+        })
+        data = parse_result(result)
+
+        assert data["success"] is True
+        assert data["is_new"] is True
+
+        agent_calls = mock_db.upsert_agent.await_args_list
+        assert agent_calls, "upsert_agent must be called for a fresh force_new identity"
+        agent_kwargs = agent_calls[0].kwargs
+        assert agent_kwargs.get("parent_agent_id") == parent_uuid, (
+            f"parent_agent_id must reach core.agents on force_new; got {agent_kwargs!r}"
+        )
+        assert agent_kwargs.get("spawn_reason") == spawn_reason, (
+            f"spawn_reason must reach core.agents on force_new; got {agent_kwargs!r}"
+        )
+
+        identity_calls = mock_db.upsert_identity.await_args_list
+        assert identity_calls, "upsert_identity must be called for a fresh force_new identity"
+        identity_kwargs = identity_calls[0].kwargs
+        assert identity_kwargs.get("parent_agent_id") == parent_uuid, (
+            f"parent_agent_id must reach core.identities on force_new; got {identity_kwargs!r}"
+        )
+
+    @pytest.mark.asyncio
     async def test_onboard_with_model_type_gemini(self, patch_onboard_deps, mock_db, mock_redis):
         """Model normalization for gemini in onboard flow."""
         from src.mcp_handlers.identity.handlers import handle_onboard_v2
