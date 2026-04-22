@@ -339,6 +339,54 @@ Branch deletion not executed without operator approval — shared remote, reflog
 
 S6 as scoped above is consistent with identity.md §"Implications" — "Re-interpret (not re-derive)" — and consistent with the "math survives within a process lifetime; window norms change" framing. No new math. No deletion. Additive routing + recalibration. Substrate-earned agents get a separate calibration pool (per R4), which the routing layer makes structural rather than ad-hoc.
 
+**Callers of `compute_trust_tier`** (all UUID-aggregated read-side sites):
+
+| Site | File:line | Role |
+|---|---|---|
+| Update enrichment — tier + risk adjust | `src/mcp_handlers/updates/enrichments.py:729-773` | Recomputes tier post-signature, stamps `meta.trust_tier`, adjusts current update's `risk_score` ±0.05 / ±0.15 by tier and drift flag |
+| Batch tier load | `src/agent_metadata_persistence.py:173-192` | Fleet metadata load: batch-fetches identities, populates `meta.trust_tier_num` per record |
+| Lifecycle query | `src/mcp_handlers/lifecycle/query.py:413-433` | Backfills missing `trust_tier` when listing agents |
+| Identity status endpoint | `src/mcp_handlers/identity/handlers.py:1713-1717` | `get_trajectory_status` response decoration |
+
+**KG provenance — `agent_id` stamping and aggregation** (S7's territory; tightly coupled to R3):
+
+| Site | File:line | Class |
+|---|---|---|
+| `DiscoveryNode.agent_id` | `src/knowledge_graph.py:81` | UUID-aggregated stamp; load-bearing for attribution |
+| `DiscoveryNode.provenance_chain` | `src/knowledge_graph.py:97-99` | Mixed — exists, role-friendly, but underused (open question 5) |
+| PG `kg_add_discovery` / `query` / `get_stats(by_agent)` / `get_agent_discoveries` | `src/storage/knowledge_graph_postgres.py:56-208` | UUID-aggregated; `total_agents` stat = "distinct process-instances that authored this epoch", not "total agents" under v2 |
+| AGE backend mirror + rate limiter | `src/storage/knowledge_graph_age.py:937-1006` | UUID-aggregated; rate-limit-by-UUID means a churning role gets `N x budget` writes (feature or leak — open question 4) |
+
+**Fleet-level aggregation** (S10's territory):
+
+| Site | File:line | Class |
+|---|---|---|
+| `handle_aggregate_metrics` | `src/mcp_handlers/observability/handlers.py:671-771` | **Already statistical** — UUID is iteration key, not aggregation key; mean/count over observations is identity-agnostic in spirit |
+| `calibrate_class_conditional.py` | `scripts/calibrate_class_conditional.py:90-134` | **Already statistical and role-aware** — groups by `classify_from_db_row(label, tags)`; integral-over-role semantics R3 calls for |
+| `classify_agent` | `src/grounding/class_indicator.py` | Role-aware primitive; class tags map to known residents + ephemeral/persistent/embodied/default |
+| `get_recent_cross_agent_activity` | `src/db/mixins/state.py:120-148` | UUID-aggregated (`GROUP BY i.agent_id`) |
+| `SequentialCalibrationTracker` | `src/sequential_calibration.py:104` and `:204-252` | Mixed — `global_state` (statistical) parallel to `agent_states[agent_id]` (UUID-aggregated); callers choose |
+
+**Audit machinery** (UUID-aggregated at stamp time): `audit_log.log_*(agent_id=...)` across `src/audit_log.py:20-170`; `trajectory_drift` event at `src/trajectory_identity.py:527-543`; `identity_assurance_change` broadcast at `src/trajectory_identity.py:561-574`.
+
+**Open questions for S6/S7/S10 owner:**
+
+1. **Substrate-earned: class-arg or parallel path?** `compute_trust_tier` could take a `calibration_class` argument and branch internally, or substrate-earned could bypass `compute_trust_tier` entirely (tier=3 by R4's three-condition check). Latter is cleaner; requires a parallel "substrate-earned path" alongside the per-UUID metadata path.
+2. **Reseed ceiling.** `store_genesis_signature` already has a partial-admission patch (lines 416-426): reseed when lineage drops. A principled extension: "at tier ≤ 1 with declared parent, seed genesis from parent's `trajectory_current`." Module-scope win that may obviate the heavier role-aggregation lift.
+3. **`observation_count >= 200` as substrate-earned-only.** Under v2, this threshold is unreachable for session-like agents. If we keep it, tier 3 ("verified") becomes substrate-earned-only by accident — intentional? Maybe yes (consistent with R4); if so, name it.
+4. **AGE rate limiter — feature or leak?** Per-UUID budget means churning roles exceed the limit `N` times. Intended elasticity or a hole.
+5. **`provenance_chain` is dormant.** Field exists, is serialized, is role-friendly. Few writers populate it. Is this the cheapest place to start role-aware write-stamping, or is there a reason it's underused.
+
+**Unblocking table:**
+
+| Row | Unblocked? | What remains |
+|---|---|---|
+| **S6** (`compute_trust_tier` re-interpret) | Yes, partially | (a) operator answer to question 1 above, (b) empirical window-size for `default` class (likely from S8 archival data) |
+| **S7** (KG provenance audit) | Yes, largely | (a) lineage-chain column schema decision, (b) `total_agents` stat semantics migration |
+| **S10** (fleet aggregation paths) | Partially | (a) dashboard + external-consumer contract reshape, (b) coordination with R4 (substrate-earned visible as N=1 classes); still blocked on S7 for KG slice |
+
+**Re-scope observation:** R3's bulk is at the storage layer (KG stamping/query/stats — S7 territory) and audit (G section above). The trust-tier function itself is small. **R3 and S7 are tightly coupled** in a way the dependency graph treats as one-directional. A joint pass may be more coherent than sequential. The pure-trust-tier slice (B-tier item 3 above) can ship module-scope without S7/S10, but consumers will want KG primitives migrated soon after.
+
 
 ### 2026-04-21 — S11 execution: landing + duplicate-PR lesson
 
