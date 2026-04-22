@@ -34,7 +34,7 @@ Reference fingerprints in the commit message — Watcher's audit trail lives in 
 
 ## Project
 
-UNITARES governance MCP server. Thermodynamic governance framework for AI agents (EISV state vectors, coherence tracking, dialectic resolution, knowledge graph).
+UNITARES governance MCP server. Information-theoretic governance framework for AI agents (EISV state vectors, coherence tracking, dialectic resolution, knowledge graph).
 
 ## Stack
 

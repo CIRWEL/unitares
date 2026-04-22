@@ -49,7 +49,7 @@ Use `--agent-id` when resolving or dismissing so the audit trail stays attribute
 
 ## Project
 
-UNITARES governance MCP server. Thermodynamic governance framework for AI agents (EISV state vectors, coherence tracking, dialectic resolution, knowledge graph).
+UNITARES governance MCP server. Information-theoretic governance framework for AI agents (EISV state vectors, coherence tracking, dialectic resolution, knowledge graph).
 
 ## Stack
 
