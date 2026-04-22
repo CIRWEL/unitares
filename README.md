@@ -12,11 +12,21 @@ Status: live. For architecture details, see [docs/UNIFIED_ARCHITECTURE.md](docs/
 
 Most AI agents fly blind: they can't tell when they're thrashing, drifting, or overconfident until a human notices. UNITARES is a runtime layer that lets agents **see their own state and regulate themselves** — slow down when disorder spikes, ask for review when integrity drops, hand off when they're running on fumes.
 
-Each check-in returns four numbers — **EISV**: energy, integrity, entropy, valence (the signed energy/integrity imbalance) — plus a verdict, guidance, and calibration. Agents use those numbers to adjust their own behavior *before* external circuit breakers have to fire. Humans and peer agents read the same state, so one signal serves three consumers: agents regulating themselves, humans watching dashboards, peers coordinating.
+Each check-in returns four continuous state variables, a verdict (`proceed` / `guide` / `pause` / `reject`), and guidance. Agents adjust their own behavior *before* external circuit breakers fire. Humans and peer agents read the same state, so one signal serves three consumers: agents regulating themselves, humans watching dashboards, peers coordinating. The variables are called **EISV** — energy, integrity, entropy, valence — and the model is detailed below in [How state works](#how-state-works-eisv).
 
 Circuit breakers and kill switches are still there — they're just the last line of defense, not the first.
 
 Running continuously in production since November 2025 with 6,200+ passing tests at 77% coverage. Long-run trajectories are stored in PostgreSQL + AGE; the state model is derived from what agents actually do (EMA-smoothed observations, not model predictions).
+
+**Try it** (assumes Postgres + AGE — full setup in [Installation](#installation)):
+
+```bash
+git clone https://github.com/CIRWEL/unitares.git && cd unitares
+pip install -r requirements-full.txt
+export DB_POSTGRES_URL=postgresql://postgres:postgres@localhost:5432/governance
+python src/mcp_server.py --port 8767
+# then point any MCP client at http://localhost:8767/mcp/
+```
 
 | | |
 |--|--|
@@ -62,16 +72,19 @@ The agent reads its own metrics and adjusts *before* external controls have to f
 
 ## Production snapshot
 
-As of April 2026:
+As of April 2026 (single-operator deployment, this is self-traffic — not external adoption):
 
 | Metric | Value |
 |--------|-------|
-| Agents onboarded | 2,574 total |
-| Unique agents active (last 7 days) | 2,226 — mostly ephemeral CLI sessions, plus long-running resident agents |
+| Agents onboarded | 2,574 total process-instances — overwhelmingly ephemeral CLI sessions from one operator's workstation plus a handful of long-running resident agents (launchd crons, Pi-side Lumen) |
+| Distinct external (non-resident) agents | ~56 over a 3-week post-grounding window — the corpus v7 empirical work is blocked on maturing |
+| Unique agents active (last 7 days) | 2,226 |
 | Governance events processed | 94,000+ (≈51K in the last 7 days) |
 | Knowledge graph discoveries | 578 |
 | V operating range | Active agents often within [-0.1, 0.1] |
 | Tests | 6,200+ passing · 77% coverage |
+
+*What these numbers are good for:* a stress test that the pipeline holds up under sustained volume. *What they are not:* evidence of product-market traction. External adoption is the open question.
 
 <p align="center">
   <img src="docs/assets/dashboard.png" width="80%" alt="UNITARES dashboard — stats overview with fleet coherence, agent count, discoveries, and system health"/>
