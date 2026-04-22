@@ -631,6 +631,7 @@ class EISVWebSocket {
             this._pollFallback = false;
             this.onStatusChange('connected');
             console.log('[WS] Connected to /ws/eisv');
+            this._backfillOnce();
         };
 
         this.ws.onmessage = (event) => {
@@ -673,9 +674,27 @@ class EISVWebSocket {
         this._pollFailures = 0;
         this.onStatusChange('polling');
         console.log('[WS] Polling /v1/eisv/latest every 30s');
-        // Poll immediately, then every 30s
+        // Backfill recent history, then poll immediately, then every 30s
+        this._backfillOnce();
         this._pollOnce();
         this._pollInterval = setInterval(() => this._pollOnce(), 30000);
+    }
+
+    async _backfillOnce() {
+        if (this._backfilled) return;
+        this._backfilled = true;
+        try {
+            const resp = await fetch(`${window.location.origin}/v1/eisv/recent?limit=120`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const events = (data && Array.isArray(data.events)) ? data.events : [];
+            for (const evt of events) {
+                try { this.onUpdate(evt); } catch (_) { /* ignore per-event render errors */ }
+            }
+            console.log('[WS] Backfilled', events.length, 'EISV events');
+        } catch (e) {
+            console.debug('[WS] Backfill failed:', e);
+        }
     }
 
     async _pollOnce() {
