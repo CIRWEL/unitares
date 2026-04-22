@@ -91,7 +91,7 @@
     <!-- Descriptor line -->
     <text y="175" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#58a6ff" opacity="0.8">Runtime governance</text>
     <text y="175" x="130" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#484f58">|</text>
-    <text y="175" x="142" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#58a6ff" opacity="0.8">Thermodynamic state tracking</text>
+    <text y="175" x="142" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#58a6ff" opacity="0.8">Self-relative drift detection</text>
     <text y="175" x="340" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#484f58">|</text>
     <text y="175" x="352" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#58a6ff" opacity="0.8">MCP + HTTP</text>
 
