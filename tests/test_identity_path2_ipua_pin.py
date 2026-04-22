@@ -52,6 +52,50 @@ def broadcaster_stub(captured_events):
 
 class TestPath2IpuaPinCheck:
     @pytest.mark.asyncio
+    async def test_default_mode_is_strict(
+        self, monkeypatch, captured_events, broadcaster_stub
+    ):
+        """With no env override, bare onboard() hitting the pin fallback must
+        flip resume=False so a fresh identity is minted.
+
+        Retires the PATH 2 IP:UA fingerprint pin as an implicit resume path.
+        Identity ontology v2 (§85, `docs/ontology/identity.md`) names
+        fingerprint-based cross-process-instance identity as performative —
+        fresh process-instance = fresh identity unless a cryptographic resume
+        signal is presented. Invariant #2 ("force_new is explicit opt-in
+        only") is preserved: the flip to resume=False produces a fresh mint
+        through the normal onboard flow, not via auto-force_new-as-fallback.
+        """
+        # Deliberate: no monkeypatch.setenv — exercise the compile-time default.
+
+        from src.mcp_handlers.identity import handlers as h_mod
+
+        with patch(
+            "src.mcp_handlers.context.get_session_resolution_source",
+            return_value="pinned_onboard_session",
+        ), patch.object(h_mod, "_broadcaster", return_value=broadcaster_stub):
+            new_resume = await h_mod._path2_ipua_pin_check(
+                arguments={},
+                base_session_key="fp-ipua-abcdef:claude",
+                force_new=False,
+                resume=True,
+            )
+
+        # Strict-by-default: resume forced False so the caller mints fresh.
+        assert new_resume is False, (
+            "Default mode must be 'strict' — bare onboard with no ownership "
+            "proof must not adopt a fingerprint-pinned UUID. Retires "
+            "§85 performative cross-process-instance identity. Got resume=True."
+        )
+
+        hijack_events = [
+            e for e in captured_events
+            if e.get("event_type") == "identity_hijack_suspected"
+        ]
+        assert hijack_events, "Default mode must still emit the event for visibility"
+        assert (hijack_events[0].get("payload") or {}).get("mode") == "strict"
+
+    @pytest.mark.asyncio
     async def test_log_mode_emits_and_leaves_resume_true(
         self, monkeypatch, captured_events, broadcaster_stub
     ):
