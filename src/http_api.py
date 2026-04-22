@@ -887,6 +887,29 @@ async def http_eisv_latest(request):
     return JSONResponse({"type": "no_data", "message": "No EISV updates yet"}, status_code=200)
 
 
+async def http_eisv_recent(request):
+    """Return the last N eisv_update events in chronological order.
+
+    Backfill endpoint for dashboard clients that just connected — lets the
+    chart populate immediately from the broadcaster's ring buffer instead of
+    waiting for the next live check-in. Used both by WebSocket clients on
+    reconnect and polling-fallback clients (when upstream proxies block the
+    WS upgrade, e.g. Cloudflare tunnels without the WebSocket toggle).
+    """
+    try:
+        limit = int(request.query_params.get("limit", 120))
+    except (TypeError, ValueError):
+        limit = 120
+    limit = max(1, min(limit, 500))
+
+    events: list = []
+    for event in broadcaster_instance.event_history:
+        if isinstance(event, dict) and event.get("type") == "eisv_update":
+            events.append(event)
+    events = events[-limit:]
+    return JSONResponse({"type": "eisv_recent", "count": len(events), "events": events})
+
+
 # Events API endpoint for dashboard
 async def http_events(request):
     """Return recent governance events for dashboard."""
@@ -1849,6 +1872,7 @@ def register_http_routes(
     app.routes.append(Route("/health/deep", http_health_deep, methods=["GET"]))
     app.routes.append(Route("/metrics", http_metrics, methods=["GET"]))
     app.routes.append(Route("/v1/eisv/latest", http_eisv_latest, methods=["GET"]))
+    app.routes.append(Route("/v1/eisv/recent", http_eisv_recent, methods=["GET"]))
     app.routes.append(Route("/v1/lifecycle/recent", http_lifecycle_recent, methods=["GET"]))
     app.routes.append(Route("/api/events", http_events, methods=["GET"]))
     app.routes.append(Route("/api/findings", http_record_finding, methods=["POST"]))
