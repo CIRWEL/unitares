@@ -1,6 +1,9 @@
 #!/bin/bash
 # Cleanup stale processes and resources from governance-mcp
 # Run: ./scripts/cleanup_stale.sh [--dry-run]
+# Override project root via UNITARES_ROOT env var; otherwise auto-derived.
+
+PROJECT_DIR="${UNITARES_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
 DRY_RUN=false
 if [[ "$1" == "--dry-run" ]]; then
@@ -29,7 +32,7 @@ echo ""
 
 # 2. Check for stale lock files
 echo "Checking for stale lock files..."
-LOCK_DIR="/Users/cirwel/projects/unitares/data/locks"
+LOCK_DIR="$PROJECT_DIR/data/locks"
 if [[ -d "$LOCK_DIR" ]]; then
     LOCK_COUNT=$(find "$LOCK_DIR" -name "*.lock" -mmin +30 2>/dev/null | wc -l | tr -d ' ')
     if [[ "$LOCK_COUNT" -gt 0 ]]; then
@@ -50,7 +53,7 @@ echo ""
 
 # 3. Check for orphaned heartbeat files
 echo "Checking heartbeat freshness..."
-HEARTBEAT_FILE="/Users/cirwel/projects/unitares/data/mcp_heartbeat.json"
+HEARTBEAT_FILE="$PROJECT_DIR/data/mcp_heartbeat.json"
 if [[ -f "$HEARTBEAT_FILE" ]]; then
     AGE_MINUTES=$(( ($(date +%s) - $(stat -f %m "$HEARTBEAT_FILE")) / 60 ))
     if [[ $AGE_MINUTES -gt 10 ]]; then

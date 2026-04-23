@@ -1,7 +1,8 @@
 #!/bin/bash
 # Install git hooks for unitares
+# Override project root via UNITARES_ROOT env var; otherwise auto-derived.
 
-PROJECT_DIR="/Users/cirwel/projects/unitares"
+PROJECT_DIR="${UNITARES_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 cd "$PROJECT_DIR" || exit 1
 
 echo "🪝 Installing Git Hooks"
