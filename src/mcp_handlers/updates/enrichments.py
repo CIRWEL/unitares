@@ -724,16 +724,22 @@ async def enrich_trajectory_identity(ctx: UpdateContext) -> None:
                 ctx.response_data["trajectory_identity"]["genesis_created"] = True
                 logger.info(f"[TRAJECTORY] Created genesis S_0 for {ctx.agent_uuid[:8]}... on first update")
 
-            # Trust tier computation
+            # Trust tier computation (S6 Option B: substrate-earned routing)
             try:
-                from src.trajectory_identity import compute_trust_tier
+                from src.identity.trust_tier_routing import resolve_trust_tier
                 from src.db import get_db as _get_db
 
                 trust_tier = trajectory_result.get("trust_tier")
                 if not trust_tier:
                     identity = await _get_db().get_identity(ctx.agent_uuid)
                     if identity and identity.metadata:
-                        trust_tier = compute_trust_tier(identity.metadata)
+                        _meta = ctx.meta
+                        trust_tier = await resolve_trust_tier(
+                            ctx.agent_uuid,
+                            identity.metadata,
+                            prefetched_tags=getattr(_meta, "tags", None) if _meta else None,
+                            prefetched_label=getattr(_meta, "label", None) if _meta else None,
+                        )
 
                 if trust_tier:
                     ctx.response_data["trajectory_identity"]["trust_tier"] = trust_tier

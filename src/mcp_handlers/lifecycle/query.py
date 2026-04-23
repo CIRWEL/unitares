@@ -410,10 +410,11 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
             agents_list.append(agent_info)
 
         # Batch-load trust tiers for agents missing cached values (avoids N+1 queries)
+        # (S6 Option B: substrate-earned routing)
         agents_needing_tiers = [a for a in agents_list if a["trust_tier"] is None]
         if agents_needing_tiers:
             try:
-                from src.trajectory_identity import compute_trust_tier
+                from src.identity.trust_tier_routing import resolve_trust_tier
                 from src.db import get_db as _get_db
                 db = _get_db()
                 ids_to_fetch = [a["agent_id"] for a in agents_needing_tiers]
@@ -422,10 +423,15 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                     aid = agent_info["agent_id"]
                     identity = identities.get(aid)
                     if identity and identity.metadata:
-                        tier_info = compute_trust_tier(identity.metadata)
+                        meta_obj = mcp_server.agent_metadata.get(aid)
+                        tier_info = await resolve_trust_tier(
+                            aid,
+                            identity.metadata,
+                            prefetched_tags=getattr(meta_obj, "tags", None) if meta_obj else None,
+                            prefetched_label=getattr(meta_obj, "label", None) if meta_obj else None,
+                        )
                         agent_info["trust_tier"] = tier_info.get("name", "unknown")
                         # Cache for next time
-                        meta_obj = mcp_server.agent_metadata.get(aid)
                         if meta_obj:
                             meta_obj.trust_tier = agent_info["trust_tier"]
                             meta_obj.trust_tier_num = tier_info.get("tier", 0)

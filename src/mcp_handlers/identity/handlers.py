@@ -1733,13 +1733,19 @@ async def handle_get_trajectory_status(arguments: Dict[str, Any]) -> Sequence[Te
         if result.get("error"):
             return error_response(result["error"])
 
-        # Add trust tier to status response
+        # Add trust tier to status response (S6 Option B: substrate-earned routing)
         try:
-            from src.trajectory_identity import compute_trust_tier
+            from src.identity.trust_tier_routing import resolve_trust_tier
             from src.db import get_db
             identity = await get_db().get_identity(agent_uuid)
             if identity and identity.metadata:
-                result["trust_tier"] = compute_trust_tier(identity.metadata)
+                _meta = mcp_server.agent_metadata.get(agent_uuid)
+                result["trust_tier"] = await resolve_trust_tier(
+                    agent_uuid,
+                    identity.metadata,
+                    prefetched_tags=getattr(_meta, "tags", None) if _meta else None,
+                    prefetched_label=getattr(_meta, "label", None) if _meta else None,
+                )
         except Exception:
             pass
 
