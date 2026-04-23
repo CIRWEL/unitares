@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd manifest for the IPv6 loopback proxy sidecar.
+
+  Why this exists:
+    cloudflared 2026.3.x resolves `localhost` IPv6-first on its WebSocket
+    proxy path and does not fall back to IPv4. Our uvicorn server binds
+    the IPv4 all-interfaces socket only, so HTTP through the tunnel works
+    (cloudflared's HTTP path happy-eyeballs to IPv4) but WebSocket upgrades
+    break with `dial tcp [::1]:8767: connect: connection refused`.
+
+    This sidecar listens on `[::1]:<PORT>` and proxies raw bytes to
+    `127.0.0.1:<PORT>`. Bytes-level passthrough preserves the Upgrade
+    header and all X-Forwarded-* headers cloudflared already injected.
+
+  Install:
+    cp scripts/ops/com.unitares.ipv6-loopback-proxy.plist.template \
+       ~/Library/LaunchAgents/com.unitares.ipv6-loopback-proxy.plist
+    # Edit the path to Python and the unitares repo below if needed.
+    launchctl load ~/Library/LaunchAgents/com.unitares.ipv6-loopback-proxy.plist
+
+  Verify:
+    lsof -nP -iTCP:8767 -sTCP:LISTEN   # both IPv4 and IPv6 [::1]:8767 listeners
+    curl -I http://[::1]:8767/health   # must return 200
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.unitares.ipv6-loopback-proxy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>/Users/cirwel/projects/unitares/scripts/ops/ipv6_loopback_proxy.py</string>
+        <string>--listen-host</string>
+        <string>::1</string>
+        <string>--listen-port</string>
+        <string>8767</string>
+        <string>--target-host</string>
+        <string>127.0.0.1</string>
+        <string>--target-port</string>
+        <string>8767</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/unitares-ipv6-proxy.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/unitares-ipv6-proxy.log</string>
+</dict>
+</plist>
