@@ -51,14 +51,36 @@ def watcher_module():
 @pytest.fixture(autouse=True)
 def _isolate_watcher_state(tmp_path, monkeypatch, watcher_module):
     """Redirect all Watcher state paths into a tmp dir so tests never touch
-    the production findings.jsonl / dedup.json / log file."""
+    the production findings.jsonl / dedup.json / log file.
+
+    Constants live in the split-out modules (findings, _util) as of the
+    watcher-findings-split refactor, so we patch them at the source. The
+    watcher_module re-exports are also patched for tests that read
+    ``watcher_module.FINDINGS_FILE`` etc. directly.
+    """
+    from agents.watcher import _util as watcher_util
+    from agents.watcher import agent as real_watcher
+    from agents.watcher import findings as watcher_findings
+
     tmp_state = tmp_path / "watcher-state"
     tmp_state.mkdir()
     tmp_log = tmp_path / "watcher.log"
-    monkeypatch.setattr(watcher_module, "STATE_DIR", tmp_state)
-    monkeypatch.setattr(watcher_module, "FINDINGS_FILE", tmp_state / "findings.jsonl")
-    monkeypatch.setattr(watcher_module, "DEDUP_FILE", tmp_state / "dedup.json")
-    monkeypatch.setattr(watcher_module, "LOG_FILE", tmp_log)
+
+    # Source modules (where the constants now live) — the canonical patch
+    # points; findings.py's own functions read these, not the re-exports.
+    monkeypatch.setattr(watcher_findings, "STATE_DIR", tmp_state)
+    monkeypatch.setattr(watcher_findings, "FINDINGS_FILE", tmp_state / "findings.jsonl")
+    monkeypatch.setattr(watcher_findings, "DEDUP_FILE", tmp_state / "dedup.json")
+    monkeypatch.setattr(watcher_util, "LOG_FILE", tmp_log)
+
+    # Re-exported names on the agent module — patched so any caller that
+    # reads them through `watcher_module.FINDINGS_FILE` / the real agent
+    # module still sees the tmp paths.
+    for target in (watcher_module, real_watcher):
+        monkeypatch.setattr(target, "STATE_DIR", tmp_state)
+        monkeypatch.setattr(target, "FINDINGS_FILE", tmp_state / "findings.jsonl")
+        monkeypatch.setattr(target, "DEDUP_FILE", tmp_state / "dedup.json")
+        monkeypatch.setattr(target, "LOG_FILE", tmp_log)
     yield
 
 
@@ -66,14 +88,49 @@ def _isolate_watcher_state(tmp_path, monkeypatch, watcher_module):
 def _mock_post_finding_by_default(monkeypatch, watcher_module):
     """Default to no-op post_finding so tests don't hit the network.
 
-    Patches both the importlib-loaded watcher_module (used by most tests)
-    and the agents.watcher.agent import (used by TestWatcherPostsFindings).
-    Tests that need to assert on the call can override via monkeypatch —
-    the later setattr wins.
+    Patches all three namespaces that hold a ``post_finding`` binding:
+      - ``watcher_module`` — the importlib-loaded copy used by most tests
+      - ``agents.watcher.agent`` — re-exported name used by TestWatcherPostsFindings
+      - ``agents.watcher.findings`` — where the binding actually lives post-refactor
+        (persist_finding and _post_resolution_event call it from inside findings.py)
+
+    Tests that need to assert on the call should use ``_mock_post_finding``
+    below rather than monkeypatching directly — it handles all three
+    namespaces so the spy fires regardless of which code path invokes it.
     """
     from agents.watcher import agent as watcher
+    from agents.watcher import findings as watcher_findings
     monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: True)
     monkeypatch.setattr(watcher, "post_finding", lambda **kw: True)
+    monkeypatch.setattr(watcher_findings, "post_finding", lambda **kw: True)
+
+
+def _mock_post_finding(monkeypatch, watcher_module, spy):
+    """Install ``spy`` as post_finding on all three namespaces."""
+    from agents.watcher import agent as watcher
+    from agents.watcher import findings as watcher_findings
+    monkeypatch.setattr(watcher_module, "post_finding", spy)
+    monkeypatch.setattr(watcher, "post_finding", spy)
+    monkeypatch.setattr(watcher_findings, "post_finding", spy)
+
+
+def _mock_escalate_to_kg(monkeypatch, watcher_module, spy):
+    """Install ``spy`` as _escalate_to_kg on all namespaces that hold the binding."""
+    from agents.watcher import agent as watcher
+    from agents.watcher import findings as watcher_findings
+    monkeypatch.setattr(watcher_module, "_escalate_to_kg", spy)
+    monkeypatch.setattr(watcher, "_escalate_to_kg", spy)
+    monkeypatch.setattr(watcher_findings, "_escalate_to_kg", spy)
+
+
+def _mock_watcher_identity(monkeypatch, watcher_module, identity):
+    """Set ``_watcher_identity`` on both the importlib copy and the real agent
+    module. Needed because findings.update_finding_status does a lazy import
+    from ``agents.watcher.agent`` — patches on the watcher_module copy alone
+    miss the real module's binding."""
+    from agents.watcher import agent as watcher
+    monkeypatch.setattr(watcher_module, "_watcher_identity", identity)
+    monkeypatch.setattr(watcher, "_watcher_identity", identity)
 
 
 # ---------------------------------------------------------------------------
@@ -562,7 +619,7 @@ def test_review_file_escalates_high_severity(watcher_module, tmp_path, monkeypat
     _install_review_stubs(watcher_module, monkeypatch, review_json)
 
     calls: list[dict] = []
-    monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: calls.append(kw) or True)
+    _mock_post_finding(monkeypatch, watcher_module, lambda **kw: calls.append(kw) or True)
 
     watcher_module.review_file("/tmp/fake.py")
 
@@ -581,9 +638,7 @@ def test_escalate_high_does_not_call_external_targets(watcher_module, monkeypatc
     finding = _finding(watcher_module, severity="high")
     kg_calls = []
 
-    monkeypatch.setattr(
-        watcher_module, "_escalate_to_kg", lambda f: kg_calls.append(f)
-    )
+    _mock_escalate_to_kg(monkeypatch, watcher_module, lambda f: kg_calls.append(f))
 
     watcher_module.escalate(finding)
 
@@ -594,9 +649,7 @@ def test_escalate_critical_calls_kg(watcher_module, monkeypatch):
     finding = _finding(watcher_module, severity="critical")
     calls = []
 
-    monkeypatch.setattr(
-        watcher_module, "_escalate_to_kg", lambda f: calls.append(f)
-    )
+    _mock_escalate_to_kg(monkeypatch, watcher_module, lambda f: calls.append(f))
 
     watcher_module.escalate(finding)
 
@@ -1822,9 +1875,13 @@ class TestWatcherPostsFindings:
     def test_high_severity_finding_posts_to_event_stream(self, tmp_path, monkeypatch):
         """After persisting a new high-severity finding to jsonl, Watcher posts to /api/findings."""
         from agents.watcher import agent as watcher
+        from agents.watcher import findings as watcher_findings_local
 
         monkeypatch.setattr(watcher, "FINDINGS_FILE", tmp_path / "findings.jsonl")
         monkeypatch.setattr(watcher, "DEDUP_FILE", tmp_path / "dedup.json")
+        monkeypatch.setattr(watcher_findings_local, "FINDINGS_FILE", tmp_path / "findings.jsonl")
+        monkeypatch.setattr(watcher_findings_local, "DEDUP_FILE", tmp_path / "dedup.json")
+        monkeypatch.setattr(watcher_findings_local, "STATE_DIR", tmp_path)
 
         calls = []
 
@@ -1832,7 +1889,7 @@ class TestWatcherPostsFindings:
             calls.append(kwargs)
             return True
 
-        monkeypatch.setattr(watcher, "post_finding", fake_post)
+        _mock_post_finding(monkeypatch, watcher, fake_post)
 
         finding = watcher.Finding(
             pattern="P011",
@@ -1860,12 +1917,16 @@ class TestWatcherPostsFindings:
     def test_low_severity_finding_does_not_post(self, tmp_path, monkeypatch):
         """Low/medium stay local to jsonl — only high/critical hit the stream."""
         from agents.watcher import agent as watcher
+        from agents.watcher import findings as watcher_findings_local
 
         monkeypatch.setattr(watcher, "FINDINGS_FILE", tmp_path / "findings.jsonl")
         monkeypatch.setattr(watcher, "DEDUP_FILE", tmp_path / "dedup.json")
+        monkeypatch.setattr(watcher_findings_local, "FINDINGS_FILE", tmp_path / "findings.jsonl")
+        monkeypatch.setattr(watcher_findings_local, "DEDUP_FILE", tmp_path / "dedup.json")
+        monkeypatch.setattr(watcher_findings_local, "STATE_DIR", tmp_path)
 
         calls = []
-        monkeypatch.setattr(watcher, "post_finding",
+        _mock_post_finding(monkeypatch, watcher,
                             lambda **kw: calls.append(kw) or True)
 
         finding = watcher.Finding(
@@ -1881,12 +1942,16 @@ class TestWatcherPostsFindings:
     def test_persist_findings_delegates_posting_per_high_severity_finding(self, tmp_path, monkeypatch):
         """Batch persist_findings calls post_finding for each new high-severity finding."""
         from agents.watcher import agent as watcher
+        from agents.watcher import findings as watcher_findings_local
 
         monkeypatch.setattr(watcher, "FINDINGS_FILE", tmp_path / "findings.jsonl")
         monkeypatch.setattr(watcher, "DEDUP_FILE", tmp_path / "dedup.json")
+        monkeypatch.setattr(watcher_findings_local, "FINDINGS_FILE", tmp_path / "findings.jsonl")
+        monkeypatch.setattr(watcher_findings_local, "DEDUP_FILE", tmp_path / "dedup.json")
+        monkeypatch.setattr(watcher_findings_local, "STATE_DIR", tmp_path)
 
         calls = []
-        monkeypatch.setattr(watcher, "post_finding",
+        _mock_post_finding(monkeypatch, watcher,
                             lambda **kw: calls.append(kw) or True)
 
         f1 = watcher.Finding(
@@ -2300,7 +2365,7 @@ class TestWatcherCheckin:
         ])
 
         # Set up identity so check-in proceeds
-        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+        _mock_watcher_identity(monkeypatch, watcher_module, {
             "agent_uuid": "uuid-w", "client_session_id": "s1", "continuity_token": "t1",
         })
 
@@ -2328,7 +2393,7 @@ class TestWatcherCheckin:
 
     def test_checkin_skipped_when_no_identity(self, watcher_module, monkeypatch):
         """No identity → surface works, check-in silently skipped."""
-        monkeypatch.setattr(watcher_module, "_watcher_identity", None)
+        _mock_watcher_identity(monkeypatch, watcher_module, None)
 
         self._write_findings(watcher_module, [
             {"fingerprint": "ccc3", "status": "open", "severity": "low",
@@ -2342,7 +2407,7 @@ class TestWatcherCheckin:
 
     def test_checkin_idle_heartbeat(self, watcher_module, monkeypatch):
         """No active findings → idle heartbeat with low complexity."""
-        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+        _mock_watcher_identity(monkeypatch, watcher_module, {
             "agent_uuid": "uuid-w", "client_session_id": "s1", "continuity_token": "t1",
         })
 
@@ -2387,7 +2452,7 @@ class TestWatcherCheckin:
         """surface_pending() must call _do_checkin even when there are no open
         findings to surface. Previously the early return skipped the check-in,
         causing Watcher to go silent between finding bursts."""
-        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+        _mock_watcher_identity(monkeypatch, watcher_module, {
             "agent_uuid": "uuid-w", "client_session_id": "s1", "continuity_token": "t1",
         })
 
@@ -2429,14 +2494,14 @@ class TestResolutionAuditTrail:
              "hint": "asyncpg deadlock", "violation_class": "REC",
              "timestamp": datetime.now(timezone.utc).isoformat()},
         ])
-        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+        _mock_watcher_identity(monkeypatch, watcher_module, {
             "agent_uuid": "uuid-watcher",
             "client_session_id": "s1",
             "continuity_token": "t1",
         })
 
         posted = {}
-        monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: posted.update(kw) or True)
+        _mock_post_finding(monkeypatch, watcher_module, lambda **kw: posted.update(kw) or True)
 
         watcher_module.update_finding_status("ff27c1b2", "confirmed", resolver_agent_id="uuid-agent-X")
 
@@ -2454,14 +2519,14 @@ class TestResolutionAuditTrail:
              "hint": "asyncpg deadlock", "violation_class": "REC",
              "timestamp": datetime.now(timezone.utc).isoformat()},
         ])
-        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+        _mock_watcher_identity(monkeypatch, watcher_module, {
             "agent_uuid": "uuid-watcher",
             "client_session_id": "s1",
             "continuity_token": "t1",
         })
 
         posted = {}
-        monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: posted.update(kw) or True)
+        _mock_post_finding(monkeypatch, watcher_module, lambda **kw: posted.update(kw) or True)
 
         watcher_module.update_finding_status("8266dfb8", "dismissed", resolver_agent_id="uuid-agent-Y")
 
@@ -2477,14 +2542,14 @@ class TestResolutionAuditTrail:
              "hint": "unbounded growth", "violation_class": "ENT",
              "timestamp": datetime.now(timezone.utc).isoformat()},
         ])
-        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+        _mock_watcher_identity(monkeypatch, watcher_module, {
             "agent_uuid": "uuid-watcher",
             "client_session_id": "s1",
             "continuity_token": "t1",
         })
 
         posted = {}
-        monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: posted.update(kw) or True)
+        _mock_post_finding(monkeypatch, watcher_module, lambda **kw: posted.update(kw) or True)
 
         watcher_module.update_finding_status("abcd1234", "confirmed")
 
@@ -2498,10 +2563,10 @@ class TestResolutionAuditTrail:
              "hint": "test", "violation_class": "CON",
              "timestamp": datetime.now(timezone.utc).isoformat()},
         ])
-        monkeypatch.setattr(watcher_module, "_watcher_identity", None)
+        _mock_watcher_identity(monkeypatch, watcher_module, None)
 
         posted = {}
-        monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: posted.update(kw) or True)
+        _mock_post_finding(monkeypatch, watcher_module, lambda **kw: posted.update(kw) or True)
 
         result = watcher_module.update_finding_status("dead0000", "confirmed")
 
@@ -2516,7 +2581,7 @@ class TestResolutionAuditTrail:
              "hint": "test", "violation_class": "REC",
              "timestamp": datetime.now(timezone.utc).isoformat()},
         ])
-        monkeypatch.setattr(watcher_module, "_watcher_identity", {
+        _mock_watcher_identity(monkeypatch, watcher_module, {
             "agent_uuid": "uuid-watcher",
             "client_session_id": "s1",
             "continuity_token": "t1",
@@ -2525,7 +2590,7 @@ class TestResolutionAuditTrail:
         def exploding_post(**kw):
             raise RuntimeError("governance exploded")
 
-        monkeypatch.setattr(watcher_module, "post_finding", exploding_post)
+        _mock_post_finding(monkeypatch, watcher_module, exploding_post)
 
         result = watcher_module.update_finding_status("beef0000", "confirmed")
         assert result == 0  # local update still worked
@@ -2579,6 +2644,13 @@ class TestWatcherLifecycleIntegration:
         assert watcher_module.get_watcher_identity()["agent_uuid"] == "uuid-watcher-int"
         assert ("onboard", "Watcher") in gov_calls
 
+        # resolve_identity only sets _watcher_identity on the importlib-loaded
+        # watcher_module copy. findings.update_finding_status does a lazy
+        # import from the real agents.watcher.agent module, so mirror the
+        # identity there for _post_resolution_event to see it.
+        from agents.watcher import agent as real_watcher
+        monkeypatch.setattr(real_watcher, "_watcher_identity", watcher_module.get_watcher_identity())
+
         # 2. Simulate a finding being persisted
         watcher_module.FINDINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
         finding = {
@@ -2603,7 +2675,7 @@ class TestWatcherLifecycleIntegration:
 
         # 4. Resolve finding (posts audit event)
         posted_events = []
-        monkeypatch.setattr(watcher_module, "post_finding", lambda **kw: posted_events.append(kw) or True)
+        _mock_post_finding(monkeypatch, watcher_module, lambda **kw: posted_events.append(kw) or True)
 
         result = watcher_module.update_finding_status("integ000", "confirmed", resolver_agent_id="uuid-agent-resolver")
         assert result == 0
