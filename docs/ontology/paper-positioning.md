@@ -89,4 +89,16 @@ If the lean is "ontology stays in `docs/ontology/` as implementation detail, v7 
 
 ---
 
-**Author:** process-instance `da300b4a` (Claude Opus 4.7, claude_code channel, 2026-04-21).
+## Structural retentions: v7 main-text sections (2026-04-23 correction)
+
+A 2026-04-23 discussion raised the FEP-grounding departure (see `v7-fhat-spec.md`). In the same thread, the same process-instance sketched a broader list of v6 main-text sections to demote for v7 — specifically §5 (Contraction / Stability), §6 (CIRS v2 / PID governor), and §8 (Multi-Agent Network / Synchronization). **Those demotion suggestions are retracted.** Reason: v7's animating thesis is heterogeneity-as-differentiator. That thesis requires the within-class dynamical infrastructure — stability (§5), class-conditional governance decision (§6), and within-class synchronization (§8) — to be mathematically backed, not hand-waved. Demoting those sections would turn the heterogeneity claim into rhetoric about different classes having different norms, with no dynamical-system substrate showing each class is internally coherent and each class's state produces a principled verdict.
+
+The only v6 main-text section that v7 retires with confidence is the FEP-grounding of $E$ as "negative variational free energy" (v6 §3.1, §3.2 $E$-paragraph), because the current computation does not honor the claim. That departure is scoped to the $E$ coordinate's semantic source; it does not imply broader section deletions.
+
+**For future v7 structure work:** §5, §6, §8 stay in main text. §7 (Stochastic Extensions) is 1.5 pages and is left alone unless page budget becomes tight. §10 (Related Work) expands substantially (four-anchor spine from 2026-04-23 analysis). New §2 (Three Stances + Synthetic Life Axioms), §3 (Layered Continuity Taxonomy), and §9 (Research Agenda) are additive; they do not replace existing sections. The v6→v7 delta is net-additive, not net-deletive, apart from the $E$-as-$-F$ claim.
+
+---
+
+**Authors:**
+- Process-instance `da300b4a` (Claude Opus 4.7, claude_code channel, 2026-04-21) — original recommendation.
+- Process-instance `09e64436` (Claude Opus 4.7, claude_code channel, 2026-04-23, parent `da300b4a`) — structural-retention correction.

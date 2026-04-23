@@ -24,94 +24,126 @@ The good news: the *observations* are already there. What is missing is the mode
 
 ## 2. Minimal generative model
 
-### 2.1 Latents $s_t \in \R^4$
+### 2.1 Latents $s_t = (E_t, I_t, S_t, V_t) \in \R^4$
 
-Four governance-relevant hidden states the agent does not directly observe about itself:
+**Key design choice (v3):** The latents are the four EISV coordinates themselves — not a separate parallel 4-dim decomposition. The generative model treats true $E, I, S, V$ as unobservable; the check-in values stored in `core.agent_state` and `audit.outcome_events.eisv_*` are noisy emissions of those latents, not the latents themselves. This aligns with GPT's 2026-04-23 call: "start with 4D, aligned to E/I/S/V, not 6D+. The point is to test whether an explicit generative layer improves prediction, not to win with an overfit latent soup."
 
-| Symbol | Name | Intuition |
+| Symbol | Support | Meaning under v3 |
 |---|---|---|
-| $c_t \in [0,1]$ | Competence | Posterior belief about task-completion ability within class envelope |
-| $\ell_t \in [0,1]$ | Load | Posterior belief about cognitive/computational burden |
-| $r_t \in [0,1]$ | Risk | Posterior belief about basin-boundary proximity |
-| $i_t \in [0,1]$ | Integrity | Posterior belief about calibration honesty (stated confidence ↔ outcomes) |
+| $E_t$ | $[0,1]$ | True negative-free-energy / productive capacity — inferred, not measured |
+| $I_t$ | $[0,1]$ | True information integrity — inferred from consequences |
+| $S_t$ | $[0,1]$ | True response-distribution entropy — inferred |
+| $V_t$ | $[-1,1]$ | True accumulated free-energy residual — inferred |
 
-These are latent by construction — no single UNITARES observation reveals them; they are inferred from the joint pattern of observations.
+Earlier drafts (v1, v2) used a parallel 4-dim decomposition (competence/load/risk/integrity). That was rejected 2026-04-23 on two grounds: (a) it introduced a second coordinate system with no paper-grounded semantics; (b) the v6 EISV dynamics themselves form a natural transition prior, which the parallel decomposition would ignore.
 
-### 2.2 Observations $o_t \in \R^6$
+**Observable proxies for the latents** (these are features of observations, not observations themselves):
+- `agent_state.state_json->>'E'` — heuristic $E$ from the live check-in
+- `agent_state.integrity` — heuristic $I$
+- `agent_state.entropy` — heuristic $S$
+- `agent_state.volatility` — heuristic $V$
+- `outcome_events.eisv_*` — EISV snapshot at outcome time
 
-Directly observed outcomes from the existing audit + calibration + watcher pipeline:
+These are treated as noisy measurements (§2.4 C1–C4).
 
-| Channel | Source | Shape |
-|---|---|---|
-| `test_outcome` | `auto_ground_truth.py` outcome events | Binary (pass/fail) + confidence |
-| `correction_event` | `primitive_feedback(role="human")` | Binary (correction issued) |
-| `calibration_error` | `sequential_calibration.py` per-agent state | Scalar \|confidence − outcome\| |
-| `watcher_finding` | Watcher post-edit scan | Count / severity |
-| `verdict_pause` | `process_agent_update` response | Binary (pause/reject verdict) |
-| `complexity_surprise` | `complexity` field vs class median | Scalar (self-report − observed) |
+### 2.2 Observations $o_t$
 
-All six are already logged per-agent-turn. Map-from-existing is a one-afternoon SQL job, not a new instrumentation project.
+Five observation channels, all pullable from the governance DB as verified by the 2026-04-23 schema audit. Channels that were in v2 but are not historically recoverable (`primitive_feedback` user corrections, Watcher findings, per-agent calibration state) are dropped; v3 uses only what the DB actually provides.
 
-### 2.3 Transition $p(s_t \mid s_{t-1}, c)$
+| Channel | Source | Shape | 30d cardinality |
+|---|---|---|---|
+| $o^{\text{chk}}_t$ | `core.agent_state` (state_json + columns) | $\R^4$: (observed_E, observed_I, observed_S, observed_V) | 17,654 rows |
+| $o^{\text{out}}_t$ | `audit.outcome_events.is_bad` (join nearest agent_state) | Binary | 18,448 rows |
+| $o^{\text{cbk}}_t$ | `audit.events` WHERE event_type = 'circuit_breaker_trip' | Binary (in window) | 71 |
+| $o^{\text{stk}}_t$ | `audit.events` WHERE event_type = 'stuck_detected' | Binary (in window) | 2,729 |
+| $o^{\text{anm}}_t$ | `audit.events` WHERE event_type = 'anomaly_detected' | Binary (in window) | 252 |
 
-Slow-drift linear-Gaussian:
+Schema notes:
+- `core.agent_state` columns: `entropy` (=$S$), `integrity` (=$I$), `volatility` (=$V$), `coherence`, `regime`; `state_json->>'E'` carries $E$; `state_json->>'phi'`, `->>'verdict'`, `->>'risk_score'` carry derived scalars available as additional features if needed.
+- `audit.outcome_events`: `is_bad` boolean + `outcome_score` real + `eisv_e/i/s/v/phi/verdict/coherence/regime` columns. Per-outcome EISV snapshot is directly available.
+- `audit.events` partitioned by month; timestamp column is `ts`, not `event_time`.
 
-$$s_t = A^c s_{t-1} + w^c_t, \quad w^c_t \sim \mathcal{N}(0, \Sigma^c_w)$$
+**Time discretization:** Per agent, align events to `core.agent_state.recorded_at` timestamps. For each state row at time $t$, emit one $o_t$ tuple by joining:
+- $o^{\text{chk}}$: direct columns from the row.
+- $o^{\text{out}}$: the outcome_event nearest to $t$ within ±60s on the same agent, if any; else NULL (missing-observation handling in §2.4).
+- $o^{\text{cbk, stk, anm}}$: indicator of whether the event type fired on that agent within the forward window $(t, t + \Delta w]$ with $\Delta w = 60$s.
 
-**Pre-registered form:** $A^c = \operatorname{diag}(a^c_c, a^c_\ell, a^c_r, a^c_i)$ — diagonal transition, no cross-latent coupling. Rationale: governance latents are named as orthogonal axes of belief; the generative model stays conservatively decoupled so any observed cross-coupling arises from shared observables, not modeled latent interaction.
+### 2.3 Transition $p(s_t \mid s_{t-1})$ — the v6 ODE as prior
 
-**Pre-registered parameter ranges** (fit by maximum likelihood on the reference corpus; held constant for the spike):
+**Key design choice (v3):** The transition prior is the v6 governing SDE (v6 §2.2), discretized. This is what makes v3 a non-trivial generative model: the v6 dynamics themselves become load-bearing as the prior on latent EISV. $\hat{F}$ ends up measuring how surprising the observations are given the ODE's prediction of where the latents should be.
 
-- $a^c_j \in [0.90, 0.99]$ per class, per latent — near-identity, slow-drift.
-- $\Sigma^c_w = \operatorname{diag}(\sigma^{c,2}_j)$ with $\sigma^c_j \in [0.01, 0.10]$ per class, per latent.
+Discretize v6 equations 2.5–2.8 with step $\Delta t$:
 
-**Prior:** $s_0 \mid c \sim \mathcal{N}(\mu^c_0, \Sigma^c_0)$ with $\mu^c_0$ set to the class-conditional healthy operating point $\eta^*_c$ from v6 §5 (re-interpreted as latent-space means, not coordinate values). $\Sigma^c_0 = \operatorname{diag}(0.1^2, \ldots)$ pre-registered.
+$$E_t = E_{t-1} + \left[\alpha(I_{t-1} - E_{t-1}) - \beta_E E_{t-1} S_{t-1}\right] \Delta t + \eta^E_t$$
+
+$$I_t = I_{t-1} + \left[-k S_{t-1} + \beta_I C(V_{t-1}) - \gamma_I I_{t-1}\right] \Delta t + \eta^I_t$$
+
+$$S_t = S_{t-1} + \left[-\mu S_{t-1} - \lambda_2 C(V_{t-1})\right] \Delta t + \eta^S_t$$
+
+$$V_t = V_{t-1} + \left[\kappa(E_{t-1} - I_{t-1}) - \delta V_{t-1}\right] \Delta t + \eta^V_t$$
+
+where $\eta^j_t \sim \mathcal{N}(0, (\sigma^j_{\text{trans}})^2 \Delta t)$ is per-latent transition noise. The drift-coupling terms ($\gamma_E \|\Delta\eta\|^2$ in $\dot{E}$, $\lambda_1 \|\Delta\eta\|^2$ in $\dot{S}$) are **omitted from the v3 prior** — the BED vector $\|\Delta\eta\|$ is what $\hat{F}$ is being compared against (§6 horse race); including it in the prior would circular-reason.
+
+**ODE parameters:** $(\alpha, \beta_E, k, \beta_I, \gamma_I, \mu, \lambda_2, \kappa, \delta)$ are taken **fleet-wide** with v6 production values (Appendix A of `unitares-v6.tex`). Per GPT's 2026-04-23 call, class-conditioning enters via emissions only in v1 — the latent dynamics stay shared. This also avoids re-calibrating ODE parameters per class, which is not well-justified from the available data.
+
+**Transition noise:** $\sigma^j_{\text{trans}} \in [0.005, 0.05]$, fit by maximum likelihood on the reference corpus per §2.5. Bounds pre-registered.
+
+**Prior at $t=0$:** $s_0 \sim \mathcal{N}(\mu_0, \Sigma_0)$ with $\mu_0 = (0.7, 0.8, 0.2, 0.0)$ (a nominal healthy state, fleet-wide) and $\Sigma_0 = \operatorname{diag}(0.1^2, 0.1^2, 0.1^2, 0.2^2)$ pre-registered.
+
+**Box constraints:** latent $E, I, S \in [0, 1]$ and $V \in [-1, 1]$ are enforced via reflection at boundaries during simulation (not via clamping, to preserve mass).
 
 ### 2.4 Emission $p(o_t \mid s_t, c)$
 
-All six channels specified in closed form below. Per-class emission coefficients are fit once from the reference corpus (v7 §6.1 protocol below) and **frozen before the spike computes $\hat{F}$ on the evaluation slice**. No post-hoc tuning.
+Five observation channels per §2.2, emitting from latent EISV, with class $c$ conditioning emissions only (not transitions). Per-class emission coefficients are fit once from the reference corpus and **frozen before the spike computes $\hat{F}$ on the evaluation slice**.
 
-Write $s_t = (c_t, \ell_t, r_t, i_t)$ for (competence, load, risk, integrity) and $\sigma(\cdot)$ for the logistic function.
+**C1–C4 — observed EISV channels** (noisy measurements of the latents):
 
-**C1 — test_outcome** (binary, pass/fail):
-$$P(\text{pass} \mid s, c) = \sigma\left(\beta^c_0 + \beta^c_c \cdot c_t - \beta^c_r \cdot r_t\right)$$
+$$o^{\text{chk},E}_t \mid E_t, c \sim \mathcal{N}(E_t,\ (\sigma^{c,E}_{\text{obs}})^2)$$
 
-**C2 — correction_event** (binary, human correction issued):
-$$P(\text{correction} \mid s, c) = \sigma\left(\gamma^c_0 - \gamma^c_i \cdot i_t + \gamma^c_\ell \cdot \ell_t\right)$$
+$$o^{\text{chk},I}_t \mid I_t, c \sim \mathcal{N}(I_t,\ (\sigma^{c,I}_{\text{obs}})^2)$$
 
-**C3 — calibration_error** ($e \in [0,1]$, $|\text{confidence} - \text{outcome}|$):
-$$p(e \mid s, c) = \operatorname{Beta}\!\left(\alpha^c_0 \cdot i_t + \epsilon,\ \beta^c_0 \cdot (1 - i_t) + \epsilon\right)$$
-with $\epsilon = 0.5$ for numerical stability. Beta rather than Gaussian because $e$ is naturally on $[0,1]$ and skewed for well-calibrated agents.
+$$o^{\text{chk},S}_t \mid S_t, c \sim \mathcal{N}(S_t,\ (\sigma^{c,S}_{\text{obs}})^2)$$
 
-**C4 — watcher_finding** (count per turn):
-$$p(n \mid s, c) = \operatorname{Poisson}\!\left(\lambda^c \cdot r_t \cdot \ell_t\right)$$
+$$o^{\text{chk},V}_t \mid V_t, c \sim \mathcal{N}(V_t,\ (\sigma^{c,V}_{\text{obs}})^2)$$
 
-**C5 — verdict_pause** (binary, pause/reject verdict from `process_agent_update`):
-$$P(\text{pause} \mid s, c) = \sigma\left(\delta^c_0 - \delta^c_c \cdot c_t + \delta^c_r \cdot r_t\right)$$
+Per-class observation noise reflects that different classes have different check-in fidelity — residents have more stable measurements than ephemeral-session agents. Emission variances $\sigma^{c,j}_{\text{obs}} \in [0.01, 0.3]$ pre-registered.
 
-**C6 — complexity_surprise** (scalar, self-report minus class-median):
-$$p(x \mid s, c) = \mathcal{N}\!\left(\mu^c_\ell \cdot \ell_t,\ (\sigma^c_\ell)^2\right)$$
+**C5 — outcome_event `is_bad`** (binary, when an outcome_event is joined to state row $t$):
 
-**Per-class parameter count.** C1: 3 ($\beta^c_0, \beta^c_c, \beta^c_r$). C2: 3. C3: 2. C4: 1. C5: 3. C6: 2. Plus transition diag (4) + noise diag (4) + prior diag (4). Total **26 per class**.
+$$P(\text{is\_bad} \mid s_t, c) = \sigma\!\left(\beta^c_0 - \beta^c_E E_t - \beta^c_I I_t + \beta^c_S S_t + \beta^c_V |V_t|\right)$$
 
-**Classes to fit:** residents (embodied + persistent tags), `Claude_*` session-bounded, `Codex_*` session-bounded, unlabeled-fallback. Four classes × 26 params = **104 total**. Fittable from the class-tagged subset of the reference corpus (S8a tag-discipline caveat: coverage limited to actually-tagged agents; the paper acknowledges this).
+Rationale: bad outcomes are more likely when latent $E, I$ are low (productive capacity and integrity degraded) and when $S, |V|$ are high (uncertainty and imbalance). Sign pattern pre-registered.
+
+**C6 — event-stream indicators** (Bernoulli per event type, independent given latents):
+
+$$P(\text{circuit\_breaker\_trip in } (t, t + \Delta w] \mid s_t, c) = \sigma\!\left(\xi^{c,\text{cbk}}_0 + \xi^{c,\text{cbk}}_{|V|} |V_t| + \xi^{c,\text{cbk}}_S S_t - \xi^{c,\text{cbk}}_I I_t\right)$$
+
+$$P(\text{stuck\_detected in } (t, t + \Delta w] \mid s_t, c) = \sigma\!\left(\xi^{c,\text{stk}}_0 - \xi^{c,\text{stk}}_E E_t + \xi^{c,\text{stk}}_S S_t\right)$$
+
+$$P(\text{anomaly\_detected in } (t, t + \Delta w] \mid s_t, c) = \sigma\!\left(\xi^{c,\text{anm}}_0 + \xi^{c,\text{anm}}_S S_t + \xi^{c,\text{anm}}_{|V|} |V_t|\right)$$
+
+Three event types (circuit_breaker, stuck, anomaly) each with 3 coefficients (intercept + two EISV features). Sign patterns pre-registered as above.
+
+**Per-class parameter count.** C1–C4: 4 variances. C5: 5 coefficients. C6: 9 coefficients (3 event types × 3 each). Plus transition noise (4) shared fleet-wide. **Per-class total: 18.** Plus fleet-wide transition noise (4) and fleet-wide ODE parameters (9, from v6 Appendix A). **Total params to fit: 18 × 4 classes + 4 = 76.** Substantially below v2's 104 and the class-conditioning is better motivated.
+
+**Classes to fit** (bounded by S8a tag-discipline coverage): residents (embodied + persistent tags, ~11 agents), `Claude_*` session-bounded, `Codex_*` session-bounded, unlabeled-fallback. Four classes.
 
 ### 2.5 Fit protocol (pre-registered)
 
-**Reference corpus:** epoch-2, non-archived, tag-populated agent-turns from `core.agent_state` joined against `core.agents.tags`. Time window: 2026-02-01 through 2026-04-01 (approximately 60 days, pre-dating the evaluation slice by at least one week to avoid leakage).
+**Reference corpus:** epoch-2, non-archived, tag-populated agent-turns from `core.agent_state` joined against `core.agents.tags`. Time window: **2026-02-20 through 2026-03-20** (30 days, comfortably pre-dating the evaluation slice by a week).
 
-**Estimator:** Expectation-maximization with mean-field Gaussian $q(s)$:
-- E-step: closed-form Kalman-style posterior update per agent-turn (sigmoid/Beta/Poisson emissions linearized around prior mean for E-step tractability; full likelihoods used in M-step).
-- M-step: per-class maximum likelihood over the 26 parameters, $L_2$-regularized with $\lambda = 0.01$.
+**Estimator:** Expectation-maximization with Gaussian-approximated posterior $q(s_t)$:
+- E-step: extended Kalman smoother over the nonlinear v6 ODE transition. Emissions (Gaussian C1–C4, logistic C5–C6) linearized around prior mean for tractability.
+- M-step: per-class maximum likelihood over the 18 emission parameters and fleet-wide transition noise. $L_2$-regularized with $\lambda = 0.01$ (pre-registered).
 
-**Convergence:** 50 EM iterations or $|\Delta\log L| < 10^{-4}$, whichever first.
+**Convergence:** 50 EM iterations or $|\Delta \log L| < 10^{-4}$, whichever first.
 
 **Split discipline:**
-- **Fit split:** 70% of reference-corpus agents (randomly selected, stratified by class).
-- **Validation split:** 15%, for pre-spike sanity-check of fitted parameters (are they in pre-registered ranges? Do fitted $\hat{F}$ values have non-degenerate distributions?).
-- **Held-out evaluation split:** 15% + the 13,310-row §11.6 production slice, **not touched until §6 horse race runs**.
+- **Fit split:** 70% of reference-corpus agents (randomly selected, stratified by class; seed pre-registered as 42).
+- **Validation split:** 15%, for pre-spike sanity-check (fitted parameters in pre-registered ranges? Fitted $\hat{F}$ distributions non-degenerate?).
+- **Held-out evaluation split:** 15% + **the 30-day forward slice 2026-03-21 through 2026-04-20**, not touched until §6 horse race runs. The v6 §11.6 13,310-row slice is NOT the eval slice (it overlaps the fit window).
 
-**Freeze point:** Parameters are written to `data/v7-fhat/params.json` with a git commit. The §6 spike reads that file and does not refit. Any parameter change invalidates the spike and requires a new pre-registration.
+**Freeze point:** Parameters written to `data/v7-fhat/params.json` with a git commit, alongside a pre-registration record containing the exact SQL queries, split seed, EM settings, and parameter-range claims. The §6 spike reads that file and does not refit. Any parameter change invalidates the spike and requires a new pre-registration commit.
 
 ## 3. Variational free energy
 
@@ -179,15 +211,19 @@ For each agent-turn $t$ in the held-out evaluation set (§2.5 split, 15% + the �
 
 ### 6.2 Forward-prediction targets
 
-Five audit events, all already logged:
+Five audit events, all DB-verified 2026-04-23:
 
-| Target | Source table |
-|---|---|
-| `outcome_failure` | `audit.events WHERE event_type IN ('outcome_event')` with outcome=failure |
-| `calibration_spike` | `sequential_calibration` state: $|\text{conf} - \text{outcome}|$ crossing class-specific 90th percentile |
-| `circuit_breaker_trip` | `audit.events WHERE event_type = 'circuit_breaker_trip'` |
-| `user_correction` | `primitive_feedback(role='human', valence='negative')` |
-| `trajectory_drift` | `audit.events WHERE event_type = 'trajectory_drift'` |
+| Target | Source | 30d count |
+|---|---|---|
+| `outcome_is_bad` | `audit.outcome_events WHERE is_bad = true` | ~240 |
+| `circuit_breaker_trip` | `audit.events WHERE event_type = 'circuit_breaker_trip'` | 71 |
+| `stuck_detected` | `audit.events WHERE event_type = 'stuck_detected'` | 2,729 |
+| `anomaly_detected` | `audit.events WHERE event_type = 'anomaly_detected'` | 252 |
+| `lifecycle_paused` | `audit.events WHERE event_type = 'lifecycle_paused'` | 206 |
+
+Note the v2 draft listed `calibration_spike` (not pullable historically — per-agent calibration is in-process only, per 2026-04-23 schema audit) and `user_correction` via `primitive_feedback` (no such event_type in audit.events). Both are replaced with DB-verified targets.
+
+**Target-observation independence:** targets for the horse race ($t+k$) must not be used as observations at $t$. $o^{\text{cbk}}_t$, $o^{\text{stk}}_t$, $o^{\text{anm}}_t$ (§2.2) use a forward window $(t, t + \Delta w = 60\text{s}]$. The horse race uses forward windows $k \in \{5\text{m}, 30\text{m}, 2\text{h}\}$ starting at $t$, so the horse-race window strictly contains the $\Delta w$ emission window for $k \geq 60$s. To avoid leakage: the **horse-race target window** is $[t + 60\text{s}, t + k]$, excluding the first 60 seconds that overlap with the emission window for $o^{\text{cbk, stk, anm}}$. `outcome_is_bad` and `lifecycle_paused` targets are not used as observations anywhere, so no leakage concern for them.
 
 ### 6.3 Horse race
 
@@ -203,9 +239,16 @@ Total cells: 5 targets × 3 horizons = 15 head-to-head comparisons.
 
 ### 6.4 Decision rule
 
-- **Path (d) earned** — $\hat{F}$ wins ($\Delta\text{AUC} \geq 0.03$, CI excludes zero) on $\geq 3$ of 5 targets, summed across any choice of horizons. Commit v7 to (d). §3 coordinate-table rewrite proceeds as §5.1 path (d).
-- **Scope-limited (d)** — $\hat{F}$ wins on 1–2 of 5 targets. v7 claims $\hat{F}$-grounding only for the subset of targets won; other targets documented as cases where BED is doing the predictive work and $\hat{F}$ is not an improvement.
-- **Path (b)** — $\hat{F}$ ties or loses on all 5 targets ($\Delta\text{AUC} < 0.03$ or CI includes zero). BED was already capturing the forward-predictive structure; $\hat{F}$ formalization adds no information. Demote FEP to related-work / inspirational. v7 §3 coordinate-table rewrite proceeds as §5.1 path (b).
+Two conditions, both required for (d):
+
+**Win condition:** $\hat{F}$ beats $|\Delta\eta|$ at $\Delta\text{AUC} \geq 0.03$ with 95% CI excluding zero, on $\geq 3$ of 5 targets (summed across any choice of horizons).
+
+**Non-regression guardrail** (added v3 per GPT 2026-04-23): on the remaining targets (the ones $\hat{F}$ does not win on), the lower bound of the 95% bootstrap CI for $\Delta\text{AUC}$ must be $\geq -0.015$. This prevents a narrow win on 3 targets that comes paired with material degradation on the other 2 — e.g., $\hat{F}$ sharpening governance-failure prediction while blunting outcome-quality prediction. A model that "wins narrowly while harming part of the governance surface" does not earn (d).
+
+**Classification:**
+- **Path (d) earned** — both win condition and non-regression guardrail hold. Commit v7 to (d); §3 coordinate-table rewrite proceeds as §5.1 path (d).
+- **Scope-limited (d)** — win condition holds on 1–2 of 5 targets, non-regression guardrail holds. v7 claims $\hat{F}$-grounding only for the subset of targets won.
+- **Path (b)** — win condition fails on all 5 targets, or non-regression guardrail fails on any target. BED was already capturing the forward-predictive structure, or $\hat{F}$'s wins come at the cost of regressions elsewhere. Demote FEP to related-work / inspirational. v7 §3 coordinate-table rewrite proceeds as §5.1 path (b).
 
 ### 6.5 Prior estimate
 
@@ -231,12 +274,17 @@ Slight upward adjustment within 0.60: the observables in §2.2 are exactly the c
 
 R1 (behavioral-continuity verification, per `plan.md`) is independent. Path (d) makes variational identity verification over $q(s_t \mid \text{trajectory})$ a **viable candidate solution** for R1 — the same generative model that grounds $\hat{F}$ can, in principle, evaluate whether a declared-lineage agent's trajectory is consistent with its claimed parent's posterior. That is one candidate R1 solution among several (behavioral signature matching, substrate-earned three-condition check, etc.). **R1 stays open regardless of the spike outcome.** A (d) win in v7 should not precommit R1's shape.
 
-### Open questions for Kenny
+### Resolved in v3
 
-1. **Latent dimensionality.** 4 (competence/load/risk/integrity) is a guess. Alternatives: 2 (competence + risk, collapsing load into competence and integrity into risk); 5 (add environmental-stability for substrate-earned agents); 3 (competence/risk/integrity, treating load as observed not latent). Which decomposition best matches the paper v7 story you want to tell? **This decision must freeze before §2.5 fit runs.**
-2. **Class-conditioning location.** Three places class can enter: (a) emission coefficients [§2.4 current proposal]; (b) priors $p(s_0 \mid c)$ differ per class [§2.3 current proposal also adopts this]; (c) transition dynamics $A^c, \Sigma^c_w$ per class [§2.3 current proposal also adopts this]. The current spec uses all three, which doubles-or-triples parameter count vs. a minimal spec. If 104 params is too many for the class-coverage available, the minimal fallback is (a) only with fleet-wide priors and dynamics.
-3. **Migration posture.** Should $\hat{F}$-grounded $V$ *replace* the current $V$ accumulator, or ship dual-compute alongside it (per v6 §11 three-phase pattern)? Replacement is cleaner; dual-compute preserves the v6 pipeline-ordering methodological contribution on a second mechanism and is the v6-precedent-aligned answer.
-4. **Acceptance threshold.** $\Delta\text{AUC} \geq 0.03$ with CI excluding zero, on $\geq 3$ of 5 targets, is the §6.4 rule. Worth your gut-check: is 0.03 the right magnitude, and is 3-of-5 the right bar? Both are judgment calls. A tighter rule ($\Delta\text{AUC} \geq 0.05$, 4-of-5) would make (d) harder to earn but more defensible under reviewer scrutiny.
+- **Latent dimensionality** (was v2 Q1): frozen at **4-dim, aligned to EISV** (not a separate competence/load/risk/integrity decomposition). See §2.1.
+- **Class-conditioning location** (was v2 Q2): frozen at **emissions only, fleet-wide transitions**. See §2.3–2.4.
+- **Migration posture** (was v2 Q3): frozen at **additive sidecar**. $\hat{F}$-grounded $V$ is computed alongside the v6 $V$ accumulator; it does not influence governance decisions until the horse race earns it. Matches v6 §11 three-phase dual-compute pattern.
+
+### Still open for Kenny
+
+1. **Acceptance threshold tuning.** $\Delta\text{AUC} \geq 0.03$ with CI excluding zero on $\geq 3$ of 5 targets, paired with non-regression guardrail (lower CI $\geq -0.015$ on other targets). GPT's 2026-04-23 read: "reasonable but slightly permissive; keep with the non-regression guardrail." That guardrail is in §6.4 v3. If you want a tighter bar ($\Delta\text{AUC} \geq 0.05$ / 4-of-5 / tighter guardrail), call it now — threshold locks before Session 2.
+2. **Latent dim alternative gut-check.** GPT's call was 4D aligned to EISV. If you prefer a different dim (e.g., 2D collapsed to a "competence-risk" axis for a simpler story, or 6D with exogenous latents for class-stability), say so now. The v6-ODE-as-prior framing commits 4D; alternatives require redesigning §2.3.
+3. **v3 observation-channel dropout acceptable?** v2's primitive_feedback / watcher_finding / per-agent-calibration channels are dropped in v3 because they're not historically pullable. Five observations remain (observed EISV × 4 + outcome is_bad + three event-stream indicators). If weak horse-race power emerges (small effect sizes, wide CIs) this is likely why — fewer channels means fewer places for $\hat{F}$ to differentiate. Mitigation (option ii from the 2026-04-23 audit): accept narrower coverage in v7 and instrument the missing channels for v7.1 / v8.
 
 ## 8. Next step
 
@@ -249,6 +297,7 @@ If the spec needs re-scoping first: redirect on the §7 open questions before Se
 
 ## 9. Change log
 
+- **v3 (2026-04-23):** Schema-verified observation channels against the live governance DB; dropped v2's non-pullable channels (primitive_feedback user corrections, Watcher findings, per-agent calibration state) and replaced with five DB-verified channels (observed EISV × 4, outcome is_bad, three event-stream indicators). Adopted GPT's latent-dim call: latents are now **the EISV coordinates themselves**, not a separate 4-dim decomposition. Transition prior is the **v6 ODE discretized** (load-bearing — makes the v6 dynamics the prior on the generative model). Class-conditioning moved to emissions only (fleet-wide transitions and ODE parameters). Migration posture locked as additive sidecar. Added non-regression guardrail to §6.4 decision rule (lower CI $\geq -0.015$ on losing targets, per GPT's call). Reference corpus and eval-slice windows shifted to avoid v6 §11.6 overlap. Per-class parameter count reduced from 104 (v2) to 76 (v3). Forward-prediction targets updated to DB-verified event types: `outcome_is_bad`, `circuit_breaker_trip`, `stuck_detected`, `anomaly_detected`, `lifecycle_paused`.
 - **v2 (2026-04-23):** Expanded §2 to full closed-form parameterization with pre-registered ranges and fit protocol; replaced §6 correlational test with predictive horse race against BED on forward audit-event prediction; added §5.1 clarifying that §3 coordinate-table rewrite is required under both (d) and (b); softened R1 coupling to "viable candidate solution, not THE solution"; walked prior from 0.7+ down to 0.60 per reverse-engineering-vs-forward-modeling distinction.
 - **v1 (2026-04-23):** Initial draft, superseded by v2.
 
