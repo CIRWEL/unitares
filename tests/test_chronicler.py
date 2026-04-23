@@ -42,6 +42,50 @@ class TestTokeiScraper:
             tokei_unitares_src_code(tmp_path)
 
 
+class TestDbScrapers:
+    """DB-backed scrapers delegate to `_fetchval`. Test each one calls it
+    with the right SQL shape — the actual DB round-trip is integration-tested
+    elsewhere."""
+
+    def test_agents_active_7d_queries_distinct_tool_usage(self, tmp_path: Path):
+        from agents.chronicler import scrapers
+
+        with patch.object(scrapers, "_fetchval", return_value=42.0) as m:
+            value = scrapers.agents_active_7d(tmp_path)
+
+        assert value == 42.0
+        sql = m.call_args.args[0]
+        assert "count(DISTINCT agent_id)" in sql
+        assert "audit.tool_usage" in sql
+        assert "7 days" in sql
+
+    def test_kg_entries_count_queries_discoveries(self, tmp_path: Path):
+        from agents.chronicler import scrapers
+
+        with patch.object(scrapers, "_fetchval", return_value=137.0) as m:
+            value = scrapers.kg_entries_count(tmp_path)
+
+        assert value == 137.0
+        assert "knowledge.discoveries" in m.call_args.args[0]
+
+    def test_checkins_7d_filters_process_agent_update(self, tmp_path: Path):
+        from agents.chronicler import scrapers
+
+        with patch.object(scrapers, "_fetchval", return_value=9001.0) as m:
+            value = scrapers.checkins_7d(tmp_path)
+
+        assert value == 9001.0
+        sql = m.call_args.args[0]
+        assert "tool_name = 'process_agent_update'" in sql
+        assert "7 days" in sql
+
+    def test_new_scrapers_registered_in_SCRAPERS(self):
+        from agents.chronicler.scrapers import SCRAPERS
+
+        for name in ("agents.active.7d", "kg.entries.count", "checkins.7d"):
+            assert name in SCRAPERS, f"{name} missing from SCRAPERS registry"
+
+
 class TestTestsCountScraper:
     def test_counts_only_test_prefixed_py_files(self, tmp_path: Path):
         from agents.chronicler.scrapers import tests_unitares_count

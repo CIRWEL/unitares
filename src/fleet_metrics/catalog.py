@@ -76,3 +76,21 @@ register(Metric(
     description="Number of `test_*.py` files in unitares/tests/ — rough proxy for test-surface breadth.",
     unit="files",
 ))
+
+register(Metric(
+    name="agents.active.7d",
+    description="Distinct agents with any tool call in the last 7 days — fleet liveness curve.",
+    unit="agents",
+))
+
+register(Metric(
+    name="kg.entries.count",
+    description="Total discoveries in the knowledge graph — cumulative KG growth.",
+    unit="entries",
+))
+
+register(Metric(
+    name="checkins.7d",
+    description="`process_agent_update` calls in the last 7 days — governance traffic (feeds paper v7 corpus-maturity status).",
+    unit="calls",
+))

@@ -24,6 +24,12 @@ class TestCatalog:
         assert entry.unit == "lines"
         assert "unitares" in entry.description
 
+    def test_db_backed_metrics_registered(self):
+        """Chronicler's DB-backed scrapers have catalog entries so the server
+        accepts POSTs from them — a missing catalog entry returns 404."""
+        for name in ("agents.active.7d", "kg.entries.count", "checkins.7d"):
+            assert name in _catalog, f"{name} missing from catalog"
+
     def test_require_known_name_returns_entry(self):
         entry = require("tokei.unitares.src.code")
         assert isinstance(entry, Metric)
