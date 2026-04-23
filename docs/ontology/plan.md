@@ -160,8 +160,7 @@ S5 and S6-Option-B (plus Q2 `seed_genesis_from_parent` primitive) both shipped t
 1. **S6 follow-up: wire `seed_genesis_from_parent` into onboard** — **Shipped 2026-04-23** as PR #112 (`a8bf5d71`). `_seed_genesis_from_parent_bg` in `src/mcp_handlers/identity/handlers.py:1790` scheduled alongside `_create_spawned_edge_bg` on both fresh-identity and force_new branches.
 2. **v7 outline draft** — fresh session in `unitares-paper-v6` repo. Produces a `.tex` skeleton you can read and redirect. Independent of all code work.
 3. **Pre-dispatch PR-scan checkpoint** — **Resolved 2026-04-23** as the lighter `WIP-PR:` convention + handoff-template pre-flight (see "How to change this plan" and "Handoff prompt template" below). Docs-only; no enforcement hook. If the convention fails to prevent duplicates in practice, escalate to a dispatch-path hook.
-4. **S8a follow-up: Phase-1 default-stamp at onboard** — **In flight 2026-04-23**. Operator signed off on a 2-branch rule (resident label → persistent+autonomous; else → ephemeral); `session_like` class deferred to Phase 2; Phase 2 held pending empirical data.
-   WIP-PR: branch `feat/s8a-phase1-classify-on-onboard` (agent-59e966aa-7b8)
+4. **S8a follow-up: Phase-1 default-stamp at onboard** — **Shipped 2026-04-23** as PR #121. Server-side 2-branch rule in `src/grounding/onboard_classifier.py`; wiring in `src/mcp_handlers/identity/handlers.py:_stamp_default_tags_on_onboard` fires on `is_new` fresh identities. Resident label → `["persistent", "autonomous"]`; otherwise → `["ephemeral"]`. `session_like` class deferred to Phase 2; Phase 2 held pending ≥1 week of Phase-1 data. SDK `update_agent_metadata` retained as backward-compat fallback. Unblocks S6 session-like threshold recalibration and S8b backfill.
 
 After those, re-read this plan and decide whether remaining rows still matter or have been superseded.
 
