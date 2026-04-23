@@ -449,6 +449,112 @@ async def store_genesis_signature(
         return False
 
 
+async def seed_genesis_from_parent(
+    agent_id: str,
+    parent_agent_id: str,
+) -> Dict[str, Any]:
+    """Seed an agent's genesis from its declared parent's `trajectory_current`.
+
+    Ontology v2 primitive — see docs/ontology/plan.md R3-appendix Q2.
+    Under v2 most process-instances die before accumulating the 50/200
+    observations `compute_trust_tier` expects. When a fresh agent declares
+    a `parent_agent_id` at onboard, seeding genesis from the parent's
+    accumulated fingerprint gives the child a meaningful lineage baseline
+    against which `update_current_signature` can compute similarity —
+    instead of comparing the child's first ten samples against themselves.
+
+    Behavior:
+      - If the agent already has `trajectory_genesis` at tier >= 2,
+        refuses to reseed (respects the immutability rule in
+        `store_genesis_signature`).
+      - If parent has no `trajectory_current`, no-op (nothing to seed
+        from; parent's own genesis is a weaker baseline and is not used).
+      - Otherwise, writes parent's current-signature dict as the child's
+        genesis plus a `trajectory_genesis_source` marker for provenance.
+
+    The caller is responsible for deciding *when* to invoke this —
+    typically at onboard with `force_new=true, parent_agent_id=<uuid>`.
+
+    Returns a dict:
+      {"seeded": bool, "reason": str,
+       "parent_agent_id": str, "source": Optional[str]}
+    """
+    try:
+        from src.db import get_db
+        db = get_db()
+
+        child = await db.get_identity(agent_id)
+        if not child:
+            return {
+                "seeded": False,
+                "reason": "child identity not found",
+                "parent_agent_id": parent_agent_id,
+                "source": None,
+            }
+
+        child_metadata = child.metadata or {}
+        existing_genesis = child_metadata.get("trajectory_genesis")
+        if existing_genesis:
+            trust = child_metadata.get("trust_tier", {})
+            tier = trust.get("tier", 0) if isinstance(trust, dict) else 0
+            if tier >= 2:
+                return {
+                    "seeded": False,
+                    "reason": f"child has existing genesis at tier {tier} (immutable)",
+                    "parent_agent_id": parent_agent_id,
+                    "source": None,
+                }
+
+        parent = await db.get_identity(parent_agent_id)
+        if not parent or not parent.metadata:
+            return {
+                "seeded": False,
+                "reason": "parent identity not found or has no metadata",
+                "parent_agent_id": parent_agent_id,
+                "source": None,
+            }
+
+        parent_current = parent.metadata.get("trajectory_current")
+        if not parent_current:
+            return {
+                "seeded": False,
+                "reason": "parent has no trajectory_current to seed from",
+                "parent_agent_id": parent_agent_id,
+                "source": None,
+            }
+
+        # Write parent's current as child's genesis, with provenance.
+        now_iso = datetime.now(timezone.utc).isoformat()
+        child_metadata["trajectory_genesis"] = dict(parent_current)
+        child_metadata["trajectory_genesis_at"] = now_iso
+        child_metadata["trajectory_genesis_source"] = {
+            "source": "parent_lineage",
+            "parent_agent_id": parent_agent_id,
+            "seeded_at": now_iso,
+        }
+
+        await db.update_identity_metadata(agent_id, child_metadata)
+        logger.info(
+            f"[Trajectory] Seeded genesis for {agent_id[:8]}... from parent "
+            f"{parent_agent_id[:8]}... (lineage declared)"
+        )
+        return {
+            "seeded": True,
+            "reason": "seeded from parent trajectory_current",
+            "parent_agent_id": parent_agent_id,
+            "source": "parent_lineage",
+        }
+
+    except Exception as e:
+        logger.error(f"[Trajectory] seed_genesis_from_parent failed: {e}")
+        return {
+            "seeded": False,
+            "reason": f"error: {type(e).__name__}: {e}",
+            "parent_agent_id": parent_agent_id,
+            "source": None,
+        }
+
+
 async def update_current_signature(
     agent_id: str,
     signature: TrajectorySignature,

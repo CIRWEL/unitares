@@ -170,9 +170,9 @@ async def _load_metadata_from_postgres_async() -> dict:
     except Exception as e:
         logger.debug(f"Agent profile hydration skipped: {e}")
 
-    # Batch-load trust tiers
+    # Batch-load trust tiers (S6 Option B: substrate-earned routing)
     try:
-        from src.trajectory_identity import compute_trust_tier
+        from src.identity.trust_tier_routing import resolve_trust_tier
         from src.db import get_db
         db = get_db()
         agent_ids = list(result.keys())
@@ -185,7 +185,13 @@ async def _load_metadata_from_postgres_async() -> dict:
             identities = {}
         for aid, identity in identities.items():
             if identity and identity.metadata and "trajectory_current" in identity.metadata:
-                tier_info = compute_trust_tier(identity.metadata)
+                _meta = result.get(aid)
+                tier_info = await resolve_trust_tier(
+                    aid,
+                    identity.metadata,
+                    prefetched_tags=getattr(_meta, "tags", None) if _meta else None,
+                    prefetched_label=getattr(_meta, "label", None) if _meta else None,
+                )
                 result[aid].trust_tier = tier_info.get("name", "unknown")
                 result[aid].trust_tier_num = tier_info.get("tier", 0)
     except Exception as e:
