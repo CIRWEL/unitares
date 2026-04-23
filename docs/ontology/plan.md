@@ -37,7 +37,7 @@ Every item from `identity.md` that requires work, what "resolved" means for it, 
 | S3 | Cross-channel token acceptance | Retire | S1 | Token's `ch` claim enforced; mismatch = force-new with lineage. |
 | S4 | Label-as-identifier flows | **Mostly resolved** (2026-04-17 `resolve_by_name_claim` cleanup + 2026-04-21 audit in `audit-notes.md`) | None | Outstanding effective action narrows to S5; remaining sites are cosmetic label-to-UUID translation. Verify no regressions. |
 | S5 | `resident_fork_detected` event | **Resolved 2026-04-23** | R4 | Event inverted in `src/mcp_handlers/identity/persistence.py:set_agent_label` — fires only when a persistent-label collision occurs *without* the new agent declaring `parent_agent_id=<existing_uuid>`. Lineage-declared restarts log at INFO with `[RESIDENT_LINEAGE]`; broadcast payload gains `declared_parent` for consumer taxonomy. Signal chosen: declared `parent_agent_id` (the substrate commitment available at onboard time — full `verify_substrate_earned` fails fresh processes on condition 2). Tests in `tests/test_resident_fork_detector.py`. |
-| S6 | Trust-tier calculation (`compute_trust_tier`) | **Partially resolved 2026-04-23** — Option B routing + Q2 reseed primitive shipped | R3 | `resolve_trust_tier` in `src/identity/trust_tier_routing.py` shortcuts substrate-earned agents (R4 three-condition pass) to tier=3; session-like agents continue through `compute_trust_tier` unchanged. Lineage-seeded genesis primitive `seed_genesis_from_parent` in `src/trajectory_identity.py` (Q2). Remaining: wire `seed_genesis_from_parent` into onboard flow (follow-up) and empirically recalibrate session-like thresholds once S8a tag-discipline lands. |
+| S6 | Trust-tier calculation (`compute_trust_tier`) | **Partially resolved 2026-04-23** — Option B routing + Q2 reseed primitive shipped; onboard-flow wiring follow-up shipped same day | R3 | `resolve_trust_tier` in `src/identity/trust_tier_routing.py` shortcuts substrate-earned agents (R4 three-condition pass) to tier=3; session-like agents continue through `compute_trust_tier` unchanged. Lineage-seeded genesis primitive `seed_genesis_from_parent` in `src/trajectory_identity.py` (Q2); wired into onboard via `_seed_genesis_from_parent_bg` in `src/mcp_handlers/identity/handlers.py`, scheduled alongside `_create_spawned_edge_bg` on both `created_fresh_identity` and `force_new` branches. Remaining: empirically recalibrate session-like thresholds once S8a tag-discipline lands. |
 | S7 | KG provenance (`agent_id` stamping) | Audit + shift aggregation | R3 | Queries and aggregations that assume multi-session UUID continuity migrated to role or lineage-chain. Schema audit of `knowledge_graph_postgres.py` and `knowledge_graph.py`. |
 | S8 | Orphan archival heuristics (`classify_for_archival`) | **Re-scoped** (2026-04-21 audit in `audit-notes.md` — thresholds are fine; real gap is tag discipline) | None urgent | Split into S8a (tag-discipline audit) + S8b (class-tag backfill). Heuristic thresholds remain as-is. |
 | S8a | Tag-discipline audit — 96% of active agents lack class tags | Audit | None | Understand why onboard flow isn't stamping class tags (pipeline broken? Agents not declaring? Something else?). Produces findings doc. |
@@ -142,11 +142,11 @@ This plan is a dispatch queue. Each row is a scoped task, each task is handled b
 - Decide when "the ontology is done enough" vs. needs another revision pass.
 - Close the loop on this plan when it reaches its definition-of-done state.
 
-### Recommended priority (snapshot 2026-04-23, end of session)
+### Recommended priority (snapshot 2026-04-23)
 
-S5 shipped this session (see S5 row). S6 options doc appended to this file (see "2026-04-23 — S6 options" appendix) — awaiting operator decision before S6 work can start. Refreshed priority for the next session:
+S5 and S6-Option-B (plus Q2 `seed_genesis_from_parent` primitive) both shipped this session. The S6 options appendix below is kept for historical reading but its "operator decision needed" framing is superseded — PR #107 picked Option B and landed the Q2 primitive in the same commit. The onboard-flow wiring (Q2 into live call sites) ships separately. Refreshed priority:
 
-1. **S6 decision → implementation** — operator picks between the two paths laid out in the S6 options appendix below. Once picked, the module-scope work in the R3 appendix's "Action — what S6 actually needs to do" can ship.
+1. **S6 follow-up: wire `seed_genesis_from_parent` into onboard** — primitive exists at `src/trajectory_identity.py:452` with unit tests, but had no production callers. Shipping a `_seed_genesis_from_parent_bg` helper in `src/mcp_handlers/identity/handlers.py` scheduled alongside `_create_spawned_edge_bg` closes the gap. Module-scope, independent of S8a. (In progress — this PR.)
 2. **v7 outline draft** — fresh session in `unitares-paper-v6` repo. Produces a `.tex` skeleton you can read and redirect. Independent of all code work.
 3. **Pre-dispatch PR-scan checkpoint** — followup candidate noted in the "2026-04-21 — S11 execution" appendix. Lightweight either as a hook or as a `WIP-PR:` field convention on plan.md rows. Closes the "two agents writing the same PR in parallel" failure mode that recurred the prior session.
 4. **S8a tag-discipline audit** — 96% of active agents lack class tags per the 2026-04-21 A3 audit. Blocks clean S6 threshold recalibration and S8b backfill. Findings-doc scope, not code.
@@ -409,6 +409,8 @@ S6 as scoped above is consistent with identity.md §"Implications" — "Re-inter
 **What this does not do.** No change to the *existing* agent's tagging or tier. No change to ephemeral-collision path. `resident_fork_detected` event name unchanged (payload additive). Downstream consumers (dashboard, Discord bridge) receive the same event shape plus one new field — no breaking change.
 
 ### 2026-04-23 — S6 options: substrate-earned routing
+
+> **Superseded 2026-04-23.** PR #107 picked Option B and shipped the Q2 reseed primitive (`seed_genesis_from_parent`) in the same commit. Onboard-flow wiring for the primitive followed the same day. Appendix retained for historical reading of the A/B tradeoffs; no decision is outstanding.
 
 **Context:** The open question from the 2026-04-21 R3 appendix ("Q1: substrate-earned as class-arg or parallel path?") needs an operator decision before S6 implementation. This appendix lays out both options with tradeoffs; decision unblocks the R3-appendix "Action — what S6 actually needs to do" work.
 
