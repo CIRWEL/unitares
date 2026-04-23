@@ -173,8 +173,30 @@ class TestDetectClientFromUserAgent:
     def test_claude_desktop(self):
         assert detect_client_from_user_agent("Claude Desktop 1.0") == "claude_desktop"
 
-    def test_anthropic(self):
-        assert detect_client_from_user_agent("Anthropic/SDK") == "claude_desktop"
+    def test_claude_desktop_dashed(self):
+        assert detect_client_from_user_agent("claude-desktop/1.2.3") == "claude_desktop"
+
+    def test_claude_code_cli(self):
+        # Previously mislabeled as claude_desktop — this is the 96% case.
+        assert detect_client_from_user_agent("claude-code/2.0.0") == "claude_code"
+
+    def test_claude_code_no_dash(self):
+        assert detect_client_from_user_agent("ClaudeCode/1.0") == "claude_code"
+
+    def test_claude_code_wins_over_generic_claude(self):
+        # A mixed UA with both markers must resolve to the specific one.
+        assert detect_client_from_user_agent("claude-code via Claude/1.0") == "claude_code"
+
+    def test_anthropic_generic(self):
+        # Python/TS SDKs and unknown anthropic clients fall into the honest
+        # "claude" catch-all, not the previous "claude_desktop" misnomer.
+        assert detect_client_from_user_agent("Anthropic/SDK") == "claude"
+
+    def test_anthropic_python_sdk(self):
+        assert detect_client_from_user_agent("anthropic-python/0.40.0") == "claude"
+
+    def test_generic_claude(self):
+        assert detect_client_from_user_agent("Claude/1.0") == "claude"
 
     def test_chatgpt(self):
         assert detect_client_from_user_agent("ChatGPT-Plugin/1.0") == "chatgpt"

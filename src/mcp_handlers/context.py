@@ -217,6 +217,12 @@ def detect_client_from_user_agent(user_agent: str) -> Optional[str]:
 
     Used for auto-generating meaningful structured_id (e.g., "cursor_20251226").
 
+    Claude-family clients are disambiguated: Claude Code CLI, Claude Desktop app,
+    and the generic Anthropic-SDK / unknown-Claude bucket all have distinct
+    labels. Previously every "claude"-bearing UA was labeled "claude_desktop",
+    which mislabeled Claude Code sessions, Python SDK scripts, and anything else
+    using the anthropic libraries.
+
     Args:
         user_agent: HTTP User-Agent header value
 
@@ -231,11 +237,24 @@ def detect_client_from_user_agent(user_agent: str) -> Optional[str]:
     if "cursor" in ua:
         return "cursor"
     # Prefer OpenAI/Codex detection before Claude in mixed/proxy UAs.
-    elif "codex" in ua or "chatgpt" in ua or "openai" in ua or "gpt" in ua:
+    if "codex" in ua or "chatgpt" in ua or "openai" in ua or "gpt" in ua:
         return "chatgpt"
-    elif "claude" in ua or "anthropic" in ua:
+    # Claude Code CLI — check before generic claude fallthrough. Claude Code
+    # UAs include the literal "claude-code" slug.
+    if "claude-code" in ua or "claudecode" in ua:
+        return "claude_code"
+    # Claude Desktop — specific match for the desktop app's UA. Historic Anthropic
+    # desktop builds have used "claude desktop", "claude-desktop", and the bare
+    # "Claude/<version>" format; match the first two explicitly.
+    if "claude-desktop" in ua or "claude desktop" in ua:
         return "claude_desktop"
-    elif "vscode" in ua or "visual studio code" in ua:
+    # Generic Claude / Anthropic fallback. Covers anthropic-python, anthropic-ts,
+    # custom MCP clients, and anything else carrying "claude" or "anthropic" in
+    # the UA that we can't narrow further. Honest label: we know it's an
+    # Anthropic-family client, we don't know which one.
+    if "claude" in ua or "anthropic" in ua:
+        return "claude"
+    if "vscode" in ua or "visual studio code" in ua:
         return "vscode"
 
     return None

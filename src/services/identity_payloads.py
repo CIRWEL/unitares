@@ -158,7 +158,9 @@ def build_onboard_response_data(
     client_tips = {
         "chatgpt": "ChatGPT loses session state. ALWAYS include client_session_id in every call.",
         "cursor": "Cursor maintains sessions well. client_session_id optional but recommended.",
+        "claude_code": "Claude Code CLI maintains sessions via the governance hook chain. client_session_id optional.",
         "claude_desktop": "Claude Desktop has stable sessions. client_session_id optional.",
+        "claude": "Anthropic-family client. For best continuity, include client_session_id in all tool calls.",
         "unknown": "For best session continuity, include client_session_id in all tool calls.",
     }
 
