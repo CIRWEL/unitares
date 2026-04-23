@@ -480,30 +480,37 @@ class TestCircuitBreaker:
         assert cb.state == "closed"
 
     def test_half_open_after_timeout(self):
-        import time
         cb = self.CircuitBreaker(threshold=1, timeout=0.01)
-        cb.record_failure()
-        assert cb.state == "open"
-        time.sleep(0.02)
-        assert cb.state == "half_open"
+        clock = {"now": 100.0}
+
+        with patch("src.cache.redis_client.time.time", side_effect=lambda: clock["now"]):
+            cb.record_failure()
+            assert cb.state == "open"
+            clock["now"] += 0.02
+            assert cb.state == "half_open"
 
     def test_half_open_success_closes(self):
-        import time
         cb = self.CircuitBreaker(threshold=1, timeout=0.01)
-        cb.record_failure()
-        time.sleep(0.02)
-        assert cb.state == "half_open"
-        cb.record_success()
-        assert cb.state == "closed"
+        clock = {"now": 200.0}
+
+        with patch("src.cache.redis_client.time.time", side_effect=lambda: clock["now"]):
+            cb.record_failure()
+            clock["now"] += 0.02
+            assert cb.state == "half_open"
+            cb.record_success()
+            assert cb.state == "closed"
 
     def test_half_open_failure_reopens(self):
-        import time
         cb = self.CircuitBreaker(threshold=1, timeout=0.01)
-        cb.record_failure()
-        time.sleep(0.02)
-        assert cb.state == "half_open"
-        cb.record_failure()
-        assert cb.state == "open"
+        clock = {"now": 300.0}
+
+        with patch("src.cache.redis_client.time.time", side_effect=lambda: clock["now"]):
+            cb.record_failure()
+            clock["now"] += 0.02
+            assert cb.state == "half_open"
+            clock["now"] += 0.001
+            cb.record_failure()
+            assert cb.state == "open"
 
     def test_reset(self):
         cb = self.CircuitBreaker(threshold=1)

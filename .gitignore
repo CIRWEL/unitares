@@ -198,3 +198,6 @@ wiggum/
 papers/
 examples/
 src/data/
+
+# Operator-local: Schmidt proposal figures + venv
+schmidt-proposal-figures/
