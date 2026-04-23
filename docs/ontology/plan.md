@@ -121,6 +121,17 @@ Rows are cheap. Add one per surfaced item. Remove rows that are explicitly cance
 
 Do not promote items out of "research" (R) into "implications" (S) without first resolving the R item — otherwise we re-introduce performative stance.
 
+### `WIP-PR:` field (parallel-work avoidance)
+
+When a process-instance starts code work on a row, add a `WIP-PR:` line to that row's cell pointing to the open PR (or branch, pre-push). Example:
+
+```
+| S8a | Tag-discipline audit — ... | Resolved 2026-04-23 — findings doc shipped | ... |
+      WIP-PR: unitares#118 (opened by agent-59e966aa-7b8)
+```
+
+Remove the field when the PR merges or closes. Before opening a new PR for any row, dispatcher (human or subagent) runs the pre-flight check in the handoff template below — this is the cure for the S11-execution dogfood where two agents independently wrote the same PR 7 hours apart.
+
 ---
 
 ## Appendix: Operational pattern (how to pursue)
@@ -146,9 +157,9 @@ This plan is a dispatch queue. Each row is a scoped task, each task is handled b
 
 S5 and S6-Option-B (plus Q2 `seed_genesis_from_parent` primitive) both shipped this session. The S6 options appendix below is kept for historical reading but its "operator decision needed" framing is superseded — PR #107 picked Option B and landed the Q2 primitive in the same commit. The onboard-flow wiring (Q2 into live call sites) ships separately. Refreshed priority:
 
-1. **S6 follow-up: wire `seed_genesis_from_parent` into onboard** — primitive exists at `src/trajectory_identity.py:452` with unit tests, but had no production callers. Shipping a `_seed_genesis_from_parent_bg` helper in `src/mcp_handlers/identity/handlers.py` scheduled alongside `_create_spawned_edge_bg` closes the gap. Module-scope, independent of S8a. (In progress — this PR.)
+1. **S6 follow-up: wire `seed_genesis_from_parent` into onboard** — **Shipped 2026-04-23** as PR #112 (`a8bf5d71`). `_seed_genesis_from_parent_bg` in `src/mcp_handlers/identity/handlers.py:1790` scheduled alongside `_create_spawned_edge_bg` on both fresh-identity and force_new branches.
 2. **v7 outline draft** — fresh session in `unitares-paper-v6` repo. Produces a `.tex` skeleton you can read and redirect. Independent of all code work.
-3. **Pre-dispatch PR-scan checkpoint** — followup candidate noted in the "2026-04-21 — S11 execution" appendix. Lightweight either as a hook or as a `WIP-PR:` field convention on plan.md rows. Closes the "two agents writing the same PR in parallel" failure mode that recurred the prior session.
+3. **Pre-dispatch PR-scan checkpoint** — **Resolved 2026-04-23** as the lighter `WIP-PR:` convention + handoff-template pre-flight (see "How to change this plan" and "Handoff prompt template" below). Docs-only; no enforcement hook. If the convention fails to prevent duplicates in practice, escalate to a dispatch-path hook.
 4. **S8a follow-up: Phase-1 default-stamp at onboard** — S8a findings doc shipped (`docs/ontology/s8a-tag-discipline-audit.md`); recommendation is Option 1 (default-stamp at onboard) + partial Option 2 (later promotion sweep). Needs operator sign-off on the Phase-1 rule set and the `session_like` class addition before implementation. Unblocks S6 recalibration and S8b backfill.
 
 After those, re-read this plan and decide whether remaining rows still matter or have been superseded.
@@ -164,11 +175,22 @@ Authoritative reference:
 - [any row-specific doc, e.g., docs/ontology/s11-consolidation.md]
 all on master in the unitares repo.
 
+Pre-flight (parallel-work avoidance):
+1. Read plan.md row for this task — check for existing `WIP-PR:` field.
+   If present and not stale (<48h), abort and report the existing PR
+   rather than open a duplicate.
+2. Run `gh pr list --state open --search "<row ID>"` in the target repo.
+   If any open PR references this row ID in title/body/branch, abort and
+   report the existing PR.
+3. Before pushing a branch, stamp `WIP-PR:` into the plan.md row cell in
+   the same commit as the first push (or in a preceding docs-only commit).
+
 Scope: [specific bounds, e.g., "three changes per s11-consolidation.md §4;
 ship via ship.sh runtime path for PR + auto-merge"].
 
 Output: [shipped PR URL / shipped docs path / plan.md row update with
-status and pointer to artifact].
+status and pointer to artifact]. On merge, remove the `WIP-PR:` field
+and update the row's "Resolved when" cell.
 
 Optional lineage declaration: parent_agent_id=[prior process-instance
 UUID, if continuity of reasoning matters; otherwise omit].
