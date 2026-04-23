@@ -294,12 +294,27 @@ async def _resolve_http_bound_agent(tool_name: str, arguments: dict, signals) ->
             logger.debug("[STICKY-REST] cache check failed: %s", e)
 
     session_key = await derive_session_key(signals, arguments)
+
+    # Extract agent UUID from continuity token so PATH 2.8 can rebind via
+    # cryptographic ownership proof — without this the resolver cannot
+    # distinguish \"Watcher owns agent-907e3195-c64\" from \"some prior REST
+    # caller claimed that session_key and got cached\", and PATH 1 happily
+    # returns whichever agent the cache holds (issue #110).
+    _token_agent_uuid = None
+    if continuity_token:
+        try:
+            from src.mcp_handlers.identity.session import extract_token_agent_uuid
+            _token_agent_uuid = extract_token_agent_uuid(str(continuity_token))
+        except Exception:
+            pass
+
     resolved = await resolve_session_identity(
         session_key,
         persist=False,
         model_type=arguments.get("model_type"),
         client_hint=arguments.get("client_hint"),
         resume=True,
+        token_agent_uuid=_token_agent_uuid,
     )
     if resolved and not resolved.get("created"):
         agent_uuid = resolved.get("agent_uuid")

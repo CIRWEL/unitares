@@ -393,6 +393,43 @@ async def resolve_session_identity(
                     # See docs/specs/2026-04-16-sever-fingerprint-eisv-inheritance-design.md
                     if resume:
 
+                        # PATH 1 token ownership cross-check (issue #110,
+                        # 2026-04-23). When the caller provided a signed
+                        # continuity_token whose aid claim doesn't match the
+                        # cached UUID, the cache entry is someone else's
+                        # binding — not the legitimate owner's. Unlike
+                        # fingerprint (soft heuristic), token mismatch is
+                        # cryptographic proof of a different owner. Fall
+                        # through to PATH 2.8 so token_rebind can take over.
+                        if token_agent_uuid and token_agent_uuid != agent_uuid:
+                            logger.warning(
+                                "[PATH1_TOKEN_MISMATCH] session_key=%s... "
+                                "cached_uuid=%s... token_uuid=%s... — "
+                                "cache hijacked, deferring to token rebind",
+                                session_key[:20],
+                                agent_uuid[:8],
+                                token_agent_uuid[:8],
+                            )
+                            try:
+                                from .handlers import _broadcaster
+                                _b = _broadcaster()
+                                if _b is not None:
+                                    await _b.broadcast_event(
+                                        event_type="identity_hijack_suspected",
+                                        agent_id=agent_uuid,
+                                        payload={
+                                            "path": "path1_token_mismatch",
+                                            "source": "path1_token_mismatch",
+                                            "cached_uuid_prefix": agent_uuid[:8],
+                                            "token_uuid_prefix": token_agent_uuid[:8],
+                                        },
+                                    )
+                            except Exception as _be:
+                                logger.warning(
+                                    f"[PATH1_TOKEN_MISMATCH] broadcast failed: {_be}"
+                                )
+                            resume = False
+
                         # PATH 1 fingerprint cross-check (2026-04-20 council follow-up
                         # to identity-honesty Part C). Session IDs of form
                         # `agent-{uuid[:12]}` are UUID-derivable; PATH 1 resume by
