@@ -12,9 +12,38 @@ dashboard instead of as a missing line.
 
 from __future__ import annotations
 
+import asyncio
+import os
 import subprocess
 from pathlib import Path
 from typing import Callable
+
+# Default matches the server's DSN (see .claude/CLAUDE.md — one Postgres
+# instance, one database). Overridable so a reflash or remote scrape can
+# point somewhere else without code changes.
+DEFAULT_DSN = "postgresql://postgres:postgres@localhost:5432/governance"
+
+
+def _fetchval(sql: str) -> float:
+    """Run ``sql`` against the governance DB and return the scalar as float.
+
+    Uses asyncpg under a one-shot ``asyncio.run`` because Chronicler is a
+    daily cron, not a long-running process — the per-call loop is cheap at
+    this cadence and keeps scrapers stateless (no shared pool to plumb).
+    """
+    import asyncpg  # local import: keeps test-time patching simple
+
+    dsn = os.environ.get("CHRONICLER_DB_DSN", DEFAULT_DSN)
+
+    async def _run() -> float:
+        conn = await asyncpg.connect(dsn)
+        try:
+            value = await conn.fetchval(sql)
+            return float(value or 0)
+        finally:
+            await conn.close()
+
+    return asyncio.run(_run())
 
 
 def tokei_unitares_src_code(repo_root: Path) -> float:
@@ -68,6 +97,27 @@ def tests_unitares_count(repo_root: Path) -> float:
     return float(len(files))
 
 
+def agents_active_7d(_repo_root: Path) -> float:
+    """Distinct agents with any tool call in the last 7 days — fleet liveness."""
+    return _fetchval(
+        "SELECT count(DISTINCT agent_id) FROM audit.tool_usage "
+        "WHERE ts > now() - interval '7 days' AND agent_id IS NOT NULL"
+    )
+
+
+def kg_entries_count(_repo_root: Path) -> float:
+    """Total discoveries in the knowledge graph — cumulative growth."""
+    return _fetchval("SELECT count(*) FROM knowledge.discoveries")
+
+
+def checkins_7d(_repo_root: Path) -> float:
+    """process_agent_update calls in the last 7 days — governance traffic."""
+    return _fetchval(
+        "SELECT count(*) FROM audit.tool_usage "
+        "WHERE ts > now() - interval '7 days' AND tool_name = 'process_agent_update'"
+    )
+
+
 # Registry: metric name → scrape callable. Chronicler iterates this on each run.
 #
 # Keep this in sync with the server-side catalog in
@@ -77,4 +127,7 @@ def tests_unitares_count(repo_root: Path) -> float:
 SCRAPERS: dict[str, Callable[[Path], float]] = {
     "tokei.unitares.src.code": tokei_unitares_src_code,
     "tests.unitares.count": tests_unitares_count,
+    "agents.active.7d": agents_active_7d,
+    "kg.entries.count": kg_entries_count,
+    "checkins.7d": checkins_7d,
 }
