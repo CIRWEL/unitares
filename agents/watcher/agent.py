@@ -746,6 +746,68 @@ def _looks_like_comment(line: str) -> bool:
     return False
 
 
+def p008_actually_fires(file_path: str, line: int) -> bool:
+    """AST post-filter for P008 (shell injection).
+
+    The LLM keeps flagging list-form subprocess calls as P008 even though
+    the rule text says list-form is exempt. This deterministic check parses
+    the target file and suppresses the finding when no call at/spanning the
+    flagged line actually uses the shell (shell=True or os.system/os.popen).
+
+    Conservative on errors: if we can't parse the file or resolve the call,
+    return True so the finding is NOT suppressed — human review is still
+    valuable when we can't verify the exemption.
+
+    Returns True  → finding is a possible real P008; keep it
+    Returns False → verified false positive; suppress it
+    """
+    import ast
+
+    try:
+        source = Path(file_path).read_text()
+    except (OSError, UnicodeDecodeError):
+        return True  # can't read → don't hide from humans
+
+    if not file_path.endswith(".py"):
+        # P008 is Python-shell-injection; other languages not covered here.
+        # Don't suppress for now — falls back to the LLM's judgment.
+        return True
+
+    try:
+        tree = ast.parse(source, filename=file_path)
+    except SyntaxError:
+        return True  # can't parse → don't hide
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        start = getattr(node, "lineno", 0)
+        end = getattr(node, "end_lineno", start)
+        if not (start <= line <= end):
+            continue
+
+        # os.system(...) / os.popen(...) are always shell-bound
+        func = node.func
+        name = None
+        if isinstance(func, ast.Attribute):
+            name = func.attr
+            module = func.value.id if isinstance(func.value, ast.Name) else None
+            if module == "os" and name in ("system", "popen"):
+                return True
+            if module == "subprocess":
+                # subprocess.run / Popen / call / check_call / check_output
+                for kw in node.keywords:
+                    if kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                        return True
+        elif isinstance(func, ast.Name):
+            # Bare `system(...)` or `popen(...)` — unlikely but possible via `from os import system`
+            if func.id in ("system", "popen"):
+                return True
+
+    # No call at this line uses shell=True or os.system/popen → verified FP.
+    return False
+
+
 def parse_findings(
     text: str, file_path: str, model_used: str, region_start: int
 ) -> list[tuple[Finding, str]]:
@@ -817,6 +879,18 @@ def parse_findings(
         evidence = str(rf.get("evidence", "")).strip()[:300]
         # Authoritative severity comes from the library, never the model.
         severity = library_severities[pattern]
+
+        # P008 post-filter: the LLM keeps flagging list-form subprocess as
+        # shell injection. Verify with an AST scan; suppress when no call
+        # at this line uses shell=True / os.system / os.popen.
+        if pattern == "P008" and not p008_actually_fires(file_path, line):
+            log(
+                f"suppressing P008 false-positive at {file_path}:{line} "
+                f"(no shell=True / os.system at that line)",
+                "debug",
+            )
+            continue
+
         findings.append(
             (
                 Finding(
