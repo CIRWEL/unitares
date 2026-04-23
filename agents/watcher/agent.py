@@ -59,9 +59,14 @@ from typing import Any
 # Paths & Config
 # ---------------------------------------------------------------------------
 
-# PROJECT_ROOT is defined in _util so findings.py can import it without a
-# circular dependency; the sys.path insert still has to happen before the
-# common.* / unitares_sdk imports below.
+# Put the repo root on sys.path before the first `agents.*` import. Hooks
+# invoke this script by absolute path from arbitrary cwd (e.g. $HOME), so
+# Python only adds `agents/watcher/` to sys.path by default — the `agents`
+# package is not importable without this. PROJECT_ROOT is re-exported from
+# _util as the canonical reference for downstream consumers, but we can't
+# import _util until after the path is patched.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 from agents.watcher._util import (
     LOG_FILE,
     MAX_LOG_LINES,
@@ -70,8 +75,6 @@ from agents.watcher._util import (
     log,
     repo_relative_path,
 )
-
-sys.path.insert(0, str(PROJECT_ROOT))
 from agents.common.log import trim_log as _common_trim_log
 from agents.common.findings import post_finding
 from agents.watcher import findings as _findings_mod
