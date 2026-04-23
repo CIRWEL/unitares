@@ -154,8 +154,23 @@ failure the caller needs to know about.
 
 ### P008 — Unchecked shell input (severity: critical, violation_class: VOI)
 
-`subprocess.run(..., shell=True)` or `os.system(...)` with any string that
-includes user/external input without `shlex.quote` or a list-form invocation.
+Fire **only** when both conditions hold:
+1. The call is `subprocess.*(..., shell=True)` OR `os.system(...)` OR `os.popen(...)`.
+2. The command string includes user/external input without `shlex.quote`.
+
+**Do NOT fire** on list-form subprocess calls — those bypass the shell entirely
+and are the recommended safe form. Examples that must NOT be flagged:
+```python
+subprocess.run(["find", path, "-name", "*.py"], check=True)
+subprocess.run(["wc", "-l"] + files, capture_output=True)
+subprocess.Popen(["git", "log", "--oneline"])
+```
+
+Examples that SHOULD be flagged:
+```python
+subprocess.run(f"find {path} -name '*.py'", shell=True)  # unquoted interpolation
+os.system("rm -rf " + user_input)                         # shell + external input
+```
 
 **Hint template:** `shell injection — use shlex.quote or list-form subprocess`
 
