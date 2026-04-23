@@ -1383,6 +1383,13 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                     _create_spawned_edge_bg(agent_uuid, _parent_agent_id, _spawn_reason),
                     name="spawned_edge",
                 )
+                # Q2 reseed: seed child's genesis from parent's trajectory_current
+                # so tier<=1 agents with lineage get a meaningful baseline rather
+                # than comparing their first 10 samples against themselves.
+                create_tracked_task(
+                    _seed_genesis_from_parent_bg(agent_uuid, _parent_agent_id),
+                    name="seed_genesis_from_parent",
+                )
 
             # Cache with the adjusted session_key (may include model suffix)
             await _cache_session(session_key, agent_uuid, display_agent_id=agent_id)
@@ -1433,6 +1440,11 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                     create_tracked_task(
                         _create_spawned_edge_bg(agent_uuid, _parent_agent_id, _spawn_reason),
                         name="spawned_edge",
+                    )
+                    # Q2 reseed: mirror the created_fresh_identity branch.
+                    create_tracked_task(
+                        _seed_genesis_from_parent_bg(agent_uuid, _parent_agent_id),
+                        name="seed_genesis_from_parent",
                     )
                 except Exception as e:
                     logger.debug(f"[ONBOARD] Could not schedule SPAWNED edge (force_new branch): {e}")
@@ -1773,3 +1785,28 @@ async def _create_spawned_edge_bg(
         logger.info(f"[SPAWNED] Created edge {parent_id[:8]}... -> {child_id[:8]}...")
     except Exception as e:
         logger.debug(f"SPAWNED edge creation failed (non-fatal): {e}")
+
+
+async def _seed_genesis_from_parent_bg(child_id: str, parent_id: str):
+    """Seed child's trajectory_genesis from parent's trajectory_current.
+
+    Ontology v2 Q2 reseed — see docs/ontology/plan.md R3-appendix and
+    `src/trajectory_identity.seed_genesis_from_parent`. Primitive is
+    permissive (no-op if parent lacks trajectory_current, refuses to
+    clobber a tier>=2 genesis), so fire-and-forget here is safe.
+    """
+    try:
+        from src.trajectory_identity import seed_genesis_from_parent
+        result = await seed_genesis_from_parent(child_id, parent_id)
+        if result.get("seeded"):
+            logger.info(
+                f"[SEED_GENESIS] Seeded {child_id[:8]}... genesis "
+                f"from parent {parent_id[:8]}..."
+            )
+        else:
+            logger.debug(
+                f"[SEED_GENESIS] Skipped {child_id[:8]}... <- "
+                f"{parent_id[:8]}...: {result.get('reason')}"
+            )
+    except Exception as e:
+        logger.debug(f"seed_genesis_from_parent scheduling failed (non-fatal): {e}")
