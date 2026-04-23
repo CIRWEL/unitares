@@ -1,25 +1,33 @@
 #!/usr/bin/env python3
 """Chronicler — daily scraper of fleet metrics into `metrics.series`.
 
-Intentionally lightweight: one-shot invocation (launchd drives cadence),
-no own identity, no EISV check-ins. Runs each scraper in `scrapers.py`,
-POSTs the value to the governance server, emits a `.error` metric on
-failure so silent breakage stays visible.
+One-shot invocation (launchd drives cadence). Runs each scraper in
+`scrapers.py`, POSTs the value to the governance server, emits a
+`.error` metric on failure so silent breakage stays visible. After the
+scrape loop, checks in to governance via `process_agent_update` so
+Chronicler appears as a first-class resident with its own EISV
+trajectory alongside Vigil/Sentinel/Watcher.
 
 Environment:
     UNITARES_METRICS_URL        base URL (default http://127.0.0.1:8767)
     UNITARES_HTTP_API_TOKEN     bearer token; optional if running locally
                                 (trusted-network bypass handles 127.0.0.1)
     CHRONICLER_REPO_ROOT        repo to scrape (default: working directory)
+    UNITARES_FIRST_RUN          set to 1 once to mint Chronicler's identity;
+                                subsequent runs resume via the anchor
 
 Usage:
-    python3 agents/chronicler/agent.py          # run all scrapers once
-    python3 agents/chronicler/agent.py --dry    # no POSTs, print to stdout
+    python3 agents/chronicler/agent.py          # run all scrapers once, check in
+    python3 agents/chronicler/agent.py --dry    # print metrics; skip POST and check-in
+
+First-time bootstrap (mints UUID into ~/.unitares/anchors/chronicler.json):
+    UNITARES_FIRST_RUN=1 python3 agents/chronicler/agent.py
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -35,6 +43,8 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from agents.chronicler.scrapers import SCRAPERS
+from unitares_sdk.agent import CycleResult, GovernanceAgent
+from unitares_sdk.client import GovernanceClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -110,7 +120,64 @@ def run(
                 failures += 1
                 log.warning("could not post %s: %s", name, exc)
 
+    log.info("chronicler done: success=%d fail=%d", successes, failures)
     return successes, failures
+
+
+class ChroniclerAgent(GovernanceAgent):
+    """GovernanceAgent wrapper that runs one scrape cycle and checks in.
+
+    One-shot: launchd drives cadence, so this uses ``run_once()`` not
+    ``run_forever()``. Identity is persistent; the anchor lives at
+    ``~/.unitares/anchors/chronicler.json`` (the SDK default).
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        token: str | None,
+        repo_root: Path,
+        dry_run: bool = False,
+    ):
+        # Governance tools use the MCP endpoint; metrics POSTs hit the REST
+        # endpoint. Derive the MCP URL from the same base so both aim at the
+        # same server when UNITARES_METRICS_URL is overridden.
+        mcp_url = base_url.rstrip("/") + "/mcp/"
+        super().__init__(
+            name="Chronicler",
+            mcp_url=mcp_url,
+            persistent=True,
+            refuse_fresh_onboard=True,
+        )
+        self.base_url = base_url
+        self.token = token
+        self.repo_root = repo_root
+        self.dry_run = dry_run
+
+    async def run_cycle(self, client: GovernanceClient) -> CycleResult | None:
+        # Scrapers are sync (subprocess + httpx.Client); push to a thread so
+        # the MCP anyio task group isn't blocked by their blocking I/O.
+        successes, failures = await asyncio.to_thread(
+            run, self.base_url, self.token, self.repo_root, self.dry_run,
+        )
+
+        if self.dry_run:
+            # Dry run is a diagnostic — skip the check-in so we don't pollute
+            # the trajectory with ad-hoc operator invocations.
+            return None
+
+        total = successes + failures
+        summary = f"Chronicler: {successes}/{total} scrapers ok"
+        # Clean runs are routine + deterministic (low complexity, high
+        # confidence); any failure bumps both dimensions to reflect the
+        # transient-vs-persistent uncertainty.
+        complexity = 0.4 if failures > 0 else 0.1
+        confidence = 0.5 if failures > 0 else 0.9
+        return CycleResult(
+            summary=summary,
+            complexity=complexity,
+            confidence=confidence,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -123,9 +190,22 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = Path(os.environ.get("CHRONICLER_REPO_ROOT", os.getcwd())).resolve()
 
     log.info("chronicler start: url=%s repo=%s scrapers=%d", base_url, repo_root, len(SCRAPERS))
-    successes, failures = run(base_url, token, repo_root, dry_run=args.dry)
-    log.info("chronicler done: success=%d fail=%d", successes, failures)
-    return 0 if failures == 0 else 1
+    # --dry is a diagnostic — skip the governance connect + identity dance
+    # entirely so operators can debug scrapers without first bootstrapping
+    # the Chronicler anchor (refuse_fresh_onboard would otherwise block).
+    if args.dry:
+        _, failures = run(base_url, token, repo_root, dry_run=True)
+        return 0 if failures == 0 else 1
+
+    agent = ChroniclerAgent(
+        base_url=base_url, token=token, repo_root=repo_root, dry_run=False,
+    )
+    try:
+        asyncio.run(agent.run_once())
+    except Exception as e:
+        log.error("chronicler failed: %s", e)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

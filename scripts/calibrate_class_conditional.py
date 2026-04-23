@@ -44,7 +44,7 @@ except ImportError:
     sys.exit(1)
 
 
-KNOWN_RESIDENT_LABELS = {"Lumen", "Vigil", "Sentinel", "Watcher", "Steward"}
+KNOWN_RESIDENT_LABELS = {"Lumen", "Vigil", "Sentinel", "Watcher", "Steward", "Chronicler"}
 HEALTHY_REGIMES = ("nominal", "STABLE", "CONVERGENCE", "EXPLORATION")
 
 

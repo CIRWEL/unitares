@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -217,3 +218,105 @@ class TestAgentRun:
 
         assert ok == 0
         assert fail == 1  # scrape failure counted, post-error failure swallowed
+
+
+# ---------------------------------------------------------------------------
+# ChroniclerAgent — governance identity wrapper
+# ---------------------------------------------------------------------------
+
+
+class TestChroniclerAgent:
+    def test_is_persistent_resident_refusing_fresh_onboard(self, tmp_path: Path):
+        """Chronicler is a resident; the SDK must refuse fresh onboard without
+        UNITARES_FIRST_RUN, matching Vigil/Sentinel/Watcher."""
+        from agents.chronicler.agent import ChroniclerAgent
+
+        agent = ChroniclerAgent(
+            base_url="http://127.0.0.1:8767", token=None, repo_root=tmp_path,
+        )
+        assert agent.name == "Chronicler"
+        assert agent.persistent is True
+        assert agent.refuse_fresh_onboard is True
+        # MCP URL is derived from the metrics base URL, not hardcoded, so
+        # UNITARES_METRICS_URL overrides route to the same server.
+        assert agent.mcp_url == "http://127.0.0.1:8767/mcp/"
+
+    def test_run_cycle_returns_summary_on_clean_run(self, tmp_path: Path):
+        from agents.chronicler import agent as chronicler
+        from agents.chronicler.agent import ChroniclerAgent
+
+        scrapers = {
+            "a": lambda _r: 1.0,
+            "b": lambda _r: 2.0,
+        }
+        fake = FakeHttpClient()
+        agent = ChroniclerAgent(
+            base_url="http://127.0.0.1:8767", token=None, repo_root=tmp_path,
+        )
+        with (
+            patch.object(chronicler, "SCRAPERS", scrapers),
+            patch("agents.chronicler.agent.httpx.Client", return_value=fake),
+        ):
+            result = asyncio.run(agent.run_cycle(client=MagicMock()))
+
+        assert result is not None
+        assert result.summary == "Chronicler: 2/2 scrapers ok"
+        # Clean runs stay low-complexity / high-confidence so a routine day
+        # doesn't perturb the trajectory.
+        assert result.complexity == 0.1
+        assert result.confidence == 0.9
+
+    def test_run_cycle_bumps_complexity_when_a_scraper_fails(self, tmp_path: Path):
+        from agents.chronicler import agent as chronicler
+        from agents.chronicler.agent import ChroniclerAgent
+
+        def boom(_root):
+            raise RuntimeError("broken")
+
+        scrapers = {"ok": lambda _r: 1.0, "boom": boom}
+        fake = FakeHttpClient()
+        agent = ChroniclerAgent(
+            base_url="http://127.0.0.1:8767", token=None, repo_root=tmp_path,
+        )
+        with (
+            patch.object(chronicler, "SCRAPERS", scrapers),
+            patch("agents.chronicler.agent.httpx.Client", return_value=fake),
+        ):
+            result = asyncio.run(agent.run_cycle(client=MagicMock()))
+
+        assert result is not None
+        assert result.summary == "Chronicler: 1/2 scrapers ok"
+        # Failure bumps both dimensions so the check-in carries honest uncertainty.
+        assert result.complexity == 0.4
+        assert result.confidence == 0.5
+
+    def test_dry_run_cycle_returns_none(self, tmp_path: Path):
+        """--dry is a diagnostic — it must not write a check-in (would pollute
+        the trajectory with ad-hoc operator invocations)."""
+        from agents.chronicler import agent as chronicler
+        from agents.chronicler.agent import ChroniclerAgent
+
+        fake = FakeHttpClient()
+        agent = ChroniclerAgent(
+            base_url="http://127.0.0.1:8767", token=None, repo_root=tmp_path,
+            dry_run=True,
+        )
+        with (
+            patch.object(chronicler, "SCRAPERS", {"x": lambda _r: 1.0}),
+            patch("agents.chronicler.agent.httpx.Client", return_value=fake),
+        ):
+            result = asyncio.run(agent.run_cycle(client=MagicMock()))
+
+        assert result is None  # GovernanceAgent._handle_cycle_result skips check-in
+
+
+class TestChroniclerAsKnownResident:
+    def test_chronicler_in_known_resident_labels(self):
+        from src.grounding.class_indicator import KNOWN_RESIDENT_LABELS
+        assert "Chronicler" in KNOWN_RESIDENT_LABELS
+
+    def test_chronicler_silence_threshold_configured(self):
+        from src.http_api import _DEFAULT_RESIDENT_SILENCE_SECONDS
+        # Daily cadence → must be at least 24hr so a normal gap doesn't
+        # get flagged as silence.
+        assert _DEFAULT_RESIDENT_SILENCE_SECONDS["chronicler"] >= 24 * 3600

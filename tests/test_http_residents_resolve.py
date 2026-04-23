@@ -62,8 +62,9 @@ class TestResolveResidentLabels:
         assert source == "known-residents"
 
     def test_known_residents_preserves_canonical_order(self):
-        # Order should be canonical (Vigil, Sentinel, Watcher, Steward, Lumen),
-        # not metadata-dict insertion order, so the dashboard layout is stable.
+        # Order should be canonical (Vigil, Sentinel, Watcher, Steward,
+        # Chronicler, Lumen), not metadata-dict insertion order, so the
+        # dashboard layout is stable.
         server = SimpleNamespace(agent_metadata={
             "a1": _meta("Lumen"),
             "a2": _meta("Vigil"),
@@ -71,6 +72,18 @@ class TestResolveResidentLabels:
         })
         labels, source = _resolve_resident_labels(server)
         assert labels == ["Vigil", "Watcher", "Lumen"]
+        assert source == "known-residents"
+
+    def test_chronicler_sorts_between_steward_and_lumen(self):
+        # Chronicler is a daily scraper resident; it belongs with the other
+        # background residents, before Lumen (which is the embodied agent).
+        server = SimpleNamespace(agent_metadata={
+            "a1": _meta("Lumen"),
+            "a2": _meta("Chronicler"),
+            "a3": _meta("Steward"),
+        })
+        labels, source = _resolve_resident_labels(server)
+        assert labels == ["Steward", "Chronicler", "Lumen"]
         assert source == "known-residents"
 
     def test_empty_when_fleet_has_no_known_residents(self):

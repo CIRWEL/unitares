@@ -1306,6 +1306,8 @@ _DEFAULT_RESIDENT_SILENCE_SECONDS: Dict[str, int] = {
     "lumen": 10 * 60,      # continuous poll
     # Event-driven agents may be quiet for a long time and still be healthy.
     "watcher": 24 * 3600,
+    # Daily scraper — 24hr cadence + 6hr buffer before silence is flagged.
+    "chronicler": 30 * 3600,
 }
 
 
@@ -1346,9 +1348,10 @@ def _resolve_resident_labels(mcp_server_obj) -> tuple[list[str], str]:
         if label and label in KNOWN_RESIDENT_LABELS:
             present.add(label)
     if present:
-        # Canonical order is stable (Vigil, Sentinel, Watcher, Steward, Lumen)
-        # so dashboard layout doesn't jitter when the dict ordering shifts.
-        canonical_order = ["Vigil", "Sentinel", "Watcher", "Steward", "Lumen"]
+        # Canonical order is stable (Vigil, Sentinel, Watcher, Steward,
+        # Chronicler, Lumen) so dashboard layout doesn't jitter when the dict
+        # ordering shifts.
+        canonical_order = ["Vigil", "Sentinel", "Watcher", "Steward", "Chronicler", "Lumen"]
         ordered = [lbl for lbl in canonical_order if lbl in present]
         return ordered, "known-residents"
 
@@ -1629,7 +1632,7 @@ async def http_resident_tag_audit(request):
         {
             "success": true,
             "required_tags": ["persistent", "autonomous"],
-            "checked": ["Vigil", "Sentinel", "Watcher", "Steward", "Lumen"],
+            "checked": ["Vigil", "Sentinel", "Watcher", "Steward", "Chronicler", "Lumen"],
             "missing": {
                 "Watcher": ["autonomous"],
                 ...
