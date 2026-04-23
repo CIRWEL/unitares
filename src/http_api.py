@@ -855,7 +855,7 @@ async def http_dashboard_static(request):
         "utils.js", "state.js", "colors.js", "components.js",
         "visualizations.js", "agents.js", "discoveries.js",
         "dialectic.js", "eisv-charts.js", "timeline.js",
-        "residents.js", "fleet-metrics.js",
+        "residents.js", "fleet-metrics.js", "watcher.js",
         "styles.css", "dashboard.js",
         "phase.js",
     ]
@@ -1195,6 +1195,142 @@ async def http_get_metrics_catalog(request):
             for m in sorted(_catalog.values(), key=lambda x: x.name)
         ],
     })
+
+
+_WATCHER_FINDINGS_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "watcher" / "findings.jsonl"
+)
+_WATCHER_DAILY_WINDOW_DAYS = 30
+
+
+def _watcher_summary_from_rows(rows, now=None, window_days=_WATCHER_DAILY_WINDOW_DAYS):
+    """Aggregate watcher findings.jsonl rows into dashboard-ready shape.
+
+    Pure function so test coverage doesn't need to stand up the full HTTP app —
+    feed it a list of parsed-dict rows, get back the counts + daily buckets.
+    """
+    from collections import Counter, defaultdict
+    from datetime import datetime, timedelta, timezone
+
+    by_status = Counter()
+    by_severity = Counter()   # open-only (surfaced + open) — the actionable queue
+    by_pattern = defaultdict(lambda: {"surfaced": 0, "resolved": 0, "dismissed": 0, "other": 0})
+    daily = defaultdict(int)  # yyyy-mm-dd → count of detected_at in that day
+    resolutions_daily = defaultdict(lambda: {"resolved": 0, "dismissed": 0})
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+    window_start = (now - timedelta(days=window_days - 1)).date()
+
+    def _parse_date(value):
+        if not value:
+            return None
+        try:
+            # Tolerate trailing Z and no tz
+            if value.endswith("Z"):
+                value = value[:-1] + "+00:00"
+            return datetime.fromisoformat(value)
+        except Exception:
+            return None
+
+    for row in rows:
+        status = str(row.get("status", "surfaced"))
+        pattern = str(row.get("pattern") or "?")
+        severity = str(row.get("severity") or "?")
+        by_status[status] += 1
+
+        bucket = by_pattern[pattern]
+        if status in ("resolved", "dismissed"):
+            bucket[status] += 1
+        elif status in ("surfaced", "open"):
+            bucket["surfaced"] += 1
+            by_severity[severity] += 1
+        else:
+            bucket["other"] += 1
+
+        detected = _parse_date(row.get("detected_at"))
+        if detected and detected.date() >= window_start:
+            daily[detected.date().isoformat()] += 1
+
+        # Resolution timestamp if present (fields used by watcher agent:
+        # resolved_at / dismissed_at)
+        for key in ("resolved_at", "dismissed_at"):
+            ts = _parse_date(row.get(key))
+            if ts and ts.date() >= window_start:
+                kind = "resolved" if key == "resolved_at" else "dismissed"
+                resolutions_daily[ts.date().isoformat()][kind] += 1
+
+    # Pattern table — include resolve/dismiss ratio for noise detection
+    patterns_out = []
+    for pat, b in by_pattern.items():
+        total_closed = b["resolved"] + b["dismissed"]
+        dismiss_ratio = (b["dismissed"] / total_closed) if total_closed else None
+        patterns_out.append({
+            "pattern": pat,
+            "surfaced": b["surfaced"],
+            "resolved": b["resolved"],
+            "dismissed": b["dismissed"],
+            "other": b["other"],
+            "dismiss_ratio": dismiss_ratio,
+        })
+    patterns_out.sort(
+        key=lambda p: (-p["surfaced"], -(p["resolved"] + p["dismissed"]), p["pattern"])
+    )
+
+    # Daily series spans the full window so the chart renders zeros instead of gaps
+    timeline = []
+    for i in range(window_days):
+        day = (window_start + timedelta(days=i)).isoformat()
+        timeline.append({
+            "day": day,
+            "detected": daily.get(day, 0),
+            "resolved": resolutions_daily[day]["resolved"],
+            "dismissed": resolutions_daily[day]["dismissed"],
+        })
+
+    return {
+        "total": sum(by_status.values()),
+        "by_status": dict(by_status),
+        "by_severity_open": dict(by_severity),
+        "patterns": patterns_out,
+        "timeline": timeline,
+        "window_days": window_days,
+        "generated_at": now.isoformat(),
+    }
+
+
+async def http_watcher_summary(request):
+    """GET /v1/watcher/summary — aggregate Watcher findings for the dashboard panel.
+
+    Reads data/watcher/findings.jsonl in-process (watcher's append-only audit
+    log) and returns counts + a daily time series. Data is gitignored, so
+    absence = empty summary (not an error)."""
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    if not _check_http_auth(request, http_api_token=http_api_token):
+        return _http_unauthorized()
+
+    rows = []
+    path = _WATCHER_FINDINGS_PATH
+    try:
+        if path.exists():
+            with path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except Exception:
+                        # Skip malformed lines silently — findings.jsonl is
+                        # append-only and a partial write shouldn't 500 the panel.
+                        continue
+    except OSError as e:
+        return JSONResponse({"success": False, "error": f"findings read failed: {e}"}, status_code=500)
+
+    summary = _watcher_summary_from_rows(rows)
+    summary["success"] = True
+    summary["findings_path"] = str(path)
+    return JSONResponse(summary)
 
 
 async def http_record_finding(request):
@@ -1889,6 +2025,7 @@ def register_http_routes(
     app.routes.append(Route("/v1/metrics", http_post_metric, methods=["POST"]))
     app.routes.append(Route("/v1/metrics/series", http_get_metrics, methods=["GET"]))
     app.routes.append(Route("/v1/metrics/catalog", http_get_metrics_catalog, methods=["GET"]))
+    app.routes.append(Route("/v1/watcher/summary", http_watcher_summary, methods=["GET"]))
     app.routes.append(Route("/api/activity", http_activity, methods=["GET"]))
     app.routes.append(Route("/api/incidents", http_incidents, methods=["GET"]))
     app.routes.append(Route("/v1/residents", http_residents, methods=["GET"]))

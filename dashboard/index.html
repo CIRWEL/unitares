@@ -31,6 +31,7 @@
     <script src="/dashboard/timeline.js"></script>
     <script src="/dashboard/residents.js"></script>
     <script src="/dashboard/fleet-metrics.js"></script>
+    <script src="/dashboard/watcher.js"></script>
 </head>
 
 <body>
@@ -78,6 +79,7 @@
         <a href="#dialectic-section" class="section-nav-item" data-section="dialectic-section">Dialectic</a>
         <a href="#activity-timeline-section" class="section-nav-item" data-section="activity-timeline-section">Activity</a>
         <a href="#fleet-metrics-section" class="section-nav-item" data-section="fleet-metrics-section">Chronicler</a>
+        <a href="#watcher-section" class="section-nav-item" data-section="watcher-section">Watcher</a>
         <a href="/phase" style="margin-left:auto; opacity:0.6; padding:6px 14px; border-radius:20px; font-size:0.8rem; font-weight:500; color:var(--text-secondary); text-decoration:none; white-space:nowrap;">Phase Space &rarr;</a>
     </nav>
 
@@ -484,6 +486,58 @@
             <div class="fleet-metrics-chart-wrap">
                 <canvas id="fleet-metrics-chart"></canvas>
                 <div id="fleet-metrics-empty" class="timeline-empty">Loading metrics…</div>
+            </div>
+        </div>
+
+        <!-- Watcher — findings pipeline: open queue, pattern breakdown with
+             dismiss ratio (surfaces noisy rules), daily detect/resolve/dismiss
+             timeline. Backed by /v1/watcher/summary. -->
+        <div class="panel" id="watcher-section">
+            <div class="panel-header">
+                <h2>Watcher</h2>
+                <div class="panel-controls">
+                    <button id="watcher-refresh" class="panel-button" type="button">Refresh</button>
+                </div>
+            </div>
+            <div class="watcher-counts">
+                <div class="watcher-stat">
+                    <span class="watcher-stat-label">open</span>
+                    <span class="watcher-stat-value" id="watcher-count-open">—</span>
+                </div>
+                <div class="watcher-stat">
+                    <span class="watcher-stat-label">resolved</span>
+                    <span class="watcher-stat-value" id="watcher-count-resolved">—</span>
+                </div>
+                <div class="watcher-stat">
+                    <span class="watcher-stat-label">dismissed</span>
+                    <span class="watcher-stat-value" id="watcher-count-dismissed">—</span>
+                </div>
+                <div class="watcher-stat watcher-stat-sev-critical">
+                    <span class="watcher-stat-label">open · critical</span>
+                    <span class="watcher-stat-value" id="watcher-count-critical">—</span>
+                </div>
+                <div class="watcher-stat watcher-stat-sev-high">
+                    <span class="watcher-stat-label">open · high</span>
+                    <span class="watcher-stat-value" id="watcher-count-high">—</span>
+                </div>
+            </div>
+            <div class="watcher-chart-wrap">
+                <canvas id="watcher-timeline-chart"></canvas>
+            </div>
+            <table class="watcher-patterns">
+                <thead>
+                    <tr>
+                        <th>pattern</th>
+                        <th>open</th>
+                        <th>resolved</th>
+                        <th>dismissed</th>
+                        <th>dismiss rate</th>
+                    </tr>
+                </thead>
+                <tbody id="watcher-patterns-body"></tbody>
+            </table>
+            <div class="fleet-metrics-meta">
+                <span id="watcher-meta" class="fleet-metrics-scrape-status"></span>
             </div>
         </div>
 
