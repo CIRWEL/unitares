@@ -324,3 +324,151 @@ class TestPath1FingerprintMismatchEmits:
         assert hijack_events == [], (
             "Off mode is explicit opt-out — no event even on mismatch"
         )
+
+
+class TestPath1TokenOwnershipCrossCheck:
+    """PATH 1 cache-hit with divergent token_agent_uuid falls through unconditionally.
+
+    Unlike fingerprint (soft heuristic, operator-configurable), token-uuid
+    mismatch is cryptographic proof of different ownership — we trust the
+    signed token over whatever the session_key cache happens to hold. This
+    closes the hijack vector in issue #110 where a REST caller claimed
+    Watcher's session_key and received Watcher's check-ins for 3 days.
+    """
+
+    @pytest.fixture
+    def captured_events(self):
+        return []
+
+    @pytest.fixture
+    def broadcaster_stub(self, captured_events):
+        b = MagicMock()
+
+        async def _record(**kwargs):
+            captured_events.append(kwargs)
+
+        b.broadcast_event = AsyncMock(side_effect=_record)
+        return b
+
+    @pytest.mark.asyncio
+    async def test_token_mismatch_falls_through_regardless_of_fingerprint_mode(
+        self, monkeypatch, captured_events, broadcaster_stub
+    ):
+        # Explicitly set fingerprint mode to "off" so we prove the
+        # token check is independent of the fingerprint gate.
+        monkeypatch.setenv("UNITARES_SESSION_FINGERPRINT_CHECK", "off")
+
+        from src.mcp_handlers.identity import resolution as res
+
+        cached_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        token_uuid = "99999999-8888-7777-6666-555555555555"
+        cached_payload = {
+            "agent_id": cached_uuid,
+            "display_agent_id": "hijacker_mcp_20260423",
+            "bind_ip_ua": "ip-anything:ua-anything",
+        }
+
+        fake_redis = MagicMock()
+        fake_redis.get = AsyncMock(return_value=cached_payload)
+
+        # PATH 2.8 sees the token, finds the real agent, and rebinds.
+        with patch.object(res, "_get_redis", return_value=fake_redis), patch(
+            "src.mcp_handlers.identity.resolution._agent_exists_in_postgres",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "src.mcp_handlers.identity.resolution._get_agent_status",
+            new=AsyncMock(return_value="active"),
+        ), patch(
+            "src.mcp_handlers.identity.resolution._get_agent_id_from_metadata",
+            new=AsyncMock(return_value="Watcher_mcp_20260420"),
+        ), patch(
+            "src.mcp_handlers.identity.resolution._get_agent_label",
+            new=AsyncMock(return_value="Watcher"),
+        ), patch(
+            "src.mcp_handlers.identity.resolution._cache_session",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "src.mcp_handlers.identity.resolution.get_db",
+            side_effect=RuntimeError("DB session rebind is non-fatal"),
+        ), patch(
+            "src.mcp_handlers.identity.handlers._broadcaster",
+            return_value=broadcaster_stub,
+        ):
+            result = await res.resolve_session_identity(
+                session_key="agent-aaaaaaaaaaab",
+                resume=True,
+                token_agent_uuid=token_uuid,
+            )
+
+        # PATH 2.8 should have taken over — result must name the token's
+        # UUID, not the hijacker's cached UUID.
+        assert result.get("agent_uuid") == token_uuid, (
+            f"Token ownership must override cache hijack. Got: {result}"
+        )
+        assert result.get("source") == "token_rebind", (
+            f"Expected PATH 2.8 token_rebind, got source={result.get('source')}"
+        )
+
+        # And the hijack event fires with the new path tag.
+        hijack_events = [
+            e for e in captured_events
+            if e.get("event_type") == "identity_hijack_suspected"
+        ]
+        assert hijack_events, (
+            f"Token mismatch must emit identity_hijack_suspected. "
+            f"Captured: {captured_events}"
+        )
+        payload = hijack_events[0].get("payload") or {}
+        assert payload.get("path") == "path1_token_mismatch", (
+            f"Expected path='path1_token_mismatch', got: {payload}"
+        )
+        assert payload.get("cached_uuid_prefix") == cached_uuid[:8]
+        assert payload.get("token_uuid_prefix") == token_uuid[:8]
+
+    @pytest.mark.asyncio
+    async def test_matching_token_uuid_does_not_fall_through(
+        self, monkeypatch, captured_events, broadcaster_stub
+    ):
+        """When the token's aid matches the cached UUID, PATH 1 returns cached."""
+        monkeypatch.setenv("UNITARES_SESSION_FINGERPRINT_CHECK", "off")
+
+        from src.mcp_handlers.identity import resolution as res
+
+        agent_uuid = "cccccccc-dddd-eeee-ffff-000000000000"
+        cached_payload = {
+            "agent_id": agent_uuid,
+            "display_agent_id": "Watcher_mcp_20260420",
+            "bind_ip_ua": "ip-any:ua-any",
+        }
+
+        fake_redis = MagicMock()
+        fake_redis.get = AsyncMock(return_value=cached_payload)
+
+        with patch.object(res, "_get_redis", return_value=fake_redis), patch(
+            "src.mcp_handlers.identity.resolution._agent_exists_in_postgres",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "src.mcp_handlers.identity.resolution._get_agent_label",
+            new=AsyncMock(return_value="Watcher"),
+        ), patch(
+            "src.mcp_handlers.identity.resolution._get_agent_status",
+            new=AsyncMock(return_value="active"),
+        ), patch(
+            "src.mcp_handlers.identity.resolution._soft_verify_trajectory",
+            new=AsyncMock(return_value={"verified": True}),
+        ), patch(
+            "src.mcp_handlers.identity.handlers._broadcaster",
+            return_value=broadcaster_stub,
+        ):
+            result = await res.resolve_session_identity(
+                session_key="agent-cccccccccddd",
+                resume=True,
+                token_agent_uuid=agent_uuid,  # matches cache
+            )
+
+        # Happy path: token says what the cache says, PATH 1 returns cached.
+        assert result.get("agent_uuid") == agent_uuid
+        assert result.get("source") == "redis"
+        assert captured_events == [], (
+            f"Matching token should not emit hijack event. Got: {captured_events}"
+        )
