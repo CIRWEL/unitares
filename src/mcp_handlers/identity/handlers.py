@@ -1483,6 +1483,17 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                 agent_label = name
                 identity["label"] = name
 
+    # S8a Phase-1: default-stamp class tag on fresh identities so the class
+    # partition (ephemeral / resident / ...) is populated from onboard rather
+    # than left to out-of-band SDK writes that only fire for resident
+    # subclasses. Rule lives in src/grounding/onboard_classifier.py; see
+    # docs/ontology/s8a-tag-discipline-audit.md.
+    if is_new:
+        try:
+            await _stamp_default_tags_on_onboard(agent_uuid, name)
+        except Exception as e:
+            logger.debug(f"[ONBOARD] default-stamp failed (non-fatal): {e}")
+
     # TRAJECTORY IDENTITY: Store genesis signature if provided (optional, non-blocking)
     # Agents from anima-mcp can include trajectory_signature in their onboard call
     trajectory_result = None
@@ -1785,6 +1796,42 @@ async def _create_spawned_edge_bg(
         logger.info(f"[SPAWNED] Created edge {parent_id[:8]}... -> {child_id[:8]}...")
     except Exception as e:
         logger.debug(f"SPAWNED edge creation failed (non-fatal): {e}")
+
+
+async def _stamp_default_tags_on_onboard(agent_uuid: str, name: Optional[str]) -> None:
+    """S8a Phase-1: stamp default class tags on a freshly-created identity.
+
+    Synchronous (not background) because the first `process_agent_update`
+    call can immediately follow `onboard` and the class tag governs
+    class-conditional calibration, trust-tier routing, and
+    archive-orphan-sweep exemptions. If tags aren't persisted before
+    onboard returns, the first check-in classifies as `default` and uses
+    the wrong scale maps.
+
+    Rule (2-branch): resident label → ["persistent", "autonomous"];
+    otherwise → ["ephemeral"]. See src/grounding/onboard_classifier.py.
+
+    Non-fatal on exception — onboard succeeds without the tag stamp, but
+    the agent will be misclassified until a later `update_agent_metadata`
+    call. Caller catches and logs.
+    """
+    from src import agent_storage
+    from src.grounding.onboard_classifier import default_tags_for_onboard
+
+    meta = mcp_server.agent_metadata.get(agent_uuid)
+    existing_tags = getattr(meta, "tags", None) if meta is not None else None
+    default_tags = default_tags_for_onboard(name, existing_tags=existing_tags)
+    if default_tags is None:
+        return
+
+    # In-memory sync so subsequent reads in the same request see the tags;
+    # DB write so load_metadata_async() reloads don't clobber them.
+    if meta is not None:
+        meta.tags = default_tags
+    await agent_storage.update_agent(agent_id=agent_uuid, tags=default_tags)
+    logger.info(
+        f"[ONBOARD] S8a default-stamp: {agent_uuid[:8]}... tagged {default_tags} (name={name!r})"
+    )
 
 
 async def _seed_genesis_from_parent_bg(child_id: str, parent_id: str):

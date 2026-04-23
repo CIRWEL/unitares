@@ -243,6 +243,14 @@ class GovernanceAgent:
             #                    can't respond to pause verdicts within the 30s
             #                    cooldown, so pattern-4 rejection silently starves
             #                    their state writes (Steward 2026-04-20 regression).
+            #
+            # S8a Phase-1 (2026-04-23): the server now stamps these tags in the
+            # onboard handler for any name matching KNOWN_RESIDENT_LABELS (see
+            # src/grounding/onboard_classifier.py + identity/handlers.py
+            # _stamp_default_tags_on_onboard). This client-side write is now
+            # redundant against a current server, but retained as backward
+            # compatibility for older server deploys that predate Phase 1. It
+            # is a no-op when the server already stamped the same tags.
             try:
                 await client.call_tool(
                     "update_agent_metadata",
