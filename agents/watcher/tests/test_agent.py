@@ -1673,7 +1673,7 @@ class TestEscalation:
 # ---------------------------------------------------------------------------
 
 
-def _verify_finding(watcher_module, pattern, line, src_line, file="/Users/cirwel/projects/unitares/src/mcp_handlers/x.py", evidence=""):
+def _verify_finding(watcher_module, pattern, line, src_line, file="/repo/src/mcp_handlers/x.py", evidence=""):
     """Helper: run _verify_finding_against_source with a 1-line snippet."""
     f = watcher_module.Finding(
         pattern=pattern, file=file, line=line, hint="t",
@@ -1693,7 +1693,7 @@ def test_p004_dropped_outside_mcp_handlers_directory(watcher_module):
         pattern="P004",
         line=736,
         src_line="async def http_dashboard(request):",
-        file="/Users/cirwel/projects/unitares/src/http_api.py",
+        file="/repo/src/http_api.py",
     )
 
 
@@ -1717,7 +1717,7 @@ def test_p004_kept_for_real_asyncpg_call_inside_mcp_handler(watcher_module):
         pattern="P004",
         line=42,
         src_line="rows = await conn.fetchrow(query)",
-        file="/Users/cirwel/projects/unitares/src/mcp_handlers/identity/handlers.py",
+        file="/repo/src/mcp_handlers/identity/handlers.py",
     )
 
 
@@ -1772,7 +1772,7 @@ def test_p016_dropped_on_typed_attribute_access(watcher_module):
             pattern="P016",
             line=42,
             src_line=src_line,
-            file="/Users/cirwel/projects/unitares/agents/vigil/agent.py",
+            file="/repo/agents/vigil/agent.py",
         ), f"P016 should be dropped for typed attribute access: {src_line!r}"
 
 
@@ -1790,7 +1790,7 @@ def test_p016_kept_for_dict_envelope_parse(watcher_module):
             pattern="P016",
             line=42,
             src_line=src_line,
-            file="/Users/cirwel/projects/unitares/scripts/unitares",
+            file="/repo/scripts/unitares",
         ), f"P016 should fire on dict-envelope parse: {src_line!r}"
 
 

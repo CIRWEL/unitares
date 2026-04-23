@@ -6,6 +6,7 @@ This script tests the date-context server directly via stdio to verify it's work
 """
 
 import asyncio
+import os
 import sys
 import json
 from pathlib import Path
@@ -14,6 +15,12 @@ from datetime import datetime
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+
+# date-context-mcp is a separate repo; set DATE_CONTEXT_MCP_ROOT to point at
+# your local checkout. Defaults to ~/projects/date-context-mcp.
+DATE_CONTEXT_MCP_ROOT = Path(
+    os.environ.get("DATE_CONTEXT_MCP_ROOT", Path.home() / "projects" / "date-context-mcp")
+)
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -33,20 +40,21 @@ async def test_date_context_connection():
     print(f"Time: {datetime.now().isoformat()}\n")
     
     # Server configuration (matches Cursor config)
-    server_path = Path("/Users/cirwel/projects/date-context-mcp/src/mcp_server.py")
-    
+    server_path = DATE_CONTEXT_MCP_ROOT / "src" / "mcp_server.py"
+
     if not server_path.exists():
         print(f"❌ Server file not found: {server_path}")
+        print(f"   Set DATE_CONTEXT_MCP_ROOT to override the default location.")
         return False
-    
+
     print(f"✅ Server file found: {server_path}")
-    
+
     # Configure server parameters
     server_params = StdioServerParameters(
         command="python3",
         args=[str(server_path)],
         env={
-            "PYTHONPATH": "/Users/cirwel/projects/date-context-mcp"
+            "PYTHONPATH": str(DATE_CONTEXT_MCP_ROOT)
         }
     )
     

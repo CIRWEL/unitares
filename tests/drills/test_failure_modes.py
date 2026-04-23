@@ -180,7 +180,8 @@ class TestCrossDeviceAudit:
     def test_audit_log_exists(self):
         """Drill 7: Audit log should exist and be writable."""
         import os
-        audit_path = "/Users/cirwel/projects/unitares/data/audit.jsonl"
+        from pathlib import Path
+        audit_path = str(Path(__file__).resolve().parents[2] / "data" / "audit.jsonl")
 
         if os.path.exists(audit_path):
             size = os.path.getsize(audit_path)
@@ -192,7 +193,8 @@ class TestCrossDeviceAudit:
         """Drill 8: EISV sync should create audit entry."""
         # Get initial audit log size
         import os
-        audit_path = "/Users/cirwel/projects/unitares/data/audit.jsonl"
+        from pathlib import Path
+        audit_path = str(Path(__file__).resolve().parents[2] / "data" / "audit.jsonl")
         initial_size = os.path.getsize(audit_path) if os.path.exists(audit_path) else 0
 
         # Trigger a sync

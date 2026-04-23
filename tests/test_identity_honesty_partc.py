@@ -555,9 +555,7 @@ class TestResidentRegression:
         """_ensure_identity must set client.continuity_token before identity() call."""
         import sys
         import pathlib
-        sdk_path = pathlib.Path(
-            "/Users/cirwel/projects/unitares/.worktrees/identity-honesty-partc/agents/sdk/src"
-        )
+        sdk_path = pathlib.Path(__file__).resolve().parents[1] / "agents" / "sdk" / "src"
         if str(sdk_path) not in sys.path:
             sys.path.insert(0, str(sdk_path))
 
