@@ -483,19 +483,11 @@ async def http_call_tool(request):
         if isinstance(arguments, dict):
             ua = (request.headers.get("user-agent") or "").lower()
 
-            # Detect client type
+            # Detect client type via the shared detector so HTTP and MCP paths
+            # agree on the claude_code / claude_desktop / claude disambiguation.
             if "client_hint" not in arguments:
-                detected_client = None
-                if "cursor" in ua:
-                    detected_client = "cursor"
-                # Prefer OpenAI/Codex before Claude in mixed/proxy UAs.
-                elif "codex" in ua or "chatgpt" in ua or "openai" in ua or "gpt" in ua:
-                    detected_client = "chatgpt"
-                elif "claude" in ua or "anthropic" in ua:
-                    detected_client = "claude_desktop"
-                elif "vscode" in ua or "visual studio code" in ua:
-                    detected_client = "vscode"
-
+                from src.mcp_handlers.context import detect_client_from_user_agent
+                detected_client = detect_client_from_user_agent(ua)
                 if detected_client:
                     arguments["client_hint"] = detected_client
                     logger.debug(f"[HTTP] Auto-detected client_hint={detected_client} from UA")
