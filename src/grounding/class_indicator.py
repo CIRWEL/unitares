@@ -14,7 +14,9 @@ from typing import Any, Optional
 
 # Specific labels that identify a unique resident agent. Each is its own
 # calibration class because population N=1 means class==agent in practice.
-KNOWN_RESIDENT_LABELS = frozenset({"Lumen", "Vigil", "Sentinel", "Watcher", "Steward"})
+KNOWN_RESIDENT_LABELS = frozenset(
+    {"Lumen", "Vigil", "Sentinel", "Watcher", "Steward", "Chronicler"}
+)
 
 # Tag-derived class names.
 CLASS_EMBODIED = "embodied"

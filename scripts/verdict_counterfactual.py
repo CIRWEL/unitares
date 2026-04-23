@@ -35,7 +35,7 @@ except ImportError:
 
 
 # ── Mirror of src/grounding/class_indicator.classify_agent ────────────
-KNOWN_RESIDENT_LABELS = {"Lumen", "Vigil", "Sentinel", "Watcher", "Steward"}
+KNOWN_RESIDENT_LABELS = {"Lumen", "Vigil", "Sentinel", "Watcher", "Steward", "Chronicler"}
 
 
 def classify_from_db_row(label: Optional[str], tags: Optional[list]) -> str:

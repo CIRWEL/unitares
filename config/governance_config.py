@@ -844,6 +844,12 @@ DELTA_NORM_MAX_BY_CLASS: Dict[str, ScaleConstant] = {
         notes="Alias to default. Steward created 2026-04-17, blocked by "
               "loop-detection on calibration day so 0 rows in core.agent_state. "
               "Re-run scripts/calibrate_class_conditional.py once corpus exists."),
+    "Chronicler": ScaleConstant(
+        name="DELTA_NORM_MAX[Chronicler]", value=0.2018, measured_on="2026-04-23",
+        corpus_size=0, percentile=None, provenance="alias",
+        notes="Alias to default. Chronicler minted an identity on 2026-04-23; "
+              "one check-in per day means a corpus takes weeks to build. "
+              "Re-run scripts/calibrate_class_conditional.py once corpus exists."),
 }
 
 # Healthy operating points per class — median (E, I, S) on healthy-regime
@@ -856,6 +862,7 @@ HEALTHY_OPERATING_POINT_BY_CLASS: Dict[str, Tuple[float, float, float]] = {
     "Vigil":    (0.7371, 0.7896, 0.2404),   # N=384
     "Watcher":  (0.7482, 0.7686, 0.2477),   # N=283
     "Steward":  (0.7264, 0.7934, 0.2364),   # alias=default (N=0; see DELTA_NORM_MAX[Steward])
+    "Chronicler": (0.7264, 0.7934, 0.2364), # alias=default (N=0; see DELTA_NORM_MAX[Chronicler])
 }
 
 # Default healthy operating point (fleet fallback for unclassified agents).
