@@ -36,7 +36,7 @@ Every item from `identity.md` that requires work, what "resolved" means for it, 
 | S2 | `.unitares/session.json` auto-resume | Retire (Claude Code channel) | S1 | Auto-resume removed from Codex plugin + Claude Code harness hooks. Fresh processes mint fresh identities with declared lineage. |
 | S3 | Cross-channel token acceptance | Retire | S1 | Token's `ch` claim enforced; mismatch = force-new with lineage. |
 | S4 | Label-as-identifier flows | **Mostly resolved** (2026-04-17 `resolve_by_name_claim` cleanup + 2026-04-21 audit in `audit-notes.md`) | None | Outstanding effective action narrows to S5; remaining sites are cosmetic label-to-UUID translation. Verify no regressions. |
-| S5 | `resident_fork_detected` event | Invert | R4 (needs substrate-earned pattern) | Event fires when a resident restart lacks declared lineage, not when it has one. |
+| S5 | `resident_fork_detected` event | **Resolved 2026-04-23** | R4 | Event inverted in `src/mcp_handlers/identity/persistence.py:set_agent_label` — fires only when a persistent-label collision occurs *without* the new agent declaring `parent_agent_id=<existing_uuid>`. Lineage-declared restarts log at INFO with `[RESIDENT_LINEAGE]`; broadcast payload gains `declared_parent` for consumer taxonomy. Signal chosen: declared `parent_agent_id` (the substrate commitment available at onboard time — full `verify_substrate_earned` fails fresh processes on condition 2). Tests in `tests/test_resident_fork_detector.py`. |
 | S6 | Trust-tier calculation (`compute_trust_tier`) | Re-interpret + calibration-window adjustment | R3 | Window norms adjusted for typical process-instance lifetime. Substrate-anchored agents (Lumen) use separate calibration pool per R4. |
 | S7 | KG provenance (`agent_id` stamping) | Audit + shift aggregation | R3 | Queries and aggregations that assume multi-session UUID continuity migrated to role or lineage-chain. Schema audit of `knowledge_graph_postgres.py` and `knowledge_graph.py`. |
 | S8 | Orphan archival heuristics (`classify_for_archival`) | **Re-scoped** (2026-04-21 audit in `audit-notes.md` — thresholds are fine; real gap is tag discipline) | None urgent | Split into S8a (tag-discipline audit) + S8b (class-tag backfill). Heuristic thresholds remain as-is. |
@@ -142,14 +142,14 @@ This plan is a dispatch queue. Each row is a scoped task, each task is handled b
 - Decide when "the ontology is done enough" vs. needs another revision pass.
 - Close the loop on this plan when it reaches its definition-of-done state.
 
-### Recommended priority (snapshot 2026-04-21, end of session)
+### Recommended priority (snapshot 2026-04-23, end of session)
 
-Two prior priority items shipped this session: S11 (via `unitares-governance-plugin#17`) and R3 annotation (commit `31d30d9a` + appendix). R4.1 also landed (`unitares#96`, `verify_substrate_earned` operational check). Refreshed priority for the next session:
+S5 shipped this session (see S5 row). S6 options doc appended to this file (see "2026-04-23 — S6 options" appendix) — awaiting operator decision before S6 work can start. Refreshed priority for the next session:
 
-1. **S5 inversion** — `resident_fork_detected` semantics flip (fire when restart *lacks* lineage, not when present). Small, localized. Pairs with R4 (Lumen is the primary beneficiary). Now unblocked: R4 has both the v1 spec (identity.md appendix) and the operational primitive (`src/identity/substrate.py`).
-2. **S6 trust-tier re-interpretation** — operator answers needed for the open questions in this file's "2026-04-21 — R3" appendix (especially Q1: substrate-earned as class-arg or parallel path). Then the module-scope work outlined in the appendix's "Action — what S6 actually needs to do" can ship. Independent of S7/S10.
-3. **v7 outline draft** — fresh session in `unitares-paper-v6` repo. Produces a `.tex` skeleton you can read and redirect. Independent of all code work.
-4. **Pre-dispatch PR-scan checkpoint** — followup candidate noted in the "2026-04-21 — S11 execution" appendix. Lightweight either as a hook or as a `WIP-PR:` field convention on plan.md rows. Closes the "two agents writing the same PR in parallel" failure mode that recurred this session.
+1. **S6 decision → implementation** — operator picks between the two paths laid out in the S6 options appendix below. Once picked, the module-scope work in the R3 appendix's "Action — what S6 actually needs to do" can ship.
+2. **v7 outline draft** — fresh session in `unitares-paper-v6` repo. Produces a `.tex` skeleton you can read and redirect. Independent of all code work.
+3. **Pre-dispatch PR-scan checkpoint** — followup candidate noted in the "2026-04-21 — S11 execution" appendix. Lightweight either as a hook or as a `WIP-PR:` field convention on plan.md rows. Closes the "two agents writing the same PR in parallel" failure mode that recurred the prior session.
+4. **S8a tag-discipline audit** — 96% of active agents lack class tags per the 2026-04-21 A3 audit. Blocks clean S6 threshold recalibration and S8b backfill. Findings-doc scope, not code.
 
 After those, re-read this plan and decide whether remaining rows still matter or have been superseded.
 
@@ -399,3 +399,59 @@ S6 as scoped above is consistent with identity.md §"Implications" — "Re-inter
 **The pattern that was not prevented.** S11's audit was scoped to consolidate the 5 prior parallel WIP branches that triggered this row. The execution session then **spawned a 6th parallel attempt** without first running `gh pr list --state open` to scan for in-flight work. The audit identified the symptom (multiple agents independently reaching for the same problem with no cross-visibility) but did not produce a code-level cure (no pre-dispatch PR-scan checkpoint).
 
 **Followup candidate (not committed):** a small pre-dispatch hook for parallel-work avoidance — when an agent is about to open a PR, scan open PRs in the same repo for matching scope tags and require explicit acknowledgment before proceeding. Lighter alternative: the plan.md row format gains a `WIP-PR:` field that owner-of-row updates when work is in flight, and the dispatcher (Claude/Codex subagent) is instructed to grep for that field before opening a new PR. Either way, the durable fix lives in the dispatcher's pre-flight, not in operator vigilance.
+
+### 2026-04-23 — S5 shipped: resident-fork inversion
+
+**Landed:** `src/mcp_handlers/identity/persistence.py:set_agent_label` + `tests/test_resident_fork_detector.py` on master via this session's ship. Under ontology v2, a resident restart (Watcher, Sentinel, Vigil, Steward, Lumen) is the expected case and should declare `parent_agent_id=<existing_uuid>` at onboard. The event now fires only when that declaration is missing or points elsewhere; lineage-declared restarts log at INFO (`[RESIDENT_LINEAGE]`) and rename silently. Broadcast payload gains `declared_parent` so dashboard/Discord consumers can distinguish unlineaged forks from lineage-mismatch cases.
+
+**Signal choice.** The full R4 `verify_substrate_earned` predicate (three conditions: dedicated substrate, sustained behavior, declared role) was considered but rejected as the inversion signal — condition 2 (observation_count ≥ N=5) is structurally false for a fresh process. The substrate commitment available at onboard time is the lineage declaration itself; R4's full check is for *post-facto* earned-identity verification, not restart admission. Documented in the S5 row.
+
+**What this does not do.** No change to the *existing* agent's tagging or tier. No change to ephemeral-collision path. `resident_fork_detected` event name unchanged (payload additive). Downstream consumers (dashboard, Discord bridge) receive the same event shape plus one new field — no breaking change.
+
+### 2026-04-23 — S6 options: substrate-earned routing
+
+**Context:** The open question from the 2026-04-21 R3 appendix ("Q1: substrate-earned as class-arg or parallel path?") needs an operator decision before S6 implementation. This appendix lays out both options with tradeoffs; decision unblocks the R3-appendix "Action — what S6 actually needs to do" work.
+
+**The choice.** `compute_trust_tier(metadata)` today takes one metadata dict (per-UUID) and returns a tier. Under v2, substrate-earned agents (Lumen and eventually verified residents) have honest per-UUID semantics; session-like agents need role-aggregated baselines. Two ways to route:
+
+**Option A — class-arg branch inside `compute_trust_tier`.**
+
+- Signature becomes `compute_trust_tier(metadata, *, calibration_class=None, role_baseline=None)`.
+- When `calibration_class == "substrate_earned"` or class tag is `embodied`: run current per-UUID logic against `metadata["trajectory_genesis"]`.
+- When `calibration_class == "session_like"` or class tag is `ephemeral`/absent: compare `metadata["trajectory_current"]` against `role_baseline` (role-aggregated distribution).
+- Thresholds parameterize per class — substrate-earned keeps 200/50, session-like uses empirically-derived numbers (blocked on S8a).
+
+Pros:
+- Single entry point. All four callers (`enrichments.py:729`, `agent_metadata_persistence.py:173`, `lifecycle/query.py:413`, `identity/handlers.py:1713`) stay on one function. Routing decision is internal.
+- Small blast radius. Existing callers that don't pass `calibration_class` get current behavior (backward-compat default).
+- Migration is in-place — no new functions to wire up.
+
+Cons:
+- Conflates two different questions inside one function: "has this subject behaved consistently?" (per-UUID) and "does this process-instance fit its role's envelope?" (role-aggregated). The math is similar but the interpretation differs — keeping them inside one function masks the semantic split.
+- `metadata` parameter carries two different meanings depending on class. Callers that get it wrong silently pick the wrong path.
+- Threshold table balloons — per-class tuples inside the function, hard to audit.
+
+**Option B — parallel path; substrate-earned bypasses `compute_trust_tier`.**
+
+- New function: `tier_from_substrate_earned(verify_result) -> int`. Takes the `verify_substrate_earned()` dict, returns tier=3 when `earned=True`, tier=2 when two-of-three conditions met, tier ≤ 1 otherwise.
+- `compute_trust_tier` keeps its current body but gets documented as "session-like / per-UUID path"; its callers pick which path based on class tag.
+- Routing layer at handler entry (the four call sites) — cheap dispatch: class tag `embodied` → substrate path; otherwise → existing `compute_trust_tier`.
+
+Pros:
+- Semantic split is structural. Two paths, two stories. Readers can't confuse them.
+- R4's three-condition check becomes the *source of truth* for substrate-earned tier — no duplication with `trajectory_current` heuristics. Matches the R4 spec direction.
+- Session-like recalibration (blocked on S8a) is isolated to one function. Substrate-earned agents get tier=3 immediately once tagged; no empirical threshold work required for them.
+- Future retirement of UUID-keyed trust-tier logic (when role-aggregation is fleet-wide) leaves the substrate-earned path intact — it was never UUID-keyed in spirit.
+
+Cons:
+- Four call sites need the routing decision. Each caller grows a branch.
+- Two functions to maintain — divergence risk if the trust-tier semantics drift.
+- `tier_from_substrate_earned` has its own ramp-up: need to decide what 2/3 conditions earns (tier 2? tier 1? refuse?).
+
+**Tradeoff.** Option A is faster to ship and has smaller call-site churn. Option B matches the ontology's semantic split and makes the R4 pattern the authoritative path for substrate-earned agents. The R3 appendix's Q1 framing ("Latter is cleaner; requires a parallel substrate-earned path alongside the per-UUID metadata path") leans B.
+
+**Secondary question (regardless of A vs B).** Reseed ceiling from the R3 appendix Q2 — "at tier ≤ 1 with declared parent, seed genesis from parent's `trajectory_current`" — is a module-scope win that may obviate part of the heavier role-aggregation lift. Worth implementing independently of the A/B call; can ship in the same PR as whichever path wins, or before.
+
+**Recommendation.** B, with Q2's reseed as part of the same ship. B aligns with the R4 spec direction, isolates the empirical-threshold work (S8a-blocked) to the session-like function alone, and matches how `verify_substrate_earned` was designed (predicate-first, not metadata-augmenter). The call-site churn is four branches — small enough. Substrate-earned `tier_from_substrate_earned` starts with `earned → tier 3; otherwise → fall through to compute_trust_tier` (skip the 2/3-conditions question initially; defer until we see real counterexamples).
+
+**Operator decision needed.** A or B (or a third framing). Once picked, fresh session can implement per the R3 appendix's "Action — what S6 actually needs to do" list, scoped to the chosen path.

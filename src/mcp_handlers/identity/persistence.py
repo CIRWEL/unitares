@@ -454,24 +454,49 @@ async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str
         existing_public_agent_id = _metadata_public_agent_id(existing_metadata)
 
         # Check for duplicate labels.
-        # Resident-fork detector (2026-04-19, see
-        # docs/superpowers/plans/2026-04-19-anchor-resilience-series.md):
-        # when the existing label-holder is tagged 'persistent', the rename
-        # is suppressing a resident fork — emit a governance event so
-        # dashboards and Discord surface it within one broadcast cycle.
-        # The rename still happens (can't block onboard).
+        # Resident-fork detector (ontology plan.md §S5 — inverted 2026-04-23):
+        # Under ontology v2 a resident restart is expected to declare
+        # parent_agent_id=<existing_uuid>. The event fires only when a
+        # persistent-tagged collision occurs *without* that lineage
+        # declaration — i.e., a silent/unlineaged fork. Lineage-declared
+        # restarts log at INFO and rename silently. The rename still happens
+        # (can't block onboard). See docs/ontology/identity.md §"Pattern —
+        # Substrate-Earned Identity".
         existing = await _find_agent_by_label(label)
         if existing and existing != agent_uuid:
             new_label = f"{label}_{agent_uuid[:8]}"
             existing_is_resident = await db.agent_has_tag(existing, "persistent")
-            if existing_is_resident:
+
+            # Resolve new agent's declared lineage. existing_metadata above
+            # is the new-agent's own identity metadata (keyed by agent_uuid
+            # at line 452), despite the misleading "existing_" prefix.
+            declared_parent: Optional[str] = None
+            if isinstance(existing_metadata, dict):
+                dp = existing_metadata.get("parent_agent_id")
+                if isinstance(dp, str) and dp:
+                    declared_parent = dp
+            if declared_parent is None:
+                try:
+                    meta_map = getattr(mcp_server, "agent_metadata", None)
+                    meta = meta_map.get(agent_uuid) if meta_map else None
+                    dp = getattr(meta, "parent_agent_id", None) if meta else None
+                    if isinstance(dp, str) and dp:
+                        declared_parent = dp
+                except Exception:
+                    pass
+            lineage_declared = declared_parent == existing
+
+            if existing_is_resident and not lineage_declared:
                 logger.warning(
-                    "[RESIDENT_FORK] label collision: existing agent %s is "
-                    "persistent but onboard minted %s with same label %r — "
-                    "renaming new agent to %r. Likely rotation wipe, anchor "
-                    "corruption, or misconfigured bootstrap. See "
-                    "memory/project_identity-audit-2026-04-19.md.",
-                    existing[:8], agent_uuid[:8], label, new_label,
+                    "[RESIDENT_FORK] unlineaged collision on persistent agent %s: "
+                    "fresh onboard minted %s with label %r and parent_agent_id=%r "
+                    "(expected %s). Renaming to %r. Under v2 ontology a resident "
+                    "restart declares parent_agent_id=<existing_uuid>; missing "
+                    "lineage suggests rotation wipe, anchor corruption, or "
+                    "misconfigured bootstrap. See docs/ontology/identity.md "
+                    "§'Pattern — Substrate-Earned Identity'.",
+                    existing[:8], agent_uuid[:8], label, declared_parent,
+                    existing[:8], new_label,
                 )
                 b = _broadcaster()
                 if b is not None:
@@ -483,12 +508,19 @@ async def set_agent_label(agent_uuid: str, label: str, session_key: Optional[str
                                 "existing_agent_id": existing,
                                 "label": label,
                                 "new_label": new_label,
+                                "declared_parent": declared_parent,
                             },
                         )
                     except Exception as e:
                         logger.warning(
                             f"[RESIDENT_FORK] broadcast_event failed: {e}"
                         )
+            elif existing_is_resident and lineage_declared:
+                logger.info(
+                    "[RESIDENT_LINEAGE] restart of persistent agent %s by %s "
+                    "with declared parent — expected. Renaming to %r.",
+                    existing[:8], agent_uuid[:8], new_label,
+                )
             else:
                 logger.info(f"Label collision, using: {new_label}")
             label = new_label
