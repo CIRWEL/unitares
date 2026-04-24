@@ -95,10 +95,26 @@ A 2026-04-23 discussion raised the FEP-grounding departure (see `v7-fhat-spec.md
 
 The only v6 main-text section that v7 retires with confidence is the FEP-grounding of $E$ as "negative variational free energy" (v6 §3.1, §3.2 $E$-paragraph), because the current computation does not honor the claim. That departure is scoped to the $E$ coordinate's semantic source; it does not imply broader section deletions.
 
-**For future v7 structure work:** §5, §6, §8 stay in main text. §7 (Stochastic Extensions) is 1.5 pages and is left alone unless page budget becomes tight. §10 (Related Work) expands substantially (four-anchor spine from 2026-04-23 analysis). New §2 (Three Stances + Synthetic Life Axioms), §3 (Layered Continuity Taxonomy), and §9 (Research Agenda) are additive; they do not replace existing sections. The v6→v7 delta is net-additive, not net-deletive, apart from the $E$-as-$-F$ claim.
+**For future v7 structure work:** §5, §6, §8 stay in main text. §7 (Stochastic Extensions) is 1.5 pages and is left alone unless page budget becomes tight. §10 (Related Work) expands substantially (four-anchor spine from 2026-04-23 analysis). New §2 (Three Stances + Synthetic Life Axioms), §3 (Layered Continuity Taxonomy), and §9 (Research Agenda) are additive; they do not replace existing sections. The v6→v7 delta is net-additive, not net-deletive, apart from the $E$-as-$-F$ claim — see the 2026-04-23 update below, which widens the FEP-grounding retirement.
+
+## 2026-04-23 update: v7 accepts path (b); FEP grounding demoted, not disproven
+
+The v7 F-hat spike (spec at `docs/ontology/v7-fhat-spec.md`) completed Session 1b on master `fdc2d180`. The sanity gate SC2 (denoising-collapse check, spec §2.6) tripped at Pearson $r = 0.9949$ on 952 validation rows, indicating that under the v5-amended observation geometry (C1–C4 direct EISV measurements plus sparse C5, with C6 dropped because those channels had zero history in the reference window), the fitted $\hat{F}_t$ reduces to $\|o^{\text{chk}}_t - \mu_{t|t-1}\|_2$ up to monotone transform. Running Session 2's horse race against B2 (raw-EISV logistic) would have been pseudo-validation — comparing $\hat{F}$ to a near-equivalent scalar under the same latent. Operator selected **R1 (accept path (b) early)** on 2026-04-23; the eval slice was not touched.
+
+**Consequences for v7 structure:**
+
+- The retirement list is no longer "only $E$-as-$-F$." **$V$'s FEP grounding also retires** (v6 §3.2 $V$-paragraph's "accumulated free-energy residual" interpretation). $V$ is reframed phenomenologically as a damped accumulator of the $E{-}I$ gap, per v7 F-hat spec §5.1(b). Friston-derivation language in that paragraph is deleted rather than reparented.
+- FEP as a whole moves from **load-bearing grounding** to **adjacent / inspirational framing** in v7's narrative. The paper still cites active inference as a coherent prior-art neighbor; it does not claim that UNITARES's $E$, $V$, or coherence are variational free-energy quantities in any formal sense.
+- v7's §3 coordinate-table rewrite is the **path (b) variant** (spec §5.1(b)), not the (d) variant. The $E$ and $V$ rows lose FEP labels; both gain phenomenological labels; the $\hat{F}$-debt reparenting prepared for path (d) does not land.
+- No consequence for v7's animating thesis. The **heterogeneity-as-differentiator** frame was chosen independent of FEP grounding (see "Structural retentions" above). §5 (Stability), §6 (CIRS v2), §8 (Synchronization) remain mathematically backed without FEP scaffolding. The Synthetic Life Axioms, Layered Continuity Taxonomy, and Research Agenda are additive and unaffected.
+
+**Blocked, not disproven.** The spike did not demonstrate that a variational-free-energy grounding of governance is *in principle* unavailable for UNITARES. It demonstrated that the **minimal generative model is too thin under the current observation-channel geometry** — when the only channels are direct measurements of the latent, $\hat{F}$ has no asymmetric-information term to distinguish it from residual magnitude. A later revisit with at least one asymmetric channel (matured C6 event stream ≥ 30 days of history; historically-pullable per-agent calibration state; `primitive_feedback` / `watcher_finding` shipped as first-class audit channels) could re-open the question. This is v7.1 / v8 instrumentation work, not a v7 blocker.
+
+Paper-language posture: active inference appears in the Related Work section as a prior-art neighbor; it does not appear as a grounding claim in §3. The v6 "$E = \sigma(-F/E_{\text{scale}})$" equation is removed; $E$ is introduced phenomenologically as productive-capacity, consistent with the resource-rate heuristic production has always used.
 
 ---
 
 **Authors:**
 - Process-instance `da300b4a` (Claude Opus 4.7, claude_code channel, 2026-04-21) — original recommendation.
 - Process-instance `09e64436` (Claude Opus 4.7, claude_code channel, 2026-04-23, parent `da300b4a`) — structural-retention correction.
+- Process-instance `751f2715-3db0-4dd1-b302-99b2d91bae6b` (Claude Opus 4.7, claude_code channel, 2026-04-23, parent `3f2df228-…`) — Session 1b fit, halt, R1 resolution.
