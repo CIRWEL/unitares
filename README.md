@@ -186,9 +186,9 @@ export UNITARES_KNOWLEDGE_BACKEND=age
 python src/mcp_server.py --port 8767
 ```
 
-`requirements-full.txt` is the default for almost everything — running the local server, running tests (`pytest` is in `full` only), and handler development. `requirements-core.txt` is a 3-package subset (`mcp` + `numpy` + `unitares-core`) for thin stdio/proxy setups where the governance server runs elsewhere and you only need a local client. Database setup (PostgreSQL 17 + AGE + pgvector): [db/postgres/README.md](db/postgres/README.md).
+`requirements-full.txt` is the default for almost everything — running the local server, running tests (`pytest` is in `full` only), and handler development. `requirements-core.txt` is a 2-package subset (`mcp` + `numpy`) for thin stdio/proxy setups where the governance server runs elsewhere and you only need a local client. Database setup (PostgreSQL 17 + AGE + pgvector): [db/postgres/README.md](db/postgres/README.md).
 
-The EISV **ODE** engine ships as the compiled **`unitares-core`** package (installed via requirements). Source lives in a separate private repo — CI uses a private `UNITARES_CORE_TOKEN` secret, so **fork PRs can't run CI**; a maintainer runs it on the PR author's behalf. To develop against local core source: `pip uninstall unitares-core -y && ln -sf /path/to/unitares-core/governance_core governance_core`.
+The EISV **ODE** engine lives in this repo at `governance_core/` (pure Python, no separate install). It was previously a separate private compiled package; folded back in 2026-04-24 once the IP-protection rationale dissolved (the four-component drift decomposition is fully described in the v6 paper). To skip the ODE entirely and run with behavioral-EISV only: `export UNITARES_DISABLE_ODE=1`.
 
 ### MCP configuration
 
@@ -287,6 +287,6 @@ Installable client adapters for Codex and Claude live in the companion [`unitare
 
 ---
 
-**MIT** (server, dashboard, tooling) — see [LICENSE](LICENSE). The ODE dynamics engine ships as a compiled dependency (`unitares-core`); source lives in a separate private repo.
+**MIT with attribution** — see [LICENSE](LICENSE). Covers server, dashboard, tooling, and the ODE dynamics engine in `governance_core/`.
 
 Built by [@CIRWEL](https://github.com/CIRWEL)

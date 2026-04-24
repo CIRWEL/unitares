@@ -10,8 +10,11 @@ requires-python = ">=3.12"
 dependencies = [
     "mcp>=1.26.0,<2.0.0",
     "numpy>=1.24.0,<3.0.0",
-    # unitares-core (governance_core) is a private compiled package — not on PyPI.
-    # Install separately: ln -sf ~/projects/unitares-core/governance_core .venv/lib/python3.14/site-packages/governance_core
+    # governance_core (EISV ODE engine) lives in this repo at top-level
+    # governance_core/ — pure Python, no separate install needed. The package
+    # was previously a separate private compiled wheel (CIRWEL/unitares-core);
+    # folded back in 2026-04-24 once IP-protection rationale dissolved.
+    # The unitares-core repo remains as an archived historical reference at v2.3.0.
 ]
 
 [project.optional-dependencies]

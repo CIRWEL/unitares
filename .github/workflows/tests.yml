@@ -12,13 +12,11 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
-    - name: Checkout unitares-core (private)
-      uses: actions/checkout@v4
       with:
-        repository: CIRWEL/unitares-core
-        token: ${{ secrets.UNITARES_CORE_TOKEN }}
-        path: unitares-core
+        # Don't persist GITHUB_TOKEN as a git credential, otherwise pip's
+        # `git clone` of unitares-core (or any other public repo) sends it
+        # as a 401-eliciting auth header and falls back to a no-TTY prompt.
+        persist-credentials: false
 
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
@@ -28,8 +26,6 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install cython
-        cd unitares-core && USE_CYTHON=1 pip install . && cd ..
         pip install -r requirements-full.txt
 
     - name: Validate CI/Python version sync
@@ -60,13 +56,11 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
-    - name: Checkout unitares-core (private)
-      uses: actions/checkout@v4
       with:
-        repository: CIRWEL/unitares-core
-        token: ${{ secrets.UNITARES_CORE_TOKEN }}
-        path: unitares-core
+        # Don't persist GITHUB_TOKEN as a git credential, otherwise pip's
+        # `git clone` of unitares-core (or any other public repo) sends it
+        # as a 401-eliciting auth header and falls back to a no-TTY prompt.
+        persist-credentials: false
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
@@ -76,8 +70,6 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install cython
-        cd unitares-core && USE_CYTHON=1 pip install . && cd ..
         pip install -r requirements-full.txt
 
     - name: Validate CI/Python version sync

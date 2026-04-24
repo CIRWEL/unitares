@@ -78,7 +78,7 @@ UNITARES governance MCP server. Information-theoretic governance framework for A
 
 ## Architecture Patterns
 
-- **governance_core is an external compiled package** — there is NO `governance_core/` directory in this repo. The EISV dynamics engine is in a separate private repo and installed as a compiled `.so` wheel. Code in `src/` imports it as `from governance_core import X`. Do not try to create or recreate `governance_core/`.
+- **governance_core lives in this repo** at top-level `governance_core/` (pure Python). Was previously a separate private compiled wheel (`CIRWEL/unitares-core`); folded back 2026-04-24 once the IP-protection rationale dissolved. Code in `src/` imports it as `from governance_core import X`. The archived `unitares-core` repo at v2.3.0 remains as a historical reference.
 - **LazyMCPServer**: All handler modules import `lazy_mcp_server as mcp_server` from `shared.py` (single definition, no per-file copies). Tests patch `{MODULE}.mcp_server` not `get_mcp_server`.
 - **Pydantic validation**: Parameter validation uses Pydantic schemas in `src/mcp_handlers/schemas/`. Legacy `validate_and_coerce_params` is removed.
 - **Handler modules**: Each in `src/mcp_handlers/`, decorated with `@mcp_tool`.
