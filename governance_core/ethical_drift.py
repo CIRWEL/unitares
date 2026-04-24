@@ -1,30 +1,36 @@
 """
-UNITARES Governance Core - Ethical Drift Vector
+UNITARES Governance Core — Behavioral–Epistemic Drift Vector
 
-Concrete, measurable implementation of the ethical drift vector Δη.
+Concrete, measurable implementation of the drift vector Δη described in the
+UNITARES v6 paper (§Behavioral–Epistemic Drift Vector).
 
-THEORETICAL FOUNDATION:
-The patent critiques correctly identified that "ethical drift" was abstract.
-This module makes it CONCRETE by defining Δη as a vector of measurable deviations:
+Overview
+--------
+Earlier drafts of the framework described "drift" abstractly. This module
+defines Δη as a four-component vector computed from observable signals:
 
     Δη = (
         calibration_deviation,    # |predicted_correct - actual_correct|
         complexity_divergence,    # |derived_complexity - self_complexity|
         coherence_deviation,      # |current_coherence - baseline_coherence|
-        stability_deviation       # Decision pattern instability
+        stability_deviation       # decision-pattern instability
     )
 
-Each component is computed from OBSERVABLE SIGNALS, not abstract concepts.
-The L2 norm ||Δη|| feeds into the EISV dynamics (dS/dt, dE/dt).
+Each component is derived from signals the system already measures. The
+L2 norm ‖Δη‖ feeds into the EISV dynamics (dS/dt, dE/dt).
 
-MAPPING TO PATENT TERMINOLOGY:
-- "Fairness deviation" → calibration_deviation (confidence vs outcome)
-- "Explainability deviation" → complexity_divergence (derived vs reported)
-- "Robustness deviation" → coherence_deviation (current vs baseline)
-- "Consistency deviation" → stability_deviation (decision patterns)
+Mapping to AI-ethics pillar vocabulary
+--------------------------------------
+The four-component decomposition aligns with the standard AI-ethics pillars
+used in NIST AI RMF and IEEE 7000-series:
 
-This is the "instrumentation layer" that converts abstract governance into
-measurable engineering signals, satisfying the patent claims.
+- Fairness        → calibration_deviation  (confidence vs. outcome)
+- Explainability  → complexity_divergence  (derived vs. self-reported)
+- Robustness      → coherence_deviation    (current vs. baseline)
+- Consistency     → stability_deviation    (decision patterns over time)
+
+The module is the instrumentation layer that turns each pillar into a
+scalar an agent can emit at check-in time.
 """
 
 from __future__ import annotations
