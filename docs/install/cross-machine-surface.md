@@ -5,6 +5,7 @@ A grep-derived inventory of every value in this repo that varies between machine
 **Audit date:** 2026-04-24 against `chore/install-audit` branch.
 **Scope:** unitares server only. Pi-side anima-mcp deferred to v2.
 **Acceptance:** the install playbook (`docs/install/PLAYBOOK.md`) must not assume any value classified MUST-FIX below.
+**Resolutions:** 10 of 11 MUST-FIX entries and all 4 plist-template gaps addressed in `chore/install-audit-fixes` (PR pending). Regressions now blocked by `tests/test_install_surface.py`. One entry (`health_watchdog.sh`) deferred — see end of MUST-FIX section.
 
 ---
 
@@ -25,18 +26,28 @@ When adding new files that touch any of the patterns in *Audit Patterns*, re-che
 
 These values bake one operator's environment into code that ships to others. Each must change before a stranger install will work.
 
-| File | Line | Value | Fix |
-|------|------|-------|-----|
-| `scripts/ops/start_unitares.sh` | 14 | `UNITARES_MCP_ALLOWED_HOSTS` default = `192.168.1.151:*,192.168.1.164:*,100.96.201.46:*,gov.cirwel.org` | Default to empty (loopback-only); document opt-in env var |
-| `scripts/ops/start_unitares.sh` | 15 | `UNITARES_MCP_ALLOWED_ORIGINS` default = same LAN/Tailscale/`gov.cirwel.org` set | Same as above |
-| `scripts/ops/start_unitares.sh` | 37 | Prints `https://gov.cirwel.org/v1/tools` example | Use `${UNITARES_PUBLIC_URL:-http://localhost:$PORT}` |
-| `scripts/ops/start_unitares.sh` | 121 | Prints `Tunnel: https://gov.cirwel.org/mcp/` unconditionally | Only print when `CLOUDFLARE_TUNNEL_HOSTNAME` is set |
-| `scripts/ops/start_server.sh` | 60 | Same `gov.cirwel.org` example string | Same as start_unitares.sh:37 |
-| `scripts/ops/health_watchdog.sh` | 28 | Hardcoded Pi Tailscale IP `100.79.215.83` | `${ANIMA_HEALTH_URL:-}`; skip anima check if unset |
-| `scripts/ops/answer_lumen_questions.py` | 19 | Default `https://lumen.cirwel.org/mcp/` | Require `PI_MCP_URL`, error if unset |
-| `scripts/ops/answer_lumen_questions.py` | 84 | Hardcoded Pi LAN IP `192.168.1.165` | Same — env-var-required |
-| `requirements-core.txt` | 22 | Comment example uses `https://gov.cirwel.org/v1/tools` | Use `https://your-host.example/v1/tools` |
-| `scripts/ops/com.unitares.ipv6-loopback-proxy.plist.template` | 33 | Hardcoded `/Users/cirwel/projects/unitares/scripts/ops/ipv6_loopback_proxy.py` | Use `__UNITARES_ROOT__` placeholder (matches chronicler template convention) |
+| Status | File | Line | Value | Fix |
+|--------|------|------|-------|-----|
+| ✅ resolved | `scripts/ops/start_unitares.sh` | 14 | `UNITARES_MCP_ALLOWED_HOSTS` default = `192.168.1.151:*,192.168.1.164:*,100.96.201.46:*,gov.cirwel.org` | Default to empty (loopback-only); comment block documents opt-in env var |
+| ✅ resolved | `scripts/ops/start_unitares.sh` | 15 | `UNITARES_MCP_ALLOWED_ORIGINS` default = same LAN/Tailscale/`gov.cirwel.org` set | Default empty |
+| ✅ resolved | `scripts/ops/start_unitares.sh` | 37 | Prints `https://gov.cirwel.org/v1/tools` example | Generic `https://your-host.example/v1/tools` |
+| ✅ resolved | `scripts/ops/start_unitares.sh` | 121 | Prints `Tunnel: https://gov.cirwel.org/mcp/` unconditionally | Conditional print guarded by `CLOUDFLARE_TUNNEL_HOSTNAME` |
+| ✅ resolved | `scripts/ops/start_server.sh` | 60 | Same `gov.cirwel.org` example string | Generic example |
+| ⏸ deferred | `scripts/ops/health_watchdog.sh` | 28 | Hardcoded Pi Tailscale IP `100.79.215.83` | See *deferred rationale* below |
+| ✅ resolved | `scripts/ops/answer_lumen_questions.py` | 19 | Default `https://lumen.cirwel.org/mcp/` | `PI_MCP_URL` required, script exits if unset |
+| ✅ resolved | `scripts/ops/answer_lumen_questions.py` | 84 | Hardcoded Pi LAN IP `192.168.1.165` | Optional `PI_MCP_URL_FALLBACK` env var; no hardcoded IP |
+| ✅ resolved | `requirements-core.txt` | 22 | Comment example uses `https://gov.cirwel.org/v1/tools` | Generic example |
+| ✅ resolved | `scripts/ops/com.unitares.ipv6-loopback-proxy.plist.template` | 33 | Hardcoded `/Users/cirwel/projects/unitares/scripts/ops/ipv6_loopback_proxy.py` | `__UNITARES_ROOT__` + `__PYTHON3__` placeholders; install header shows `sed` substitution |
+
+### Deferred: `health_watchdog.sh:28`
+
+Applying the fix as written (`${ANIMA_HEALTH_URL:-}`, skip if unset) silently stops Kenny's running anima/Lumen monitoring because `com.unitares.health-watchdog.plist` does not currently set `ANIMA_HEALTH_URL` — it relied on the hardcoded default. Three paths forward:
+
+1. Operator first adds `ANIMA_HEALTH_URL` env var to the live plist, then the script default is removed in a follow-up PR.
+2. Ship a gitignored `scripts/ops/operator.env.local` that the script sources if present; operator maintains their Pi IP there.
+3. Keep the current hardcoded default AND add an `ANIMA_HEALTH_URL` override, with an explicit comment that stranger installs can ignore the (unreachable) default — it just logs a timeout.
+
+Option 2 is cleanest for cross-machine portability. Not applied in this PR because it requires an operator-side change (creating the `.local` file) that coincides with the script change.
 
 ---
 
@@ -44,15 +55,17 @@ These values bake one operator's environment into code that ships to others. Eac
 
 `.gitignore` excludes `scripts/ops/*.plist` because installed copies contain secrets. Only three templates are tracked: `governance-mcp.plist` (sanitized), `chronicler.plist.template`, `ipv6-loopback-proxy.plist.template`. The four below exist on the operator's disk but **a stranger has nothing to copy from**.
 
-| LaunchAgent | Status | Fix |
-|------------|--------|-----|
+| LaunchAgent | Status | Notes |
+|------------|--------|-------|
 | `com.unitares.governance-mcp.plist` | Tracked, sanitized with `/PATH/TO/UNITARES`, `GENERATE_YOUR_OWN_TOKEN` | Rename to `.template` for naming consistency (low priority) |
-| `com.unitares.chronicler.plist.template` | Tracked template using `__UNITARES_ROOT__`, `__HOME__` | OK |
-| `com.unitares.ipv6-loopback-proxy.plist.template` | Tracked template, but hardcodes `/Users/cirwel/...` (see MUST-FIX above) | Convert to `__UNITARES_ROOT__` |
-| `com.unitares.sentinel.plist` | **Gitignored — no template tracked** | Create `.template` |
-| `com.unitares.vigil.plist` | **Gitignored — no template tracked** | Create `.template` |
-| `com.unitares.gateway-mcp.plist` | **Gitignored — no template tracked** | Create `.template` |
-| `com.unitares.governance-backup.plist` | **Gitignored — no template tracked** | Create `.template` |
+| `com.unitares.chronicler.plist.template` | Tracked template using `__UNITARES_ROOT__`, `__HOME__` | OK — reference pattern |
+| `com.unitares.ipv6-loopback-proxy.plist.template` | ✅ Resolved in this PR | `__UNITARES_ROOT__` + `__PYTHON3__` placeholders applied |
+| `com.unitares.sentinel.plist.template` | ✅ Added in this PR | Sanitized template created |
+| `com.unitares.vigil.plist.template` | ✅ Added in this PR | Sanitized template created |
+| `com.unitares.gateway-mcp.plist.template` | ✅ Added in this PR | Sanitized template created |
+| `com.unitares.governance-backup.plist.template` | ✅ Added in this PR | Sanitized template created |
+
+`tests/test_install_surface.py::test_plist_template_uses_placeholders` now enforces that any `<string>` in a `*.plist.template` contains no hardcoded `/Users/` path and that each template declares at least one `__UNITARES_ROOT__` or `__HOME__` placeholder.
 
 ---
 

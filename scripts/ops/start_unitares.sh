@@ -9,10 +9,15 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cd "$PROJECT_ROOT"
 
-# Host header allowlists for LAN/Cloudflare access (see src/mcp_listen_config.py)
+# Host header allowlists for LAN/Cloudflare access (see src/mcp_listen_config.py).
+# Defaults are empty — loopback-only. To expose on LAN or via tunnel, set these
+# in the caller's environment (e.g. via your LaunchAgent plist) BEFORE invoking
+# this script:
+#   UNITARES_MCP_ALLOWED_HOSTS="<lan-ip>:*,<hostname>.local,<tunnel-host>"
+#   UNITARES_MCP_ALLOWED_ORIGINS="http://<lan-ip>:*,https://<tunnel-host>"
 export UNITARES_BIND_ALL_INTERFACES="${UNITARES_BIND_ALL_INTERFACES:-1}"
-export UNITARES_MCP_ALLOWED_HOSTS="${UNITARES_MCP_ALLOWED_HOSTS:-192.168.1.151:*,192.168.1.164:*,100.96.201.46:*,gov.cirwel.org}"
-export UNITARES_MCP_ALLOWED_ORIGINS="${UNITARES_MCP_ALLOWED_ORIGINS:-http://192.168.1.151:*,http://192.168.1.164:*,http://100.96.201.46:*,https://gov.cirwel.org}"
+export UNITARES_MCP_ALLOWED_HOSTS="${UNITARES_MCP_ALLOWED_HOSTS:-}"
+export UNITARES_MCP_ALLOWED_ORIGINS="${UNITARES_MCP_ALLOWED_ORIGINS:-}"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -34,7 +39,7 @@ if [ ! -d ".venv" ]; then
         echo "                              brew install python@3.12   (macOS)"
         echo "    2. Skip local setup and use remote mode instead:"
         echo "         export UNITARES_HTTP_API_TOKEN=<token>"
-        echo "         curl -H 'Authorization: Bearer <token>' https://gov.cirwel.org/v1/tools"
+        echo "         curl -H 'Authorization: Bearer <token>' https://your-host.example/v1/tools"
         echo ""
         exit 1
     fi
@@ -118,7 +123,9 @@ echo "  UNITARES Status"
 echo "════════════════════════════════════════════════════════════"
 echo "  MCP Server:  http://localhost:8767/mcp/"
 echo "  Health:      http://localhost:8767/health"
-echo "  Tunnel:      https://gov.cirwel.org/mcp/"
+if [ -n "${CLOUDFLARE_TUNNEL_HOSTNAME:-}" ]; then
+    echo "  Tunnel:      https://${CLOUDFLARE_TUNNEL_HOSTNAME}/mcp/"
+fi
 echo ""
 echo "  Logs:"
 echo "    Server:    tail -f /tmp/unitares.log"

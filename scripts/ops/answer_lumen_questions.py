@@ -15,8 +15,12 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# Pi MCP URL — Cloudflare tunnel, with Tailscale fallback
-PI_MCP_URL = os.environ.get("PI_MCP_URL", "https://lumen.cirwel.org/mcp/")
+# Pi MCP URL — required. Set to your anima-mcp endpoint, e.g.:
+#   export PI_MCP_URL=http://<pi-lan-or-tailscale-ip>:8766/mcp/
+#   export PI_MCP_URL=https://<your-pi-tunnel>/mcp/
+PI_MCP_URL = os.environ.get("PI_MCP_URL")
+if not PI_MCP_URL:
+    sys.exit("PI_MCP_URL environment variable is required (see script header)")
 PI_MCP_TIMEOUT = 30.0
 
 
@@ -79,10 +83,14 @@ async def main():
     
     if "error" in result:
         print(f"❌ Error fetching questions: {result['error']}")
-        # Try direct IP
+        # If the primary URL failed and you have a LAN/Tailscale fallback,
+        # set PI_MCP_URL_FALLBACK in the environment. Otherwise bail.
+        fallback = os.environ.get("PI_MCP_URL_FALLBACK")
+        if not fallback:
+            return
         global PI_MCP_URL
-        PI_MCP_URL = "http://192.168.1.165:8766/mcp/"  # DEFINITIVE: anima-mcp runs on 8766
-        print(f"🔄 Trying direct connection: {PI_MCP_URL}")
+        PI_MCP_URL = fallback
+        print(f"🔄 Trying fallback connection: {PI_MCP_URL}")
         result = await call_pi_tool("get_questions", {"limit": 20})
         if "error" in result:
             print(f"❌ Still failed: {result['error']}")

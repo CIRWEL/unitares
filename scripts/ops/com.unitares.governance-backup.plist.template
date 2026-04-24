@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd manifest for the daily governance DB backup (03:00 local).
+
+  Runs scripts/ops/backup_governance.sh which pg_dumps the governance DB
+  into $HOME/backups/governance/ (override via BACKUP_DIR env var in the
+  script itself).
+
+  Install (render __VARS__ then load):
+    sed -e "s|__UNITARES_ROOT__|$HOME/projects/unitares|g" \
+        -e "s|__HOME__|$HOME|g" \
+        scripts/ops/com.unitares.governance-backup.plist.template \
+        > ~/Library/LaunchAgents/com.unitares.governance-backup.plist
+    launchctl load ~/Library/LaunchAgents/com.unitares.governance-backup.plist
+
+  Verify:
+    launchctl list | grep com.unitares.governance-backup
+    ls -la __HOME__/backups/governance/
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.unitares.governance-backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__UNITARES_ROOT__/scripts/ops/backup_governance.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__UNITARES_ROOT__</string>
+
+    <!-- Run daily at 03:00 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/backups/governance/backup-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/backups/governance/backup-launchd.log</string>
+</dict>
+</plist>

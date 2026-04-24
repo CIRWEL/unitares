@@ -19,6 +19,6 @@ numpy>=1.24.0,<3.0.0
 #   ln -sf ~/projects/unitares-core/governance_core governance_core
 # If you don't have unitares-core, use remote mode instead:
 #   export UNITARES_HTTP_API_TOKEN=<token>
-#   curl -H 'Authorization: Bearer <token>' https://gov.cirwel.org/v1/tools
+#   curl -H 'Authorization: Bearer <token>' https://your-host.example/v1/tools
 unitares-core>=2.3.0
 
