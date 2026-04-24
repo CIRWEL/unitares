@@ -890,3 +890,58 @@ class TestOnVerdictPause:
         assert mock_client.checkin.await_count == 2
         # VerdictError carries the SECOND (final) pause's guidance.
         assert exc_info.value.guidance == "still paused"
+
+
+class TestStateFileOverride:
+    def test_state_file_override_used_for_persistence(self, tmp_path):
+        """load_state / save_state use state_file when provided."""
+        custom = tmp_path / "my_state.json"
+
+        class Agent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None
+
+        agent = Agent(
+            name="Custom", mcp_url="http://127.0.0.1:9999/mcp/",
+            state_file=custom,
+        )
+        agent.save_state({"cycles": 42})
+        assert custom.exists()
+
+        agent2 = Agent(
+            name="Custom", mcp_url="http://127.0.0.1:9999/mcp/",
+            state_file=custom,
+        )
+        assert agent2.load_state() == {"cycles": 42}
+
+    def test_state_file_default_is_state_dir_over_state_json(self, tmp_path):
+        """Default state path unchanged: state_dir/state.json."""
+
+        class Agent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None
+
+        agent = Agent(
+            name="Default", mcp_url="http://127.0.0.1:9999/mcp/",
+            state_dir=tmp_path,
+        )
+        agent.save_state({"k": "v"})
+        assert (tmp_path / "state.json").exists()
+
+    def test_state_file_takes_precedence_over_state_dir(self, tmp_path):
+        """When both state_dir and state_file are given, state_file wins."""
+        custom = tmp_path / "nested" / "chosen.json"
+        other_dir = tmp_path / "elsewhere"
+
+        class Agent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None
+
+        agent = Agent(
+            name="Picky", mcp_url="http://127.0.0.1:9999/mcp/",
+            state_dir=other_dir,
+            state_file=custom,
+        )
+        agent.save_state({"marker": 1})
+        assert custom.exists()
+        assert not (other_dir / "state.json").exists()

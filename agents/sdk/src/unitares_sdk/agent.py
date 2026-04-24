@@ -96,6 +96,7 @@ class GovernanceAgent:
         cycle_timeout_seconds: float | None = None,
         log_file: Path | None = None,
         max_log_lines: int = 10_000,
+        state_file: Path | None = None,
     ):
         self.name = name
         self.mcp_url = mcp_url
@@ -131,6 +132,10 @@ class GovernanceAgent:
         name_lower = name.lower()
         default_root = Path(__file__).resolve().parent.parent.parent.parent.parent
         self.state_dir = state_dir or default_root / "data" / name_lower
+        # state_file overrides the default state_dir/state.json when the
+        # caller wants a specific path (e.g. a versioned filename or a
+        # non-default data root). When None, falls back to the old default.
+        self.state_file = state_file
         # Host-scoped anchor default: one identity per role per host, shared
         # across every git worktree or install path (Watcher/Vigil/Sentinel
         # previously minted a new UUID per install-path-relative session
@@ -470,12 +475,14 @@ class GovernanceAgent:
     # --- State persistence ---
 
     def load_state(self) -> dict:
-        """Load agent-specific cross-cycle state from state_dir."""
-        return load_json_state(self.state_dir / "state.json")
+        """Load agent-specific cross-cycle state."""
+        path = self.state_file or (self.state_dir / "state.json")
+        return load_json_state(path)
 
     def save_state(self, state: dict) -> None:
-        """Save agent-specific cross-cycle state to state_dir."""
-        save_json_state(self.state_dir / "state.json", state)
+        """Save agent-specific cross-cycle state."""
+        path = self.state_file or (self.state_dir / "state.json")
+        save_json_state(path, state)
 
     # --- Signal handlers ---
 
