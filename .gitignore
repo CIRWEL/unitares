@@ -201,3 +201,6 @@ src/data/
 
 # Operator-local: Schmidt proposal figures + venv
 schmidt-proposal-figures/
+
+# v7 F-hat: corpus parquets are reproducible from sql/ + DB; don't track binaries
+data/v7-fhat/corpus/
