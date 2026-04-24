@@ -10,6 +10,8 @@
 
 Status: live. For architecture details, see [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md).
 
+**In one line:** UNITARES is a runtime governance layer for heterogeneous AI-agent fleets. It tracks continuous agent state, calibrates by class, detects drift, and issues governance interventions with auditable provenance.
+
 Most AI agents fly blind: they can't tell when they're thrashing, drifting, or overconfident until a human notices. UNITARES is a runtime layer that lets agents **see their own state and regulate themselves** — slow down when disorder spikes, ask for review when integrity drops, hand off when they're running on fumes.
 
 Each check-in returns four continuous state variables, a verdict (`proceed` / `guide` / `pause` / `reject`), and guidance. Agents adjust their own behavior *before* external circuit breakers fire. Humans and peer agents read the same state, so one signal serves three consumers: agents regulating themselves, humans watching dashboards, peers coordinating. The variables are called **EISV** — energy, integrity, entropy, valence — and the model is detailed below in [How state works](#how-state-works-eisv).
@@ -302,7 +304,7 @@ Three files at the repo root orient different AI CLIs. Human readers can skip th
 
 ## Paper
 
-[**UNITARES v6**](https://github.com/CIRWEL/unitares-paper-v6) — *Information-Theoretic Governance of Heterogeneous Agent Fleets*. Framework + migration paper (30 pages, latest: `paper-v6.9`). Reframes EISV in Shannon + variational free-energy terms, presents class-conditional calibration as a first-class design constraint, and documents the pipeline-ordering migration mechanism used to re-ground the live system. Headline empirical finding: a 13,310-row verdict counterfactual shows 28.9% of governance basin assignments flip under class-conditional grounded coherence relative to the legacy fleet-wide form, with a strong directional bias into the `low` basin — direct empirical support for the homogenization-failure-mode argument. Concept DOI: [10.5281/zenodo.19647159](https://doi.org/10.5281/zenodo.19647159) (resolves to latest version; each tagged release has its own version DOI).
+[**UNITARES v6**](https://github.com/CIRWEL/unitares-paper-v6) — *Information-Theoretic Governance of Heterogeneous Agent Fleets*. Framework + migration paper (30 pages, latest: `paper-v6.9.1`). Reframes EISV in Shannon + variational free-energy terms, presents class-conditional calibration as a first-class design constraint, and documents the pipeline-ordering migration mechanism used to re-ground the live system. Headline empirical finding: a 13,310-row verdict counterfactual shows 28.9% of governance basin assignments flip under class-conditional grounded coherence relative to the legacy fleet-wide form, with a strong directional bias into the `low` basin — direct empirical support for the homogenization-failure-mode argument. Concept DOI: [10.5281/zenodo.19647159](https://doi.org/10.5281/zenodo.19647159) (resolves to latest version; each tagged release has its own version DOI).
 
 ## Related Projects
 
