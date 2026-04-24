@@ -119,13 +119,15 @@ pip install --upgrade pip
 pip install -r requirements-full.txt
 ```
 
-**Expected:** all packages install cleanly, including `unitares-core`.
+**Expected:** all packages install cleanly, including `unitares-core` (pulled from its public GitHub repo via `git+https`, compiled with Cython at install time).
 
-**`unitares-core` install path (transitional):** as of this audit, `unitares-core` is being moved from a private repo to public. Three possible states you might be in:
+**If you want to skip `unitares-core` entirely** (e.g., a CI runner without a C toolchain, or you only need the behavioral-EISV verdict path), run in behavioral-only mode:
 
-- **Public on PyPI (target):** the line above just works.
-- **Public on GitHub (interim):** add `pip install "unitares-core @ git+https://github.com/CIRWEL/unitares-core.git@<tag>"`.
-- **Still private (legacy):** you need a `UNITARES_CORE_TOKEN` from a maintainer. If you don't have one, you can run the server in **behavioral-only mode** by setting `UNITARES_DISABLE_ODE=1` — verdicts come from the behavioral EISV path, with the ODE diagnostic fallback skipped. The dashboard will show a banner indicating reduced diagnostic detail.
+```bash
+export UNITARES_DISABLE_ODE=1
+```
+
+The ODE diagnostic fallback is skipped; verdicts come from the behavioral EISV path alone. The dashboard shows a banner indicating reduced diagnostic detail.
 
 ---
 

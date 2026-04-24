@@ -73,7 +73,7 @@ Option 2 is cleanest for cross-machine portability. Not applied in this PR becau
 
 Beyond per-line edits, two structural issues will prevent a fresh install:
 
-1. **`unitares-core` is a private compiled wheel.** `pyproject.toml:14` instructs symlinking from `~/projects/unitares-core/governance_core`, which only exists on Kenny's machine. CI uses `UNITARES_CORE_TOKEN` (`.github/workflows/tests.yml:20,68`); fork PRs can't run CI. **Decision in flight: publish `unitares-core` to PyPI / public GitHub.** Until that ships, any third-party install fails at `pip install -r requirements-full.txt`.
+1. ~~**`unitares-core` is a private compiled wheel.**~~ ✅ **Resolved 2026-04-24.** `unitares-core` is now public at [CIRWEL/unitares-core](https://github.com/CIRWEL/unitares-core) under MIT with attribution. `requirements-core.txt` installs it from `git+https` with a pinned tag (`v2.3.0`). CI no longer requires `UNITARES_CORE_TOKEN`; fork PRs can run CI. Rationale: the paper (v6, Zenodo DOI [10.5281/zenodo.19647159](https://doi.org/10.5281/zenodo.19647159)) had already disclosed the four-component drift decomposition — going public aligned code with the published specification rather than exposing new IP.
 2. **Apple Silicon assumed in scripts.** `/opt/homebrew/opt/postgresql@17/bin` is hardcoded in:
    - `scripts/ops/emergency_fix_postgres.sh:6`
    - `scripts/ops/backup_governance.sh:10`

@@ -188,7 +188,7 @@ python src/mcp_server.py --port 8767
 
 `requirements-full.txt` is the default for almost everything — running the local server, running tests (`pytest` is in `full` only), and handler development. `requirements-core.txt` is a 3-package subset (`mcp` + `numpy` + `unitares-core`) for thin stdio/proxy setups where the governance server runs elsewhere and you only need a local client. Database setup (PostgreSQL 17 + AGE + pgvector): [db/postgres/README.md](db/postgres/README.md).
 
-The EISV **ODE** engine ships as the compiled **`unitares-core`** package (installed via requirements). Source lives in a separate private repo — CI uses a private `UNITARES_CORE_TOKEN` secret, so **fork PRs can't run CI**; a maintainer runs it on the PR author's behalf. To develop against local core source: `pip uninstall unitares-core -y && ln -sf /path/to/unitares-core/governance_core governance_core`.
+The EISV **ODE** engine ships as the **`unitares-core`** package, public at [CIRWEL/unitares-core](https://github.com/CIRWEL/unitares-core) under MIT with attribution. `requirements-core.txt` pins it to a tag and pip installs it via `git+https`, compiling with Cython at install time. Fork PRs run CI without any secret. To develop against local core source: `pip uninstall unitares-core -y && ln -sf /path/to/unitares-core/governance_core governance_core`. To skip the ODE entirely (behavioral-only mode): `export UNITARES_DISABLE_ODE=1`.
 
 ### MCP configuration
 
@@ -287,6 +287,6 @@ Installable client adapters for Codex and Claude live in the companion [`unitare
 
 ---
 
-**MIT** (server, dashboard, tooling) — see [LICENSE](LICENSE). The ODE dynamics engine ships as a compiled dependency (`unitares-core`); source lives in a separate private repo.
+**MIT** (server, dashboard, tooling) — see [LICENSE](LICENSE). The ODE dynamics engine ships as the [`unitares-core`](https://github.com/CIRWEL/unitares-core) dependency, also MIT.
 
 Built by [@CIRWEL](https://github.com/CIRWEL)

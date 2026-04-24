@@ -10,8 +10,10 @@ requires-python = ">=3.12"
 dependencies = [
     "mcp>=1.26.0,<2.0.0",
     "numpy>=1.24.0,<3.0.0",
-    # unitares-core (governance_core) is a private compiled package — not on PyPI.
-    # Install separately: ln -sf ~/projects/unitares-core/governance_core .venv/lib/python3.14/site-packages/governance_core
+    # unitares-core (governance_core) — public at https://github.com/CIRWEL/unitares-core.
+    # Pinned install lives in requirements-core.txt; PEP 621 dependencies don't support
+    # direct git URLs. For dev against local source:
+    #   ln -sf ~/projects/unitares-core/governance_core .venv/lib/python3.12/site-packages/governance_core
 ]
 
 [project.optional-dependencies]

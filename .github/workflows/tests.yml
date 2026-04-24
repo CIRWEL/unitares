@@ -13,13 +13,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Checkout unitares-core (private)
-      uses: actions/checkout@v4
-      with:
-        repository: CIRWEL/unitares-core
-        token: ${{ secrets.UNITARES_CORE_TOKEN }}
-        path: unitares-core
-
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
@@ -29,7 +22,6 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install cython
-        cd unitares-core && USE_CYTHON=1 pip install . && cd ..
         pip install -r requirements-full.txt
 
     - name: Validate CI/Python version sync
@@ -61,13 +53,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Checkout unitares-core (private)
-      uses: actions/checkout@v4
-      with:
-        repository: CIRWEL/unitares-core
-        token: ${{ secrets.UNITARES_CORE_TOKEN }}
-        path: unitares-core
-
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
@@ -77,7 +62,6 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install cython
-        cd unitares-core && USE_CYTHON=1 pip install . && cd ..
         pip install -r requirements-full.txt
 
     - name: Validate CI/Python version sync
