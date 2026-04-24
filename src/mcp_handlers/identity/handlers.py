@@ -1494,6 +1494,27 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         except Exception as e:
             logger.debug(f"[ONBOARD] default-stamp failed (non-fatal): {e}")
 
+    # CONCURRENT IDENTITY BINDING (#123): if the client declared a process
+    # fingerprint, record the binding and run audit-only collision detection.
+    # Fire-and-forget — declaration-only, never resolves or recovers identity.
+    _raw_fp = arguments.get("process_fingerprint")
+    if _raw_fp is not None:
+        try:
+            from .process_binding import validate_fingerprint, record_binding_bg
+            _fp = validate_fingerprint(_raw_fp)
+            if _fp is not None:
+                from src.background_tasks import create_tracked_task
+                create_tracked_task(
+                    record_binding_bg(
+                        agent_uuid,
+                        _fp,
+                        arguments.get("client_session_id"),
+                    ),
+                    name="record_process_binding",
+                )
+        except Exception as e:
+            logger.debug(f"[PROCESS_BINDING] onboard scheduling failed (non-fatal): {e}")
+
     # TRAJECTORY IDENTITY: Store genesis signature if provided (optional, non-blocking)
     # Agents from anima-mcp can include trajectory_signature in their onboard call
     trajectory_result = None
