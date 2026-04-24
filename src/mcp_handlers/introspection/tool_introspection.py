@@ -18,6 +18,37 @@ from src.logging_utils import get_logger
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
+
+def _resolve_json_schema_type(field_info: Dict[str, Any]) -> str:
+    """Render a Pydantic/JSON Schema field's type for lite-mode param lists.
+
+    Pydantic emits Optional[T] as ``{"anyOf": [{"type": T}, {"type": "null"}]}``
+    with no top-level ``type`` key. A naive ``.get("type", "any")`` therefore
+    collapses every Optional field to "any", which defeats the purpose of lite
+    mode — agents use lite schemas to shape arguments.
+
+    Resolution:
+      - top-level ``type`` wins if present
+      - otherwise, walk ``anyOf`` and collect non-null ``type``s
+        - 1 non-null type → return it (the Optional case)
+        - 2+ non-null types → join with ``|`` (the Union case)
+        - 0 non-null types or no shape info → fall back to "any"
+    """
+    t = field_info.get("type")
+    if isinstance(t, str):
+        return t
+    any_of = field_info.get("anyOf")
+    if isinstance(any_of, list):
+        non_null = [variant.get("type") for variant in any_of
+                    if isinstance(variant, dict)
+                    and variant.get("type")
+                    and variant.get("type") != "null"]
+        if len(non_null) == 1:
+            return non_null[0]
+        if len(non_null) > 1:
+            return "|".join(non_null)
+    return "any"
+
 @mcp_tool("list_tools", timeout=10.0, rate_limit_exempt=True)
 async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     """List all available governance tools with descriptions and categories
@@ -1085,7 +1116,7 @@ async def handle_describe_tool(arguments: Dict[str, Any]) -> Sequence[TextConten
                         if shown >= 5:
                             break
                         shown += 1
-                        field_type = field_info.get("type", "any")
+                        field_type = _resolve_json_schema_type(field_info)
                         default = field_info.get("default")
                         if default is not None:
                             params_simple.append(f"{field_name}: {field_type} (default: {default})")
@@ -1156,7 +1187,7 @@ async def handle_describe_tool(arguments: Dict[str, Any]) -> Sequence[TextConten
                     shown_count += 1
                 for param, prop in list(properties.items())[:8]:
                     if param not in required and param != "client_session_id":
-                        ptype = prop.get("type", "any")
+                        ptype = _resolve_json_schema_type(prop)
                         params_simple.append(f"{param}: {ptype}")
                         shown_count += 1
                 total_optional = sum(1 for p in properties if p not in required)

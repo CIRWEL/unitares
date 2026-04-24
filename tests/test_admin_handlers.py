@@ -518,6 +518,77 @@ class TestDescribeTool:
             data = parse_result(result)
             assert data["success"] is False
 
+    @pytest.mark.asyncio
+    async def test_describe_tool_lite_resolves_optional_types(self, patch_context_agent_id):
+        """Pydantic Optional[T] emits anyOf:[{type:T},{type:null}] with no top-level
+        type. Lite mode must surface T, not 'any'. Inputs to the fallback path
+        (no Pydantic model registered) so we exercise the inputSchema branch."""
+        mock_tool = MagicMock()
+        mock_tool.name = "optional_tool"
+        mock_tool.description = "Tool with Optional params"
+        mock_tool.inputSchema = {
+            "type": "object",
+            "properties": {
+                "required_str": {"type": "string"},
+                "optional_str": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None},
+                "optional_int": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": None},
+                "optional_bool": {"anyOf": [{"type": "boolean"}, {"type": "null"}], "default": False},
+                "union_str_bool": {"anyOf": [{"type": "string"}, {"type": "boolean"}, {"type": "null"}]},
+            },
+            "required": ["required_str"],
+        }
+
+        with patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool]), \
+             patch("src.tool_schemas.get_pydantic_schemas", return_value={}), \
+             patch("src.mcp_handlers.validators.PARAM_ALIASES", {}):
+            from src.mcp_handlers.introspection.tool_introspection import handle_describe_tool
+            result = await handle_describe_tool({"tool_name": "optional_tool", "lite": True})
+
+        data = parse_result(result)
+        assert data["success"] is True
+        params = " | ".join(data["parameters"])
+        # Required param rendered without type (existing contract)
+        assert "required_str (required)" in data["parameters"]
+        # Each Optional must surface its non-null type, NOT "any"
+        assert "optional_str: string" in params
+        assert "optional_int: integer" in params
+        assert "optional_bool: boolean" in params
+        # Union[str, bool] must render both types
+        assert "union_str_bool: string|boolean" in params
+        # Regression guard: no param should be typed "any" given the above shapes
+        assert ": any" not in params
+
+    @pytest.mark.asyncio
+    async def test_describe_tool_lite_pydantic_path_resolves_optional(self, patch_context_agent_id):
+        """Pydantic-schema branch of lite mode must also resolve anyOf → concrete type."""
+        from pydantic import BaseModel
+        from typing import Optional as Opt
+
+        class OptionalParams(BaseModel):
+            required_str: str
+            optional_str: Opt[str] = None
+            optional_int: Opt[int] = 5
+
+        mock_tool = MagicMock()
+        mock_tool.name = "pydantic_tool"
+        mock_tool.description = "Pydantic-backed tool"
+        mock_tool.inputSchema = {"type": "object", "properties": {}, "required": []}
+
+        with patch("src.tool_schemas.get_tool_definitions", return_value=[mock_tool]), \
+             patch("src.tool_schemas.get_pydantic_schemas",
+                   return_value={"pydantic_tool": OptionalParams}), \
+             patch("src.mcp_handlers.validators.PARAM_ALIASES", {}):
+            from src.mcp_handlers.introspection.tool_introspection import handle_describe_tool
+            result = await handle_describe_tool({"tool_name": "pydantic_tool", "lite": True})
+
+        data = parse_result(result)
+        assert data["success"] is True
+        params = " | ".join(data["parameters"])
+        assert "required_str (required)" in data["parameters"]
+        assert "optional_str: string" in params
+        assert "optional_int: integer" in params
+        assert ": any" not in params
+
 
 # ============================================================================
 # handle_health_check
