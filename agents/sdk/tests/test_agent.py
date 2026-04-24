@@ -508,3 +508,77 @@ class TestCycleTimeout:
                         # to 0 and running=False inside run_cycle to exit.
                         await agent.run_forever(interval=0)
         assert timed_out["fired"] is True
+
+
+class TestLogFileTrim:
+    @pytest.mark.asyncio
+    async def test_log_file_trimmed_after_cycle(self, tmp_path):
+        """Base class trims log_file to max_log_lines after each cycle."""
+        log_path = tmp_path / "agent.log"
+        log_path.write_text("\n".join(f"line {i}" for i in range(100)) + "\n")
+
+        class LoggingAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None  # skip checkin
+
+        agent = LoggingAgent(
+            name="Logger",
+            mcp_url="http://127.0.0.1:9999/mcp/",
+            log_file=log_path,
+            max_log_lines=10,
+        )
+        with patch("unitares_sdk.agent.GovernanceClient") as mock_cm:
+            mock_client = AsyncMock()
+            mock_cm.return_value.__aenter__.return_value = mock_client
+            mock_cm.return_value.__aexit__.return_value = None
+            with patch.object(LoggingAgent, "_ensure_identity", AsyncMock()):
+                await agent.run_once()
+
+        surviving = log_path.read_text().splitlines()
+        assert len(surviving) == 10
+        assert surviving[-1] == "line 99"
+
+    @pytest.mark.asyncio
+    async def test_log_file_none_is_noop(self, tmp_path):
+        """log_file=None (default) does not error."""
+
+        class QuietAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None
+
+        agent = QuietAgent(name="Quiet", mcp_url="http://127.0.0.1:9999/mcp/")
+        assert agent.log_file is None
+        with patch("unitares_sdk.agent.GovernanceClient") as mock_cm:
+            mock_client = AsyncMock()
+            mock_cm.return_value.__aenter__.return_value = mock_client
+            mock_cm.return_value.__aexit__.return_value = None
+            with patch.object(QuietAgent, "_ensure_identity", AsyncMock()):
+                await agent.run_once()
+
+    @pytest.mark.asyncio
+    async def test_log_file_trimmed_even_on_cycle_timeout(self, tmp_path):
+        """Log trim happens in finally, so it fires even when the cycle times out."""
+        log_path = tmp_path / "agent.log"
+        log_path.write_text("\n".join(f"line {i}" for i in range(50)) + "\n")
+
+        class SlowAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                await asyncio.sleep(10.0)
+                return None
+
+        agent = SlowAgent(
+            name="Slow",
+            mcp_url="http://127.0.0.1:9999/mcp/",
+            log_file=log_path,
+            max_log_lines=5,
+            cycle_timeout_seconds=0.05,
+        )
+        with patch("unitares_sdk.agent.GovernanceClient") as mock_cm:
+            mock_client = AsyncMock()
+            mock_cm.return_value.__aenter__.return_value = mock_client
+            mock_cm.return_value.__aexit__.return_value = None
+            with patch.object(SlowAgent, "_ensure_identity", AsyncMock()):
+                with pytest.raises(asyncio.TimeoutError):
+                    await agent.run_once()
+        # Trim must have fired despite the TimeoutError.
+        assert len(log_path.read_text().splitlines()) == 5

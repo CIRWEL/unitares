@@ -114,6 +114,26 @@ def parse_continuity_token(token: str) -> dict | None:
         return None
 
 
+def trim_log(log_file: Path, max_lines: int) -> None:
+    """Keep log_file bounded to the last ``max_lines`` lines.
+
+    Silent no-op on OSError or if the file doesn't exist — log rotation
+    should never be the reason an agent crashes.
+    """
+    if not log_file.exists():
+        return
+    try:
+        lines = log_file.read_text().splitlines()
+    except OSError:
+        return
+    if len(lines) <= max_lines:
+        return
+    try:
+        log_file.write_text("\n".join(lines[-max_lines:]) + "\n")
+    except OSError:
+        pass
+
+
 def validate_token_uuid(token: str, expected_uuid: str) -> bool:
     """Parse token, extract aid, return True if it matches expected_uuid.
 

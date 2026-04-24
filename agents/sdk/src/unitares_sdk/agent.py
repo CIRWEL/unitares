@@ -29,6 +29,7 @@ from unitares_sdk.utils import (
     load_json_state,
     notify,
     save_json_state,
+    trim_log,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,8 @@ class GovernanceAgent:
         persistent: bool = False,
         refuse_fresh_onboard: bool = False,
         cycle_timeout_seconds: float | None = None,
+        log_file: Path | None = None,
+        max_log_lines: int = 10_000,
     ):
         self.name = name
         self.mcp_url = mcp_url
@@ -103,6 +106,13 @@ class GovernanceAgent:
         # previously implemented this as an asyncio.wait_for wrapper in
         # their own run_once; hoisted here so subclasses don't reinvent it.
         self.cycle_timeout_seconds = cycle_timeout_seconds
+        # Optional bounded log file. When set, the base class trims it to
+        # max_log_lines after each run_once / run_forever iteration (via
+        # finally so it fires on error and timeout too). Leave unset when
+        # an external rotator (launchd StandardOutPath, logrotate) manages
+        # the file.
+        self.log_file = log_file
+        self.max_log_lines = max_log_lines
         self.notify_on_error = notify_on_error
         # When True, stamp the "persistent" tag after fresh onboard so
         # auto_archive_orphan_agents (is_agent_protected in agent_lifecycle.py)
@@ -152,7 +162,8 @@ class GovernanceAgent:
     async def run_once(self) -> None:
         """Single cycle: connect -> ensure_identity -> run_cycle -> checkin -> disconnect.
 
-        Bounded by ``cycle_timeout_seconds`` if set.
+        Bounded by ``cycle_timeout_seconds`` if set. Trims ``log_file`` after
+        completion (success, failure, or timeout).
         """
         async def _cycle() -> None:
             async with GovernanceClient(mcp_url=self.mcp_url, timeout=self.timeout) as client:
@@ -160,10 +171,14 @@ class GovernanceAgent:
                 result = await self.run_cycle(client)
                 await self._handle_cycle_result(client, result)
 
-        if self.cycle_timeout_seconds is None:
-            await _cycle()
-        else:
-            await asyncio.wait_for(_cycle(), self.cycle_timeout_seconds)
+        try:
+            if self.cycle_timeout_seconds is None:
+                await _cycle()
+            else:
+                await asyncio.wait_for(_cycle(), self.cycle_timeout_seconds)
+        finally:
+            if self.log_file is not None:
+                trim_log(self.log_file, self.max_log_lines)
 
     async def run_forever(
         self, interval: int = 60, heartbeat_interval: int = 1800
@@ -211,6 +226,9 @@ class GovernanceAgent:
                 logger.error("%s: unexpected error: %s", self.name, e, exc_info=True)
                 if self.notify_on_error:
                     notify(self.name, f"Error: {e}")
+            finally:
+                if self.log_file is not None:
+                    trim_log(self.log_file, self.max_log_lines)
 
             if self.running:
                 await asyncio.sleep(interval)
