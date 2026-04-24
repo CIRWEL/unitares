@@ -855,7 +855,7 @@ async def http_dashboard_static(request):
         "utils.js", "state.js", "colors.js", "components.js",
         "visualizations.js", "agents.js", "discoveries.js",
         "dialectic.js", "eisv-charts.js", "timeline.js",
-        "residents.js", "fleet-metrics.js", "watcher.js",
+        "residents.js", "fleet-metrics.js", "watcher.js", "sentinel.js",
         "styles.css", "dashboard.js",
         "phase.js",
     ]
@@ -1330,6 +1330,136 @@ async def http_watcher_summary(request):
     summary = _watcher_summary_from_rows(rows)
     summary["success"] = True
     summary["findings_path"] = str(path)
+    return JSONResponse(summary)
+
+
+_SENTINEL_DEFAULT_WINDOW_HOURS = 24
+_SENTINEL_DEFAULT_RECENT_LIMIT = 50
+
+
+def _sentinel_summary_from_events(
+    events, now=None, window_hours=_SENTINEL_DEFAULT_WINDOW_HOURS,
+    recent_limit=_SENTINEL_DEFAULT_RECENT_LIMIT,
+):
+    """Aggregate sentinel_finding events into dashboard-ready shape.
+
+    Pure function so tests can feed parsed-dict events and assert on the
+    output without standing up Starlette or the event_detector singleton.
+
+    Unlike Watcher, sentinel findings have no open/closed lifecycle — they're
+    transient fleet-state signals. The aggregator surfaces severity + violation
+    class counts and a chronological stream, not an actionable queue.
+    """
+    from collections import Counter, defaultdict
+    from datetime import datetime, timedelta, timezone
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=window_hours)
+
+    def _parse_ts(value):
+        if not value:
+            return None
+        try:
+            if isinstance(value, str) and value.endswith("Z"):
+                value = value[:-1] + "+00:00"
+            return datetime.fromisoformat(value)
+        except Exception:
+            return None
+
+    windowed = []
+    for e in events:
+        ts = _parse_ts(e.get("timestamp"))
+        if ts is None:
+            # Malformed timestamp — count toward totals but skip window check
+            windowed.append((None, e))
+            continue
+        if ts >= window_start:
+            windowed.append((ts, e))
+
+    by_severity = Counter()
+    by_class_counts = Counter()
+    by_class_severity = defaultdict(Counter)
+
+    for _ts, e in windowed:
+        severity = str(e.get("severity") or "?")
+        vclass = str(e.get("violation_class") or "?")
+        by_severity[severity] += 1
+        by_class_counts[vclass] += 1
+        by_class_severity[vclass][severity] += 1
+
+    by_violation_class = [
+        {
+            "violation_class": vc,
+            "count": by_class_counts[vc],
+            "by_severity": dict(by_class_severity[vc]),
+        }
+        for vc in sorted(by_class_counts, key=lambda v: (-by_class_counts[v], v))
+    ]
+
+    # Recent stream — newest first. Events with bad timestamps sort last but
+    # are still included so operators can see they exist.
+    def _sort_key(pair):
+        ts, _ = pair
+        return ts or datetime.min.replace(tzinfo=timezone.utc)
+
+    recent_sorted = sorted(windowed, key=_sort_key, reverse=True)
+    recent = [
+        {
+            "timestamp": e.get("timestamp"),
+            "severity": e.get("severity"),
+            "violation_class": e.get("violation_class"),
+            "finding_type": e.get("finding_type"),
+            "message": e.get("message"),
+            "agent_id": e.get("agent_id"),
+            "event_id": e.get("event_id"),
+        }
+        for _ts, e in recent_sorted[:recent_limit]
+    ]
+
+    return {
+        "total": len(windowed),
+        "by_severity": dict(by_severity),
+        "by_violation_class": by_violation_class,
+        "recent": recent,
+        "window_hours": window_hours,
+        "generated_at": now.isoformat(),
+    }
+
+
+async def http_sentinel_summary(request):
+    """GET /v1/sentinel/summary — aggregate recent sentinel_finding events
+    for the dashboard panel.
+
+    Reads from event_detector's in-memory ring buffer (same source that
+    powers the live event stream). Transient across governance-mcp
+    restarts by design — sentinel findings are fleet-state signals, not a
+    historical backlog."""
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    if not _check_http_auth(request, http_api_token=http_api_token):
+        return _http_unauthorized()
+
+    try:
+        window_hours = int(request.query_params.get("window_hours", _SENTINEL_DEFAULT_WINDOW_HOURS))
+    except ValueError:
+        window_hours = _SENTINEL_DEFAULT_WINDOW_HOURS
+    window_hours = max(1, min(window_hours, 24 * 30))
+
+    try:
+        recent_limit = int(request.query_params.get("limit", _SENTINEL_DEFAULT_RECENT_LIMIT))
+    except ValueError:
+        recent_limit = _SENTINEL_DEFAULT_RECENT_LIMIT
+    recent_limit = max(1, min(recent_limit, 500))
+
+    from src.event_detector import event_detector
+    events = event_detector.get_recent_events(
+        event_type="sentinel_finding", limit=500,
+    )
+
+    summary = _sentinel_summary_from_events(
+        events, window_hours=window_hours, recent_limit=recent_limit,
+    )
+    summary["success"] = True
     return JSONResponse(summary)
 
 
@@ -2026,6 +2156,7 @@ def register_http_routes(
     app.routes.append(Route("/v1/metrics/series", http_get_metrics, methods=["GET"]))
     app.routes.append(Route("/v1/metrics/catalog", http_get_metrics_catalog, methods=["GET"]))
     app.routes.append(Route("/v1/watcher/summary", http_watcher_summary, methods=["GET"]))
+    app.routes.append(Route("/v1/sentinel/summary", http_sentinel_summary, methods=["GET"]))
     app.routes.append(Route("/api/activity", http_activity, methods=["GET"]))
     app.routes.append(Route("/api/incidents", http_incidents, methods=["GET"]))
     app.routes.append(Route("/v1/residents", http_residents, methods=["GET"]))

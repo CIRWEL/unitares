@@ -48,6 +48,9 @@ class TestDashboardStaticAllowlist:
     def test_fleet_metrics_is_allowed(self):
         assert "fleet-metrics.js" in _load_allowlist()
 
+    def test_sentinel_is_allowed(self):
+        assert "sentinel.js" in _load_allowlist()
+
     def test_every_index_html_reference_is_allowed(self):
         referenced = _scripts_referenced_by_index_html()
         allowed = set(_load_allowlist())
