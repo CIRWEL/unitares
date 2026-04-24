@@ -89,8 +89,13 @@ def load_json_state(path: Path) -> dict:
 
 
 def save_json_state(path: Path, state: dict) -> None:
-    """Save JSON state atomically."""
-    atomic_write(path, json.dumps(state))
+    """Save JSON state atomically.
+
+    Non-JSON-serializable values (datetime, Path, custom objects) are coerced
+    to their str() representation rather than raising TypeError — matching the
+    defensive behavior that Vigil's original save_state override provided.
+    """
+    atomic_write(path, json.dumps(state, default=str))
 
 
 def parse_continuity_token(token: str) -> dict | None:

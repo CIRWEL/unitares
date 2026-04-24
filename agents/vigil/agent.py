@@ -25,11 +25,9 @@ What it does each cycle:
 
 import asyncio
 
-import json
 import os
 import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -43,7 +41,6 @@ import httpx
 from agents.common.config import GOV_MCP_URL
 from unitares_sdk.agent import CycleResult, GovernanceAgent
 from unitares_sdk.client import GovernanceClient
-from unitares_sdk.errors import GovernanceError, VerdictError
 from unitares_sdk.utils import notify
 from agents.common.findings import post_finding, compute_fingerprint
 from agents.vigil.checks.registry import load_plugins
