@@ -223,3 +223,103 @@ def _emit_concurrent_binding_event(agent_id: str, live_rows: List[Any]) -> None:
             asyncio.ensure_future(_broadcast())
         except Exception:
             pass
+
+
+# -----------------------------------------------------------------------------
+# Sweeper — marks bindings stale once their last_seen falls outside the live
+# window. Audit-only v1 does not act on stale_at, but populating it lets the
+# diagnose view and future enforcement (v2) distinguish "no longer live" from
+# "never existed."
+# -----------------------------------------------------------------------------
+
+
+async def sweep_stale_bindings() -> int:
+    """Mark bindings stale when last_seen exceeds LIVE_WINDOW_SECONDS.
+
+    Returns the number of rows marked stale. Safe to call concurrently; the
+    UPDATE is idempotent and narrows on `stale_at IS NULL`.
+    """
+    try:
+        from src.db import get_db
+        db = get_db()
+        async with db.acquire() as conn:
+            updated = await conn.execute(
+                f"""
+                UPDATE core.agent_process_bindings
+                SET stale_at = NOW()
+                WHERE stale_at IS NULL
+                  AND last_seen <= NOW() - INTERVAL '{LIVE_WINDOW_SECONDS} seconds'
+                """
+            )
+        # asyncpg execute() returns a status string like "UPDATE 17"; parse the
+        # count if present, otherwise fall back to 0.
+        try:
+            return int((updated or "UPDATE 0").split()[-1])
+        except Exception:
+            return 0
+    except Exception as e:
+        logger.debug(f"[PROCESS_BINDING] sweep_stale_bindings failed: {e}")
+        return 0
+
+
+async def get_live_bindings(agent_id: str) -> List[Dict[str, Any]]:
+    """Return all live bindings for an agent, most-recent first.
+
+    "Live" = `stale_at IS NULL AND last_seen within LIVE_WINDOW_SECONDS`.
+    Returns an empty list on DB failure — callers surface that as "no
+    bindings reported" rather than raising.
+    """
+    try:
+        from src.db import get_db
+        db = get_db()
+        async with db.acquire() as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT host_id, pid, pid_start_time, transport,
+                       tty, ppid, anchor_path_hash, client_session_id,
+                       onboard_ts, last_seen
+                FROM core.agent_process_bindings
+                WHERE agent_id = $1
+                  AND stale_at IS NULL
+                  AND last_seen > NOW() - INTERVAL '{LIVE_WINDOW_SECONDS} seconds'
+                ORDER BY last_seen DESC
+                """,
+                agent_id,
+            )
+        return [
+            {
+                "host_id": r["host_id"],
+                "pid": r["pid"],
+                "pid_start_time": r["pid_start_time"],
+                "transport": r["transport"],
+                "tty": r["tty"],
+                "ppid": r["ppid"],
+                "anchor_path_hash": r["anchor_path_hash"],
+                "client_session_id": r["client_session_id"],
+                "onboard_ts": r["onboard_ts"].isoformat() if r["onboard_ts"] else None,
+                "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.debug(f"[PROCESS_BINDING] get_live_bindings failed: {e}")
+        return []
+
+
+async def process_binding_sweeper_task() -> None:
+    """Periodic sweeper — runs every LIVE_WINDOW_SECONDS.
+
+    Registered from src/background_tasks.py alongside the other periodic
+    tasks. Cadence matches the live-window: a binding that did not refresh
+    in the last window is marked stale on the next tick.
+    """
+    import asyncio
+    await asyncio.sleep(30.0)  # startup delay, match matview/partition pattern
+    while True:
+        try:
+            n = await sweep_stale_bindings()
+            if n:
+                logger.info(f"[PROCESS_BINDING] swept {n} stale binding(s)")
+        except Exception as e:
+            logger.debug(f"[PROCESS_BINDING] sweeper tick failed: {e}")
+        await asyncio.sleep(LIVE_WINDOW_SECONDS)

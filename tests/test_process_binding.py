@@ -222,6 +222,31 @@ async def test_record_binding_swallows_db_errors(fp):
 
 
 @pytest.mark.asyncio
+async def test_sweep_stale_bindings_returns_row_count():
+    """Sweeper parses asyncpg's 'UPDATE N' status string."""
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value="UPDATE 42")
+    acquire_cm = AsyncMock()
+    acquire_cm.__aenter__.return_value = conn
+    acquire_cm.__aexit__.return_value = False
+    db = MagicMock()
+    db.acquire = MagicMock(return_value=acquire_cm)
+    with patch("src.db.get_db", return_value=db):
+        count = await process_binding.sweep_stale_bindings()
+    assert count == 42
+
+
+@pytest.mark.asyncio
+async def test_sweep_stale_bindings_swallows_errors():
+    """Sweeper failure must not propagate — next tick retries."""
+    db = MagicMock()
+    db.acquire = MagicMock(side_effect=RuntimeError("boom"))
+    with patch("src.db.get_db", return_value=db):
+        count = await process_binding.sweep_stale_bindings()
+    assert count == 0
+
+
+@pytest.mark.asyncio
 async def test_record_binding_pid_reuse_disambiguated_by_start_time(fp):
     """Same host+pid with different pid_start_time = different contexts.
 
@@ -239,3 +264,112 @@ async def test_record_binding_pid_reuse_disambiguated_by_start_time(fp):
          patch.object(process_binding, "_emit_concurrent_binding_event", emit):
         await process_binding.record_binding_bg("agent-1", fp)
     emit.assert_called_once()
+
+
+# -----------------------------------------------------------------------------
+# get_live_bindings + list_process_bindings MCP tool
+# -----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_live_bindings_returns_serialized_rows():
+    """Helper returns dict-per-row with ISO-formatted timestamps."""
+    from datetime import datetime, timezone
+
+    ts = datetime(2026, 4, 24, 1, 2, 3, tzinfo=timezone.utc)
+    row = {
+        "host_id": "h1", "pid": 100, "pid_start_time": 1.0,
+        "transport": "http", "tty": "/dev/ttys0", "ppid": 1,
+        "anchor_path_hash": None, "client_session_id": None,
+        "onboard_ts": ts, "last_seen": ts,
+    }
+    conn = AsyncMock()
+    conn.fetch = AsyncMock(return_value=[row])
+    acquire_cm = AsyncMock()
+    acquire_cm.__aenter__.return_value = conn
+    acquire_cm.__aexit__.return_value = False
+    db = MagicMock()
+    db.acquire = MagicMock(return_value=acquire_cm)
+
+    with patch("src.db.get_db", return_value=db):
+        bindings = await process_binding.get_live_bindings("agent-1")
+    assert len(bindings) == 1
+    assert bindings[0]["host_id"] == "h1"
+    assert bindings[0]["last_seen"] == "2026-04-24T01:02:03+00:00"
+
+
+@pytest.mark.asyncio
+async def test_get_live_bindings_returns_empty_on_db_failure():
+    db = MagicMock()
+    db.acquire = MagicMock(side_effect=RuntimeError("nope"))
+    with patch("src.db.get_db", return_value=db):
+        result = await process_binding.get_live_bindings("agent-1")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_list_process_bindings_requires_agent():
+    """Tool errors when neither agent_uuid nor a bound session is present."""
+    from src.mcp_handlers.identity import process_binding_handler
+
+    with patch.object(
+        process_binding_handler, "get_bound_agent_id", return_value=None
+    ):
+        result = await process_binding_handler.handle_list_process_bindings({})
+    # error_response returns a Sequence[TextContent]; just confirm it is non-empty.
+    assert result
+    text = result[0].text
+    assert "agent_uuid" in text.lower() or "bound session" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_list_process_bindings_flags_concurrent_collision():
+    """Tool sets concurrent_binding_detected=true when ≥2 distinct contexts."""
+    from src.mcp_handlers.identity import process_binding_handler
+
+    bindings = [
+        {"host_id": "h1", "pid": 100, "pid_start_time": 1.0, "transport": "http",
+         "tty": None, "ppid": None, "anchor_path_hash": None,
+         "client_session_id": None, "onboard_ts": None, "last_seen": None},
+        {"host_id": "h1", "pid": 200, "pid_start_time": 2.0, "transport": "stdio",
+         "tty": None, "ppid": None, "anchor_path_hash": None,
+         "client_session_id": None, "onboard_ts": None, "last_seen": None},
+    ]
+    with patch.object(
+        process_binding_handler,
+        "get_live_bindings",
+        AsyncMock(return_value=bindings),
+    ):
+        result = await process_binding_handler.handle_list_process_bindings(
+            {"agent_uuid": "agent-1"}
+        )
+    import json
+    payload = json.loads(result[0].text)
+    assert payload["live_binding_count"] == 2
+    assert payload["concurrent_binding_detected"] is True
+    assert "note" in payload
+
+
+@pytest.mark.asyncio
+async def test_list_process_bindings_single_binding_not_flagged():
+    """One live binding → concurrent_binding_detected=false, no note."""
+    from src.mcp_handlers.identity import process_binding_handler
+
+    bindings = [
+        {"host_id": "h1", "pid": 100, "pid_start_time": 1.0, "transport": "http",
+         "tty": None, "ppid": None, "anchor_path_hash": None,
+         "client_session_id": None, "onboard_ts": None, "last_seen": None},
+    ]
+    with patch.object(
+        process_binding_handler,
+        "get_live_bindings",
+        AsyncMock(return_value=bindings),
+    ):
+        result = await process_binding_handler.handle_list_process_bindings(
+            {"agent_uuid": "agent-1"}
+        )
+    import json
+    payload = json.loads(result[0].text)
+    assert payload["live_binding_count"] == 1
+    assert payload["concurrent_binding_detected"] is False
+    assert "note" not in payload
