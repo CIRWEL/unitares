@@ -91,10 +91,17 @@ class GovernanceAgent:
         spawn_reason: str | None = None,
         persistent: bool = False,
         refuse_fresh_onboard: bool = False,
+        cycle_timeout_seconds: float | None = None,
     ):
         self.name = name
         self.mcp_url = mcp_url
         self.timeout = timeout
+        # Hard cap on a single cycle (connect + run_cycle + checkin). Used by
+        # residents whose cycles can stall on an MCP session that never
+        # finishes initialize. None = unbounded. Vigil and Sentinel
+        # previously implemented this as an asyncio.wait_for wrapper in
+        # their own run_once; hoisted here so subclasses don't reinvent it.
+        self.cycle_timeout_seconds = cycle_timeout_seconds
         self.notify_on_error = notify_on_error
         # When True, stamp the "persistent" tag after fresh onboard so
         # auto_archive_orphan_agents (is_agent_protected in agent_lifecycle.py)
@@ -142,11 +149,20 @@ class GovernanceAgent:
     # --- Lifecycle ---
 
     async def run_once(self) -> None:
-        """Single cycle: connect -> ensure_identity -> run_cycle -> checkin -> disconnect."""
-        async with GovernanceClient(mcp_url=self.mcp_url, timeout=self.timeout) as client:
-            await self._ensure_identity(client)
-            result = await self.run_cycle(client)
-            await self._handle_cycle_result(client, result)
+        """Single cycle: connect -> ensure_identity -> run_cycle -> checkin -> disconnect.
+
+        Bounded by ``cycle_timeout_seconds`` if set.
+        """
+        async def _cycle() -> None:
+            async with GovernanceClient(mcp_url=self.mcp_url, timeout=self.timeout) as client:
+                await self._ensure_identity(client)
+                result = await self.run_cycle(client)
+                await self._handle_cycle_result(client, result)
+
+        if self.cycle_timeout_seconds is None:
+            await _cycle()
+        else:
+            await asyncio.wait_for(_cycle(), self.cycle_timeout_seconds)
 
     async def run_forever(
         self, interval: int = 60, heartbeat_interval: int = 1800

@@ -430,3 +430,39 @@ class TestSyncFromClient:
 
         with pytest.raises(IdentityDriftError):
             agent._sync_from_client(client)
+
+
+class TestCycleTimeout:
+    @pytest.mark.asyncio
+    async def test_cycle_timeout_fires(self):
+        """run_once raises TimeoutError if the cycle exceeds cycle_timeout_seconds."""
+
+        class SlowAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                await asyncio.sleep(10.0)
+                return CycleResult.simple("never reached")
+
+        agent = SlowAgent(
+            name="Slow",
+            mcp_url="http://127.0.0.1:9999/mcp/",
+            cycle_timeout_seconds=0.05,
+        )
+        # Bypass network: patch the client context manager and identity
+        with patch("unitares_sdk.agent.GovernanceClient") as mock_cm:
+            mock_client = AsyncMock()
+            mock_cm.return_value.__aenter__.return_value = mock_client
+            mock_cm.return_value.__aexit__.return_value = None
+            with patch.object(SlowAgent, "_ensure_identity", AsyncMock()):
+                with pytest.raises(asyncio.TimeoutError):
+                    await agent.run_once()
+
+    @pytest.mark.asyncio
+    async def test_cycle_timeout_none_means_no_bound(self):
+        """cycle_timeout_seconds=None disables the wrapper (default)."""
+
+        class QuickAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("done")
+
+        agent = QuickAgent(name="Quick", mcp_url="http://127.0.0.1:9999/mcp/")
+        assert agent.cycle_timeout_seconds is None
