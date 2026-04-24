@@ -130,6 +130,8 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                     "last": meta.last_update[:10] if meta.last_update else None,
                     "last_update": meta.last_update,
                     "trust_tier": getattr(meta, 'trust_tier', None),
+                    "parent_agent_id": getattr(meta, 'parent_agent_id', None),
+                    "spawn_reason": getattr(meta, 'spawn_reason', None),
                 })
             # Sort: labeled first, then by most recent activity
             agents.sort(key=lambda x: (0 if x.get("label") else 1, -(x.get("updates") or 0), x.get("last_update", "") or ""), reverse=False)
@@ -156,6 +158,8 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                         "last": caller_meta.last_update[:10] if caller_meta.last_update else None,
                         "last_update": caller_meta.last_update,
                         "trust_tier": getattr(caller_meta, 'trust_tier', None),
+                        "parent_agent_id": getattr(caller_meta, 'parent_agent_id', None),
+                        "spawn_reason": getattr(caller_meta, 'spawn_reason', None),
                         "you": True,
                     })
 
@@ -280,6 +284,8 @@ async def handle_list_agents(arguments: ToolArgumentsDict) -> Sequence[TextConte
                 "total_updates": meta.total_updates,
                 "tags": meta.tags.copy() if meta.tags else [],
                 "notes": meta.notes if meta.notes else "",
+                "parent_agent_id": getattr(meta, 'parent_agent_id', None),
+                "spawn_reason": getattr(meta, 'spawn_reason', None),
             }
 
             # Lazy load metrics only if requested (optimization)
