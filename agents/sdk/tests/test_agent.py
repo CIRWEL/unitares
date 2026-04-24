@@ -603,7 +603,7 @@ class TestOnAfterCheckin:
         mock_client.checkin = AsyncMock(
             return_value=CheckinResult(
                 success=True, verdict="proceed", coherence=0.9,
-                guidance="", metrics={}, _raw={},
+                guidance="", metrics={},
             )
         )
         await agent._handle_cycle_result(mock_client, CycleResult.simple("did work"))
@@ -646,7 +646,7 @@ class TestOnAfterCheckin:
         mock_client.checkin = AsyncMock(
             return_value=CheckinResult(
                 success=True, verdict="pause", coherence=0.5,
-                guidance="slow down", metrics={}, _raw={},
+                guidance="slow down", metrics={},
             )
         )
         with pytest.raises(VerdictError):
@@ -670,8 +670,30 @@ class TestOnAfterCheckin:
         mock_client.checkin = AsyncMock(
             return_value=CheckinResult(
                 success=True, verdict="proceed", coherence=0.9,
-                guidance="", metrics={}, _raw={},
+                guidance="", metrics={},
             )
         )
         # Must NOT raise: hook failure is swallowed, verdict is proceed so no VerdictError.
         await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+    @pytest.mark.asyncio
+    async def test_hook_cancelled_error_propagates(self):
+        """CancelledError from on_after_checkin is NOT swallowed (inherits from BaseException)."""
+
+        class CancelledHookAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_after_checkin(self, client, checkin_result, cycle_result):
+                raise asyncio.CancelledError("cancelled mid-hook")
+
+        agent = CancelledHookAgent(name="Cancelled", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="proceed", coherence=0.9,
+                guidance="", metrics={},
+            )
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))

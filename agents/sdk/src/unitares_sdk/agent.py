@@ -362,7 +362,7 @@ class GovernanceAgent:
         try:
             await self.on_after_checkin(client, checkin_result, result)
         except Exception as e:
-            logger.warning("%s: on_after_checkin raised: %s", self.name, e)
+            logger.warning("%s: on_after_checkin raised: %r", self.name, e)
 
         # Surface verdict
         verdict = checkin_result.verdict
