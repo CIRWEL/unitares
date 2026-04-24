@@ -1,13 +1,24 @@
 """
-UNITARES Governance Core - Mathematical Foundation
+UNITARES Governance Core — EISV ODE dynamics (secondary / diagnostic path)
 
-This module contains the canonical implementation of UNITARES Phase-3
-thermodynamic dynamics. Both the production UNITARES system and the
-research unitaires system use this as their mathematical foundation.
+Despite the name, this is **not the primary verdict-driving path** in the
+runtime pipeline. It implements the coupled-ODE evolution of the four EISV
+variables (E, I, S, V) with contraction-style stability analysis, running
+in parallel for analysis and as a warmup-phase fallback.
 
-Version: 2.0
-Date: November 22, 2025
-Status: Active
+Primary verdict-driving path: Behavioral EISV in `src/behavioral_state.py`
+and `src/behavioral_assessment.py` — EMA-smoothed observations with
+per-agent Welford baselines; no ODE, no universal attractor.
+
+Governance verdicts normally follow behavioral EISV once per-agent
+confidence is established. This ODE is the fallback when behavioral
+confidence is still insufficient (early check-ins) or is explicitly
+disabled via ``UNITARES_DISABLE_ODE=1``.
+
+See README §"How state works (EISV)" and docs/UNIFIED_ARCHITECTURE.md for
+the full pipeline (drift → entropy, calibration, circuit breaker, dialectic).
+
+Authoritative version is ``__version__`` at the end of this module.
 """
 
 from .dynamics import (
