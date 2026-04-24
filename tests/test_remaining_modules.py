@@ -558,6 +558,7 @@ class TestGenerateActionableFeedback:
 # ---------------------------------------------------------------------------
 from src.mcp_handlers.support.llm_delegation import (
     _get_default_model,
+    _wants_reasoning_effort_none,
     call_local_llm,
     synthesize_results,
     explain_anomaly,
@@ -628,6 +629,61 @@ class TestCallLocalLLM:
              patch("src.mcp_handlers.support.llm_delegation._get_ollama_client", return_value=mock_client):
             result = await call_local_llm("test")
             assert result is None
+
+    @pytest.mark.asyncio
+    async def test_qwen3_injects_reasoning_effort_none(self):
+        """qwen3.x models must receive reasoning.effort=none so thinking-mode
+        output isn't hidden by /v1/chat/completions."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content="ok"))]
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch("src.mcp_handlers.support.llm_delegation.OPENAI_AVAILABLE", True), \
+             patch("src.mcp_handlers.support.llm_delegation._get_ollama_client", return_value=mock_client):
+            await call_local_llm("test", model="qwen3.6:27b-coding-nvfp4")
+
+        kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert kwargs.get("extra_body") == {"reasoning": {"effort": "none"}}
+
+    @pytest.mark.asyncio
+    async def test_gemma4_does_not_inject_reasoning(self):
+        """gemma4 and other non-thinking models must not receive extra_body,
+        which would be a no-op at best and a 400 at worst on some backends."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content="ok"))]
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch("src.mcp_handlers.support.llm_delegation.OPENAI_AVAILABLE", True), \
+             patch("src.mcp_handlers.support.llm_delegation._get_ollama_client", return_value=mock_client):
+            await call_local_llm("test", model="gemma4:latest")
+
+        kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert "extra_body" not in kwargs
+
+
+class TestWantsReasoningEffortNone:
+    @pytest.mark.parametrize("model", [
+        "qwen3.6:27b-coding-nvfp4",
+        "qwen3.6:27b-coding-mxfp8",
+        "qwen3-coder-next:latest",
+        "Qwen3-Next-80B",
+        "qwen-3.6-27b",
+    ])
+    def test_qwen3_family_opts_in(self, model):
+        assert _wants_reasoning_effort_none(model) is True
+
+    @pytest.mark.parametrize("model", [
+        "gemma4:latest",
+        "qwen2.5:7b",
+        "deepseek-r1:14b",
+        "llama3:8b",
+        "",
+        None,
+    ])
+    def test_other_families_opt_out(self, model):
+        assert _wants_reasoning_effort_none(model) is False
 
 
 class TestSynthesizeResults:
