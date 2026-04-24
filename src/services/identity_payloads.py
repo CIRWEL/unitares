@@ -36,6 +36,9 @@ def build_identity_response_data(
             "display_name": display_name,
         },
     }
+    # S1-a: surface ownership_proof_version at top level (see build_onboard_response_data).
+    if continuity_support.get("ownership_proof_version") is not None:
+        response_data["ownership_proof_version"] = continuity_support["ownership_proof_version"]
     if model_type:
         response_data["model_type"] = model_type
     if continuity_token:
@@ -209,6 +212,11 @@ def build_onboard_response_data(
         "date_context": {"date": datetime.now().strftime("%Y-%m-%d"), "source": "mcp-server"},
         "next_step": "Call process_agent_update with response_text describing your work",
     }
+    # S1-a (2026-04-24): surface ownership_proof_version at top level so log
+    # consumers and dashboards don't have to dig into the token payload or
+    # rely on verbose=True. See docs/ontology/s1-continuity-token-retirement.md §4.5.
+    if continuity_support.get("ownership_proof_version") is not None:
+        result["ownership_proof_version"] = continuity_support["ownership_proof_version"]
 
     if verbose:
         result["welcome_message"] = welcome_message

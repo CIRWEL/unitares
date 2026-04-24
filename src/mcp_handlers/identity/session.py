@@ -18,19 +18,77 @@ from src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
+_S1_DEPRECATION_SUNSET = "2026-Q4"  # operator-set placeholder; see s1 doc §11
 _PIN_TTL = 1800  # 30 minutes — refresh on use
-_CONTINUITY_TTL = 30 * 24 * 3600  # 30 days
+# S1-a (2026-04-24): shrunk from 30 days to 1 hour as part of continuity_token
+# retirement-via-narrowing. See docs/ontology/s1-continuity-token-retirement.md §4.1.
+# TTL-only is not process-instance binding; this is honestly "performative, narrowed".
+# A′ (PID/nonce binding) is the follow-on for actual earned process-scope.
+_CONTINUITY_TTL = 3600  # 1 hour
+_OWNERSHIP_PROOF_VERSION = 1  # bump to 2 when A′ lands; to 3 when R1-composite ships
 
 
 def continuity_token_support_status() -> Dict[str, Any]:
     """Return continuity token support details for diagnostics."""
     if os.getenv("UNITARES_CONTINUITY_TOKEN_SECRET"):
-        return {"enabled": True, "secret_source": "UNITARES_CONTINUITY_TOKEN_SECRET"}
+        return {
+            "enabled": True,
+            "secret_source": "UNITARES_CONTINUITY_TOKEN_SECRET",
+            "ownership_proof_version": _OWNERSHIP_PROOF_VERSION,
+        }
     if os.getenv("UNITARES_HTTP_API_TOKEN"):
-        return {"enabled": True, "secret_source": "UNITARES_HTTP_API_TOKEN"}
+        return {
+            "enabled": True,
+            "secret_source": "UNITARES_HTTP_API_TOKEN",
+            "ownership_proof_version": _OWNERSHIP_PROOF_VERSION,
+        }
     if os.getenv("UNITARES_API_TOKEN"):
-        return {"enabled": True, "secret_source": "UNITARES_API_TOKEN"}
+        return {
+            "enabled": True,
+            "secret_source": "UNITARES_API_TOKEN",
+            "ownership_proof_version": _OWNERSHIP_PROOF_VERSION,
+        }
     return {"enabled": False, "secret_source": None}
+
+
+def build_token_deprecation_block(
+    *,
+    used_token_for_resume: bool,
+    token_issued_at: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return a deprecation-warning dict for cross-instance resume, or None.
+
+    S1-a (2026-04-24): onboard() called with continuity_token (without
+    force_new=true) is the retired cross-process-instance resume path. During
+    the grace period the server still accepts these but emits a warning in
+    the response so callers can migrate.
+
+    Intra-session uses (mid-session identity() rebind, request auth via
+    continuity_token on process_agent_update, etc.) are NOT deprecated —
+    they're role (3) from s1 doc §1, the anti-hijack proof-of-ownership
+    surface that Part-C relies on.
+
+    Args:
+        used_token_for_resume: True iff onboard was called with
+            continuity_token and without force_new=true.
+        token_issued_at: Token's `iat` claim. Optional; carried through for
+            grace-period telemetry if the caller has it handy.
+    """
+    if not used_token_for_resume:
+        return None
+    block: Dict[str, Any] = {
+        "field": "continuity_token",
+        "severity": "warning",
+        "message": (
+            "cross-process-instance resume via continuity_token is deprecated; "
+            "declare lineage via parent_agent_id on force_new=true. "
+            "See docs/ontology/s1-continuity-token-retirement.md."
+        ),
+        "sunset": _S1_DEPRECATION_SUNSET,
+    }
+    if token_issued_at is not None:
+        block["token_issued_at"] = int(token_issued_at)
+    return block
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -70,6 +128,7 @@ def create_continuity_token(
     now = int(time.time())
     payload = {
         "v": 1,
+        "opv": _OWNERSHIP_PROOF_VERSION,  # S1-a: forward-compat ownership-proof schema version
         "sid": str(client_session_id),
         "aid": str(agent_uuid),
         "mf": _normalize_pin_model_type(model_type),
@@ -81,6 +140,35 @@ def create_continuity_token(
     payload_b64 = _b64url_encode(payload_json)
     sig_b64 = _b64url_encode(hmac.new(secret, payload_b64.encode(), hashlib.sha256).digest())
     return f"v1.{payload_b64}.{sig_b64}"
+
+
+def extract_token_iat(token: str) -> Optional[int]:
+    """Extract the `iat` (issued-at) claim from a continuity token.
+
+    Signature-verified like `extract_token_agent_uuid`; does NOT check expiry.
+    Returned for grace-period telemetry under S1-a (docs/ontology/
+    s1-continuity-token-retirement.md §6) — callers need `iat` to compute
+    token lifetime at accept-time.
+    """
+    if not token or not isinstance(token, str):
+        return None
+    secret = _get_continuity_secret()
+    if not secret:
+        return None
+    try:
+        version, payload_b64, sig_b64 = token.split(".", 2)
+        if version != "v1":
+            return None
+        expected_sig = _b64url_encode(hmac.new(secret, payload_b64.encode(), hashlib.sha256).digest())
+        if not hmac.compare_digest(expected_sig, sig_b64):
+            return None
+        payload = json.loads(_b64url_decode(payload_b64).decode())
+        iat = payload.get("iat")
+        if iat is None:
+            return None
+        return int(iat)
+    except Exception:
+        return None
 
 
 def extract_token_agent_uuid(token: str) -> Optional[str]:

@@ -43,7 +43,9 @@ from .session import (
     create_continuity_token,
     resolve_continuity_token,
     extract_token_agent_uuid,
+    extract_token_iat,
     continuity_token_support_status,
+    build_token_deprecation_block,
 )
 
 # --- identity_persistence ---
@@ -1663,6 +1665,36 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         system_activity=_get_system_evidence() if verbose else None,
         tool_mode_info=tool_mode_info,
     )
+
+    # S1-a (2026-04-24): grace-period deprecation surface. onboard() called
+    # with continuity_token AND without force_new=true is the retired
+    # cross-process-instance resume path. Emit a warning in the response and
+    # a grace-period audit event so callers can migrate and operators can
+    # observe the tail. See docs/ontology/s1-continuity-token-retirement.md §4.3 / §6.
+    # `force_new` is set once at the top of this handler (L1180) from arguments
+    # and never reassigned — signal is honest.
+    _caller_token = arguments.get("continuity_token")
+    if _caller_token and not force_new:
+        _issued_at = extract_token_iat(str(_caller_token))
+        _dep_block = build_token_deprecation_block(
+            used_token_for_resume=True,
+            token_issued_at=_issued_at,
+        )
+        if _dep_block is not None:
+            result.setdefault("deprecations", []).append(_dep_block)
+        try:
+            import time as _time
+            from src.audit_log import audit_logger as _audit
+            _audit.log_continuity_token_deprecated_accept(
+                agent_id=response_agent_id,
+                caller_channel=client_hint,
+                caller_model_type=model_type,
+                issued_at=_issued_at if _issued_at is not None else 0,
+                accepted_at=int(_time.time()),
+                agent_uuid=agent_uuid,
+            )
+        except Exception as _audit_err:
+            logger.debug(f"[S1-a] deprecated-accept audit write failed (non-fatal): {_audit_err}")
 
     # Temporal narrator — contextual time awareness (silence by default)
     try:
