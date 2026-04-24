@@ -12,6 +12,11 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        # Don't persist GITHUB_TOKEN as a git credential, otherwise pip's
+        # `git clone` of unitares-core (or any other public repo) sends it
+        # as a 401-eliciting auth header and falls back to a no-TTY prompt.
+        persist-credentials: false
 
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
@@ -52,6 +57,11 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        # Don't persist GITHUB_TOKEN as a git credential, otherwise pip's
+        # `git clone` of unitares-core (or any other public repo) sends it
+        # as a 401-eliciting auth header and falls back to a no-TTY prompt.
+        persist-credentials: false
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
