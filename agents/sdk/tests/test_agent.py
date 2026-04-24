@@ -630,7 +630,7 @@ class TestOnAfterCheckin:
 
     @pytest.mark.asyncio
     async def test_hook_runs_before_verdict_error_on_pause(self):
-        """Hook runs on pause verdict before VerdictError is raised, so state trackers see it."""
+        """Hook runs on pause verdict before VerdictError is raised (when on_verdict_pause default False)."""
         captured: dict = {"called": False, "verdict": None}
 
         class HookedAgent(GovernanceAgent):
@@ -709,7 +709,7 @@ class TestOnVerdictPause:
             async def run_cycle(self, client):
                 return CycleResult.simple("work")
 
-            async def on_verdict_pause(self, client, cycle_result, checkin_result):
+            async def on_verdict_pause(self, client, checkin_result, cycle_result):
                 attempts.append("recovery called")
                 await client.self_recovery(action="quick")
                 return True  # request retry
@@ -742,7 +742,7 @@ class TestOnVerdictPause:
             async def run_cycle(self, client):
                 return CycleResult.simple("work")
 
-            async def on_verdict_pause(self, client, cycle_result, checkin_result):
+            async def on_verdict_pause(self, client, checkin_result, cycle_result):
                 return False
 
         agent = PassiveAgent(name="Passive", mcp_url="http://127.0.0.1:9999/mcp/")
@@ -765,7 +765,7 @@ class TestOnVerdictPause:
             async def run_cycle(self, client):
                 return CycleResult.simple("work")
 
-            async def on_verdict_pause(self, client, cycle_result, checkin_result):
+            async def on_verdict_pause(self, client, checkin_result, cycle_result):
                 return True  # force retry
 
             async def on_after_checkin(self, client, checkin_result, cycle_result):
@@ -819,7 +819,7 @@ class TestOnVerdictPause:
             async def run_cycle(self, client):
                 return CycleResult.simple("work")
 
-            async def on_verdict_pause(self, client, cycle_result, checkin_result):
+            async def on_verdict_pause(self, client, checkin_result, cycle_result):
                 raise RuntimeError("recovery exploded")
 
         agent = BrokenRecoveryAgent(name="Broken", mcp_url="http://127.0.0.1:9999/mcp/")
@@ -843,7 +843,7 @@ class TestOnVerdictPause:
             async def run_cycle(self, client):
                 return CycleResult.simple("work")
 
-            async def on_verdict_pause(self, client, cycle_result, checkin_result):
+            async def on_verdict_pause(self, client, checkin_result, cycle_result):
                 raise asyncio.CancelledError("cancelled mid-recovery")
 
         agent = CancelledRecoveryAgent(name="Cancelled", mcp_url="http://127.0.0.1:9999/mcp/")
@@ -856,3 +856,37 @@ class TestOnVerdictPause:
         )
         with pytest.raises(asyncio.CancelledError):
             await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+    @pytest.mark.asyncio
+    async def test_retry_also_pauses_raises_verdict_error_no_second_retry(self):
+        """When the retry checkin also returns pause, VerdictError is raised — no second retry."""
+        hook_calls: list = []
+
+        class StubbornRecoveryAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_verdict_pause(self, client, checkin_result, cycle_result):
+                hook_calls.append("called")
+                return True
+
+        agent = StubbornRecoveryAgent(name="Stubborn", mcp_url="http://127.0.0.1:9999/mcp/")
+        first = CheckinResult(
+            success=True, verdict="pause", coherence=0.3,
+            guidance="first pause", metrics={},
+        )
+        second = CheckinResult(
+            success=True, verdict="pause", coherence=0.35,
+            guidance="still paused", metrics={},
+        )
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(side_effect=[first, second])
+
+        with pytest.raises(VerdictError) as exc_info:
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+        # Exactly one retry, then give up — hook called once.
+        assert hook_calls == ["called"]
+        assert mock_client.checkin.await_count == 2
+        # VerdictError carries the SECOND (final) pause's guidance.
+        assert exc_info.value.guidance == "still paused"

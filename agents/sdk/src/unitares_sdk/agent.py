@@ -180,16 +180,16 @@ class GovernanceAgent:
     async def on_verdict_pause(
         self,
         client: GovernanceClient,
-        cycle_result: CycleResult,
         checkin_result: CheckinResult,
+        cycle_result: CycleResult,
     ) -> bool:
         """Pause-recovery hook. Called when checkin returns ``pause``.
 
         Return ``True`` to retry the checkin once (e.g. after
         ``client.self_recovery(action="quick")``); ``False`` to let the
         ``VerdictError`` propagate. Hook exceptions are logged and
-        swallowed (treated as ``False``). CancelledError propagates.
-        Default: no recovery — returns False.
+        swallowed (treated as ``False``). Default: no recovery — returns
+        False.
         """
         return False
 
@@ -377,7 +377,7 @@ class GovernanceAgent:
         # Pause-recovery hook: retry once if the subclass recovered.
         if checkin_result.verdict == "pause":
             try:
-                retry = await self.on_verdict_pause(client, result, checkin_result)
+                retry = await self.on_verdict_pause(client, checkin_result, result)
             except Exception as e:
                 logger.warning("%s: on_verdict_pause raised: %r", self.name, e)
                 retry = False
