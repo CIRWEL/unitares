@@ -31,7 +31,6 @@ import signal
 import sys
 import time
 
-import anyio
 from collections import deque
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -44,6 +43,7 @@ sys.path.insert(0, str(project_root))
 from agents.common.config import GOV_MCP_URL, GOV_WS_URL
 from unitares_sdk.agent import CycleResult, GovernanceAgent
 from unitares_sdk.client import GovernanceClient
+from unitares_sdk.models import CheckinResult
 from unitares_sdk.errors import GovernanceError, VerdictError
 from unitares_sdk.utils import notify
 from agents.common.findings import post_finding, compute_fingerprint
@@ -565,7 +565,7 @@ class SentinelAgent(GovernanceAgent):
         )
 
     async def on_after_checkin(
-        self, client: GovernanceClient, checkin_result, cycle_result: CycleResult,
+        self, client: GovernanceClient, checkin_result: CheckinResult, cycle_result: CycleResult,
     ) -> None:
         """Log one-line EISV summary after each check-in."""
         if not checkin_result.success:
