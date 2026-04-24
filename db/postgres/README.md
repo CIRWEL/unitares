@@ -169,6 +169,7 @@ SELECT version, name, applied_at FROM core.schema_migrations ORDER BY version;
 | 1 | `initial_schema` | Core tables (agents, sessions, dialectic) |
 | 2 | `knowledge_schema` | Knowledge graph tables for PostgreSQL FTS |
 | 3 | `dialectic_messages` | Dialectic messages table (migrated from SQLite) |
+| 15 | `agent_process_bindings` | Concurrent identity binding invariant (#123): `core.agent_process_bindings` + `allow_rebind_after_exit` / `allow_concurrent_contexts` flags on `core.agents` |
 
 The health check returns `schema_version` from this table.
 

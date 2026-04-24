@@ -14,6 +14,8 @@ from .core import (
     resolve_session_identity,
     set_agent_label,
 )
+# Concurrent identity binding invariant (#123) — registers list_process_bindings.
+from .process_binding_handler import handle_list_process_bindings
 
 __all__ = [
     "handle_identity_adapter",
@@ -27,4 +29,5 @@ __all__ = [
     "_agent_exists_in_postgres",
     "resolve_session_identity",
     "set_agent_label",
+    "handle_list_process_bindings",
 ]

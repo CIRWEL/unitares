@@ -81,6 +81,20 @@ class OnboardParams(AgentIdentityMixin):
         default=None,
         description="Explicit thread ID to join (auto-derived from session if not provided)"
     )
+    # Concurrent identity binding invariant (issue #123).
+    # Client-reported execution context — used to detect same-UUID siphoning
+    # when two processes on the same host claim the same UUID. Audit-only in
+    # v1; see issue #123 for the detection rule and policy flags.
+    process_fingerprint: Optional[dict] = Field(
+        default=None,
+        description=(
+            "Optional client-reported execution context: "
+            "{host_id, pid, pid_start_time, transport, ppid?, tty?, "
+            "anchor_path_hash?}. Recorded server-side; used to detect "
+            "concurrent identity bindings. Declaration-only — never used "
+            "to resolve or recover identity."
+        )
+    )
 
     @model_validator(mode='after')
     def coerce_booleans(self):
