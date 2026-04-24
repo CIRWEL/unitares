@@ -1,134 +1,166 @@
-# R1 — `verify_lineage_claim` design spike
+# R1 — `score_behavioral_continuity` design spike
 
-**Status:** Design doc. No implementation commitment.
-**Scope:** Plan row R1 (`docs/ontology/plan.md`). Produces: signature, confidence model, threshold analysis, implementation sketch, synthetic-data test fixture.
+**Status:** Design doc, revision pass 2.
+**Scope:** Plan row R1 (`docs/ontology/plan.md`). Produces: signature, plausibility model, threshold analysis, implementation sketch, synthetic-data test fixture.
 **Author:** agent `8ae8cb4b-23d2-4b21-9906-b9993b4293d0` (claude_code), 2026-04-24.
+**Revision history:**
+- v1 (2026-04-24 morning) — one-shot draft; five-channel model, verification framing.
+- **v2 (2026-04-24 afternoon) — current.** Rewritten after dialectic + code review. Renamed primitive (`verify_lineage_claim` → `score_behavioral_continuity`). Channels reduced 5 → 2 after code review found C3/C4/C5 not implementable from current storage. Security-gate framing dropped. Independence claim retracted. R2/Q1 unblock claim downgraded to "similarity gate for R2."
 
 ---
 
 ## Purpose
 
-Under the v2 ontology, a fresh process-instance declaring `parent_agent_id=<uuid>` is making a *claim*, not a fact. The claim is credible only if the successor's observable behavior is consistent with the parent's behavioral fingerprint. `verify_lineage_claim` is the governance-side primitive that turns a claim into a probability — "this successor is behaving like a continuation of that parent, to confidence `c`."
+Under the v2 ontology, a fresh process-instance declaring `parent_agent_id=<uuid>` is making a *claim*, not a fact. The claim is credible only if the successor's observable behavior is consistent with the parent's behavioral fingerprint. `score_behavioral_continuity` is the governance-side primitive that turns a claim into a *plausibility score* — "this successor behaves consistently with that parent, to score `p`."
 
-This is the earning mechanism referenced in `identity.md` axiom §Behavioral-continuity verification. It replaces "continuity by token" with "continuity by behavior."
+This is the earning mechanism referenced in `identity.md` axiom §Behavioral-continuity verification.
 
-## Non-goals
+## Non-goals (explicit)
 
-- Does not authenticate (auth is still bearer-token + process-fingerprint).
-- Does not issue identity; it produces a confidence score. The policy layer decides what to do with the score.
-- Not a substitute for substrate-earned identity (R4): that pattern has its own three-condition test.
+- **Not authentication.** Auth remains bearer-token + process-fingerprint.
+- **Not a security primitive.** An adversary with KG read access can forge a passing trajectory. This primitive detects *honest over-claims*, not adversarial ones.
+- **Not an identity issuer.** Output is a plausibility score; policy decides what to do with it.
+- **Not a substitute for R4.** Substrate-earned agents (Lumen pattern) use `verify_substrate_earned` — the three-condition test is stronger than what this primitive offers.
+- **Not an integration test.** Similarity ≠ integration. Distinguishing integration from replay is R5's job.
 
 ## Input signature
 
 ```python
-def verify_lineage_claim(
+def score_behavioral_continuity(
     claimed_parent_id: str,
     successor_id: str,
     *,
     min_observations: int = 5,
     window: timedelta = timedelta(days=30),
-) -> LineageVerdict:
+) -> LineageContinuityScore:
     ...
 
 @dataclass
-class LineageVerdict:
-    confidence: float                  # [0.0, 1.0]
-    verdict: Literal["consistent", "inconclusive", "inconsistent"]
+class LineageContinuityScore:
+    plausibility: float                # [0.0, 1.0]
+    verdict: Literal["plausible", "inconclusive", "unsupported"]
     observations: int                  # successor check-ins used
     components: Dict[str, float]       # per-channel similarities
+    channels_available: List[str]      # which channels actually had data
+    channels_deferred: List[str]       # which were deferred (e.g. C3/C4/C5)
     reasons: List[str]                 # human-readable drivers
-    parent_mature: bool                # parent had enough history to fingerprint
+    parent_mature: bool                # parent had enough history
 ```
 
-The caller supplies UUIDs; the function pulls both agents' histories from existing storage (`agent_states`, `recent_decisions` via `AgentBaseline`, `TrajectorySignature` if cached). No new per-agent state needs to be persisted — all inputs are already being collected by existing check-in machinery.
+The caller supplies UUIDs; the function pulls both agents' histories from `agent_states` and cached `TrajectorySignature`. No schema changes.
 
-## Confidence model
+## Channels — what ships, what defers
 
-Five channels, each produces a similarity in `[0, 1]`. Weighted average yields `confidence`.
+The v1 draft claimed five channels. Code review found three of them not implementable from current storage. v2 ships with two, honestly scoped.
 
-| Channel | Signal | Measure | Weight |
+### Ships
+
+| Channel | Signal | Measure | Notes |
 |---|---|---|---|
-| C1 Trajectory shape | E, I, S, V time-series | DTW similarity via existing `_dtw_similarity` | 0.30 |
-| C2 Homeostatic set-point | Mean/var of EISV in steady state | Bhattacharyya similarity (`bhattacharyya_similarity`) | 0.25 |
-| C3 Calibration curve | Confidence vs outcome (from `auto_ground_truth`) | Jensen-Shannon distance → similarity | 0.15 |
-| C4 Decision distribution | `recent_decisions` histogram (proceed/guide/pause/reject) | Cosine similarity on normalized counts | 0.15 |
-| C5 Complexity distribution | `complexity` values at check-in | Bhattacharyya on fitted Gaussian | 0.15 |
+| **C1 Trajectory shape** | EISV time-series from `agent_states`, windowed | Per-dimension `_dtw_similarity` (E/I/S/V) averaged | Pure DTW. Existing primitive at `src/trajectory_identity.py:198`, subject-agnostic. |
+| **C2 Homeostatic composite** | EISV set-point + recovery profile | `homeostatic_similarity(h1, h2)` at `src/trajectory_identity.py:119` | **Composite, not pure Bhattacharyya.** Wraps Bhattacharyya + recovery-tau + viability-margin. v1 mischaracterized this as a single-measure channel. |
 
-**Rationale for these five:** each channel is already measured, each is reasonably independent (low mutual information in production data per v7-fhat spike), and each captures a different aspect of "how this agent operates" rather than "what this agent contains." Content signals (KG writes, response text) are intentionally excluded — they correlate with task, not agent.
+### Deferred (named openly in output so callers can see what didn't run)
 
-Channels with insufficient data on either side degrade gracefully (weight redistributed; `components` entry set to `None`; listed in `reasons`).
+| Channel | Why deferred |
+|---|---|
+| **C3 Calibration curve** | `calibration_checker` is a global aggregate (`src/calibration.py`) with no per-agent partitioning. Requires new per-agent calibration storage — same "per-agent calibration state" channel named in plan.md S12 as an unblock for FEP work. |
+| **C4 Decision distribution** | `AgentBaseline.recent_decisions` is capped at 20 entries and lives in-memory only (see `governance_core/ethical_drift.py:397`, LRU-bounded on `chore/fold-unitares-core`). No persistent 30-day decision log exists. Requires new decision-log storage. |
+| **C5 Complexity distribution** | `baseline_complexity` is a single EMA scalar, not a sample set. Also, Gaussian on bounded [0,1] is the wrong distributional choice — codebase convention is Bhattacharyya with fitted covariance (C2's approach). Requires persistent complexity samples + Beta or covariance-fit machinery. |
 
-## Confidence → verdict thresholds
+**Deferral policy:** C3/C4/C5 do not ship until the underlying storage + measurement infrastructure does. They should come back through a separate row once that infrastructure matures — same pacing as v7 corpus-maturity work, not R1 scope.
 
-Calibrated against synthetic data first, re-tuned against production once corpus matures.
+## Independence — what v1 got wrong
+
+v1 asserted "low mutual information in production data per v7-fhat spike" as justification for a weighted average. This was a citation error in the wrong direction: v7-fhat Session 1b SC2 (r=0.9949, recorded in plan.md S12) is evidence that the minimal generative model under v5 channel geometry *collapses* the state channels to a monotone transform of one latent — i.e., the channels are **not** independent.
+
+v2 posture:
+- **No weights beyond equal.** C1 and C2 both ship at 0.5 weight. This is not a claim of equal importance; it is a refusal to pretend we have the MI estimates that would justify anything else.
+- **Pairwise-MI estimation is a prerequisite before any non-equal weights ship.** That analysis (C1 vs C2 on shadow-mode production data) is part of the threshold-calibration path below, not a separate row.
+- **When C3/C4/C5 return**, they return with their own MI measurements against the existing channels or they don't ship.
+
+## Plausibility → verdict thresholds
+
+Starting point, narrow inconclusive band (callers need to decide something):
 
 | Condition | Verdict |
 |---|---|
 | `observations < min_observations` OR `parent_mature == False` | `inconclusive` |
-| `confidence >= 0.75` | `consistent` |
-| `0.40 <= confidence < 0.75` | `inconclusive` |
-| `confidence < 0.40` | `inconsistent` |
+| `plausibility >= 0.70` | `plausible` |
+| `0.55 <= plausibility < 0.70` | `inconclusive` |
+| `plausibility < 0.55` | `unsupported` |
 
-The `inconclusive` band is wide on purpose: this primitive should rarely declare a lineage false. False-negatives cost trust; false-positives cost nothing (the claim just doesn't upgrade to confirmed).
+**Caller policy is the hard part, not the band width.** The dialectic review surfaced that a wide `inconclusive` collapses to `plausible` in practice unless callers have an explicit policy that differs from the plausible branch. v2 expects callers to define one of two postures per call-site:
+
+- **"Inconclusive blocks":** require re-evaluation later; do not upgrade the lineage claim.
+- **"Inconclusive allows with mark":** proceed, but stamp the lineage record with `provisional` so downstream consumers know.
+
+The primitive itself does not choose.
 
 ## Implementation sketch
 
-- **Location:** `src/identity/lineage_verification.py` (new). Imports similarity primitives from `src/trajectory_identity.py` (already subject-agnostic per R3 annotation).
-- **Storage reads:** `agent_states` history (window-scoped), `AgentBaseline` for decisions + complexity, `auto_ground_truth` for calibration, `TrajectorySignature` if cached. All via existing async helpers; no schema changes.
-- **Dispatch pattern:** read-only, so follows the `run_in_executor` + sync DB pattern (anyio-asyncio gotcha — see CLAUDE.md).
-- **Exposure:** initial consumers are policy code only (not an MCP tool yet). An `mcp_handlers/identity/verify_lineage` wrapper can come later if external callers need it.
-- **Observability:** emits a KG discovery of type `lineage_verification` with `confidence`, `verdict`, `components` — matches existing audit pattern.
+- **Location:** `src/identity/lineage_verification.py` (new). File name preserves searchability even though the primitive is renamed.
+- **Dispatch pattern:** `run_in_executor` with sync DB client, per the project's anyio-asyncio contract (CLAUDE.md, Known Issue section). v1 incorrectly framed "read-only" as exempt — it is not. The function reads `agent_states` via async asyncpg elsewhere in the codebase, but a new caller should match `verify_agent_ownership` at `src/agent_loop_detection.py:374`.
+- **Storage reads:** `agent_states` history (windowed) + `TrajectorySignature` cache. Both already populated by existing check-in machinery. No schema changes, no new background tasks.
+- **Exposure:** internal policy consumers only in v2. No MCP tool wrapper unless a named external caller needs one.
+- **Observability:** emits a KG discovery of type `lineage_continuity_score` with `plausibility`, `verdict`, `components`, and `channels_deferred`. The deferred-channels list is visible in the audit record so reviewers can see what didn't run.
 
 ## Test fixture (synthetic data)
 
-`tests/test_lineage_verification_synthetic.py`:
+`tests/test_lineage_continuity_synthetic.py`:
 
-1. **Genuine continuation.** Generate parent trajectory (100 check-ins, trend toward high basin, stable decision mix). Generate successor (20 check-ins) by continuing the same generator's state. Expect `verdict=consistent`, `confidence >= 0.75`.
-2. **Forged (different generator).** Parent as above. Successor from an independent generator with different set-point and decision distribution. Expect `verdict=inconsistent`, `confidence < 0.40`.
-3. **Early-stage successor.** Parent as above. Successor with 3 check-ins (< `min_observations`). Expect `verdict=inconclusive`, `observations=3`.
-4. **Drifted-but-same.** Parent stable. Successor starts from same state but trajectory drifts over 20 check-ins. Expect `verdict=inconclusive` (in the wide band) — this is the gray zone on purpose.
-5. **Immature parent.** Parent with 4 check-ins, successor genuine. Expect `verdict=inconclusive`, `parent_mature=False`.
+1. **Genuine continuation.** Parent trajectory 100 check-ins, steady high-basin. Successor 20 check-ins continuing same generator. Expect `verdict=plausible`, `plausibility >= 0.70`, `channels_available=[C1, C2]`.
+2. **Divergent generator.** Parent as above. Successor from independent generator with different set-point. Expect `verdict=unsupported`, `plausibility < 0.55`.
+3. **Early-stage successor.** Parent as above. Successor with 3 check-ins. Expect `verdict=inconclusive`, `observations=3`, `parent_mature=True`.
+4. **Drifted-but-same.** Parent stable. Successor starts from same state; drifts over 20 check-ins. Expect `verdict=inconclusive` (the policy-decision zone).
+5. **Immature parent.** Parent with 4 check-ins. Expect `verdict=inconclusive`, `parent_mature=False`.
+6. **Channel degradation.** Parent has full history; successor has C1 but `TrajectorySignature` cache miss. Expect `verdict` based on C1 alone, `channels_available=[C1]`, `components={"C2": None}`.
 
-Synthetic data generators live in `tests/fixtures/synthetic_trajectories.py` (new). The fixture is deterministic (seeded) so thresholds can be regression-tested.
+Synthetic generators in `tests/fixtures/synthetic_trajectories.py` (new). Deterministic seeds; thresholds are regression-tested against this fixture.
 
-## Threshold analysis — what calibration looks like
+## Threshold-calibration path
 
-Thresholds above are initial; the correct values are empirical. Calibration path:
+1. Ship synthetic-tuned thresholds (above).
+2. **Shadow-mode on production:** score every declared-lineage pair; log but do not enforce. Run ≥ 2 weeks or until `N_claims ≥ 100` pairs, whichever is later. Paces with v7 corpus-maturity work.
+3. **Measure pairwise MI** between C1 and C2 on shadow-mode data. If MI is high, weights stay equal (no information in weight differentiation). If MI is low, an operator can re-tune with the evidence.
+4. **Inspect distributions** by `spawn_reason`: `new_session` (expected genuine), `subagent` (Q2 hypothesis: bimodal), `compaction` (unknown).
+5. Adjust thresholds only if shadow data shows clear mis-calibration.
 
-1. Ship the primitive with synthetic-only calibration (thresholds from fixture-tuning).
-2. Run in shadow-mode on production: verify lineage claims already declared via `parent_agent_id`, but don't enforce anything. Log `confidence` distribution per declared-lineage pair.
-3. After ≥ 2 weeks of shadow data, inspect:
-   - Distribution for `spawn_reason=new_session` (expected genuine) — should cluster above 0.75.
-   - Distribution for `spawn_reason=subagent` (Q2 — this is the bit that's "principled or pragmatic?") — hypothesis: bimodal, depending on subagent scope.
-   - Any outliers in either direction become test cases.
-4. Adjust thresholds if shadow data shows clear mis-calibration; re-tune weights only if a channel shows no discriminative power.
-
-## Dependency map
+## Dependency map (revised)
 
 ```
-R1 ── unblocks ──> R2 (honest memory integration)
-               └── Q2 (subagents — shadow-mode gives the "N observations" number)
-               └── S9 (PATH 1/2 re-scoping — verification replaces continuity-enforcement)
-               └── R5 eventually (via R2)
+R1 ── provides similarity gate for ── R2 (integration test; R5 discriminates integration from replay)
+R1 ── provides similarity gate for ── R5
+R1 ── does NOT unblock ─────────────── Q1 (trajectory portability — stuck until R5)
+R1 ── does NOT unblock ─────────────── Q2 (subagent ephemerality — shadow-mode data may inform, but does not resolve)
+R1 ── does NOT unblock ─────────────── S9 (PATH 1/2 — R1 is an honesty primitive, not a verification primitive; S9 needs the adversarial-grade thing that R1 explicitly is not)
 ```
+
+v1 claimed R1 unblocked R2/R5/Q1/S9. Dialectic review correctly flagged this as overreach. v2 carries the narrower claim.
 
 ## Definition of done for this row
 
-Plan row R1 is resolved when:
-- This document exists with the five sections (signature / confidence / thresholds / sketch / fixture). ✓
-- The operator has accepted it, rejected it, or flagged for revision.
+Plan row R1 resolved when:
+- This spec exists with signature / channels / thresholds / sketch / fixture. ✓
+- Operator accepts, rejects, or flags for revision.
 - A subsequent implementation-spike row is opened (or R1 is re-scoped).
-
-This document does **not** commit to shipping the implementation. Implementation is a separate decision; this row only produces the spec.
 
 ## Open questions for Kenny
 
-1. **Channel weights.** 0.30 / 0.25 / 0.15 / 0.15 / 0.15 are defensible-but-arbitrary. Accept as "seed weights, re-tune after shadow-mode data," or demand better motivation before shipping?
-2. **Shadow-mode corpus size.** 2 weeks is a guess; might be too short given current fleet size. Happy to pace on the same "corpus maturity" gate blocking v7 empirical work?
-3. **MCP exposure.** Ship as internal-only first, or is there a near-term external consumer (Discord bridge? dashboard?) that needs the tool surface earlier?
+1. **Ship v2 (two-channel) as R1's answer, or hold R1 open until C3/C4/C5 storage lands?** v2 shipping early gives the shadow-mode data that retroactively justifies infrastructure for C3/C4/C5. Holding gives one larger spec later. Dialectic was silent; code review implied "ship what works."
+2. **Caller policy for `inconclusive`.** Who defines it — each call-site, or a global default in the primitive's wrapper? v2 punts; v3 shouldn't.
+3. **Naming.** `score_behavioral_continuity` is precise but long. `continuity_score(parent, successor)` reads better; losing "behavioral" concedes ground the ontology cares about. Preference?
 
 ## Appendix: what this does NOT solve
 
-- **Cross-channel impersonation.** If an adversary has read access to the parent's state history, they can plausibly replay it. Defense is bearer-token + process-fingerprint (bind_session); lineage verification is about honest claims, not adversarial ones. Worth being explicit about in the §Threat model follow-up doc.
-- **Trajectory portability (Q1).** `verify_lineage_claim` measures *similarity*; it does not answer whether similarity + integration = identity. That's Q1's job, downstream of R2.
-- **Substrate-earned identity (R4).** Lumen's pattern has a stronger test (three-condition pass); don't route substrate-earned agents through this primitive — use `verify_substrate_earned` instead.
+- **Adversarial forgery.** KG-readable parent state enables trajectory synthesis. Defense remains bearer-token + process-fingerprint. This primitive is an honesty primitive, not a security one.
+- **Trajectory portability (Q1).** R1 measures similarity; Q1 asks whether similarity-plus-integration = identity. R5 discriminates integration from replay. R1 is necessary but insufficient for either.
+- **Substrate-earned identity (R4).** Use `verify_substrate_earned` (three-condition test). Substrate-earned agents should not be routed through this primitive.
+- **Per-agent calibration (C3), decision log (C4), complexity distribution (C5).** Deferred until storage exists. These are named channels, not hidden ones — consumers can see what didn't run via `channels_deferred`.
+
+## Appendix: review provenance
+
+- v1 dialectic review (agent `a98256ccd566598cd`, `dialectic-knowledge-architect`, 2026-04-24): surfaced independence-citation error, content-exclusion tension, Potemkin-verifier risk, R2/Q1 unblock overclaim, inconclusive-band policy vs. technical question.
+- v1 code review (agent `ae3eec7695eafae26`, `feature-dev:code-reviewer`, 2026-04-24): C3 per-agent calibration not available; C4 has no 30-day log; C5 has no sample set; `homeostatic_similarity` is composite not pure; anyio framing backwards.
+
+Both reviews drove this revision.
