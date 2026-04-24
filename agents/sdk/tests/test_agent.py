@@ -458,11 +458,53 @@ class TestCycleTimeout:
 
     @pytest.mark.asyncio
     async def test_cycle_timeout_none_means_no_bound(self):
-        """cycle_timeout_seconds=None disables the wrapper (default)."""
+        """cycle_timeout_seconds=None disables the wrapper (default); run_once completes."""
 
         class QuickAgent(GovernanceAgent):
             async def run_cycle(self, client):
-                return CycleResult.simple("done")
+                return None  # skip checkin path entirely
 
         agent = QuickAgent(name="Quick", mcp_url="http://127.0.0.1:9999/mcp/")
         assert agent.cycle_timeout_seconds is None
+
+        with patch("unitares_sdk.agent.GovernanceClient") as mock_cm:
+            mock_client = AsyncMock()
+            mock_cm.return_value.__aenter__.return_value = mock_client
+            mock_cm.return_value.__aexit__.return_value = None
+            with patch.object(QuickAgent, "_ensure_identity", AsyncMock()):
+                # Must complete without raising — no wait_for wrapping when None.
+                await agent.run_once()
+
+    @pytest.mark.asyncio
+    async def test_run_forever_respects_cycle_timeout(self):
+        """run_forever also bounds each iteration by cycle_timeout_seconds."""
+
+        timed_out = {"fired": False}
+
+        class SlowForeverAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                self.running = False  # exit loop after this iteration
+                try:
+                    await asyncio.sleep(10.0)
+                except asyncio.CancelledError:
+                    timed_out["fired"] = True
+                    raise
+
+        agent = SlowForeverAgent(
+            name="SlowForever",
+            mcp_url="http://127.0.0.1:9999/mcp/",
+            cycle_timeout_seconds=0.05,
+        )
+        with patch("unitares_sdk.agent.GovernanceClient") as mock_cm:
+            mock_client = AsyncMock()
+            mock_cm.return_value.__aenter__.return_value = mock_client
+            mock_cm.return_value.__aexit__.return_value = None
+            with patch.object(SlowForeverAgent, "_ensure_identity", AsyncMock()):
+                with patch.object(SlowForeverAgent, "_install_signal_handlers"):
+                    # notify() may be called during error logging — stub it out.
+                    with patch("unitares_sdk.agent.notify"):
+                        # run_forever catches the TimeoutError internally and
+                        # sleeps "interval" seconds before retrying; set interval
+                        # to 0 and running=False inside run_cycle to exit.
+                        await agent.run_forever(interval=0)
+        assert timed_out["fired"] is True

@@ -96,7 +96,8 @@ class GovernanceAgent:
         self.name = name
         self.mcp_url = mcp_url
         self.timeout = timeout
-        # Hard cap on a single cycle (connect + run_cycle + checkin). Used by
+        # Hard cap on a single cycle in both run_once() and run_forever()
+        # (connect + run_cycle + checkin + heartbeat-check). Used by
         # residents whose cycles can stall on an MCP session that never
         # finishes initialize. None = unbounded. Vigil and Sentinel
         # previously implemented this as an asyncio.wait_for wrapper in
@@ -167,23 +168,32 @@ class GovernanceAgent:
     async def run_forever(
         self, interval: int = 60, heartbeat_interval: int = 1800
     ) -> None:
-        """Loop: run_cycle repeatedly with heartbeat when idle."""
+        """Loop: run_cycle repeatedly with heartbeat when idle.
+
+        Each iteration is bounded by ``cycle_timeout_seconds`` if set.
+        """
         self._install_signal_handlers()
         self._last_checkin_time = time.monotonic()
 
+        async def _iteration() -> None:
+            async with GovernanceClient(
+                mcp_url=self.mcp_url, timeout=self.timeout
+            ) as client:
+                await self._ensure_identity(client)
+                result = await self.run_cycle(client)
+                await self._handle_cycle_result(client, result)
+
+                # Heartbeat if idle too long
+                elapsed = time.monotonic() - self._last_checkin_time
+                if elapsed >= heartbeat_interval and result is None:
+                    await self._send_heartbeat(client)
+
         while self.running:
             try:
-                async with GovernanceClient(
-                    mcp_url=self.mcp_url, timeout=self.timeout
-                ) as client:
-                    await self._ensure_identity(client)
-                    result = await self.run_cycle(client)
-                    await self._handle_cycle_result(client, result)
-
-                    # Heartbeat if idle too long
-                    elapsed = time.monotonic() - self._last_checkin_time
-                    if elapsed >= heartbeat_interval and result is None:
-                        await self._send_heartbeat(client)
+                if self.cycle_timeout_seconds is None:
+                    await _iteration()
+                else:
+                    await asyncio.wait_for(_iteration(), self.cycle_timeout_seconds)
 
             except (GovernanceConnectionError, GovernanceTimeoutError) as e:
                 logger.warning("%s: governance unavailable: %s", self.name, e)
