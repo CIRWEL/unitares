@@ -200,6 +200,22 @@
         var agentEISVHistory = state.get('agentEISVHistory') || {};
         var displayAgents = agents.slice(0, state.get('agentPageSize'));
 
+        // Build lineage lookup maps from the full cached set, so a parent
+        // filtered out of the current view still resolves its short label
+        // for a visible child, and child counts reflect the full population.
+        var agentsById = {};
+        var childrenByParent = {};
+        for (var li = 0; li < cachedAgents.length; li++) {
+            var la = cachedAgents[li];
+            var laId = la.agent_id || la.id;
+            if (!laId) continue;
+            agentsById[laId] = la;
+            var pid = la.parent_agent_id;
+            if (pid) {
+                (childrenByParent[pid] = childrenByParent[pid] || []).push(laId);
+            }
+        }
+
         var cardsHtml = displayAgents.map(function (agent) {
             var status = getAgentStatus(agent);
             var statusClass = status === 'paused' ? 'paused' :
@@ -270,6 +286,25 @@
                 : 0;
             var tierDisplayNames = { 0: 'T0', 1: 'T1', 2: 'T2', 3: 'T3' };
             var trustTierHtml = '<span class="trust-tier tier-' + tierNum + '" title="Trust Tier ' + tierNum + ': ' + (tierNames[tierNum] || 'unknown') + '">' + tierDisplayNames[tierNum] + '</span>';
+
+            // Lineage badges: "↑ <parent>" when this agent was spawned from
+            // another, and "<N> child" when other agents declare this one as
+            // their parent. Makes the parent/child relationship visible in
+            // the flat card list.
+            var lineageBadgeHtml = '';
+            var parentId = agent.parent_agent_id;
+            if (parentId) {
+                var parentAgent = agentsById[parentId];
+                var parentShort = parentAgent
+                    ? getAgentDisplayName(parentAgent)
+                    : parentId.slice(0, 8);
+                var spawn = agent.spawn_reason ? ' (' + escapeHtml(agent.spawn_reason) + ')' : '';
+                lineageBadgeHtml += '<span class="lineage-badge lineage-child" data-parent-uuid="' + escapeHtml(parentId) + '" title="Spawned from ' + escapeHtml(parentId) + spawn + '">↑ ' + escapeHtml(parentShort) + '</span>';
+            }
+            var children = childrenByParent[agentId] || [];
+            if (children.length > 0) {
+                lineageBadgeHtml += '<span class="lineage-badge lineage-parent" title="' + children.length + ' child agent(s) declared this as parent">' + children.length + ' child' + (children.length !== 1 ? 'ren' : '') + '</span>';
+            }
 
             var hasMetrics = agentHasMetrics(agent);
             var isPinned = state.get('pinnedAgentId') === agentId;
@@ -345,7 +380,7 @@
                         '<span class="agent-name">' + nameHtml + '</span>' +
                         stuckBadgeHtml + inactiveBadgeHtml +
                         healthBadgeHtml + staleBadgeHtml +
-                        trustTierHtml + anomalyHtml +
+                        trustTierHtml + lineageBadgeHtml + anomalyHtml +
                         sparklineHtml +
                         actionsHtml +
                     '</div>' +
@@ -609,6 +644,41 @@
                     escapeHtml(agent.last_update || '-') +
                 '</div>' +
             '</div>' +
+
+            (function () {
+                // Lineage section — parent and children, resolved against cachedAgents
+                var parentId = agent.parent_agent_id;
+                var all = state.get('cachedAgents') || [];
+                var byIdLocal = {};
+                var childrenLocal = [];
+                for (var ki = 0; ki < all.length; ki++) {
+                    var other = all[ki];
+                    var oid = other.agent_id || other.id;
+                    if (!oid) continue;
+                    byIdLocal[oid] = other;
+                    if (other.parent_agent_id === agentId) childrenLocal.push(other);
+                }
+                if (!parentId && childrenLocal.length === 0) return '';
+                var parentHtml = '-';
+                if (parentId) {
+                    var parentAgent = byIdLocal[parentId];
+                    var parentName = parentAgent ? getAgentDisplayName(parentAgent) : (parentId.slice(0, 12) + '...');
+                    var spawn = agent.spawn_reason ? ' <span class="text-secondary-xs">(' + escapeHtml(agent.spawn_reason) + ')</span>' : '';
+                    parentHtml = '<code class="code-tertiary">' + escapeHtml(parentName) + '</code>' +
+                        '<br><span class="text-secondary-xs">' + escapeHtml(parentId) + '</span>' + spawn;
+                }
+                var childrenHtml = childrenLocal.length
+                    ? childrenLocal.map(function (c) {
+                        var cid = c.agent_id || c.id;
+                        return '<div><code class="code-tertiary">' + escapeHtml(getAgentDisplayName(c)) + '</code>' +
+                            ' <span class="text-secondary-xs">' + escapeHtml(cid) + '</span></div>';
+                    }).join('')
+                    : '<span class="text-secondary-sm">None</span>';
+                return '<div class="grid-2col mb-md">' +
+                    '<div><strong class="text-secondary-sm">Parent:</strong><br>' + parentHtml + '</div>' +
+                    '<div><strong class="text-secondary-sm">Children (' + childrenLocal.length + '):</strong><br>' + childrenHtml + '</div>' +
+                '</div>';
+            })() +
 
             (trustTier !== null
                 ? '<div class="info-callout">' +

@@ -170,6 +170,33 @@ class TestListAgentsLite:
             assert "labeled-agent" in ids
             assert "unlabeled-agent" not in ids
 
+    @pytest.mark.asyncio
+    async def test_lite_exposes_lineage_fields(self, server):
+        """Lite mode must surface parent_agent_id + spawn_reason so the
+        dashboard can render lineage. Without these fields the DB-level
+        parent/child relationship is invisible downstream (#lineage-visibility).
+        """
+        server.agent_metadata = {
+            "parent-agent": make_agent_meta(label="Parent", total_updates=20),
+            "child-agent": make_agent_meta(
+                label="Child",
+                total_updates=3,
+                parent_agent_id="parent-agent",
+                spawn_reason="new_session",
+            ),
+            "orphan-agent": make_agent_meta(label="Orphan", total_updates=2),
+        }
+        with patch_lifecycle_server(server):
+            from src.mcp_handlers.lifecycle.handlers import handle_list_agents
+            result = await handle_list_agents({"lite": True})
+            data = _parse(result)
+            by_id = {a["id"]: a for a in data["agents"]}
+            assert by_id["child-agent"]["parent_agent_id"] == "parent-agent"
+            assert by_id["child-agent"]["spawn_reason"] == "new_session"
+            assert by_id["parent-agent"]["parent_agent_id"] is None
+            assert by_id["parent-agent"]["spawn_reason"] is None
+            assert by_id["orphan-agent"]["parent_agent_id"] is None
+
 
 # ============================================================================
 # handle_list_agents - Non-Lite (Full) Mode
@@ -276,6 +303,40 @@ class TestListAgentsFull:
             assert data["summary"]["total"] == 10
             assert data["summary"]["offset"] == 2
             assert data["summary"]["limit"] == 3
+
+    @pytest.mark.asyncio
+    async def test_full_mode_exposes_lineage_fields(self, server):
+        """Full mode agent_info must surface parent_agent_id + spawn_reason."""
+        server.agent_metadata = {
+            "parent-agent": make_agent_meta(
+                status="active", label="Parent", total_updates=20, notes=""
+            ),
+            "child-agent": make_agent_meta(
+                status="active",
+                label="Child",
+                total_updates=3,
+                notes="",
+                parent_agent_id="parent-agent",
+                spawn_reason="new_session",
+            ),
+        }
+        health_status = MagicMock()
+        health_status.value = "healthy"
+        server.health_checker = MagicMock()
+        server.health_checker.get_health_status.return_value = (health_status, {})
+        server.monitors = {}
+
+        with patch_lifecycle_server(server):
+            from src.mcp_handlers.lifecycle.handlers import handle_list_agents
+            result = await handle_list_agents({
+                "lite": False, "grouped": False, "include_metrics": False,
+            })
+            data = _parse(result)
+            agents = data["agents"]
+            by_id = {a["agent_id"]: a for a in agents}
+            assert by_id["child-agent"]["parent_agent_id"] == "parent-agent"
+            assert by_id["child-agent"]["spawn_reason"] == "new_session"
+            assert by_id["parent-agent"]["parent_agent_id"] is None
 
     @pytest.mark.asyncio
     async def test_full_mode_status_filter_all(self, server):
