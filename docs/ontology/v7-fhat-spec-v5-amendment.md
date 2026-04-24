@@ -92,9 +92,9 @@ v4 §6.2 and §7.1 already contained the default rule: "fall back to B2 unless a
 - Non-regression guardrail (v4 §6.4) removed — only applies with multi-cell arbitration.
 
 **v5 §6.6 prior redistribution:**
-- $P(\text{full-earn}) \approx 0.40$ (was 0.25 in v4; one cell has higher per-cell base rate)
-- $P(\text{(b)}) \approx 0.60$ (was 0.40)
-- Scope-limited fraction (0.35 in v4) distributed between the two outcomes.
+- $P(\hat{F} \text{ earns on outcome\_is\_bad}) \approx 0.45$ (was 0.25 full-earn in v4)
+- $P(\text{null / path (b)}) \approx 0.55$ (was 0.40)
+- Scope-limited fraction (0.35 in v4) **mostly folds into (b)**, not into earn: under the tighter single-target bar, the single-target win already *is* the scope-limited outcome under v4's framing. The coherent-subset mapping in v4 §6.5 remains the paper-facing frame — a win here maps to "variational grounding captures outcome-quality surprise; $V$-debt accumulator is grounded for task-success prediction."
 
 ---
 
