@@ -85,6 +85,7 @@ class GovernanceAgent:
         name: str,
         mcp_url: str = "http://127.0.0.1:8767/mcp/",
         state_dir: Path | None = None,
+        state_file: Path | None = None,
         session_file: Path | None = None,
         legacy_session_file: Path | None = None,
         notify_on_error: bool = True,
@@ -96,7 +97,6 @@ class GovernanceAgent:
         cycle_timeout_seconds: float | None = None,
         log_file: Path | None = None,
         max_log_lines: int = 10_000,
-        state_file: Path | None = None,
     ):
         self.name = name
         self.mcp_url = mcp_url
