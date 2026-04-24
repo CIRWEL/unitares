@@ -70,13 +70,16 @@ if [ -n "$NEW_MARKDOWN_FILES" ]; then
         if [ -f "$file" ]; then
             WORD_COUNT=$(wc -w < "$file" 2>/dev/null || echo "0")
 
-            if [ "$WORD_COUNT" -lt 500 ]; then
-                echo "  ❌ $file - Too small ($WORD_COUNT words, need 500+)"
-                echo "     → Consider consolidating into existing doc or using store_knowledge()"
+            if [ "$WORD_COUNT" -lt 150 ]; then
+                echo "  ❌ $file - Too small ($WORD_COUNT words, need 150+)"
+                echo "     → Below 150 words is recap/summary territory — consolidate into an existing doc or use store_knowledge() instead"
                 VIOLATIONS=$((VIOLATIONS + 1))
+            elif [ "$WORD_COUNT" -lt 500 ]; then
+                echo "  ⚠️  $file - Small ($WORD_COUNT words, recommend 500+)"
+                echo "     → Deliberate specialized references are fine; verify this isn't per-turn slop"
             elif [ "$WORD_COUNT" -lt 1000 ]; then
-                echo "  ⚠️  $file - Small ($WORD_COUNT words, recommend 1000+)"
-                echo "     → Consider consolidating into existing doc"
+                echo "  ⚠️  $file - Moderate ($WORD_COUNT words, recommend 1000+)"
+                echo "     → Consider consolidating into existing doc if scope overlaps"
             else
                 echo "  ✅ $file - Size OK ($WORD_COUNT words)"
             fi

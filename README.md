@@ -192,44 +192,9 @@ The EISV **ODE** engine ships as the compiled **`unitares-core`** package (insta
 
 ### MCP configuration
 
-**Cursor / Claude Code** (native `type: http`):
+Client-specific JSON (Cursor / Claude Code / Claude Desktop), endpoint table, and bind-address security: [`docs/integration/MCP_CLIENTS.md`](docs/integration/MCP_CLIENTS.md).
 
-```json
-{
-  "mcpServers": {
-    "unitares": {
-      "type": "http",
-      "url": "http://localhost:8767/mcp/"
-    }
-  }
-}
-```
-
-**Claude Desktop** (via `mcp-remote`):
-
-```json
-{
-  "mcpServers": {
-    "unitares": {
-      "command": "npx",
-      "args": ["mcp-remote", "http://localhost:8767/mcp/"]
-    }
-  }
-}
-```
-
-Agents self-identify through `onboard()`; no hardcoded agent-name header is required.
-
-| Endpoint | Transport | Use case |
-|----------|-----------|----------|
-| `/mcp/` | Streamable HTTP | MCP clients |
-| `/v1/tools/call` | REST POST | CLI, scripts, non-MCP clients |
-| `/dashboard` | HTTP | Web dashboard |
-| `/health` | HTTP | Health checks |
-
-**Security:** The server binds to `127.0.0.1` by default. For LAN or remote access, set `UNITARES_BIND_ALL_INTERFACES=1` and configure `UNITARES_MCP_ALLOWED_HOSTS` and `UNITARES_MCP_ALLOWED_ORIGINS` (comma-separated). See [scripts/ops/](scripts/ops/) for an example plist.
-
-> **For AI agents:** Resident agents: save `agent_uuid` from `onboard()`, pass it to `identity(agent_uuid=..., resume=true)`. No token management needed. See [docs/guides/START_HERE.md](docs/guides/START_HERE.md) and [docs/operations/OPERATOR_RUNBOOK.md](docs/operations/OPERATOR_RUNBOOK.md).
+Resident agents: save `agent_uuid` from `onboard()`, pass it to `identity(agent_uuid=..., resume=true)`. No token management needed. See [Getting Started](docs/guides/START_HERE.md) and [Operator Runbook](docs/operations/OPERATOR_RUNBOOK.md).
 
 ---
 
@@ -290,6 +255,7 @@ graph LR
 | Guide | Purpose |
 |-------|---------|
 | [Getting Started](docs/guides/START_HERE.md) | Setup, workflows, tool modes |
+| [MCP Clients](docs/integration/MCP_CLIENTS.md) | Cursor / Claude Code / Claude Desktop config |
 | [Architecture](docs/UNIFIED_ARCHITECTURE.md) | Pipeline, verdicts, recovery, storage |
 | [Case Study](docs/CASE_STUDY.md) | Project summary and context |
 | [Troubleshooting](docs/guides/TROUBLESHOOTING.md) | Common issues |
