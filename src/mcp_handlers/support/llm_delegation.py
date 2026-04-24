@@ -59,6 +59,17 @@ def _get_default_model() -> str:
     # gemma4 for governance coaching — needs real reasoning
     return "gemma4:latest"
 
+
+def _wants_reasoning_effort_none(model: str) -> bool:
+    """Thinking-mode models hide their answer behind a <think> block that
+    /v1/chat/completions does not surface, so the whole token budget burns
+    on invisible reasoning. reasoning.effort=none skips it and returns the
+    final answer directly. Currently applies to qwen3 / qwen3.6 families."""
+    if not model:
+        return False
+    m = model.lower()
+    return m.startswith("qwen3") or m.startswith("qwen-3")
+
 async def call_local_llm(
     prompt: str,
     model: Optional[str] = None,
@@ -93,6 +104,15 @@ async def call_local_llm(
 
     model = model or _get_default_model()
 
+    # qwen3.x defaults to thinking-mode, which hides the final answer from
+    # /v1/chat/completions — the entire token budget gets consumed by the
+    # unsurfaced <think> block. ollama's OpenAI-compat layer honors
+    # reasoning.effort=none, which skips thinking and returns the answer
+    # directly. Other families ignore the field.
+    extra_kwargs: Dict[str, Any] = {}
+    if _wants_reasoning_effort_none(model):
+        extra_kwargs["extra_body"] = {"reasoning": {"effort": "none"}}
+
     try:
         import asyncio
 
@@ -105,7 +125,8 @@ async def call_local_llm(
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=max_tokens,
                 temperature=temperature,
-                timeout=timeout
+                timeout=timeout,
+                **extra_kwargs,
             )
             return response.choices[0].message.content
 
