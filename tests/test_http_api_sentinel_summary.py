@@ -1,0 +1,172 @@
+"""Tests for _sentinel_summary_from_events — the pure aggregator behind
+/v1/sentinel/summary. Mirrors the test pattern in test_http_api_watcher_summary:
+feed dict rows, assert on the shape returned, no HTTP/DB plumbing.
+
+Sentinel findings are transient fleet-state signals (a coordinated_degradation
+detected at 14:02 may already be gone at 14:07). There's no open/closed
+lifecycle — operators want a chronological stream + counts by violation class
+to spot which concerns are dominating right now."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from src.http_api import _sentinel_summary_from_events
+
+
+NOW = datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc)
+
+
+def _event(**kwargs):
+    base = {
+        "type": "sentinel_finding",
+        "severity": "high",
+        "message": "coordinated EISV degradation across 3 agents",
+        "agent_id": "sentinel-uuid",
+        "agent_name": "Sentinel",
+        "violation_class": "coordinated_degradation",
+        "finding_type": "cross_agent",
+        "timestamp": NOW.isoformat(),
+        "event_id": 1,
+    }
+    base.update(kwargs)
+    return base
+
+
+class TestCounts:
+    def test_empty_input_returns_zeroed_shape(self):
+        out = _sentinel_summary_from_events([], now=NOW, window_hours=24)
+        assert out["total"] == 0
+        assert out["by_severity"] == {}
+        assert out["by_violation_class"] == []
+        assert out["recent"] == []
+        assert out["window_hours"] == 24
+
+    def test_total_counts_all_findings(self):
+        events = [_event(event_id=i) for i in range(5)]
+        out = _sentinel_summary_from_events(events, now=NOW)
+        assert out["total"] == 5
+
+    def test_by_severity_counts_all_not_just_open(self):
+        """Unlike Watcher, Sentinel findings don't have open/closed state —
+        every severity count is surfaced so 'what's Sentinel seeing right
+        now' is the honest answer."""
+        events = [
+            _event(event_id=1, severity="critical"),
+            _event(event_id=2, severity="critical"),
+            _event(event_id=3, severity="high"),
+            _event(event_id=4, severity="medium"),
+        ]
+        out = _sentinel_summary_from_events(events, now=NOW)
+        assert out["by_severity"] == {"critical": 2, "high": 1, "medium": 1}
+
+
+class TestViolationClassBreakdown:
+    def test_groups_by_violation_class_with_severity_subcounts(self):
+        """The breakdown lets operators see which violation types dominate
+        and whether each class is mostly high-severity or noise."""
+        events = [
+            _event(event_id=1, violation_class="coordinated_degradation", severity="high"),
+            _event(event_id=2, violation_class="coordinated_degradation", severity="high"),
+            _event(event_id=3, violation_class="coordinated_degradation", severity="medium"),
+            _event(event_id=4, violation_class="identity_drift", severity="critical"),
+        ]
+        out = _sentinel_summary_from_events(events, now=NOW)
+        by_class = {c["violation_class"]: c for c in out["by_violation_class"]}
+        assert by_class["coordinated_degradation"]["count"] == 3
+        assert by_class["coordinated_degradation"]["by_severity"] == {"high": 2, "medium": 1}
+        assert by_class["identity_drift"]["count"] == 1
+        assert by_class["identity_drift"]["by_severity"] == {"critical": 1}
+
+    def test_breakdown_sorted_by_count_desc(self):
+        events = (
+            [_event(event_id=i, violation_class="high_vol") for i in range(4)]
+            + [_event(event_id=10, violation_class="low_vol")]
+        )
+        out = _sentinel_summary_from_events(events, now=NOW)
+        classes = [c["violation_class"] for c in out["by_violation_class"]]
+        assert classes == ["high_vol", "low_vol"]
+
+    def test_missing_violation_class_falls_under_question_mark(self):
+        """Legacy Sentinel emissions without violation_class shouldn't crash
+        the aggregator or silently disappear — they bucket under '?' so the
+        operator sees they exist."""
+        out = _sentinel_summary_from_events(
+            [_event(violation_class=None)], now=NOW
+        )
+        assert out["by_violation_class"][0]["violation_class"] == "?"
+        assert out["by_violation_class"][0]["count"] == 1
+
+
+class TestRecentStream:
+    def test_recent_is_newest_first(self):
+        events = [
+            _event(event_id=1, message="oldest",
+                   timestamp=(NOW - timedelta(minutes=30)).isoformat()),
+            _event(event_id=2, message="middle",
+                   timestamp=(NOW - timedelta(minutes=15)).isoformat()),
+            _event(event_id=3, message="newest",
+                   timestamp=NOW.isoformat()),
+        ]
+        out = _sentinel_summary_from_events(events, now=NOW)
+        messages = [r["message"] for r in out["recent"]]
+        assert messages == ["newest", "middle", "oldest"]
+
+    def test_recent_respects_limit(self):
+        events = [
+            _event(event_id=i, timestamp=(NOW - timedelta(minutes=i)).isoformat())
+            for i in range(100)
+        ]
+        out = _sentinel_summary_from_events(events, now=NOW, recent_limit=10)
+        assert len(out["recent"]) == 10
+
+    def test_recent_includes_fields_the_panel_renders(self):
+        """The panel renders timestamp, severity, violation_class, and message.
+        Locking the projection here means future changes to the internal event
+        shape can't silently break the UI."""
+        events = [_event(event_id=1)]
+        out = _sentinel_summary_from_events(events, now=NOW)
+        row = out["recent"][0]
+        for key in ("timestamp", "severity", "violation_class", "message"):
+            assert key in row, f"panel needs {key}"
+
+
+class TestWindow:
+    def test_events_outside_window_excluded_from_totals(self):
+        """A 3-day-old finding shouldn't contribute to a 24h 'right now' panel —
+        that's the whole point of the window. If you want historical view,
+        build a different panel."""
+        events = [
+            _event(event_id=1, timestamp=(NOW - timedelta(hours=2)).isoformat()),
+            _event(event_id=2, timestamp=(NOW - timedelta(hours=2)).isoformat()),
+            _event(event_id=3, timestamp=(NOW - timedelta(days=3)).isoformat()),
+        ]
+        out = _sentinel_summary_from_events(events, now=NOW, window_hours=24)
+        assert out["total"] == 2
+
+    def test_default_window_is_24h(self):
+        out = _sentinel_summary_from_events([], now=NOW)
+        assert out["window_hours"] == 24
+
+
+class TestRobustness:
+    def test_trailing_Z_timestamp_parses(self):
+        events = [_event(timestamp="2026-04-24T11:30:00Z")]
+        out = _sentinel_summary_from_events(events, now=NOW, window_hours=24)
+        assert out["total"] == 1
+
+    def test_malformed_timestamp_does_not_crash(self):
+        """A bad timestamp counts toward totals but is omitted from the window
+        check — dropping it entirely would hide findings from operators;
+        crashing would hide the whole panel."""
+        events = [_event(timestamp="not-a-date")]
+        out = _sentinel_summary_from_events(events, now=NOW)
+        # counted in totals, message still in recent
+        assert out["total"] == 1
+        assert len(out["recent"]) == 1
+
+    def test_missing_severity_falls_under_question_mark(self):
+        out = _sentinel_summary_from_events([_event(severity=None)], now=NOW)
+        assert out["by_severity"] == {"?": 1}

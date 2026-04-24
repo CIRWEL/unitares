@@ -32,6 +32,7 @@
     <script src="/dashboard/residents.js"></script>
     <script src="/dashboard/fleet-metrics.js"></script>
     <script src="/dashboard/watcher.js"></script>
+    <script src="/dashboard/sentinel.js"></script>
 </head>
 
 <body>
@@ -80,6 +81,7 @@
         <a href="#activity-timeline-section" class="section-nav-item" data-section="activity-timeline-section">Activity</a>
         <a href="#fleet-metrics-section" class="section-nav-item" data-section="fleet-metrics-section">Chronicler</a>
         <a href="#watcher-section" class="section-nav-item" data-section="watcher-section">Watcher</a>
+        <a href="#sentinel-section" class="section-nav-item" data-section="sentinel-section">Sentinel</a>
         <a href="/phase" style="margin-left:auto; opacity:0.6; padding:6px 14px; border-radius:20px; font-size:0.8rem; font-weight:500; color:var(--text-secondary); text-decoration:none; white-space:nowrap;">Phase Space &rarr;</a>
     </nav>
 
@@ -538,6 +540,41 @@
             </table>
             <div class="fleet-metrics-meta">
                 <span id="watcher-meta" class="fleet-metrics-scrape-status"></span>
+            </div>
+        </div>
+
+        <!-- Sentinel — fleet-anomaly findings stream. Unlike Watcher there's no
+             open/resolved lifecycle: findings are transient state signals.
+             Backed by /v1/sentinel/summary. -->
+        <div class="panel" id="sentinel-section">
+            <div class="panel-header">
+                <h2>Sentinel</h2>
+                <div class="panel-controls">
+                    <button id="sentinel-refresh" class="panel-button" type="button">Refresh</button>
+                </div>
+            </div>
+            <div class="sentinel-counts">
+                <div class="sentinel-stat">
+                    <span class="sentinel-stat-label">total · 24h</span>
+                    <span class="sentinel-stat-value" id="sentinel-count-total">—</span>
+                </div>
+                <div class="sentinel-stat sentinel-stat-sev-critical">
+                    <span class="sentinel-stat-label">critical</span>
+                    <span class="sentinel-stat-value" id="sentinel-count-critical">—</span>
+                </div>
+                <div class="sentinel-stat sentinel-stat-sev-high">
+                    <span class="sentinel-stat-label">high</span>
+                    <span class="sentinel-stat-value" id="sentinel-count-high">—</span>
+                </div>
+                <div class="sentinel-stat sentinel-stat-sev-medium">
+                    <span class="sentinel-stat-label">medium</span>
+                    <span class="sentinel-stat-value" id="sentinel-count-medium">—</span>
+                </div>
+            </div>
+            <div class="sentinel-class-breakdown" id="sentinel-class-breakdown"></div>
+            <div class="sentinel-stream" id="sentinel-stream"></div>
+            <div class="fleet-metrics-meta">
+                <span id="sentinel-meta" class="fleet-metrics-scrape-status"></span>
             </div>
         </div>
 

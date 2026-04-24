@@ -5251,3 +5251,141 @@ main {
     text-align: center !important;
     padding: 18px !important;
 }
+
+/* Sentinel — findings stream panel. No chart (transient signals don't need
+ * a time series); stream list + class breakdown pills. */
+.sentinel-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.sentinel-stat {
+    flex: 1 1 100px;
+    min-width: 100px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.sentinel-stat-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+}
+
+.sentinel-stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.35rem;
+    color: var(--text-primary);
+}
+
+.sentinel-stat-sev-critical .sentinel-stat-value { color: #ef4444; }
+.sentinel-stat-sev-high     .sentinel-stat-value { color: #f59e0b; }
+.sentinel-stat-sev-medium   .sentinel-stat-value { color: #3b82f6; }
+
+.sentinel-class-breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 14px;
+    min-height: 26px;
+}
+
+.sentinel-class-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    font-size: 0.78rem;
+}
+
+.sentinel-class-name {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-primary);
+}
+
+.sentinel-class-count {
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+}
+
+.sentinel-class-empty {
+    color: var(--text-secondary);
+    font-style: italic;
+    font-size: 0.82rem;
+}
+
+.sentinel-stream {
+    max-height: 360px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    margin-bottom: 10px;
+}
+
+.sentinel-stream-empty {
+    color: var(--text-secondary);
+    font-style: italic;
+    text-align: center;
+    padding: 24px;
+    font-size: 0.88rem;
+}
+
+.sentinel-row {
+    display: grid;
+    grid-template-columns: 80px 80px 180px 1fr;
+    gap: 10px;
+    align-items: baseline;
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    font-size: 0.84rem;
+}
+
+.sentinel-row:last-child {
+    border-bottom: none;
+}
+
+.sentinel-row-time {
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.76rem;
+}
+
+.sentinel-row-sev {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+}
+
+.sentinel-row-sev-critical { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+.sentinel-row-sev-high     { background: rgba(245, 158, 11, 0.18); color: #fcd34d; }
+.sentinel-row-sev-medium   { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
+
+.sentinel-row-class {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-primary);
+    font-size: 0.78rem;
+}
+
+.sentinel-row-msg {
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
