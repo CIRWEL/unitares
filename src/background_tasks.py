@@ -1081,6 +1081,15 @@ def start_all_background_tasks(connection_tracker, set_ready):
     _supervised_create_task(concept_extraction_background_task(), name="concept_extraction")
     _supervised_create_task(periodic_matview_refresh(), name="matview_refresh")
     _supervised_create_task(periodic_partition_maintenance(), name="partition_maintenance")
+    # Concurrent identity binding sweeper (#123): marks bindings stale once
+    # they fall outside the live window so the diagnose view and v2
+    # enforcement can distinguish stale from live.
+    from src.mcp_handlers.identity.process_binding import (
+        process_binding_sweeper_task,
+    )
+    _supervised_create_task(
+        process_binding_sweeper_task(), name="process_binding_sweeper"
+    )
     _supervised_create_task(background_metadata_load(), name="metadata_load")
     # periodic_orphan_cleanup removed 2026-04-19 — auto-sweep was hiding
     # onboarding bugs behind archival. Use the archive_orphan_agents MCP tool
