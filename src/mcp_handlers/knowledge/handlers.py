@@ -689,6 +689,15 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         # Accept both "query" and "text" as parameter names for better UX
         query_text = arguments.get("query") or arguments.get("text")
         agent_id = arguments.get("agent_id")
+        # Labels to exclude (e.g. ["Vigil"]) — lets the dashboard hide
+        # janitorial residents from the default Discoveries feed. Resolved to
+        # agent_ids below, applied as a post-query filter over `results`.
+        exclude_labels_raw = arguments.get("exclude_agent_labels") or []
+        exclude_labels_lc: set[str] = {
+            str(lbl).strip().lower()
+            for lbl in exclude_labels_raw
+            if str(lbl).strip()
+        } if isinstance(exclude_labels_raw, (list, tuple)) else set()
         tags = normalize_tags(arguments.get("tags", [])) or None
         dtype = arguments.get("discovery_type")
         severity = arguments.get("severity")
@@ -1001,7 +1010,20 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         
         dt_ms = (time.perf_counter() - t0) * 1000.0
         record_ms(f"knowledge.search.{search_mode}", dt_ms)
-        
+
+        # Post-query exclude-by-label filter. Kept here (not in the DB query)
+        # so it composes with all retrieval modes — FTS, semantic, hybrid RRF,
+        # graph expansion — without each branch needing to know the filter.
+        if exclude_labels_lc:
+            filtered = []
+            for d in results:
+                agent_display = _resolve_agent_display(d.agent_id)
+                display_name = agent_display.get("display_name", d.agent_id) or ""
+                if str(display_name).strip().lower() in exclude_labels_lc:
+                    continue
+                filtered.append(d)
+            results = filtered
+
         # Auto-include details when result set is small (saves a round-trip)
         auto_details = not include_details and 0 < len(results) <= 3
         if auto_details:

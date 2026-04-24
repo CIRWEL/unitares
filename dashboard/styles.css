@@ -5413,3 +5413,146 @@ main {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
+/* -----------------------------------------------------------------------
+ * Vigil panel — mirrors sentinel layout with cycles + writes streams.
+ * ----------------------------------------------------------------------- */
+
+.vigil-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.vigil-stat {
+    flex: 1 1 110px;
+    min-width: 110px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.vigil-stat-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+}
+
+.vigil-stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.1rem;
+    color: var(--text-primary);
+}
+
+.vigil-subhead {
+    margin: 14px 0 6px 0;
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.vigil-stream {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    margin-bottom: 6px;
+}
+
+.vigil-stream-empty {
+    color: var(--text-secondary);
+    font-style: italic;
+    text-align: center;
+    padding: 20px;
+    font-size: 0.86rem;
+}
+
+.vigil-row {
+    display: grid;
+    gap: 10px;
+    align-items: baseline;
+    padding: 5px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    font-size: 0.82rem;
+}
+
+.vigil-row:last-child {
+    border-bottom: none;
+}
+
+/* Cycle rows: time | verdict | C | R | EISV */
+.vigil-row-cycle {
+    grid-template-columns: 72px 72px 70px 70px 1fr;
+}
+
+/* Write rows: time | severity | type | summary */
+.vigil-row-write {
+    grid-template-columns: 72px 72px 120px 1fr;
+}
+
+.vigil-row-time {
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.74rem;
+}
+
+.vigil-row-verdict,
+.vigil-row-sev {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+}
+
+.vigil-verdict-proceed,
+.vigil-verdict-approve { background: rgba(34, 197, 94, 0.18); color: #86efac; }
+.vigil-verdict-guide,
+.vigil-verdict-caution { background: rgba(245, 158, 11, 0.18); color: #fcd34d; }
+.vigil-verdict-pause,
+.vigil-verdict-reject  { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+
+.vigil-row-sev-critical { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+.vigil-row-sev-high     { background: rgba(245, 158, 11, 0.18); color: #fcd34d; }
+.vigil-row-sev-medium   { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
+
+.vigil-row-metric {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-primary);
+    font-size: 0.78rem;
+}
+
+.vigil-row-eisv {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vigil-row-type {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.vigil-row-msg {
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

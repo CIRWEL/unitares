@@ -25,6 +25,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock, PropertyMock
 from datetime import datetime
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Optional, List, Dict, Any
 
 project_root = Path(__file__).parent.parent
@@ -284,6 +285,57 @@ class TestSearchKnowledgeGraph:
 
         data = parse_result(result)
         assert data["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_exclude_agent_labels_drops_matching_rows(self, patch_common):
+        """exclude_agent_labels filters post-query so the main Discoveries feed
+        can hide janitorial residents (e.g. Vigil) without losing them from
+        agent-drill-down views. The match is on display_name, case-insensitive."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        # Register two agents with distinct labels in agent_metadata so the
+        # display-name resolver returns something meaningful.
+        mock_mcp_server.agent_metadata = {
+            "vigil-uuid": SimpleNamespace(label="Vigil", display_name="Vigil"),
+            "worker-uuid": SimpleNamespace(label="Worker", display_name="Worker"),
+        }
+
+        mock_graph.query = AsyncMock(return_value=[
+            make_discovery(id="d-v1", agent_id="vigil-uuid", summary="Groundskeeper"),
+            make_discovery(id="d-w1", agent_id="worker-uuid", summary="Real finding"),
+            make_discovery(id="d-v2", agent_id="vigil-uuid", summary="Another groundskeeper"),
+        ])
+
+        result = await handle_search_knowledge_graph({
+            "exclude_agent_labels": ["Vigil"],
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 1
+        ids = [d["id"] for d in data["discoveries"]]
+        assert ids == ["d-w1"]
+
+    @pytest.mark.asyncio
+    async def test_exclude_agent_labels_empty_list_is_no_op(self, patch_common):
+        """Passing an empty list (or omitting the param) must not filter
+        anything — otherwise the default MCP-tool call would silently lose
+        results for any caller that passes the param unconditionally."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        mock_graph.query = AsyncMock(return_value=[
+            make_discovery(id="d-1", summary="One"),
+            make_discovery(id="d-2", summary="Two"),
+        ])
+
+        result = await handle_search_knowledge_graph({
+            "exclude_agent_labels": [],
+        })
+
+        data = parse_result(result)
+        assert data["count"] == 2
 
     @pytest.mark.asyncio
     async def test_search_with_tags(self, patch_common):

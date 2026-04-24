@@ -1336,6 +1336,9 @@ async function loadDiscoveries(searchQuery = '') {
         console.log('Loading discoveries...', searchQuery ? `(search: ${searchQuery})` : '');
 
         // Single API call — get discoveries and derive count from results
+        // Vigil is hidden by default: the Vigil panel (see vigil.js) shows
+        // its groundskeeper stream separately. Searching explicitly still
+        // returns its entries since the user intent is clear.
         const toolArgs = {
             limit: 50,
             include_details: true,
@@ -1343,6 +1346,8 @@ async function loadDiscoveries(searchQuery = '') {
 
         if (searchQuery) {
             toolArgs.query = searchQuery;
+        } else {
+            toolArgs.exclude_agent_labels = ['Vigil'];
         }
 
         const searchResult = await callTool('search_knowledge_graph', toolArgs);
