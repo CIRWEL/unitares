@@ -697,3 +697,162 @@ class TestOnAfterCheckin:
         )
         with pytest.raises(asyncio.CancelledError):
             await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+
+class TestOnVerdictPause:
+    @pytest.mark.asyncio
+    async def test_hook_can_request_retry(self):
+        """on_verdict_pause returning True triggers a single checkin retry."""
+        attempts: list = []
+
+        class RecoveringAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_verdict_pause(self, client, cycle_result, checkin_result):
+                attempts.append("recovery called")
+                await client.self_recovery(action="quick")
+                return True  # request retry
+
+        agent = RecoveringAgent(name="Recoverer", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        first = CheckinResult(
+            success=True, verdict="pause", coherence=0.5,
+            guidance="slow", metrics={},
+        )
+        second = CheckinResult(
+            success=True, verdict="proceed", coherence=0.8,
+            guidance="", metrics={},
+        )
+        mock_client.checkin = AsyncMock(side_effect=[first, second])
+        mock_client.self_recovery = AsyncMock()
+
+        # Should NOT raise: retry succeeded.
+        await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+        assert attempts == ["recovery called"]
+        assert mock_client.checkin.await_count == 2
+        assert mock_client.self_recovery.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_hook_returning_false_surfaces_pause(self):
+        """on_verdict_pause returning False lets VerdictError propagate."""
+
+        class PassiveAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_verdict_pause(self, client, cycle_result, checkin_result):
+                return False
+
+        agent = PassiveAgent(name="Passive", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="pause", coherence=0.5,
+                guidance="slow", metrics={},
+            )
+        )
+        with pytest.raises(VerdictError):
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+    @pytest.mark.asyncio
+    async def test_on_after_checkin_receives_post_retry_result(self):
+        """When on_verdict_pause triggers retry, on_after_checkin sees the RETRIED (second) checkin."""
+        captured: dict = {}
+
+        class RetryAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_verdict_pause(self, client, cycle_result, checkin_result):
+                return True  # force retry
+
+            async def on_after_checkin(self, client, checkin_result, cycle_result):
+                captured["verdict"] = checkin_result.verdict
+                captured["coherence"] = checkin_result.coherence
+
+        agent = RetryAgent(name="Retry", mcp_url="http://127.0.0.1:9999/mcp/")
+        first = CheckinResult(
+            success=True, verdict="pause", coherence=0.3,
+            guidance="", metrics={},
+        )
+        second = CheckinResult(
+            success=True, verdict="proceed", coherence=0.9,
+            guidance="", metrics={},
+        )
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(side_effect=[first, second])
+
+        await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+        # on_after_checkin must see the post-retry result, not the pre-retry pause.
+        assert captured["verdict"] == "proceed"
+        assert captured["coherence"] == 0.9
+
+    @pytest.mark.asyncio
+    async def test_default_hook_returns_false_so_pause_surfaces(self):
+        """Default on_verdict_pause returns False — no retry, original pause raises."""
+
+        class DefaultAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+            # does NOT override on_verdict_pause
+
+        agent = DefaultAgent(name="Default", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="pause", coherence=0.5,
+                guidance="slow", metrics={},
+            )
+        )
+        with pytest.raises(VerdictError):
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+        assert mock_client.checkin.await_count == 1  # no retry
+
+    @pytest.mark.asyncio
+    async def test_hook_exception_does_not_break_cycle(self):
+        """If on_verdict_pause raises, the failure is logged and the original pause surfaces."""
+
+        class BrokenRecoveryAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_verdict_pause(self, client, cycle_result, checkin_result):
+                raise RuntimeError("recovery exploded")
+
+        agent = BrokenRecoveryAgent(name="Broken", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="pause", coherence=0.5,
+                guidance="", metrics={},
+            )
+        )
+        # Hook raised, no retry, original pause surfaces as VerdictError.
+        with pytest.raises(VerdictError):
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+        assert mock_client.checkin.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_hook_cancelled_error_propagates(self):
+        """CancelledError from on_verdict_pause is NOT swallowed."""
+
+        class CancelledRecoveryAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_verdict_pause(self, client, cycle_result, checkin_result):
+                raise asyncio.CancelledError("cancelled mid-recovery")
+
+        agent = CancelledRecoveryAgent(name="Cancelled", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="pause", coherence=0.5,
+                guidance="", metrics={},
+            )
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))

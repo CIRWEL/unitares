@@ -171,9 +171,27 @@ class GovernanceAgent:
         before a ``pause`` or ``reject`` verdict raises ``VerdictError``.
         Runs on every verdict so state trackers see paused/rejected cycles
         too. Hook exceptions are logged and swallowed — a broken hook must
-        not take down the cycle. Default: no-op.
+        not take down the cycle. When a retry occurred via
+        ``on_verdict_pause``, this hook receives the post-retry result, not
+        the pre-retry pause. Default: no-op.
         """
         return None
+
+    async def on_verdict_pause(
+        self,
+        client: GovernanceClient,
+        cycle_result: CycleResult,
+        checkin_result: CheckinResult,
+    ) -> bool:
+        """Pause-recovery hook. Called when checkin returns ``pause``.
+
+        Return ``True`` to retry the checkin once (e.g. after
+        ``client.self_recovery(action="quick")``); ``False`` to let the
+        ``VerdictError`` propagate. Hook exceptions are logged and
+        swallowed (treated as ``False``). CancelledError propagates.
+        Default: no recovery — returns False.
+        """
+        return False
 
     # --- Lifecycle ---
 
@@ -336,7 +354,7 @@ class GovernanceAgent:
     async def _handle_cycle_result(
         self, client: GovernanceClient, result: CycleResult | None
     ) -> None:
-        """Process a cycle result: check in, post notes, run hook, raise on pause/reject."""
+        """Process a cycle result: check in, post notes, run hooks, raise on unrecovered pause/reject."""
         if result is None:
             return
 
@@ -354,20 +372,34 @@ class GovernanceAgent:
                 try:
                     await client.leave_note(summary=summary, tags=tags)
                 except Exception as e:
-                    logger.warning("%s: failed to leave note: %s", self.name, e)
+                    logger.warning("%s: failed to leave note: %r", self.name, e)
 
-        # Extension point: subclasses do state tracking / EISV logging here.
-        # Runs on every verdict so paused/rejected cycles are observed before
-        # VerdictError propagates. Hook exceptions are logged and swallowed.
+        # Pause-recovery hook: retry once if the subclass recovered.
+        if checkin_result.verdict == "pause":
+            try:
+                retry = await self.on_verdict_pause(client, result, checkin_result)
+            except Exception as e:
+                logger.warning("%s: on_verdict_pause raised: %r", self.name, e)
+                retry = False
+            if retry:
+                checkin_result = await client.checkin(
+                    response_text=result.summary,
+                    complexity=result.complexity,
+                    confidence=result.confidence,
+                    response_mode=result.response_mode,
+                )
+                self._last_checkin_time = time.monotonic()
+
+        # State-tracking hook: runs on the FINAL checkin_result (post-retry).
+        # Hook exceptions are logged and swallowed.
         try:
             await self.on_after_checkin(client, checkin_result, result)
         except Exception as e:
             logger.warning("%s: on_after_checkin raised: %r", self.name, e)
 
-        # Surface verdict
-        verdict = checkin_result.verdict
-        if verdict in ("pause", "reject"):
-            raise VerdictError(verdict, checkin_result.guidance)
+        # Surface verdict if still bad
+        if checkin_result.verdict in ("pause", "reject"):
+            raise VerdictError(checkin_result.verdict, checkin_result.guidance)
 
     async def _send_heartbeat(self, client: GovernanceClient) -> None:
         """Send a lightweight heartbeat check-in."""
