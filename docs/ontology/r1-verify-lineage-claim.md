@@ -6,7 +6,8 @@
 **Revision history:**
 - v1 (2026-04-24 morning) — one-shot draft; five-channel model, `verify_lineage_claim` naming. Dismissed as not implementable and carrying security-gate framing.
 - v2 (2026-04-24 afternoon) — two-channel reduction (C1 trajectory DTW + C2 homeostatic composite); renamed `score_behavioral_continuity`. Reviewed by second council; council found the C1/C2 channels were themselves gated on agents explicitly uploading `TrajectorySignature.attractor` — both unavailable on the standard `process_agent_update` path. v2 also smuggled in a recursive-weight inconsistency (C2's internal 0.4/0.3/0.3 weights exempted from the "no weights until MI" rule applied at the outer level).
-- **v3 (2026-04-24 evening) — current.** Single-channel spec. Renamed `score_behavioral_continuity` → `score_trajectory_continuity` to match what the primitive actually measures. C1 retained via a new server-side helper that reconstructs per-dimension EISV series from `agent_states` rows — no agent-side cooperation required. C2/C3/C4/C5 all deferred with named prerequisites. No weighting question remains (one channel). Thresholds explicitly tagged "seeded, not earned; shadow-mode-calibrate before enforcement."
+- v3 (2026-04-24 evening). Single-channel spec. Renamed `score_behavioral_continuity` → `score_trajectory_continuity` to match what the primitive actually measures. C1 retained via a new server-side helper that reconstructs per-dimension EISV series from `agent_states` rows — no agent-side cooperation required. C2/C3/C4/C5 all deferred with named prerequisites. No weighting question remains (one channel). Thresholds explicitly tagged "seeded, not earned; shadow-mode-calibrate before enforcement."
+- **v3.1 (2026-04-24 late) — current.** Third council pass. Dialectic found no forcing issues (dynamics-confound noted but below primitive's resolution; `plausibility` at API boundary already scoped honestly — dialectic's own recommendation: stop iterating, let next signal come from shadow-mode data or downstream adoption). Code review found three factual errors in the implementation sketch — corrected below. No scope changes.
 
 ---
 
@@ -85,17 +86,31 @@ These four each look like 1-2 weeks of storage/fit work. None of them are blocke
 def reconstruct_eisv_series(
     agent_id: str,
     window: timedelta,
-    conn: Connection,   # sync asyncpg or psycopg2 Connection passed by caller
+    conn,   # asyncpg.Connection, invoked inside run_in_executor via the
+            # sync-asyncpg-in-executor pattern at tests/test_db_utils.py:36-38
 ) -> Dict[str, List[float]]:
     """
     Return {'E': [...], 'I': [...], 'S': [...], 'V': [...]} from core.agent_state
-    rows for agent_id within window, ordered by timestamp ascending.
-
-    Empty lists for dimensions with no rows in window.
+    rows for the agent within window, ordered by timestamp ascending.
+    Dimension keys map to SQL columns: E→entropy, I→integrity, S→stability_index,
+    V→volatility. Empty lists for dimensions with no rows in window.
     """
 ```
 
-Implementation: single SQL query against `core.agent_state` filtered by `agent_id` and timestamp, selecting the four scalar columns (`entropy`, `integrity`, `stability_index`, `volatility` per `src/db/mixins/state.py:17-43`), ordered by timestamp. Group into per-dimension lists in Python. No new schema, no new indexes (existing `agent_id` + timestamp index suffices).
+**SQL shape.** `core.agent_state` stores `identity_id` (BIGINT FK to `core.identities`), not the text `agent_id`, so the helper joins `core.identities` to resolve the UUID string. This matches the existing pattern in `get_latest_agent_state` at `src/db/mixins/state.py` (see the same file for `_row_to_agent_state` mapping — Python field name `void` corresponds to SQL column `volatility`; use the SQL name `volatility` in the query).
+
+```sql
+SELECT s.entropy, s.integrity, s.stability_index, s.volatility, s.recorded_at
+FROM core.agent_state s
+JOIN core.identities i ON i.id = s.identity_id
+WHERE i.agent_id = $1
+  AND s.recorded_at >= NOW() - $2::interval
+ORDER BY s.recorded_at ASC;
+```
+
+Index coverage: `db/postgres/schema.sql:169` provides `idx_agent_state_identity_time ON core.agent_state(identity_id, recorded_at DESC)`. Planner resolves identity first, then range-scans the index. No new index needed.
+
+**Schema specifics** (for implementor): columns are `REAL NOT NULL DEFAULT ...`; `recorded_at` is `TIMESTAMPTZ NOT NULL`. Group rows into per-dimension lists in Python by reading the four scalar columns in order.
 
 ## Plausibility → verdict thresholds
 
@@ -127,16 +142,16 @@ Near-term call-sites and their postures:
 ## Implementation sketch
 
 - **Location:** `src/identity/lineage_continuity.py` (new). Consumers import `score_trajectory_continuity` directly.
-- **DB pattern:** sync DB read inside `run_in_executor`. The project's existing template at `src/agent_loop_detection.py:374` (referenced in CLAUDE.md) uses in-memory state — that template does *not* generalize to asyncpg reads. This spec assumes a companion task: "add a reusable sync-DB-read helper" — likely a short psycopg2 connection factory matching the asyncpg connection string from `DATABASE_URL`. That helper doesn't exist yet; R1's implementation blocks on it but it is trivially small.
+- **DB pattern:** sync DB read inside `run_in_executor`. The project's `src/agent_loop_detection.py:374` template uses in-memory state and does *not* generalize to DB reads. The correct template already exists at `tests/test_db_utils.py:36-38` — it runs an asyncpg connection on a fresh event loop inside the executor thread via `asyncio.run(...)`. This adds no new dependency (project already has `asyncpg>=0.29.0`; `psycopg2` is not in `pyproject.toml`). Env var is `DB_POSTGRES_URL` (see `src/db/postgres_backend.py:72`), not `DATABASE_URL`. An implementation may promote the `test_db_utils` pattern into a reusable helper, but no new driver is required.
 - **Exposure:** internal policy consumers only. No MCP tool wrapper in v3.
 - **Observability:** emits a KG discovery of type `trajectory_continuity_score` with `plausibility`, `verdict`, `components` (per-dimension), and `observations`. Provides audit trail.
 
 ## Test fixture (synthetic)
 
-Anchored in `tests/conftest.py` (existing convention — no new `tests/fixtures/` directory). New fixtures:
+`tests/conftest.py` is pure isolation infrastructure (session, DB-backend stubbing, ghost cleanup) — no data-generator fixtures live there today. Adding a trajectory generator there would be a stylistic mismatch. Place the generator in a dedicated helper module instead:
 
-- `synthetic_trajectory_pair(seed, kind)` → `(parent_rows, successor_rows)`: returns two lists of dicts shaped like `core.agent_state` rows, for insertion into a test DB. `kind ∈ {"genuine", "divergent", "drifted", "early"}`.
-- `eisv_dtw_score_fixture` → helper that calls `score_trajectory_continuity` against the mocked DB reader.
+- `tests/helpers/trajectory_fixtures.py` (new) — `synthetic_trajectory_pair(seed, kind) → (parent_rows, successor_rows)`: returns two lists of dicts shaped like `core.agent_state` rows. `kind ∈ {"genuine", "divergent", "drifted", "early"}`.
+- The `eisv_dtw_score_fixture` pytest fixture (for mocking the DB reader in unit tests) can live as a local fixture in `tests/test_lineage_continuity.py` itself, or be promoted to a helper module later if multiple tests use it.
 
 Test cases in `tests/test_lineage_continuity.py` (new):
 
@@ -196,5 +211,7 @@ v1/v2 framed R1 as "the earning mechanism." v3 is narrower: R1 is a single-chann
 - v1 code review (`ae3eec7695eafae26`) — C3/C4/C5 not implementable from current storage.
 - v2 dialectic (`a57d2b9f80ee33ce3`) — C2 hidden composite weighting, 0.5/0.5 as claim not refusal, "paces with v7" conflation, thresholds asserted not earned, earning-mechanism vs telemetry-only framing gap.
 - v2 code review (`a5a418ffb32f569b8`) — C1/C2 both gated on agent-uploaded `TrajectorySignature.attractor`, `run_in_executor` template does not cover DB reads, `tests/fixtures/` convention does not exist.
+- v3 dialectic (`acb058f6cd6f3f4f0`) — dynamics-confound observation (post-coupling EISV may measure dynamics more than agent), seeded-thresholds epistemic-debt tension, inconclusive-flood operational concern. All three judged below forcing threshold given v3's shadow-mode-only ship posture. Dialectic's explicit recommendation: stop iterating, next signal comes from data.
+- v3 code review (`a68d31899e90dea48`) — `core.agent_state` indexes on `identity_id` not `agent_id` (JOIN required); env var is `DB_POSTGRES_URL` not `DATABASE_URL`; psycopg2 is not a project dependency (use sync-asyncpg-in-executor pattern already at `tests/test_db_utils.py:36-38`); `conftest.py` is pure isolation infrastructure, data generators belong in a helper module.
 
-v3 addresses each finding by narrowing scope, adding the reconstruction helper, renaming to match reduced claim, and explicitly splitting synthetic-regression from shadow-calibration responsibilities.
+v3.1 applies the v3 code-review corrections in-place (SQL JOIN, correct env var, sync-asyncpg pattern, fixture module). No spec-level changes.
