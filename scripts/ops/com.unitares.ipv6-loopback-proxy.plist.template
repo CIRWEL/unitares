@@ -13,10 +13,11 @@
     `127.0.0.1:<PORT>`. Bytes-level passthrough preserves the Upgrade
     header and all X-Forwarded-* headers cloudflared already injected.
 
-  Install:
-    cp scripts/ops/com.unitares.ipv6-loopback-proxy.plist.template \
-       ~/Library/LaunchAgents/com.unitares.ipv6-loopback-proxy.plist
-    # Edit the path to Python and the unitares repo below if needed.
+  Install (render __VARS__ then load):
+    sed -e "s|__UNITARES_ROOT__|$HOME/projects/unitares|g" \
+        -e "s|__PYTHON3__|$(command -v python3)|g" \
+        scripts/ops/com.unitares.ipv6-loopback-proxy.plist.template \
+        > ~/Library/LaunchAgents/com.unitares.ipv6-loopback-proxy.plist
     launchctl load ~/Library/LaunchAgents/com.unitares.ipv6-loopback-proxy.plist
 
   Verify:
@@ -29,8 +30,8 @@
     <string>com.unitares.ipv6-loopback-proxy</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
-        <string>/Users/cirwel/projects/unitares/scripts/ops/ipv6_loopback_proxy.py</string>
+        <string>__PYTHON3__</string>
+        <string>__UNITARES_ROOT__/scripts/ops/ipv6_loopback_proxy.py</string>
         <string>--listen-host</string>
         <string>::1</string>
         <string>--listen-port</string>

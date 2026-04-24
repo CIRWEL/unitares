@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd manifest for the Sentinel agent (continuous fleet monitor).
+
+  Sentinel is an analytical resident agent: watches the fleet for anomalies
+  and lockstep drift, reports findings back into the governance store.
+
+  Install (render __VARS__ then load):
+    sed -e "s|__UNITARES_ROOT__|$HOME/projects/unitares|g" \
+        -e "s|__HOME__|$HOME|g" \
+        -e "s|__PYTHON3__|$(command -v python3)|g" \
+        scripts/ops/com.unitares.sentinel.plist.template \
+        > ~/Library/LaunchAgents/com.unitares.sentinel.plist
+    launchctl load ~/Library/LaunchAgents/com.unitares.sentinel.plist
+
+  Verify:
+    launchctl list | grep com.unitares.sentinel   # status 0 = running
+    tail -f __HOME__/Library/Logs/unitares-sentinel-launchd.log
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.unitares.sentinel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON3__</string>
+        <string>__UNITARES_ROOT__/agents/sentinel/agent.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__UNITARES_ROOT__</string>
+
+    <!-- Continuous process — restart on crash -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Wait for governance to be up before starting -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/unitares-sentinel-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/unitares-sentinel-launchd.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>__UNITARES_ROOT__</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+</dict>
+</plist>

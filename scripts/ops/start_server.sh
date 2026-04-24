@@ -57,7 +57,7 @@ if ! "$PYTHON" -c "import mcp, uvicorn, starlette" 2>/dev/null; then
         echo "Note: unitares-core (governance_core) is a private package not on PyPI."
         echo "  Install from wheel:  pip install /path/to/unitares_core-*.whl"
         echo "  Or use remote mode:  export UNITARES_HTTP_API_TOKEN=<token>"
-        echo "                       curl -H 'Authorization: Bearer <token>' https://gov.cirwel.org/v1/tools"
+        echo "                       curl -H 'Authorization: Bearer <token>' https://your-host.example/v1/tools"
         echo ""
     fi
     exit 1
