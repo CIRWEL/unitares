@@ -66,27 +66,32 @@ def _emit_lifecycle_event(
         )
 
         async def _emit():
+            # Exactly one audit row per lifecycle transition.
+            # broadcast_event triggers _persist_event which writes to audit.events;
+            # fall back to a direct write only when broadcast is skipped or fails.
+            broadcast_persisted = False
             if not skip_broadcast:
                 try:
                     await broadcaster_instance.broadcast_event(
                         event_type=f"lifecycle_{event}",
                         agent_id=agent_id,
-                        payload={"reason": reason},
+                        payload={"reason": reason, "event": event},
                     )
+                    broadcast_persisted = True
                 except Exception as e:
                     logger.debug(f"Lifecycle broadcast failed: {e}")
 
-            # Also write to audit DB (best-effort)
-            try:
-                from src.audit_db import append_audit_event_async
-                await append_audit_event_async({
-                    "timestamp": timestamp,
-                    "event_type": f"lifecycle_{event}",
-                    "agent_id": agent_id,
-                    "details": {"reason": reason, "event": event},
-                })
-            except Exception as e:
-                logger.debug(f"Lifecycle audit write failed: {e}")
+            if not broadcast_persisted:
+                try:
+                    from src.audit_db import append_audit_event_async
+                    await append_audit_event_async({
+                        "timestamp": timestamp,
+                        "event_type": f"lifecycle_{event}",
+                        "agent_id": agent_id,
+                        "details": {"reason": reason, "event": event},
+                    })
+                except Exception as e:
+                    logger.debug(f"Lifecycle audit write failed: {e}")
 
         # Schedule onto the running event loop if available
         try:

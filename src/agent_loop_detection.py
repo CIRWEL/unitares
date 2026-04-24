@@ -336,7 +336,7 @@ def process_update_authenticated(
         save_monitor_state(agent_id, monitor)
 
         meta = agent_metadata[agent_id]
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         meta.last_update = now
         meta.total_updates += 1
 
@@ -480,7 +480,7 @@ async def process_update_authenticated_async(
 
     if auto_save:
         decision_action = result.get('decision', {}).get('action', 'unknown')
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         meta = agent_metadata.get(agent_id)
         if meta is not None:
