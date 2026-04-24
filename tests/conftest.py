@@ -140,6 +140,15 @@ def _isolate_db_backend(monkeypatch):
     # observed as 2 surviving RuntimeWarnings after the _lm/_lo rebind fix
     # (KG bug 2026-04-10T06:27:12.501426 follow-up).
     mock_backend.get_identities_batch = AsyncMock(return_value={})
+    # Baseline preload (src/mcp_handlers/updates/phases.py:667). Must return
+    # None so the AgentBaseline.from_dict(AsyncMock) path doesn't fire — that
+    # path calls `data.get('last_updated')` which on an AsyncMock returns a
+    # coroutine that is never awaited. Latent bug surfaced after
+    # governance_core was folded into this repo in 2026-04-24; before the
+    # fold, `from governance_core import ...` in phases.py could silently
+    # ImportError in CI and the entire preload block was skipped, masking
+    # this leak.
+    mock_backend.load_agent_baseline = AsyncMock(return_value=None)
     # Health
     mock_backend.init.return_value = None
     mock_backend.close.return_value = None
