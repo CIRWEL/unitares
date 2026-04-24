@@ -365,6 +365,39 @@ class AuditLogger:
         )
         self._write_entry(entry)
 
+    def log_continuity_token_deprecated_accept(
+        self,
+        *,
+        agent_id: str,
+        caller_channel: Optional[str],
+        caller_model_type: Optional[str],
+        issued_at: int,
+        accepted_at: int,
+        agent_uuid: str,
+    ) -> None:
+        """S1-a (2026-04-24) — grace-period telemetry for cross-instance token resume.
+
+        Fires when a caller invokes onboard() with a continuity_token and
+        without force_new=true. The retired cross-process-instance resume path.
+        See docs/ontology/s1-continuity-token-retirement.md §4.3, §6.
+        """
+        lifetime_seconds = max(0, int(accepted_at) - int(issued_at))
+        entry = AuditEntry(
+            timestamp=datetime.now().isoformat(),
+            agent_id=agent_id,
+            event_type="continuity_token_deprecated_accept",
+            confidence=1.0,
+            details={
+                "caller_channel": caller_channel,
+                "caller_model_type": caller_model_type,
+                "issued_at": int(issued_at),
+                "accepted_at": int(accepted_at),
+                "lifetime_seconds": lifetime_seconds,
+                "agent_uuid": agent_uuid,
+            },
+        )
+        self._write_entry(entry)
+
     def _write_entry(self, entry: AuditEntry):
         """Write audit entry to JSONL log file with locking"""
         entry_dict = asdict(entry)
