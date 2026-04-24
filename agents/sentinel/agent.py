@@ -42,7 +42,6 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from agents.common.config import GOV_MCP_URL, GOV_WS_URL
-from agents.common.log import trim_log as _trim_log
 from unitares_sdk.agent import CycleResult, GovernanceAgent
 from unitares_sdk.client import GovernanceClient
 from unitares_sdk.errors import GovernanceError, VerdictError
@@ -425,6 +424,9 @@ class SentinelAgent(GovernanceAgent):
             timeout=30.0,
             persistent=True,
             refuse_fresh_onboard=True,
+            cycle_timeout_seconds=CYCLE_TIMEOUT,
+            log_file=LOG_FILE,
+            max_log_lines=MAX_LOG_LINES,
         )
         self.ws_url = ws_url
         self.analysis_interval = analysis_interval
@@ -562,73 +564,26 @@ class SentinelAgent(GovernanceAgent):
             notes=note_tuples if note_tuples else None,
         )
 
-    async def _handle_cycle_result(
-        self, client: GovernanceClient, result: CycleResult | None
+    async def on_after_checkin(
+        self, client: GovernanceClient, checkin_result, cycle_result: CycleResult,
     ) -> None:
-        """Override base: add EISV logging after check-in."""
-        if result is None:
+        """Log one-line EISV summary after each check-in."""
+        if not checkin_result.success:
+            log(f"CHECK-IN FAILED | {cycle_result.summary}")
             return
-
-        # Check in via SDK client
+        metrics = checkin_result.metrics or {}
         try:
-            checkin_result = await client.checkin(
-                response_text=result.summary,
-                complexity=result.complexity,
-                confidence=result.confidence,
-                response_mode=result.response_mode,
+            eisv = (
+                f"E={float(metrics['E']):.3f} "
+                f"I={float(metrics['I']):.3f} "
+                f"S={float(metrics['S']):.3f} "
+                f"V={float(metrics['V']):.3f}"
             )
-            self._last_checkin_time = time.monotonic()
-        except VerdictError:
-            raise
-        except Exception as e:
-            log(f"Check-in failed: {e}")
-            return
-
-        # Post notes
-        if result.notes:
-            for summary_text, tags in result.notes:
-                try:
-                    await client.leave_note(summary=summary_text, tags=tags)
-                except Exception:
-                    log(f"NOTE FAILED: {summary_text}")
-
-        # Log one-line summary with EISV
-        if checkin_result.success:
-            metrics = checkin_result.metrics or {}
-            try:
-                eisv = (
-                    f"E={float(metrics['E']):.3f} "
-                    f"I={float(metrics['I']):.3f} "
-                    f"S={float(metrics['S']):.3f} "
-                    f"V={float(metrics['V']):.3f}"
-                )
-            except (KeyError, TypeError, ValueError):
-                eisv = "EISV=?"
-            verdict = checkin_result.verdict
-            log(f"{verdict} | {eisv} | {result.summary}")
-        else:
-            log(f"CHECK-IN FAILED | {result.summary}")
+        except (KeyError, TypeError, ValueError):
+            eisv = "EISV=?"
+        log(f"{checkin_result.verdict} | {eisv} | {cycle_result.summary}")
 
     # --- Main loops ---
-
-    async def _bounded_analysis_cycle(self) -> str:
-        """Run one analysis cycle with a hard timeout.
-
-        Uses asyncio.wait_for — NOT anyio.fail_after — because super().run_once()
-        opens an MCP ClientSession whose internal reader task owns its own anyio
-        cancel scope. An outer anyio.fail_after and the SDK's inner task group
-        end up with mismatched cancel-scope ownership: when the timeout fires
-        during session.initialize, unwinding crashes with "Attempted to exit a
-        cancel scope that isn't the current task's current cancel scope".
-        asyncio.wait_for wraps the coroutine in its own task so MCP's task
-        group is entered and exited within a single task boundary.
-        """
-        try:
-            await asyncio.wait_for(super().run_once(), CYCLE_TIMEOUT)
-            return f"cycle {self._cycle_count} complete"
-        except asyncio.TimeoutError:
-            log(f"Analysis cycle exceeded {CYCLE_TIMEOUT}s — skipping")
-            return f"TIMEOUT after {CYCLE_TIMEOUT}s"
 
     async def run_continuous(self):
         """Run Sentinel continuously: WebSocket consumer + periodic analysis."""
@@ -650,7 +605,9 @@ class SentinelAgent(GovernanceAgent):
             # Matches the periodic loop's error handling below.
             await asyncio.sleep(5)  # let WS connect
             try:
-                await self._bounded_analysis_cycle()
+                await self.run_once()
+            except asyncio.TimeoutError:
+                log(f"Analysis cycle exceeded {CYCLE_TIMEOUT}s — skipping")
             except Exception as e:
                 log(f"Initial analysis cycle error: {e}")
 
@@ -659,10 +616,11 @@ class SentinelAgent(GovernanceAgent):
                 await asyncio.sleep(self.analysis_interval)
                 if self.running:
                     try:
-                        await self._bounded_analysis_cycle()
+                        await self.run_once()
+                    except asyncio.TimeoutError:
+                        log(f"Analysis cycle exceeded {CYCLE_TIMEOUT}s — skipping")
                     except Exception as e:
                         log(f"Analysis cycle error: {e}")
-                    _trim_log(LOG_FILE, MAX_LOG_LINES)
         finally:
             ws_task.cancel()
             try:
@@ -679,7 +637,12 @@ class SentinelAgent(GovernanceAgent):
         ws_task = asyncio.create_task(self.ws_consumer())
         try:
             await asyncio.sleep(10)  # collect events for 10s
-            result = await self._bounded_analysis_cycle()
+            try:
+                await self.run_once()
+                result = f"cycle {self._cycle_count} complete"
+            except asyncio.TimeoutError:
+                log(f"Analysis cycle exceeded {CYCLE_TIMEOUT}s — skipping")
+                result = f"TIMEOUT after {CYCLE_TIMEOUT}s"
             self.running = False
         finally:
             ws_task.cancel()
