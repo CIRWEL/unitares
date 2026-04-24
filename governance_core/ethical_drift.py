@@ -34,10 +34,25 @@ scalar an agent can emit at check-in time.
 """
 
 from __future__ import annotations
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Deque
 import math
+import os
+
+
+# Per-agent decision-history window. Bounded by deque(maxlen=...) on
+# AgentBaseline.recent_decisions so updates can't grow the buffer.
+_RECENT_DECISIONS_MAXLEN = 20
+
+# In-memory baseline cache size cap. Beyond this, least-recently-used
+# entries are evicted; the next access for an evicted agent_id triggers
+# a reload from PostgreSQL via src/mcp_handlers/updates/phases.py:667
+# (load_agent_baseline), so eviction is loss-free as long as write-back
+# at phases.py:1042 (save_agent_baseline) keeps the DB current.
+# Override via UNITARES_BASELINE_CACHE_MAXLEN env var.
+_BASELINE_CACHE_MAXLEN = int(os.environ.get("UNITARES_BASELINE_CACHE_MAXLEN", "1000"))
 
 
 @dataclass
@@ -161,8 +176,12 @@ class AgentBaseline:
     baseline_confidence: float = 0.6
     baseline_complexity: float = 0.4
 
-    # Decision pattern tracking
-    recent_decisions: List[str] = field(default_factory=list)  # Last N decision outcomes
+    # Decision pattern tracking — bounded by deque(maxlen=...) so the
+    # buffer can't grow past _RECENT_DECISIONS_MAXLEN regardless of how
+    # many updates land.
+    recent_decisions: Deque[str] = field(
+        default_factory=lambda: deque(maxlen=_RECENT_DECISIONS_MAXLEN)
+    )
     decision_consistency: float = 0.8  # How consistent are decisions
 
     # Update count for weighting
@@ -212,11 +231,9 @@ class AgentBaseline:
             self.prev_complexity = complexity  # Raw observation for rate-of-change
 
         if decision is not None:
+            # deque(maxlen=_RECENT_DECISIONS_MAXLEN) auto-evicts the oldest
+            # entry on append once full, so no manual trim is needed.
             self.recent_decisions.append(decision)
-            # Keep only last 20 decisions
-            if len(self.recent_decisions) > 20:
-                self.recent_decisions = self.recent_decisions[-20:]
-            # Compute consistency as mode frequency
             self._update_decision_consistency()
 
         self.update_count += 1
@@ -253,7 +270,7 @@ class AgentBaseline:
             'prev_coherence': self.prev_coherence,
             'prev_confidence': self.prev_confidence,
             'prev_complexity': self.prev_complexity,
-            'recent_decisions': self.recent_decisions,
+            'recent_decisions': list(self.recent_decisions),
             'decision_consistency': self.decision_consistency,
             'update_count': self.update_count,
             'alpha': self.alpha,
@@ -270,7 +287,9 @@ class AgentBaseline:
         baseline.prev_coherence = data.get('prev_coherence')
         baseline.prev_confidence = data.get('prev_confidence')
         baseline.prev_complexity = data.get('prev_complexity')
-        baseline.recent_decisions = data.get('recent_decisions', [])
+        baseline.recent_decisions = deque(
+            data.get('recent_decisions', []), maxlen=_RECENT_DECISIONS_MAXLEN
+        )
         baseline.decision_consistency = data.get('decision_consistency', 0.8)
         baseline.update_count = data.get('update_count', 0)
         baseline.alpha = data.get('alpha', 0.1)
@@ -393,33 +412,54 @@ def compute_ethical_drift(
     )
 
 
-# Baseline storage (in-memory, can be extended to Redis)
-_baseline_cache: Dict[str, AgentBaseline] = {}
+# Baseline storage — bounded LRU. Eviction is loss-free as long as the
+# write-back at src/mcp_handlers/updates/phases.py:1042 keeps the DB
+# current. Cap is _BASELINE_CACHE_MAXLEN (env-overridable).
+_baseline_cache: "OrderedDict[str, AgentBaseline]" = OrderedDict()
+
+
+def _touch_lru(agent_id: str) -> None:
+    """Mark agent_id as most-recently-used in the cache."""
+    _baseline_cache.move_to_end(agent_id)
+
+
+def _evict_if_over_cap() -> None:
+    """Drop the least-recently-used entry if cache exceeds the cap."""
+    while len(_baseline_cache) > _BASELINE_CACHE_MAXLEN:
+        _baseline_cache.popitem(last=False)
 
 
 def get_agent_baseline(agent_id: str) -> AgentBaseline:
-    """Get or create baseline for an agent."""
-    if agent_id not in _baseline_cache:
-        _baseline_cache[agent_id] = AgentBaseline(agent_id=agent_id)
-    return _baseline_cache[agent_id]
+    """Get or create baseline for an agent (LRU-touched on access)."""
+    if agent_id in _baseline_cache:
+        _touch_lru(agent_id)
+        return _baseline_cache[agent_id]
+    baseline = AgentBaseline(agent_id=agent_id)
+    _baseline_cache[agent_id] = baseline
+    _evict_if_over_cap()
+    return baseline
 
 
 def clear_baseline(agent_id: str):
     """Clear baseline for an agent (for testing or reset)."""
-    if agent_id in _baseline_cache:
-        del _baseline_cache[agent_id]
+    _baseline_cache.pop(agent_id, None)
 
 
 def get_all_baselines() -> Dict[str, AgentBaseline]:
-    """Get all baselines (for debugging/inspection)."""
-    return _baseline_cache.copy()
+    """Get all baselines (for debugging/inspection). Snapshot copy."""
+    return dict(_baseline_cache)
 
 
 def set_agent_baseline(agent_id: str, baseline: AgentBaseline) -> None:
-    """Preload a baseline (e.g., from persistent storage)."""
+    """Preload a baseline (e.g., from persistent storage). LRU-touched."""
     _baseline_cache[agent_id] = baseline
+    _touch_lru(agent_id)
+    _evict_if_over_cap()
 
 
 def get_baseline_or_none(agent_id: str) -> Optional[AgentBaseline]:
-    """Get baseline if cached, without creating a default."""
-    return _baseline_cache.get(agent_id)
+    """Get baseline if cached, without creating a default. LRU-touched on hit."""
+    if agent_id in _baseline_cache:
+        _touch_lru(agent_id)
+        return _baseline_cache[agent_id]
+    return None
