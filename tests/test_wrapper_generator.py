@@ -269,3 +269,98 @@ class TestCreateTypedWrapper:
         wrapper = create_typed_wrapper("multi_type", schema, get_handler)
         sig = inspect.signature(wrapper)
         assert len(sig.parameters) == 6
+
+
+# ============================================================================
+# FastMCP Context parameter detection
+# ============================================================================
+# Regression: wrapper_generator previously set only __signature__, leaving
+# __annotations__ empty. FastMCP's find_context_parameter reads get_type_hints
+# (→ __annotations__) to decide whether to skip `ctx` from the emitted tools/list
+# inputSchema, so ctx leaked as a user-facing argument. See KG discovery
+# 2026-04-24T00:16:12.229114.
+
+class TestSessionWrapperContextDetection:
+
+    def test_session_wrapper_annotations_match_signature(self):
+        """Synthesized signature's annotations must be mirrored in __annotations__."""
+        def get_handler(name):
+            async def handler(**kwargs):
+                return {}
+            return handler
+
+        def session_extractor(ctx):
+            return "session-id"
+
+        schema = {"properties": {"query": {"type": "string"}}, "required": []}
+        wrapper = create_typed_wrapper(
+            "session_tool", schema, get_handler,
+            inject_session=True, session_extractor=session_extractor,
+        )
+        sig = inspect.signature(wrapper)
+        assert "ctx" in sig.parameters
+        # __annotations__ must carry ctx so get_type_hints can find it.
+        assert "ctx" in wrapper.__annotations__
+        assert wrapper.__annotations__["ctx"] == sig.parameters["ctx"].annotation
+
+    def test_fastmcp_finds_ctx_in_session_wrapper(self):
+        """FastMCP's find_context_parameter must locate ctx on a session wrapper."""
+        pytest.importorskip("mcp.server.fastmcp")
+        from mcp.server.fastmcp.utilities.context_injection import find_context_parameter
+
+        def get_handler(name):
+            async def handler(**kwargs):
+                return {}
+            return handler
+
+        def session_extractor(ctx):
+            return "sid"
+
+        schema = {"properties": {"query": {"type": "string"}}, "required": []}
+        wrapper = create_typed_wrapper(
+            "session_tool", schema, get_handler,
+            inject_session=True, session_extractor=session_extractor,
+        )
+        assert find_context_parameter(wrapper) == "ctx"
+
+    def test_tools_list_schema_omits_ctx(self):
+        """With ctx detected, func_metadata must exclude it from the emitted schema."""
+        pytest.importorskip("mcp.server.fastmcp")
+        from mcp.server.fastmcp.utilities.context_injection import find_context_parameter
+        from mcp.server.fastmcp.utilities.func_metadata import func_metadata
+
+        def get_handler(name):
+            async def handler(**kwargs):
+                return {}
+            return handler
+
+        def session_extractor(ctx):
+            return "sid"
+
+        schema = {
+            "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+            "required": ["query"],
+        }
+        wrapper = create_typed_wrapper(
+            "session_tool", schema, get_handler,
+            inject_session=True, session_extractor=session_extractor,
+        )
+        ctx_kwarg = find_context_parameter(wrapper)
+        assert ctx_kwarg == "ctx"
+        meta = func_metadata(wrapper, skip_names=[ctx_kwarg])
+        fields = set(meta.arg_model.model_fields.keys())
+        assert "ctx" not in fields
+        assert "query" in fields
+        assert "limit" in fields
+
+    def test_simple_wrapper_has_no_ctx(self):
+        """Sanity: wrapper without session injection carries no ctx at all."""
+        def get_handler(name):
+            async def handler(**kwargs):
+                return {}
+            return handler
+
+        schema = {"properties": {"q": {"type": "string"}}, "required": []}
+        wrapper = create_typed_wrapper("plain", schema, get_handler, inject_session=False)
+        assert "ctx" not in inspect.signature(wrapper).parameters
+        assert "ctx" not in wrapper.__annotations__

@@ -237,11 +237,11 @@ def _create_simple_wrapper(
         filtered = {k: v for k, v in kwargs.items() if v is not None}
         handler = get_handler(tool_name)
         return await handler(**filtered)
-    
+
     typed_wrapper.__signature__ = sig
     typed_wrapper.__name__ = tool_name
     typed_wrapper.__qualname__ = tool_name
-    
+
     return typed_wrapper
 
 def _create_session_wrapper(
@@ -313,9 +313,21 @@ def _create_session_wrapper(
         filtered = {k: v for k, v in kwargs.items() if v is not None}
         handler = get_handler(tool_name)
         return await handler(**filtered)
-    
+
     typed_wrapper.__signature__ = sig
     typed_wrapper.__name__ = tool_name
     typed_wrapper.__qualname__ = tool_name
-    
+    # Sync __annotations__ with the synthesized signature. FastMCP's
+    # find_context_parameter reads typing.get_type_hints (which walks
+    # __annotations__, not __signature__) to decide whether to skip ctx
+    # from the emitted tools/list inputSchema. Without this sync, ctx
+    # leaks into the schema as a first-class argument even though the
+    # signature annotation correctly types it as Optional[Context].
+    typed_wrapper.__annotations__ = {
+        p.name: p.annotation
+        for p in sig.parameters.values()
+        if p.annotation is not inspect.Parameter.empty
+    }
+    typed_wrapper.__annotations__["return"] = dict
+
     return typed_wrapper
