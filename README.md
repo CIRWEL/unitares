@@ -14,7 +14,7 @@ Status: live. For architecture details, see [docs/UNIFIED_ARCHITECTURE.md](docs/
 
 Most AI agents fly blind: they can't tell when they're thrashing, drifting, or overconfident until a human notices. UNITARES is a runtime layer that lets agents **see their own state and regulate themselves** — slow down when disorder spikes, ask for review when integrity drops, hand off when they're running on fumes.
 
-Each check-in returns four continuous state variables, a verdict (`proceed` / `guide` / `pause` / `reject`), and guidance. Agents adjust their own behavior *before* external circuit breakers fire. Humans and peer agents read the same state, so one signal serves three consumers: agents regulating themselves, humans watching dashboards, peers coordinating. The variables are called **EISV** — energy, integrity, entropy, valence — and the model is detailed below in [How state works](#how-state-works-eisv).
+Each check-in returns a verdict (`proceed` / `guide` / `pause` / `reject`) and guidance, so agents can adjust *before* external circuit breakers fire. Humans and peer agents read the same underlying state, so one signal serves three consumers: agents regulating themselves, humans watching dashboards, peers coordinating. The state model is detailed below in [How state works](#how-state-works-eisv).
 
 Circuit breakers and kill switches are still there — they're just the last line of defense, not the first.
 
@@ -74,7 +74,10 @@ The agent reads its own metrics and adjusts *before* external controls have to f
 
 ## Production snapshot
 
-As of April 2026 (single-operator deployment, this is self-traffic — not external adoption):
+As of April 2026 (single-operator deployment — self-traffic, not external adoption). Headline: **94K+ governance events · 2,574 process-instances onboarded · 2,226 active in the last 7 days**.
+
+<details>
+<summary><strong>Full metrics table</strong></summary>
 
 | Metric | Value |
 |--------|-------|
@@ -85,6 +88,8 @@ As of April 2026 (single-operator deployment, this is self-traffic — not exter
 | Knowledge graph discoveries | 578 |
 | V operating range | Active agents often within [-0.1, 0.1] |
 | Tests | 6,200+ passing · 77% coverage |
+
+</details>
 
 *What these numbers are good for:* a stress test that the pipeline holds up under sustained volume. *What they are not:* evidence of product-market traction. External adoption is the open question.
 
@@ -304,7 +309,7 @@ Three files at the repo root orient different AI CLIs. Human readers can skip th
 
 ## Paper
 
-[**UNITARES v6**](https://github.com/CIRWEL/unitares-paper-v6) — *Information-Theoretic Governance of Heterogeneous Agent Fleets*. Framework + migration paper (30 pages, latest: `paper-v6.9.1`). Reframes EISV in Shannon + variational free-energy terms, presents class-conditional calibration as a first-class design constraint, and documents the pipeline-ordering migration mechanism used to re-ground the live system. Headline empirical finding: a 13,310-row verdict counterfactual shows 28.9% of governance basin assignments flip under class-conditional grounded coherence relative to the legacy fleet-wide form, with a strong directional bias into the `low` basin — direct empirical support for the homogenization-failure-mode argument. Concept DOI: [10.5281/zenodo.19647159](https://doi.org/10.5281/zenodo.19647159) (resolves to latest version; each tagged release has its own version DOI).
+[**UNITARES v6**](https://github.com/CIRWEL/unitares-paper-v6) — *Information-Theoretic Governance of Heterogeneous Agent Fleets*. Framework + migration paper (30 pages, latest: `paper-v6.9.1`). Grounds EISV in Shannon entropy and class-conditional calibration, with variational free energy as the asymptote target for `E` rather than the current estimator (v6.9 §4.1). Documents the pipeline-ordering migration mechanism used to re-ground the live system. Headline empirical finding: a 13,310-row verdict counterfactual shows 28.9% of governance basin assignments flip under class-conditional grounded coherence relative to the legacy fleet-wide form, with a strong directional bias into the `low` basin — direct empirical support for the homogenization-failure-mode argument. Concept DOI: [10.5281/zenodo.19647159](https://doi.org/10.5281/zenodo.19647159) (resolves to latest version; each tagged release has its own version DOI).
 
 ## Related Projects
 
