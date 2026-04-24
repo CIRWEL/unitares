@@ -25,6 +25,7 @@ from unitares_sdk.errors import (
     IdentityDriftError,
     VerdictError,
 )
+from unitares_sdk.models import CheckinResult
 from unitares_sdk.utils import (
     load_json_state,
     notify,
@@ -156,6 +157,23 @@ class GovernanceAgent:
     async def run_cycle(self, client: GovernanceClient) -> CycleResult | None:
         """One unit of work. Return CycleResult for check-in, or None to skip."""
         raise NotImplementedError
+
+    async def on_after_checkin(
+        self,
+        client: GovernanceClient,
+        checkin_result: CheckinResult,
+        cycle_result: CycleResult,
+    ) -> None:
+        """Post-checkin extension hook. Override to log EISV, track state,
+        or do any bookkeeping that needs the server's response.
+
+        Called after a successful checkin AND after notes are posted, but
+        before a ``pause`` or ``reject`` verdict raises ``VerdictError``.
+        Runs on every verdict so state trackers see paused/rejected cycles
+        too. Hook exceptions are logged and swallowed — a broken hook must
+        not take down the cycle. Default: no-op.
+        """
+        return None
 
     # --- Lifecycle ---
 
@@ -318,7 +336,7 @@ class GovernanceAgent:
     async def _handle_cycle_result(
         self, client: GovernanceClient, result: CycleResult | None
     ) -> None:
-        """Process a cycle result: check in and post notes."""
+        """Process a cycle result: check in, post notes, run hook, raise on pause/reject."""
         if result is None:
             return
 
@@ -337,6 +355,14 @@ class GovernanceAgent:
                     await client.leave_note(summary=summary, tags=tags)
                 except Exception as e:
                     logger.warning("%s: failed to leave note: %s", self.name, e)
+
+        # Extension point: subclasses do state tracking / EISV logging here.
+        # Runs on every verdict so paused/rejected cycles are observed before
+        # VerdictError propagates. Hook exceptions are logged and swallowed.
+        try:
+            await self.on_after_checkin(client, checkin_result, result)
+        except Exception as e:
+            logger.warning("%s: on_after_checkin raised: %s", self.name, e)
 
         # Surface verdict
         verdict = checkin_result.verdict

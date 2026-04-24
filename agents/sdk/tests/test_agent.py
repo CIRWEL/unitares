@@ -582,3 +582,96 @@ class TestLogFileTrim:
                     await agent.run_once()
         # Trim must have fired despite the TimeoutError.
         assert len(log_path.read_text().splitlines()) == 5
+
+
+class TestOnAfterCheckin:
+    @pytest.mark.asyncio
+    async def test_hook_called_with_checkin_result(self):
+        """on_after_checkin runs after a successful checkin with the result."""
+        captured: dict = {}
+
+        class HookedAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("did work")
+
+            async def on_after_checkin(self, client, checkin_result, cycle_result):
+                captured["checkin_verdict"] = checkin_result.verdict
+                captured["cycle_summary"] = cycle_result.summary
+
+        agent = HookedAgent(name="Hooked", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="proceed", coherence=0.9,
+                guidance="", metrics={}, _raw={},
+            )
+        )
+        await agent._handle_cycle_result(mock_client, CycleResult.simple("did work"))
+
+        assert captured["checkin_verdict"] == "proceed"
+        assert captured["cycle_summary"] == "did work"
+
+    @pytest.mark.asyncio
+    async def test_hook_not_called_when_result_is_none(self):
+        """on_after_checkin is skipped when run_cycle returned None."""
+        captured: dict = {"called": False}
+
+        class HookedAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None
+
+            async def on_after_checkin(self, client, checkin_result, cycle_result):
+                captured["called"] = True
+
+        agent = HookedAgent(name="Hooked", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        await agent._handle_cycle_result(mock_client, None)
+        assert captured["called"] is False
+
+    @pytest.mark.asyncio
+    async def test_hook_runs_before_verdict_error_on_pause(self):
+        """Hook runs on pause verdict before VerdictError is raised, so state trackers see it."""
+        captured: dict = {"called": False, "verdict": None}
+
+        class HookedAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_after_checkin(self, client, checkin_result, cycle_result):
+                captured["called"] = True
+                captured["verdict"] = checkin_result.verdict
+
+        agent = HookedAgent(name="Hooked", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="pause", coherence=0.5,
+                guidance="slow down", metrics={}, _raw={},
+            )
+        )
+        with pytest.raises(VerdictError):
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+        assert captured["called"] is True
+        assert captured["verdict"] == "pause"
+
+    @pytest.mark.asyncio
+    async def test_hook_exception_does_not_break_cycle(self):
+        """If on_after_checkin raises, it's logged but VerdictError is still decided from checkin_result."""
+
+        class BrokenHookAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_after_checkin(self, client, checkin_result, cycle_result):
+                raise RuntimeError("hook exploded")
+
+        agent = BrokenHookAgent(name="Broken", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="proceed", coherence=0.9,
+                guidance="", metrics={}, _raw={},
+            )
+        )
+        # Must NOT raise: hook failure is swallowed, verdict is proceed so no VerdictError.
+        await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
