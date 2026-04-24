@@ -25,10 +25,12 @@ from unitares_sdk.errors import (
     IdentityDriftError,
     VerdictError,
 )
+from unitares_sdk.models import CheckinResult
 from unitares_sdk.utils import (
     load_json_state,
     notify,
     save_json_state,
+    trim_log,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,6 +85,7 @@ class GovernanceAgent:
         name: str,
         mcp_url: str = "http://127.0.0.1:8767/mcp/",
         state_dir: Path | None = None,
+        state_file: Path | None = None,
         session_file: Path | None = None,
         legacy_session_file: Path | None = None,
         notify_on_error: bool = True,
@@ -91,10 +94,27 @@ class GovernanceAgent:
         spawn_reason: str | None = None,
         persistent: bool = False,
         refuse_fresh_onboard: bool = False,
+        cycle_timeout_seconds: float | None = None,
+        log_file: Path | None = None,
+        max_log_lines: int = 10_000,
     ):
         self.name = name
         self.mcp_url = mcp_url
         self.timeout = timeout
+        # Hard cap on a single cycle in both run_once() and run_forever()
+        # (connect + run_cycle + checkin + heartbeat-check). Used by
+        # residents whose cycles can stall on an MCP session that never
+        # finishes initialize. None = unbounded. Vigil and Sentinel
+        # previously implemented this as an asyncio.wait_for wrapper in
+        # their own run_once; hoisted here so subclasses don't reinvent it.
+        self.cycle_timeout_seconds = cycle_timeout_seconds
+        # Optional bounded log file. When set, the base class trims it to
+        # max_log_lines after each run_once / run_forever iteration (via
+        # finally so it fires on error and timeout too). Leave unset when
+        # an external rotator (launchd StandardOutPath, logrotate) manages
+        # the file.
+        self.log_file = log_file
+        self.max_log_lines = max_log_lines
         self.notify_on_error = notify_on_error
         # When True, stamp the "persistent" tag after fresh onboard so
         # auto_archive_orphan_agents (is_agent_protected in agent_lifecycle.py)
@@ -112,6 +132,10 @@ class GovernanceAgent:
         name_lower = name.lower()
         default_root = Path(__file__).resolve().parent.parent.parent.parent.parent
         self.state_dir = state_dir or default_root / "data" / name_lower
+        # state_file overrides the default state_dir/state.json when the
+        # caller wants a specific path (e.g. a versioned filename or a
+        # non-default data root). When None, falls back to the old default.
+        self.state_file = state_file
         # Host-scoped anchor default: one identity per role per host, shared
         # across every git worktree or install path (Watcher/Vigil/Sentinel
         # previously minted a new UUID per install-path-relative session
@@ -139,35 +163,93 @@ class GovernanceAgent:
         """One unit of work. Return CycleResult for check-in, or None to skip."""
         raise NotImplementedError
 
+    async def on_after_checkin(
+        self,
+        client: GovernanceClient,
+        checkin_result: CheckinResult,
+        cycle_result: CycleResult,
+    ) -> None:
+        """Post-checkin extension hook. Override to log EISV, track state,
+        or do any bookkeeping that needs the server's response.
+
+        Called after a successful checkin AND after notes are posted, but
+        before a ``pause`` or ``reject`` verdict raises ``VerdictError``.
+        Runs on every verdict so state trackers see paused/rejected cycles
+        too. Hook exceptions are logged and swallowed — a broken hook must
+        not take down the cycle. When a retry occurred via
+        ``on_verdict_pause``, this hook receives the post-retry result, not
+        the pre-retry pause. Default: no-op.
+        """
+        return None
+
+    async def on_verdict_pause(
+        self,
+        client: GovernanceClient,
+        checkin_result: CheckinResult,
+        cycle_result: CycleResult,
+    ) -> bool:
+        """Pause-recovery hook. Called when checkin returns ``pause``.
+
+        Return ``True`` to retry the checkin once (e.g. after
+        ``client.self_recovery(action="quick")``); ``False`` to let the
+        ``VerdictError`` propagate. Hook exceptions are logged and
+        swallowed (treated as ``False``). Default: no recovery — returns
+        False.
+        """
+        return False
+
     # --- Lifecycle ---
 
     async def run_once(self) -> None:
-        """Single cycle: connect -> ensure_identity -> run_cycle -> checkin -> disconnect."""
-        async with GovernanceClient(mcp_url=self.mcp_url, timeout=self.timeout) as client:
-            await self._ensure_identity(client)
-            result = await self.run_cycle(client)
-            await self._handle_cycle_result(client, result)
+        """Single cycle: connect -> ensure_identity -> run_cycle -> checkin -> disconnect.
+
+        Bounded by ``cycle_timeout_seconds`` if set. Trims ``log_file`` after
+        completion (success, failure, or timeout).
+        """
+        async def _cycle() -> None:
+            async with GovernanceClient(mcp_url=self.mcp_url, timeout=self.timeout) as client:
+                await self._ensure_identity(client)
+                result = await self.run_cycle(client)
+                await self._handle_cycle_result(client, result)
+
+        try:
+            if self.cycle_timeout_seconds is None:
+                await _cycle()
+            else:
+                await asyncio.wait_for(_cycle(), self.cycle_timeout_seconds)
+        finally:
+            if self.log_file is not None:
+                trim_log(self.log_file, self.max_log_lines)
 
     async def run_forever(
         self, interval: int = 60, heartbeat_interval: int = 1800
     ) -> None:
-        """Loop: run_cycle repeatedly with heartbeat when idle."""
+        """Loop: run_cycle repeatedly with heartbeat when idle.
+
+        Each iteration is bounded by ``cycle_timeout_seconds`` if set.
+        """
         self._install_signal_handlers()
         self._last_checkin_time = time.monotonic()
 
+        async def _iteration() -> None:
+            async with GovernanceClient(
+                mcp_url=self.mcp_url, timeout=self.timeout
+            ) as client:
+                await self._ensure_identity(client)
+                result = await self.run_cycle(client)
+                await self._handle_cycle_result(client, result)
+
+                # Heartbeat if idle too long
+                elapsed = time.monotonic() - self._last_checkin_time
+                if elapsed >= heartbeat_interval and result is None:
+                    await self._send_heartbeat(client)
+
         while self.running:
             try:
-                async with GovernanceClient(
-                    mcp_url=self.mcp_url, timeout=self.timeout
-                ) as client:
-                    await self._ensure_identity(client)
-                    result = await self.run_cycle(client)
-                    await self._handle_cycle_result(client, result)
-
-                    # Heartbeat if idle too long
-                    elapsed = time.monotonic() - self._last_checkin_time
-                    if elapsed >= heartbeat_interval and result is None:
-                        await self._send_heartbeat(client)
+                if self.cycle_timeout_seconds is None:
+                    await _iteration()
+                else:
+                    await asyncio.wait_for(_iteration(), self.cycle_timeout_seconds)
 
             except (GovernanceConnectionError, GovernanceTimeoutError) as e:
                 logger.warning("%s: governance unavailable: %s", self.name, e)
@@ -185,6 +267,9 @@ class GovernanceAgent:
                 logger.error("%s: unexpected error: %s", self.name, e, exc_info=True)
                 if self.notify_on_error:
                     notify(self.name, f"Error: {e}")
+            finally:
+                if self.log_file is not None:
+                    trim_log(self.log_file, self.max_log_lines)
 
             if self.running:
                 await asyncio.sleep(interval)
@@ -274,7 +359,7 @@ class GovernanceAgent:
     async def _handle_cycle_result(
         self, client: GovernanceClient, result: CycleResult | None
     ) -> None:
-        """Process a cycle result: check in and post notes."""
+        """Process a cycle result: check in, post notes, run hooks, raise on unrecovered pause/reject."""
         if result is None:
             return
 
@@ -292,12 +377,34 @@ class GovernanceAgent:
                 try:
                     await client.leave_note(summary=summary, tags=tags)
                 except Exception as e:
-                    logger.warning("%s: failed to leave note: %s", self.name, e)
+                    logger.warning("%s: failed to leave note: %r", self.name, e)
 
-        # Surface verdict
-        verdict = checkin_result.verdict
-        if verdict in ("pause", "reject"):
-            raise VerdictError(verdict, checkin_result.guidance)
+        # Pause-recovery hook: retry once if the subclass recovered.
+        if checkin_result.verdict == "pause":
+            try:
+                retry = await self.on_verdict_pause(client, checkin_result, result)
+            except Exception as e:
+                logger.warning("%s: on_verdict_pause raised: %r", self.name, e)
+                retry = False
+            if retry:
+                checkin_result = await client.checkin(
+                    response_text=result.summary,
+                    complexity=result.complexity,
+                    confidence=result.confidence,
+                    response_mode=result.response_mode,
+                )
+                self._last_checkin_time = time.monotonic()
+
+        # State-tracking hook: runs on the FINAL checkin_result (post-retry).
+        # Hook exceptions are logged and swallowed.
+        try:
+            await self.on_after_checkin(client, checkin_result, result)
+        except Exception as e:
+            logger.warning("%s: on_after_checkin raised: %r", self.name, e)
+
+        # Surface verdict if still bad
+        if checkin_result.verdict in ("pause", "reject"):
+            raise VerdictError(checkin_result.verdict, checkin_result.guidance)
 
     async def _send_heartbeat(self, client: GovernanceClient) -> None:
         """Send a lightweight heartbeat check-in."""
@@ -368,12 +475,14 @@ class GovernanceAgent:
     # --- State persistence ---
 
     def load_state(self) -> dict:
-        """Load agent-specific cross-cycle state from state_dir."""
-        return load_json_state(self.state_dir / "state.json")
+        """Load agent-specific cross-cycle state."""
+        path = self.state_file or (self.state_dir / "state.json")
+        return load_json_state(path)
 
     def save_state(self, state: dict) -> None:
-        """Save agent-specific cross-cycle state to state_dir."""
-        save_json_state(self.state_dir / "state.json", state)
+        """Save agent-specific cross-cycle state."""
+        path = self.state_file or (self.state_dir / "state.json")
+        save_json_state(path, state)
 
     # --- Signal handlers ---
 

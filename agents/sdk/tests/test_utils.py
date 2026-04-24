@@ -127,6 +127,28 @@ def test_save_and_load_roundtrip(tmp_path):
     assert result["continuity_token"] == "t1"
 
 
+def test_save_json_state_coerces_non_serializable(tmp_path):
+    """save_json_state uses default=str, so datetime/Path values persist as strings."""
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    state = {
+        "when": datetime(2026, 4, 24, 12, 0, 0, tzinfo=timezone.utc),
+        "path": Path("/tmp/example"),
+        "ok": True,
+    }
+    target = tmp_path / "state.json"
+    save_json_state(target, state)
+
+    loaded = load_json_state(target)
+    # datetime/Path coerced to str on write; load gets strings back.
+    assert isinstance(loaded["when"], str)
+    assert loaded["when"].startswith("2026-04-24")
+    assert isinstance(loaded["path"], str)
+    assert loaded["path"] == "/tmp/example"
+    assert loaded["ok"] is True
+
+
 # --- parse_continuity_token ---
 
 

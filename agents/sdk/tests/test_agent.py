@@ -430,3 +430,518 @@ class TestSyncFromClient:
 
         with pytest.raises(IdentityDriftError):
             agent._sync_from_client(client)
+
+
+class TestCycleTimeout:
+    @pytest.mark.asyncio
+    async def test_cycle_timeout_fires(self):
+        """run_once raises TimeoutError if the cycle exceeds cycle_timeout_seconds."""
+
+        class SlowAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                await asyncio.sleep(10.0)
+                return CycleResult.simple("never reached")
+
+        agent = SlowAgent(
+            name="Slow",
+            mcp_url="http://127.0.0.1:9999/mcp/",
+            cycle_timeout_seconds=0.05,
+        )
+        # Bypass network: patch the client context manager and identity
+        with patch("unitares_sdk.agent.GovernanceClient") as mock_cm:
+            mock_client = AsyncMock()
+            mock_cm.return_value.__aenter__.return_value = mock_client
+            mock_cm.return_value.__aexit__.return_value = None
+            with patch.object(SlowAgent, "_ensure_identity", AsyncMock()):
+                with pytest.raises(asyncio.TimeoutError):
+                    await agent.run_once()
+
+    @pytest.mark.asyncio
+    async def test_cycle_timeout_none_means_no_bound(self):
+        """cycle_timeout_seconds=None disables the wrapper (default); run_once completes."""
+
+        class QuickAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None  # skip checkin path entirely
+
+        agent = QuickAgent(name="Quick", mcp_url="http://127.0.0.1:9999/mcp/")
+        assert agent.cycle_timeout_seconds is None
+
+        with patch("unitares_sdk.agent.GovernanceClient") as mock_cm:
+            mock_client = AsyncMock()
+            mock_cm.return_value.__aenter__.return_value = mock_client
+            mock_cm.return_value.__aexit__.return_value = None
+            with patch.object(QuickAgent, "_ensure_identity", AsyncMock()):
+                # Must complete without raising — no wait_for wrapping when None.
+                await agent.run_once()
+
+    @pytest.mark.asyncio
+    async def test_run_forever_respects_cycle_timeout(self):
+        """run_forever also bounds each iteration by cycle_timeout_seconds."""
+
+        timed_out = {"fired": False}
+
+        class SlowForeverAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                self.running = False  # exit loop after this iteration
+                try:
+                    await asyncio.sleep(10.0)
+                except asyncio.CancelledError:
+                    timed_out["fired"] = True
+                    raise
+
+        agent = SlowForeverAgent(
+            name="SlowForever",
+            mcp_url="http://127.0.0.1:9999/mcp/",
+            cycle_timeout_seconds=0.05,
+        )
+        with patch("unitares_sdk.agent.GovernanceClient") as mock_cm:
+            mock_client = AsyncMock()
+            mock_cm.return_value.__aenter__.return_value = mock_client
+            mock_cm.return_value.__aexit__.return_value = None
+            with patch.object(SlowForeverAgent, "_ensure_identity", AsyncMock()):
+                with patch.object(SlowForeverAgent, "_install_signal_handlers"):
+                    # notify() may be called during error logging — stub it out.
+                    with patch("unitares_sdk.agent.notify"):
+                        # run_forever catches the TimeoutError internally and
+                        # sleeps "interval" seconds before retrying; set interval
+                        # to 0 and running=False inside run_cycle to exit.
+                        await agent.run_forever(interval=0)
+        assert timed_out["fired"] is True
+
+
+class TestLogFileTrim:
+    @pytest.mark.asyncio
+    async def test_log_file_trimmed_after_cycle(self, tmp_path):
+        """Base class trims log_file to max_log_lines after each cycle."""
+        log_path = tmp_path / "agent.log"
+        log_path.write_text("\n".join(f"line {i}" for i in range(100)) + "\n")
+
+        class LoggingAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None  # skip checkin
+
+        agent = LoggingAgent(
+            name="Logger",
+            mcp_url="http://127.0.0.1:9999/mcp/",
+            log_file=log_path,
+            max_log_lines=10,
+        )
+        with patch("unitares_sdk.agent.GovernanceClient") as mock_cm:
+            mock_client = AsyncMock()
+            mock_cm.return_value.__aenter__.return_value = mock_client
+            mock_cm.return_value.__aexit__.return_value = None
+            with patch.object(LoggingAgent, "_ensure_identity", AsyncMock()):
+                await agent.run_once()
+
+        surviving = log_path.read_text().splitlines()
+        assert len(surviving) == 10
+        assert surviving[-1] == "line 99"
+
+    @pytest.mark.asyncio
+    async def test_log_file_none_is_noop(self, tmp_path):
+        """log_file=None (default) does not error."""
+
+        class QuietAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None
+
+        agent = QuietAgent(name="Quiet", mcp_url="http://127.0.0.1:9999/mcp/")
+        assert agent.log_file is None
+        with patch("unitares_sdk.agent.GovernanceClient") as mock_cm:
+            mock_client = AsyncMock()
+            mock_cm.return_value.__aenter__.return_value = mock_client
+            mock_cm.return_value.__aexit__.return_value = None
+            with patch.object(QuietAgent, "_ensure_identity", AsyncMock()):
+                await agent.run_once()
+
+    @pytest.mark.asyncio
+    async def test_log_file_trimmed_even_on_cycle_timeout(self, tmp_path):
+        """Log trim happens in finally, so it fires even when the cycle times out."""
+        log_path = tmp_path / "agent.log"
+        log_path.write_text("\n".join(f"line {i}" for i in range(50)) + "\n")
+
+        class SlowAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                await asyncio.sleep(10.0)
+                return None
+
+        agent = SlowAgent(
+            name="Slow",
+            mcp_url="http://127.0.0.1:9999/mcp/",
+            log_file=log_path,
+            max_log_lines=5,
+            cycle_timeout_seconds=0.05,
+        )
+        with patch("unitares_sdk.agent.GovernanceClient") as mock_cm:
+            mock_client = AsyncMock()
+            mock_cm.return_value.__aenter__.return_value = mock_client
+            mock_cm.return_value.__aexit__.return_value = None
+            with patch.object(SlowAgent, "_ensure_identity", AsyncMock()):
+                with pytest.raises(asyncio.TimeoutError):
+                    await agent.run_once()
+        # Trim must have fired despite the TimeoutError.
+        assert len(log_path.read_text().splitlines()) == 5
+
+
+class TestOnAfterCheckin:
+    @pytest.mark.asyncio
+    async def test_hook_called_with_checkin_result(self):
+        """on_after_checkin runs after a successful checkin with the result."""
+        captured: dict = {}
+
+        class HookedAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("did work")
+
+            async def on_after_checkin(self, client, checkin_result, cycle_result):
+                captured["checkin_verdict"] = checkin_result.verdict
+                captured["cycle_summary"] = cycle_result.summary
+
+        agent = HookedAgent(name="Hooked", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="proceed", coherence=0.9,
+                guidance="", metrics={},
+            )
+        )
+        await agent._handle_cycle_result(mock_client, CycleResult.simple("did work"))
+
+        assert captured["checkin_verdict"] == "proceed"
+        assert captured["cycle_summary"] == "did work"
+
+    @pytest.mark.asyncio
+    async def test_hook_not_called_when_result_is_none(self):
+        """on_after_checkin is skipped when run_cycle returned None."""
+        captured: dict = {"called": False}
+
+        class HookedAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None
+
+            async def on_after_checkin(self, client, checkin_result, cycle_result):
+                captured["called"] = True
+
+        agent = HookedAgent(name="Hooked", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        await agent._handle_cycle_result(mock_client, None)
+        assert captured["called"] is False
+
+    @pytest.mark.asyncio
+    async def test_hook_runs_before_verdict_error_on_pause(self):
+        """Hook runs on pause verdict before VerdictError is raised (when on_verdict_pause default False)."""
+        captured: dict = {"called": False, "verdict": None}
+
+        class HookedAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_after_checkin(self, client, checkin_result, cycle_result):
+                captured["called"] = True
+                captured["verdict"] = checkin_result.verdict
+
+        agent = HookedAgent(name="Hooked", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="pause", coherence=0.5,
+                guidance="slow down", metrics={},
+            )
+        )
+        with pytest.raises(VerdictError):
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+        assert captured["called"] is True
+        assert captured["verdict"] == "pause"
+
+    @pytest.mark.asyncio
+    async def test_hook_exception_does_not_break_cycle(self):
+        """If on_after_checkin raises, it's logged but VerdictError is still decided from checkin_result."""
+
+        class BrokenHookAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_after_checkin(self, client, checkin_result, cycle_result):
+                raise RuntimeError("hook exploded")
+
+        agent = BrokenHookAgent(name="Broken", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="proceed", coherence=0.9,
+                guidance="", metrics={},
+            )
+        )
+        # Must NOT raise: hook failure is swallowed, verdict is proceed so no VerdictError.
+        await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+    @pytest.mark.asyncio
+    async def test_hook_cancelled_error_propagates(self):
+        """CancelledError from on_after_checkin is NOT swallowed (inherits from BaseException)."""
+
+        class CancelledHookAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_after_checkin(self, client, checkin_result, cycle_result):
+                raise asyncio.CancelledError("cancelled mid-hook")
+
+        agent = CancelledHookAgent(name="Cancelled", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="proceed", coherence=0.9,
+                guidance="", metrics={},
+            )
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+
+class TestOnVerdictPause:
+    @pytest.mark.asyncio
+    async def test_hook_can_request_retry(self):
+        """on_verdict_pause returning True triggers a single checkin retry."""
+        attempts: list = []
+
+        class RecoveringAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_verdict_pause(self, client, checkin_result, cycle_result):
+                attempts.append("recovery called")
+                await client.self_recovery(action="quick")
+                return True  # request retry
+
+        agent = RecoveringAgent(name="Recoverer", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        first = CheckinResult(
+            success=True, verdict="pause", coherence=0.5,
+            guidance="slow", metrics={},
+        )
+        second = CheckinResult(
+            success=True, verdict="proceed", coherence=0.8,
+            guidance="", metrics={},
+        )
+        mock_client.checkin = AsyncMock(side_effect=[first, second])
+        mock_client.self_recovery = AsyncMock()
+
+        # Should NOT raise: retry succeeded.
+        await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+        assert attempts == ["recovery called"]
+        assert mock_client.checkin.await_count == 2
+        assert mock_client.self_recovery.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_hook_returning_false_surfaces_pause(self):
+        """on_verdict_pause returning False lets VerdictError propagate."""
+
+        class PassiveAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_verdict_pause(self, client, checkin_result, cycle_result):
+                return False
+
+        agent = PassiveAgent(name="Passive", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="pause", coherence=0.5,
+                guidance="slow", metrics={},
+            )
+        )
+        with pytest.raises(VerdictError):
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+    @pytest.mark.asyncio
+    async def test_on_after_checkin_receives_post_retry_result(self):
+        """When on_verdict_pause triggers retry, on_after_checkin sees the RETRIED (second) checkin."""
+        captured: dict = {}
+
+        class RetryAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_verdict_pause(self, client, checkin_result, cycle_result):
+                return True  # force retry
+
+            async def on_after_checkin(self, client, checkin_result, cycle_result):
+                captured["verdict"] = checkin_result.verdict
+                captured["coherence"] = checkin_result.coherence
+
+        agent = RetryAgent(name="Retry", mcp_url="http://127.0.0.1:9999/mcp/")
+        first = CheckinResult(
+            success=True, verdict="pause", coherence=0.3,
+            guidance="", metrics={},
+        )
+        second = CheckinResult(
+            success=True, verdict="proceed", coherence=0.9,
+            guidance="", metrics={},
+        )
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(side_effect=[first, second])
+
+        await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+        # on_after_checkin must see the post-retry result, not the pre-retry pause.
+        assert captured["verdict"] == "proceed"
+        assert captured["coherence"] == 0.9
+
+    @pytest.mark.asyncio
+    async def test_default_hook_returns_false_so_pause_surfaces(self):
+        """Default on_verdict_pause returns False — no retry, original pause raises."""
+
+        class DefaultAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+            # does NOT override on_verdict_pause
+
+        agent = DefaultAgent(name="Default", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="pause", coherence=0.5,
+                guidance="slow", metrics={},
+            )
+        )
+        with pytest.raises(VerdictError):
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+        assert mock_client.checkin.await_count == 1  # no retry
+
+    @pytest.mark.asyncio
+    async def test_hook_exception_does_not_break_cycle(self):
+        """If on_verdict_pause raises, the failure is logged and the original pause surfaces."""
+
+        class BrokenRecoveryAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_verdict_pause(self, client, checkin_result, cycle_result):
+                raise RuntimeError("recovery exploded")
+
+        agent = BrokenRecoveryAgent(name="Broken", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="pause", coherence=0.5,
+                guidance="", metrics={},
+            )
+        )
+        # Hook raised, no retry, original pause surfaces as VerdictError.
+        with pytest.raises(VerdictError):
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+        assert mock_client.checkin.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_hook_cancelled_error_propagates(self):
+        """CancelledError from on_verdict_pause is NOT swallowed."""
+
+        class CancelledRecoveryAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_verdict_pause(self, client, checkin_result, cycle_result):
+                raise asyncio.CancelledError("cancelled mid-recovery")
+
+        agent = CancelledRecoveryAgent(name="Cancelled", mcp_url="http://127.0.0.1:9999/mcp/")
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(
+            return_value=CheckinResult(
+                success=True, verdict="pause", coherence=0.5,
+                guidance="", metrics={},
+            )
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+    @pytest.mark.asyncio
+    async def test_retry_also_pauses_raises_verdict_error_no_second_retry(self):
+        """When the retry checkin also returns pause, VerdictError is raised — no second retry."""
+        hook_calls: list = []
+
+        class StubbornRecoveryAgent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return CycleResult.simple("work")
+
+            async def on_verdict_pause(self, client, checkin_result, cycle_result):
+                hook_calls.append("called")
+                return True
+
+        agent = StubbornRecoveryAgent(name="Stubborn", mcp_url="http://127.0.0.1:9999/mcp/")
+        first = CheckinResult(
+            success=True, verdict="pause", coherence=0.3,
+            guidance="first pause", metrics={},
+        )
+        second = CheckinResult(
+            success=True, verdict="pause", coherence=0.35,
+            guidance="still paused", metrics={},
+        )
+        mock_client = AsyncMock()
+        mock_client.checkin = AsyncMock(side_effect=[first, second])
+
+        with pytest.raises(VerdictError) as exc_info:
+            await agent._handle_cycle_result(mock_client, CycleResult.simple("work"))
+
+        # Exactly one retry, then give up — hook called once.
+        assert hook_calls == ["called"]
+        assert mock_client.checkin.await_count == 2
+        # VerdictError carries the SECOND (final) pause's guidance.
+        assert exc_info.value.guidance == "still paused"
+
+
+class TestStateFileOverride:
+    def test_state_file_override_used_for_persistence(self, tmp_path):
+        """load_state / save_state use state_file when provided."""
+        custom = tmp_path / "my_state.json"
+
+        class Agent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None
+
+        agent = Agent(
+            name="Custom", mcp_url="http://127.0.0.1:9999/mcp/",
+            state_file=custom,
+        )
+        agent.save_state({"cycles": 42})
+        assert custom.exists()
+
+        agent2 = Agent(
+            name="Custom", mcp_url="http://127.0.0.1:9999/mcp/",
+            state_file=custom,
+        )
+        assert agent2.load_state() == {"cycles": 42}
+
+    def test_state_file_default_is_state_dir_over_state_json(self, tmp_path):
+        """Default state path unchanged: state_dir/state.json."""
+
+        class Agent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None
+
+        agent = Agent(
+            name="Default", mcp_url="http://127.0.0.1:9999/mcp/",
+            state_dir=tmp_path,
+        )
+        agent.save_state({"k": "v"})
+        assert (tmp_path / "state.json").exists()
+
+    def test_state_file_takes_precedence_over_state_dir(self, tmp_path):
+        """When both state_dir and state_file are given, state_file wins."""
+        custom = tmp_path / "nested" / "chosen.json"
+        other_dir = tmp_path / "elsewhere"
+
+        class Agent(GovernanceAgent):
+            async def run_cycle(self, client):
+                return None
+
+        agent = Agent(
+            name="Picky", mcp_url="http://127.0.0.1:9999/mcp/",
+            state_dir=other_dir,
+            state_file=custom,
+        )
+        agent.save_state({"marker": 1})
+        assert custom.exists()
+        assert not (other_dir / "state.json").exists()

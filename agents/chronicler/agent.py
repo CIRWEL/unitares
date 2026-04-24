@@ -143,11 +143,19 @@ class ChroniclerAgent(GovernanceAgent):
         # endpoint. Derive the MCP URL from the same base so both aim at the
         # same server when UNITARES_METRICS_URL is overridden.
         mcp_url = base_url.rstrip("/") + "/mcp/"
+        # Resolve log file: launchd plist owns stdout/stderr, but when run
+        # manually we still want bounded logs. CHRONICLER_LOG_FILE env var
+        # overrides; unset = no rotation (launchd handles it).
+        log_file_env = os.environ.get("CHRONICLER_LOG_FILE", "").strip()
+        log_file_path = Path(log_file_env) if log_file_env else None
         super().__init__(
             name="Chronicler",
             mcp_url=mcp_url,
             persistent=True,
             refuse_fresh_onboard=True,
+            log_file=log_file_path,
+            max_log_lines=10_000,
+            cycle_timeout_seconds=120.0,
         )
         self.base_url = base_url
         self.token = token
