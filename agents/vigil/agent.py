@@ -41,7 +41,6 @@ sys.path.insert(0, str(project_root))
 import httpx
 
 from agents.common.config import GOV_MCP_URL
-from agents.common.log import trim_log as _trim_log
 from unitares_sdk.agent import CycleResult, GovernanceAgent
 from unitares_sdk.client import GovernanceClient
 from unitares_sdk.errors import GovernanceError, VerdictError
@@ -274,6 +273,10 @@ class VigilAgent(GovernanceAgent):
             timeout=30.0,
             persistent=True,
             refuse_fresh_onboard=True,
+            cycle_timeout_seconds=CYCLE_TIMEOUT,
+            log_file=LOG_FILE,
+            max_log_lines=MAX_LOG_LINES,
+            state_file=STATE_FILE,
         )
         self.heartbeat_interval = heartbeat_interval
         self.with_tests = with_tests
@@ -540,53 +543,28 @@ class VigilAgent(GovernanceAgent):
             notes=note_tuples,
         )
 
-    async def _handle_cycle_result(
-        self, client: GovernanceClient, result: CycleResult | None
-    ) -> None:
-        """Override base: add post-checkin EISV tracking and self-recovery."""
-        if result is None:
-            return
-
-        # Check in
+    async def on_verdict_pause(
+        self, client, checkin_result, cycle_result,
+    ) -> bool:
+        """Attempt quick self-recovery on pause; return True to retry once."""
+        log("Paused — attempting self-recovery")
         try:
-            checkin_result = await client.checkin(
-                response_text=result.summary,
-                complexity=result.complexity,
-                confidence=result.confidence,
-                response_mode=result.response_mode,
-            )
-            self._last_checkin_time = time.monotonic()
-        except VerdictError as e:
-            if e.verdict == "pause":
-                log("Paused — attempting self-recovery")
-                try:
-                    await client.self_recovery(action="quick")
-                    log("Self-recovery succeeded, retrying check-in")
-                    checkin_result = await client.checkin(
-                        response_text=result.summary,
-                        complexity=result.complexity,
-                        confidence=result.confidence,
-                        response_mode=result.response_mode,
-                    )
-                    self._last_checkin_time = time.monotonic()
-                except Exception as retry_err:
-                    log(f"Self-recovery retry failed: {retry_err}")
-                    self.save_state(self._cycle_state)
-                    raise
-            else:
-                self.save_state(self._cycle_state)
-                raise
+            await client.self_recovery(action="quick")
+            log("Self-recovery succeeded, retrying check-in")
+            return True
+        except Exception as retry_err:
+            log(f"Self-recovery failed: {retry_err}")
+            self.save_state(self._cycle_state)
+            return False
 
-        # Post notes
-        if result.notes:
-            for summary, tags in result.notes:
-                try:
-                    await client.leave_note(summary=summary, tags=tags)
-                    log(f"NOTE: {summary}")
-                except Exception:
-                    log(f"NOTE FAILED: {summary}")
+    async def on_after_checkin(
+        self, client, checkin_result, cycle_result,
+    ) -> None:
+        """Track coherence changes, persist state, log a one-line EISV summary.
 
-        # Extract EISV for state tracking
+        Receives the FINAL checkin_result (post-retry if on_verdict_pause
+        requested a retry).
+        """
         coherence = checkin_result.coherence
         verdict = checkin_result.verdict
         metrics = checkin_result.metrics or {}
@@ -594,11 +572,11 @@ class VigilAgent(GovernanceAgent):
         self._cycle_state["coherence"] = coherence
         self._cycle_state["verdict"] = verdict
 
-        # Detect coherence/verdict changes that depend on post-checkin data
+        # Post any late-appearing notes (coherence/verdict changes)
         late_changes = detect_changes(self._cycle_prev_state, self._cycle_state)
+        existing_summaries = {n[0] for n in (cycle_result.notes or [])}
         for change in late_changes:
-            # Only post changes not already in notes
-            if not any(n[0] == change["summary"] for n in (result.notes or [])):
+            if change["summary"] not in existing_summaries:
                 try:
                     await client.leave_note(
                         summary=change["summary"], tags=change["tags"]
@@ -607,10 +585,8 @@ class VigilAgent(GovernanceAgent):
                 except Exception:
                     pass
 
-        # Save state
         self.save_state(self._cycle_state)
 
-        # Log one-line summary
         if checkin_result.success:
             try:
                 eisv = (
@@ -624,54 +600,11 @@ class VigilAgent(GovernanceAgent):
             total_cycles = self._cycle_state.get("total_cycles", 0)
             gov_up = self._cycle_state.get("gov_up_cycles", 0)
             lumen_up = self._cycle_state.get("lumen_up_cycles", 0)
-            uptime = f" | uptime: gov={gov_up/total_cycles:.0%} lumen={lumen_up/total_cycles:.0%}" if total_cycles > 0 else ""
-            log(f"{verdict or '?'} | {eisv} | {result.summary}{uptime}")
-
-    # --- State persistence (use .vigil_state, not the SDK default) ---
-
-    def load_state(self) -> dict:
-        """Load Vigil's cross-cycle state."""
-        if STATE_FILE.exists():
-            try:
-                data = json.loads(STATE_FILE.read_text())
-                if isinstance(data, dict):
-                    return data
-            except Exception:
-                pass
-        return {}
-
-    def save_state(self, state: dict) -> None:
-        """Save Vigil's cross-cycle state."""
-        from unitares_sdk.utils import atomic_write
-        try:
-            atomic_write(STATE_FILE, json.dumps(state, default=str))
-        except Exception:
-            pass
-
-    # --- Lifecycle overrides ---
-
-    async def run_once(self, timeout: float = CYCLE_TIMEOUT):
-        """Run a single heartbeat cycle with a wall-clock timeout.
-
-        Uses asyncio.wait_for — the historical comment here claimed
-        anyio.fail_after was required to avoid cancel-scope ownership
-        violations, but under Python 3.14 anyio.fail_after itself raises
-        RuntimeError on exit ("Attempted to exit a cancel scope that isn't
-        the current task's current cancel scope"). wait_for is the
-        project-standard pattern (CLAUDE.md "Known Issue" mitigation #3).
-        """
-        log("--- Heartbeat cycle start ---")
-        start = time.time()
-        try:
-            await asyncio.wait_for(super().run_once(), timeout=timeout)
-        except asyncio.TimeoutError:
-            elapsed = time.time() - start
-            log(f"CYCLE TIMEOUT after {elapsed:.1f}s (limit={timeout}s) — aborting")
-            _trim_log(LOG_FILE, MAX_LOG_LINES)
-            raise
-        elapsed = time.time() - start
-        log(f"Cycle complete ({elapsed:.1f}s)")
-        _trim_log(LOG_FILE, MAX_LOG_LINES)
+            uptime = (
+                f" | uptime: gov={gov_up/total_cycles:.0%} lumen={lumen_up/total_cycles:.0%}"
+                if total_cycles > 0 else ""
+            )
+            log(f"{verdict or '?'} | {eisv} | {cycle_result.summary}{uptime}")
 
     async def run_daemon(self):
         """Run continuously with interval sleeps."""
