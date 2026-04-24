@@ -39,6 +39,8 @@ If `health_check()` is used, also show:
 - degraded checks
 - first operator action
 
+Call `list_process_bindings()` (optionally with `agent_uuid=<uuid>`) to show live execution-context bindings for the agent. When `concurrent_binding_detected` is true, surface the `bindings[]` tuples — each row is `{host_id, pid, pid_start_time, transport, tty, last_seen}` — so the operator can see which contexts are siphoning the same UUID. See issue #123.
+
 If the live identity differs from `.unitares/session.json`, refresh the local cache with the latest `uuid`, identity fields, and continuity data using `scripts/client/session_cache.py set session --merge --stamp`.
 
 Do not dump raw JSON unless the user explicitly asks for it.

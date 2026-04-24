@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 
 def atomic_write(path: Path, data: str, mode: int = 0o600) -> None:
@@ -126,3 +129,113 @@ def validate_token_uuid(token: str, expected_uuid: str) -> bool:
     if not aid:
         return False
     return aid == expected_uuid
+
+
+def capture_process_fingerprint(
+    transport: str = "unknown",
+    anchor_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build the client-reported process_fingerprint for onboard().
+
+    Concurrent identity binding invariant (issue #123). The server uses this
+    tuple to detect same-UUID siphoning across live execution contexts. The
+    fingerprint is declaration-only: it is recorded for audit, never used to
+    resolve or recover identity.
+
+    Fields:
+      - host_id: stable per-machine identifier (hostname + machine-id hash)
+      - pid, pid_start_time: identify the current process even across PID reuse
+      - ppid: optional evidence for lineage verification
+      - tty: nullable — daemons have no controlling TTY
+      - transport: caller-declared MCP channel (stdio/http/websocket/...)
+      - anchor_path_hash: SHA-256 of the resident's anchor file path if any
+
+    All fields are best-effort: any capture failure yields a skipped field
+    rather than an exception. The caller passes the resulting dict straight
+    into onboard(process_fingerprint=...).
+    """
+    fp: Dict[str, Any] = {}
+
+    try:
+        hostname = socket.gethostname()
+    except Exception:
+        hostname = "unknown"
+
+    machine_id = ""
+    for candidate in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        try:
+            with open(candidate, "r") as f:
+                machine_id = f.read().strip()
+            if machine_id:
+                break
+        except Exception:
+            continue
+    if not machine_id and sys.platform == "darwin":
+        try:
+            out = subprocess.check_output(
+                ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            ).decode()
+            for line in out.splitlines():
+                if "IOPlatformUUID" in line:
+                    machine_id = line.split('"')[-2]
+                    break
+        except Exception:
+            pass
+
+    fp["host_id"] = hashlib.sha256(
+        f"{hostname}:{machine_id}".encode()
+    ).hexdigest()[:16]
+
+    try:
+        fp["pid"] = os.getpid()
+    except Exception:
+        pass
+
+    try:
+        fp["ppid"] = os.getppid()
+    except Exception:
+        pass
+
+    try:
+        import psutil  # type: ignore
+        fp["pid_start_time"] = psutil.Process().create_time()
+    except Exception:
+        # Linux fallback: parse /proc/self/stat field 22 (starttime in clock ticks
+        # since boot). Combine with /proc/stat's btime to get epoch seconds.
+        try:
+            with open(f"/proc/{os.getpid()}/stat", "r") as f:
+                stat_fields = f.read().split()
+            starttime_ticks = int(stat_fields[21])
+            with open("/proc/stat", "r") as f:
+                for line in f:
+                    if line.startswith("btime "):
+                        btime = int(line.split()[1])
+                        break
+                else:
+                    btime = 0
+            hz = os.sysconf(os.sysconf_names["SC_CLK_TCK"])
+            if hz > 0 and btime > 0:
+                fp["pid_start_time"] = float(btime + starttime_ticks / hz)
+        except Exception:
+            pass
+
+    try:
+        if os.isatty(0):
+            fp["tty"] = os.ttyname(0)
+    except Exception:
+        pass
+
+    if transport:
+        fp["transport"] = transport
+
+    if anchor_path:
+        try:
+            fp["anchor_path_hash"] = hashlib.sha256(
+                anchor_path.encode()
+            ).hexdigest()[:16]
+        except Exception:
+            pass
+
+    return fp
