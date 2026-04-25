@@ -183,16 +183,36 @@ def check_secrets_file() -> CheckResult:
 # ---------------------------------------------------------------------------
 
 
+def check_http_listening() -> CheckResult:
+    """Is something accepting TCP connections on 8767? Fast signal, separate
+    from HTTP responsiveness so a slow event loop doesn't masquerade as a
+    dead server."""
+    name, mode = "http_listening", "operator"
+    try:
+        with socket.create_connection(("127.0.0.1", 8767), timeout=1):
+            return CheckResult(name, mode, Status.PASS, "TCP listener on 127.0.0.1:8767")
+    except (ConnectionError, socket.timeout, OSError) as e:
+        return CheckResult(name, mode, Status.FAIL,
+                           "no TCP listener on 8767", detail=str(e))
+
+
 def check_http_health() -> CheckResult:
+    """Does /health/live respond within 5s? A slow event loop (e.g., a
+    process_agent_update holding a per-agent lock) can stall this even when
+    the listener is up — that's a *latency* finding, not a *down* finding."""
     name, mode = "http_health", "operator"
     try:
-        with urllib.request.urlopen(HTTP_HEALTH_URL, timeout=2) as resp:
+        with urllib.request.urlopen(HTTP_HEALTH_URL, timeout=5) as resp:
             if resp.status == 200:
                 return CheckResult(name, mode, Status.PASS,
                                    f"{HTTP_HEALTH_URL} returned 200")
             return CheckResult(name, mode, Status.FAIL,
                                f"{HTTP_HEALTH_URL} returned {resp.status}")
-    except (urllib.error.URLError, ConnectionError, socket.timeout, OSError) as e:
+    except socket.timeout:
+        return CheckResult(name, mode, Status.WARN,
+                           "/health/live did not respond within 5s",
+                           detail="event loop may be saturated by a slow handler — check mcp_server_error.log for `lock_timeout` lines")
+    except (urllib.error.URLError, ConnectionError, OSError) as e:
         return CheckResult(name, mode, Status.FAIL,
                            "HTTP health endpoint unreachable",
                            detail=str(e))
@@ -291,6 +311,7 @@ def build_checks(repo_root: Path, db_url: str) -> list[Check]:
         Check("schema_migrations", "local", lambda: check_schema_migrations(db_url)),
         Check("anchor_directory", "local", check_anchor_dir),
         Check("secrets_file", "local", check_secrets_file),
+        Check("http_listening", "operator", check_http_listening),
         Check("http_health", "operator", check_http_health),
         Check("pid_file", "operator", lambda: check_pid_file(repo_root)),
         Check("launchagent_loaded", "operator", lambda: check_launchagent(loaded())),
