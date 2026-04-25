@@ -594,7 +594,7 @@ async def set_onboard_pin(
     except asyncio.TimeoutError:
         logger.warning(
             f"[ONBOARD_PIN] Pin-set timed out after {_PIN_REDIS_TIMEOUT}s "
-            f"for {base_fingerprint} — onboard proceeds, future requests skip pin"
+            "— onboard proceeds, future requests skip pin"
         )
         return False
     except Exception as e:
@@ -634,5 +634,5 @@ async def _set_onboard_pin_inner(
     for fp in candidates:
         pin_key = f"recent_onboard:{fp}"
         await raw_redis.setex(pin_key, _PIN_TTL, pin_data)
-        logger.info(f"[ONBOARD_PIN] Set {pin_key} -> {agent_uuid[:8]}...")
+        logger.info(f"[ONBOARD_PIN] Set pin for agent {agent_uuid[:8]}...")
     return True
