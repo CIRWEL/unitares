@@ -25,6 +25,7 @@ What it does each cycle:
 
 import asyncio
 
+import json
 import os
 import subprocess
 import sys
@@ -59,6 +60,11 @@ TEST_TIMEOUT = 180  # 3 minutes per suite
 
 # Wall-clock cap for a single heartbeat cycle.
 CYCLE_TIMEOUT = int(os.getenv("HEARTBEAT_CYCLE_TIMEOUT", "120"))
+
+# KG hygiene v1: retrieval-eval step configuration
+RETRIEVAL_EVAL_DIR = project_root / "tests" / "retrieval_eval"
+RETRIEVAL_EVAL_SCRIPT = project_root / "scripts" / "eval" / "retrieval_eval.py"
+NDCG_REGRESSION_THRESHOLD = 0.05  # absolute drop in nDCG@10 that flags regression
 
 
 _interactive = sys.stdout.isatty()
@@ -251,6 +257,70 @@ def _filter_sentinel_findings(
     return out
 
 
+# ---------------------------------------------------------------------------
+# KG hygiene v1: retrieval-eval helpers
+# ---------------------------------------------------------------------------
+
+def _derive_eval_config_tag() -> str:
+    """Derive a config tag matching baseline filename suffix from env vars.
+
+    Tag values mirror existing baselines in tests/retrieval_eval/:
+    bge_m3, bge_m3_reranked, hybrid_rrf, hybrid_graph.
+    """
+    embedding = os.environ.get("UNITARES_EMBEDDING_MODEL", "").strip().lower()
+    hybrid = os.environ.get("UNITARES_ENABLE_HYBRID", "").strip() == "1"
+    graph = os.environ.get("UNITARES_ENABLE_GRAPH_EXPANSION", "").strip() == "1"
+    reranker = os.environ.get("UNITARES_ENABLE_RERANKER", "").strip() == "1"
+
+    base = "bge_m3" if "bge-m3" in embedding else (embedding.replace("-", "_") or "default")
+
+    if graph:
+        return "hybrid_graph"
+    if hybrid:
+        return "hybrid_rrf"
+    if reranker:
+        return f"{base}_reranked"
+    return base
+
+
+def _pick_eval_baseline(baseline_dir: Path, config_tag: str) -> Optional[Path]:
+    """Return newest baseline_*_<config_tag>.json by mtime, or None."""
+    if not baseline_dir.exists():
+        return None
+    matches = sorted(
+        baseline_dir.glob(f"baseline_*_{config_tag}.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return matches[0] if matches else None
+
+
+def _run_eval_subprocess() -> Dict[str, Any]:
+    """Invoke the eval harness as a subprocess; return parsed JSON metrics.
+
+    Sync function — designed to be called via ``run_in_executor`` from the
+    async cycle. Returns ``{}`` on any failure (caller handles).
+    """
+    try:
+        proc = subprocess.run(
+            ["python3", str(RETRIEVAL_EVAL_SCRIPT), "--json"],
+            capture_output=True, text=True, timeout=300,
+        )
+        if proc.returncode != 0:
+            log(f"eval subprocess returned {proc.returncode}: {proc.stderr[:200]}")
+            return {}
+        return json.loads(proc.stdout)
+    except subprocess.TimeoutExpired:
+        log("eval subprocess timed out after 300s")
+        return {}
+    except json.JSONDecodeError as e:
+        log(f"eval subprocess JSON parse failed: {e}")
+        return {}
+    except Exception as e:
+        log(f"eval subprocess failed: {e}")
+        return {}
+
+
 class VigilAgent(GovernanceAgent):
     def __init__(
         self,
@@ -260,6 +330,7 @@ class VigilAgent(GovernanceAgent):
         with_tests: bool = False,
         with_audit: bool = True,
         with_hygiene: bool = False,
+        with_eval: bool = False,
         force_new: bool = False,
     ):
         super().__init__(
@@ -280,6 +351,7 @@ class VigilAgent(GovernanceAgent):
         self.with_tests = with_tests
         self.with_audit = with_audit
         self.with_hygiene = with_hygiene
+        self.with_eval = with_eval
         self.force_new = force_new
         # Vigil-specific cycle data (populated during run_cycle, used in post-checkin)
         self._cycle_state: Dict[str, Any] = {}
@@ -433,6 +505,65 @@ class VigilAgent(GovernanceAgent):
         # defensively in case the contract ever changes.
         top_stale.sort(key=lambda x: x.get("last_activity_days", 0), reverse=True)
         return top_stale[:top_n]
+
+    async def _run_eval_step(self) -> Dict[str, Any]:
+        """KG hygiene v1: run retrieval_eval as a subprocess; diff against baseline.
+
+        Subprocess runs via ``run_in_executor`` to avoid the anyio-asyncpg
+        deadlock surface (the eval script itself awaits asyncpg internally).
+
+        Returns a dict with keys: ``ran`` (bool), ``metrics`` (dict),
+        ``baseline`` (str|None), ``delta`` (dict), ``regression`` (bool),
+        plus optional ``no_baseline_warning``, ``diff_error``, ``reason``.
+        Never raises — disabled or failed runs return ``{"ran": False, ...}``.
+        """
+        if not self.with_eval:
+            return {"ran": False, "reason": "with_eval=False"}
+
+        loop = asyncio.get_event_loop()
+        try:
+            metrics = await loop.run_in_executor(None, _run_eval_subprocess)
+        except Exception as e:
+            log(f"eval step failed: {e}")
+            return {"ran": False, "reason": f"executor error: {e}"}
+
+        if not metrics:
+            return {"ran": False, "reason": "empty metrics"}
+
+        config_tag = _derive_eval_config_tag()
+        baseline_path = _pick_eval_baseline(RETRIEVAL_EVAL_DIR, config_tag)
+
+        result: Dict[str, Any] = {
+            "ran": True,
+            "metrics": metrics,
+            "config_tag": config_tag,
+            "baseline": baseline_path.name if baseline_path else None,
+            "delta": {},
+            "regression": False,
+        }
+
+        if baseline_path is None:
+            result["no_baseline_warning"] = (
+                f"no matching baseline for config={config_tag}; "
+                f"run output not compared. Promote manually if good."
+            )
+            log(result["no_baseline_warning"])
+            return result
+
+        try:
+            baseline = json.loads(baseline_path.read_text())
+            base_metrics = baseline.get("metrics", baseline)  # tolerate flat or nested
+            for key in ("nDCG@10", "Recall@20", "MRR", "latency_p50", "latency_p95"):
+                if key in metrics and key in base_metrics:
+                    result["delta"][key] = metrics[key] - base_metrics[key]
+            ndcg_delta = result["delta"].get("nDCG@10", 0.0)
+            if ndcg_delta < -NDCG_REGRESSION_THRESHOLD:
+                result["regression"] = True
+        except Exception as e:
+            log(f"baseline diff failed: {e}")
+            result["diff_error"] = str(e)
+
+        return result
 
     async def run_cycle(self, client: GovernanceClient) -> CycleResult | None:
         """Run one heartbeat cycle."""
