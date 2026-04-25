@@ -292,3 +292,78 @@ def test_build_snippet_copilot_todo_note(setup_mod):
     )
     assert "TODO" in item.snippet
     assert "speculative" in item.snippet.lower() or "not yet" in item.snippet.lower()
+
+
+def _patch_doctor(monkeypatch, setup_mod, payload):
+    monkeypatch.setattr(setup_mod, "run_doctor", lambda: payload)
+
+
+def test_run_pipeline_dry_run_emits_full_plan(setup_mod, monkeypatch, tmp_path):
+    fake_home = tmp_path / "home"
+    (fake_home / ".claude").mkdir(parents=True)
+    initial = _doctor_payload(
+        ("python_version", "pass", "ok"),
+        ("postgres_running", "fail", "down"),
+        ("anchor_directory", "warn", "missing"),
+    )
+    _patch_doctor(monkeypatch, setup_mod, initial)
+
+    out = setup_mod.run_pipeline(
+        apply=False, home=fake_home, proxy_url=None,
+    )
+
+    assert out["schema_version"] == 1
+    assert out["doctor_initial"] == initial
+    assert out["doctor_final"] is None  # dry-run does not re-run doctor
+    phases = {p.phase for p in out["plan"]}
+    assert 1 in phases  # remediation
+    assert 2 in phases  # mkdir/file
+    assert 3 in phases  # snippet
+    # Nothing applied in dry-run.
+    assert all(not p.applied for p in out["plan"])
+
+
+def test_run_pipeline_apply_runs_final_doctor(setup_mod, monkeypatch, tmp_path):
+    fake_home = tmp_path / "home"
+    initial = _doctor_payload(("anchor_directory", "warn", "missing"))
+    final = _doctor_payload(("anchor_directory", "pass", "exists"))
+
+    calls = {"n": 0}
+
+    def fake_run_doctor():
+        calls["n"] += 1
+        return initial if calls["n"] == 1 else final
+
+    monkeypatch.setattr(setup_mod, "run_doctor", fake_run_doctor)
+
+    out = setup_mod.run_pipeline(
+        apply=True, home=fake_home, proxy_url=None,
+    )
+    assert out["doctor_final"] == final
+    # Anchor dir was created.
+    assert (fake_home / ".unitares").is_dir()
+
+
+def test_run_pipeline_idempotent_apply_on_healthy_state(setup_mod, monkeypatch, tmp_path):
+    fake_home = tmp_path / "home"
+    (fake_home / ".unitares").mkdir(mode=0o700, parents=True)
+    secrets = fake_home / ".config" / "cirwel" / "secrets.env"
+    secrets.parent.mkdir(parents=True)
+    secrets.write_text("EXISTING=1\n")
+    secrets.chmod(0o600)
+
+    healthy = _doctor_payload(
+        ("python_version", "pass", "ok"),
+        ("postgres_running", "pass", "ok"),
+    )
+    _patch_doctor(monkeypatch, setup_mod, healthy)
+
+    out = setup_mod.run_pipeline(apply=True, home=fake_home, proxy_url=None)
+
+    # Phase 2 items are present but applied=False because everything already
+    # existed.
+    phase2 = [p for p in out["plan"] if p.phase == 2]
+    assert phase2  # we still emit the items
+    assert all(not p.applied for p in phase2)
+    # Existing secret content untouched.
+    assert secrets.read_text() == "EXISTING=1\n"

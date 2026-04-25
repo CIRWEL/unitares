@@ -302,6 +302,63 @@ def build_snippet(
     )
 
 
+def run_pipeline(
+    *,
+    apply: bool,
+    home: Path,
+    proxy_url: str | None,
+) -> dict:
+    """Execute all five phases. Returns a dict shaped like the --json schema.
+
+    Phase 1 always runs (read-only doctor + remediation generation).
+    Phase 2 emits items for the two filesystem targets; mutates only with
+    apply=True and only when targets are missing.
+    Phase 3 detects clients and emits snippets (always print-only).
+    Phase 4 re-runs doctor IFF apply=True (no point re-running in dry mode).
+    """
+    initial = run_doctor()
+    plan: list[PlanItem] = []
+
+    # Phase 1: remediation for fail/warn doctor results.
+    plan.extend(build_remediation(initial))
+
+    # Phase 2: filesystem scaffolding.
+    plan.append(ensure_anchor_dir(home / ".unitares", apply=apply))
+    plan.append(ensure_secrets_file(
+        home / ".config" / "cirwel" / "secrets.env",
+        apply=apply,
+    ))
+
+    # Phase 3: client detection + snippet generation.
+    detected = detect_clients(home)
+    repo_root = REPO_ROOT
+    for client, info in detected.items():
+        plan.append(build_snippet(
+            client=client,
+            config_path=info["config_path"],
+            fmt=info["format"],
+            repo_root=repo_root,
+            proxy_url=proxy_url,
+        ))
+
+    # Phase 4: re-run doctor only when we actually mutated something.
+    final = run_doctor() if apply else None
+
+    final_pass = (
+        final is not None
+        and not any(r["status"] == "fail" for r in final.get("results", []))
+    )
+    exit_code = 0 if (final is None or final_pass) else 1
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "doctor_initial": initial,
+        "plan": plan,
+        "doctor_final": final,
+        "exit_code": exit_code,
+    }
+
+
 def bootstrap_check() -> None:
     """Verify the MCP SDK is importable. Setup is not stdlib-only — it shares
     the server's runtime deps. If mcp is missing, exit early with the canonical
