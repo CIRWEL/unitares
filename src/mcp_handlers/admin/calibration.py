@@ -68,37 +68,59 @@ async def handle_check_calibration(arguments: Dict[str, Any]) -> Sequence[TextCo
     else:
         conf_dist = {"mean": 0.0, "samples": 0, "note": "No calibration data yet"}
     
+    # Pull real outcome-matched accuracy from the sequential tracker if it has
+    # any hard tactical evidence (tests/commands/lint outcomes). Without that,
+    # `accuracy` would only be the trajectory_health proxy under a misleading
+    # label, so we surface null + flip the truth_channel to be honest.
+    tactical_metrics: Dict[str, Any] = {}
+    try:
+        from src.sequential_calibration import get_sequential_calibration_tracker
+        tactical_metrics = get_sequential_calibration_tracker().compute_metrics()
+    except Exception:
+        tactical_metrics = {}
+
+    has_real_outcome_evidence = (
+        tactical_metrics.get("status") == "tracking"
+        and "empirical_accuracy" in tactical_metrics
+    )
+    if has_real_outcome_evidence:
+        accuracy_value = tactical_metrics["empirical_accuracy"]
+        truth_channel = "confidence_outcome_match"
+        calibration_note = (
+            "`accuracy` reports empirical confidence-vs-outcome match from the "
+            "sequential tactical evidence stream (tests, commands, lint, file ops). "
+            "`trajectory_health` is the strategic proxy: did confident agents end up healthy?"
+        )
+    else:
+        accuracy_value = None
+        truth_channel = "trajectory_proxy"
+        calibration_note = (
+            "`accuracy` is null because no exogenous tactical outcomes have been "
+            "recorded yet. `trajectory_health` is a strategic proxy (did confident "
+            "agents end up healthy?), not a measurement of decision correctness."
+        )
+
     response = {
         "calibrated": is_calibrated,
-        "issues": metrics.get('issues', []),  # Surface calibration issues
-        # Backward compatibility: historically named "accuracy"
-        "accuracy": overall_trajectory_health,
-        # Preferred name: what this metric actually represents in UNITARES
+        "issues": metrics.get('issues', []),
+        "accuracy": accuracy_value,
         "trajectory_health": overall_trajectory_health,
-        "truth_channel": "confidence_outcome_match",  # Updated: now compares confidence to outcome quality
+        "truth_channel": truth_channel,
         "confidence_distribution": conf_dist,
         "pending_updates": calibration_checker.get_pending_updates(),
         "total_samples": total_samples,
         "message": "Calibration check complete",
-        "calibration_note": (
-            "Ground truth evaluates if confidence matched outcome quality. "
-            "High confidence + poor outcome = overconfident (False). "
-            "Low confidence + excellent outcome = underconfident (False)."
-        )
+        "calibration_note": calibration_note,
     }
 
-    try:
-        from src.sequential_calibration import get_sequential_calibration_tracker
-
+    if tactical_metrics:
         response["tactical_evidence"] = {
-            **get_sequential_calibration_tracker().compute_metrics(),
+            **tactical_metrics,
             "note": (
                 "Sequential evidence is tracked only for hard exogenous tactical outcomes "
                 "(tests, commands, files, lint, tool-result evidence)."
             ),
         }
-    except Exception:
-        pass
     
     # Add complexity calibration metrics if available
     if 'complexity_calibration' in metrics:
