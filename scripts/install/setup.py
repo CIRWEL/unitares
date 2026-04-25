@@ -274,11 +274,19 @@ def build_snippet(
             indent=2,
         )
     elif fmt == "toml":
-        env_lines = "\n".join(f'{k} = "{v}"' for k, v in env.items())
+        # TOML strings: escape backslashes and double quotes. Mac paths rarely
+        # contain either, but a path with a literal quote would otherwise break
+        # the user's config silently when they paste.
+        def _toml_str(s: str) -> str:
+            return s.replace("\\", "\\\\").replace('"', '\\"')
+
+        env_lines = "\n".join(
+            f'{k} = "{_toml_str(v)}"' for k, v in env.items()
+        )
         snippet = (
             f"[mcp_servers.unitares-governance]\n"
             f'command = "python3"\n'
-            f'args = ["{server_path}"]\n\n'
+            f'args = ["{_toml_str(server_path)}"]\n\n'
             f"[mcp_servers.unitares-governance.env]\n"
             f"{env_lines}\n"
         )
