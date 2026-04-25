@@ -37,27 +37,46 @@ class TestStatusAndSeverityCounts:
         assert all(d["detected"] == 0 for d in out["timeline"])
 
     def test_status_counter_counts_everything(self):
+        # "confirmed" is the closed-as-real-bug status; see findings.py
+        # VALID_FINDING_STATUSES. Earlier the aggregator looked for "resolved"
+        # and silently dropped every confirmed finding.
         rows = [
             _row(status="surfaced"),
             _row(status="surfaced"),
-            _row(status="resolved"),
+            _row(status="confirmed"),
             _row(status="dismissed"),
         ]
         out = _watcher_summary_from_rows(rows, now=NOW)
-        assert out["by_status"] == {"surfaced": 2, "resolved": 1, "dismissed": 1}
+        assert out["by_status"] == {"surfaced": 2, "confirmed": 1, "dismissed": 1}
         assert out["total"] == 4
 
     def test_severity_counts_only_open_findings(self):
-        """by_severity_open is the actionable queue; resolved/dismissed shouldn't
+        """by_severity_open is the actionable queue; confirmed/dismissed shouldn't
         show up there or the panel implies ongoing severity that isn't real."""
         rows = [
             _row(severity="critical", status="surfaced"),
             _row(severity="high", status="surfaced"),
-            _row(severity="critical", status="resolved"),   # closed — excluded
-            _row(severity="critical", status="dismissed"),  # closed — excluded
+            _row(severity="critical", status="confirmed"),   # closed — excluded
+            _row(severity="critical", status="dismissed"),   # closed — excluded
         ]
         out = _watcher_summary_from_rows(rows, now=NOW)
         assert out["by_severity_open"] == {"critical": 1, "high": 1}
+
+    def test_legacy_resolved_status_falls_through_to_other(self):
+        """Defensive: if any pre-existing findings.jsonl rows still carry the
+        old 'resolved' status (none in current fixtures, but the file is
+        gitignored so an old machine could have them), they're tallied in
+        by_status but routed to the pattern bucket's 'other' slot — they
+        shouldn't pollute the confirmed/dismissed counts."""
+        rows = [_row(pattern="P_LEGACY", status="resolved")]
+        out = _watcher_summary_from_rows(rows, now=NOW)
+        assert out["by_status"] == {"resolved": 1}
+        bucket = out["patterns"][0]
+        assert bucket["confirmed"] == 0
+        assert bucket["dismissed"] == 0
+        assert bucket["other"] == 1
+        # Ratio undefined when nothing landed in confirmed/dismissed
+        assert bucket["dismiss_ratio"] is None
 
 
 class TestPatternTable:
@@ -68,16 +87,16 @@ class TestPatternTable:
         rows = [
             _row(pattern="P008", status="dismissed"),
             _row(pattern="P008", status="dismissed"),
-            _row(pattern="P008", status="dismissed"),  # 3/3 dismissed — noisy
-            _row(pattern="P001", status="resolved"),
-            _row(pattern="P001", status="resolved"),   # 0/2 dismissed — signal
-            _row(pattern="P001", status="surfaced"),   # 1 still open
+            _row(pattern="P008", status="dismissed"),   # 3/3 dismissed — noisy
+            _row(pattern="P001", status="confirmed"),
+            _row(pattern="P001", status="confirmed"),   # 0/2 dismissed — signal
+            _row(pattern="P001", status="surfaced"),    # 1 still open
         ]
         out = _watcher_summary_from_rows(rows, now=NOW)
         by = {p["pattern"]: p for p in out["patterns"]}
-        assert by["P008"]["dismissed"] == 3 and by["P008"]["resolved"] == 0
+        assert by["P008"]["dismissed"] == 3 and by["P008"]["confirmed"] == 0
         assert by["P008"]["dismiss_ratio"] == pytest.approx(1.0)
-        assert by["P001"]["resolved"] == 2 and by["P001"]["dismissed"] == 0
+        assert by["P001"]["confirmed"] == 2 and by["P001"]["dismissed"] == 0
         assert by["P001"]["dismiss_ratio"] == pytest.approx(0.0)
 
     def test_dismiss_ratio_is_none_when_nothing_closed(self):
@@ -129,14 +148,14 @@ class TestTimeline:
         out = _watcher_summary_from_rows([_row(detected_at=old)], now=NOW, window_days=30)
         assert all(d["detected"] == 0 for d in out["timeline"])
 
-    def test_timeline_captures_resolved_and_dismissed_timestamps(self):
-        resolved_day = datetime(2026, 4, 21, 14, 0, tzinfo=timezone.utc)
+    def test_timeline_captures_confirmed_and_dismissed_timestamps(self):
+        confirmed_day = datetime(2026, 4, 21, 14, 0, tzinfo=timezone.utc)
         dismissed_day = datetime(2026, 4, 22, 14, 0, tzinfo=timezone.utc)
         rows = [
             _row(
                 detected_at=(NOW - timedelta(days=1)).isoformat(),
-                status="resolved",
-                resolved_at=resolved_day.isoformat(),
+                status="confirmed",
+                confirmed_at=confirmed_day.isoformat(),
             ),
             _row(
                 detected_at=(NOW - timedelta(days=1)).isoformat(),
@@ -146,7 +165,7 @@ class TestTimeline:
         ]
         out = _watcher_summary_from_rows(rows, now=NOW, window_days=7)
         by_day = {d["day"]: d for d in out["timeline"]}
-        assert by_day["2026-04-21"]["resolved"] == 1
+        assert by_day["2026-04-21"]["confirmed"] == 1
         assert by_day["2026-04-22"]["dismissed"] == 1
 
 

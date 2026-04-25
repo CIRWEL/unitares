@@ -49,7 +49,9 @@
         var byStatus = summary.by_status || {};
         var bySev = summary.by_severity_open || {};
         setMetric('watcher-count-open', (byStatus.surfaced || 0) + (byStatus.open || 0));
-        setMetric('watcher-count-resolved', byStatus.resolved || 0);
+        // Resolved-as-bug status is "confirmed" in the watcher data model —
+        // see agents/watcher/findings.py VALID_FINDING_STATUSES.
+        setMetric('watcher-count-confirmed', byStatus.confirmed || 0);
         setMetric('watcher-count-dismissed', byStatus.dismissed || 0);
         setMetric('watcher-count-critical', bySev.critical || 0);
         setMetric('watcher-count-high', bySev.high || 0);
@@ -76,7 +78,7 @@
             var cells = [
                 p.pattern,
                 String(p.surfaced),
-                String(p.resolved),
+                String(p.confirmed),
                 String(p.dismissed),
                 p.dismiss_ratio == null ? '—' : (Math.round(p.dismiss_ratio * 100) + '%'),
             ];
@@ -141,7 +143,7 @@
         var timeline = summary.timeline || [];
         var hex = (typeof MetricColors !== 'undefined' && MetricColors.HEX) ? MetricColors.HEX : {};
         var detectedColor = hex.chartSurprise || '#f59e0b';
-        var resolvedColor = hex.chartIntegrity || '#10b981';
+        var confirmedColor = hex.chartIntegrity || '#10b981';
         var dismissedColor = hex.chartDrift || '#6b7280';
 
         function series(key, color, label) {
@@ -166,7 +168,7 @@
             data: {
                 datasets: [
                     series('detected', detectedColor, 'new findings'),
-                    series('resolved', resolvedColor, 'resolved'),
+                    series('confirmed', confirmedColor, 'confirmed'),
                     series('dismissed', dismissedColor, 'dismissed'),
                 ],
             },

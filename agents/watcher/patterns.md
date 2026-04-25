@@ -113,7 +113,14 @@ literal asyncpg/Redis call marker (`asyncpg`, `pool.acquire`, `conn.fetch`,
 False-positive sweep 2026-04-14 (flagged `async def http_dashboard` and
 unrelated arithmetic in `src/http_api.py`) motivated the verifier constraints.
 
-**Hint template:** `asyncpg inside MCP handler — will deadlock, wrap in executor`
+**Hint template:** `asyncpg/Redis in MCP handler — will deadlock, wrap in executor`
+
+> NOTE for resolvers: the hint historically said only "asyncpg", which led
+> agents to dismiss real `await raw_redis.get(...)` deadlock sites. Both
+> drivers share the same anyio task-group conflict — see CLAUDE.md
+> "Known Issue: anyio-asyncio Conflict" and the existing
+> `_load_binding_from_redis` `wait_for` mitigation. Do not dismiss a
+> P004 just because the call is Redis rather than asyncpg.
 
 ### P005 — Acquire without paired release (severity: high, violation_class: REC)
 
