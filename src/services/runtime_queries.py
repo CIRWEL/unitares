@@ -146,6 +146,11 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
         verbosity = "minimal" if lite else "full"
 
     monitor = server.get_or_create_monitor(agent_id)
+    # Heal the DB ↔ file persistence split: if the on-disk state file was
+    # dropped (anyio executor stall, crash mid-write, etc.) but core.agent_state
+    # has history, the monitor would otherwise report "uninitialized" forever.
+    from src.agent_monitor_state import hydrate_from_db_if_fresh
+    await hydrate_from_db_if_fresh(monitor, agent_id)
     include_state = arguments.get("include_state", False)
     metrics = monitor.get_metrics(include_state=include_state)
 
