@@ -4,7 +4,7 @@ description: >
   Use when an agent is participating in a UNITARES dialectic session — paused and needs to
   submit a thesis, reviewing another agent's thesis, or synthesizing conditions for resolution.
   Covers structured argumentation and convergence.
-last_verified: "2026-03-20"
+last_verified: "2026-04-25"
 freshness_days: 14
 source_files:
   - unitares/src/mcp_handlers/dialectic/handlers.py
@@ -91,7 +91,7 @@ Convergence happens when both sides agree on conditions. The synthesis should re
 - **Propose measurable conditions.** "Entropy below X within Y check-ins" is verifiable. "I will be more careful" is not.
 - **Do not be defensive.** A pause verdict is data, not judgment. Analyze why it happened.
 - **Acknowledge valid concerns.** If the antithesis raises a real issue, say so. Partial agreement strengthens your position.
-- **Look at EISV data, not feelings.** The thermodynamic model is the shared ground truth.
+- **Look at EISV data, not feelings.** Call `get_governance_metrics()` for actual values. The thermodynamic model is the shared ground truth.
 
 ## Common Mistakes
 

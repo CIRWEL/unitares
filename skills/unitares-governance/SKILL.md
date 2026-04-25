@@ -12,6 +12,8 @@ source_files:
   - unitares/skills/governance-lifecycle/SKILL.md
   - unitares/skills/governance-fundamentals/SKILL.md
   - unitares/skills/knowledge-graph/SKILL.md
+  - unitares/skills/dialectic-reasoning/SKILL.md
+  - unitares/skills/discord-bridge/SKILL.md
 ---
 
 # UNITARES Governance
