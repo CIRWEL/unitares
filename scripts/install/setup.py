@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -41,6 +42,91 @@ class DoctorError(RuntimeError):
     Nonzero exit codes from doctor are NOT errors — failed checks are normal.
     Only invalid JSON or a missing executable raise this.
     """
+
+
+@dataclass
+class PlanItem:
+    """One actionable item in the wizard's plan. Phase 1 items are
+    remediation commands the user copy-pastes; phase 2 items are filesystem
+    operations setup will perform under --apply; phase 3 items are
+    MCP-client snippets the user pastes into their own config files.
+    """
+    phase: int  # 1 = remediation, 2 = mkdir/file, 3 = snippet
+    kind: str   # "remediation" | "mkdir" | "file" | "snippet"
+    finding: str = ""        # phase 1: doctor finding name
+    command: str = ""        # phase 1: shell command to run
+    path: str = ""           # phase 2: filesystem target
+    mode: str = ""           # phase 2: octal mode as string
+    client: str = ""         # phase 3: client name (claude_code, codex, etc.)
+    config_path: str = ""    # phase 3: target config file
+    snippet: str = ""        # phase 3: copy-paste payload
+    applied: bool = False
+    note: str = ""           # human-readable note (e.g., superuser caveat)
+
+
+# Remediation commands keyed by doctor finding name. Lookup misses fall through
+# to a generic "see doctor output" message. The schema-migrations entry is
+# computed at runtime because it depends on which migration files exist.
+_REMEDIATIONS = {
+    "postgres_running":
+        "brew install postgresql@17 && brew services start postgresql@17",
+    "governance_database":
+        "createdb -h localhost -U postgres governance",
+    "pg_extensions":
+        "psql -U postgres -d governance -f db/postgres/init-extensions.sql",
+    "secrets_file":  # mode-fail variant; the missing-file variant is phase 2
+        "chmod 600 ~/.config/cirwel/secrets.env",
+    "anchor_directory":
+        "mkdir -m 700 ~/.unitares",
+}
+
+_REMEDIATION_NOTES = {
+    "pg_extensions":
+        "AGE + pgvector require superuser. The -U postgres is intentional; "
+        "do not substitute -U $USER on a typical local install.",
+}
+
+
+def build_remediation(doctor_payload: dict) -> list[PlanItem]:
+    """For each fail/warn in the doctor payload, emit a PlanItem with a
+    remediation command. pass results are skipped (no action needed).
+    """
+    items: list[PlanItem] = []
+    for r in doctor_payload.get("results", []):
+        if r["status"] not in ("fail", "warn"):
+            continue
+        name = r["name"]
+        if name == "schema_migrations":
+            command = _build_migrations_command()
+        else:
+            command = _REMEDIATIONS.get(
+                name,
+                f"# No automated remediation for '{name}'. See doctor output: {r['message']}",
+            )
+        items.append(PlanItem(
+            phase=1,
+            kind="remediation",
+            finding=name,
+            command=command,
+            note=_REMEDIATION_NOTES.get(name, ""),
+        ))
+    return items
+
+
+def _build_migrations_command() -> str:
+    """List the SQL files in db/postgres/migrations/ in lexical order, plus
+    the canonical schema files. The user runs them in order with psql.
+    """
+    migrations_dir = REPO_ROOT / "db" / "postgres" / "migrations"
+    pieces = [
+        "psql -U postgres -d governance -f db/postgres/schema.sql",
+        "psql -U postgres -d governance -f db/postgres/knowledge_schema.sql",
+    ]
+    if migrations_dir.is_dir():
+        for sql in sorted(migrations_dir.glob("*.sql")):
+            rel = sql.relative_to(REPO_ROOT)
+            pieces.append(f"psql -U postgres -d governance -f {rel}")
+    return " && \\\n    ".join(pieces)
 
 
 def bootstrap_check() -> None:

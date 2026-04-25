@@ -97,3 +97,55 @@ def test_run_doctor_raises_on_invalid_json(setup_mod, monkeypatch):
     monkeypatch.setattr(setup_mod.subprocess, "run", lambda *a, **kw: FakeProc())
     with pytest.raises(setup_mod.DoctorError):
         setup_mod.run_doctor()
+
+
+def _doctor_payload(*finds):
+    """Build a doctor payload with the given (name, status, message) tuples."""
+    return {
+        "mode": "local",
+        "results": [
+            {"name": n, "mode": "local", "status": s, "message": m, "detail": ""}
+            for n, s, m in finds
+        ],
+        "exit_code": 1 if any(s == "fail" for _, s, _ in finds) else 0,
+    }
+
+
+def test_remediation_for_postgres_fail(setup_mod):
+    payload = _doctor_payload(("postgres_running", "fail", "down"))
+    items = setup_mod.build_remediation(payload)
+    assert len(items) == 1
+    assert items[0].finding == "postgres_running"
+    assert "brew install postgresql@17" in items[0].command
+    assert items[0].applied is False
+
+
+def test_remediation_for_pg_extensions_fail(setup_mod):
+    payload = _doctor_payload(("pg_extensions", "fail", "missing: age, vector"))
+    items = setup_mod.build_remediation(payload)
+    assert "psql -U postgres -d governance" in items[0].command
+    assert "init-extensions.sql" in items[0].command
+
+
+def test_remediation_for_secrets_wrong_mode(setup_mod):
+    payload = _doctor_payload(("secrets_file", "fail", "mode is 0o644 — must be 0600"))
+    items = setup_mod.build_remediation(payload)
+    assert "chmod 600" in items[0].command
+
+
+def test_remediation_skips_pass_results(setup_mod):
+    payload = _doctor_payload(
+        ("python_version", "pass", "Python 3.14"),
+        ("postgres_running", "fail", "down"),
+    )
+    items = setup_mod.build_remediation(payload)
+    # python_version is pass, only postgres_running gets a remediation block.
+    assert len(items) == 1
+    assert items[0].finding == "postgres_running"
+
+
+def test_remediation_includes_warns(setup_mod):
+    payload = _doctor_payload(("anchor_directory", "warn", "missing"))
+    items = setup_mod.build_remediation(payload)
+    assert len(items) == 1
+    assert items[0].finding == "anchor_directory"
