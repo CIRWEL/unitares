@@ -42,7 +42,9 @@ Every item from `identity.md` that requires work, what "resolved" means for it, 
 | S8 | Orphan archival heuristics (`classify_for_archival`) | **Re-scoped** (2026-04-21 audit in `audit-notes.md` — thresholds are fine; real gap is tag discipline) | None urgent | Split into S8a (tag-discipline audit) + S8b (class-tag backfill). Heuristic thresholds remain as-is. |
 | S8a | Tag-discipline audit — 96% of active agents lack class tags | **Resolved 2026-04-23** — findings doc shipped | None | Root cause: only the SDK resident-branch stamps tags via `update_agent_metadata`; onboard defaults to `metadata={}` and no inference fires. See `docs/ontology/s8a-tag-discipline-audit.md` for measurements, write-path trace, and phased recommendation (default-stamp at onboard + later promotion sweep). **Phase-1 rule set shipped 2026-04-23 (PR #121).** **Operator decisions accepted 2026-04-25**: (a) `session_like` class addition ratified — needs scale-map entry in `governance_config.py`; (b) Phase 2 sweep timing — wait until ≥1 week of Phase-1 data (~2026-04-30 earliest) before drafting promotion thresholds; (c) Phase 2 rule for `ephemeral → session_like` promotion — defer to post-data so thresholds are empirical not guessed; (d) backfill 3180 archived records — same rule, one-shot pass once Phase-2 ratifies. Phase-2 not yet opened. |
 | S8b | Class-tag backfill on active agents | Data ops | S8a findings | Backfill class tags on active agents where class is inferable (resident-labelled, `Claude_*`-labelled, etc.). |
-| S9 | PATH 1/2 anti-hijack machinery | Re-scope or retire | R1 | Under R1, external verification replaces continuity-enforcement. PATH 1/2 flip to lineage-plausibility checks or retire. |
+| S8c | `spawn_reason` write-path repair — 0 of 19 lineage-declared active agents recorded one | **Surfaced 2026-04-25** by post-acceptance council pass | None urgent | The `spawn_reason` field is declarable at onboard but no live agent records it (S8a §"Gaps worth noting"). R1 v3.1's shadow-mode calibration partition keys on `spawn_reason ∈ {new_session, subagent, compaction}`; without the plumbing repair, R1's calibration is degenerate the same way S6's session-like partition was. **Hard blocker for R1 implementation row.** Repair likely small — either (a) onboard handler not threading the value into persistence, or (b) clients not passing it. Audit + fix expected ≤1 PR. Resolved when: the onboard write path verifiably stamps `spawn_reason` whenever passed; ≥1 week of new agents records it across `new_session` + `subagent` cases for R1 to calibrate against. |
+| S9 | PATH 1/2 anti-hijack machinery | Re-scope or retire | R1 | Under R1, external verification replaces continuity-enforcement. PATH 1/2 flip to lineage-plausibility checks or retire. **`bind_session` TTL-coupling parked here 2026-04-25** — under S1-a's TTL shrink (already shipped at `_CONTINUITY_TTL = 3600`), `bind_session`'s acceptance window silently changed from 30d to 1h. Must be addressed when S9 is scoped; should not silently propagate without a regression test asserting the new TTL. |
+| S14 | Option C feasibility re-evaluation — substrate-only continuity proof | **Deferred** — opened 2026-04-25 to prevent A→A′ muscle-memory foreclosure of C | S8a Phase 2 + 4 weeks of S1-a deprecation telemetry | The S1 council pass flagged that `ownership_proof_version` makes A→A′ frictionless, which silently forecloses Option C (substrate-only proof, the v2-ontology-pure endpoint per `identity.md:111`). This row is the explicit forcing-function so C does not die by neglect. Resolved when: post-S8a-Phase-2 with substrate vs session-like classes populated, the operator either ratifies A′ as the endpoint or reopens C. Concrete trigger condition: S1-a deprecation telemetry shows ≥4 weeks of cross-process-instance accept activity (well-defined volume, not zero), AND substrate-earned class has accumulated ≥10 agents passing R4 verification — at which point C becomes implementation-tractable. |
 | S10 | Fleet calibration aggregation paths | Shift default unit | R3, S7 | Default aggregation unit shifts from UUID to role. Dashboards + external-consumer contracts updated. |
 | S11 | SessionStart / onboard default behavior (the teeth of the ontology) | **Resolved 2026-04-21** | Audit + plugin PR | Landed as `unitares-governance-plugin#17` (commit `743952ab`) — banner inversion, cache becomes lineage-only (schema_version=2, no continuity_token write), S1 deprecation breadcrumb. Audit + duplicate-PR dogfood story in this file's Appendix entries "2026-04-21 — S11" (initial) and "2026-04-21 — S11 execution" (landing + lesson). |
 | S13 | Server-side complement of S11 (resolved 2026-04-21 plugin-only) — handler-default flip + onboard-teaching surface sweep | Server PR (default flip + workflow-surface sweep + STEP-1 demotion) | None (coordinate deprecation-breadcrumb language with S1 if S1-a ships first; structural work is independent of S1's A/A′/B/C decision) | **Counterpart in spirit (not mirror) of S5** — both replace silent re-association with explicit-declaration-required posture; S5 inverted event interpretation, S13 retires a resolution path. **Resolved when:** (a) handler defaults at `src/mcp_handlers/identity/handlers.py:781-782` invert to `force_new=True, resume=False`, so arg-less `onboard()` short-circuits at line 1231 before any session-key resume runs; (b) the two genuine onboard-teaching surfaces — `src/tool_descriptions.json:54` and `src/mcp_handlers/schemas/identity.py:55-65` (the `resume` field's "resume-preferred entry point" docstring) — match identity.md v2's posture; `src/mcp_handlers/introspection/tool_introspection.py:462` (UI label only) and `src/mcp_handlers/support/agent_auth.py:358-365` (not-registered error hint) get a lighter alignment sweep, not a workflow rewrite; (c) `unitares/CLAUDE.md` "Minimal Agent Workflow" rewritten to declarative-lineage form (`onboard(force_new=true, parent_agent_id=...)` lead, no `identity(agent_uuid=..., resume=true)` follow-up); (d) `derive_session_key` step 7 (`src/mcp_handlers/identity/session.py:419-438`) — the actual fingerprint/IP:UA pin-lookup site — emits a `concurrent_session_binding_observed` audit event when a pin match is found but does not auto-resume on the arg-less path (preserves the IPUA-pin `agent_id`-as-proof contract test); (e) regression tests: a fresh-instance log assertion (arg-less `onboard()` emits `[FRESH_INSTANCE]`) and a `bind_session` non-coupling test (verify shared resolution chain unaffected since `bind_session` consumes the same session-key plumbing). **Note for future readers:** a session-evidence finding that `session_resolution_source: pinned_onboard_session` returns even on explicit `force_new=true` is **honest labeling, not a bug** — `force_new` is correctly honored at `handlers.py:1231`; the field reflects key-derivation provenance, not identity-resolution outcome. Reordering key derivation to "fix" the label would break the unified key-derivation contract. **Scope boundary:** does NOT retire `continuity_token` server-side (S1) and does NOT change `bind_session` semantics or PATH 0/1/2 anti-hijack (S9). Single-concern sweep. Reviewed by `dialectic-knowledge-architect` + `feature-dev:code-reviewer` council pre-merge. |
@@ -68,7 +70,11 @@ S8 ── (nothing) ── data-driven re-calibration
 S9 ── R1
 S10 ── R3, S7
 S13 ── (nothing) ── actionable now; coordinate breadcrumb language with S1 if S1-a ships first
+S8c ── (nothing) ── actionable now; HARD BLOCKER for R1 implementation row
+S14 ── S8a Phase 2 + 4w S1-a telemetry ── deferred trigger row
 ```
+
+**Critical-path note (2026-04-25):** S13 should ship before S1-a (sequencing risk: both touch onboard-default surface — S13's fresh-instance gate must fire first so TTL-narrowed tokens never matter for arg-less callers). S8c must ship before R1 implementation row opens (R1 calibration is degenerate without `spawn_reason`).
 
 ## Suggested sequencing
 
@@ -518,3 +524,61 @@ Sequencing per §9 stands: S1-a → S1-b → S1-c → S1-d → A′. S1-a is the
 - The "operator decisions pending" backlog is now empty for these three rows. Next operator-decision pressure surface: A′ ship-or-defer call (post-S1-c), and S6/S8a Phase-2 once data lands.
 
 **No code changes this session.** Decisions recorded in plan.md; implementation rows open next session.
+
+### 2026-04-25 — Post-acceptance council pass: forcing items + scope correction
+
+After the operator accepted R1 v3.1, S1 path-A→A′, and S8a Phase 2 in one sitting, a five-agent council pass (dialectic + code-reviewer × R1, S1-a; dialectic-only × trajectory) ran in parallel to audit the implementation surface. It surfaced material gaps in all three docs and one new piece of context the docs hadn't captured.
+
+**Forcing items added to the ledger as new rows:**
+
+- **S8c** — `spawn_reason` write-path repair. The trajectory agent surfaced this: R1's shadow-mode plan partitions plausibility distributions by `spawn_reason ∈ {new_session, subagent, compaction}`, but S8a measured `spawn_reason` recorded on **0 of 19** lineage-declared active agents. If R1 starts accumulating without the repair, the 4-week clock runs on uncalibratable data. Hard blocker for R1 implementation row.
+- **S14** — Option C feasibility re-evaluation. The S1 dialectic flagged that `ownership_proof_version` makes A→A′ frictionless, which silently forecloses C. Explicit deferred row added so C doesn't die by neglect.
+- **S9 amended** — `bind_session`'s TTL-coupling now silently inherits S1-a's 1h TTL. Parked under S9 with explicit note rather than left as "flag for S9" deferral.
+
+**Scope correction — S1-a is mostly already shipped.** Code-review agent found that what the S1 doc §12 lists as "must update in S1-a" was largely already in master:
+- `_CONTINUITY_TTL = 3600` at `src/mcp_handlers/identity/session.py:32` (TTL shrink shipped)
+- `_OWNERSHIP_PROOF_VERSION` injected at lines 42, 48, 54 (forward-compat field shipped)
+- `build_token_deprecation_block` at line 59 (deprecation infrastructure built)
+- `log_continuity_token_deprecated_accept` at `src/audit_log.py:368` (audit event shipped)
+- Onboard handler wires the deprecation block + audit event at `src/mcp_handlers/identity/handlers.py:1702-1720`
+
+What's actually left for S1-a:
+1. Wire deprecation block + audit event into `handle_identity_adapter` (the `identity()` tool path) — currently only in `handle_onboard_adapter`
+2. Wire same into `handle_bind_session`
+3. Wire same into HTTP onboard direct-tool path (`src/http_api.py`)
+4. Add clock-skew tolerance to `resolve_continuity_token` (currently zero drift accepted; §7.2 clock-skew test requires the tolerance to exist first)
+5. Three regression tests per §7.2 (token-expiry-mid-call, clock-skew-near-boundary, concurrent-possessor-with-expired-token)
+6. Chronicler regression test (>1h-old-token resident force-re-onboards correctly)
+
+The S1 doc has been updated in this commit to reflect this honest scope.
+
+**Operator decisions on S1-a framing (2026-04-25):**
+
+- **TTL = 1h.** Operator picked under hygiene framing. Reasoning: long enough that all resident cadences with rolling-refresh stay covered (Vigil 30min, Steward 5min, Sentinel/Lumen continuous); short enough to not claim "long-lived credential"; not so short (5min) that clock-skew false positives are created without proportional security gain.
+- **Hygiene framing + secret rotation at ship.** Operator picked hygiene over security after the dialectic surfaced the doc's §4.1 honest label ("performative, narrowed") and that the project doesn't have a threat model that would justify "1h vs 5min vs 1d." Pair with rotating `UNITARES_CONTINUITY_TOKEN_SECRET` at S1-a ship to invalidate all pre-S1-a 30d-TTL tokens — collapses §7.5 grace-window concern with a one-line operational move rather than a philosophical claim.
+
+**R1 v3.2 amendment (this commit):** four sections added to `r1-verify-lineage-claim.md` covering issues the council found that v3.1 didn't address:
+- Telemetry-as-lineage-leak surface — KG discovery of `trajectory_continuity_score` per pair must NOT publish full per-dim `components` to readable KG (lowers adversarial-forgery cost). Mitigation: per-dim values go to audit-only table; public discovery shows verdict + plausibility only.
+- `provisional=true` read-side contract — flag lives in identity metadata, S6/S7/R3 each documented as either ignoring provisional records or counting them with a discount factor (default: ignore until promoted).
+- `calibration_status: seeded|earned` flag — every score record + dashboard surface gated on this; `earned` only flips after shadow-mode calibration completes.
+- KG discovery TTL/cap — bounded analogous to Watcher's `FINDINGS_TTL_DAYS = 14`; extra: dedupe per `(parent_id, successor_id)` pair (update, not append).
+
+Plus one inline correction: the helper SQL needs `AND s.epoch = $current_epoch` to avoid conflating pre-grounding and grounded data on the live database.
+
+**R1 implementation row sequencing.** Now blocked on three things, in order:
+1. S8c (`spawn_reason` plumbing repair) merged + ≥1 week of clean partition data
+2. S8a Phase 2 (`session_like` class added) so script-driven daily-cron classes are filterable from R1's signal
+3. R1 v3.2 amendment council-pass confirmation (we just did the amendment in-context; one more dispatch may be advisable before opening implementation row)
+
+**Critical-path summary post-council:**
+```
+Now → 1 week:    S13 ship (single-concern, sequencing-required before S1-a)
+                 + S8c: spawn_reason write-path repair (1 PR, blocks R1 impl)
+                 + S8a Phase 2 hold runs out → ship session_like + scale-map entry
+1 week → 2 weeks: S1-a ship (after S13; secret rotation + hygiene PR copy)
+                  R1 v3.2 council pass (light)
+2 weeks → 4+ weeks: R1 implementation row opens; shadow-mode telemetry begins
+                    R2 design can start in parallel (not blocked)
+```
+
+The hidden coupling the trajectory agent named: S1-a forces more `force_new` re-onboards which APPEARS to feed R1's pair-count target — but Chronicler-style daily-cron pairs would score high deterministically (same script behavior) rather than because of behavioral lineage. R1 will under-discriminate unless filterable by class tag (`session_like` vs script-driven daily-cron — currently no class for the latter). Captured as known limitation in R1 v3.2.

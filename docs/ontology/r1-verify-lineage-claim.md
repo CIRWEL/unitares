@@ -104,11 +104,14 @@ SELECT s.entropy, s.integrity, s.stability_index, s.volatility, s.recorded_at
 FROM core.agent_state s
 JOIN core.identities i ON i.id = s.identity_id
 WHERE i.agent_id = $1
-  AND s.recorded_at >= NOW() - $2::interval
+  AND s.epoch = $2  -- GovernanceConfig.CURRENT_EPOCH; see v3.2 amendment
+  AND s.recorded_at >= NOW() - $3::interval
 ORDER BY s.recorded_at ASC;
 ```
 
 Index coverage: `db/postgres/schema.sql:169` provides `idx_agent_state_identity_time ON core.agent_state(identity_id, recorded_at DESC)`. Planner resolves identity first, then range-scans the index. No new index needed.
+
+**Epoch filter (v3.2 correction).** The 2026-04-25 council code-review pass found that every row written by `record_agent_state` (`src/db/mixins/state.py:33`) stamps an `epoch` column, and every existing read query filters on `s.epoch = $N`. Without the filter, the helper returns rows from all epochs (pre-grounding + grounded) on any deployed instance, conflating calibration data across the EISV grounding boundary. Use `GovernanceConfig.CURRENT_EPOCH` as the bound at call time; do not hardcode a literal.
 
 **Schema specifics** (for implementor): columns are `REAL NOT NULL DEFAULT ...`; `recorded_at` is `TIMESTAMPTZ NOT NULL`. Group rows into per-dimension lists in Python by reading the four scalar columns in order.
 
@@ -215,3 +218,84 @@ v1/v2 framed R1 as "the earning mechanism." v3 is narrower: R1 is a single-chann
 - v3 code review (`a68d31899e90dea48`) — `core.agent_state` indexes on `identity_id` not `agent_id` (JOIN required); env var is `DB_POSTGRES_URL` not `DATABASE_URL`; psycopg2 is not a project dependency (use sync-asyncpg-in-executor pattern already at `tests/test_db_utils.py:36-38`); `conftest.py` is pure isolation infrastructure, data generators belong in a helper module.
 
 v3.1 applies the v3 code-review corrections in-place (SQL JOIN, correct env var, sync-asyncpg pattern, fixture module). No spec-level changes.
+
+---
+
+## Amendment v3.2 (2026-04-25) — post-acceptance council pass
+
+After the operator accepted v3.1 on 2026-04-25, a fourth council pass (dialectic + code-review) ran specifically on the implementation surface. It found four issues v3.1 didn't address. None invalidate v3.1's single-channel design; all add specifications the implementation row must follow.
+
+### v3.2-A. Telemetry-as-lineage-leak surface
+
+**Issue.** v3.1 emits a KG discovery of type `trajectory_continuity_score` per scoring call with `verdict`, `plausibility`, `components` (per-dimension similarities), `observations`. The §"What this does NOT solve" appendix names "adversarial forgery" as out-of-scope. But emitting full per-dim `components` to the *readable* KG materially lowers the cost of fitting a forgery — an adversary who can read scoring history sees exactly which dimensions matched and can synthesize a trajectory that hits the cuts.
+
+**Mitigation (required before implementation row opens).** Split the discovery write path:
+
+- **Public KG discovery payload:** `verdict` + `plausibility` (scalar) + `parent_mature` + `observations` only. No per-dimension breakdown.
+- **Audit-only persistence:** `components` dict (per-dim similarities) stored in `core.audit_events` or a new `r1_score_audit` table — readable by operator tooling, not by KG queries available to general agents.
+- **Reasons array:** stays in audit-only path. Includes dimension-degradation messages that could leak which dimensions are missing.
+
+This adjustment costs one extra write site and one schema decision (audit table vs. extending `core.audit_events`). It does not change the primitive's signature or the verdict logic. The `TrajectoryContinuityScore` dataclass returned to *internal callers* remains complete; only the KG-published shape narrows.
+
+### v3.2-B. `provisional=true` read-side contract
+
+**Issue.** v3.1 caller-policy lists `marks` for the onboard call-site (stamp `provisional=true` on the lineage record, proceed). It does not specify (a) where the flag lives, (b) how four downstream consumers interpret it.
+
+**Specification.**
+
+- **Storage:** `provisional_lineage` boolean column on the lineage edge or `provenance_chain` entry, defaulting to `false`. Set `true` when `score_trajectory_continuity` returns `inconclusive` and the call-site policy is `marks`.
+- **Read semantics for downstream consumers:**
+
+| Consumer | Provisional record handling |
+|---|---|
+| Trust-tier (S6) | Ignored. `provisional=true` does not contribute to tier upgrades. Substrate-earned routing unchanged. |
+| KG provenance (S7) | Visible in `provenance_chain` but flagged. Aggregations of "lineage-attributed activity" exclude provisional records by default; explicit query opt-in shows them. |
+| R3 role baselines | Excluded from baseline distribution computation. Provisional pairs are not yet load-bearing for fleet calibration. |
+| Dashboard / external consumers | Shown with explicit "provisional" badge. Do not present as confirmed lineage. |
+
+- **Promotion path:** `provisional → confirmed` via the `score_trajectory_continuity` re-evaluation policy at the promotion call-site (`blocks` posture per v3.1). When successor accumulates ≥ `min_observations` and re-scoring returns `plausible`, flag flips to `confirmed`. If re-scoring returns `unsupported` after maturation, lineage edge is removed (orphan-archival path).
+- **Backstop:** any consumer that does not implement provisional-aware logic must be patched in the same PR. Default policy for unaware consumers is "treat as confirmed" — the unsafe default. v3.2 elevates this to a read-side specification, not a punt to consumers.
+
+### v3.2-C. `calibration_status` field
+
+**Issue.** v3.1's "shadow-mode-only is not load-bearing until R2" framing is true for *enforcement* and false for *interpretation*. A KG discovery type, a per-pair score, and any dashboard surface together create a public commitment. Operators and external consumers will read `plausibility=0.62` as meaningful before calibration earns it.
+
+**Specification.** Every score record + every dashboard surface gated on a `calibration_status` field with two values:
+
+- `seeded` (default at ship): synthetic-fixture-calibrated thresholds, no production validation. UI displays "uncalibrated" badge; verdict is shown but downstream treats it as advisory only.
+- `earned`: shadow-mode pairs cleared the cutoff (≥100 pairs OR ≥4 weeks per operator decision); thresholds validated against production distribution. UI displays the verdict without caveat.
+
+The transition from `seeded → earned` is a single explicit operator action, not an automatic flip. Even if shadow-mode telemetry passes the cutoff, an operator must run the calibration analysis and explicitly mark the field. This prevents the failure mode where a dashboard panel quietly graduates from "advisory" to "load-bearing" without anyone naming the moment.
+
+### v3.2-D. KG discovery TTL/cap
+
+**Issue.** v3.1 emits one KG discovery per scoring call. No retention policy. At `process_agent_update` rate × any agent with declared parent, this generates one node per check-in indefinitely. Watcher findings have an explicit `FINDINGS_TTL_DAYS = 14` cap; KG discovery types do not.
+
+**Specification.**
+
+- **Dedupe by `(parent_id, successor_id)` pair:** update the existing record rather than appending. The N-th score for a pair overwrites the (N-1)-th in the public KG; the audit-only table (per v3.2-A) retains history.
+- **TTL = 30 days** on the public KG record. After 30 days without re-scoring, record is archived (audit table retains).
+- **Audit-only table** retains history per its own retention policy (currently 90 days for `audit_events`; new `r1_score_audit` table inherits).
+
+### v3.2-E. Inline corrections to v3.1 implementation sketch
+
+The council code-review surfaced three additional implementation-row gotchas:
+
+1. **`epoch` column filter** in the SQL (already applied above to `reconstruct_eisv_series`).
+2. **conftest stub registration:** `tests/conftest.py:_isolate_db_backend` is autouse and replaces `_db_instance` with an `AsyncMock`. Any new method the helper adds must be registered as a method stub on `mock_backend` or new tests will get auto-generated `AsyncMock` children returning coroutines instead of lists. Implementation row must add `mock_backend.reconstruct_eisv_series` and `mock_backend.score_trajectory_continuity` to the conftest fixture.
+3. **`asyncio.run()` vs `asyncio.new_event_loop()`:** v3.1's prose described the `tests/test_db_utils.py:36-38` template as using `asyncio.run(...)`. The actual pattern uses `asyncio.new_event_loop() + run_until_complete() + loop.close()`. Implementer should follow the actual code, not the prose description.
+
+### v3.2-F. Known limitation — script-driven trajectory pairs
+
+The trajectory council agent surfaced this: under S1-a (TTL shrink), Chronicler-style daily-cron processes get forced through `force_new` re-onboard on each wake. They will appear to R1 as declared-lineage pairs (the cron has a stable identity it can declare as parent), and their DTW similarity will be high — not because of behavioral lineage but because the script is deterministic.
+
+**Captured as known limitation, not a v3.2 fix.** Mitigation lives in S8a Phase 2: when `session_like` (or a sibling `script_driven` class) is added, R1's calibration partition can filter these out. Until then, R1 implementation should:
+
+- Document this expected high-plausibility cluster in the shadow-mode calibration appendix.
+- Recommend that the calibration analysis, when run, explicitly inspects `class_tag=resident_persistent` separately from session-like pairs, since the deterministic-script behavior is concentrated in residents.
+
+### v3.2 summary
+
+Four normative additions (v3.2-A through D), three implementation-row corrections (v3.2-E), one captured limitation (v3.2-F). Single-channel design from v3.1 unchanged. No changes to `score_trajectory_continuity` signature; one new column on lineage records (`provisional_lineage`); one new field on score records (`calibration_status`); one new audit table (`r1_score_audit`).
+
+**Implementation row sequencing reminder (per `plan.md` 2026-04-25 appendix):** R1 implementation row blocks on (1) S8c (`spawn_reason` write-path repair), (2) S8a Phase 2 (`session_like` class), (3) light council confirmation pass on this v3.2 amendment.

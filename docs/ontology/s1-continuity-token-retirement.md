@@ -116,6 +116,27 @@ Translation: **the token is the current possession-proof mechanism** for bare-UU
 
 ## 4. Deprecation scope under Option A
 
+> **Status update 2026-04-25 — most of §4 is already shipped.** A post-acceptance code-review pass found that the items below labeled "must update in S1-a" were largely landed before the operator's path-A acceptance. Specifically:
+>
+> | Sub-item | Status |
+> |---|---|
+> | §4.1 TTL shrink (`_CONTINUITY_TTL = 3600`) | **Shipped** at `src/mcp_handlers/identity/session.py:32` |
+> | §4.5 `ownership_proof_version` in payload | **Shipped** at `session.py:42, 48, 54` |
+> | §4.3 `build_token_deprecation_block` infrastructure | **Shipped** at `session.py:59` |
+> | §4.3 `log_continuity_token_deprecated_accept` audit event | **Shipped** at `src/audit_log.py:368` |
+> | §4.3 onboard handler wiring (deprecation block + audit on cross-process-instance accept) | **Shipped** at `src/mcp_handlers/identity/handlers.py:1702-1720` |
+>
+> **Real remaining work for S1-a:**
+> 1. Wire deprecation block + audit event into `handle_identity_adapter` (the `identity()` tool path) — currently only in `handle_onboard_adapter`.
+> 2. Wire same into `handle_bind_session`.
+> 3. Wire same into HTTP onboard direct-tool path (`src/http_api.py`).
+> 4. Add clock-skew tolerance to `resolve_continuity_token` (currently zero drift accepted; the §7.2 clock-skew test requires this to exist first).
+> 5. Three regression tests per §7.2 (token-expiry-mid-call, clock-skew-near-boundary, concurrent-possessor-with-expired-token).
+> 6. Chronicler regression test asserting >1h-old-token resident gets force-re-onboarded correctly (the council found this gap).
+> 7. PR copy must use **hygiene framing** (operator decision 2026-04-25 — see §11.1 below) and pair with **rotating `UNITARES_CONTINUITY_TOKEN_SECRET`** at ship time (collapses §7.5 grace-window concern).
+>
+> The §4 sub-sections below are kept as historical-design context. Treat the inline "must update" line numbers as illustrative — read the code to confirm current state.
+
 Landing **A** means five concrete changes, none of which delete the token primitive:
 
 ### 4.1. Stop emitting as a long-TTL resume credential
@@ -268,14 +289,18 @@ S1-a alone closes most of the ontology-hygiene concern without touching client c
 
 ## 11. Operator decision points
 
-1. **A / A′ / C?** Recommend A → A′. Option B withdrawn 2026-04-24 per R1 v3 scope clarification. Any objection?
-2. **TTL target for Option A?** Recommend 1h. **Justification caveat:** 1h is a convenience anchor (fits resident cadences in §5), not a threat-model anchor. The relevant question is attacker-window, not client-cadence — "how long would a stolen token need to be useful to be dangerous?" is not the same as "how often does Vigil wake." If the operator has a threat-model-derived budget (e.g., "tokens exfiltrated from logs should expire before a human operator could notice"), that number should drive the TTL. Operator-set.
-3. **Grace-period length?** Recommend one release cycle (effectively "until telemetry is clean"). Operator-set sunset date. See §6 security-posture note.
-4. **Field rename (`continuity_token` → `ownership_proof`)?** Deferred to S1-d per §9. Confirm?
-5. **Chronicler re-onboard-on-wake acceptable?** It's the only resident that structurally changes behavior under 1h TTL. §5 argues yes — correct v2 behavior for launchd-daily processes.
-6. **`bind_session` TTL: let-propagate or hold?** §7.3 recommends let-propagate. Operator call.
-7. **Grace-period security posture: warning-only or early cutoff?** §6 and §7.5 flag the "attacker with pre-S1-a token" window during grace.
-8. **Is "performative, narrowed" an acceptable ontology label?** §4.1 argues A does not cross into earned continuity. If the operator wants A to ship as an earned-continuity claim, A′ (PID/nonce binding) is the path, not A alone.
+> **All eight decisions resolved 2026-04-25.** Outcomes recorded inline below. The "Recommend" lines remain as historical context for the reasoning.
+
+1. **A / A′ / C? — A → A′ accepted.** Recommend A → A′. Option B withdrawn 2026-04-24 per R1 v3 scope clarification.
+2. **TTL target for Option A? — 1h accepted.** Recommend 1h. **Justification caveat:** 1h is a convenience anchor (fits resident cadences in §5), not a threat-model anchor. The relevant question is attacker-window, not client-cadence — "how long would a stolen token need to be useful to be dangerous?" is not the same as "how often does Vigil wake." If the operator has a threat-model-derived budget (e.g., "tokens exfiltrated from logs should expire before a human operator could notice"), that number should drive the TTL. **Operator picked 1h under hygiene framing** — long enough that all rolling-refresh resident cadences stay covered, short enough to not claim "long-lived credential," not so short (5min) that clock-skew false positives outweigh proportional security gain.
+3. **Grace-period length? — one release cycle, warning-only, accepted.** Recommend one release cycle (effectively "until telemetry is clean"). See §6 security-posture note. Tightening explicitly addressed via decision #7 below (secret rotation).
+4. **Field rename (`continuity_token` → `ownership_proof`)? — deferred to S1-d.** Confirmed; S1-d post-grace.
+5. **Chronicler re-onboard-on-wake acceptable? — accepted.** Correct v2 behavior for launchd-daily processes.
+6. **`bind_session` TTL: let-propagate or hold? — let-propagate accepted.** Coupling parked under S9 in `plan.md` with a regression-test requirement; not a silent deferral.
+7. **Grace-period security posture: warning-only or early cutoff? — warning-only + secret rotation accepted.** Operator paired the warning-only grace with **rotating `UNITARES_CONTINUITY_TOKEN_SECRET` at S1-a ship**. Rotation invalidates all pre-S1-a 30d-TTL HMACs in one stroke, collapsing the §7.5 "attacker with stolen pre-S1-a token" window without requiring a philosophical claim about TTL math being security teeth. This is the cheap-and-honest path: hygiene framing in PR copy + actual security move via secret rotation.
+8. **Is "performative, narrowed" an acceptable ontology label? — accepted under hygiene framing.** §4.1's honest label stands. A is hygiene with a security-side-effect; the operator did not pick the security-claim framing. A→A′ remains the explicit security-upgrade path if PID/nonce binding is later wanted.
+
+**Implementation directive for next process-instance:** PR title and body for S1-a use hygiene language. Example: "narrow continuity_token's role to within-process-instance use; preserve PATH 0 anti-hijack with shorter-lived possession proof." Do **not** write "tighten ownership-proof TTL to reduce window of stolen-token replay" — that silently renegotiates §4.1's label into a security claim the operator did not pick.
 
 ## 12. Pointers for next process-instance executing this plan
 
@@ -289,26 +314,42 @@ S1-a alone closes most of the ontology-hygiene concern without touching client c
 
 ## Appendix: Call-site quick reference
 
-**Emit sites (must update in S1-a):**
-- `src/mcp_handlers/identity/session.py:22` (`_CONTINUITY_TTL` — shrink)
-- `src/mcp_handlers/identity/session.py:57` (`create_continuity_token` — embed `ownership_proof_version`)
-- `src/services/identity_payloads.py:17, 41-42, 53-54, 63-64, 83` (payload builders — emit `deprecations` + version field)
+> **2026-04-25 council audit refreshed the line numbers below.** Many citations in the 2026-04-24 draft were off by 20-60 lines because the implementation landed in parallel with doc-writing. Treat the line numbers as guidance; the implementer should grep for the symbol name to locate the current site.
 
-**Accept sites (deprecation-warning instrumentation in S1-a):**
-- `src/mcp_handlers/identity/session.py:275-284`
-- `src/mcp_handlers/middleware/identity_step.py:297-308, 393-396`
-- `src/mcp_handlers/identity/handlers.py:130, 543-547, 807-808, 1066` (last is `bind_session`)
-- `src/http_api.py:304-307`
+**Emit sites — already shipped (do NOT re-edit in S1-a):**
+- `src/mcp_handlers/identity/session.py:32` — `_CONTINUITY_TTL = 3600` (1h)
+- `src/mcp_handlers/identity/session.py:42, 48, 54` — `_OWNERSHIP_PROOF_VERSION` injected into payload
+- `src/mcp_handlers/identity/session.py:59` — `build_token_deprecation_block` (deprecation-block infrastructure)
+- `src/mcp_handlers/identity/session.py:120` — `create_continuity_token` (signature already accepts `ttl_seconds` parameter for tests)
+- `src/audit_log.py:368` — `log_continuity_token_deprecated_accept`
+- `src/mcp_handlers/identity/handlers.py:1702-1720` — onboard-handler wiring of deprecation block + audit event on cross-process-instance accept
 
-**Client sites (must update in S1-b):**
-- `scripts/unitares:70, 148` (cache read + pass — L62 is the write, keep as-is)
-- `scripts/client/onboard_helper.py:181-184` (startup preference)
-- Plugin mirror of `onboard_helper.py`
+**Accept sites — wiring needed in S1-a (deprecation-block + audit event NOT yet wired; only onboard handler does both):**
+- `handle_identity_adapter` (the `identity()` tool path) — wire deprecation block + audit event mirroring the onboard pattern
+- `handle_bind_session` — wire deprecation block + audit event
+- `src/http_api.py` HTTP onboard direct-tool path — wire same surface
 
-**Test surfaces that will need updating:**
-- `tests/test_identity_session.py:228-263` — `test_priority_1_continuity_token*` (intra-process still works; add TTL-boundary + clock-skew assertions)
-- `tests/test_identity_payloads.py:16-73` — payload shape (`deprecations` block + `ownership_proof_version`)
-- `tests/test_name_cosmetic_invariant.py:41` — banner-text assertion may need update
-- Plugin `test_session_start_checkin.py` — startup-banner behavior
-- Plugin `test_auto_checkin_decision.py:155-169` — fallback hierarchy (in-process preference retained)
-- **New:** PATH-0-with-expired-token regression; re-onboard-race-at-TTL-boundary test; `bind_session` with short-TTL token
+**Code surfaces still needing change in S1-a:**
+- `resolve_continuity_token` (`src/mcp_handlers/identity/session.py:120-`) — add clock-skew tolerance parameter (currently zero drift accepted; §7.2 clock-skew test is undefined-behavior without this)
+- Audit-event call sites: ensure `caller_channel` and `caller_model_type` are threaded through identity-adapter and bind_session paths the same way they are in onboard at handlers.py:1713-1714
+
+**Client sites (S1-b, separate PR):**
+- `scripts/unitares` — cache read + pass paths (verify line numbers; doc previously cited :70, :148)
+- `scripts/client/onboard_helper.py` — startup preference (verify)
+- Plugin mirror of `onboard_helper.py` (separate plugin-repo PR)
+
+**Test surfaces that will need updating / adding (S1-a regression coverage):**
+- `tests/test_identity_session.py` — `test_priority_1_continuity_token*` (intra-process still works; add TTL-boundary + clock-skew assertions)
+- `tests/test_identity_payloads.py` — payload shape (`deprecations` block + `ownership_proof_version`)
+- `tests/test_name_cosmetic_invariant.py` — banner-text assertion may need update
+- **New regression tests required:**
+  - PATH-0-with-expired-token reject (§7.2 token-expiry-mid-call)
+  - Clock-skew-near-boundary (requires implementing tolerance first)
+  - Concurrent-possessor with expired token (§7.2)
+  - `bind_session` with short-TTL token (§7.3 — currently no test asserts `bind_session` honors any specific TTL)
+  - **Resident re-onboard regression:** assert that a resident with a >1h-old token correctly forces through re-onboard rather than erroring out. Council found this is a greenfield test gap; Chronicler is the structural example.
+
+**Operational steps at S1-a ship (paired with code PR):**
+- **Rotate `UNITARES_CONTINUITY_TOKEN_SECRET`** (operator action — see decision #7). Triggers re-mint of all in-flight tokens; pre-rotation 30d-TTL HMACs become unverifiable.
+- Restart `com.unitares.governance-mcp` LaunchAgent to pick up the rotated secret.
+- Note in PR body that pre-S1-a 30d tokens are invalidated by rotation; this is the operational form of §7.5's "early cutoff" without philosophical TTL claims.
