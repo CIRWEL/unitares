@@ -1129,3 +1129,80 @@ class TestSupersedes:
         # Response surfaces the supersession
         assert data.get("superseded") == "old-disc-1"
 
+    @pytest.mark.asyncio
+    async def test_supersedes_vetoed_for_permanent_predecessor(
+        self, patch_common, registered_agent,
+    ):
+        """Permanent-tagged predecessors cannot be auto-flipped to superseded."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+
+        # tag "permanent" → get_lifecycle_policy returns "permanent"
+        # (Note: PERMANENT_TYPES uses "architecture_decision" but the handler's
+        # VALID_DISCOVERY_TYPES uses "architectural_decision" — using the tag
+        # path avoids that existing inconsistency.)
+        permanent_predecessor = DiscoveryNode(
+            id="perm-1",
+            agent_id="other-agent",
+            type="note",
+            summary="ADR: schema choice",
+            status="open",
+            tags=["permanent"],
+        )
+        mock_graph.get_discovery = AsyncMock(return_value=permanent_predecessor)
+
+        result = await handle_store_knowledge_graph({
+            "agent_id": registered_agent,
+            "summary": "tries to supersede ADR",
+            "supersedes": "perm-1",
+        })
+
+        data = parse_result(result)
+        # Veto must come BEFORE the new discovery is stored
+        mock_graph.add_discovery.assert_not_awaited()
+        mock_graph.update_discovery.assert_not_awaited()
+        # Error response, not success
+        assert data.get("success") is False
+        assert "permanent" in data.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_supersedes_missing_predecessor_warns_not_errors(
+        self, patch_common, registered_agent,
+    ):
+        """Missing predecessor surfaces as warning; new discovery still stored."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+
+        mock_graph.get_discovery = AsyncMock(return_value=None)  # not found
+
+        result = await handle_store_knowledge_graph({
+            "agent_id": registered_agent,
+            "summary": "thinks it supersedes a ghost",
+            "supersedes": "ghost-id",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert "discovery_id" in data  # new entry was still stored
+        mock_graph.add_discovery.assert_awaited_once()
+        mock_graph.update_discovery.assert_not_awaited()
+        assert "_supersedes_warning" in data
+
+    @pytest.mark.asyncio
+    async def test_supersedes_empty_string_rejected(
+        self, patch_common, registered_agent,
+    ):
+        """supersedes='' is a parameter error, not silently ignored."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+
+        result = await handle_store_knowledge_graph({
+            "agent_id": registered_agent,
+            "summary": "tries with empty",
+            "supersedes": "",
+        })
+
+        data = parse_result(result)
+        assert data.get("success") is False
+        mock_graph.add_discovery.assert_not_awaited()
+
