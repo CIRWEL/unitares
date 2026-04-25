@@ -555,7 +555,7 @@ async def _try_resume_by_agent_uuid_direct(
                 (
                     "Bare agent_uuid resume is not permitted. Include "
                     "continuity_token (bound to this UUID) or call "
-                    "identity(force_new=true) / onboard() to create a new identity."
+                    "identity(force_new=true) / onboard(force_new=true) to create a new identity."
                 ),
                 recovery={
                     "reason": "bare_uuid_resume_denied",
@@ -767,13 +767,15 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     Optional: Pass model_type='...' to create distinct identity per model.
     Optional: Pass resume=false to force a new identity (with predecessor link).
     Optional: Pass force_new=true to create new identity with no predecessor link.
-    Optional: Pass agent_uuid='...' to resume a known identity by UUID directly.
-              Requires resume=true (default). Skips session/name resolution entirely.
-              Returns error if UUID not found or not active — never creates a ghost.
-    Defaults to resuming existing identity if one exists for this session.
+    Optional: Pass agent_uuid='...' plus a matching continuity_token to rebind
+              a known identity. Bare UUID resume is hijack-shaped under strict
+              identity mode. Returns error if UUID is not found or active —
+              never creates a ghost.
+    Fresh process instances should prefer onboard(force_new=true) and use
+    parent_agent_id to declare lineage to prior work.
 
     Dispatcher structure (2026-04-19 refactor):
-      1. PATH 0  — _try_resume_by_agent_uuid_direct (UUID-direct resume)
+      1. PATH 0  — _try_resume_by_agent_uuid_direct (proof-owned UUID rebind)
       2. STEP 1  — _try_resume_by_session_key (base-session-key resolve)
       3. Finisher — fall through to handle_identity_v2 + persist + response
     """
@@ -789,7 +791,7 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
     normalized_model = None
     explicit_resume_binding = bool(arguments.get("client_session_id") or arguments.get("continuity_token"))
 
-    # PATH 0: Direct UUID lookup (resident agents with stored UUID).
+    # PATH 0: Direct UUID lookup with Part-C ownership proof.
     path0_response = await _try_resume_by_agent_uuid_direct(
         arguments,
         resume=resume,

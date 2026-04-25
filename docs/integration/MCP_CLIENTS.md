@@ -53,8 +53,10 @@ The server binds to `127.0.0.1` by default. For LAN or remote access:
 
 See [`scripts/ops/`](../../scripts/ops/) for an example LaunchAgent plist with bind-all plus allowlists.
 
-## Resident agents
+## Agent Identity
 
-Save `agent_uuid` from `onboard()`, then pass it on subsequent connections via `identity(agent_uuid=..., resume=true)`. No token management is required for resident agents.
+For a fresh process, call `onboard(force_new=true)`. If the process is continuing prior work, call `onboard(force_new=true, parent_agent_id=<prior uuid>, spawn_reason="new_session")`.
+
+For a same-owner rebind to an existing UUID, call `identity(agent_uuid=..., continuity_token=..., resume=true)` with the matching short-lived token. Do not teach clients to use bare `identity(agent_uuid=..., resume=true)`: UUID alone is an unsigned claim and is hijack-shaped under strict identity mode.
 
 See also: [Getting Started](../guides/START_HERE.md), [Operator Runbook](../operations/OPERATOR_RUNBOOK.md).

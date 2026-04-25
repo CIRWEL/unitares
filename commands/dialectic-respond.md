@@ -8,8 +8,11 @@ Use the shared helper:
 
 - `scripts/client/session_cache.py get session`
 
-If the cache contains `uuid`, resume that exact identity first with `identity(agent_uuid=<uuid>, resume=true)`.
-Do not rely on weaker fingerprint/session fallback when a cached UUID is available.
+If the cache contains `uuid`, use it as the expected actor and lineage context, not as proof by itself.
+
+If you need to bind to that exact cached UUID before responding, use `identity(agent_uuid=<uuid>, continuity_token=<token>, resume=true)` with a matching token. Without proof, call `/governance-start` and declare `parent_agent_id=<cached uuid>` if this process is continuing the same work.
+
+Do not rely on weaker fingerprint/session fallback when dialectic authorization depends on the exact actor.
 
 Then inspect the target session with:
 

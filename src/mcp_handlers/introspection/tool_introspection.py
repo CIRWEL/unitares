@@ -714,9 +714,9 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             },
             # Quick workflows (v2.5.0+) - progressive disclosure
             "workflows": {
-                "new_agent": ["onboard()", "process_agent_update(complexity=0.5)", "agent(action='list') or list_agents()"],
+                "new_agent": ["onboard(force_new=true)", "process_agent_update(response_text='...', complexity=0.5)", "agent(action='list') or list_agents()"],
                 "check_in": ["process_agent_update(response_text='...', complexity=0.5)"],
-                "save_insight": ["leave_note(summary='...')", "OR store_knowledge_graph(summary='...', tags=[...])"],
+                "save_insight": ["knowledge(action='note', content='...')", "OR knowledge(action='store', summary='...', tags=[...])"],
                 "find_info": ["knowledge(action='search', query='...')", "OR knowledge(action='search', tags=[...])"]
             },
             # Common signatures (type hints at a glance)
@@ -729,14 +729,14 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             },
             "more": "list_tools(lite=false) for all tools with full category details",
             "tip": "describe_tool(tool_name=...) for parameter details and examples",
-            "quick_start": "Start with onboard() → process_agent_update() → explore categories"
+            "quick_start": "Start fresh with onboard(force_new=true); use parent_agent_id for lineage, not bare UUID resume"
         }
         
         # Add first-time hint for new agents
         if is_new_agent:
             response_data["first_time"] = {
-                "hint": "👋 First time here? Start with onboard() to create your identity!",
-                "next_step": "Call onboard() - no parameters needed, it gives you everything you need."
+                "hint": "👋 First time here? Start with onboard(force_new=true) to create your identity!",
+                "next_step": "Call onboard(force_new=true). If inheriting prior work, also pass parent_agent_id and spawn_reason='new_session'."
             }
         
         # Add progressive metadata if enabled
@@ -931,11 +931,11 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         "note": "Use this tool to discover available capabilities. MCP protocol also provides tool definitions, but this provides categorized overview useful for onboarding. Use 'essential_only=true' or 'tier=essential' to reduce cognitive load by showing only core workflow tools (~10 tools).",
         "quick_start": {
             "new_agent": [
-                "1. Call onboard() - creates identity + gives you templates",
-                "2. Save client_session_id from response",
-                "3. Call process_agent_update() to share your work",
-                "4. Use identity(name='...') to name yourself",
-                "5. Explore other categories as needed"
+                "1. Call onboard(force_new=true) - creates a fresh process identity",
+                "2. If inheriting prior work, include parent_agent_id and spawn_reason='new_session'",
+                "3. Save uuid plus continuity diagnostics from response",
+                "4. Call process_agent_update() to share meaningful work",
+                "5. Use identity(name='...') to set a cosmetic label"
             ],
             "categories_to_explore": [
                 "🚀 Identity & Onboarding - Start here!",
@@ -1075,7 +1075,7 @@ async def handle_describe_tool(arguments: Dict[str, Any]) -> Sequence[TextConten
                     "identity": {
                         "check_identity": "identity()  # Shows current bound identity",
                         "name_yourself": "identity(name=\"my_agent\")  # Set your display name",
-                        "after_session_restart": "identity()  # Recover identity after LLM context loss"
+                        "proof_owned_rebind": "identity(agent_uuid=\"...\", continuity_token=\"...\", resume=true)  # Same-owner rebind"
                     },
                     "list_agents": {
                         "all_agents": "list_agents()  # List all agents with metadata",
@@ -1180,10 +1180,11 @@ async def handle_describe_tool(arguments: Dict[str, Any]) -> Sequence[TextConten
                 params_simple = []
                 for param in required:
                     params_simple.append(f"{param} (required)")
-                # Always show client_session_id first if present
+                # Show transport continuity metadata without implying it is
+                # long-term identity proof.
                 shown_count = 0
                 if "client_session_id" in properties and "client_session_id" not in required:
-                    params_simple.append("client_session_id: string (recommended)")
+                    params_simple.append("client_session_id: string (in-session continuity)")
                     shown_count += 1
                 for param, prop in list(properties.items())[:8]:
                     if param not in required and param != "client_session_id":

@@ -53,7 +53,7 @@ For a deeper live read from the running server, call `health_check()` through MC
 
 ## Identity Continuity
 
-**UUID-direct is the standard approach (PATH 0).** The `identity()` response includes:
+UUID is an identity anchor, not sufficient proof that the current execution context owns that identity. The `identity()` response includes:
 
 - `identity_status` (`created` or `resumed`)
 - `bound_identity` (`uuid`, `agent_id`, `display_name`)
@@ -61,13 +61,14 @@ For a deeper live read from the running server, call `health_check()` through MC
 
 Standard agent workflow:
 
-1. `onboard()` — save the returned `agent_uuid`
-2. `identity(agent_uuid=..., resume=true)` on subsequent connections
-3. `process_agent_update()` for work logging
-4. `get_governance_metrics()` for read-only state
-5. `identity()` to confirm current binding
+1. Fresh process: `onboard(force_new=true)` — save the returned `agent_uuid`
+2. Fresh process inheriting prior work: `onboard(force_new=true, parent_agent_id=<prior uuid>, spawn_reason="new_session")`
+3. Same live owner / proof-owned rebind: `identity(agent_uuid=..., continuity_token=..., resume=true)`
+4. `process_agent_update()` for work logging
+5. `get_governance_metrics()` for read-only state
+6. `identity()` to confirm current binding
 
-UUID is ground truth. `continuity_token` and `client_session_id` still work as legacy fallbacks for external/ephemeral clients but are not needed for resident agents.
+`continuity_token` is now a short-lived ownership proof for PATH 0 anti-hijack, not indefinite cross-process continuity. `client_session_id` remains in-session transport continuity metadata. For fresh process instances, prefer lineage declaration over silent UUID resume.
 
 If an agent forks identity unexpectedly, inspect `session_resolution_source` first.
 
@@ -152,9 +153,9 @@ Symptom:
 
 Fix:
 
-- rerun `onboard()`
-- keep the returned `client_session_id`
-- if `continuity_token_supported=true`, prefer the continuity token on future calls
+- rerun `onboard(force_new=true)`
+- if the process is continuing prior work, include `parent_agent_id=<prior uuid>` and `spawn_reason="new_session"`
+- avoid bare `identity(agent_uuid=..., resume=true)`; use a matching `continuity_token` only for same-owner rebinding
 
 ### Start script exits unexpectedly
 

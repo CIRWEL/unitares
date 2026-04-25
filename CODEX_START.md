@@ -21,11 +21,12 @@ Connect to a running UNITARES governance server, preserve continuity cleanly, an
 
 If you are not using commands directly, the equivalent raw tool flow is:
 
-1. `onboard()` once and save `uuid`
-2. On subsequent sessions, call `identity(agent_uuid=..., resume=true)`
+1. First run or fresh process: `onboard(force_new=true)` and save `uuid`
+2. Fresh process continuing prior work: `onboard(force_new=true, parent_agent_id=<saved uuid>, spawn_reason="new_session")`
 3. `process_agent_update()` after meaningful work
-4. `get_governance_metrics()` for read-only state checks
-5. `health_check()` only if the system itself may be part of the problem
+4. Same live owner / proof-owned rebind only: `identity(agent_uuid=..., continuity_token=..., resume=true)`
+5. `get_governance_metrics()` for read-only state checks
+6. `health_check()` only if the system itself may be part of the problem
 
 ## Codex Reality
 
@@ -36,10 +37,12 @@ If you are not using commands directly, the equivalent raw tool flow is:
 
 ## Continuity Model
 
-- `uuid` is the primary identity anchor for resident agents
-- `continuity_token` and `client_session_id` are useful resume metadata and fallback paths
+- `uuid` is an identity anchor, not ownership proof
+- `continuity_token` is short-lived ownership proof for same-owner rebinding, not indefinite cross-process resume
+- `client_session_id` is in-session transport continuity metadata
+- `parent_agent_id` is how a fresh process declares lineage to prior work
 - `session_resolution_source` tells you how the runtime actually resolved continuity
-- if continuity falls back to a weak source, rerun `/governance-start` or `identity(agent_uuid=..., resume=true)`
+- if continuity falls back to a weak source, rerun `/governance-start`; do not repair it with bare UUID resume
 
 ## Local Cache
 
@@ -66,7 +69,7 @@ Treat this as local runtime state. It should not be used as a source of truth ov
 
 Typical session:
 
-- start or resume with `/governance-start`
+- start, declare lineage, or proof-resume with `/governance-start`
 - do meaningful work
 - check in after a milestone, completed step, or decision point
 - diagnose only when needed
@@ -83,7 +86,7 @@ Do not treat every file edit as a governance event. High-signal check-ins are mo
 
 ## Commands
 
-- `/governance-start` to onboard or resume and refresh local continuity state
+- `/governance-start` to create, declare lineage, or proof-resume and refresh local continuity state
 - `/checkin` for a governance update after meaningful work
 - `/diagnose` for identity, state, and operator diagnostics
 - `/dialectic` for structured review

@@ -4,7 +4,7 @@ description: >
   Compatibility umbrella skill for the UNITARES governance framework. Use this
   as the entrypoint when you need the overall model and route into the split
   governance skills.
-last_verified: "2026-04-14"
+last_verified: "2026-04-25"
 freshness_days: 14
 source_files:
   - unitares/src/mcp_handlers/core.py
@@ -28,14 +28,26 @@ UNITARES evaluates agent state with the **EISV** model:
 - `S`: entropy / disorder / instability
 - `V`: valence (signed E-I imbalance)
 
-Agents typically start with `onboard()` and continue with
+Agents typically start with `onboard(force_new=true)` and continue with
 `process_agent_update()` as their main check-in loop.
 
 ## Session Continuity
 
-Use `onboard()` to register or reconnect identity. The returned
-`client_session_id` should be echoed back on later calls when continuity tokens
-are not available. This prevents attribution fragmentation across sessions.
+Use `onboard(force_new=true)` to register a fresh process identity. If the
+process is continuing prior work, declare that with
+`parent_agent_id=<prior uuid>` and `spawn_reason="new_session"`.
+
+Use `identity(agent_uuid=..., continuity_token=..., resume=true)` only when
+rebinding the same live owner to an existing UUID. The `continuity_token` is
+short-lived ownership proof for anti-hijack gates, not indefinite
+cross-process continuity. A bare `onboard()` or bare
+`identity(agent_uuid=..., resume=true)` can rely on weak evidence or an
+unsigned UUID claim; do not teach those as normal flow.
+
+In-process tool calls thread the response's `client_session_id` through
+subsequent invocations to maintain transport continuity within a single
+process. `client_session_id` is in-session continuity only — weak across
+processes, not identity proof on its own.
 
 Use `process_agent_update()` after meaningful work to record progress,
 complexity, and confidence, then read the returned governance verdict.
