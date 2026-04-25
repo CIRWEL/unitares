@@ -81,6 +81,12 @@ def _isolate_watcher_state(tmp_path, monkeypatch, watcher_module):
         monkeypatch.setattr(target, "FINDINGS_FILE", tmp_state / "findings.jsonl")
         monkeypatch.setattr(target, "DEDUP_FILE", tmp_state / "dedup.json")
         monkeypatch.setattr(target, "LOG_FILE", tmp_log)
+
+    # Disable session-scope auto-discovery in tests by default so seeded
+    # findings (whose file paths point outside the tmp tree) keep their
+    # legacy "always in-scope" behavior. Tests that exercise the scoping
+    # logic itself pass `scope_root=...` explicitly.
+    monkeypatch.setattr(watcher_findings, "_resolve_session_scope_root", lambda *a, **kw: None)
     yield
 
 
@@ -1259,6 +1265,87 @@ def test_print_unresolved_silent_when_only_resolved(watcher_module, capsys):
     assert rc == 0
     captured = capsys.readouterr()
     assert captured.out == ""
+
+
+# --- Worktree scoping (in-scope vs other-worktree footer) -----------------
+
+
+def test_print_unresolved_partitions_findings_by_scope(watcher_module, tmp_path, capsys):
+    """In-scope findings render in the body; out-of-scope ones collapse to a
+    single footer line keyed by their `.worktrees/<name>` segment."""
+    in_scope_file = str(tmp_path / "in_scope.py")
+    out_a = "/some/other/.worktrees/branch-a/src/foo.py"
+    out_b = "/some/other/.worktrees/branch-b/src/bar.py"
+    _seed_findings(
+        watcher_module,
+        [
+            _make_raw_entry("inside__00000000", status="open", file=in_scope_file),
+            _make_raw_entry("brancha_00000000", status="open", file=out_a),
+            _make_raw_entry("branchb_00000000", status="open", file=out_b),
+            _make_raw_entry("brancha2_0000000", status="surfaced", file=out_a),
+        ],
+    )
+    rc = watcher_module.print_unresolved(scope_root=tmp_path)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "inside__" in out
+    assert "brancha_" not in out  # out-of-scope, must not appear in body
+    assert "branchb_" not in out
+    assert "Plus 3 finding(s) in other worktrees" in out
+    assert "branch-a=2" in out
+    assert "branch-b=1" in out
+
+
+def test_print_unresolved_emits_footer_only_when_in_scope_empty(
+    watcher_module, tmp_path, capsys
+):
+    """When every finding is out-of-scope, still emit a minimal block so the
+    agent knows the backlog exists rather than appearing clean."""
+    out_path = "/some/other/.worktrees/branch-x/src/foo.py"
+    _seed_findings(
+        watcher_module,
+        [_make_raw_entry("x_______00000000", status="open", file=out_path)],
+    )
+    rc = watcher_module.print_unresolved(scope_root=tmp_path)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "<unitares-watcher-findings>" in out
+    assert "x_______" not in out  # body is empty
+    assert "Plus 1 finding(s) in other worktrees" in out
+    assert "branch-x=1" in out
+
+
+def test_print_unresolved_silent_when_no_findings_anywhere(
+    watcher_module, tmp_path, capsys
+):
+    """Empty findings + scope set → no block, same as the unscoped case."""
+    rc = watcher_module.print_unresolved(scope_root=tmp_path)
+    assert rc == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_partition_with_no_scope_treats_all_as_in_scope(watcher_module):
+    """``scope_root=None`` is the documented escape hatch — preserves the
+    legacy 'surface everything' behavior for callers without a worktree."""
+    findings = [
+        _make_raw_entry("a_______00000000", file="/anywhere/foo.py"),
+        _make_raw_entry("b_______00000000", file="/elsewhere/bar.py"),
+    ]
+    in_scope, out_groups = watcher_module._partition_findings_by_scope(findings, None)
+    assert len(in_scope) == 2
+    assert out_groups == {}
+
+
+def test_label_for_other_worktree_uses_worktrees_segment(watcher_module):
+    assert watcher_module._label_for_other_worktree(
+        "/projects/repo/.worktrees/feat-x/src/foo.py"
+    ) == "feat-x"
+
+
+def test_label_for_other_worktree_falls_back_to_parent(watcher_module):
+    # No `.worktrees` segment — fall back to deepest dir name.
+    assert watcher_module._label_for_other_worktree("/var/log/app/main.py") == "app"
+    assert watcher_module._label_for_other_worktree("") == "(unknown)"
 
 
 # --- surface_pending (UserPromptSubmit hook, chime mode) -------------------
