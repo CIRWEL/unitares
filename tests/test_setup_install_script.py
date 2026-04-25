@@ -9,6 +9,7 @@ postgres.
 from __future__ import annotations
 
 import importlib.util
+import stat
 import sys
 from pathlib import Path
 
@@ -149,3 +150,60 @@ def test_remediation_includes_warns(setup_mod):
     items = setup_mod.build_remediation(payload)
     assert len(items) == 1
     assert items[0].finding == "anchor_directory"
+
+
+def test_ensure_anchor_dir_dry_run_no_writes(setup_mod, tmp_path):
+    target = tmp_path / "unitares"
+    assert not target.exists()
+    item = setup_mod.ensure_anchor_dir(target, apply=False)
+    assert not target.exists()
+    assert item.applied is False
+    assert item.path == str(target)
+    assert item.mode == "0o700"
+
+
+def test_ensure_anchor_dir_apply_creates_with_mode_0700(setup_mod, tmp_path):
+    target = tmp_path / "unitares"
+    item = setup_mod.ensure_anchor_dir(target, apply=True)
+    assert target.is_dir()
+    actual = stat.S_IMODE(target.stat().st_mode)
+    assert actual == 0o700, f"expected 0o700 got {oct(actual)}"
+    assert item.applied is True
+
+
+def test_ensure_anchor_dir_apply_idempotent(setup_mod, tmp_path):
+    target = tmp_path / "unitares"
+    target.mkdir(mode=0o700)
+    item = setup_mod.ensure_anchor_dir(target, apply=True)
+    # Already existed — applied should be False (we did not mutate).
+    assert item.applied is False
+
+
+def test_ensure_secrets_file_dry_run_no_writes(setup_mod, tmp_path):
+    target = tmp_path / "secrets.env"
+    item = setup_mod.ensure_secrets_file(target, apply=False)
+    assert not target.exists()
+    assert item.applied is False
+    assert item.mode == "0o600"
+
+
+def test_ensure_secrets_file_apply_creates_with_mode_0600(setup_mod, tmp_path):
+    target = tmp_path / "secrets.env"
+    item = setup_mod.ensure_secrets_file(target, apply=True)
+    assert target.is_file()
+    actual = stat.S_IMODE(target.stat().st_mode)
+    assert actual == 0o600, f"expected 0o600 got {oct(actual)}"
+    content = target.read_text()
+    assert "ANTHROPIC_API_KEY" in content
+    assert "mode 0600, never commit" in content
+    assert item.applied is True
+
+
+def test_ensure_secrets_file_does_not_overwrite_existing(setup_mod, tmp_path):
+    target = tmp_path / "secrets.env"
+    target.write_text("ANTHROPIC_API_KEY=existing-secret\n")
+    target.chmod(0o600)
+    item = setup_mod.ensure_secrets_file(target, apply=True)
+    # File preserved exactly.
+    assert target.read_text() == "ANTHROPIC_API_KEY=existing-secret\n"
+    assert item.applied is False

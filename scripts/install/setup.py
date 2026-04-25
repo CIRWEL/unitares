@@ -21,6 +21,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass, asdict
@@ -127,6 +128,63 @@ def _build_migrations_command() -> str:
             rel = sql.relative_to(REPO_ROOT)
             pieces.append(f"psql -U postgres -d governance -f {rel}")
     return " && \\\n    ".join(pieces)
+
+
+SECRETS_TEMPLATE = """\
+# UNITARES external secrets — mode 0600, never commit.
+# Used by handlers that call out to LLM providers.
+# ANTHROPIC_API_KEY=
+# OPENAI_API_KEY=
+"""
+
+
+def ensure_anchor_dir(path: Path, apply: bool) -> PlanItem:
+    """Plan/apply creation of the agent anchor directory.
+
+    Default mkdir mode is umask-dependent and on a typical Mac dev machine
+    (umask 022) yields 0o755 — world-readable. Anchor dir holds session state;
+    explicit 0o700 is correct.
+    """
+    item = PlanItem(
+        phase=2,
+        kind="mkdir",
+        path=str(path),
+        mode="0o700",
+        applied=False,
+    )
+    if path.is_dir():
+        return item  # already exists; nothing to do
+    if not apply:
+        return item  # dry run; report only
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    item.applied = True
+    return item
+
+
+def ensure_secrets_file(path: Path, apply: bool) -> PlanItem:
+    """Plan/apply scaffolding of ~/.config/cirwel/secrets.env.
+
+    Creates parent directories if needed (e.g., ~/.config/cirwel/). Writes
+    a commented template at mode 0o600. Never overwrites an existing file —
+    the doctor flags wrong-mode separately, and we do not want to lose
+    the user's keys.
+    """
+    item = PlanItem(
+        phase=2,
+        kind="file",
+        path=str(path),
+        mode="0o600",
+        applied=False,
+    )
+    if path.exists():
+        return item  # do not overwrite
+    if not apply:
+        return item  # dry run
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(SECRETS_TEMPLATE)
+    os.chmod(path, 0o600)
+    item.applied = True
+    return item
 
 
 def bootstrap_check() -> None:
