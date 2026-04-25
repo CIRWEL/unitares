@@ -8,7 +8,20 @@
 
 Provide a guided, inspectable user-install path for UNITARES that an external adopter (or Kenny on a second MacBook) can run without reading half of `docs/`. The wizard *plans* the install — it prints exact remediation commands and copy-pasteable MCP-client snippets. With `--apply` it makes the minimum filesystem mutations (anchor dir, secrets-file scaffold) needed for the install to be functional.
 
+**Default transport: stdio.** The user-install path runs `src/mcp_server_std.py` per-client — no port, no launchd plist, no admin secret, no Tailscale, no domain. The HTTP server (`src/mcp_server.py` on port 8767) is the *additional* operator-tier configuration, not the default.
+
 Non-goal: replace the operator-tier install (HTTP, launchd, Tailscale, cloudflared). That stays manual and undocumented-in-setup.
+
+## Existing infrastructure (load-bearing)
+
+Two server entry points already exist; setup does not invent transports.
+
+- `src/mcp_server.py` — HTTP transport on port 8767. Multi-client; persistent service; the operator path.
+- `src/mcp_server_std.py` — **stdio transport**. Two modes:
+  - **Local mode** (no env vars): full handler dispatch, talks to local Postgres directly. This is what setup configures by default.
+  - **Proxy mode** (`UNITARES_PROXY_URL` or `UNITARES_STDIO_PROXY_HTTP_URL`): thin proxy forwarding to an already-running HTTP governance server. For multi-machine setups (e.g., Lumen Pi → Mac).
+
+This spec assumes `mcp_server_std.py` works as documented. No changes to either server are required.
 
 ## Non-magical posture (load-bearing)
 
@@ -94,17 +107,21 @@ Setup probes for installed MCP clients by checking known config paths:
 | Gemini CLI | `~/.config/gemini/` | `~/.config/gemini/settings.json` (`mcpServers` key) |
 | Copilot CLI | `~/.config/github-copilot-cli/` | format speculative; print TODO note, don't fail |
 
-For each detected client, setup prints a copy-pasteable snippet pointing at the local stdio entry point:
+For each detected client, setup prints a copy-pasteable snippet pointing at `src/mcp_server_std.py` in local mode:
 
 ```json
 "unitares-governance": {
   "command": "python3",
-  "args": ["<ABS_REPO_ROOT>/src/mcp_server.py", "--stdio"],
+  "args": ["<ABS_REPO_ROOT>/src/mcp_server_std.py"],
   "env": {"DB_POSTGRES_URL": "postgresql://postgres:postgres@localhost:5432/governance"}
 }
 ```
 
-`<ABS_REPO_ROOT>` is derived from `Path(__file__).resolve().parent.parent.parent` — the same three-parent-step pattern doctor uses. This is robust against `cd`, symlinks, and worktrees. **Comment in the code documents the derivation explicitly** to discourage future "simplification".
+`<ABS_REPO_ROOT>` is derived from `Path(__file__).resolve().parent.parent.parent` — the same three-parent-step pattern doctor uses. Robust against `cd`, symlinks, and worktrees. **Comment in the code documents the derivation explicitly** to discourage future "simplification".
+
+No `--stdio` flag, no proxy URL, no port. `mcp_server_std.py` defaults to local-mode (full handler dispatch + direct Postgres) when no proxy env vars are set. The snippet is *complete* — the user pastes it, restarts the client, and the connection works.
+
+For users on machines that point at a remote governance server (e.g., a Pi reaching back to a Mac, or a laptop reaching a server), an alternate snippet is generated when the user passes `--proxy-url=https://gov.example.org/mcp/` to setup; setup adds the matching `UNITARES_STDIO_PROXY_HTTP_URL` env entry to the snippet. This is documented but not the default path.
 
 Setup does NOT modify client config files. It detects, prints, points at the right config path. The user pastes manually. This boundary is non-negotiable: governance does not silently rewrite user files.
 
@@ -118,33 +135,15 @@ Print the canonical post-install sequence:
 
 ```
 1. Restart your MCP client(s) to pick up the new mcpServers entry.
-2. (Optional) Run `python src/mcp_server.py --port 8767` to start the HTTP server.
-3. Verify with `scripts/unitares health`.
+2. (Optional, operator path) Run `python src/mcp_server.py --port 8767` to start
+   the HTTP server. Required only if other machines / dashboards / external
+   tools need to reach this governance instance.
+3. Verify the stdio connection: in Claude Code, run a quick `onboard()`. If the
+   client logs an MCP server error, check `~/Library/Logs/Claude/mcp*.log`.
 4. Read docs/guides/START_HERE.md for the agent-side workflow.
 ```
 
-The HTTP-server invocation matches CLAUDE.md's setup section verbatim.
-
-## Companion change: `--stdio` rejection in `mcp_server.py`
-
-The snippet above points at `python3 .../src/mcp_server.py --stdio`. Today, `mcp_server.py` accepts `--port` and runs HTTP only. If a user pastes the snippet and restarts their client, the server starts in HTTP mode and the client tries to talk stdio to it; the result is silent failure that produces no actionable error.
-
-To convert silent-broken into loud-immediate, **the same PR adds a `--stdio` flag to `mcp_server.py`'s argparse that errors out**:
-
-```python
-parser.add_argument("--stdio", action="store_true",
-                    help="(reserved) stdio MCP transport — not yet implemented")
-# ...
-if args.stdio:
-    parser.error(
-        "--stdio is not yet implemented. "
-        "Run `--port 8767` for HTTP transport, or check "
-        "docs/superpowers/specs/2026-04-25-unitares-setup-design.md "
-        "for the stdio plan."
-    )
-```
-
-This is ~8 lines, ships in the same change, and converts the failure mode. Real stdio implementation is its own piece of work, gated by a separate spec.
+The HTTP-server invocation is explicitly the *operator* path; the default user install does not need it.
 
 ## `--json` output schema
 
@@ -208,12 +207,11 @@ A second `--apply` run on a healthy install prints a plan with all `applied: fal
 ```
 scripts/install/setup.py                              (new, ~450 lines)
 scripts/install/__init__.py                           (new, empty)
-src/mcp_server.py                                     (modified: --stdio rejection)
 tests/test_setup_install_script.py                    (new, ~180 lines)
 docs/superpowers/specs/2026-04-25-unitares-setup-design.md  (this doc)
 ```
 
-No changes to `scripts/dev/unitares_doctor.py`, `scripts/unitares`, or `db/postgres/`.
+No changes to `scripts/dev/unitares_doctor.py`, `scripts/unitares`, `src/mcp_server.py`, `src/mcp_server_std.py`, or `db/postgres/`.
 
 ## Out of scope (deliberately, for v0)
 
@@ -224,18 +222,18 @@ No changes to `scripts/dev/unitares_doctor.py`, `scripts/unitares`, or `db/postg
 - Non-Mac platforms (Linux, WSL2)
 - Operator-tier setup (HTTP launchd plist, Tailscale, cloudflared, IPv6 sidecar, resident agents)
 - Uninstall / rollback (pattern noted; not implemented; revisit when filesystem mutations broaden)
-- Real stdio transport in `mcp_server.py` (this spec lands the rejection flag only; a separate spec covers the implementation)
+- Changes to either server (`mcp_server.py`, `mcp_server_std.py`). Stdio is already implemented; setup just configures clients to use it.
 
 ## Acceptance criteria
 
 1. `python3 scripts/install/setup.py` on a fresh second MacBook (Postgres + AGE + pgvector + repo cloned + deps installed) produces a plan with zero `fail` items and exits 0.
 2. `python3 scripts/install/setup.py --apply` on the same machine creates `~/.unitares/` (0o700) and `~/.config/cirwel/secrets.env` (0o600 template) and re-runs doctor showing all-pass.
-3. The printed Claude Code snippet, pasted into `~/.claude/settings.json`, causes Claude Code to attempt the stdio connection. The server (run via `--stdio`) errors with the rejection message instead of silent broken.
+3. The printed Claude Code snippet, pasted into `~/.claude/settings.json` and followed by a Claude Code restart, causes a successful stdio connection to `mcp_server_std.py`. An `onboard()` call returns a UUID.
 4. `pytest tests/test_setup_install_script.py` passes.
 5. `python3 scripts/install/setup.py --json | jq .schema_version` returns `1`.
 
 ## Decisions deferred
 
-- **Real stdio implementation in `mcp_server.py`.** Separate spec. Likely lands shortly after this; the rejection flag is a short-lived bridge.
 - **Auto-write client configs (`A+B hybrid` from brainstorm).** If snippet-paste UX proves unbearable for adopters, revisit. Not in v0.
 - **`curl | bash` installer.** Depends on the repo being public + this spec landing + adopter demand. Tracked separately.
+- **Linux / WSL2 support.** `mcp_server_std.py` is cross-platform; setup's filesystem assumptions (`~/.config/cirwel/`, `~/.claude/`) are Mac-shaped but extend cleanly. Defer until first Linux user asks.
