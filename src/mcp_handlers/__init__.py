@@ -104,7 +104,7 @@ from .identity.handlers import (
     handle_verify_trajectory_identity,
     handle_get_trajectory_status,
 )
-# Model Inference - Free/low-cost LLM access via ngrok.ai
+# Model Inference - Free/low-cost LLM access via Ollama (local) or HF Inference Providers
 from .support.model_inference import handle_call_model
 # Outcome Events - EISV validation infrastructure (Feb 2026)
 from .observability.outcome_events import handle_outcome_event

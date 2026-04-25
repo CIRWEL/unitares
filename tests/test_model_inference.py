@@ -572,44 +572,16 @@ class TestAutoProviderSelection:
 
 
 # =============================================================================
-# Tests: Default/other provider (ngrok/OpenAI endpoint)
+# Tests: Unknown provider rejection (Pydantic-blocked at MCP boundary,
+# but direct callers must still get a clean error)
 # =============================================================================
 
-class TestDefaultProvider:
-    """Tests for default (ngrok/OpenAI) provider routing.
-
-    These reach the final else branch in provider routing.
-    Must use privacy="cloud" to skip the Ollama shortcut.
-    """
+class TestUnknownProvider:
+    """Tests that an unknown provider value returns INVALID_PROVIDER."""
 
     @pytest.mark.asyncio
-    async def test_default_provider_requires_api_key(self):
-        """Default provider returns error when no API key set."""
-        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch.dict("os.environ", {}, clear=True):
-            from src.mcp_handlers.support.model_inference import handle_call_model
-            result = await handle_call_model({
-                "prompt": "Hello",
-                "provider": "openai",
-                "privacy": "cloud",
-            })
-
-        parsed = _parse_text_content(result)
-        assert parsed["success"] is False
-        assert "NGROK_API_KEY" in parsed["error"] or "OPENAI_API_KEY" in parsed["error"]
-
-    @pytest.mark.asyncio
-    async def test_default_provider_with_api_key(self):
-        """Default provider works with API key."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.chat.completions.create.return_value = _make_mock_response(
-            content="openai response", model="gpt-4"
-        )
-
-        env = {"OPENAI_API_KEY": "sk-test-key"}
-        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance), \
-             patch.dict("os.environ", env, clear=False):
+    async def test_unknown_provider_rejected(self):
+        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True):
             from src.mcp_handlers.support.model_inference import handle_call_model
             result = await handle_call_model({
                 "prompt": "Hello",
@@ -619,27 +591,9 @@ class TestDefaultProvider:
             })
 
         parsed = _parse_text_content(result)
-        assert parsed["success"] is True
-        assert parsed["routed_via"] == "direct"
-
-    @pytest.mark.asyncio
-    async def test_default_provider_rejects_auto_model(self):
-        """Custom endpoints must specify a model — 'auto' is rejected."""
-        env = {"OPENAI_API_KEY": "sk-test-key"}
-        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch.dict("os.environ", env, clear=False):
-            from src.mcp_handlers.support.model_inference import handle_call_model
-            result = await handle_call_model({
-                "prompt": "Hello",
-                "provider": "openai",
-                "privacy": "cloud",
-                "model": "auto",
-            })
-
-        parsed = _parse_text_content(result)
         assert parsed["success"] is False
-        assert parsed.get("error_code") == "MISSING_PARAM"
-        assert "explicit model" in parsed["error"].lower()
+        assert parsed.get("error_code") == "INVALID_PROVIDER"
+        assert "openai" in parsed["error"]
 
 
 # =============================================================================
@@ -1098,33 +1052,9 @@ class TestRoutingViaDetection:
         parsed = _parse_text_content(result)
         assert parsed["routed_via"] == "huggingface"
 
-    # Gemini provider and its routed_via="gemini-direct" label were removed.
-
-    @pytest.mark.asyncio
-    async def test_routed_via_direct_for_custom_endpoint(self):
-        """Detects direct routing for non-standard endpoints.
-
-        Post-#80 custom endpoints require an explicit `model` (the Gemini
-        fallback was removed), so the test passes one that the caller's
-        endpoint would serve.
-        """
-        mock_client_instance = MagicMock()
-        mock_client_instance.chat.completions.create.return_value = _make_mock_response()
-
-        env = {"OPENAI_API_KEY": "sk-test"}
-        with patch("src.mcp_handlers.support.model_inference.OPENAI_AVAILABLE", True), \
-             patch("src.mcp_handlers.support.model_inference.OpenAI", return_value=mock_client_instance), \
-             patch.dict("os.environ", env, clear=False):
-            from src.mcp_handlers.support.model_inference import handle_call_model
-            result = await handle_call_model({
-                "prompt": "test",
-                "provider": "openai",
-                "privacy": "cloud",
-                "model": "gpt-4o-mini",
-            })
-
-        parsed = _parse_text_content(result)
-        assert parsed["routed_via"] == "direct"
+    # Gemini provider and ngrok.ai gateway (routed_via="gemini-direct"/"ngrok.ai")
+    # were removed. The "direct" routed_via fallback is retained as defensive
+    # default but is unreachable through the supported provider set.
 
 
 # =============================================================================

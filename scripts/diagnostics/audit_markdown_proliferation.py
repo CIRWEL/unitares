@@ -28,7 +28,6 @@ APPROVED_FILES = {
     'docs/UNIFIED_ARCHITECTURE.md',
     'docs/guides/START_HERE.md',
     'docs/guides/TROUBLESHOOTING.md',
-    'docs/guides/NGROK_DEPLOYMENT.md',
     'docs/guides/CIRS_PROTOCOL.md',
     'docs/operations/DEFINITIVE_PORTS.md',
     'docs/operations/OPERATOR_RUNBOOK.md',
