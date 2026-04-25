@@ -365,6 +365,36 @@ class AuditLogger:
         )
         self._write_entry(entry)
 
+    def log_concurrent_session_binding_observed(
+        self,
+        *,
+        session_key_prefix: str,
+        candidate_fingerprint_prefix: str,
+        client_hint: Optional[str],
+        model_type: Optional[str],
+    ) -> None:
+        """S13 (2026-04-25) — passive observation when derive_session_key step 7
+        IP:UA pin lookup matches. Distinct from the active-alert
+        identity_hijack_suspected event: this fires whenever a pin match
+        happens (even with proof signal), to build the dataset of
+        multi-agent-on-same-machine concurrency. Hijack alerts remain the
+        active-attack signal; this event is the observation channel.
+        See docs/ontology/plan.md S13.
+        """
+        entry = AuditEntry(
+            timestamp=datetime.now().isoformat(),
+            agent_id=None,
+            event_type="concurrent_session_binding_observed",
+            confidence=1.0,
+            details={
+                "session_key_prefix": session_key_prefix,
+                "candidate_fingerprint_prefix": candidate_fingerprint_prefix,
+                "client_hint": client_hint,
+                "model_type": model_type,
+            },
+        )
+        self._write_entry(entry)
+
     def log_continuity_token_deprecated_accept(
         self,
         *,

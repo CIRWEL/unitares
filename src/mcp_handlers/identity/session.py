@@ -440,6 +440,21 @@ async def derive_session_key(
                 pinned = await lookup_onboard_pin(candidate)
                 if pinned:
                     _mark("pinned_onboard_session")
+                    # S13: emit passive observation event distinct from the
+                    # active-alert identity_hijack_suspected. Caller may still
+                    # have proof signals; this fires regardless to build the
+                    # dataset of co-resident multi-agent concurrency.
+                    try:
+                        from src.audit_log import audit_logger as _audit
+                        _audit.log_concurrent_session_binding_observed(
+                            session_key_prefix=str(pinned)[:16],
+                            candidate_fingerprint_prefix=str(candidate)[:16],
+                            client_hint=hint,
+                            model_type=model,
+                        )
+                    except Exception:
+                        # Audit-write failure is never fatal to identity resolution
+                        pass
                     return pinned
         _mark("ip_ua_fingerprint")
         return signals.ip_ua_fingerprint

@@ -221,8 +221,10 @@ def require_agent_id(arguments: Dict[str, Any]) -> Tuple[str, Optional[TextConte
         if _partc_mode == "strict":
             return None, (
                 "No agent_id provided and no session-bound identity. "
-                "Call onboard() to create a new identity or "
-                "identity(agent_uuid=X, continuity_token=Y, resume=true) to resume."
+                "Call onboard(force_new=true, parent_agent_id='<prior UUID>' if continuing, "
+                "spawn_reason='new_session') per v2 ontology — declare lineage rather than "
+                "resume via token. Resume by proof requires identity(agent_uuid=X, "
+                "continuity_token=Y) with both signals."
             )
         elif _partc_mode == "log":
             logger.warning(
