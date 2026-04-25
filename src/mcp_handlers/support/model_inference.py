@@ -20,7 +20,8 @@ from src.logging_utils import get_logger
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 logger = get_logger(__name__)
 
-# Check if OpenAI SDK available (used for ngrok.ai compatibility)
+# Check if OpenAI SDK available (Ollama and HF Inference Providers expose
+# OpenAI-compatible APIs that this client speaks).
 try:
     from openai import OpenAI
     OPENAI_AVAILABLE = True
@@ -177,51 +178,17 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
                     }
                 )]
     else:
-        # Default branch: custom OpenAI-compatible endpoint (ngrok gateway,
-        # self-hosted router, etc.). Reached when a caller passes a provider
-        # value outside the schema enum — the Pydantic layer normally blocks
-        # this, so this path only fires via direct handler calls or when the
-        # enum is widened. No hard-coded default model here: the caller must
-        # name a model the target endpoint actually serves.
-        base_url = os.getenv("NGROK_AI_ENDPOINT", "https://api.openai.com/v1")
-        api_key = os.getenv("NGROK_API_KEY") or os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            return [error_response(
-                "NGROK_API_KEY or OPENAI_API_KEY required for model inference",
-                error_code="MISSING_CONFIG",
-                error_category="system_error",
-                recovery={
-                    "action": "Set NGROK_API_KEY or OPENAI_API_KEY environment variable",
-                    "related_tools": ["health_check", "get_connection_status"],
-                    "workflow": [
-                        "1. Set environment variable: export NGROK_API_KEY=your_key",
-                        "2. Or set: export OPENAI_API_KEY=your_key",
-                        "3. Restart MCP server",
-                        "4. Retry call_model tool"
-                    ]
-                }
-            )]
-        if model == "auto":
-            return [error_response(
-                "Custom provider requires an explicit model name; 'auto' is not supported here.",
-                error_code="MISSING_PARAM",
-                error_category="validation_error",
-                recovery={
-                    "action": "Pass an explicit model name that your endpoint serves",
-                    "related_tools": ["health_check"],
-                    "workflow": [
-                        "1. Identify a model your custom endpoint exposes",
-                        "2. Pass it via the 'model' parameter",
-                        "3. Retry call_model tool"
-                    ]
-                }
-            )]
-        logger.info(f"Using custom OpenAI-compatible endpoint: {model}")
+        # Unknown provider value. Pydantic schema (Literal["auto","hf","ollama"])
+        # blocks this in normal MCP calls; only direct calls can reach here.
+        return [error_response(
+            f"Unknown provider '{provider}'. Expected one of: auto, hf, ollama.",
+            error_code="INVALID_PROVIDER",
+            error_category="validation_error",
+        )]
     
     try:
         client = OpenAI(base_url=base_url, api_key=api_key)
         
-        # Call model via ngrok.ai (or direct if not using gateway)
         logger.debug(f"Calling model '{model}' via {base_url} for task_type='{task_type}'")
         
         response = client.chat.completions.create(
@@ -297,8 +264,6 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             routed_via = "huggingface"
         elif "localhost" in base_url or "127.0.0.1" in base_url:
             routed_via = "ollama"
-        elif "ngrok" in base_url.lower():
-            routed_via = "ngrok.ai"
         else:
             routed_via = "direct"
         

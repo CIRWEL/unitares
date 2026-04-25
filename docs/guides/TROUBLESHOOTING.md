@@ -60,7 +60,7 @@ tail -f data/logs/mcp_server_error.log
 
 **Symptoms:**
 - Remote URL returns connection error
-- Tunnel process (`cloudflared`, `ngrok`, etc.) logs show failures
+- Tunnel process (`cloudflared`, etc.) logs show failures
 
 **Solutions:**
 
@@ -257,7 +257,7 @@ grep -i error data/logs/mcp_server.log | tail -20
 cat ~/.claude.json | python3 -m json.tool
 
 # Environment variables
-env | grep -E "(DB_|UNITARES_|NGROK_)"
+env | grep -E "(DB_|UNITARES_)"
 
 # Python path
 which python3
@@ -303,8 +303,7 @@ launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
 ### Documentation
 
 1. [START_HERE.md](START_HERE.md) — Thin default workflow and doc map
-2. [Ngrok Deployment](NGROK_DEPLOYMENT.md) — Client configuration and remote access
-3. [database_architecture.md](../operations/database_architecture.md) — Database details
+2. [database_architecture.md](../operations/database_architecture.md) — Database details
 
 ### Health Monitoring
 
