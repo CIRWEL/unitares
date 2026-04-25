@@ -633,6 +633,19 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
         "timestamp": datetime.now().isoformat(),
     }
 
+    # Circuit breaker telemetry — surfaced in both lite and full so dashboards
+    # can read trips_1h/trips_24h without needing get_governance_metrics. The
+    # payload is small (three counters per breaker) so always-on is fine.
+    try:
+        from src.agent_loop_detection import get_circuit_breaker_telemetry
+        from src.cache.redis_client import get_circuit_breaker as get_redis_cb
+        response["circuit_breakers"] = {
+            "governance": get_circuit_breaker_telemetry(),
+            "redis": get_redis_cb().get_telemetry(),
+        }
+    except Exception as e:
+        logger.debug(f"Could not gather circuit breaker telemetry: {e}")
+
     lite = arguments.get("lite", True)
     if lite:
         lite_checks = {}

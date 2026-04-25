@@ -2320,6 +2320,67 @@ class TestHealthCheckEdgeCases:
             data = await get_health_check_data({})
             # data_directory should still work (nonexistent but no exception)
 
+    @pytest.mark.asyncio
+    async def test_health_check_includes_circuit_breaker_telemetry(
+        self, mock_mcp_server, patch_context_agent_id
+    ):
+        """health_check response must surface governance circuit-breaker trips.
+
+        Regression: get_health_check_data previously omitted CB telemetry that
+        get_governance_metrics_data already exposed, so trips_1h/trips_24h read
+        as 0 from the dashboard even when residents (Steward, etc.) hit
+        governance pause.
+        """
+        from datetime import datetime, timezone
+        from src.agent_loop_detection import _governance_pause_timestamps
+
+        _governance_pause_timestamps.clear()
+        _governance_pause_timestamps.append(datetime.now(timezone.utc))
+
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        mock_db = AsyncMock()
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+        mock_db.init = AsyncMock()
+
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=False), \
+             patch("src.knowledge_graph.get_knowledge_graph",
+                   new_callable=AsyncMock) as mock_kg:
+
+            mock_kg_instance = AsyncMock()
+            mock_kg_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_kg.return_value = mock_kg_instance
+
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({"lite": False}, server=mock_mcp_server)
+
+        _governance_pause_timestamps.clear()
+
+        assert "circuit_breakers" in data, (
+            "health_check must surface circuit_breakers (governance + redis); "
+            "regression of dashboard CB visibility on resident agents"
+        )
+        gov = data["circuit_breakers"].get("governance", {})
+        assert gov.get("trips_1h", 0) >= 1
+        assert gov.get("trips_24h", 0) >= 1
+        assert gov.get("last_trip") is not None
+
 
 # ============================================================================
 # handle_describe_tool - additional coverage
