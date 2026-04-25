@@ -545,23 +545,17 @@ class SentinelAgent(GovernanceAgent):
 
         summary = " | ".join(parts)
 
-        # Build notes for high-severity fleet findings
-        note_tuples: list[tuple[str, list[str]]] = []
-        for f in fleet_findings:
-            if f["severity"] == "high":
-                vcls = f.get("violation_class", "")
-                cls_tag = f"[{vcls}] " if vcls else ""
-                note_tuples.append((
-                    f"[Sentinel] {cls_tag}{f['summary']}",
-                    ["sentinel", f["type"], f["severity"]] + ([vcls.lower()] if vcls else []),
-                ))
-
+        # Findings already emit to the dashboard event stream via
+        # post_finding() above (with fingerprint dedup). They previously also
+        # wrote to the KG via leave_note — that path is removed because the
+        # entries had no archival value (10-min fleet snapshots) and the
+        # Vigil-Sentinel coordination contract that read them is broken at the
+        # type-name level (see docs/proposals/sentinel-events-vs-kg.md).
         return CycleResult(
             summary=f"Sentinel analysis: {summary}",
             complexity=complexity,
             confidence=confidence,
             response_mode="compact",
-            notes=note_tuples if note_tuples else None,
         )
 
     async def on_after_checkin(

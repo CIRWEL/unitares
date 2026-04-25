@@ -43,6 +43,42 @@ async def test_run_cycle_posts_findings_for_high_severity():
 
 
 @pytest.mark.asyncio
+async def test_run_cycle_does_not_write_findings_to_kg():
+    """Findings go to the event stream only — never to the KG via CycleResult.notes.
+
+    Regression for the redundant double-write pattern. Sentinel previously
+    populated `notes` for high-severity findings, which the SDK routed to
+    leave_note(). Those KG entries were ephemeral fleet snapshots with no
+    archival value (see docs/proposals/sentinel-events-vs-kg.md). Findings
+    already reach the dashboard via post_finding(); the KG write was pure
+    redundancy and noise.
+    """
+    from agents.sentinel.agent import SentinelAgent
+
+    agent = SentinelAgent.__new__(SentinelAgent)
+    agent._cycle_count = 0
+    agent._findings_total = 0
+    agent._ws_connected = True
+    agent.agent_uuid = "sentinel-test-uuid"
+    agent.fleet = MagicMock()
+    agent.fleet.analyze.return_value = [
+        {
+            "severity": "high",
+            "type": "verdict_shift",
+            "violation_class": "ENT",
+            "summary": "Pause rate 50% in last 10min (4/8)",
+        }
+    ]
+    agent.fleet.fleet_summary.return_value = {"active_agents": 8}
+
+    with patch("agents.sentinel.agent.post_finding"):
+        result = await agent.run_cycle(client=None)
+
+    # Result has no notes channel — KG never sees this
+    assert result.notes is None
+
+
+@pytest.mark.asyncio
 async def test_run_cycle_does_not_post_self_observations():
     """Self-observations stay internal — they must not hit the event stream."""
     from agents.sentinel.agent import SentinelAgent
