@@ -20,9 +20,27 @@ Usage:
 
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
+from pathlib import Path
 
 SCHEMA_VERSION = 1
+
+# REPO_ROOT derivation. The script lives at scripts/install/setup.py, so
+# Path(__file__).resolve().parent.parent.parent is the repo root. This pattern
+# matches scripts/dev/unitares_doctor.py and is robust against `cd`, symlinks,
+# and worktrees. Do not "simplify" to os.getcwd() — that breaks when the user
+# runs the script from any cwd other than the repo root.
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+DOCTOR_SCRIPT = REPO_ROOT / "scripts" / "dev" / "unitares_doctor.py"
+
+
+class DoctorError(RuntimeError):
+    """Raised when the doctor subprocess emits something we cannot parse.
+    Nonzero exit codes from doctor are NOT errors — failed checks are normal.
+    Only invalid JSON or a missing executable raise this.
+    """
 
 
 def bootstrap_check() -> None:
@@ -39,6 +57,26 @@ def bootstrap_check() -> None:
             file=sys.stdout,
         )
         sys.exit(2)
+
+
+def run_doctor() -> dict:
+    """Spawn unitares_doctor.py --json --mode=local and return the parsed
+    payload. A nonzero exit code is normal (any local check failed); the
+    payload is still complete. Only invalid JSON raises DoctorError.
+    """
+    proc = subprocess.run(
+        [sys.executable, str(DOCTOR_SCRIPT), "--json", "--mode=local"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        raise DoctorError(
+            f"doctor emitted invalid JSON (rc={proc.returncode}); "
+            f"stdout[:200]={proc.stdout[:200]!r}; stderr={proc.stderr[:200]!r}"
+        ) from e
 
 
 def main(argv: list[str] | None = None) -> int:

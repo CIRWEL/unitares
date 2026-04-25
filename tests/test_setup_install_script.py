@@ -54,3 +54,46 @@ def test_bootstrap_check_exits_when_mcp_missing(setup_mod, monkeypatch, capsys):
     assert exc.value.code == 2
     err = capsys.readouterr().out
     assert "pip install -r requirements-full.txt" in err
+
+
+def test_run_doctor_parses_pass_payload(setup_mod, monkeypatch):
+    fake_stdout = '{"mode": "local", "results": [{"name": "x", "mode": "local", "status": "pass", "message": "ok", "detail": ""}], "exit_code": 0}'
+
+    class FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(setup_mod.subprocess, "run", lambda *a, **kw: FakeProc())
+    result = setup_mod.run_doctor()
+    assert result["mode"] == "local"
+    assert result["results"][0]["status"] == "pass"
+    assert result["exit_code"] == 0
+
+
+def test_run_doctor_handles_nonzero_exit_with_valid_json(setup_mod, monkeypatch):
+    """Doctor exits 1 when any local check fails; setup must NOT treat that
+    as an error — the JSON payload is still complete and is the input to
+    remediation."""
+    fake_stdout = '{"mode": "local", "results": [{"name": "postgres_running", "mode": "local", "status": "fail", "message": "down", "detail": ""}], "exit_code": 1}'
+
+    class FakeProc:
+        returncode = 1
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(setup_mod.subprocess, "run", lambda *a, **kw: FakeProc())
+    result = setup_mod.run_doctor()
+    assert result["results"][0]["status"] == "fail"
+    assert result["exit_code"] == 1
+
+
+def test_run_doctor_raises_on_invalid_json(setup_mod, monkeypatch):
+    class FakeProc:
+        returncode = 0
+        stdout = "not json"
+        stderr = ""
+
+    monkeypatch.setattr(setup_mod.subprocess, "run", lambda *a, **kw: FakeProc())
+    with pytest.raises(setup_mod.DoctorError):
+        setup_mod.run_doctor()
