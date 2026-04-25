@@ -251,6 +251,40 @@ class TestIdentityOperations:
         assert record.parent_agent_id == parent_id
 
     @pytest.mark.asyncio
+    async def test_upsert_identity_persists_spawn_reason(self, backend):
+        # S8c regression: spawn_reason is declarable at onboard but pre-fix was
+        # never written by upsert_identity. S8a measured 0/19 lineage-declared
+        # active agents had it recorded; this confirms the persistence path.
+        agent_id = _uuid()
+        await _ensure_agent(backend, agent_id)
+        await backend.upsert_identity(agent_id, "h", spawn_reason="new_session")
+        record = await backend.get_identity(agent_id)
+        assert record.spawn_reason == "new_session"
+
+    @pytest.mark.asyncio
+    async def test_upsert_identity_preserves_spawn_reason_on_conflict(self, backend):
+        # S8c regression: COALESCE in ON CONFLICT — passing spawn_reason=None
+        # on a re-upsert must preserve the prior value, not overwrite to NULL.
+        agent_id = _uuid()
+        await _ensure_agent(backend, agent_id)
+        await backend.upsert_identity(agent_id, "h", spawn_reason="subagent")
+        # Second upsert without spawn_reason — must not clobber.
+        await backend.upsert_identity(agent_id, "h", metadata={"updated": True})
+        record = await backend.get_identity(agent_id)
+        assert record.spawn_reason == "subagent"
+
+    @pytest.mark.asyncio
+    async def test_upsert_identity_overwrites_spawn_reason_when_explicit(self, backend):
+        # S8c regression: explicit non-NULL spawn_reason on conflict must overwrite.
+        # Mirrors the COALESCE($7, spawn_reason) pattern in update_agent_fields.
+        agent_id = _uuid()
+        await _ensure_agent(backend, agent_id)
+        await backend.upsert_identity(agent_id, "h", spawn_reason="new_session")
+        await backend.upsert_identity(agent_id, "h", spawn_reason="compaction")
+        record = await backend.get_identity(agent_id)
+        assert record.spawn_reason == "compaction"
+
+    @pytest.mark.asyncio
     async def test_identity_record_fields(self, backend):
         agent_id, identity_id = await _create_identity_with_agent(backend)
         record = await backend.get_identity(agent_id)
@@ -299,6 +333,40 @@ class TestAgentOperations:
         agent = await backend.get_agent(agent_id)
         assert agent["api_key"] == "real_key"  # Empty string shouldn't overwrite
         assert agent["purpose"] == "updated purpose"
+
+    @pytest.mark.asyncio
+    async def test_upsert_agent_propagates_spawn_reason_on_conflict(self, backend):
+        # S8c regression: ON CONFLICT update list previously omitted spawn_reason
+        # and parent_agent_id. A row created without lineage, then re-upserted
+        # with spawn_reason set, must now carry the lineage.
+        agent_id = _uuid()
+        await backend.upsert_agent(agent_id, "key")  # No spawn_reason
+        await backend.upsert_agent(agent_id, "key", spawn_reason="new_session")
+        agent = await backend.get_agent(agent_id)
+        assert agent["spawn_reason"] == "new_session"
+
+    @pytest.mark.asyncio
+    async def test_upsert_agent_preserves_spawn_reason_on_conflict_with_null(self, backend):
+        # S8c regression: COALESCE in ON CONFLICT — re-upserting with
+        # spawn_reason=None must not overwrite a previously-set value.
+        agent_id = _uuid()
+        await backend.upsert_agent(agent_id, "key", spawn_reason="subagent")
+        await backend.upsert_agent(agent_id, "key", purpose="re-upserted")
+        agent = await backend.get_agent(agent_id)
+        assert agent["spawn_reason"] == "subagent"
+        assert agent["purpose"] == "re-upserted"
+
+    @pytest.mark.asyncio
+    async def test_upsert_agent_propagates_parent_agent_id_on_conflict(self, backend):
+        # S8c regression: parent_agent_id was also missing from ON CONFLICT.
+        # A row created without parent, then re-upserted with parent set,
+        # must carry the lineage after the second call.
+        parent_id, _ = await _create_identity_with_agent(backend)
+        child_id = _uuid()
+        await backend.upsert_agent(child_id, "key")  # No parent
+        await backend.upsert_agent(child_id, "key", parent_agent_id=parent_id)
+        agent = await backend.get_agent(child_id)
+        assert str(agent["parent_agent_id"]) == parent_id
 
     @pytest.mark.asyncio
     async def test_update_agent_fields(self, backend):
