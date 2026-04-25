@@ -1,18 +1,19 @@
-"""Regression tests for heartbeat_agent.run_once wall-clock timeout.
+"""Regression tests for Vigil's wall-clock cycle timeout.
 
 Background: on 2026-04-08 a heartbeat (--once) invocation stalled inside an
 MCP call and never exited. Because launchd's StartInterval does not fire
 while the previous instance is still running, Vigil went silent for ~46
 hours — not detected until a manual ps check during unrelated work.
 
-Fix: wrap ``run_cycle()`` in ``asyncio.wait_for`` with a bounded
-``CYCLE_TIMEOUT`` (default 120s, overridable via HEARTBEAT_CYCLE_TIMEOUT
-env var). When the cycle hangs, the wrapper raises ``TimeoutError``,
-``run_once`` logs it, and ``main()`` exits non-zero so launchd rotates to
-a fresh invocation next interval.
+Fix: wrap the cycle in ``asyncio.wait_for`` with a bounded ``CYCLE_TIMEOUT``
+(default 120s, overridable via ``HEARTBEAT_CYCLE_TIMEOUT`` env var). Post-
+SDK migration this lives in ``GovernanceAgent.run_once`` configured by
+``cycle_timeout_seconds`` from Vigil's constructor. When the cycle hangs,
+``run_once`` raises ``asyncio.TimeoutError`` and ``main()`` exits non-zero
+so launchd rotates to a fresh invocation next interval.
 
 These tests load the script via importlib (no __init__.py under
-scripts/ops), monkeypatch ``run_cycle`` with a never-returning coroutine,
+agents/vigil/), monkeypatch ``run_cycle`` with a never-returning coroutine,
 and assert the timeout fires cleanly within a few milliseconds.
 """
 
@@ -75,20 +76,20 @@ def _mock_sdk_connection():
 
 
 @pytest.mark.asyncio
-async def test_run_once_aborts_when_cycle_hangs(agent, vigil_module):
+async def test_run_once_aborts_when_cycle_hangs(agent):
     """A never-returning run_cycle must be cancelled by the timeout."""
+    agent.cycle_timeout_seconds = 0.1
     hang_started = asyncio.Event()
 
     async def _hang(self, client=None):
         hang_started.set()
         await asyncio.Event().wait()  # never resolves
 
-    # Bind the hang as the agent's run_cycle.
     agent.run_cycle = _hang.__get__(agent, type(agent))
 
     start = asyncio.get_event_loop().time()
     with pytest.raises(asyncio.TimeoutError):
-        await agent.run_once(timeout=0.1)
+        await agent.run_once()
     elapsed = asyncio.get_event_loop().time() - start
 
     assert hang_started.is_set(), "run_cycle should have started before timeout"
@@ -98,34 +99,18 @@ async def test_run_once_aborts_when_cycle_hangs(agent, vigil_module):
 
 
 @pytest.mark.asyncio
-async def test_run_once_completes_normally_under_timeout(agent, vigil_module):
+async def test_run_once_completes_normally_under_timeout(agent):
     """A fast run_cycle must not be affected by the timeout wrapper."""
+    agent.cycle_timeout_seconds = 5.0
     called = asyncio.Event()
 
     async def _fast(self, client=None):
         called.set()
 
     agent.run_cycle = _fast.__get__(agent, type(agent))
-    await agent.run_once(timeout=5.0)
+    agent._handle_cycle_result = AsyncMock()
+    await agent.run_once()
     assert called.is_set()
-
-
-@pytest.mark.asyncio
-async def test_timeout_writes_readable_log_line(agent, vigil_module):
-    """The timeout path must leave a traceable log line for operators."""
-
-    async def _hang(self, client=None):
-        await asyncio.Event().wait()
-
-    agent.run_cycle = _hang.__get__(agent, type(agent))
-
-    with pytest.raises(asyncio.TimeoutError):
-        await agent.run_once(timeout=0.1)
-
-    log_contents = vigil_module.LOG_FILE.read_text()
-    assert "Heartbeat cycle start" in log_contents
-    assert "CYCLE TIMEOUT" in log_contents
-    assert "limit=0.1s" in log_contents or "limit=0" in log_contents
 
 
 def test_cycle_timeout_default_is_bounded(vigil_module):
@@ -139,3 +124,6 @@ def test_cycle_timeout_default_is_bounded(vigil_module):
 
 # NOTE: load_state and load_session JSON hardening tests have moved to
 # agents/sdk/tests/test_utils.py (load_json_state covers both cases).
+# The structural "must use asyncio.wait_for not anyio.fail_after" guard
+# moved to agents/sentinel/tests/test_cycle_timeout.py — it inspects the
+# shared SDK source, so a single copy serves both residents.

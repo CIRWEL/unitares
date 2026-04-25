@@ -55,14 +55,21 @@ class OnboardParams(AgentIdentityMixin):
     resume: Union[bool, str, None] = Field(
         default=True,
         description=(
-            "Resume existing identity (default True — onboard is a "
-            "resume-preferred entry point). Pass resume=false for a new "
-            "identity with predecessor link, or force_new=true for a clean break."
+            "Resume existing identity when a proof signal is present "
+            "(continuity_token, agent_uuid, agent_id, client_session_id, "
+            "or name). Per identity.md v2 ontology (S13), an arg-less "
+            "onboard() with no proof signal mints fresh — the server "
+            "gates `force_new=True` automatically when nothing is presented."
         )
     )
     force_new: Union[bool, str, None] = Field(
         default=False,
-        description="Force new identity creation"
+        description=(
+            "Force new identity creation. Per identity.md v2 ontology "
+            "(force_new=true is the default posture for fresh process-"
+            "instances), declare lineage via parent_agent_id rather than "
+            "resume via token when continuity matters across process boundaries."
+        )
     )
     trajectory_signature: Optional[dict] = Field(
         default=None,

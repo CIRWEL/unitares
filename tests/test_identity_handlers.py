@@ -1653,8 +1653,67 @@ class TestHandleOnboardV2:
         assert "what_this_does" not in data
 
     @pytest.mark.asyncio
+    async def test_arg_less_onboard_gates_to_fresh_per_v2_ontology(self, patch_onboard_deps, mock_db, mock_redis, caplog):
+        """S13: arg-less onboard() with no proof signal mints fresh per v2 ontology.
+
+        Per identity.md §"Layered taxonomy of continuity", a fresh process-instance
+        with no proof signal (no continuity_token, agent_uuid, agent_id,
+        client_session_id, or name) mints fresh. The v2 gate at handle_onboard_v2
+        entry flips force_new=True and emits a [FRESH_INSTANCE] log line.
+        """
+        import logging
+        from src.mcp_handlers.identity.handlers import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.side_effect = [
+            None,
+            None,
+            SimpleNamespace(identity_id="new-ident", metadata={}),
+        ]
+
+        with caplog.at_level(logging.INFO, logger="src.mcp_handlers.identity.handlers"):
+            result = await handle_onboard_v2({})
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["is_new"] is True
+        assert any(
+            "[FRESH_INSTANCE]" in record.getMessage() for record in caplog.records
+        ), "v2 gate should emit [FRESH_INSTANCE] log line for arg-less onboard()"
+
+    @pytest.mark.asyncio
+    async def test_proof_signal_bypasses_v2_gate(self, patch_onboard_deps, mock_db, mock_redis, caplog):
+        """S13: passing client_session_id is a proof signal — gate must NOT fire.
+
+        Preserves PATH 1/2 active-session-binding semantics (S9 territory).
+        Without this carve-out, S13 would silently retire S9's resume path.
+        """
+        import logging
+        from src.mcp_handlers.identity.handlers import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.side_effect = [
+            None,
+            None,
+            SimpleNamespace(identity_id="new-ident", metadata={}),
+        ]
+
+        with caplog.at_level(logging.INFO, logger="src.mcp_handlers.identity.handlers"):
+            result = await handle_onboard_v2({"client_session_id": "preserve-resume-path"})
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert not any(
+            "[FRESH_INSTANCE]" in record.getMessage() for record in caplog.records
+        ), "v2 gate must NOT fire when client_session_id is presented as a proof signal"
+
+    @pytest.mark.asyncio
     async def test_onboard_resumes_existing_identity_by_default(self, patch_onboard_deps, mock_db, mock_redis, mock_raw_redis):
-        """onboard() resumes existing identity by default (resume=True)."""
+        """onboard(client_session_id=...) resumes existing identity — proof signal preserves resume default per S13."""
         from src.mcp_handlers.identity.handlers import handle_onboard_v2
 
         existing_uuid = str(uuid.uuid4())

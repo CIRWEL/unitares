@@ -113,16 +113,20 @@ The MCP SDK's anyio task group conflicts with asyncpg/Redis async operations. MC
 
 ## Minimal Agent Workflow
 
+Per identity.md v2 ontology, fresh process-instances mint fresh identity. Lineage is declared, not resumed via token.
+
 Default happy path:
 
-1. `onboard()` → save `agent_uuid` from response
-2. `identity(agent_uuid=..., resume=true)` on subsequent connections
-3. `process_agent_update(response_text=..., complexity=...)`
+1. `onboard(force_new=true, parent_agent_id="<prior UUID if continuing this workspace>", spawn_reason="new_session")` → save `agent_uuid` and `client_session_id` from response
+2. `process_agent_update(response_text=..., complexity=..., client_session_id=...)` for in-process check-ins
+3. On a future process-instance, repeat step 1 with the new prior UUID — do not auto-resume
 
-Identity rule:
+Identity rules:
 
-- Store `agent_uuid` in a session file. Pass it on every `identity()` call.
-- UUID is the ground truth. No tokens or session IDs needed for resident agents.
-- `client_session_id` and `continuity_token` still work for external/ephemeral clients.
+- A fresh process-instance is a fresh agent. Process-instance boundaries are honored.
+- `client_session_id` maintains identity within one process; weak across processes.
+- `continuity_token` is being narrowed (S1 in `docs/ontology/plan.md`) — present-day external clients can still resume with it, but plugin-internal flows declare lineage instead.
+- Substrate-anchored agents (Lumen, the long-lived residents) earn cross-process continuity via the substrate-earned identity pattern in `docs/ontology/identity.md` — they may use a hardcoded UUID across restarts.
+- Arg-less `onboard()` with no proof signal triggers the v2 fresh-instance gate — the server flips `force_new=true` and emits a `[FRESH_INSTANCE]` log line (S13).
 
 <!-- END SHARED CONTRACT -->
