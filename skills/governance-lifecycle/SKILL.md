@@ -4,7 +4,7 @@ description: >
   Use when an agent is interacting with UNITARES governance for the first time, needs to
   onboard, check in, or recover from a pause/reject verdict. Covers the full agent lifecycle
   from session start through check-ins to recovery.
-last_verified: "2026-03-20"
+last_verified: "2026-04-25"
 freshness_days: 14
 source_files:
   - unitares/src/mcp_handlers/core.py
@@ -16,18 +16,39 @@ source_files:
 
 ## Starting a Session
 
-Call `onboard()` to register or reconnect:
+Choose creation, lineage, or proof-owned resume explicitly:
 
 ```
-onboard(name, model_type)
+onboard(force_new=true)                                              # first run / fresh process
+onboard(force_new=true, parent_agent_id="<prior-uuid>",
+        spawn_reason="new_session")                                  # fresh process inheriting prior work
+identity(agent_uuid="<uuid>", continuity_token="<token>", resume=true) # same live owner / proof-owned rebind
 ```
 
 Returns:
-- **UUID**: Your persistent identity across sessions
-- **client_session_id**: Echo this back in subsequent calls for session continuity
-- **continuity metadata**: Newer runtimes may also return `continuity_token_supported` and session-resolution diagnostics
+- **UUID**: The server identity anchor for this process instance
+- **client_session_id**: In-session transport continuity metadata
+- **continuity_token**: Short-lived ownership proof for PATH 0 anti-hijack, not indefinite cross-process continuity
+- **session diagnostics**: `session_resolution_source`, `identity_assurance`, and deprecation warnings when relevant
 
-If the runtime supports a continuity token, prefer it. Otherwise always echo `client_session_id`.
+### Creation, lineage, and resume (updated 2026-04-25)
+
+`name=` is a cosmetic label, not a resume key. Passing the same name on a later session does not prove identity.
+
+Default rules:
+
+1. Fresh first run: call `onboard(force_new=true)`.
+2. New process continuing prior work: call `onboard(force_new=true, parent_agent_id="<prior-uuid>", spawn_reason="new_session")`.
+3. Same live process or explicit ownership rebind: call `identity(agent_uuid="<uuid>", continuity_token="<token>", resume=true)`.
+4. Ordinary check-ins: pass `continuity_token` when available, otherwise rely on the active session binding.
+
+Avoid these patterns:
+
+- Bare `identity(agent_uuid=X, resume=true)`: UUID alone is an unsigned claim. It currently logs/emits hijack-suspected telemetry and is strict-mode rejected when `UNITARES_IDENTITY_STRICT=strict`.
+- `onboard(continuity_token=...)` as cross-process resume: S1-a accepts this only during the deprecation window and returns a warning. Declare lineage with `parent_agent_id` instead.
+- Bare `onboard()`: older code may still pin-resume by weak session/IP:UA evidence. Use `force_new=true` when creating a new process identity.
+
+`continuity_token` is now intentionally narrow: 1-hour TTL, rolling, and retained as possession proof for anti-hijack gates. It does not establish process-instance continuity by itself.
 
 ## Check-ins
 
@@ -43,16 +64,9 @@ process_agent_update(
 
 ### When to Check In
 
-A Stop hook fires a lightweight check-in automatically at the end of each
-response turn, so the baseline cadence is one check-in per turn. In addition
-to that automatic signal, you should check in explicitly when any of these
-apply — do not wait silently past them:
-
 - After completing a meaningful unit of work
 - Before and after high-complexity tasks
 - When you feel uncertain or notice drift
-- At minimum once every 10 minutes of active work, or after ~5 tool calls
-  inside a single long turn — whichever comes first
 - **Not** after every single tool call — use judgment between these bounds
 
 ### What You Get Back
@@ -73,16 +87,18 @@ A `guide` verdict is an early warning. Ignoring it makes `pause` more likely.
 
 ## Identity
 
-- Your identity persists across sessions via UUID
-- Session binding can happen via transport session, `client_session_id`, or continuity token
+- UUID is an identity anchor, not proof that the current process owns that identity
+- Session binding can happen via transport session, `client_session_id`, or short-lived continuity token
 - Use `identity()` when continuity seems unclear
 - Inspect:
   - `identity_status`
   - `bound_identity`
   - `session_resolution_source`
   - `continuity_token_supported`
+  - `identity_assurance`
+  - `deprecations`
 
-Strong continuity is better than implicit continuity. If the runtime falls back to weak signals such as fingerprinting, re-onboard and resume with explicit continuity data.
+Strong ownership proof is better than implicit continuity. If the runtime falls back to weak signals such as fingerprinting, mint a fresh process identity and declare lineage.
 
 ## Recovery
 
@@ -100,13 +116,13 @@ Recovery is not a shortcut — `self_recovery()` examines your EISV state and de
 
 ### Essential (use in every session)
 
-- `onboard()` — Register or reconnect identity
+- `onboard(force_new=true, parent_agent_id=...)` — Create a fresh process identity, optionally declaring lineage
 - `process_agent_update()` — Check in with work summary, complexity, confidence
 - `get_governance_metrics()` — Read your current EISV state
-- `identity()` — Confirm who the runtime thinks you are and how continuity was resolved
+- `identity()` — Confirm who the runtime thinks you are and how continuity was resolved; include `continuity_token` for proof-owned UUID rebinds
 - `health_check()` — Check operator-facing server health when behavior seems odd
-- `search_knowledge_graph()` — Find existing knowledge before creating new entries
-- `leave_note()` — Quick contribution to the knowledge graph
+- `knowledge(action="search", ...)` — Find existing knowledge before creating new entries
+- `knowledge(action="note", ...)` — Quick contribution to the knowledge graph
 
 ### Common (use when needed)
 

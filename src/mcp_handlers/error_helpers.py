@@ -123,12 +123,12 @@ RECOVERY_PATTERNS = {
         ]
     },
     "missing_client_session_id": {
-        "action": "Include client_session_id in your tool call",
+        "action": "Provide active session continuity metadata or re-onboard explicitly",
         "related_tools": ["identity", "onboard"],
         "workflow": [
-            "1. Call identity() to get your client_session_id",
-            "2. Include client_session_id in all future tool calls",
-            "3. For write operations, client_session_id is required"
+            "1. Call identity() to inspect the current binding",
+            "2. Include continuity_token for a proof-owned UUID rebind when available",
+            "3. For a fresh process, call onboard(force_new=true) and use parent_agent_id for lineage"
         ]
     },
     "session_mismatch": {
@@ -136,9 +136,9 @@ RECOVERY_PATTERNS = {
         "related_tools": ["identity", "get_connection_status"],
         "workflow": [
             "1. Call identity() to check your resolved identity",
-            "2. Ensure client_session_id matches your session",
-            "3. If mismatch persists, call onboard(force_new=true) to reset",
-            "4. Retry your request with correct client_session_id"
+            "2. Ensure client_session_id or continuity_token matches your active session",
+            "3. If mismatch persists, call onboard(force_new=true) and declare parent_agent_id when inheriting work",
+            "4. Retry your request with the resolved binding"
         ]
     },
     "missing_parameter": {
@@ -581,4 +581,3 @@ def tool_not_found_error(
         },
         context=context or {}
     )]
-

@@ -4,15 +4,17 @@ description: "Manual UNITARES governance check-in after meaningful work"
 
 Before calling tools, check for `.unitares/session.json` in the current workspace.
 
-Use the shared helper in this plugin repo:
+Use the shared helper in this repo:
 
 - `scripts/client/session_cache.py get session`
 
-If the cache contains `uuid`, treat it as the canonical identity anchor.
+If the cache contains `uuid`, treat it as the local identity anchor for attribution, not proof that the current process owns that UUID.
 
-If current binding is unclear or this is a fresh session, call `identity(agent_uuid=<uuid>, resume=true)` before `process_agent_update()`.
+If current binding is unclear, call `identity()` first to inspect the active binding.
 
-If no `uuid` is cached, prefer `continuity_token` and otherwise use `client_session_id`.
+If you must rebind to a cached UUID, include the matching `continuity_token`: `identity(agent_uuid=<uuid>, continuity_token=<token>, resume=true)`.
+
+If this is a fresh process and no ownership proof is available, use `/governance-start` to mint a fresh identity with `parent_agent_id=<cached uuid>` rather than bare UUID resume.
 
 If no local continuity state exists and the current identity is unclear, use `/governance-start` first.
 
@@ -23,14 +25,14 @@ Inputs:
 - `response_text`: concise summary of what was actually accomplished
 - `complexity`: estimate `0.0-1.0`
 - `confidence`: honest estimate `0.0-1.0`
-- include `continuity_token` when available, otherwise `client_session_id`, when the client needs explicit continuity data
+- include `continuity_token` when available for ownership proof, otherwise rely on the active session binding or `client_session_id` when the client needs explicit continuity data
 - use `response_mode="mirror"` by default for Codex
 
 Guidelines:
 
 - Do not check in after every trivial edit.
 - Prefer one check-in per meaningful milestone, completed step, or decision point.
-- If you had to rebind with `identity()`, use that restored binding for the update instead of inventing a new `agent_id`.
+- If you had to rebind with `identity()`, only use that restored binding when the response shows strong/proof-owned continuity.
 - If recent local edit context exists, use it to improve the summary, but do not report raw file churn as if it were real progress.
 - If deterministic results already happened in the workflow, mention them concretely instead of speaking in generalities.
 

@@ -4,13 +4,15 @@ description: "Show current UNITARES governance state and operator-relevant diagn
 
 Start by checking for `.unitares/session.json` in the current workspace.
 
-Use the shared helper in this plugin repo:
+Use the shared helper in this repo:
 
 - `scripts/client/session_cache.py get session`
 
-If the cache contains `uuid`, prefer `identity(agent_uuid=<uuid>, resume=true)` for direct resume and verification.
+If the cache contains `uuid`, treat it as a local identity anchor and lineage candidate.
 
-If no `uuid` is cached but continuity metadata exists, prefer `continuity_token` and otherwise use `client_session_id`.
+Do not verify by bare UUID resume. If you need to test ownership of a cached UUID, call `identity(agent_uuid=<uuid>, continuity_token=<token>, resume=true)` only when a matching current token is available.
+
+If no proof-owned UUID rebind is available, call `identity()` to inspect current binding. Use `/governance-start` to create a fresh process identity with `parent_agent_id=<cached uuid>` if this process should inherit prior work.
 
 Call `identity()` first when continuity or binding is unclear.
 
@@ -20,11 +22,14 @@ Call `health_check()` only when system health, not agent state, may be part of t
 
 Display:
 
-- whether identity was resumed by UUID, resumed through continuity metadata, or freshly created
+- whether identity was proof-resumed, freshly created, or created with lineage
+- whether lineage was declared through `parent_agent_id`
 - `identity_status`
 - `bound_identity`
 - `session_resolution_source`
 - `continuity_token_supported`
+- `identity_assurance`
+- deprecation warnings
 - whether continuity looks strong or weak
 - E, I, S, V
 - coherence

@@ -6,18 +6,19 @@ Status: thin entrypoint kept for compatibility. README is the primary overview; 
 
 Use this unless you have a specific reason not to:
 
-1. Call `onboard()` on first run — save `uuid` from response
-2. On subsequent runs: `identity(agent_uuid=<saved uuid>, resume=true)`
+1. First run or fresh process: call `onboard(force_new=true)` and save `uuid` from response
+2. Fresh process continuing prior work: call `onboard(force_new=true, parent_agent_id=<saved uuid>, spawn_reason="new_session")`
 3. Call `process_agent_update()` after meaningful work
 4. Call `get_governance_metrics()` for state
+5. Use `identity(agent_uuid=<uuid>, continuity_token=<token>, resume=true)` only for same-owner proof-owned rebinds
 
 ```python
 # First run:
-result = onboard()
+result = onboard(force_new=True)
 save_to_file(result["uuid"])
 
-# Every subsequent run:
-identity(agent_uuid=saved_uuid, resume=True)
+# New process inheriting prior work:
+onboard(force_new=True, parent_agent_id=saved_uuid, spawn_reason="new_session")
 
 # After work:
 process_agent_update(response_text="What you did", complexity=0.5)
@@ -25,7 +26,7 @@ process_agent_update(response_text="What you did", complexity=0.5)
 
 ## Identity Rule
 
-UUID is the ground truth. Store it, pass it on every `identity()` call. No tokens or session IDs needed.
+UUID is an identity anchor, not proof that the current process owns that identity. Use `parent_agent_id` to declare lineage for a fresh process. Use `continuity_token` only as short-lived ownership proof when rebinding the same UUID.
 
 ## What To Trust
 
@@ -55,4 +56,4 @@ Important current semantics:
 
 This file used to be a larger onboarding guide from an earlier MCP/tooling phase. It is intentionally kept small now to avoid duplicated explanations drifting out of sync with the runtime.
 
-**Last Updated:** 2026-04-04 (reduced to thin entrypoint; authoritative content moved to canonical docs and runtime sources)
+**Last Updated:** 2026-04-25 (identity guidance aligned with S1-a token narrowing and lineage-first fresh process flow)

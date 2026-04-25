@@ -33,7 +33,7 @@ python src/mcp_server.py --port 8767
 | | |
 |--|--|
 | **What it does** | Give agents live readings of their own state (**EISV**) plus a verdict (`proceed` / `guide` / `pause` / `reject`), so they can regulate themselves — and share the state with humans and peers through the dashboard and knowledge graph. |
-| **Workflow** | `onboard()` → `process_agent_update()` → `get_governance_metrics()` — details in [Getting Started](docs/guides/START_HERE.md). |
+| **Workflow** | `onboard(force_new=true)` → `process_agent_update()` → `get_governance_metrics()`; use `parent_agent_id` for fresh-process lineage — details in [Getting Started](docs/guides/START_HERE.md). |
 | **Transports** | MCP on `/mcp/` (Streamable HTTP) · REST on `/v1/tools/call` · Dashboard on `/dashboard` |
 | **Stack** | Python 3.12+ · PostgreSQL + AGE + pgvector · Redis (optional) |
 
@@ -129,7 +129,7 @@ As of April 2026 (single-operator deployment — self-traffic, not external adop
 ## Quick Start
 
 ```
-1. onboard()                    → Get your identity
+1. onboard(force_new=true)      → Get a fresh process identity
 2. process_agent_update()       → Log your work
 3. get_governance_metrics()     → Check your state
 ```
@@ -165,7 +165,7 @@ process_agent_update({
 
 **Verdict field:** Responses expose `verdict` from `decision.action`. Governance actions are **`proceed` / `guide` / `pause` / `reject`** ([Architecture](docs/UNIFIED_ARCHITECTURE.md)). If `action` is absent, formatters fall back to **`continue`** — see `response_formatter.py`.
 
-The `onboard()` response includes `agent_uuid` — store it and pass it to `identity(agent_uuid=..., resume=true)` on subsequent connections. See [Getting Started](docs/guides/START_HERE.md) for alternative entry paths.
+The `onboard()` response includes `agent_uuid`. Store it as an identity anchor. On a fresh process that continues prior work, call `onboard(force_new=true, parent_agent_id=<prior uuid>, spawn_reason="new_session")`. Use `identity(agent_uuid=..., continuity_token=..., resume=true)` only for same-owner proof-owned rebinds.
 
 ### Installation
 
@@ -194,7 +194,7 @@ The EISV **ODE** engine lives in this repo at `governance_core/` (pure Python, n
 
 Client-specific JSON (Cursor / Claude Code / Claude Desktop), endpoint table, and bind-address security: [`docs/integration/MCP_CLIENTS.md`](docs/integration/MCP_CLIENTS.md).
 
-Resident agents: save `agent_uuid` from `onboard()`, pass it to `identity(agent_uuid=..., resume=true)`. No token management needed. See [Getting Started](docs/guides/START_HERE.md) and [Operator Runbook](docs/operations/OPERATOR_RUNBOOK.md).
+Agent identity: save `agent_uuid` from `onboard()` as an anchor; declare fresh-process lineage with `parent_agent_id`; use `continuity_token` only as short-lived ownership proof for explicit UUID rebinds. See [Getting Started](docs/guides/START_HERE.md) and [Operator Runbook](docs/operations/OPERATOR_RUNBOOK.md).
 
 ---
 
