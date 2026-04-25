@@ -93,6 +93,8 @@ As of April 2026 (single-operator deployment — self-traffic, not external adop
 
 *What these numbers are good for:* a stress test that the pipeline holds up under sustained volume. *What they are not:* evidence of product-market traction. External adoption is the open question.
 
+This repo is the credibility surface. The accumulated calibration curves, basin thresholds, production telemetry, and corpus-grounded verdict math that make UNITARES verdicts useful aren't in the code — they live in months of fleet operation, the [EISV trajectories on HuggingFace](https://github.com/CIRWEL/eisv-lumen), and the iteration history documented in the paper. Open-sourcing the runtime exposes how it works without exposing what makes it work.
+
 <p align="center">
   <img src="docs/assets/dashboard.png" width="80%" alt="UNITARES dashboard — stats overview with fleet coherence, agent count, discoveries, and system health"/>
 </p>
@@ -276,6 +278,19 @@ Three files at the repo root orient different AI CLIs. Human readers can skip th
 ## Paper
 
 [**UNITARES v6**](https://github.com/CIRWEL/unitares-paper-v6) — *Information-Theoretic Governance of Heterogeneous Agent Fleets*. Framework + migration paper (30 pages, latest: `paper-v6.9.1`). Grounds EISV in Shannon entropy and class-conditional calibration, with variational free energy as the asymptote target for `E` rather than the current estimator (v6.9 §4.1). Documents the pipeline-ordering migration mechanism used to re-ground the live system. Headline empirical finding: a 13,310-row verdict counterfactual shows 28.9% of governance basin assignments flip under class-conditional grounded coherence relative to the legacy fleet-wide form, with a strong directional bias into the `low` basin — direct empirical support for the homogenization-failure-mode argument. Concept DOI: [10.5281/zenodo.19647159](https://doi.org/10.5281/zenodo.19647159) (resolves to latest version; each tagged release has its own version DOI).
+
+### How to cite
+
+```bibtex
+@misc{wang2026unitares,
+  author       = {Wang, Kenny},
+  title        = {{UNITARES}: Information-Theoretic Governance of Heterogeneous Agent Fleets},
+  year         = {2026},
+  doi          = {10.5281/zenodo.19647159},
+  url          = {https://doi.org/10.5281/zenodo.19647159},
+  note         = {Concept DOI; resolves to latest version. ORCID: 0009-0006-7544-2374}
+}
+```
 
 ## Related Projects
 
