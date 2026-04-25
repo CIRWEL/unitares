@@ -20,6 +20,7 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -395,9 +396,118 @@ def run_doctor() -> dict:
         ) from e
 
 
+def render_text(result: dict, use_color: bool) -> str:
+    """Human-readable rendering of the wizard plan + final doctor pass.
+    Color codes match doctor's so the eye can scan both outputs the same way.
+    """
+    pass_color, fail_color, warn_color, reset = (
+        ("\033[32m", "\033[31m", "\033[33m", "\033[0m") if use_color
+        else ("", "", "", "")
+    )
+    lines: list[str] = []
+    lines.append("=== UNITARES setup ===")
+
+    initial = result["doctor_initial"]
+    fails = sum(1 for r in initial["results"] if r["status"] == "fail")
+    warns = sum(1 for r in initial["results"] if r["status"] == "warn")
+    passes = sum(1 for r in initial["results"] if r["status"] == "pass")
+    lines.append(f"\nInitial doctor: {passes} pass · {fails} fail · {warns} warn")
+
+    by_phase: dict[int, list[PlanItem]] = {}
+    for item in result["plan"]:
+        by_phase.setdefault(item.phase, []).append(item)
+
+    if 1 in by_phase:
+        lines.append(f"\n--- Phase 1: remediation ({fail_color}commands you need to run{reset}) ---")
+        for item in by_phase[1]:
+            lines.append(f"\n# {item.finding}:")
+            lines.append(item.command)
+            if item.note:
+                lines.append(f"# Note: {item.note}")
+
+    if 2 in by_phase:
+        lines.append(f"\n--- Phase 2: filesystem scaffolding ---")
+        for item in by_phase[2]:
+            tag = "applied" if item.applied else ("would create" if not Path(item.path).exists() else "ok (exists)")
+            lines.append(f"  {item.kind} {item.path} (mode {item.mode}) — {tag}")
+
+    if 3 in by_phase:
+        lines.append(f"\n--- Phase 3: MCP client snippets ({warn_color}paste these manually{reset}) ---")
+        for item in by_phase[3]:
+            lines.append(f"\n# Client: {item.client}")
+            lines.append(f"# Paste into: {item.config_path}")
+            lines.append(item.snippet)
+
+    if result["doctor_final"]:
+        f_fails = sum(1 for r in result["doctor_final"]["results"] if r["status"] == "fail")
+        f_passes = sum(1 for r in result["doctor_final"]["results"] if r["status"] == "pass")
+        lines.append(f"\nFinal doctor: {f_passes} pass · {f_fails} fail")
+
+    lines.append("\n--- Next steps ---")
+    lines.append("1. Restart your MCP client(s) to pick up the new mcpServers entry.")
+    lines.append("2. (Optional, operator path) Run `python src/mcp_server.py --port 8767` to start the HTTP server.")
+    lines.append("3. Verify: in Claude Code run a quick onboard(). Logs at ~/Library/Logs/Claude/mcp*.log if it errors.")
+    lines.append("4. Read docs/guides/START_HERE.md for the agent-side workflow.")
+
+    return "\n".join(lines)
+
+
+def _plan_to_json_safe(plan: list[PlanItem]) -> list[dict]:
+    """Convert dataclass items to dicts; only include non-empty fields so the
+    JSON envelope stays readable."""
+    out: list[dict] = []
+    for item in plan:
+        d = asdict(item)
+        out.append({k: v for k, v in d.items() if v not in ("", False) or k in ("phase", "kind")})
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     bootstrap_check()
-    return 0
+
+    parser = argparse.ArgumentParser(
+        description="Guided UNITARES install wizard.",
+    )
+    parser.add_argument("--apply", action="store_true",
+                        help="Mutate ~/.unitares/ and ~/.config/cirwel/secrets.env if missing.")
+    parser.add_argument("--json", dest="json_out", action="store_true",
+                        help="Emit machine-readable JSON; suppresses interactive prompts.")
+    parser.add_argument("--non-interactive", action="store_true",
+                        help="Skip the apply confirmation prompt (for CI).")
+    parser.add_argument("--proxy-url", default=None,
+                        help="Generate snippets that forward to a remote HTTP governance server.")
+    parser.add_argument("--no-color", action="store_true")
+    args = parser.parse_args(argv)
+
+    if args.apply and not args.json_out and not args.non_interactive:
+        # Show the dry-run plan first, then confirm.
+        dry = run_pipeline(apply=False, home=Path.home(), proxy_url=args.proxy_url)
+        print(render_text(dry, use_color=not args.no_color and sys.stdout.isatty()))
+        ans = input("\nApply the filesystem mutations above? [y/N] ").strip().lower()
+        if ans not in ("y", "yes"):
+            print("Aborted.")
+            return 1
+
+    result = run_pipeline(
+        apply=args.apply,
+        home=Path.home(),
+        proxy_url=args.proxy_url,
+    )
+
+    if args.json_out:
+        payload = {
+            "schema_version": result["schema_version"],
+            "doctor_initial": result["doctor_initial"],
+            "plan": _plan_to_json_safe(result["plan"]),
+            "doctor_final": result["doctor_final"],
+            "exit_code": result["exit_code"],
+        }
+        print(json.dumps(payload, indent=2))
+    else:
+        use_color = not args.no_color and sys.stdout.isatty()
+        print(render_text(result, use_color=use_color))
+
+    return result["exit_code"]
 
 
 if __name__ == "__main__":

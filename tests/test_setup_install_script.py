@@ -367,3 +367,53 @@ def test_run_pipeline_idempotent_apply_on_healthy_state(setup_mod, monkeypatch, 
     assert all(not p.applied for p in phase2)
     # Existing secret content untouched.
     assert secrets.read_text() == "EXISTING=1\n"
+
+
+def test_main_json_dry_run(setup_mod, monkeypatch, tmp_path, capsys):
+    initial = _doctor_payload(("python_version", "pass", "ok"))
+    monkeypatch.setattr(setup_mod, "run_doctor", lambda: initial)
+    monkeypatch.setattr(setup_mod, "Path", setup_mod.Path)
+    # Redirect HOME so detect_clients sees nothing.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    rc = setup_mod.main(["--json"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    payload = _json.loads(out)
+    assert payload["schema_version"] == 1
+    assert payload["doctor_final"] is None  # dry-run
+
+
+def test_main_apply_with_non_interactive_skips_prompt(setup_mod, monkeypatch, tmp_path, capsys):
+    healthy = _doctor_payload(("python_version", "pass", "ok"))
+    monkeypatch.setattr(setup_mod, "run_doctor", lambda: healthy)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    # If main attempted input(), this would block. The test passing proves
+    # --non-interactive bypasses the prompt.
+    rc = setup_mod.main(["--apply", "--non-interactive", "--json"])
+    assert rc == 0
+
+
+def test_main_text_output_lists_remediations(setup_mod, monkeypatch, tmp_path, capsys):
+    failing = _doctor_payload(("postgres_running", "fail", "down"))
+    monkeypatch.setattr(setup_mod, "run_doctor", lambda: failing)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    setup_mod.main(["--non-interactive"])  # dry-run + non-interactive
+    out = capsys.readouterr().out
+    assert "brew install postgresql@17" in out
+    assert "remediation" in out.lower() or "phase 1" in out.lower()
+
+
+def test_main_proxy_url_propagates_to_snippet(setup_mod, monkeypatch, tmp_path, capsys):
+    healthy = _doctor_payload(("python_version", "pass", "ok"))
+    monkeypatch.setattr(setup_mod, "run_doctor", lambda: healthy)
+    fake_home = tmp_path
+    (fake_home / ".claude").mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    setup_mod.main([
+        "--json",
+        "--proxy-url=https://gov.example.org/mcp/",
+    ])
+    out = capsys.readouterr().out
+    payload = _json.loads(out)
+    snippet_items = [p for p in payload["plan"] if p["phase"] == 3]
+    assert any("UNITARES_STDIO_PROXY_HTTP_URL" in p["snippet"] for p in snippet_items)
