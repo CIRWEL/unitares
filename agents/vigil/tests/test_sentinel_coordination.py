@@ -263,6 +263,33 @@ class TestRunCycleCoordination:
         client.audit_knowledge.assert_awaited()
 
     @pytest.mark.asyncio
+    async def test_non_audit_cycle_preserves_groundskeeper_counts(self, monkeypatch):
+        """Non-audit cycles must carry over prev_state's groundskeeper counts.
+
+        Regression for the dedupe failure across audit-gated cycles: a non-audit
+        cycle was overwriting groundskeeper_stale/archived with 0, so the next
+        audit cycle compared against 0 and the "unchanged" check fired even when
+        the real counts hadn't moved — duplicate KG note every time.
+        """
+        _patch_health_checks(monkeypatch)
+
+        agent = _make_agent(with_audit=False)
+        agent.load_state = lambda: {
+            "cycle_time": "2026-04-14T10:00:00+00:00",
+            "groundskeeper_stale": 5,
+            "groundskeeper_archived": 2,
+        }
+
+        client = _full_mock_client(search_results=[])
+        await agent.run_cycle(client)
+
+        # Audit didn't run this cycle
+        client.audit_knowledge.assert_not_awaited()
+        # Counts carry over from prev_state, not zeroed
+        assert agent._cycle_state["groundskeeper_stale"] == 5
+        assert agent._cycle_state["groundskeeper_archived"] == 2
+
+    @pytest.mark.asyncio
     async def test_broken_search_does_not_break_cycle(self, monkeypatch):
         _patch_health_checks(monkeypatch)
 

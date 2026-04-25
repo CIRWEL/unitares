@@ -520,10 +520,20 @@ class VigilAgent(GovernanceAgent):
         # Build cycle state (pre-checkin; coherence/verdict filled in post-checkin)
         total_cycles = prev_state.get("total_cycles", 0) + 1
 
+        # Preserve groundskeeper counts across non-audit cycles — otherwise
+        # they reset to 0, then the next audit cycle compares against 0 and
+        # dedupe fails (note re-emits even though stale/archived didn't move).
+        if groundskeeper_summary.get("audit_run"):
+            gk_stale = groundskeeper_summary.get("stale_found", 0)
+            gk_archived = groundskeeper_summary.get("archived", 0)
+        else:
+            gk_stale = prev_state.get("groundskeeper_stale", 0)
+            gk_archived = prev_state.get("groundskeeper_archived", 0)
+
         self._cycle_state = {
             **health_state,
-            "groundskeeper_stale": groundskeeper_summary.get("stale_found", 0),
-            "groundskeeper_archived": groundskeeper_summary.get("archived", 0),
+            "groundskeeper_stale": gk_stale,
+            "groundskeeper_archived": gk_archived,
             "total_cycles": total_cycles,
             "cycle_time": datetime.now(timezone.utc).isoformat(),
         }
