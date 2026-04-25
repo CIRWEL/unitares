@@ -50,7 +50,7 @@ async def check_rate_limit(name: str, arguments: Dict[str, Any], ctx) -> Any:
         _tool_call_history[name].append(now)
 
     # General rate limiting (skip for read-only tools)
-    read_only_tools = {'health_check', 'get_server_info', 'list_tools', 'get_thresholds', 'search_knowledge_graph', 'get_governance_metrics'}
+    read_only_tools = {'health_check', 'get_server_info', 'list_tools', 'get_thresholds', 'search_knowledge_graph', 'get_governance_metrics', 'skills'}
     if name not in read_only_tools:
         agent_id = arguments.get('agent_id') or 'anonymous'
         rate_limiter = get_rate_limiter()
