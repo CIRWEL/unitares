@@ -225,7 +225,7 @@ def detect_clients(home: Path) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for client, entry in _CLIENT_TABLE.items():
         detect_path = home / entry["detect_subpath"]
-        if detect_path.exists():
+        if detect_path.is_dir():
             out[client] = {
                 "config_path": str(home / entry["config_subpath"]),
                 "format": entry["format"],
