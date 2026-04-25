@@ -1215,9 +1215,9 @@ def _watcher_summary_from_rows(rows, now=None, window_days=_WATCHER_DAILY_WINDOW
 
     by_status = Counter()
     by_severity = Counter()   # open-only (surfaced + open) — the actionable queue
-    by_pattern = defaultdict(lambda: {"surfaced": 0, "resolved": 0, "dismissed": 0, "other": 0})
+    by_pattern = defaultdict(lambda: {"surfaced": 0, "confirmed": 0, "dismissed": 0, "other": 0})
     daily = defaultdict(int)  # yyyy-mm-dd → count of detected_at in that day
-    resolutions_daily = defaultdict(lambda: {"resolved": 0, "dismissed": 0})
+    resolutions_daily = defaultdict(lambda: {"confirmed": 0, "dismissed": 0})
 
     if now is None:
         now = datetime.now(timezone.utc)
@@ -1234,6 +1234,11 @@ def _watcher_summary_from_rows(rows, now=None, window_days=_WATCHER_DAILY_WINDOW
         except Exception:
             return None
 
+    # Status names used by Watcher (findings.py:VALID_FINDING_STATUSES):
+    # the closed-resolved status is "confirmed", not "resolved" — earlier
+    # versions of this aggregator looked for "resolved" and silently dropped
+    # every confirmed finding into "other", which made the dashboard claim
+    # zero confirms regardless of reality.
     for row in rows:
         status = str(row.get("status", "surfaced"))
         pattern = str(row.get("pattern") or "?")
@@ -1241,7 +1246,7 @@ def _watcher_summary_from_rows(rows, now=None, window_days=_WATCHER_DAILY_WINDOW
         by_status[status] += 1
 
         bucket = by_pattern[pattern]
-        if status in ("resolved", "dismissed"):
+        if status in ("confirmed", "dismissed"):
             bucket[status] += 1
         elif status in ("surfaced", "open"):
             bucket["surfaced"] += 1
@@ -1253,29 +1258,28 @@ def _watcher_summary_from_rows(rows, now=None, window_days=_WATCHER_DAILY_WINDOW
         if detected and detected.date() >= window_start:
             daily[detected.date().isoformat()] += 1
 
-        # Resolution timestamp if present (fields used by watcher agent:
-        # resolved_at / dismissed_at)
-        for key in ("resolved_at", "dismissed_at"):
+        # Resolution timestamps written by update_finding_status:
+        # confirmed_at / dismissed_at (ISO 8601, UTC).
+        for key, kind in (("confirmed_at", "confirmed"), ("dismissed_at", "dismissed")):
             ts = _parse_date(row.get(key))
             if ts and ts.date() >= window_start:
-                kind = "resolved" if key == "resolved_at" else "dismissed"
                 resolutions_daily[ts.date().isoformat()][kind] += 1
 
-    # Pattern table — include resolve/dismiss ratio for noise detection
+    # Pattern table — include confirm/dismiss ratio for noise detection
     patterns_out = []
     for pat, b in by_pattern.items():
-        total_closed = b["resolved"] + b["dismissed"]
+        total_closed = b["confirmed"] + b["dismissed"]
         dismiss_ratio = (b["dismissed"] / total_closed) if total_closed else None
         patterns_out.append({
             "pattern": pat,
             "surfaced": b["surfaced"],
-            "resolved": b["resolved"],
+            "confirmed": b["confirmed"],
             "dismissed": b["dismissed"],
             "other": b["other"],
             "dismiss_ratio": dismiss_ratio,
         })
     patterns_out.sort(
-        key=lambda p: (-p["surfaced"], -(p["resolved"] + p["dismissed"]), p["pattern"])
+        key=lambda p: (-p["surfaced"], -(p["confirmed"] + p["dismissed"]), p["pattern"])
     )
 
     # Daily series spans the full window so the chart renders zeros instead of gaps
@@ -1285,7 +1289,7 @@ def _watcher_summary_from_rows(rows, now=None, window_days=_WATCHER_DAILY_WINDOW
         timeline.append({
             "day": day,
             "detected": daily.get(day, 0),
-            "resolved": resolutions_daily[day]["resolved"],
+            "confirmed": resolutions_daily[day]["confirmed"],
             "dismissed": resolutions_daily[day]["dismissed"],
         })
 

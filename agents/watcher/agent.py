@@ -827,28 +827,40 @@ def parse_findings(
 # ---------------------------------------------------------------------------
 
 
-def _post_resolution_event(finding: dict, action: str, resolver_agent_id: str | None) -> None:
+def _post_resolution_event(
+    finding: dict,
+    action: str,
+    resolver_agent_id: str | None,
+    reason: str | None = None,
+) -> None:
     """Post a watcher_resolution event to the governance event stream."""
     identity = get_watcher_identity()
     if identity is None:
         return
 
+    base_msg = f"[{action}] {finding.get('pattern', '?')} {finding.get('file', '?')}:{finding.get('line', '?')} — {finding.get('hint', '')}"
+    message = f"{base_msg} · {reason}" if reason else base_msg
+
+    extra = {
+        "action": action,
+        "pattern": finding.get("pattern", ""),
+        "file": finding.get("file", ""),
+        "line": finding.get("line", 0),
+        "violation_class": finding.get("violation_class", ""),
+        "resolved_by": resolver_agent_id,
+    }
+    if reason:
+        extra["resolution_reason"] = reason
+
     try:
         post_finding(
             event_type="watcher_resolution",
             severity=finding.get("severity", "unknown"),
-            message=f"[{action}] {finding.get('pattern', '?')} {finding.get('file', '?')}:{finding.get('line', '?')} — {finding.get('hint', '')}",
+            message=message,
             agent_id=identity["agent_uuid"],
             agent_name="Watcher",
             fingerprint=finding.get("fingerprint", ""),
-            extra={
-                "action": action,
-                "pattern": finding.get("pattern", ""),
-                "file": finding.get("file", ""),
-                "line": finding.get("line", 0),
-                "violation_class": finding.get("violation_class", ""),
-                "resolved_by": resolver_agent_id,
-            },
+            extra=extra,
         )
     except Exception as e:
         log(f"resolution event failed: {e}", "warning")
@@ -1438,6 +1450,11 @@ def main() -> int:
         help="governance UUID of the agent resolving/dismissing (for audit trail)",
     )
     parser.add_argument(
+        "--reason",
+        metavar="TEXT",
+        help="short rationale for --resolve/--dismiss; stored on the finding and included in the governance event",
+    )
+    parser.add_argument(
         "--compact",
         action="store_true",
         help="drop resolved/dismissed/aged_out findings older than the TTL",
@@ -1472,9 +1489,13 @@ def main() -> int:
     if args.list_findings:
         return list_findings(only_open=args.only_open)
     if args.resolve:
-        return update_finding_status(args.resolve, "confirmed", resolver_agent_id=args.agent_id)
+        return update_finding_status(
+            args.resolve, "confirmed", resolver_agent_id=args.agent_id, reason=args.reason
+        )
     if args.dismiss:
-        return update_finding_status(args.dismiss, "dismissed", resolver_agent_id=args.agent_id)
+        return update_finding_status(
+            args.dismiss, "dismissed", resolver_agent_id=args.agent_id, reason=args.reason
+        )
     if args.sweep_stale:
         return sweep_stale_findings()
     if args.compact:

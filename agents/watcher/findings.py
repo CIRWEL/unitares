@@ -270,8 +270,26 @@ def match_fingerprint(prefix: str, findings: list[dict[str, Any]]) -> tuple[list
     return matches, None
 
 
-def update_finding_status(fingerprint_prefix: str, new_status: str, resolver_agent_id: str | None = None) -> int:
+_STATUS_TIMESTAMP_FIELD = {
+    "confirmed": "confirmed_at",
+    "dismissed": "dismissed_at",
+    "aged_out": "aged_out_at",
+}
+
+
+def update_finding_status(
+    fingerprint_prefix: str,
+    new_status: str,
+    resolver_agent_id: str | None = None,
+    reason: str | None = None,
+) -> int:
     """Mark a finding as ``new_status`` by fingerprint prefix.
+
+    Writes a status-transition timestamp (``confirmed_at``/``dismissed_at``/
+    ``aged_out_at``) and, when supplied, ``resolved_by`` + ``resolution_reason``
+    so the dashboard timeline and audit trail have the data they need — the
+    prior implementation only mutated ``status`` and the timeline series were
+    always zero as a result.
 
     Returns exit code:
       0 — updated exactly one finding
@@ -305,10 +323,20 @@ def update_finding_status(fingerprint_prefix: str, new_status: str, resolver_age
         return 1
 
     target_fp = matches[0].get("fingerprint", "")
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    timestamp_field = _STATUS_TIMESTAMP_FIELD.get(new_status)
+
     updated: list[dict[str, Any]] = []
     for f in findings:
         if f.get("fingerprint") == target_fp:
-            f = {**f, "status": new_status}
+            merged = {**f, "status": new_status}
+            if timestamp_field:
+                merged[timestamp_field] = now_iso
+            if resolver_agent_id:
+                merged["resolved_by"] = resolver_agent_id
+            if reason:
+                merged["resolution_reason"] = reason
+            f = merged
         updated.append(f)
     _write_findings_atomic(updated)
     log(f"update_finding_status: {target_fp[:8]} → {new_status}")
@@ -322,7 +350,7 @@ def update_finding_status(fingerprint_prefix: str, new_status: str, resolver_age
         # Lazy import: _post_resolution_event needs get_watcher_identity
         # from agent.py's identity block. Top-level import would be circular.
         from agents.watcher.agent import _post_resolution_event
-        _post_resolution_event(matches[0], new_status, resolver_agent_id)
+        _post_resolution_event(matches[0], new_status, resolver_agent_id, reason=reason)
 
     return 0
 

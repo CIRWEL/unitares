@@ -879,6 +879,60 @@ def test_update_finding_status_handles_missing_file(watcher_module, capsys):
     assert "empty" in captured.out or "absent" in captured.out
 
 
+def test_update_finding_status_writes_confirmed_at_timestamp(watcher_module):
+    """confirmed_at must be set when transitioning to confirmed — the dashboard
+    timeline series reads this field; before this fix it was never written and
+    the resolved/confirmed line was a flat zero across the whole window."""
+    _seed_findings(watcher_module, [_make_raw_entry("aaaaaaaaaaaaaaaa")])
+    rc = watcher_module.update_finding_status("aaaaaaaaaaaaaaaa", "confirmed")
+    assert rc == 0
+    row = watcher_module._iter_findings_raw()[0]
+    assert row["status"] == "confirmed"
+    assert "confirmed_at" in row
+    # ISO 8601 with trailing Z (matches detected_at convention in this file)
+    assert row["confirmed_at"].endswith("Z")
+    # Sibling timestamp not written for the wrong transition
+    assert "dismissed_at" not in row
+
+
+def test_update_finding_status_writes_dismissed_at_timestamp(watcher_module):
+    _seed_findings(watcher_module, [_make_raw_entry("bbbbbbbbbbbbbbbb")])
+    rc = watcher_module.update_finding_status("bbbbbbbbbbbbbbbb", "dismissed")
+    assert rc == 0
+    row = watcher_module._iter_findings_raw()[0]
+    assert row["status"] == "dismissed"
+    assert row["dismissed_at"].endswith("Z")
+    assert "confirmed_at" not in row
+
+
+def test_update_finding_status_persists_resolver_and_reason(watcher_module):
+    """--reason rationale is stored on the finding so future agents can see why
+    a prior agent dismissed it instead of re-deriving the judgment from
+    nothing."""
+    _seed_findings(watcher_module, [_make_raw_entry("ccccccccccccccccc"[:16])])
+    rc = watcher_module.update_finding_status(
+        "cccccccccccccccc",
+        "dismissed",
+        resolver_agent_id="uuid-resolver-1",
+        reason="false positive: file is a Starlette REST handler, not an MCP tool",
+    )
+    assert rc == 0
+    row = watcher_module._iter_findings_raw()[0]
+    assert row["resolved_by"] == "uuid-resolver-1"
+    assert "Starlette REST handler" in row["resolution_reason"]
+
+
+def test_update_finding_status_omits_reason_when_not_provided(watcher_module):
+    """No --reason → no resolution_reason key on the finding (we don't want
+    'null'/'' littering the schema)."""
+    _seed_findings(watcher_module, [_make_raw_entry("dddddddddddddddd")])
+    rc = watcher_module.update_finding_status("dddddddddddddddd", "confirmed")
+    assert rc == 0
+    row = watcher_module._iter_findings_raw()[0]
+    assert "resolution_reason" not in row
+    assert "resolved_by" not in row
+
+
 # --- sweep_stale_findings ---------------------------------------------------
 
 
