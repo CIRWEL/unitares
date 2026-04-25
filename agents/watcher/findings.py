@@ -412,12 +412,13 @@ def _format_findings_block(
     findings: list[dict[str, Any]],
     *,
     header: str,
+    out_of_scope_groups: dict[str, int] | None = None,
 ) -> tuple[str | None, list[dict[str, Any]]]:
     """Render the <unitares-watcher-findings> block.
 
     Returns ``(block, shown)`` where:
       - ``block`` is the formatted string to print, or None if nothing
-        should be surfaced (empty list / all-low-severity).
+        should be surfaced (empty list / all-low-severity / no out-of-scope).
       - ``shown`` is the ordered list of findings that actually made it
         into the displayed block. Callers use this to decide which
         findings to transition to ``surfaced`` status — we only want to
@@ -437,8 +438,15 @@ def _format_findings_block(
         reserved for critical+high (keeps session context from drowning in
         medium-severity noise while still surfacing some)
       - low: never shown (file-only signal)
+
+    ``out_of_scope_groups`` is an optional ``{worktree_label: count}`` map
+    of findings the caller is *not* surfacing in the body (typically:
+    findings whose file lives in a different worktree than the current
+    session). Their aggregate count is rendered as a single footer line
+    so the agent knows the backlog exists without drowning the chime
+    block in findings it cannot act on from this workspace.
     """
-    if not findings:
+    if not findings and not out_of_scope_groups:
         return None, []
 
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -456,7 +464,14 @@ def _format_findings_block(
     if len(shown) < 10:
         shown += medium[: 10 - len(shown)]
 
-    if not shown:
+    out_of_scope_total = (
+        sum(out_of_scope_groups.values()) if out_of_scope_groups else 0
+    )
+
+    # Nothing to render: no shown findings AND no out-of-scope summary.
+    # An empty in-scope set is OK if there are still other-worktree
+    # findings worth flagging — agent should know the backlog exists.
+    if not shown and out_of_scope_total == 0:
         return None, []
 
     lines: list[str] = []
@@ -477,6 +492,18 @@ def _format_findings_block(
         lines.append(f"  [{sev}] {cls_tag}{pat} {file}:{line_no} — {hint}  (#{fp}){marker}")
     lines.append("")
     lines.append(f"Total unresolved: {len(findings)} (showing {len(shown)})")
+    if out_of_scope_total:
+        # Render groups in deterministic order (sorted by label) so the
+        # footer stays stable across runs — easier to spot a real change
+        # than chasing dict-iteration ordering churn.
+        groups_str = ", ".join(
+            f"{label}={count}"
+            for label, count in sorted((out_of_scope_groups or {}).items())
+        )
+        lines.append(
+            f"Plus {out_of_scope_total} finding(s) in other worktrees ({groups_str}); "
+            "list with: python3 agents/watcher/agent.py --list-findings --only-open"
+        )
     lines.append(
         "Resolve: python3 agents/watcher/agent.py --resolve <fingerprint> --agent-id <your-uuid>"
     )
@@ -487,23 +514,118 @@ def _format_findings_block(
     return "\n".join(lines), shown
 
 
-def print_unresolved() -> int:
+def _resolve_session_scope_root(cwd: Path | None = None) -> Path | None:
+    """Return the path that anchors the current session's scope — typically
+    the git toplevel of the cwd. None if cwd isn't inside a git worktree;
+    callers fall back to "no scoping" (surface everything).
+
+    Bounded to a 2s subprocess timeout because session-start latency is
+    user-visible. A slow git call must not hold up the chime block.
+    """
+    base = cwd or Path.cwd()
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(base), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    out = result.stdout.strip()
+    if not out:
+        return None
+    try:
+        return Path(out).resolve()
+    except OSError:
+        return None
+
+
+def _partition_findings_by_scope(
+    findings: list[dict[str, Any]],
+    scope_root: Path | None,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Split findings into ``(in_scope, out_of_scope_groups)``.
+
+    A finding is in-scope when its ``file`` lives under ``scope_root``.
+    Out-of-scope findings are aggregated by their nearest ``.worktrees``
+    sibling label so the footer can summarize *where* the backlog is
+    without listing every path.
+
+    If ``scope_root`` is None, all findings are treated as in-scope —
+    matches the legacy "surface everything" behavior so callers without
+    a worktree (CI, ad-hoc CLI) keep the existing experience.
+    """
+    if scope_root is None:
+        return list(findings), {}
+
+    in_scope: list[dict[str, Any]] = []
+    out_groups: dict[str, int] = {}
+    scope_str = str(scope_root)
+    for f in findings:
+        file_path = f.get("file") or ""
+        if file_path and (file_path == scope_str or file_path.startswith(scope_str + "/")):
+            in_scope.append(f)
+            continue
+        out_groups[_label_for_other_worktree(file_path)] = (
+            out_groups.get(_label_for_other_worktree(file_path), 0) + 1
+        )
+    return in_scope, out_groups
+
+
+def _label_for_other_worktree(file_path: str) -> str:
+    """Heuristic short label for an out-of-scope finding's worktree.
+
+    Uses the segment after ``.worktrees/`` when present (which is how
+    superpowers/git-worktree wires the layout in this repo); otherwise
+    falls back to the parent directory name. Goal is just to give the
+    operator a stable, recognizable handle in the footer — exactness is
+    nice-to-have, not load-bearing.
+    """
+    if not file_path:
+        return "(unknown)"
+    parts = Path(file_path).parts
+    if ".worktrees" in parts:
+        idx = parts.index(".worktrees")
+        if idx + 1 < len(parts):
+            return parts[idx + 1]
+    # Fall back to the deepest dir name above the file
+    parent = Path(file_path).parent
+    return parent.name or "(root)"
+
+
+def print_unresolved(scope_root: Path | None = None) -> int:
     """Print the unresolved-findings block (open + surfaced) without mutating
     state. Called by the SessionStart hook — it's read-only so session starts
     never accidentally reshape the findings state.
+
+    ``scope_root`` is the worktree root used to filter findings to the
+    current session. When ``None`` (the production default), it's
+    auto-discovered from cwd via ``git rev-parse --show-toplevel``. Tests
+    pass an explicit value. When discovery fails, scoping is disabled
+    and the legacy behavior (surface everything) is preserved.
     """
+    if scope_root is None:
+        scope_root = _resolve_session_scope_root()
+
     findings = [
         f
         for f in _iter_findings_raw()
         if f.get("status", "open") in ("open", "surfaced")
     ]
+    in_scope, out_groups = _partition_findings_by_scope(findings, scope_root)
+
     block, _shown = _format_findings_block(
-        findings,
+        in_scope,
         header=(
             "The UNITARES Watcher agent flagged the following unresolved code\n"
             "patterns in recently edited files. Watcher has a track record — these\n"
             "are not noise. Investigate or explicitly --dismiss them."
         ),
+        out_of_scope_groups=out_groups or None,
     )
     if block is None:
         return 0
