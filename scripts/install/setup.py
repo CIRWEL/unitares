@@ -233,6 +233,67 @@ def detect_clients(home: Path) -> dict[str, dict]:
     return out
 
 
+DEFAULT_DB_URL = "postgresql://postgres:postgres@localhost:5432/governance"
+
+
+def build_snippet(
+    client: str,
+    config_path: str,
+    fmt: str,
+    repo_root: Path,
+    proxy_url: str | None,
+) -> PlanItem:
+    """Render a copy-pasteable MCP server entry for one client.
+
+    The snippet points at src/mcp_server_std.py (stdio transport, local mode).
+    If proxy_url is set, an additional UNITARES_STDIO_PROXY_HTTP_URL env entry
+    is added so the stdio process forwards to a remote HTTP governance server.
+    """
+    server_path = str(repo_root / "src" / "mcp_server_std.py")
+    env: dict[str, str] = {"DB_POSTGRES_URL": DEFAULT_DB_URL}
+    if proxy_url:
+        env["UNITARES_STDIO_PROXY_HTTP_URL"] = proxy_url
+
+    if fmt == "todo":
+        snippet = (
+            f"# TODO: Copilot CLI MCP config format is speculative as of 2026-04-25.\n"
+            f"# Verify the actual config schema before pasting. Equivalent payload:\n"
+            f"#   command: python3\n"
+            f"#   args:    [{server_path}]\n"
+            f"#   env:     {dict(env)}"
+        )
+    elif fmt == "json":
+        snippet = json.dumps(
+            {
+                "unitares-governance": {
+                    "command": "python3",
+                    "args": [server_path],
+                    "env": env,
+                }
+            },
+            indent=2,
+        )
+    elif fmt == "toml":
+        env_lines = "\n".join(f'{k} = "{v}"' for k, v in env.items())
+        snippet = (
+            f"[mcp_servers.unitares-governance]\n"
+            f'command = "python3"\n'
+            f'args = ["{server_path}"]\n\n'
+            f"[mcp_servers.unitares-governance.env]\n"
+            f"{env_lines}\n"
+        )
+    else:
+        raise ValueError(f"unknown snippet format: {fmt!r}")
+
+    return PlanItem(
+        phase=3,
+        kind="snippet",
+        client=client,
+        config_path=config_path,
+        snippet=snippet,
+    )
+
+
 def bootstrap_check() -> None:
     """Verify the MCP SDK is importable. Setup is not stdlib-only — it shares
     the server's runtime deps. If mcp is missing, exit early with the canonical

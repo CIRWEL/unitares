@@ -233,3 +233,62 @@ def test_detect_clients_returns_config_paths(setup_mod, tmp_path):
 def test_detect_clients_handles_empty_home(setup_mod, tmp_path):
     detected = setup_mod.detect_clients(tmp_path / "empty")
     assert detected == {}
+
+
+import json as _json
+
+
+def test_build_snippet_claude_code_json(setup_mod):
+    item = setup_mod.build_snippet(
+        client="claude_code",
+        config_path="/Users/x/.claude/settings.json",
+        fmt="json",
+        repo_root=Path("/repo"),
+        proxy_url=None,
+    )
+    parsed = _json.loads(item.snippet)
+    assert "unitares-governance" in parsed
+    entry = parsed["unitares-governance"]
+    assert entry["command"] == "python3"
+    assert entry["args"] == ["/repo/src/mcp_server_std.py"]
+    assert "DB_POSTGRES_URL" in entry["env"]
+    assert "UNITARES_STDIO_PROXY_HTTP_URL" not in entry["env"]
+
+
+def test_build_snippet_codex_toml(setup_mod):
+    item = setup_mod.build_snippet(
+        client="codex",
+        config_path="/Users/x/.codex/config.toml",
+        fmt="toml",
+        repo_root=Path("/repo"),
+        proxy_url=None,
+    )
+    s = item.snippet
+    assert "[mcp_servers.unitares-governance]" in s
+    assert 'command = "python3"' in s
+    assert '"/repo/src/mcp_server_std.py"' in s
+
+
+def test_build_snippet_with_proxy_url_adds_env_entry(setup_mod):
+    item = setup_mod.build_snippet(
+        client="claude_code",
+        config_path="/Users/x/.claude/settings.json",
+        fmt="json",
+        repo_root=Path("/repo"),
+        proxy_url="https://gov.example.org/mcp/",
+    )
+    parsed = _json.loads(item.snippet)
+    env = parsed["unitares-governance"]["env"]
+    assert env["UNITARES_STDIO_PROXY_HTTP_URL"] == "https://gov.example.org/mcp/"
+
+
+def test_build_snippet_copilot_todo_note(setup_mod):
+    item = setup_mod.build_snippet(
+        client="copilot",
+        config_path="/Users/x/.config/github-copilot-cli/config.json",
+        fmt="todo",
+        repo_root=Path("/repo"),
+        proxy_url=None,
+    )
+    assert "TODO" in item.snippet
+    assert "speculative" in item.snippet.lower() or "not yet" in item.snippet.lower()
