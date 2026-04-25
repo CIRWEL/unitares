@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from pathlib import Path
 
 SCHEMA_VERSION = 1
