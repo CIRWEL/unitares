@@ -47,7 +47,10 @@ class FakeSignals:
     client_hint: Optional[str] = None
     x_agent_name: Optional[str] = None
     x_agent_id: Optional[str] = None
-    transport: str = "mcp"
+    # Default to "rest" so generic cache-mechanics tests still produce a sticky key
+    # without mcp_session_id. MCP-specific tests must opt in by setting transport="mcp"
+    # and providing mcp_session_id (the only combination allowed to cache for MCP).
+    transport: str = "rest"
 
 
 def _clear_cache():
@@ -89,8 +92,9 @@ class TestTransportCacheKey:
         signals = FakeSignals(oauth_client_id="oauth:abc")
         assert _transport_cache_key(signals) is None
 
-    def test_returns_key_for_fingerprint_path(self):
-        signals = FakeSignals(ip_ua_fingerprint="192.168.1.1:abc123")
+    def test_returns_key_for_fingerprint_path_rest_transport(self):
+        """REST callers without strong session signals still get fingerprint-only stickiness."""
+        signals = FakeSignals(ip_ua_fingerprint="192.168.1.1:abc123", transport="rest")
         result = _transport_cache_key(signals)
         assert result == "sticky:192.168.1.1:abc123"
 
@@ -103,10 +107,25 @@ class TestTransportCacheKey:
         signals = FakeSignals(mcp_session_id="mcp-123", ip_ua_fingerprint="192.168.1.1:abc")
         assert _transport_cache_key(signals) == "sticky:192.168.1.1:abc:mcp-123"
 
-    def test_no_mcp_session_id_uses_fingerprint_only(self):
-        """Without mcp_session_id, falls back to fingerprint-only key."""
-        signals = FakeSignals(ip_ua_fingerprint="192.168.1.1:abc")
-        assert _transport_cache_key(signals) == "sticky:192.168.1.1:abc"
+    def test_mcp_transport_without_session_id_returns_none(self):
+        """Regression: MCP clients without mcp_session_id MUST NOT collapse onto a
+        fingerprint-only key. Two MCP processes on the same host (e.g. cron-launched
+        Vigil + an interactive Hermes/Claude session) share IP:UA, so a
+        fingerprint-only sticky key cross-binds their identities. Resolution: for
+        MCP transport, no mcp_session_id means no sticky cache — fall through to
+        identity resolution and let the agent onboard fresh.
+        """
+        signals = FakeSignals(ip_ua_fingerprint="192.168.1.1:abc", transport="mcp")
+        assert _transport_cache_key(signals) is None
+
+    def test_non_mcp_transports_still_use_fingerprint_fallback(self):
+        """REST/SSE/stdio callers retain fingerprint-only stickiness — they don't
+        share the MCP session-id signal and would otherwise lose all caching."""
+        for transport in ("rest", "sse", "stdio", "unknown"):
+            signals = FakeSignals(ip_ua_fingerprint="10.0.0.1:def", transport=transport)
+            assert _transport_cache_key(signals) == "sticky:10.0.0.1:def", (
+                f"transport={transport} should still get fingerprint stickiness"
+            )
 
 
 # ============================================================================
@@ -755,3 +774,58 @@ class TestTransportBindingCacheWarmup:
 
         assert called["persist"] is False
         assert step._transport_identity_cache["sticky:1.2.3.4:x"].agent_uuid == "uuid-warmed"
+
+
+# ============================================================================
+# 7. Cross-process MCP siphoning regression
+# ============================================================================
+
+class TestMCPCrossProcessSiphoning:
+    """Regression for the 2026-04-25 Vigil-siphoning incident: a Hermes/Claude
+    MCP session's knowledge write attributed to launchd-cron Vigil's UUID
+    because both used MCP transport from the same IP:UA without distinct
+    mcp_session_id headers, collapsing onto a fingerprint-only sticky key.
+    """
+
+    @pytest.mark.asyncio
+    async def test_mcp_without_session_id_does_not_inherit_prior_identity(self):
+        """Two MCP processes from same host without mcp_session_id must NOT share
+        identity. Pre-seeding the (would-be-buggy) fingerprint-only cache key
+        must not affect a fresh MCP call — it should fall through to identity
+        resolution and bind to the freshly-resolved UUID."""
+        # Pre-seed the legacy fingerprint-only cache key with Vigil-like UUID,
+        # mimicking the state left by an earlier Vigil cron run on this host.
+        update_transport_binding(
+            "sticky:127.0.0.1:hermes_ua",
+            "e55caaf1-43a7-4fbb-a8fa-c69a9a8f50e4",
+            "sk-vigil",
+            "redis",
+        )
+
+        # New MCP request from same fingerprint, no mcp_session_id (the bug case).
+        signals = FakeSignals(
+            ip_ua_fingerprint="127.0.0.1:hermes_ua",
+            transport="mcp",
+            mcp_session_id=None,
+        )
+        ctx = DispatchContext()
+
+        fresh_identity = {
+            "agent_uuid": "11111111-1111-1111-1111-111111111111",
+            "source": "created",
+        }
+
+        with patch("src.mcp_handlers.context.get_session_signals", return_value=signals), \
+             patch("src.mcp_handlers.identity.handlers.derive_session_key",
+                   new_callable=AsyncMock, return_value="sk-fresh"), \
+             patch("src.mcp_handlers.identity.handlers.resolve_session_identity",
+                   new_callable=AsyncMock, return_value=fresh_identity), \
+             patch("src.mcp_handlers.context.set_session_context", return_value="tok"):
+            _, _, out_ctx = await resolve_identity("knowledge", {}, ctx)
+
+        assert out_ctx.bound_agent_id != "e55caaf1-43a7-4fbb-a8fa-c69a9a8f50e4", (
+            "MCP request without mcp_session_id must NOT siphon a pre-seeded "
+            "fingerprint-only sticky entry (the Vigil-attribution bug)"
+        )
+        assert out_ctx.bound_agent_id == "11111111-1111-1111-1111-111111111111"
+        assert out_ctx.identity_result.get("source") != "sticky_cache"
