@@ -1,0 +1,127 @@
+"""Smoke tests for scripts/dev/unitares_doctor.py.
+
+The doctor itself probes the live machine (postgres, launchctl, the HTTP
+endpoint), which is brittle in CI and not what we want to test. These tests
+exercise the runner harness — the part that aggregates check results, filters
+by mode, sets exit codes, and renders output — using fake checks.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SCRIPT = REPO_ROOT / "scripts" / "dev" / "unitares_doctor.py"
+
+
+@pytest.fixture(scope="module")
+def doctor():
+    spec = importlib.util.spec_from_file_location("unitares_doctor", SCRIPT)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["unitares_doctor"] = mod  # Python 3.14 dataclass needs this
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _fake(doctor, name: str, mode: str, status):
+    return doctor.Check(
+        name, mode,
+        lambda: doctor.CheckResult(name, mode, status, f"{name} message"),
+    )
+
+
+def test_run_checks_filters_by_mode(doctor):
+    checks = [
+        _fake(doctor, "a", "local", doctor.Status.PASS),
+        _fake(doctor, "b", "operator", doctor.Status.PASS),
+    ]
+    local = doctor.run_checks(checks, "local")
+    assert [r.name for r in local] == ["a"]
+    op = doctor.run_checks(checks, "operator")
+    assert [r.name for r in op] == ["b"]
+    all_r = doctor.run_checks(checks, "all")
+    assert [r.name for r in all_r] == ["a", "b"]
+
+
+def test_exit_code_zero_when_no_failures(doctor):
+    results = [
+        doctor.CheckResult("a", "local", doctor.Status.PASS, "ok"),
+        doctor.CheckResult("b", "local", doctor.Status.WARN, "meh"),
+        doctor.CheckResult("c", "local", doctor.Status.SKIP, "skipped"),
+    ]
+    assert doctor.exit_code(results) == 0
+
+
+def test_exit_code_nonzero_on_failure(doctor):
+    results = [
+        doctor.CheckResult("a", "local", doctor.Status.PASS, "ok"),
+        doctor.CheckResult("b", "local", doctor.Status.FAIL, "broken"),
+    ]
+    assert doctor.exit_code(results) == 1
+
+
+def test_check_exception_becomes_fail(doctor):
+    def boom():
+        raise RuntimeError("kaboom")
+
+    results = doctor.run_checks([doctor.Check("explodes", "local", boom)], "all")
+    assert len(results) == 1
+    assert results[0].status == doctor.Status.FAIL
+    assert "kaboom" in results[0].detail
+
+
+def test_render_text_includes_all_results(doctor):
+    results = [
+        doctor.CheckResult("a", "local", doctor.Status.PASS, "all good"),
+        doctor.CheckResult("b", "operator", doctor.Status.FAIL, "nope",
+                           detail="hint here"),
+    ]
+    text = doctor.render_text(results, use_color=False)
+    assert "=== local ===" in text
+    assert "=== operator ===" in text
+    assert "all good" in text
+    assert "nope" in text
+    assert "hint here" in text
+    assert "1 pass" in text and "1 fail" in text
+
+
+def test_render_text_no_color_does_not_emit_ansi(doctor):
+    results = [doctor.CheckResult("a", "local", doctor.Status.PASS, "ok")]
+    text = doctor.render_text(results, use_color=False)
+    assert "\033[" not in text
+
+
+def test_redact_strips_password(doctor):
+    redacted = doctor._redact("postgresql://postgres:secretpass@localhost:5432/governance")
+    assert "secretpass" not in redacted
+    assert "postgres" not in redacted.split("@")[0].split("://")[1]
+    assert "@localhost:5432/governance" in redacted
+
+
+def test_main_json_output(doctor, monkeypatch, capsys, tmp_path):
+    # Replace build_checks so we don't probe the live system.
+    fake_checks = [_fake(doctor, "always_pass", "local", doctor.Status.PASS)]
+    monkeypatch.setattr(doctor, "build_checks", lambda root, url: fake_checks)
+
+    rc = doctor.main(["--json", "--mode", "local"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["mode"] == "local"
+    assert payload["exit_code"] == 0
+    assert payload["results"][0]["name"] == "always_pass"
+    assert payload["results"][0]["status"] == "pass"
+
+
+def test_main_returns_failure_when_check_fails(doctor, monkeypatch, capsys):
+    fake_checks = [_fake(doctor, "always_fail", "local", doctor.Status.FAIL)]
+    monkeypatch.setattr(doctor, "build_checks", lambda root, url: fake_checks)
+
+    rc = doctor.main(["--json", "--no-color"])
+    assert rc == 1
