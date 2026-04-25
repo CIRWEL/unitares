@@ -110,6 +110,23 @@ class TestSetThresholds:
         assert result["success"] is False
         assert any("Ordering violated" in e for e in result["errors"])
 
+    def test_reject_threshold_not_writable(self):
+        """risk_reject_threshold is implicit (see runtime_config.py:38) — set_thresholds must reject it."""
+        result = set_thresholds({"risk_reject_threshold": 0.9})
+        assert result["success"] is False
+        assert any("Unknown threshold" in e for e in result["errors"])
+        # Override must not persist
+        from config.governance_config import GovernanceConfig
+        assert get_effective_threshold("risk_reject_threshold") == GovernanceConfig.RISK_REJECT_THRESHOLD
+
+    def test_revise_must_be_below_class_reject(self):
+        """Ordering check uses the class-level REJECT (since reject is not writable)."""
+        from config.governance_config import GovernanceConfig
+        too_high = GovernanceConfig.RISK_REJECT_THRESHOLD + 0.1
+        result = set_thresholds({"risk_revise_threshold": min(too_high, 1.0)})
+        # Either ordering-violated or out-of-range, depending on RISK_REJECT_THRESHOLD value
+        assert result["success"] is False
+
 
 # ============================================================================
 # get_effective_threshold

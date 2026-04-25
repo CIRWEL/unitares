@@ -92,28 +92,17 @@ def set_thresholds(thresholds: Dict[str, float], validate: bool = True) -> Dict[
                 continue
         
         # Additional logical validation: enforce APPROVE < REVISE < REJECT invariant.
-        # Always validate against the effective value (pending update or current override or class default).
-        if name in ("risk_approve_threshold", "risk_revise_threshold", "risk_reject_threshold"):
-            # Build the effective triple after this update would apply
-            effective_approve = (
-                thresholds.get("risk_approve_threshold",
-                               _runtime_overrides.get("risk_approve_threshold", config.RISK_APPROVE_THRESHOLD))
+        # Reject is not writable (see comment at line 38) — always the class default.
+        if name in ("risk_approve_threshold", "risk_revise_threshold"):
+            effective_approve = thresholds.get(
+                "risk_approve_threshold",
+                _runtime_overrides.get("risk_approve_threshold", config.RISK_APPROVE_THRESHOLD),
             )
-            effective_revise = (
-                thresholds.get("risk_revise_threshold",
-                               _runtime_overrides.get("risk_revise_threshold", config.RISK_REVISE_THRESHOLD))
+            effective_revise = thresholds.get(
+                "risk_revise_threshold",
+                _runtime_overrides.get("risk_revise_threshold", config.RISK_REVISE_THRESHOLD),
             )
-            effective_reject = (
-                thresholds.get("risk_reject_threshold",
-                               _runtime_overrides.get("risk_reject_threshold", config.RISK_REJECT_THRESHOLD))
-            )
-            # Override the one being set
-            if name == "risk_approve_threshold":
-                effective_approve = value
-            elif name == "risk_revise_threshold":
-                effective_revise = value
-            elif name == "risk_reject_threshold":
-                effective_reject = value
+            effective_reject = config.RISK_REJECT_THRESHOLD
 
             if not (effective_approve < effective_revise < effective_reject):
                 errors.append(
@@ -153,7 +142,8 @@ def get_effective_threshold(threshold_name: str, default: Optional[float] = None
     elif threshold_name == "risk_revise_threshold":
         return _runtime_overrides.get("risk_revise_threshold", config.RISK_REVISE_THRESHOLD)
     elif threshold_name == "risk_reject_threshold":
-        return _runtime_overrides.get("risk_reject_threshold", default if default is not None else config.RISK_REJECT_THRESHOLD)
+        # Not writable via set_thresholds; class default unless caller passes an explicit default.
+        return default if default is not None else config.RISK_REJECT_THRESHOLD
     elif threshold_name == "coherence_critical_threshold":
         return _runtime_overrides.get("coherence_critical_threshold", config.COHERENCE_CRITICAL_THRESHOLD)
     elif threshold_name == "void_threshold_initial":
