@@ -400,9 +400,9 @@ def render_text(result: dict, use_color: bool) -> str:
     """Human-readable rendering of the wizard plan + final doctor pass.
     Color codes match doctor's so the eye can scan both outputs the same way.
     """
-    pass_color, fail_color, warn_color, reset = (
-        ("\033[32m", "\033[31m", "\033[33m", "\033[0m") if use_color
-        else ("", "", "", "")
+    fail_color, warn_color, reset = (
+        ("\033[31m", "\033[33m", "\033[0m") if use_color
+        else ("", "", "")
     )
     lines: list[str] = []
     lines.append("=== UNITARES setup ===")
@@ -454,7 +454,13 @@ def render_text(result: dict, use_color: bool) -> str:
 
 def _plan_to_json_safe(plan: list[PlanItem]) -> list[dict]:
     """Convert dataclass items to dicts; only include non-empty fields so the
-    JSON envelope stays readable."""
+    JSON envelope stays readable.
+
+    PlanItem fields default to "" (str) or False (bool); they are never None,
+    0, or []. The filter `v not in ("", False)` is therefore safe — phase and
+    kind are always included regardless because they're load-bearing for
+    consumers regardless of value.
+    """
     out: list[dict] = []
     for item in plan:
         d = asdict(item)
