@@ -2,7 +2,7 @@
 
 Status: live troubleshooting guide. Use for failure diagnosis and operator recovery steps, not as the primary architecture reference.
 
-**Last Updated:** March 2026
+**Last Updated:** April 2026
 
 ---
 
@@ -175,6 +175,43 @@ tail -f data/logs/mcp_server_error.log
    launchctl unload ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
    launchctl load ~/Library/LaunchAgents/com.unitares.governance-mcp.plist
    ```
+
+---
+
+### Issue 7: Checked-In Agent Not Visible on Dashboard
+
+**Symptoms:**
+- `identity()` or `process_agent_update()` succeeds.
+- `observe(action='agent', target_agent_id='<uuid>')` returns current state.
+- The browser dashboard does not show the agent.
+
+**Most common causes:**
+- Agent search box still contains a previous query.
+- Status filter is not set to `All`.
+- Metrics-only, production-only, trust-tier, or pagination state is hiding the row.
+- Browser cache/state is stale after a dashboard refresh.
+- The browser is pointed at a different server instance than the MCP session.
+
+**Verify backend ingestion first:**
+
+```bash
+curl -s -X POST http://127.0.0.1:8767/v1/tools/call \
+  -H "Authorization: Bearer $UNITARES_HTTP_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"name":"agent","arguments":{"action":"list","include_metrics":true,"recent_days":30,"limit":200,"min_updates":0,"status_filter":"all"}}'
+```
+
+Search the response for the agent UUID or label. If present, the backend and Postgres state are good; clear dashboard filters and hard refresh the browser.
+
+If the agent is absent from the API response but `observe()` works, check whether the dashboard's HTTP server and the MCP transport are the same running instance:
+
+```bash
+curl http://127.0.0.1:8767/health
+lsof -nP -iTCP:8767 -sTCP:LISTEN
+launchctl print gui/501/com.unitares.governance-mcp
+```
+
+Also verify the shell token matches the running service token. Launchd deployments may use the token from `~/Library/LaunchAgents/com.unitares.governance-mcp.plist`, not the repo-local `.env`.
 
 ---
 
