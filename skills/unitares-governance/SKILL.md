@@ -44,6 +44,11 @@ cross-process continuity. A bare `onboard()` or bare
 `identity(agent_uuid=..., resume=true)` can rely on weak evidence or an
 unsigned UUID claim; do not teach those as normal flow.
 
+In-process tool calls thread the response's `client_session_id` through
+subsequent invocations to maintain transport continuity within a single
+process. `client_session_id` is in-session continuity only — weak across
+processes, not identity proof on its own.
+
 Use `process_agent_update()` after meaningful work to record progress,
 complexity, and confidence, then read the returned governance verdict.
 
