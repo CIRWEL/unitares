@@ -679,6 +679,24 @@ class VigilAgent(GovernanceAgent):
                     f"stale_open: {item.get('id', '?')[:12]} \"{summary_short}\" age={age_days}d"
                 )
 
+        # --- 4.7. KG hygiene v1: retrieval-eval step (optional) ---
+        eval_result = await self._run_eval_step()
+        if eval_result.get("ran"):
+            metrics = eval_result["metrics"]
+            delta = eval_result.get("delta", {})
+            baseline_name = eval_result.get("baseline") or "no-baseline"
+            ndcg = metrics.get("nDCG@10", 0.0)
+            ndcg_delta = delta.get("nDCG@10", 0.0)
+            p95 = metrics.get("latency_p95", 0)
+            p95_delta = delta.get("latency_p95", 0)
+            findings.append(
+                f"eval: nDCG@10 {ndcg:.3f} (Δ {ndcg_delta:+.3f} vs {baseline_name}), "
+                f"p95 {p95:.0f}ms (Δ {p95_delta:+.0f}ms)"
+            )
+            if eval_result.get("regression"):
+                findings.append("⚠ eval regression: nDCG@10 dropped beyond threshold")
+                issues += 1
+
         # --- 5. Compute complexity/confidence from actual signals ---
         complexity = 0.15
         if self.with_tests:
@@ -717,6 +735,9 @@ class VigilAgent(GovernanceAgent):
             "groundskeeper_stale": groundskeeper_summary.get("stale_found", 0),
             "groundskeeper_archived": groundskeeper_summary.get("archived", 0),
             "hygiene_stale_opens": len(stale_opens),
+            "eval_ndcg10": eval_result.get("metrics", {}).get("nDCG@10"),
+            "eval_baseline": eval_result.get("baseline"),
+            "eval_regression": eval_result.get("regression", False),
             "total_cycles": total_cycles,
             "cycle_time": datetime.now(timezone.utc).isoformat(),
         }
