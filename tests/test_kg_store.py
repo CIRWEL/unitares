@@ -1044,3 +1044,40 @@ class TestLeaveNoteTagPassthrough:
 # Archived filtering in search
 # ============================================================================
 
+
+# ============================================================================
+# superseded_by field round-trip (KG hygiene v1)
+# ============================================================================
+
+def test_discovery_node_superseded_by_round_trip():
+    """superseded_by field round-trips through to_dict/from_dict."""
+    d = DiscoveryNode(
+        id="disc-new",
+        agent_id="a",
+        type="note",
+        summary="replaces older",
+    )
+    assert d.superseded_by is None  # default
+
+    d2 = DiscoveryNode(
+        id="disc-old",
+        agent_id="a",
+        type="note",
+        summary="superseded by disc-new",
+        status="superseded",
+        superseded_by="disc-new",
+    )
+    serialized = d2.to_dict()
+    assert serialized["status"] == "superseded"
+    assert serialized["superseded_by"] == "disc-new"
+
+    rehydrated = DiscoveryNode.from_dict(serialized)
+    assert rehydrated.status == "superseded"
+    assert rehydrated.superseded_by == "disc-new"
+
+
+def test_discovery_node_superseded_by_omitted_when_none():
+    """to_dict does not emit superseded_by key when None (keeps payload lean)."""
+    d = DiscoveryNode(id="x", agent_id="a", type="note", summary="s")
+    assert "superseded_by" not in d.to_dict()
+
