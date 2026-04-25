@@ -1,15 +1,29 @@
 ---
-status: DRAFT — kickstart
+status: ABANDONED — per council 2026-04-25
 authored: 2026-04-25
+closed: 2026-04-25
 author_session: agent-46187444-bd2 (Claude Opus 4.7 / claude_code)
 review_target: parallel dialectic-knowledge-architect + feature-dev:code-reviewer subagents
 unblocks: nothing — this is a structural addition, not a fix
 related: docs/ontology/s15-server-side-skills.md (canonical skill bundle), CLAUDE.md (per-client bootstrap)
+council_reviews:
+  - skill-client-awareness.dialectic-review.md (recommend_abandon w/ carve-out)
+  - skill-client-awareness.code-review.md (specification-gap, 5 findings)
+abandonment_basis: |
+  Proposal §5 named the abandonment condition: "if §3.4 [what failure mode does this
+  prevent] doesn't surface a concrete answer during council review, the right outcome
+  is abandonment." Both reviewers, working independently, failed to surface one. The
+  S15 §13 empirical update (2026-04-25) had already closed the only documented
+  motivating incident at the §6 tool_descriptions.json cure path, so the residual
+  surface this skill would have served is undefined. Carve-out: if a future incident
+  surfaces a cross-harness reasoning failure that §6 cannot address, take the
+  dialectic reviewer's incident-driven bootstrap-enrichment path before re-opening
+  this proposal as a fresh design.
 ---
 
-# Proposal: `client-awareness` skill
+# Proposal: `client-awareness` skill (ABANDONED)
 
-> **Status: DRAFT.** This is a kickstart from a single-pass conversation, not a designed proposal. **Do not ship to `unitares/skills/client-awareness/` without council review** (parallel `dialectic-knowledge-architect` + `feature-dev:code-reviewer` subagents per the 2026-04-24 feedback). The shape below is a starting point, not a recommendation.
+> **Status: ABANDONED 2026-04-25 per council reviews.** Both subagent reviews (`skill-client-awareness.dialectic-review.md` and `skill-client-awareness.code-review.md`) recommend against shipping. The proposal text below is preserved as-authored; do not revise in place. Future agents considering a similar skill should read both reviews first — particularly the dialectic reviewer's carve-out (incident-driven bootstrap enrichment + `tool_descriptions.json` extension), which is the cheap additive path the council endorsed in lieu of this skill.
 
 ## 1. Why this exists
 
