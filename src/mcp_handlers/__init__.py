@@ -65,6 +65,7 @@ from .introspection.tool_introspection import (
     handle_list_tools,
     handle_describe_tool,
 )
+from .introspection.skills import handle_skills  # S15-a: server-side skills surface
 # Knowledge Graph
 from .knowledge.handlers import (
     handle_store_knowledge_graph,

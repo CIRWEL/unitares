@@ -43,6 +43,7 @@ def _load_pydantic_schemas():
         "src.mcp_handlers.schemas.identity",
         "src.mcp_handlers.schemas.admin",
         "src.mcp_handlers.schemas.dashboard",
+        "src.mcp_handlers.schemas.skills",  # S15-a
         *_EXTRA_SCHEMA_MODULES,
     ]
     all_schemas = {}
@@ -120,6 +121,7 @@ TOOL_ORDER = [
     "detect_anomalies",
     "list_tools",
     "describe_tool",
+    "skills",
     "cleanup_stale_locks",
     "validate_file_path",
     "store_knowledge_graph",
