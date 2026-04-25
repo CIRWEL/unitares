@@ -277,7 +277,7 @@ async def get_live_bindings(agent_id: str) -> List[Dict[str, Any]]:
                 f"""
                 SELECT host_id, pid, pid_start_time, transport,
                        tty, ppid, anchor_path_hash, client_session_id,
-                       onboard_ts, last_seen
+                       onboard_ts, last_seen, same_host_ppid_consistent
                 FROM core.agent_process_bindings
                 WHERE agent_id = $1
                   AND stale_at IS NULL
@@ -298,6 +298,7 @@ async def get_live_bindings(agent_id: str) -> List[Dict[str, Any]]:
                 "client_session_id": r["client_session_id"],
                 "onboard_ts": r["onboard_ts"].isoformat() if r["onboard_ts"] else None,
                 "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
+                "same_host_ppid_consistent": r["same_host_ppid_consistent"],
             }
             for r in rows
         ]

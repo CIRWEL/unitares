@@ -1529,14 +1529,44 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             _fp = validate_fingerprint(_raw_fp)
             if _fp is not None:
                 from src.background_tasks import create_tracked_task
-                create_tracked_task(
-                    record_binding_bg(
-                        agent_uuid,
-                        _fp,
-                        arguments.get("client_session_id"),
-                    ),
-                    name="record_process_binding",
-                )
+
+                # PPID LINEAGE VERIFICATION (#128): if parent_agent_id and
+                # ppid are both present, sequence the verifier after the
+                # binding upsert so the UPDATE has a row to write to.
+                # Otherwise just schedule the binding alone.
+                _do_verify = bool(_parent_agent_id) and bool(_fp.ppid)
+                if _do_verify:
+                    from .lineage_verification import verify_lineage_bg
+
+                    async def _record_then_verify(
+                        agent_uuid=agent_uuid, fp=_fp,
+                        client_session_id=arguments.get("client_session_id"),
+                        parent_uuid=_parent_agent_id,
+                    ):
+                        await record_binding_bg(agent_uuid, fp, client_session_id)
+                        await verify_lineage_bg(
+                            child_uuid=agent_uuid,
+                            parent_uuid=parent_uuid,
+                            child_host_id=fp.host_id,
+                            child_ppid=fp.ppid,
+                            child_pid=fp.pid,
+                            child_pid_start_time=fp.pid_start_time,
+                            child_transport=fp.transport,
+                        )
+
+                    create_tracked_task(
+                        _record_then_verify(),
+                        name="record_and_verify_process_binding",
+                    )
+                else:
+                    create_tracked_task(
+                        record_binding_bg(
+                            agent_uuid,
+                            _fp,
+                            arguments.get("client_session_id"),
+                        ),
+                        name="record_process_binding",
+                    )
         except Exception as e:
             logger.debug(f"[PROCESS_BINDING] onboard scheduling failed (non-fatal): {e}")
 

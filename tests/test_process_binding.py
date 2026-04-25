@@ -282,6 +282,7 @@ async def test_get_live_bindings_returns_serialized_rows():
         "transport": "http", "tty": "/dev/ttys0", "ppid": 1,
         "anchor_path_hash": None, "client_session_id": None,
         "onboard_ts": ts, "last_seen": ts,
+        "same_host_ppid_consistent": None,
     }
     conn = AsyncMock()
     conn.fetch = AsyncMock(return_value=[row])
