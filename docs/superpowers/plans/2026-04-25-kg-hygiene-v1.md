@@ -545,9 +545,12 @@ if a future change broadens the lifecycle sweep to include superseded."
 Create `tests/test_vigil_stale_opens.py`:
 
 ```python
-"""Tests for Vigil's stale-opens propose-only sweep."""
+"""Tests for Vigil's stale-opens propose-only sweep.
+
+Reads the existing audit_knowledge handler's `top_stale` output (entries
+already scored by src/knowledge_graph_lifecycle.py:_score_discovery with
+age_days, last_activity_days, bucket). We do NOT re-parse timestamps."""
 import pytest
-from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import sys
@@ -555,44 +558,55 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-def _make_kg_search_response(items):
-    """Mimic GovernanceClient.audit_knowledge response shape."""
+def _make_audit_response(top_stale):
+    """Mimic GovernanceClient.audit_knowledge response shape.
+
+    audit_knowledge returns success_response with audit dict containing
+    `buckets`, `top_stale`, `total_audited`. Each top_stale entry is a
+    pre-scored dict with id, summary, type, age_days, last_activity_days,
+    bucket, tags, activity_score."""
     resp = MagicMock()
     resp.success = True
-    resp.audit = {"items": items}
+    resp.audit = {
+        "top_stale": top_stale,
+        "buckets": {"stale": len(top_stale), "candidate_for_archive": 0},
+        "total_audited": len(top_stale),
+    }
     return resp
 
 
 @pytest.mark.asyncio
-async def test_stale_opens_sweep_returns_top_n_by_age():
-    """Sweep returns at most 20 entries, oldest first."""
+async def test_stale_opens_sweep_returns_top_n_oldest_first():
+    """Sweep returns at most 20 entries from top_stale, oldest first."""
     from agents.vigil.agent import VigilAgent
 
-    now = datetime.now()
-    # 25 stale opens, ages 31..55 days
-    items = [
+    # 25 stale entries, last_activity_days 31..55. Audit already orders by
+    # last_activity_days desc (oldest first), but we re-sort defensively.
+    top_stale = [
         {
             "id": f"d-{i}",
             "summary": f"summary {i}",
-            "status": "open",
-            "updated_at": (now - timedelta(days=31 + i)).isoformat(),
+            "type": "note",
+            "age_days": 60 + i,
+            "last_activity_days": 31 + i,
+            "bucket": "stale",
+            "tags": [],
         }
         for i in range(25)
     ]
+    # Audit orders by last_activity_days desc — d-24 (55d) first, d-0 (31d) last
+    top_stale.sort(key=lambda x: x["last_activity_days"], reverse=True)
 
     mock_client = MagicMock()
-    mock_client.audit_knowledge = AsyncMock(
-        return_value=_make_kg_search_response(items)
-    )
+    mock_client.audit_knowledge = AsyncMock(return_value=_make_audit_response(top_stale))
 
     vigil = VigilAgent(with_hygiene=True)
     result = await vigil._run_stale_opens_sweep(mock_client)
 
     assert isinstance(result, list)
     assert len(result) == 20  # capped
-    # Oldest first: d-24 has age 55, d-0 has age 31 → d-24 first
-    assert result[0]["id"] == "d-24"
-    assert result[-1]["id"] == "d-5"  # 20th-oldest is d-5 (age 36)
+    assert result[0]["id"] == "d-24"  # last_activity_days=55, oldest first
+    assert result[-1]["id"] == "d-5"  # 20th-oldest, last_activity_days=36
 
 
 @pytest.mark.asyncio
@@ -600,18 +614,18 @@ async def test_stale_opens_sweep_no_action_taken():
     """Sweep is propose-only — never calls update_discovery or cleanup."""
     from agents.vigil.agent import VigilAgent
 
-    now = datetime.now()
-    items = [{
+    top_stale = [{
         "id": "d-1",
         "summary": "stale",
-        "status": "open",
-        "updated_at": (now - timedelta(days=45)).isoformat(),
+        "type": "note",
+        "age_days": 50,
+        "last_activity_days": 45,
+        "bucket": "stale",
+        "tags": [],
     }]
 
     mock_client = MagicMock()
-    mock_client.audit_knowledge = AsyncMock(
-        return_value=_make_kg_search_response(items)
-    )
+    mock_client.audit_knowledge = AsyncMock(return_value=_make_audit_response(top_stale))
     mock_client.cleanup_knowledge = AsyncMock()
 
     vigil = VigilAgent(with_hygiene=True)
@@ -630,6 +644,24 @@ async def test_stale_opens_sweep_disabled_by_default():
 
     vigil = VigilAgent()  # with_hygiene defaults to False
     assert vigil.with_hygiene is False
+    result = await vigil._run_stale_opens_sweep(mock_client)
+    assert result == []
+    mock_client.audit_knowledge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stale_opens_sweep_audit_failure_returns_empty():
+    """audit_knowledge failure → sweep returns [], does not raise."""
+    from agents.vigil.agent import VigilAgent
+
+    failed = MagicMock()
+    failed.success = False
+    mock_client = MagicMock()
+    mock_client.audit_knowledge = AsyncMock(return_value=failed)
+
+    vigil = VigilAgent(with_hygiene=True)
+    result = await vigil._run_stale_opens_sweep(mock_client)
+    assert result == []
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -667,24 +699,31 @@ After the `_run_groundskeeper` method (which ends around L390), add:
 
 ```python
     async def _run_stale_opens_sweep(
-        self, client: GovernanceClient, top_n: int = 20, min_age_days: int = 30,
+        self, client: GovernanceClient, top_n: int = 20,
     ) -> List[Dict[str, Any]]:
-        """Propose-only: surface oldest stale-open KG discoveries.
+        """Propose-only: surface oldest stale-open KG entries from the audit.
 
-        Reads via client.audit_knowledge(scope='open'); never mutates state.
-        Returns oldest-first up to top_n. Empty list on any failure or when
-        with_hygiene is False — propose-only is best-effort, must not poison
-        the cycle.
+        Reads via client.audit_knowledge(scope='open'); the audit handler
+        already scores each open entry and returns top_stale ordered by
+        last_activity_days desc with bucket classification. We just take
+        up to top_n entries and surface them — no action taken.
+
+        Returns oldest-first (matches the audit's own ordering). Empty list
+        on any failure or when with_hygiene is False — propose-only is
+        best-effort, must not poison the cycle.
         """
         if not self.with_hygiene:
             return []
 
         try:
             result = await asyncio.wait_for(
-                client.audit_knowledge(scope="open", top_n=max(top_n * 3, 60)),
+                client.audit_knowledge(scope="open", top_n=top_n),
                 timeout=15.0,
             )
-        except (asyncio.TimeoutError, Exception) as e:
+        except asyncio.TimeoutError:
+            log("stale-opens sweep timed out after 15s; continuing cycle")
+            return []
+        except Exception as e:
             log(f"stale-opens sweep failed ({e}); continuing cycle")
             return []
 
@@ -692,27 +731,17 @@ After the `_run_groundskeeper` method (which ends around L390), add:
             return []
 
         audit_data = getattr(result, "audit", None) or {}
-        items = audit_data.get("items", []) if isinstance(audit_data, dict) else []
+        if not isinstance(audit_data, dict):
+            return []
+        top_stale = audit_data.get("top_stale", []) or []
 
-        # Filter to stale-by-age and sort oldest first
-        cutoff = datetime.now() - timedelta(days=min_age_days)
-        cutoff_iso = cutoff.isoformat()
-        stale = [
-            item for item in items
-            if item.get("status") == "open"
-            and item.get("updated_at", "") < cutoff_iso
-        ]
-        stale.sort(key=lambda x: x.get("updated_at", ""))  # ascending = oldest first
-        return stale[:top_n]
+        # The audit already orders by last_activity_days desc. Re-sort
+        # defensively in case the contract ever changes.
+        top_stale.sort(key=lambda x: x.get("last_activity_days", 0), reverse=True)
+        return top_stale[:top_n]
 ```
 
-Add the `timedelta` import if not already present at the top of `agents/vigil/agent.py`:
-
-```python
-from datetime import datetime, timedelta, timezone
-```
-
-(Verify the existing `from datetime import` line and add `timedelta` to it.)
+No new imports required — `asyncio` is already imported at the top of `agents/vigil/agent.py`. Verify before adding anything.
 
 - [ ] **Step 4: Run tests to verify all 3 pass**
 
@@ -750,26 +779,27 @@ Edit `agents/vigil/agent.py`. After the Groundskeeper block (ending around L489)
         # --- 4.5. Stale-opens propose-only sweep (optional) ---
         stale_opens = await self._run_stale_opens_sweep(client)
         if stale_opens:
+            oldest = stale_opens[0]
             findings.append(
                 f"hygiene: {len(stale_opens)} stale opens (oldest "
-                f"{stale_opens[0].get('id', '?')}, "
-                f"age={(datetime.now() - datetime.fromisoformat(stale_opens[0]['updated_at'])).days}d)"
+                f"{oldest.get('id', '?')[:12]}, "
+                f"age={oldest.get('last_activity_days', 0)}d)"
             )
             for item in stale_opens[:5]:  # top 5 inline; rest in cycle state
                 summary_short = (item.get("summary") or "")[:60]
-                age_days = (datetime.now() - datetime.fromisoformat(item["updated_at"])).days
+                age_days = item.get("last_activity_days", 0)
                 findings.append(
-                    f"stale_open: {item['id']} \"{summary_short}\" age={age_days}d"
+                    f"stale_open: {item.get('id', '?')[:12]} \"{summary_short}\" age={age_days}d"
                 )
 ```
 
-Also extend the cycle-state dict at L538 (within `self._cycle_state = {...}`) to include:
+Also extend the cycle-state dict (within `self._cycle_state = {...}` around L538) to include:
 
 ```python
-            "hygiene_stale_opens": len(stale_opens) if 'stale_opens' in dir() else 0,
+            "hygiene_stale_opens": len(stale_opens),
 ```
 
-(This makes the count available to dashboard panels that read cycle state.)
+(`stale_opens` will always be defined by this point in run_cycle — `_run_stale_opens_sweep` returns `[]` when disabled, never raises.)
 
 - [ ] **Step 2: Run a syntax-only verification**
 
@@ -1057,7 +1087,7 @@ def _run_eval_subprocess() -> Dict[str, Any]:
         return {}
 ```
 
-Add `import json` near the other imports if not present.
+Add `import json` near the other imports — it is NOT in `agents/vigil/agent.py` today (verified: `import asyncio`, `import os`, `import subprocess`, `import sys`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import ...`).
 
 In `VigilAgent`, add the method (after `_run_stale_opens_sweep`):
 
@@ -1173,10 +1203,12 @@ Edit `agents/vigil/agent.py`. After the stale-opens sweep block from Task 6 and 
 Extend the `self._cycle_state` dict (around L538) with:
 
 ```python
-            "eval_ndcg10": eval_result.get("metrics", {}).get("nDCG@10") if 'eval_result' in dir() else None,
-            "eval_baseline": eval_result.get("baseline") if 'eval_result' in dir() else None,
-            "eval_regression": eval_result.get("regression", False) if 'eval_result' in dir() else False,
+            "eval_ndcg10": eval_result.get("metrics", {}).get("nDCG@10"),
+            "eval_baseline": eval_result.get("baseline"),
+            "eval_regression": eval_result.get("regression", False),
 ```
+
+(`eval_result` is always defined by this point — `_run_eval_step` returns a dict with `ran=False` when disabled, never raises.)
 
 - [ ] **Step 2: Run syntax check + Vigil tests**
 
@@ -1197,9 +1229,13 @@ UNITARES_EMBEDDING_MODEL=bge-m3 UNITARES_ENABLE_HYBRID=1 \
 python3 -c "
 import asyncio
 from agents.vigil.agent import VigilAgent
-v = VigilAgent(with_eval=True, with_hygiene=True)
-print(asyncio.run(v._run_eval_step()))
-print(asyncio.run(v._run_stale_opens_sweep(__import__('agents.vigil.client', fromlist=['GovernanceClient']).GovernanceClient(v.mcp_url))))
+from unitares_sdk.client import GovernanceClient
+async def main():
+    v = VigilAgent(with_eval=True, with_hygiene=True)
+    print('eval:', await v._run_eval_step())
+    async with GovernanceClient(v.mcp_url) as client:
+        print('sweep:', await v._run_stale_opens_sweep(client))
+asyncio.run(main())
 "
 ```
 
