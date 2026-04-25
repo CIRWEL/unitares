@@ -19,22 +19,28 @@ class IdentityMixin:
         agent_id: str,
         api_key_hash: str,
         parent_agent_id: Optional[str] = None,
+        spawn_reason: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         created_at=None,
     ) -> int:
         async with self.acquire() as conn:
             identity_id = await conn.fetchval(
                 """
-                INSERT INTO core.identities (agent_id, api_key_hash, parent_agent_id, metadata, created_at)
-                VALUES ($1, $2, $3, $4, COALESCE($5, now()))
+                INSERT INTO core.identities (
+                    agent_id, api_key_hash, parent_agent_id, spawn_reason, metadata, created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, COALESCE($6, now()))
                 ON CONFLICT (agent_id) DO UPDATE SET
-                    metadata = core.identities.metadata || COALESCE($4, '{}'::jsonb),
+                    parent_agent_id = COALESCE(EXCLUDED.parent_agent_id, core.identities.parent_agent_id),
+                    spawn_reason = COALESCE(EXCLUDED.spawn_reason, core.identities.spawn_reason),
+                    metadata = core.identities.metadata || COALESCE($5, '{}'::jsonb),
                     updated_at = now()
                 RETURNING identity_id
                 """,
                 agent_id,
                 api_key_hash,
                 parent_agent_id,
+                spawn_reason,
                 json.dumps(metadata or {}),
                 created_at,
             )

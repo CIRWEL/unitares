@@ -52,6 +52,8 @@ class AgentMixin:
                         purpose = COALESCE(EXCLUDED.purpose, core.agents.purpose),
                         notes = COALESCE(EXCLUDED.notes, core.agents.notes),
                         tags = EXCLUDED.tags,
+                        parent_agent_id = COALESCE(EXCLUDED.parent_agent_id, core.agents.parent_agent_id),
+                        spawn_reason = COALESCE(EXCLUDED.spawn_reason, core.agents.spawn_reason),
                         label = COALESCE(EXCLUDED.label, core.agents.label),
                         thread_id = COALESCE(EXCLUDED.thread_id, core.agents.thread_id),
                         thread_position = COALESCE(EXCLUDED.thread_position, core.agents.thread_position),

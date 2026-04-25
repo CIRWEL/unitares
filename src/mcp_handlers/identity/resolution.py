@@ -787,6 +787,7 @@ async def resolve_session_identity(
                 agent_id=agent_uuid,
                 api_key_hash="",
                 parent_agent_id=parent_agent_id,
+                spawn_reason=spawn_reason,
                 metadata=identity_metadata,
             )
 
