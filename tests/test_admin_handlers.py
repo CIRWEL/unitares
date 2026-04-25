@@ -988,6 +988,84 @@ class TestCheckCalibration:
             assert data["trajectory_health"] == 0.0
             assert data["confidence_distribution"]["mean"] == 0.0
 
+    @pytest.mark.asyncio
+    async def test_check_calibration_accuracy_uses_real_outcome_evidence(self, patch_context_agent_id):
+        """Regression: `accuracy` must report sequential tracker's empirical_accuracy
+        (real outcome-match) when available, NOT alias trajectory_health."""
+        mock_checker = MagicMock()
+        mock_checker.check_calibration.return_value = (
+            True,
+            {
+                "bins": {
+                    "high": {"count": 20, "accuracy": 0.97, "expected_accuracy": 0.85},
+                },
+                "issues": [],
+            },
+        )
+        mock_checker.get_pending_updates.return_value = 0
+        mock_seq_tracker = MagicMock()
+        mock_seq_tracker.compute_metrics.return_value = {
+            "status": "tracking",
+            "eligible_samples": 50,
+            "mean_confidence": 0.82,
+            "empirical_accuracy": 0.64,
+            "calibration_gap": -0.18,
+            "log_evidence": 2.1,
+            "capped_alarm": 0.88,
+            "signal_sources": {"tests": 30, "commands": 20},
+        }
+
+        with patch("src.calibration.calibration_checker", mock_checker), \
+             patch("src.sequential_calibration.get_sequential_calibration_tracker", return_value=mock_seq_tracker):
+            from src.mcp_handlers.admin.calibration import handle_check_calibration
+            result = await handle_check_calibration({})
+
+            data = parse_result(result)
+            assert data["accuracy"] == 0.64, (
+                "accuracy must report real empirical_accuracy from outcome evidence, "
+                "not the trajectory_health proxy"
+            )
+            assert data["trajectory_health"] == 0.97
+            assert data["accuracy"] != data["trajectory_health"], (
+                "Regression: accuracy and trajectory_health were aliased to the same value, "
+                "letting consumers read the trajectory proxy under a misleading label"
+            )
+            assert data["truth_channel"] == "confidence_outcome_match"
+
+    @pytest.mark.asyncio
+    async def test_check_calibration_accuracy_null_when_no_outcome_evidence(self, patch_context_agent_id):
+        """When sequential tracker has no_data, accuracy must be null with an
+        honest truth_channel ('trajectory_proxy') — not silently aliased to trajectory_health."""
+        mock_checker = MagicMock()
+        mock_checker.check_calibration.return_value = (
+            True,
+            {
+                "bins": {
+                    "high": {"count": 20, "accuracy": 0.97, "expected_accuracy": 0.85},
+                },
+                "issues": [],
+            },
+        )
+        mock_checker.get_pending_updates.return_value = 0
+        mock_seq_tracker = MagicMock()
+        mock_seq_tracker.compute_metrics.return_value = {
+            "status": "no_data",
+            "eligible_samples": 0,
+            "log_evidence": 0.0,
+            "capped_alarm": 0.0,
+            "signal_sources": {},
+        }
+
+        with patch("src.calibration.calibration_checker", mock_checker), \
+             patch("src.sequential_calibration.get_sequential_calibration_tracker", return_value=mock_seq_tracker):
+            from src.mcp_handlers.admin.calibration import handle_check_calibration
+            result = await handle_check_calibration({})
+
+            data = parse_result(result)
+            assert data["accuracy"] is None
+            assert data["trajectory_health"] == 0.97
+            assert data["truth_channel"] == "trajectory_proxy"
+
 
 # ============================================================================
 # handle_rebuild_calibration
