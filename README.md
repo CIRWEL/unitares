@@ -188,7 +188,7 @@ python src/mcp_server.py --port 8767
 
 `requirements-full.txt` is the default for almost everything — running the local server, running tests (`pytest` is in `full` only), and handler development. `requirements-core.txt` is a 2-package subset (`mcp` + `numpy`) for thin stdio/proxy setups where the governance server runs elsewhere and you only need a local client. Database setup (PostgreSQL 17 + AGE + pgvector): [db/postgres/README.md](db/postgres/README.md).
 
-The EISV **ODE** engine lives in this repo at `governance_core/` (pure Python, no separate install). It was previously a separate private compiled package; folded back in 2026-04-24 once the IP-protection rationale dissolved (the four-component drift decomposition is fully described in the v6 paper). To skip the ODE entirely and run with behavioral-EISV only: `export UNITARES_DISABLE_ODE=1`.
+The EISV **ODE** engine lives in this repo at `governance_core/` (pure Python, no separate install). The four-component drift decomposition is fully described in the v6 paper. To skip the ODE entirely and run with behavioral-EISV only: `export UNITARES_DISABLE_ODE=1`.
 
 ### MCP configuration
 
