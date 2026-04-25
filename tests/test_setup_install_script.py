@@ -417,3 +417,33 @@ def test_main_proxy_url_propagates_to_snippet(setup_mod, monkeypatch, tmp_path, 
     payload = _json.loads(out)
     snippet_items = [p for p in payload["plan"] if p["phase"] == 3]
     assert any("UNITARES_STDIO_PROXY_HTTP_URL" in p["snippet"] for p in snippet_items)
+
+
+def test_dry_run_exit_code_is_1_when_initial_doctor_has_fails(setup_mod, monkeypatch, tmp_path):
+    """CI consumers gate on exit_code; a dry-run that hides initial failures
+    behind exit 0 would let broken installs slip through."""
+    failing = _doctor_payload(("postgres_running", "fail", "down"))
+    monkeypatch.setattr(setup_mod, "run_doctor", lambda: failing)
+    out = setup_mod.run_pipeline(apply=False, home=tmp_path, proxy_url=None)
+    assert out["exit_code"] == 1
+
+
+def test_dry_run_exit_code_is_0_when_initial_doctor_is_clean(setup_mod, monkeypatch, tmp_path):
+    healthy = _doctor_payload(("python_version", "pass", "ok"))
+    monkeypatch.setattr(setup_mod, "run_doctor", lambda: healthy)
+    out = setup_mod.run_pipeline(apply=False, home=tmp_path, proxy_url=None)
+    assert out["exit_code"] == 0
+
+
+def test_json_output_always_includes_applied_field(setup_mod, monkeypatch, tmp_path, capsys):
+    """Spec line 158-165 shows `applied: false` explicitly; consumers need it
+    to distinguish 'pending' from 'done' without inferring from absence."""
+    failing = _doctor_payload(("postgres_running", "fail", "down"))
+    monkeypatch.setattr(setup_mod, "run_doctor", lambda: failing)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    setup_mod.main(["--json", "--non-interactive"])
+    out = capsys.readouterr().out
+    payload = _json.loads(out)
+    # Every plan item, regardless of phase, must report `applied`.
+    for item in payload["plan"]:
+        assert "applied" in item, f"item missing applied field: {item}"
