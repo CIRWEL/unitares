@@ -277,3 +277,30 @@ def test_default_thresholds():
     assert lifecycle.RESOLVED_TO_ARCHIVED_DAYS == 30
     assert lifecycle.ARCHIVED_TO_COLD_DAYS == 90
     assert lifecycle.EPHEMERAL_ARCHIVE_DAYS == 7
+
+
+# --- KG hygiene v1: superseded ⊄ lifecycle vocabulary ---
+
+
+@pytest.mark.asyncio
+async def test_archive_old_resolved_does_not_query_superseded():
+    """v1 invariant: _archive_old_resolved queries status='resolved' only.
+
+    Superseded entries are deliberately left hot — v1 surfaces them via the
+    superseded_by field rather than archiving them. This test will fail if a
+    future change broadens the lifecycle sweep to include superseded.
+    """
+    mock_graph = MagicMock()
+    mock_graph.query = AsyncMock(return_value=[])
+    mock_graph.update_discovery = AsyncMock()
+
+    lifecycle = KnowledgeGraphLifecycle()
+    lifecycle._graph = mock_graph
+
+    archived, skipped = await lifecycle._archive_old_resolved(datetime.now(), dry_run=False)
+
+    # The query was called with status='resolved' — superseded is out of band
+    mock_graph.query.assert_awaited_with(status="resolved", limit=1000)
+    assert archived == []
+    assert skipped == 0
+    mock_graph.update_discovery.assert_not_awaited()
