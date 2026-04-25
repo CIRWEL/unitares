@@ -259,6 +259,7 @@ class VigilAgent(GovernanceAgent):
         heartbeat_interval: int = 1800,
         with_tests: bool = False,
         with_audit: bool = True,
+        with_hygiene: bool = False,
         force_new: bool = False,
     ):
         super().__init__(
@@ -278,6 +279,7 @@ class VigilAgent(GovernanceAgent):
         self.heartbeat_interval = heartbeat_interval
         self.with_tests = with_tests
         self.with_audit = with_audit
+        self.with_hygiene = with_hygiene
         self.force_new = force_new
         # Vigil-specific cycle data (populated during run_cycle, used in post-checkin)
         self._cycle_state: Dict[str, Any] = {}
@@ -388,6 +390,49 @@ class VigilAgent(GovernanceAgent):
                 log(f"GROUNDSKEEPER: {note_text}")
 
         return summary
+
+    async def _run_stale_opens_sweep(
+        self, client: GovernanceClient, top_n: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """KG hygiene v1: propose-only sweep of oldest stale-open KG entries.
+
+        Reads via ``client.audit_knowledge(scope='open')``; the audit handler
+        already scores each open entry (via _score_discovery in
+        knowledge_graph_lifecycle.py) and returns ``top_stale`` ordered by
+        last_activity_days desc with bucket classification + permanent-policy
+        already applied. We just take up to ``top_n`` entries and surface them.
+
+        Returns oldest-first (matches the audit's own ordering). Empty list
+        on any failure or when ``with_hygiene`` is False — propose-only is
+        best-effort, must not poison the cycle.
+        """
+        if not self.with_hygiene:
+            return []
+
+        try:
+            result = await asyncio.wait_for(
+                client.audit_knowledge(scope="open", top_n=top_n),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            log("stale-opens sweep timed out after 15s; continuing cycle")
+            return []
+        except Exception as e:
+            log(f"stale-opens sweep failed ({e}); continuing cycle")
+            return []
+
+        if not getattr(result, "success", False):
+            return []
+
+        audit_data = getattr(result, "audit", None) or {}
+        if not isinstance(audit_data, dict):
+            return []
+        top_stale = audit_data.get("top_stale", []) or []
+
+        # The audit already orders by last_activity_days desc. Re-sort
+        # defensively in case the contract ever changes.
+        top_stale.sort(key=lambda x: x.get("last_activity_days", 0), reverse=True)
+        return top_stale[:top_n]
 
     async def run_cycle(self, client: GovernanceClient) -> CycleResult | None:
         """Run one heartbeat cycle."""
