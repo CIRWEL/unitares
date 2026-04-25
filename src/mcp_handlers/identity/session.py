@@ -7,6 +7,7 @@ Leaf module — no imports from other identity_* sub-modules.
 from __future__ import annotations
 
 from typing import Optional, Dict, Any
+import asyncio
 import os
 import hashlib
 import base64
@@ -20,6 +21,10 @@ logger = get_logger(__name__)
 
 _S1_DEPRECATION_SUNSET = "2026-Q4"  # operator-set placeholder; see s1 doc §11
 _PIN_TTL = 1800  # 30 minutes — refresh on use
+# Tight budget — anyio task group can block awaited Redis calls; degrade to
+# cold-miss instead of hanging the MCP request pipeline. See CLAUDE.md
+# "anyio-asyncio Conflict" and _load_binding_from_redis for the canonical pattern.
+_PIN_REDIS_TIMEOUT = 0.5
 # S1-a (2026-04-24): shrunk from 30 days to 1 hour as part of continuity_token
 # retirement-via-narrowing. See docs/ontology/s1-continuity-token-retirement.md §4.1.
 # TTL-only is not process-instance binding; this is honestly "performative, narrowed".
@@ -518,24 +523,37 @@ async def lookup_onboard_pin(base_fingerprint: str, *, refresh_ttl: bool = True)
     if not base_fingerprint:
         return None
     try:
-        from src.cache.redis_client import get_redis
-        import json as _json
-        raw_redis = await get_redis()
-        if not raw_redis:
-            return None
-        pin_key = f"recent_onboard:{base_fingerprint}"
-        pin_data = await raw_redis.get(pin_key)
-        if not pin_data:
-            logger.debug(f"[ONBOARD_PIN] No pin at {pin_key}")
-            return None
-        pin = _json.loads(pin_data if isinstance(pin_data, str) else pin_data.decode())
-        pinned_session_id = pin.get("client_session_id")
-        if pinned_session_id and refresh_ttl:
-            await raw_redis.expire(pin_key, _PIN_TTL)
-        return pinned_session_id
+        return await asyncio.wait_for(
+            _lookup_onboard_pin_inner(base_fingerprint, refresh_ttl=refresh_ttl),
+            timeout=_PIN_REDIS_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"[ONBOARD_PIN] Lookup timed out after {_PIN_REDIS_TIMEOUT}s "
+            f"for {base_fingerprint} — falling back to cold path"
+        )
+        return None
     except Exception as e:
         logger.debug(f"[ONBOARD_PIN] Pin lookup failed: {e}")
         return None
+
+
+async def _lookup_onboard_pin_inner(base_fingerprint: str, *, refresh_ttl: bool) -> Optional[str]:
+    from src.cache.redis_client import get_redis
+    import json as _json
+    raw_redis = await get_redis()
+    if not raw_redis:
+        return None
+    pin_key = f"recent_onboard:{base_fingerprint}"
+    pin_data = await raw_redis.get(pin_key)
+    if not pin_data:
+        logger.debug(f"[ONBOARD_PIN] No pin at {pin_key}")
+        return None
+    pin = _json.loads(pin_data if isinstance(pin_data, str) else pin_data.decode())
+    pinned_session_id = pin.get("client_session_id")
+    if pinned_session_id and refresh_ttl:
+        await raw_redis.expire(pin_key, _PIN_TTL)
+    return pinned_session_id
 
 
 async def set_onboard_pin(
@@ -562,33 +580,59 @@ async def set_onboard_pin(
         logger.debug("[ONBOARD_PIN] No fingerprint — skip pin-set")
         return False
     try:
-        from src.cache.redis_client import get_redis
-        import json as _json
-        raw_redis = await get_redis()
-        if not raw_redis:
-            logger.warning("[ONBOARD_PIN] Redis not available for pin-setting")
-            return False
-        candidates = _build_pin_fingerprint_candidates(
-            base_fingerprint,
-            client_hint=client_hint,
-            model_type=model_type,
-            user_agent=user_agent,
-            # If we can scope by model/client, avoid writing unscoped pin to
-            # prevent collisions across mixed-model traffic sharing one UA hash.
-            include_unscoped_fallback=not bool(client_hint or model_type),
+        return await asyncio.wait_for(
+            _set_onboard_pin_inner(
+                base_fingerprint,
+                agent_uuid,
+                client_session_id,
+                client_hint=client_hint,
+                model_type=model_type,
+                user_agent=user_agent,
+            ),
+            timeout=_PIN_REDIS_TIMEOUT,
         )
-        if not candidates:
-            return False
-
-        pin_data = _json.dumps({
-            "agent_uuid": agent_uuid,
-            "client_session_id": client_session_id,
-        })
-        for fp in candidates:
-            pin_key = f"recent_onboard:{fp}"
-            await raw_redis.setex(pin_key, _PIN_TTL, pin_data)
-            logger.info(f"[ONBOARD_PIN] Set {pin_key} -> {agent_uuid[:8]}...")
-        return True
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"[ONBOARD_PIN] Pin-set timed out after {_PIN_REDIS_TIMEOUT}s "
+            "— onboard proceeds, future requests skip pin"
+        )
+        return False
     except Exception as e:
         logger.warning(f"[ONBOARD_PIN] Could not set pin: {e}")
         return False
+
+
+async def _set_onboard_pin_inner(
+    base_fingerprint: str,
+    agent_uuid: str,
+    client_session_id: str,
+    *,
+    client_hint: Optional[str] = None,
+    model_type: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> bool:
+    from src.cache.redis_client import get_redis
+    import json as _json
+    raw_redis = await get_redis()
+    if not raw_redis:
+        logger.warning("[ONBOARD_PIN] Redis not available for pin-setting")
+        return False
+    candidates = _build_pin_fingerprint_candidates(
+        base_fingerprint,
+        client_hint=client_hint,
+        model_type=model_type,
+        user_agent=user_agent,
+        include_unscoped_fallback=not bool(client_hint or model_type),
+    )
+    if not candidates:
+        return False
+
+    pin_data = _json.dumps({
+        "agent_uuid": agent_uuid,
+        "client_session_id": client_session_id,
+    })
+    for fp in candidates:
+        pin_key = f"recent_onboard:{fp}"
+        await raw_redis.setex(pin_key, _PIN_TTL, pin_data)
+        logger.info(f"[ONBOARD_PIN] Set pin for agent {agent_uuid[:8]}...")
+    return True

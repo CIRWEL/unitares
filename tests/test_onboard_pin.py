@@ -305,6 +305,58 @@ class TestSharedPinOperations:
             assert result is None
 
     @pytest.mark.asyncio
+    async def test_lookup_pin_redis_hang_degrades_to_none(self):
+        """lookup_onboard_pin() must time-bound redis under anyio task-group
+        deadlock; on timeout, return None rather than hanging the MCP pipeline."""
+        import asyncio
+        from src.mcp_handlers.identity.handlers import lookup_onboard_pin
+
+        # Simulate a redis client whose .get() never resolves (the anyio-asyncio
+        # deadlock signature). The wait_for guard must short-circuit.
+        mock_redis = MagicMock()
+
+        async def hung_get(key):
+            await asyncio.sleep(10)  # well past the timeout
+
+        mock_redis.get = hung_get
+
+        async def get_redis_mock():
+            return mock_redis
+
+        with patch("src.cache.redis_client.get_redis", get_redis_mock), \
+             patch("src.mcp_handlers.identity.session._PIN_REDIS_TIMEOUT", 0.05):
+            start = asyncio.get_event_loop().time()
+            result = await lookup_onboard_pin("ua:hung")
+            elapsed = asyncio.get_event_loop().time() - start
+            assert result is None
+            assert elapsed < 1.0  # must NOT have waited the full sleep
+
+    @pytest.mark.asyncio
+    async def test_set_pin_redis_hang_degrades_to_false(self):
+        """set_onboard_pin() must time-bound redis; on timeout, return False
+        and let onboard succeed without a pin."""
+        import asyncio
+        from src.mcp_handlers.identity.handlers import set_onboard_pin
+
+        mock_redis = MagicMock()
+
+        async def hung_setex(key, ttl, data):
+            await asyncio.sleep(10)
+
+        mock_redis.setex = hung_setex
+
+        async def get_redis_mock():
+            return mock_redis
+
+        with patch("src.cache.redis_client.get_redis", get_redis_mock), \
+             patch("src.mcp_handlers.identity.session._PIN_REDIS_TIMEOUT", 0.05):
+            start = asyncio.get_event_loop().time()
+            result = await set_onboard_pin("ua:hung", "test-uuid", "agent-test123")
+            elapsed = asyncio.get_event_loop().time() - start
+            assert result is False
+            assert elapsed < 1.0
+
+    @pytest.mark.asyncio
     async def test_set_pin_correct_ttl(self):
         """set_onboard_pin() should use _PIN_TTL constant (1800s)."""
         from src.mcp_handlers.identity.handlers import set_onboard_pin, _PIN_TTL
