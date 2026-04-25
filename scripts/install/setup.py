@@ -345,11 +345,13 @@ def run_pipeline(
     # Phase 4: re-run doctor only when we actually mutated something.
     final = run_doctor() if apply else None
 
-    final_pass = (
-        final is not None
-        and not any(r["status"] == "fail" for r in final.get("results", []))
-    )
-    exit_code = 0 if (final is None or final_pass) else 1
+    # exit_code: 0 only if there are no fails. On --apply, gate on the post-
+    # mutation doctor. On dry-run, gate on the initial doctor — this makes
+    # `setup.py --json --non-interactive` usable as a CI gate that catches
+    # failing checks even when no remediation was attempted.
+    gate_payload = final if final is not None else initial
+    has_fail = any(r["status"] == "fail" for r in gate_payload.get("results", []))
+    exit_code = 1 if has_fail else 0
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -464,7 +466,11 @@ def _plan_to_json_safe(plan: list[PlanItem]) -> list[dict]:
     out: list[dict] = []
     for item in plan:
         d = asdict(item)
-        out.append({k: v for k, v in d.items() if v not in ("", False) or k in ("phase", "kind")})
+        out.append({
+            k: v
+            for k, v in d.items()
+            if v not in ("", False) or k in ("phase", "kind", "applied")
+        })
     return out
 
 
