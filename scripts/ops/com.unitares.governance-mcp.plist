@@ -80,6 +80,8 @@
         <string>GENERATE_YOUR_OWN_TOKEN</string>
         <key>UNITARES_CONTINUITY_TOKEN_SECRET</key>
         <string>GENERATE_YOUR_OWN_SECRET</string>
+        <key>UNITARES_LLM_MODEL</key>
+        <string>qwen3.6:27b-coding-nvfp4</string>
     </dict>
 </dict>
 </plist>
