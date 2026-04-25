@@ -532,6 +532,22 @@ class VigilAgent(GovernanceAgent):
             if sentinel_force_audit and not self.with_audit:
                 findings.append("Groundskeeper forced by Sentinel coordination")
 
+        # --- 4.5. KG hygiene v1: stale-opens propose-only sweep (optional) ---
+        stale_opens = await self._run_stale_opens_sweep(client)
+        if stale_opens:
+            oldest = stale_opens[0]
+            findings.append(
+                f"hygiene: {len(stale_opens)} stale opens (oldest "
+                f"{oldest.get('id', '?')[:12]}, "
+                f"age={oldest.get('last_activity_days', 0)}d)"
+            )
+            for item in stale_opens[:5]:  # top 5 inline; full count in cycle state
+                summary_short = (item.get("summary") or "")[:60]
+                age_days = item.get("last_activity_days", 0)
+                findings.append(
+                    f"stale_open: {item.get('id', '?')[:12]} \"{summary_short}\" age={age_days}d"
+                )
+
         # --- 5. Compute complexity/confidence from actual signals ---
         complexity = 0.15
         if self.with_tests:
@@ -569,6 +585,7 @@ class VigilAgent(GovernanceAgent):
             **health_state,
             "groundskeeper_stale": groundskeeper_summary.get("stale_found", 0),
             "groundskeeper_archived": groundskeeper_summary.get("archived", 0),
+            "hygiene_stale_opens": len(stale_opens),
             "total_cycles": total_cycles,
             "cycle_time": datetime.now(timezone.utc).isoformat(),
         }
