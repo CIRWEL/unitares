@@ -470,6 +470,12 @@ async def process_update_authenticated_async(
 
     # Get or create monitor
     monitor = await loop.run_in_executor(None, get_or_create_monitor, agent_id)
+    # Heal the DB ↔ file persistence split: if the on-disk state file is
+    # missing but core.agent_state has history, hydrate update_count +
+    # rolling histories from DB so this check-in continues from real state
+    # rather than from a fresh zero.
+    from src.agent_monitor_state import hydrate_from_db_if_fresh
+    await hydrate_from_db_if_fresh(monitor, agent_id)
 
     task_type = agent_state.get("task_type", "mixed")
 
@@ -503,7 +509,7 @@ async def process_update_authenticated_async(
                 meta.total_updates += 1
 
         # Enforce pause decisions (circuit breaker)
-        if decision_action == 'pause':
+        if decision_action == 'pause' and meta is not None:
             meta.status = "paused"
             meta.paused_at = now
             decision_reason = result.get('decision', {}).get('reason', 'Circuit breaker triggered')
@@ -560,7 +566,7 @@ async def process_update_authenticated_async(
                 logger.warning(f"Could not auto-initiate dialectic recovery: {e}")
 
         # Clear cooldown if it has passed
-        if meta.loop_cooldown_until:
+        if meta is not None and meta.loop_cooldown_until:
             cooldown_until = datetime.fromisoformat(meta.loop_cooldown_until)
             if datetime.now() >= cooldown_until:
                 meta.loop_cooldown_until = None

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import json
+import tempfile
 import time
 import fcntl
 import asyncio
@@ -18,6 +19,12 @@ from src.agent_metadata_model import project_root
 from src.governance_monitor import UNITARESMonitor
 
 logger = get_logger(__name__)
+
+# Budget for the file-write executor await. If the anyio task group stalls
+# the event loop (see docs anyio-deadlock note), we'd rather degrade than
+# hang the handler. hydrate_from_db_if_fresh heals the missed save on the
+# next monitor load, so dropping one write is no longer catastrophic.
+STATE_SAVE_TIMEOUT_SECONDS = 2.0
 
 # Store monitors per agent (shared mutable dict)
 monitors: dict[str, UNITARESMonitor] = {}
@@ -48,11 +55,31 @@ def get_state_file(agent_id: str) -> Path:
 
 
 def _write_state_file(state_file: Path, state_data: dict) -> None:
-    """Helper function to write state file (used by both sync and async versions)"""
-    with open(state_file, 'w') as f:
-        json.dump(state_data, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
+    """Atomically write the state file.
+
+    Write to a tempfile in the same directory, fsync, then os.replace onto
+    the final path. Prevents zero-byte / truncated files if the process is
+    killed mid-write (which would leave loaders seeing a corrupt JSON and
+    silently falling back to None).
+    """
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=state_file.parent,
+        prefix=f".{state_file.stem}.",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(tmp_fd, 'w') as f:
+            json.dump(state_data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, state_file)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _snapshot_governor_state(monitor: UNITARESMonitor) -> None:
@@ -99,7 +126,10 @@ async def save_monitor_state_async(agent_id: str, monitor: UNITARESMonitor) -> N
                 raise TimeoutError("State lock timeout")
 
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _write_state_file, state_file, state_data)
+            await asyncio.wait_for(
+                loop.run_in_executor(None, _write_state_file, state_file, state_data),
+                timeout=STATE_SAVE_TIMEOUT_SECONDS,
+            )
 
         finally:
             if lock_fd is not None:
@@ -111,11 +141,25 @@ async def save_monitor_state_async(agent_id: str, monitor: UNITARESMonitor) -> N
                     os.close(lock_fd)
                 except (OSError, ValueError):
                     pass
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"State file save for {agent_id} exceeded {STATE_SAVE_TIMEOUT_SECONDS}s "
+            f"(likely anyio/asyncio executor stall); dropped this save, "
+            f"monitor will rehydrate from DB on next load"
+        )
     except Exception as e:
         logger.warning(f"Could not acquire state lock for {agent_id}: {e}", exc_info=True)
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _write_state_file, state_file, state_data)
+            await asyncio.wait_for(
+                loop.run_in_executor(None, _write_state_file, state_file, state_data),
+                timeout=STATE_SAVE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Unlocked fallback save for {agent_id} also exceeded "
+                f"{STATE_SAVE_TIMEOUT_SECONDS}s; dropped"
+            )
         except Exception as fallback_error:
             logger.error(f"Failed to save state even without lock for {agent_id}: {fallback_error}", exc_info=True)
 
@@ -187,3 +231,72 @@ def load_monitor_state(agent_id: str) -> 'GovernanceState | None':
     except Exception as e:
         logger.warning(f"Could not load state for {agent_id}: {e}", exc_info=True)
         return None
+
+
+async def hydrate_from_db_if_fresh(monitor: UNITARESMonitor, agent_id: str) -> bool:
+    """Rehydrate a fresh monitor from core.agent_state when the JSON file is missing.
+
+    The file and the DB are two independent persistence paths. If a save
+    attempt is dropped (anyio executor stall, crash mid-write, unwritten
+    file for any reason), every subsequent server restart loads the monitor
+    as update_count=0 — displayed to the user as "uninitialized" —
+    even though the DB has the full history. This function closes that gap:
+    when called on a fresh monitor, it populates EISV, coherence, regime,
+    and rolling histories from the last ~50 DB records.
+
+    Safe to call unconditionally — no-ops if the monitor already has updates
+    or if the DB has no history for this agent. Never raises.
+
+    Returns True if hydration actually applied new state.
+    """
+    # Defensive: some test paths hand us SimpleNamespace-style state objects
+    # without the full GovernanceState interface. Treat missing update_count
+    # as 0 (which means "attempt hydrate") rather than crashing the handler.
+    if getattr(monitor.state, "update_count", 0) > 0:
+        return False
+    try:
+        from src.db import get_db
+        db = get_db()
+        identity = await db.get_identity(agent_id)
+        if identity is None:
+            return False
+        # Most-recent-first; we'll reverse for chronological history arrays
+        rows = await db.get_agent_state_history(
+            identity_id=identity.identity_id, limit=50
+        )
+        if not rows:
+            return False
+        chrono = list(reversed(rows))
+        latest = chrono[-1]
+
+        # Core EISV + coherence from latest row
+        monitor.state.unitaires_state.E = float(latest.energy)
+        monitor.state.unitaires_state.I = float(latest.integrity)
+        monitor.state.unitaires_state.S = float(latest.entropy)
+        monitor.state.unitaires_state.V = float(latest.void)
+        monitor.state.coherence = float(latest.coherence)
+        monitor.state.regime = str(latest.regime)
+
+        # Rolling histories (capped at what we fetched; monitor trims itself on next update)
+        monitor.state.E_history = [float(r.energy) for r in chrono]
+        monitor.state.I_history = [float(r.integrity) for r in chrono]
+        monitor.state.S_history = [float(r.entropy) for r in chrono]
+        monitor.state.V_history = [float(r.void) for r in chrono]
+        monitor.state.coherence_history = [float(r.coherence) for r in chrono]
+        monitor.state.regime_history = [str(r.regime) for r in chrono]
+
+        # update_count gates the "uninitialized" display. Using len(chrono) is
+        # a floor (true count may be higher — we only fetched 50); that's fine
+        # since the gate is >0, and downstream consumers of update_count treat
+        # it as "how much history have we seen" which is exactly len(chrono).
+        monitor.state.update_count = len(chrono)
+
+        logger.info(
+            f"Hydrated {agent_id} from core.agent_state: "
+            f"{len(chrono)} records, coherence={monitor.state.coherence:.3f}, "
+            f"regime={monitor.state.regime}"
+        )
+        return True
+    except Exception as e:
+        logger.warning(f"DB hydration failed for {agent_id}: {e}", exc_info=True)
+        return False
