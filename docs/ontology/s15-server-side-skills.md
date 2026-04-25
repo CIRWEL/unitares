@@ -330,6 +330,18 @@ S15-a alone closes the structural source-of-truth problem on the server. S15-b i
 - Cite this doc's §4 and §5 in the S15-a PR body. §5 in particular surfaces the activation-trigger portability problem that future adapter PRs must address.
 - Verify S15-a does NOT regress `describe_tool` / `list_tools` behavior — separate concern, separate handler.
 
+## 13. Post-S15-a / §6 empirical update (2026-04-25)
+
+**Status of shipped work as of this update:** S15-a (PR #157, server-side `skills` MCP tool), §6 cure (commit `910c0edb`, v2-ontology anti-pattern guards in `tool_descriptions.json`), and S15-b (canonical content consolidation in `unitares/skills/`) all merged to master between this doc's first draft (commit `1d976b1f`) and now.
+
+**Empirical evidence on §9 step 5 (S15-e Hermes adapter) scope.** Test executed 2026-04-25 evening against a Hermes v0.11.0 install on the primary Mac, model `qwen3.6:27b-coding-nvfp4` via local Ollama, MCP server at `http://localhost:8767/mcp/`. Result: model auto-discovered all 24 UNITARES tools and successfully invoked `mcp_unitares_health_check` from a one-shot prompt — without any Hermes-side skill bundle, without S15-c/d/e adapter work, and without any UNITARES-authored skill content reaching Hermes. The §6 tool-description guards alone carried the model. KG: `2026-04-25T13:21:32.782174`.
+
+**What this narrows.** §1d framed the originating Hermes incident as motivating S15-e ("Hermes adapter is needed so the model has access to UNITARES skill content"). The §6 cure displaces that framing. With v2-ontology invariants embedded in tool descriptions, S15-e is no longer the safety net for Hermes-class teaching gaps — it becomes a *recall-speed and procedural-knowledge* optimization (e.g., teaching the model "when to invoke dialectic," not "what `force_new=true` means"). The originating incident closes at §6, not at S15-e.
+
+**Operational implication.** S15-e remains optional and lower-priority than originally framed. The natural ordering is now: §6 audit completeness (more invariants embedded as Hermes-class clients exercise the surface and reveal gaps) before any S15-e adapter design starts. Any future "Hermes is reasoning incorrectly about X" finding should first ask whether X belongs in `tool_descriptions.json`.
+
+**No edits to §1–§12.** This section is a post-ship addendum; the original framing stands as a historical record of what the design assumed before empirical validation.
+
 ---
 
 ## Appendix: Design echoes from existing UNITARES patterns
