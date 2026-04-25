@@ -187,6 +187,52 @@ def ensure_secrets_file(path: Path, apply: bool) -> PlanItem:
     return item
 
 
+# Client detection table. Detection path = directory whose existence implies
+# the client is installed. config_path = where the user pastes the snippet.
+# format = "json" or "toml" — controls render shape in build_snippet().
+# These paths were sourced from each client's documented config locations as
+# of 2026-04-25; the copilot path is speculative and prints a TODO instead
+# of a real snippet (see build_snippet() handling).
+_CLIENT_TABLE = {
+    "claude_code": {
+        "detect_subpath": ".claude",
+        "config_subpath": ".claude/settings.json",
+        "format": "json",
+    },
+    "codex": {
+        "detect_subpath": ".codex",
+        "config_subpath": ".codex/config.toml",
+        "format": "toml",
+    },
+    "gemini": {
+        "detect_subpath": ".config/gemini",
+        "config_subpath": ".config/gemini/settings.json",
+        "format": "json",
+    },
+    "copilot": {
+        "detect_subpath": ".config/github-copilot-cli",
+        "config_subpath": ".config/github-copilot-cli/config.json",
+        "format": "todo",  # speculative — emits a note, not a snippet
+    },
+}
+
+
+def detect_clients(home: Path) -> dict[str, dict]:
+    """Probe the user's home directory for installed MCP clients.
+    Returns {client_name: {"config_path": "...", "format": "..."}}.
+    Clients whose detect path is missing are silently skipped.
+    """
+    out: dict[str, dict] = {}
+    for client, entry in _CLIENT_TABLE.items():
+        detect_path = home / entry["detect_subpath"]
+        if detect_path.exists():
+            out[client] = {
+                "config_path": str(home / entry["config_subpath"]),
+                "format": entry["format"],
+            }
+    return out
+
+
 def bootstrap_check() -> None:
     """Verify the MCP SDK is importable. Setup is not stdlib-only — it shares
     the server's runtime deps. If mcp is missing, exit early with the canonical

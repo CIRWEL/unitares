@@ -207,3 +207,29 @@ def test_ensure_secrets_file_does_not_overwrite_existing(setup_mod, tmp_path):
     # File preserved exactly.
     assert target.read_text() == "ANTHROPIC_API_KEY=existing-secret\n"
     assert item.applied is False
+
+
+def test_detect_clients_finds_existing_paths(setup_mod, tmp_path):
+    # Build a fake home with claude_code + codex installed; gemini and
+    # copilot absent.
+    fake_home = tmp_path / "home"
+    (fake_home / ".claude").mkdir(parents=True)
+    (fake_home / ".codex").mkdir(parents=True)
+    detected = setup_mod.detect_clients(fake_home)
+    assert "claude_code" in detected
+    assert "codex" in detected
+    assert "gemini" not in detected
+    assert "copilot" not in detected
+
+
+def test_detect_clients_returns_config_paths(setup_mod, tmp_path):
+    fake_home = tmp_path / "home"
+    (fake_home / ".claude").mkdir(parents=True)
+    detected = setup_mod.detect_clients(fake_home)
+    assert detected["claude_code"]["config_path"].endswith(".claude/settings.json")
+    assert detected["claude_code"]["format"] == "json"
+
+
+def test_detect_clients_handles_empty_home(setup_mod, tmp_path):
+    detected = setup_mod.detect_clients(tmp_path / "empty")
+    assert detected == {}
