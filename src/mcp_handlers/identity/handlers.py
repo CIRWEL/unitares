@@ -780,6 +780,27 @@ async def handle_identity_adapter(arguments: Dict[str, Any]) -> Sequence[TextCon
       3. Finisher — fall through to handle_identity_v2 + persist + response
     """
     arguments = arguments or {}
+
+    # S13 v2-ontology gate: arg-less identity() from a fresh process-instance
+    # with no proof signal mints fresh by default per identity.md §"Layered
+    # taxonomy of continuity". Mirrors the gate in handle_onboard_v2 (~L1197);
+    # without it, arg-less identity() falls through to IP:UA-pin resolution
+    # and silently re-binds to the prior session, which is the resolution
+    # path S13 retires for the unauthenticated case.
+    _has_proof_signal = bool(
+        arguments.get("continuity_token")
+        or arguments.get("client_session_id")
+        or arguments.get("agent_uuid")
+        or arguments.get("agent_id")
+        or arguments.get("name")
+    )
+    if not _has_proof_signal and not arguments.get("force_new"):
+        arguments["force_new"] = True
+        logger.info(
+            "[FRESH_INSTANCE] arg-less identity() with no proof signal — "
+            "defaulting to force_new=true per v2 ontology (S13)"
+        )
+
     force_new = arguments.get("force_new", False)
     resume = arguments.get("resume", True)
     model_type = arguments.get("model_type")

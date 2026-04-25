@@ -1684,6 +1684,111 @@ class TestHandleOnboardV2:
         ), "v2 gate should emit [FRESH_INSTANCE] log line for arg-less onboard()"
 
     @pytest.mark.asyncio
+    async def test_arg_less_identity_gates_to_fresh_per_v2_ontology(self, patch_onboard_deps, mock_db, mock_redis, caplog):
+        """S13 (2026-04-25): arg-less identity() with no proof signal mints fresh.
+
+        Mirror of test_arg_less_onboard_gates_to_fresh — handle_identity_adapter
+        gained a v2 gate analogous to handle_onboard_v2's so identity() also
+        short-circuits to fresh-mint instead of silently re-binding via the
+        IP:UA pin path. [FRESH_INSTANCE] log line confirms gate fired.
+        """
+        import logging
+        from src.mcp_handlers.identity.handlers import handle_identity_adapter
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.side_effect = [
+            None,
+            None,
+            SimpleNamespace(identity_id="new-ident-v2", metadata={}),
+        ]
+
+        with caplog.at_level(logging.INFO, logger="src.mcp_handlers.identity.handlers"):
+            await handle_identity_adapter({})
+
+        assert any(
+            "[FRESH_INSTANCE]" in record.getMessage()
+            and "identity()" in record.getMessage()
+            for record in caplog.records
+        ), "v2 gate should emit [FRESH_INSTANCE] log line for arg-less identity()"
+
+    @pytest.mark.asyncio
+    async def test_proof_signal_bypasses_identity_v2_gate(self, patch_onboard_deps, mock_db, mock_redis, caplog):
+        """S13: identity() with a proof signal must not fire the v2 gate.
+
+        Preserves the proof-signal resume path: identity(continuity_token=...)
+        or identity(agent_uuid=...) callers should still resolve to the prior
+        identity, not get gated to fresh-mint.
+        """
+        import logging
+        from src.mcp_handlers.identity.handlers import handle_identity_adapter
+
+        existing_uuid = str(uuid.uuid4())
+        mock_redis.get.return_value = {
+            "agent_id": existing_uuid,
+            "display_agent_id": "Claude_20260207",
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(
+            identity_id="existing-ident",
+            metadata={"agent_id": "Claude_20260207"},
+        )
+
+        with caplog.at_level(logging.INFO, logger="src.mcp_handlers.identity.handlers"):
+            await handle_identity_adapter({"client_session_id": "preserve-resume-path"})
+
+        assert not any(
+            "[FRESH_INSTANCE]" in record.getMessage()
+            and "identity()" in record.getMessage()
+            for record in caplog.records
+        ), "identity() v2 gate must NOT fire when client_session_id is presented"
+
+    @pytest.mark.asyncio
+    async def test_bind_session_non_coupling_to_s13_gate(self, patch_onboard_deps, mock_db, mock_redis, caplog):
+        """S13: bind_session shares the derive_session_key plumbing but must not
+        be coupled to the identity-adapter v2 gate. bind_session callers always
+        present an explicit client_session_id (it's the bind target), so the
+        gate's "no proof signal" predicate is structurally false. This test
+        documents that contract — if a future refactor moves the gate into
+        derive_session_key, bind_session callers would silently lose their
+        resume path. The fix would not be obvious without this regression.
+        """
+        import logging
+        from src.mcp_handlers.identity.handlers import handle_bind_session
+
+        target_uuid = str(uuid.uuid4())
+        resolved = {
+            "agent_uuid": target_uuid,
+            "agent_id": "Claude_20260225",
+            "label": "TestAgent",
+            "created": False,
+        }
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="ident-1")
+        mock_db.create_session = AsyncMock()
+
+        with patch("src.mcp_handlers.identity.handlers.resolve_session_identity", new=AsyncMock(return_value=resolved)), \
+             patch("src.mcp_handlers.identity.handlers.derive_session_key", new=AsyncMock(return_value="mcp:test-session")), \
+             patch("src.mcp_handlers.identity.handlers._cache_session", new=AsyncMock()), \
+             patch("src.mcp_handlers.identity.handlers.get_db", return_value=mock_db), \
+             patch("src.mcp_handlers.context.get_session_signals", return_value=SimpleNamespace(user_agent="test")), \
+             caplog.at_level(logging.INFO, logger="src.mcp_handlers.identity.handlers"):
+            result = await handle_bind_session({
+                "client_session_id": "agent-bind-test",
+                "agent_id": "Claude_20260225",
+                "resume": True,
+            })
+        data = parse_result(result)
+
+        # bind_session resolves to the existing identity (not fresh-minted)
+        assert data["success"] is True
+        assert data["bound"] is True
+        assert data["agent_uuid"] == target_uuid
+        # And the v2 gate did NOT fire — bind_session's resume path is preserved
+        assert not any(
+            "[FRESH_INSTANCE]" in record.getMessage() for record in caplog.records
+        ), "bind_session must not be gated by S13's fresh-instance posture"
+
+    @pytest.mark.asyncio
     async def test_proof_signal_bypasses_v2_gate(self, patch_onboard_deps, mock_db, mock_redis, caplog):
         """S13: passing client_session_id is a proof signal — gate must NOT fire.
 

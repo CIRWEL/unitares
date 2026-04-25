@@ -460,7 +460,7 @@ async def handle_list_tools(arguments: Dict[str, Any]) -> Sequence[TextContent]:
     # Description mapping for tools (fallback to generic if not found)
     tool_descriptions = {
         "onboard": "Register fresh process-instance with governance. Per v2 ontology, declare lineage via parent_agent_id rather than resume via token.",
-        "identity": "🪞 Check who you are or set your display name. Auto-creates identity if first call",
+        "identity": "🪞 Check who you are or set your display name. Per v2 ontology, arg-less identity() with no proof signal mints fresh; pass continuity_token / agent_uuid + proof to resume.",
         "process_agent_update": "💬 Share your work and get supportive feedback. Your main check-in tool",
         "get_governance_metrics": "📊 Get current state and metrics without updating",
         "simulate_update": "🧪 Test decisions without persisting state",
