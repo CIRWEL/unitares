@@ -20,7 +20,11 @@ from types import SimpleNamespace
 from src.http_api import _vigil_agent_id, _vigil_stats
 
 
-NOW = datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc)
+# Anchor on real wall-clock so offsets stay consistent with `time.time()`
+# inside _vigil_stats. A fixed datetime here goes stale once real time
+# advances past the 24h window, breaking cycles_24h / writes_24h tests
+# in CI on any day after the constant's value.
+NOW = datetime.now(timezone.utc)
 NOW_TS = NOW.timestamp()
 
 
