@@ -55,7 +55,15 @@ def _transport_cache_key(signals) -> Optional[str]:
     # each get their own cached identity instead of converging to one UUID.
     if signals.mcp_session_id:
         return f"sticky:{signals.ip_ua_fingerprint}:{signals.mcp_session_id}"
-    # Fingerprint-only for REST callers and non-MCP transports.
+    # MCP transport without mcp_session_id is NEVER cached: two MCP processes on
+    # the same host share IP:UA, so a fingerprint-only key would cross-bind their
+    # identities (e.g. cron-launched Vigil siphoning a Hermes/Claude session into
+    # its UUID). Force fresh identity resolution instead — the agent's onboard
+    # call will mint or recover correctly.
+    if signals.transport == "mcp":
+        return None
+    # Fingerprint-only for REST/SSE/stdio callers — these transports don't carry
+    # an mcp-session-id header and would otherwise lose all caching.
     return f"sticky:{signals.ip_ua_fingerprint}"
 
 
