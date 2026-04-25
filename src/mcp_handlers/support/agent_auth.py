@@ -353,16 +353,16 @@ def require_registered_agent(arguments: Dict[str, Any]) -> Tuple[str, Optional[T
                     "action": "Call onboard() first to create your identity, or call process_agent_update() to auto-create",
                     "related_tools": ["onboard", "process_agent_update", "identity", "list_tools"],
                     "workflow": [
-                        "1. Call onboard() - creates identity + gives you templates (recommended)",
-                        "   OR call process_agent_update() - identity auto-creates",
+                        "1. Call onboard(force_new=true, parent_agent_id='<prior UUID>' if continuing prior work, spawn_reason='new_session')",
+                        "   — per v2 ontology, fresh process-instances mint fresh identity; lineage is declared, not resumed via token",
                         "2. Save client_session_id from response",
-                        "3. Call identity(name='your_name') to name yourself",
-                        "4. Include client_session_id in all future calls",
+                        "3. Call identity(name='your_name') to set a cosmetic label",
+                        "4. Include client_session_id in all future calls within this process-instance",
                         "5. Then call this tool again"
                     ],
                     "naming_suggestions": naming_guidance,
                     "onboarding_sequence": ["onboard", "identity", "process_agent_update", "list_tools"],
-                    "tip": "onboard() is the START HERE tool - it gives you everything you need in one call!"
+                    "tip": "onboard() registers the current process-instance with governance — see docs/ontology/identity.md for the full v2 ontology"
                 }
             )
 

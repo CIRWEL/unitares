@@ -1176,6 +1176,29 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
 
     arguments = arguments or {}
 
+    # S13 v2-ontology gate: arg-less onboard from a fresh process-instance
+    # mints fresh by default per identity.md §"Layered taxonomy of continuity".
+    # Caller opts back into resume by passing any proof signal — explicit
+    # force_new flag, ownership proof (continuity_token, agent_uuid, agent_id),
+    # transport-bound session signal (client_session_id), or display name.
+    # Without any signal we have nothing to honestly resume to; the legacy
+    # IP:UA pin path was the performative fill-in this gate retires for the
+    # arg-less case. Plugin-side complement of this gate landed as
+    # unitares-governance-plugin#17 (S11) on 2026-04-21.
+    _has_proof_signal = bool(
+        arguments.get("continuity_token")
+        or arguments.get("client_session_id")
+        or arguments.get("agent_uuid")
+        or arguments.get("agent_id")
+        or arguments.get("name")
+    )
+    if not _has_proof_signal and not arguments.get("force_new"):
+        arguments["force_new"] = True
+        logger.info(
+            "[FRESH_INSTANCE] arg-less onboard() with no proof signal — "
+            "defaulting to force_new=true per v2 ontology (S13)"
+        )
+
     # Extract optional parameters
     name = arguments.get("name")  # Optional: set display name
     force_new = coerce_bool(arguments.get("force_new"), default=False)  # Force new identity creation
