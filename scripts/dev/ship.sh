@@ -59,6 +59,19 @@ fi
 KIND=$(classify)
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
+# S15-d gate: if this commit touches skills/, the plugin's mirror must be
+# in sync with unitares canonical. Fires only when skills/ is staged AND the
+# plugin checkout is reachable (script no-ops on operators without it).
+if git diff --cached --name-only | grep -q '^skills/'; then
+    if ! "$PROJECT_ROOT/scripts/dev/sync-plugin-skills.sh" --check; then
+        echo
+        echo "[ship] skills/ staged but plugin bundle is out of sync." >&2
+        echo "[ship] run: ./scripts/dev/sync-plugin-skills.sh" >&2
+        echo "[ship] then commit the plugin-side mirror update before shipping the unitares-side change." >&2
+        exit 1
+    fi
+fi
+
 case "$KIND" in
     empty)
         echo "nothing staged — stage files with 'git add' first" >&2
