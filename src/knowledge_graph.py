@@ -249,3 +249,38 @@ async def get_knowledge_graph() -> Any:
             f"Unknown knowledge backend '{backend}'. "
             f"Set UNITARES_KNOWLEDGE_BACKEND to 'age' or 'postgres'."
         )
+
+
+def selected_backend_name() -> str:
+    """Resolve the active backend label without instantiating it.
+
+    Mirrors the env-var precedence in ``get_knowledge_graph`` so health checks
+    and capability probes can run inside anyio contexts where instantiating
+    the backend would deadlock on asyncpg.
+    """
+    backend = os.getenv("UNITARES_KNOWLEDGE_BACKEND", "auto").strip().lower()
+    db_backend = os.getenv("DB_BACKEND", "postgres").strip().lower()
+    if backend == "auto" and db_backend == "postgres":
+        return "postgres"
+    if backend in ("age", "postgres"):
+        return backend
+    if backend == "auto":
+        return "postgres"
+    return backend
+
+
+def backend_supports_semantic_search() -> bool:
+    """True when the configured backend exposes ``semantic_search``.
+
+    Class-level introspection — does not instantiate or touch the DB. Used by
+    health checks to distinguish embedder availability (the model service is
+    loadable) from semantic-search reachability (the active backend can use it).
+    """
+    name = selected_backend_name()
+    if name == "age":
+        try:
+            from src.storage.knowledge_graph import KnowledgeGraphAGE
+            return hasattr(KnowledgeGraphAGE, "semantic_search")
+        except Exception:
+            return False
+    return False

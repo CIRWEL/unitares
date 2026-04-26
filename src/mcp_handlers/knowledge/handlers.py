@@ -689,6 +689,16 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         # Accept both "query" and "text" as parameter names for better UX
         query_text = arguments.get("query") or arguments.get("text")
         agent_id = arguments.get("agent_id")
+        # Force a specific retrieval mode. 'auto' (default) preserves the
+        # historical heuristic; explicit values fail honestly instead of silently
+        # routing to FTS — the whole point of this surface is making the routing
+        # decision visible (issue #165).
+        search_mode_param = (arguments.get("search_mode") or "auto").lower()
+        if search_mode_param not in {"auto", "fts", "semantic", "hybrid"}:
+            return [error_response(
+                f"Invalid search_mode {search_mode_param!r}; "
+                "expected one of: auto, fts, semantic, hybrid"
+            )]
         # Labels to exclude (e.g. ["Vigil"]) — lets the dashboard hide
         # janitorial residents from the default Discoveries feed. Resolved to
         # agent_ids below, applied as a post-query filter over `results`.
@@ -736,27 +746,74 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         graph_expand_on = _graph_expansion_enabled()
 
         t0 = time.perf_counter()
+        # Track why the chosen mode is what it is — surfaced in the response so
+        # callers can tell a configured-FTS run from a silent-degrade-to-FTS run
+        # (issue #165).
+        semantic_skipped_reason: Optional[str] = None
         if query_text:
-            # UX FIX (Dec 2025): Auto-enable semantic search for conceptual queries
-            # - If semantic=True explicitly: always use semantic search
-            # - If semantic=False explicitly: never use semantic search
-            # - If semantic not specified: auto-detect based on query complexity
-            #   (queries with 2+ words are likely conceptual, benefit from semantic)
             has_semantic = hasattr(graph, "semantic_search")
+            has_fts = hasattr(graph, "full_text_search")
+            backend_label = graph.__class__.__name__
             explicit_semantic = arguments.get("semantic")
 
-            if explicit_semantic is not None:
-                # User explicitly chose - respect their choice
-                use_semantic = explicit_semantic and has_semantic
+            # Forced modes: error honestly when the backend can't deliver.
+            # 'auto' falls back to FTS but records the reason. 'fts' is always
+            # OK as long as the backend exposes full_text_search.
+            if search_mode_param == "semantic" and not has_semantic:
+                return [error_response(
+                    f"search_mode=semantic requires a backend with semantic_search; "
+                    f"active backend {backend_label} has none. "
+                    f"Use search_mode=fts, or set UNITARES_KNOWLEDGE_BACKEND=age."
+                )]
+            if search_mode_param == "hybrid" and not (has_semantic and has_fts):
+                missing = []
+                if not has_semantic:
+                    missing.append("semantic_search")
+                if not has_fts:
+                    missing.append("full_text_search")
+                return [error_response(
+                    f"search_mode=hybrid requires both semantic and FTS; "
+                    f"active backend {backend_label} is missing {', '.join(missing)}."
+                )]
+            if search_mode_param == "fts" and not has_fts:
+                return [error_response(
+                    f"search_mode=fts requires full_text_search; "
+                    f"active backend {backend_label} has none."
+                )]
+
+            # Decide whether semantic should run.
+            if search_mode_param in ("semantic", "hybrid"):
+                use_semantic = True
+            elif search_mode_param == "fts":
+                use_semantic = False
+                if has_semantic:
+                    semantic_skipped_reason = "caller forced search_mode=fts"
+            elif explicit_semantic is False:
+                use_semantic = False
+                semantic_skipped_reason = "caller passed semantic=false"
+            elif explicit_semantic is True:
+                if not has_semantic:
+                    return [error_response(
+                        f"semantic=true requires a backend with semantic_search; "
+                        f"active backend {backend_label} has none."
+                    )]
+                use_semantic = True
             else:
-                # Auto-detect: use semantic search when available for any text query
-                # Single-word queries benefit from semantic search too (substring_scan
-                # is limited to 50 recent entries and misses most results)
+                # auto: prefer semantic when the backend supports it
                 use_semantic = has_semantic
-            has_fts = hasattr(graph, "full_text_search")
-            # Phase 4 hybrid path: fires when hybrid flag on, semantic usable, FTS
-            # available. Skips the sequential single-mode branches below.
-            hybrid_path = hybrid_on and use_semantic and has_fts
+                if not has_semantic:
+                    semantic_skipped_reason = (
+                        f"backend {backend_label} has no semantic_search "
+                        "(set UNITARES_KNOWLEDGE_BACKEND=age to enable)"
+                    )
+
+            # Phase 4 hybrid path: only when caller forces hybrid, OR (auto + flag on + capable).
+            if search_mode_param == "hybrid":
+                hybrid_path = True  # already validated has_semantic and has_fts above
+            else:
+                hybrid_path = (
+                    search_mode_param == "auto" and hybrid_on and use_semantic and has_fts
+                )
             if hybrid_path:
                 import asyncio as _asyncio
                 min_similarity = arguments.get("min_similarity", 0.3)
@@ -1080,6 +1137,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         # Include similarity scores for semantic search
         response_data = {
             "search_mode_used": search_mode,
+            "search_mode_requested": search_mode_param,
             "operator_used": operator_used,
             "fields_searched": fields_searched,
             "query": query_text,
@@ -1087,6 +1145,8 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             "count": len(results),
             "message": f"Found {len(results)} discovery(ies)" + (" (details auto-included for small result set)" if auto_details else "" if include_details else " (summaries only)")
         }
+        if semantic_skipped_reason:
+            response_data["semantic_skipped_reason"] = semantic_skipped_reason
 
         # Surface semantic search degradation to caller
         if search_degraded_warning:

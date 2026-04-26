@@ -518,21 +518,46 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
 
     # KG check: get_knowledge_graph() initializes the AGE backend which acquires a
     # PostgreSQL connection — this deadlocks in the anyio context. Skip DB interaction
-    # and report embeddings status only (the actual signal of KG health).
+    # and report capability flags via class introspection.
+    #
+    # Two separate signals — the embedder service can be up while the active
+    # backend lacks semantic_search, in which case `knowledge action=search`
+    # silently routes to FTS. Surfacing both lets callers see the gap.
     try:
-        embeddings_ok = False
+        embedder_ok = False
         try:
             from src.embeddings import embeddings_available
-            embeddings_ok = embeddings_available()
+            embedder_ok = embeddings_available()
         except Exception:
             pass
+        try:
+            from src.knowledge_graph import (
+                backend_supports_semantic_search,
+                selected_backend_name,
+            )
+            backend_name = selected_backend_name()
+            semantic_backend_ok = backend_supports_semantic_search()
+        except Exception:
+            backend_name = "unknown"
+            semantic_backend_ok = False
+
+        semantic_search_reachable = embedder_ok and semantic_backend_ok
         checks["knowledge_graph"] = {
-            "status": "healthy" if embeddings_ok else "degraded",
-            "backend": "age",
-            "embeddings_available": embeddings_ok,
+            "status": "healthy" if semantic_search_reachable else "degraded",
+            "backend": backend_name,
+            "embedder_available": embedder_ok,
+            "semantic_backend_available": semantic_backend_ok,
+            "semantic_search_reachable": semantic_search_reachable,
         }
-        if not embeddings_ok:
-            checks["knowledge_graph"]["warning"] = "Semantic search unavailable — embeddings service not loaded."
+        if not embedder_ok:
+            checks["knowledge_graph"]["warning"] = (
+                "Embedder service not loaded — semantic search unavailable."
+            )
+        elif not semantic_backend_ok:
+            checks["knowledge_graph"]["warning"] = (
+                f"Embedder is up but backend '{backend_name}' has no semantic_search; "
+                f"`knowledge action=search` falls back to FTS."
+            )
     except Exception as e:
         checks["knowledge_graph"] = {"status": "error", "error": str(e)}
 

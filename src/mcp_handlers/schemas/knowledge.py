@@ -95,6 +95,15 @@ class SearchKnowledgeGraphParams(AgentIdentityMixin):
         default=False,
         description="If true, includes full details for each discovery"
     )
+    search_mode: Optional[Literal["auto", "fts", "semantic", "hybrid"]] = Field(
+        default="auto",
+        description=(
+            "Force a specific retrieval mode. 'auto' picks the best available "
+            "(hybrid > semantic > fts > substring). 'semantic' and 'hybrid' "
+            "fail honestly when the backend has no semantic_search — the "
+            "router does not silently fall back to FTS."
+        ),
+    )
 
     @model_validator(mode='after')
     def coerce_types(self):
