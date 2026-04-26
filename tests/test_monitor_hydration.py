@@ -144,6 +144,8 @@ async def test_hydrate_rebuilds_decision_history_from_state_json_action():
     assert applied is True
     # Chronological (oldest → newest)
     assert monitor.state.decision_history == ["proceed", "reflect", "proceed"]
+    # verdict_history hydrated from the same rows
+    assert monitor.state.verdict_history == ["safe", "caution", "safe"]
 
 
 @pytest.mark.asyncio
@@ -173,6 +175,10 @@ async def test_hydrate_skips_legacy_rows_missing_action_key():
 
     assert applied is True
     assert monitor.state.decision_history == []
+    # verdict_history DOES populate from legacy rows — the verdict key
+    # has been persisted since long before the action-write change, so
+    # observe summary still surfaces a non-empty verdict_distribution.
+    assert monitor.state.verdict_history == ["caution", "safe"]
     # Histories that should populate still do
     assert monitor.state.regime_history == ["CONVERGENCE", "DIVERGENCE"]
 
