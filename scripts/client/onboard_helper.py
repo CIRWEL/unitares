@@ -150,6 +150,27 @@ def trajectory_required(parsed: dict) -> bool:
 
 # --- Core flow -------------------------------------------------------------
 
+def _build_bootstrap_initial_state() -> dict:
+    """Bootstrap check-in payload sent by the hook (per onboard-bootstrap-checkin §3.5).
+
+    Hook-driven onboards always claim task_type='introspection' — the agent
+    has no real task at session-start. The hook MUST NOT fabricate
+    confidence values from session metadata; we omit confidence and
+    complexity so the server fills its 0.5 defaults. response_text is also
+    omitted so the server's "[bootstrap] " + client_hint composition
+    applies.
+
+    Substrate-earned exemption is enforced server-side via
+    is_substrate_earned (Phase 2). The hook can safely send initial_state
+    unconditionally: substrate-earned identities receive bootstrap.written:
+    false with reason='substrate-earned-exempt' and no row is written. In
+    practice no substrate-earned resident runs through this hook (they're
+    launchd-managed), so the structural protection is "residents don't
+    fire SessionStart."
+    """
+    return {"task_type": "introspection"}
+
+
 def run_onboard(
     *,
     server_url: str,
@@ -160,6 +181,7 @@ def run_onboard(
     force_new: bool = False,
     auth_token: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
+    with_bootstrap: bool = True,
     post_json: Callable[[str, dict, float, str | None], dict] = _post_json,
     read_cache: Callable[..., dict] = _read_cache,
     write_cache: Callable[..., None] = _write_cache,
@@ -170,6 +192,11 @@ def run_onboard(
     workspace can each own their own identity (typically the Claude Code
     session_id from hook input). When omitted, falls back to the legacy
     shared session.json — preserves single-process behavior.
+
+    ``with_bootstrap`` (default True) attaches an initial_state payload so
+    the server writes a bootstrap check-in row at t=0 per
+    docs/proposals/onboard-bootstrap-checkin.md §3.5. Idempotent on resume
+    (server returns the existing bootstrap row's state_id).
     """
     url = f"{server_url.rstrip('/')}/v1/tools/call"
     cache = read_cache(workspace, slot)
@@ -184,6 +211,9 @@ def run_onboard(
             arguments["continuity_token"] = cached_token
         elif cached_session:
             arguments["client_session_id"] = cached_session
+
+    if with_bootstrap:
+        arguments["initial_state"] = _build_bootstrap_initial_state()
 
     raw = post_json(url, {"name": "onboard", "arguments": arguments}, timeout, auth_token)
     parsed = unwrap_tool_response(raw)
@@ -238,6 +268,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force-new", action="store_true",
                         help="Explicit opt-in to create a fresh identity (never automatic)")
     parser.add_argument(
+        "--no-bootstrap",
+        dest="with_bootstrap",
+        action="store_false",
+        default=True,
+        help="Skip the bootstrap check-in payload. Default is to send "
+             "initial_state so the server writes a t=0 anchor (per "
+             "onboard-bootstrap-checkin §3.5). Use this for callers that "
+             "explicitly want no bootstrap row.",
+    )
+    parser.add_argument(
         "--slot",
         default=os.environ.get("UNITARES_SESSION_SLOT", ""),
         help="Per-process slot key (typically Claude Code session_id) so "
@@ -257,6 +297,7 @@ def main(argv: list[str] | None = None) -> int:
         workspace=workspace,
         slot=slot,
         force_new=args.force_new,
+        with_bootstrap=args.with_bootstrap,
         auth_token=auth_token,
         timeout=args.timeout,
     )
