@@ -1,6 +1,8 @@
 """Session-scoped schema bootstrap for resident_progress integration tests."""
 from __future__ import annotations
 
+import json
+
 import pytest
 import pytest_asyncio
 
@@ -9,6 +11,22 @@ from tests.test_db_utils import (
     ensure_test_database_schema,
     TEST_DB_URL,
 )
+
+
+async def _init_json_codec(conn) -> None:
+    """Register jsonb codec so asyncpg returns dicts instead of raw JSON strings.
+
+    The encoder is identity because snapshot_writer passes pre-encoded JSON strings
+    with a ::jsonb cast — asyncpg should not re-encode them.  The decoder runs
+    json.loads so SELECT results come back as Python dicts.
+    """
+    await conn.set_type_codec(
+        "jsonb",
+        encoder=lambda v: v,  # value is already a JSON string at send time
+        decoder=json.loads,
+        schema="pg_catalog",
+        format="text",
+    )
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session", autouse=True)
@@ -41,7 +59,9 @@ async def test_db():
         pytest.skip("asyncpg not installed")
 
     try:
-        pool = await asyncpg.create_pool(TEST_DB_URL, min_size=1, max_size=3, timeout=5)
+        pool = await asyncpg.create_pool(
+            TEST_DB_URL, min_size=1, max_size=3, timeout=5, init=_init_json_codec
+        )
     except Exception:
         pytest.skip("governance_test database not available")
 
