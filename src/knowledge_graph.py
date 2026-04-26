@@ -11,7 +11,7 @@ Backends:
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Literal, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import re
 import asyncio
@@ -84,7 +84,7 @@ class DiscoveryNode:
     details: str = ""
     tags: List[str] = field(default_factory=list)
     severity: Optional[str] = None  # "low", "medium", "high", "critical"
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     status: str = "open"  # "open", "resolved", "archived", "disputed"
     related_to: List[str] = field(default_factory=list)  # IDs of related discoveries (backward compat)
     response_to: Optional[ResponseTo] = None  # Typed response to parent discovery
@@ -177,7 +177,7 @@ class DiscoveryNode:
             details=data.get("details", ""),
             tags=data.get("tags", []),
             severity=data.get("severity"),
-            timestamp=data.get("timestamp", datetime.now().isoformat()),
+            timestamp=data.get("timestamp", datetime.now(timezone.utc).isoformat()),
             status=data.get("status", "open"),
             related_to=data.get("related_to", []),
             response_to=response_to,
