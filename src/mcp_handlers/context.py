@@ -38,7 +38,12 @@ class SessionSignals:
     client_hint: Optional[str] = None         # detected client type (cursor, claude_desktop, etc.)
     x_agent_name: Optional[str] = None        # X-Agent-Name header
     x_agent_id: Optional[str] = None          # X-Agent-Id header
-    transport: str = "unknown"                # "mcp", "rest", "sse", "stdio"
+    transport: str = "unknown"                # "mcp", "rest", "sse", "stdio", "uds"
+    # S19 substrate attestation: kernel-attested peer PID for UDS connections
+    # only. Populated by the UDS listener (PR3c) at accept time via
+    # LOCAL_PEERPID; left None for HTTP/SSE/stdio transports. Read by the
+    # substrate-claim verification path in src/substrate/verification.py.
+    peer_pid: Optional[int] = None
 
 # Contextvar for SessionSignals — set once per request at the transport layer
 _session_signals: ContextVar[Optional[SessionSignals]] = ContextVar('session_signals', default=None)
