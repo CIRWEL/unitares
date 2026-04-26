@@ -6,13 +6,15 @@ Enables validation of the EISV model by collecting real outcome data
 EISV state at outcome time.
 """
 
-from typing import Dict, Any, Sequence
+import time as _time
+from typing import Dict, Any, Optional, Sequence
 from mcp.types import TextContent
 from ..utils import success_response, error_response
 from ..decorators import mcp_tool
 from src.logging_utils import get_logger
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
 from src.services.runtime_queries import _build_eisv_semantics
+from src.monitor_prediction import lookup_prediction, consume_prediction
 logger = get_logger(__name__)
 
 # Outcome types that are considered "bad" by default
@@ -160,42 +162,83 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
 
     # Resolve confidence before persisting detail so exports can reconstruct the lane.
     #
+    # Two-phase prediction resolution: peek first to compute binding label,
+    # then consume only if live. See spec §4 — without peek, ttl_expired and
+    # missing collapse into the same None return from consume_prediction.
+    #
     # Resolution order:
-    #   1. Explicit `prediction_id` — exact lookup against the agent's open
+    #   1. Explicit `prediction_id` — two-phase lookup against the agent's open
     #      prediction registry. This is the phase-one seam that lets
     #      outcome_event reference a specific (confidence, timestamp) pair
     #      instead of relying on the _prev_confidence temporal proxy.
     #   2. Explicit `confidence` argument — caller overrode registration.
     #   3. Fallback to monitor._prev_confidence (most recent value seen).
-    _confidence = None
+    #   4. DB audit trail fallback.
+    _confidence: Optional[float] = None
     prediction_id = arguments.get("prediction_id")
     prediction_source = None
     prediction_record = None
+    prediction_binding: str = "no_binding"
+    _monitors = getattr(mcp_server, "monitors", None) or {}
+    _monitor_for_ttl = _monitors.get(agent_id) if isinstance(_monitors, dict) else None
+    ttl_seconds = float(getattr(_monitor_for_ttl, "_prediction_ttl_seconds", 3600.0))
+
     if prediction_id:
-        try:
-            _m = mcp_server.monitors.get(agent_id)
-            if _m is not None:
-                prediction_record = _m.consume_prediction(prediction_id)
-                if prediction_record is not None:
-                    _confidence = float(prediction_record.get("confidence"))
-                    prediction_source = "registry"
-        except Exception:
-            pass
+        _m = _monitors.get(agent_id) if isinstance(_monitors, dict) else None
+        open_predictions = getattr(_m, "_open_predictions", None) if _m else None
+        if open_predictions is not None:
+            record_peek = lookup_prediction(open_predictions, prediction_id)
+            if record_peek is None:
+                prediction_binding = "missing_prediction"
+            else:
+                age = _time.monotonic() - float(record_peek.get("created_at", 0.0))
+                if age > ttl_seconds:
+                    prediction_binding = "ttl_expired_fallback"
+                else:
+                    prediction_record = consume_prediction(
+                        open_predictions, prediction_id, ttl_seconds=ttl_seconds
+                    )
+                    if prediction_record is not None:
+                        _confidence = float(prediction_record.get("confidence"))
+                        prediction_source = "registry"
+                        prediction_binding = "registry"
+                    else:
+                        # Race: another consumer beat us. Treat as missing.
+                        prediction_binding = "missing_prediction"
+        else:
+            # No open_predictions available (old monitor or no monitor)
+            try:
+                if _m is not None:
+                    prediction_record = _m.consume_prediction(prediction_id)
+                    if prediction_record is not None:
+                        _confidence = float(prediction_record.get("confidence"))
+                        prediction_source = "registry"
+                        prediction_binding = "registry"
+                    else:
+                        prediction_binding = "missing_prediction"
+            except Exception:
+                prediction_binding = "missing_prediction"
 
     if _confidence is None:
         _raw_conf = arguments.get("confidence")
         if _raw_conf is not None:
             _confidence = float(_raw_conf)
             prediction_source = prediction_source or "argument"
+            if prediction_binding == "no_binding":
+                prediction_binding = "argument_fallback"
+
     if _confidence is None:
         try:
-            monitor = mcp_server.monitors.get(agent_id)
-            prev_confidence = getattr(monitor, "_prev_confidence", None) if monitor else None
+            _mon = mcp_server.monitors.get(agent_id)
+            prev_confidence = getattr(_mon, "_prev_confidence", None) if _mon else None
             if isinstance(prev_confidence, (int, float)):
                 _confidence = float(prev_confidence)
                 prediction_source = prediction_source or "prev_confidence_fallback"
+                if prediction_binding == "no_binding":
+                    prediction_binding = "prev_confidence_fallback"
         except Exception:
             pass
+
     # Step 4: DB fallback — query audit trail for most recent confidence
     if _confidence is None:
         try:
@@ -203,6 +246,8 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
             if db_conf is not None:
                 _confidence = db_conf
                 prediction_source = prediction_source or "audit_trail_fallback"
+                if prediction_binding == "no_binding":
+                    prediction_binding = "audit_trail_fallback"
         except Exception:
             pass
 
@@ -294,6 +339,7 @@ async def handle_outcome_event(arguments: Dict[str, Any]) -> Sequence[TextConten
         "is_bad": is_bad,
         "outcome_score": outcome_score,
         "eisv_snapshot": snapshot,
+        "prediction_binding": prediction_binding,
     })
 
 

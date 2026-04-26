@@ -48,17 +48,23 @@ def lookup_prediction(
 def consume_prediction(
     open_predictions: Dict[str, Dict],
     prediction_id: str,
+    *,
+    ttl_seconds: float = 3600.0,
 ) -> Optional[Dict[str, Any]]:
     """Mark a prediction as consumed and return its record.
 
-    Returns None if the id is unknown or already consumed. The record is
-    kept in the registry (with consumed=True) until TTL expiry so repeated
-    outcome events against the same prediction can be detected by callers.
+    Returns None if the id is unknown, already consumed, or past TTL.
+    Expired records are NOT marked consumed — they remain in the registry
+    so callers using lookup_prediction can distinguish "missing" from
+    "expired" when computing prediction_binding labels.
     """
     if not prediction_id:
         return None
     record = open_predictions.get(prediction_id)
     if not record or record.get("consumed"):
+        return None
+    age = _time.monotonic() - float(record.get("created_at", 0.0))
+    if age > ttl_seconds:
         return None
     record["consumed"] = True
     return dict(record)
