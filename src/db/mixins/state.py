@@ -41,6 +41,96 @@ class StateMixin:
             # Matview refresh moved to periodic_matview_refresh() in background_tasks.py
             return state_id
 
+    async def record_bootstrap_state(
+        self,
+        identity_id: int,
+        entropy: float,
+        integrity: float,
+        stability_index: float,
+        void: float,
+        regime: str,
+        coherence: float,
+        state_json: Dict[str, Any],
+    ) -> tuple[int, bool]:
+        """Insert a synthetic bootstrap row, idempotent on (identity_id) via the
+        unique partial index from migration 018. Returns (state_id, was_written).
+
+        On UniqueViolationError (race lost or already-bootstrapped), looks up
+        the existing bootstrap row and returns its state_id with was_written=False.
+        Callers use was_written to populate `bootstrap.written` in the response.
+        """
+        import asyncpg
+        from config.governance_config import GovernanceConfig
+        async with self.acquire() as conn:
+            try:
+                state_id = await conn.fetchval(
+                    """
+                    INSERT INTO core.agent_state
+                        (identity_id, entropy, integrity, stability_index, volatility,
+                         regime, coherence, state_json, epoch, synthetic)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
+                    RETURNING state_id
+                    """,
+                    identity_id, entropy, integrity, stability_index, void,
+                    regime, coherence, json.dumps(state_json),
+                    GovernanceConfig.CURRENT_EPOCH,
+                )
+                return state_id, True
+            except asyncpg.UniqueViolationError:
+                existing = await conn.fetchval(
+                    """
+                    SELECT state_id FROM core.agent_state
+                    WHERE identity_id = $1 AND synthetic = true
+                    """,
+                    identity_id,
+                )
+                return existing, False
+
+    async def get_bootstrap_state(
+        self,
+        identity_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the bootstrap row for an identity, or None if absent.
+
+        Returns {state_id, state_json} — the digest is read from state_json
+        by the handler, not pulled out as a separate column.
+        """
+        async with self.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT state_id, state_json
+                FROM core.agent_state
+                WHERE identity_id = $1 AND synthetic = true
+                """,
+                identity_id,
+            )
+            if row is None:
+                return None
+            state_json = row["state_json"]
+            if isinstance(state_json, str):
+                state_json = json.loads(state_json)
+            return {"state_id": row["state_id"], "state_json": state_json}
+
+    async def is_substrate_earned(self, agent_id: str) -> bool:
+        """Substrate-earned check for the bootstrap-checkin exemption (§3.5).
+
+        True iff the agent_id is registered in core.substrate_claims (S19's
+        canonical resident-attestation registry) OR appears in the small
+        Pi-resident allowlist for cross-substrate cases like Lumen.
+        """
+        from src.mcp_handlers.identity.bootstrap_checkin import (
+            PI_RESIDENT_ALLOWLIST,
+        )
+        if agent_id in PI_RESIDENT_ALLOWLIST:
+            return True
+        async with self.acquire() as conn:
+            return bool(
+                await conn.fetchval(
+                    "SELECT 1 FROM core.substrate_claims WHERE agent_id = $1",
+                    agent_id,
+                )
+            )
+
     async def get_latest_agent_state(
         self,
         identity_id: int,

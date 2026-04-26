@@ -1742,6 +1742,35 @@ async def handle_onboard_v2(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         tool_mode_info=tool_mode_info,
     )
 
+    # Bootstrap check-in (onboard-bootstrap-checkin §3.5). Conditional on
+    # initial_state being present in the request — the response gains a
+    # `bootstrap` key only when the caller asked for a bootstrap row. The
+    # write itself is timeout-bounded and fail-open per §3.5.
+    _initial_state = arguments.get("initial_state")
+    if _initial_state is not None:
+        try:
+            from src.mcp_handlers.identity.bootstrap_checkin import write_bootstrap
+            from src.mcp_handlers.schemas.core import BootstrapStateParams
+            _bootstrap_params = (
+                _initial_state if isinstance(_initial_state, BootstrapStateParams)
+                else BootstrapStateParams(**_initial_state)
+            )
+            db = get_db()
+            _identity_record = await db.get_identity(agent_uuid)
+            if _identity_record is not None:
+                result["bootstrap"] = await write_bootstrap(
+                    db,
+                    identity_id=_identity_record.identity_id,
+                    agent_id=agent_uuid,
+                    params=_bootstrap_params,
+                    client_hint=client_hint,
+                    purpose=arguments.get("purpose"),
+                )
+        except Exception as _bootstrap_err:  # noqa: BLE001 — bootstrap is fail-open
+            logger.warning(
+                f"[BOOTSTRAP] onboard initial_state handling failed (non-fatal): {_bootstrap_err}"
+            )
+
     # S1-a (2026-04-24): grace-period deprecation surface. onboard() called
     # with continuity_token AND without force_new=true is the retired
     # cross-process-instance resume path. Emit a warning in the response and

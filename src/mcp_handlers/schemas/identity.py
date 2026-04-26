@@ -1,6 +1,7 @@
 from typing import Optional, Union, Literal, Dict, Any, List, Sequence
 from pydantic import Field, model_validator
 from .mixins import AgentIdentityMixin
+from .core import BootstrapStateParams
 
 class IdentityParams(AgentIdentityMixin):
     """
@@ -101,6 +102,18 @@ class OnboardParams(AgentIdentityMixin):
             "concurrent identity bindings. Declaration-only — never used "
             "to resolve or recover identity."
         )
+    )
+    initial_state: Optional[BootstrapStateParams] = Field(
+        default=None,
+        description=(
+            "Optional bootstrap check-in payload. When present, the server "
+            "writes a synthetic state row tagged source='bootstrap' "
+            "immediately after identity creation. Bootstrap rows seed "
+            "trajectory genesis only and are excluded by default from "
+            "calibration, outcome correlation, trust-tier observation "
+            "counts, and real-check-in counts. See docs/proposals/"
+            "onboard-bootstrap-checkin.md."
+        ),
     )
 
     @model_validator(mode='after')
