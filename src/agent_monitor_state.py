@@ -260,9 +260,19 @@ async def hydrate_from_db_if_fresh(monitor: UNITARESMonitor, agent_id: str) -> b
         identity = await db.get_identity(agent_id)
         if identity is None:
             return False
-        # Most-recent-first; we'll reverse for chronological history arrays
+        # Most-recent-first; we'll reverse for chronological history arrays.
+        #
+        # exclude_synthetic=True per onboard-bootstrap-checkin §4 inclusion-
+        # exception + filter-audit site #6: the in-memory monitor's
+        # E/I/S/V/coherence/regime/histories MUST NEVER be seeded from a
+        # bootstrap row. Every downstream consumer of monitor.state
+        # (self-recovery, dialectic, trajectory ODE prior-reads) treats
+        # seeded values as measured. A bootstrap-only agent stays
+        # update_count=0 here so those downstream paths' existing
+        # "no measured trajectory yet" guards refuse-with-explanation.
         rows = await db.get_agent_state_history(
-            identity_id=identity.identity_id, limit=50
+            identity_id=identity.identity_id, limit=50,
+            exclude_synthetic=True,
         )
         if not rows:
             return False

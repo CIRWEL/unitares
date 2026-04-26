@@ -163,20 +163,40 @@ class StateMixin:
         self,
         identity_id: int,
         limit: int = 100,
+        exclude_synthetic: bool = False,
     ) -> List[AgentStateRecord]:
+        """State-row history for an identity.
+
+        Per onboard-bootstrap-checkin §4 inclusion rule #2 ("Identity audit /
+        lineage queries"), the default INCLUDES synthetic rows — history is
+        the audit/lineage record and legitimately wants the full picture.
+        Bootstrap rows in the result carry their flag in `state_json` (and
+        the underlying row's `synthetic` column is true) so callers can
+        introspect.
+
+        Set `exclude_synthetic=True` for measured-only history reads. The
+        canonical caller for that mode is `hydrate_from_db_if_fresh` in
+        agent_monitor_state.py — the in-memory monitor must NEVER be seeded
+        from a synthetic row, because every downstream consumer of
+        monitor.state (self-recovery, dialectic, trajectory ODE) treats
+        seeded values as measured. See
+        docs/proposals/onboard-bootstrap-checkin.filter-audit.md sites #5/#6.
+        """
         from config.governance_config import GovernanceConfig
         async with self.acquire() as conn:
-            rows = await conn.fetch(
-                """
+            base_sql = """
                 SELECT s.state_id, s.identity_id, i.agent_id, s.recorded_at,
                        s.entropy, s.integrity, s.stability_index, s.volatility,
                        s.regime, s.coherence, s.state_json
                 FROM core.agent_state s
                 JOIN core.identities i ON i.identity_id = s.identity_id
                 WHERE s.identity_id = $1 AND s.epoch = $2
-                ORDER BY s.recorded_at DESC
-                LIMIT $3
-                """,
+            """
+            if exclude_synthetic:
+                base_sql += " AND s.synthetic = false"
+            base_sql += " ORDER BY s.recorded_at DESC LIMIT $3"
+            rows = await conn.fetch(
+                base_sql,
                 identity_id, GovernanceConfig.CURRENT_EPOCH, limit,
             )
             return [self._row_to_agent_state(r) for r in rows]
