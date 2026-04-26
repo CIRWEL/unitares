@@ -224,11 +224,55 @@ class KnowledgeGraphPostgres:
         )
         by_status = {row['status']: row['count'] for row in by_status_rows}
 
+        # Provenance-source split (#165 part 4). NULL provenance → "legacy"
+        # bucket so callers can tell which rows predate the tagging convention.
+        # provenance is stored as JSONB; the extraction operator works on both
+        # JSONB and JSON rows.
+        prov_rows = await db._pool.fetch(
+            f"""
+            SELECT
+                COALESCE(provenance->>'source', '__legacy_or_untagged__') AS source,
+                COUNT(*) AS count
+            FROM knowledge.discoveries{where_sql}
+            GROUP BY 1
+            """,
+            *params,
+        )
+        by_provenance_source = {row['source']: row['count'] for row in prov_rows}
+
+        # Same split per-agent so operators can audit a specific agent's
+        # caller-intentional writes apart from automation noise.
+        agent_prov_rows = await db._pool.fetch(
+            f"""
+            SELECT
+                agent_id,
+                COALESCE(provenance->>'source', '__legacy_or_untagged__') AS source,
+                COUNT(*) AS count
+            FROM knowledge.discoveries{where_sql}
+            GROUP BY agent_id, source
+            """,
+            *params,
+        )
+        explicit_sources = {
+            "explicit_store", "explicit_answer", "explicit_leave_note",
+        }
+        by_agent_explicit: Dict[str, int] = {}
+        by_agent_implicit: Dict[str, int] = {}
+        for row in agent_prov_rows:
+            target = (
+                by_agent_explicit if row['source'] in explicit_sources
+                else by_agent_implicit
+            )
+            target[row['agent_id']] = target.get(row['agent_id'], 0) + row['count']
+
         return {
             "total_discoveries": total or 0,
             "by_agent": by_agent,
+            "by_agent_explicit": by_agent_explicit,
+            "by_agent_implicit": by_agent_implicit,
             "by_type": by_type,
             "by_status": by_status,
+            "by_provenance_source": by_provenance_source,
             "total_agents": len(by_agent),
             "epoch": epoch,
             "scope": {
@@ -237,9 +281,10 @@ class KnowledgeGraphPostgres:
                 "including_cold": including_cold,
                 "note": (
                     "Counts come straight from the discoveries table status "
-                    "column — includes 'superseded' rows. Compare with "
-                    "knowledge action=stats which uses lifecycle buckets and "
-                    "always includes cold rows but doesn't expose superseded."
+                    "column — includes 'superseded' rows. by_agent_explicit "
+                    "covers rows tagged with provenance.source in "
+                    f"{sorted(explicit_sources)}; everything else (including "
+                    "untagged legacy rows) lands in by_agent_implicit."
                 ),
             },
         }

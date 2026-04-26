@@ -2023,10 +2023,19 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
 
     # Store as discovery in knowledge graph for learning
     try:
-        from src.knowledge_graph import get_knowledge_graph, DiscoveryNode
+        from src.knowledge_graph import (
+            get_knowledge_graph,
+            DiscoveryNode,
+            tag_provenance_source,
+        )
+        from datetime import datetime as _dt
 
         graph = await get_knowledge_graph()
+        # Backends expose add_discovery, not store — the prior call silently
+        # errored into logger.debug for as long as that branch existed (#165
+        # phantom-write audit incidentally surfaced this dead path).
         discovery = DiscoveryNode(
+            id=_dt.now().isoformat(),
             agent_id=agent_uuid,
             summary=f"LLM dialectic: {root_cause[:80]}... → {recommendation}",
             type="dialectic_synthesis",
@@ -2035,10 +2044,11 @@ async def handle_llm_assisted_dialectic(arguments: Dict[str, Any]) -> Sequence[T
                 "thesis": thesis,
                 "antithesis": result.get("antithesis"),
                 "synthesis": synthesis,
-                "recommendation": recommendation
-            }, indent=2)
+                "recommendation": recommendation,
+            }, indent=2),
+            provenance=tag_provenance_source(None, "dialectic_synthesis"),
         )
-        await graph.store(discovery)
+        await graph.add_discovery(discovery)
         response_data["discovery_stored"] = True
     except Exception as e:
         logger.debug(f"Could not store dialectic discovery: {e}")

@@ -377,7 +377,8 @@ async def handle_self_recovery_review(arguments: Dict[str, Any]) -> Sequence[Tex
             discovery_type="recovery_reflection",
             details=f"Reflection: {reflection}\n\nRoot cause: {root_cause}\n\nProposed conditions: {proposed_conditions}\n\nMetrics at reflection: coherence={coherence:.3f}, risk={risk_score:.3f}, void={void_value:.3f}",
             tags=["recovery", "self-reflection", margin_info.get('margin', 'unknown')],
-            severity="info" if all_safe else "warning"
+            severity="info" if all_safe else "warning",
+            source="self_recovery_reflection",
         )
         reflection_logged = True
     except Exception as e:

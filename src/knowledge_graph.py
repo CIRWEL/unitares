@@ -251,6 +251,44 @@ async def get_knowledge_graph() -> Any:
         )
 
 
+def tag_provenance_source(
+    provenance: Optional[Dict[str, Any]],
+    source: str,
+) -> Dict[str, Any]:
+    """Attach `source` to a discovery's provenance without clobbering keys.
+
+    Implicit writers (self_recovery, dialectic_thesis, lifecycle_op) set
+    provenance.source so list/stats can split by_agent into explicit vs
+    implicit buckets — the previous "phantom write" symptom (#165) was a
+    side effect of implicit writes being indistinguishable from caller-
+    intentional ones in the by_agent count.
+
+    Explicit writes (`explicit_store`, `explicit_answer`, `explicit_leave_note`)
+    are tagged the same way for symmetry — that way an absent provenance.source
+    is unambiguously a legacy row.
+    """
+    base: Dict[str, Any] = dict(provenance) if provenance else {}
+    base.setdefault("source", source)
+    return base
+
+
+# Sentinel set for `source` values that count as caller-intentional writes
+# (visible in by_agent_explicit). Anything else — including absent — counts as
+# implicit / legacy / unknown and is bucketed separately.
+EXPLICIT_PROVENANCE_SOURCES = frozenset({
+    "explicit_store",
+    "explicit_answer",
+    "explicit_leave_note",
+})
+
+
+def is_explicit_source(provenance: Optional[Dict[str, Any]]) -> bool:
+    """True when provenance.source declares a caller-intentional write."""
+    if not provenance or not isinstance(provenance, dict):
+        return False
+    return provenance.get("source") in EXPLICIT_PROVENANCE_SOURCES
+
+
 def selected_backend_name() -> str:
     """Resolve the active backend label without instantiating it.
 

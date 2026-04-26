@@ -542,6 +542,11 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
             provenance = {"system_version": system_version, "captured_at": datetime.now().isoformat()}
         elif "system_version" not in provenance:
             provenance["system_version"] = system_version
+        # Tag write origin so list/stats can split caller-intentional writes
+        # from automation traffic (#165). Single-discovery store path is the
+        # canonical "explicit" write surface.
+        from src.knowledge_graph import tag_provenance_source as _tag_src
+        provenance = _tag_src(provenance, "explicit_store")
 
         # Parse confidence if provided
         raw_confidence = arguments.get("confidence")
@@ -1850,6 +1855,7 @@ async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_i
                     except (ValueError, TypeError):
                         pass
 
+                from src.knowledge_graph import tag_provenance_source as _tag_src
                 discovery = DiscoveryNode(
                     id=discovery_id,
                     agent_id=agent_id,
@@ -1860,7 +1866,8 @@ async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_i
                     severity=severity,
                     response_to=response_to,
                     references_files=disc_data.get("related_files", []),
-                    confidence=batch_confidence
+                    confidence=batch_confidence,
+                    provenance=_tag_src(disc_data.get("provenance"), "explicit_store"),
                 )
 
                 # CONFIDENCE CROSS-CHECK: Clamp to agent coherence + 0.3
@@ -1991,6 +1998,7 @@ async def handle_answer_question(arguments: Dict[str, Any]) -> Sequence[TextCont
             answer_text = answer_text[:MAX_ANSWER_LEN] + "... [truncated]"
 
         # Create answer linked to the question
+        from src.knowledge_graph import tag_provenance_source as _tag_src
         answer = DiscoveryNode(
             id=datetime.now().isoformat(),
             agent_id=agent_id,
@@ -2003,7 +2011,8 @@ async def handle_answer_question(arguments: Dict[str, Any]) -> Sequence[TextCont
             response_to=ResponseTo(
                 discovery_id=matched_question.id,
                 response_type="answers"
-            )
+            ),
+            provenance=_tag_src(None, "explicit_answer"),
         )
 
         # Link answer to question
@@ -2126,6 +2135,7 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             note_severity = "medium"
 
         # Create note with minimal ceremony
+        from src.knowledge_graph import tag_provenance_source as _tag_src
         note = DiscoveryNode(
             id=datetime.now().isoformat(),
             agent_id=agent_id,
@@ -2135,7 +2145,8 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             tags=tags,
             severity=note_severity,
             status="open",
-            response_to=response_to
+            response_to=response_to,
+            provenance=_tag_src(None, "explicit_leave_note"),
         )
         
         # Auto-link if tags provided (fast with indexes)
@@ -2298,18 +2309,29 @@ async def handle_audit_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
 async def store_discovery_internal(
     agent_id: str,
     summary: str,
+    *,
+    source: str,
     discovery_type: str = "note",
     details: str = "",
     tags: Optional[list] = None,
     severity: str = "low",
+    extra_provenance: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Internal helper for storing discoveries without MCP handler overhead.
 
-    Used by lifecycle/self_recovery to log reflections and resume events.
+    Used by lifecycle/self_recovery and dialectic to log reflections and
+    resume events. Every implicit write declares its origin via the
+    required ``source`` parameter — recorded in provenance.source so list
+    and stats can split caller-intentional writes from automation traffic
+    (#165 phantom-write surface).
+
     Raises on failure (callers should catch exceptions).
     """
+    from src.knowledge_graph import tag_provenance_source
+
     graph = await get_knowledge_graph()
     discovery_id = datetime.now().isoformat()
+    provenance = tag_provenance_source(extra_provenance, source)
     node = DiscoveryNode(
         id=discovery_id,
         agent_id=agent_id,
@@ -2318,5 +2340,6 @@ async def store_discovery_internal(
         details=details,
         tags=normalize_tags(tags or []),
         severity=severity,
+        provenance=provenance,
     )
     await graph.add_discovery(node)
