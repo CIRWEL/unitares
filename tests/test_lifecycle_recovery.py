@@ -132,6 +132,54 @@ class TestDirectResumeIfSafe:
             text = result[0].text
             assert "auth" in text.lower()
 
+    @pytest.mark.asyncio
+    async def test_resume_persists_runtime_state(self, server):
+        """Watcher P011: paused_at + lifecycle_event must be persisted alongside status."""
+        meta = make_agent_meta(status="paused")
+        server.agent_metadata = {"agent-1": meta}
+        server.get_or_create_monitor.return_value = make_monitor(coherence=0.8, mean_risk=0.3, I=0.3, S=0.5)
+
+        with patch_lifecycle_server(server, require_registered=("agent-1", None)), \
+             patch("src.mcp_handlers.lifecycle.handlers.agent_storage") as mock_storage, \
+             patch("src.mcp_handlers.lifecycle.resume.agent_storage") as mock_storage_r, \
+             patch("src.mcp_handlers.lifecycle.resume._invalidate_agent_cache", new=AsyncMock()), \
+             patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
+            mock_storage.update_agent = AsyncMock()
+            mock_storage.persist_runtime_state = AsyncMock()
+            mock_storage_r.update_agent = AsyncMock()
+            mock_storage_r.persist_runtime_state = AsyncMock()
+            from src.mcp_handlers.lifecycle.handlers import handle_direct_resume_if_safe
+            result = await handle_direct_resume_if_safe({"agent_id": "agent-1"})
+            data = _parse(result)
+            assert data["success"] is True
+            mock_storage_r.update_agent.assert_awaited_once()
+            mock_storage_r.persist_runtime_state.assert_awaited_once()
+            kwargs = mock_storage_r.persist_runtime_state.await_args.kwargs
+            assert kwargs.get("paused_at") is None
+            assert kwargs.get("append_lifecycle_event") is not None
+            assert kwargs["append_lifecycle_event"]["event"] == "resumed"
+
+    @pytest.mark.asyncio
+    async def test_resume_persist_failure_returns_error(self, server):
+        """Persist failure must surface a PERSIST_FAILED error, not silently mutate in-memory state."""
+        meta = make_agent_meta(status="paused")
+        server.agent_metadata = {"agent-1": meta}
+        server.get_or_create_monitor.return_value = make_monitor(coherence=0.8, mean_risk=0.3, I=0.3, S=0.5)
+
+        with patch_lifecycle_server(server, require_registered=("agent-1", None)), \
+             patch("src.mcp_handlers.lifecycle.resume.agent_storage") as mock_storage_r, \
+             patch("src.mcp_handlers.lifecycle.resume._invalidate_agent_cache", new=AsyncMock()), \
+             patch("src.mcp_handlers.utils.verify_agent_ownership", return_value=True):
+            mock_storage_r.update_agent = AsyncMock(side_effect=RuntimeError("db down"))
+            mock_storage_r.persist_runtime_state = AsyncMock()
+            from src.mcp_handlers.lifecycle.handlers import handle_direct_resume_if_safe
+            result = await handle_direct_resume_if_safe({"agent_id": "agent-1"})
+            data = _parse(result)
+            assert data["success"] is False
+            assert data.get("error_code") == "PERSIST_FAILED"
+            # In-memory state must NOT have been mutated when persist failed.
+            assert meta.status == "paused"
+
 
 # ============================================================================
 # handle_self_recovery_review

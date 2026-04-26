@@ -788,6 +788,22 @@ class TestGetSystemHistory:
             data = _parse(result)
             assert data.get("agent_id") == "explicit-agent"
 
+    @pytest.mark.asyncio
+    async def test_malformed_json_returns_error_envelope(self, mock_server, mock_monitor):
+        """Watcher P016: when export_history returns non-JSON, do not lie with success=True."""
+        mock_monitor.export_history = MagicMock(return_value="not json {{{")
+        mock_server.get_or_create_monitor.return_value = mock_monitor
+
+        with patch("src.mcp_handlers.introspection.export.mcp_server", mock_server), \
+             patch("src.mcp_handlers.introspection.export.require_registered_agent", return_value=("agent-1", None)), \
+             patch("src.mcp_handlers.context.get_context_agent_id", return_value="agent-1"):
+
+            from src.mcp_handlers.introspection.export import handle_get_system_history
+            result = await handle_get_system_history({"format": "json"})
+            data = _parse(result)
+            assert data.get("success") is False
+            assert data.get("error_code") == "EXPORT_MALFORMED"
+
 
 # ============================================================================
 # handle_export_to_file (export.py)

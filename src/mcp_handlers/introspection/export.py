@@ -59,12 +59,17 @@ async def handle_get_system_history(arguments: Dict[str, Any]) -> Sequence[TextC
             history_data = json.loads(history_data)
         except Exception as e:
             logger.warning(f"Could not parse history JSON: {e}")
-    
+            return [error_response(
+                "Export produced malformed JSON",
+                error_code="EXPORT_MALFORMED",
+                error_category="system_error",
+                details={"agent_id": agent_id, "cause": str(e)},
+            )]
+
     return success_response({
-        "success": True,
         "format": format_type,
         "history": history_data,
-        "agent_id": agent_id
+        "agent_id": agent_id,
     })
 
 @mcp_tool("export_to_file", timeout=45.0, register=False)
