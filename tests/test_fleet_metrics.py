@@ -46,6 +46,59 @@ class TestCatalog:
             assert _catalog["test.idempotent"] == m
         finally:
             _catalog.pop("test.idempotent", None)
+            _catalog.pop("test.idempotent.error", None)
+
+    def test_register_creates_error_twin(self):
+        """Every registered metric gets a paired `.error` entry so Chronicler
+        can post `<name>.error = 1` on scrape failure without 404ing under the
+        catalog gate. Without this, scraper failures are silently swallowed."""
+        m = Metric(name="test.twin", description="primary", unit="things")
+        register(m)
+        try:
+            twin = _catalog.get("test.twin.error")
+            assert twin is not None, "register() must auto-create .error twin"
+            assert twin.name == "test.twin.error"
+            assert twin.unit == "errors"
+            assert "test.twin" in twin.description
+        finally:
+            _catalog.pop("test.twin", None)
+            _catalog.pop("test.twin.error", None)
+
+    def test_register_idempotent_includes_twin(self):
+        """Re-registering a metric whose twin already exists must not raise."""
+        m = Metric(name="test.twin.idem", description="x", unit="y")
+        register(m)
+        try:
+            register(m)  # twin already exists; must not raise
+            assert "test.twin.idem.error" in _catalog
+        finally:
+            _catalog.pop("test.twin.idem", None)
+            _catalog.pop("test.twin.idem.error", None)
+
+    def test_existing_scrapers_have_error_twins(self):
+        """The shipping Chronicler scrapers must all have catalog-registered
+        `.error` twins so their failure-visibility path actually lands rows
+        in metrics.series instead of 404ing."""
+        for base in (
+            "tokei.unitares.src.code",
+            "tests.unitares.count",
+            "agents.active.7d",
+            "kg.entries.count",
+            "checkins.7d",
+        ):
+            assert f"{base}.error" in _catalog, f"missing .error twin for {base}"
+
+    def test_register_does_not_create_double_error_twin(self):
+        """Registering a metric whose name already ends in `.error` must not
+        produce a `.error.error` entry — the auto-twin logic guards against
+        compounding suffixes."""
+        m = Metric(name="test.bare.error", description="standalone error", unit="errors")
+        register(m)
+        try:
+            assert "test.bare.error" in _catalog
+            assert "test.bare.error.error" not in _catalog
+        finally:
+            _catalog.pop("test.bare.error", None)
 
     def test_register_conflict_raises(self):
         m1 = Metric(name="test.conflict", description="a", unit="u1")

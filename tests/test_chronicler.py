@@ -354,6 +354,151 @@ class TestChroniclerAgent:
         assert result is None  # GovernanceAgent._handle_cycle_result skips check-in
 
 
+class TestGithubTrafficScrapers:
+    """Aggregate GitHub traffic across non-archived CIRWEL repos.
+
+    The four scrapers share one process-lifetime fetch (Chronicler is a
+    one-shot launchd job) so a single run hits the GitHub API once, not
+    four times. Tests clear that cache to keep cases independent.
+    """
+
+    def setup_method(self):
+        from agents.chronicler import scrapers
+        scrapers._fetch_cirwel_traffic.cache_clear()
+
+    def teardown_method(self):
+        from agents.chronicler import scrapers
+        scrapers._fetch_cirwel_traffic.cache_clear()
+
+    @staticmethod
+    def _gh_runner(repos, traffic):
+        """Build a fake subprocess.run that answers `gh` calls.
+
+        ``repos``: list of {"name": ..., "isArchived": ...} dicts.
+        ``traffic``: {repo_name: {"views": (count, uniques), "clones": (count, uniques)}}
+        """
+        from subprocess import CompletedProcess
+
+        def fake_run(cmd, *args, **kwargs):
+            if cmd[:3] == ["gh", "repo", "list"]:
+                return CompletedProcess(cmd, 0, stdout=json.dumps(repos), stderr="")
+            if cmd[:2] == ["gh", "api"]:
+                # cmd shape: ["gh", "api", "repos/CIRWEL/<name>/traffic/<kind>"]
+                path = cmd[2]
+                _, _, repo_name, _, kind = path.split("/")
+                count, uniques = traffic[repo_name][kind]
+                payload = {"count": count, "uniques": uniques, "views": [], "clones": []}
+                return CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+            raise AssertionError(f"unexpected gh call: {cmd}")
+
+        return fake_run
+
+    def test_aggregates_views_and_clones_across_repos(self):
+        from agents.chronicler import scrapers
+
+        repos = [
+            {"name": "alpha", "isArchived": False},
+            {"name": "beta", "isArchived": False},
+        ]
+        traffic = {
+            "alpha": {"views": (100, 5), "clones": (40, 8)},
+            "beta": {"views": (23, 2), "clones": (7, 3)},
+        }
+        with patch.object(scrapers.subprocess, "run", side_effect=self._gh_runner(repos, traffic)):
+            result = scrapers._fetch_cirwel_traffic()
+
+        assert result == {
+            "views": 123,
+            "views_uniques": 7,
+            "clones": 47,
+            "clones_uniques": 11,
+        }
+
+    def test_skips_archived_repos(self):
+        from agents.chronicler import scrapers
+
+        repos = [
+            {"name": "alive", "isArchived": False},
+            {"name": "frozen", "isArchived": True},
+        ]
+        traffic = {"alive": {"views": (10, 1), "clones": (2, 1)}}
+        # Only `alive` should be queried; `frozen` would KeyError if asked.
+        with patch.object(scrapers.subprocess, "run", side_effect=self._gh_runner(repos, traffic)):
+            result = scrapers._fetch_cirwel_traffic()
+
+        assert result == {
+            "views": 10, "views_uniques": 1,
+            "clones": 2, "clones_uniques": 1,
+        }
+
+    def test_caches_within_process_lifetime(self):
+        from agents.chronicler import scrapers
+
+        repos = [{"name": "x", "isArchived": False}]
+        traffic = {"x": {"views": (1, 1), "clones": (1, 1)}}
+        runner = MagicMock(side_effect=self._gh_runner(repos, traffic))
+        with patch.object(scrapers.subprocess, "run", runner):
+            scrapers._fetch_cirwel_traffic()
+            scrapers._fetch_cirwel_traffic()
+
+        # 1 repo-list call + (views, clones) per repo = 3 total. If the second
+        # call re-fetched, we'd see 6.
+        assert runner.call_count == 3
+
+    def test_each_traffic_scraper_returns_its_dimension(self):
+        from agents.chronicler import scrapers
+
+        snapshot = {"views": 7, "views_uniques": 3, "clones": 12, "clones_uniques": 4}
+        with patch.object(scrapers, "_fetch_cirwel_traffic", return_value=snapshot):
+            assert scrapers.github_cirwel_traffic_views_14d(Path("/")) == 7.0
+            assert scrapers.github_cirwel_traffic_views_uniques_14d(Path("/")) == 3.0
+            assert scrapers.github_cirwel_traffic_clones_14d(Path("/")) == 12.0
+            assert scrapers.github_cirwel_traffic_clones_uniques_14d(Path("/")) == 4.0
+
+    def test_traffic_scrapers_registered(self):
+        from agents.chronicler.scrapers import SCRAPERS
+
+        for name in (
+            "github.cirwel.traffic.views.14d",
+            "github.cirwel.traffic.views.uniques.14d",
+            "github.cirwel.traffic.clones.14d",
+            "github.cirwel.traffic.clones.uniques.14d",
+        ):
+            assert name in SCRAPERS, f"{name} missing from SCRAPERS registry"
+
+    def test_traffic_metrics_in_catalog(self):
+        from src.fleet_metrics.catalog import catalog as _catalog
+
+        for name in (
+            "github.cirwel.traffic.views.14d",
+            "github.cirwel.traffic.views.uniques.14d",
+            "github.cirwel.traffic.clones.14d",
+            "github.cirwel.traffic.clones.uniques.14d",
+        ):
+            assert name in _catalog, f"{name} missing from catalog"
+            entry = _catalog[name]
+            # Catch-future-self caveat: explicit window semantics in description.
+            assert "rolling 14-day" in entry.description, (
+                f"{name} description must say 'rolling 14-day' so the chart "
+                f"isn't misread as a daily delta"
+            )
+
+    def test_scraper_failure_emits_error_metric_and_lands_in_catalog(self):
+        """Regression for the .error gate: when a traffic scraper fails, the
+        emitted `<name>.error` metric must be a registered catalog name so
+        the POST is accepted (not 404'd) — this exercises both the new
+        traffic surface and the auto-twin catalog fix."""
+        from src.fleet_metrics.catalog import catalog as _catalog
+
+        for name in (
+            "github.cirwel.traffic.views.14d",
+            "github.cirwel.traffic.views.uniques.14d",
+            "github.cirwel.traffic.clones.14d",
+            "github.cirwel.traffic.clones.uniques.14d",
+        ):
+            assert f"{name}.error" in _catalog
+
+
 class TestChroniclerAsKnownResident:
     def test_chronicler_in_known_resident_labels(self):
         from src.grounding.class_indicator import KNOWN_RESIDENT_LABELS
