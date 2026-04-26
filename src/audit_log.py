@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 class AuditEntry:
     """Single audit log entry"""
     timestamp: str
-    agent_id: str
+    agent_id: Optional[str]
     event_type: str  # "lambda1_skip", "auto_attest", "calibration_check", "complexity_derivation"
     confidence: float
     details: Dict
@@ -391,6 +391,50 @@ class AuditLogger:
                 "candidate_fingerprint_prefix": candidate_fingerprint_prefix,
                 "client_hint": client_hint,
                 "model_type": model_type,
+            },
+        )
+        self._write_entry(entry)
+
+    def log_identity_resolution_observed(
+        self,
+        *,
+        agent_uuid: Optional[str],
+        resolution_source: Optional[str],
+        pin_match_scope: Optional[str] = None,
+        pin_entry_present: Optional[bool] = None,
+        pin_fingerprint_match: Optional[bool] = None,
+        pin_entry_age_seconds: Optional[int] = None,
+        token_iat: Optional[int] = None,
+        token_exp: Optional[int] = None,
+        token_age_seconds: Optional[int] = None,
+    ) -> None:
+        """Record one observation per onboard/resume identity resolution.
+
+        Fields answer "what won, and what would the pin path have done if
+        we'd checked it?" — needed to discriminate the masking hypothesis
+        for the 30-min sliding pin TTL from the alternative explanations
+        (pin expired absolutely / fingerprint legitimately changed).
+
+        ``pin_*`` fields populated when a shadow lookup ran (winning path was
+        not the pin itself). ``token_*`` fields populated when a continuity
+        token was presented at resume. ``agent_uuid`` may be None when the
+        resolution did not bind to a known agent (e.g., onboard that minted
+        a fresh identity has it set; pre-bind diagnostics may not).
+        """
+        entry = AuditEntry(
+            timestamp=datetime.now().isoformat(),
+            agent_id=agent_uuid,
+            event_type="identity_resolution_observed",
+            confidence=1.0,
+            details={
+                "resolution_source": resolution_source,
+                "pin_match_scope": pin_match_scope,
+                "pin_entry_present": pin_entry_present,
+                "pin_fingerprint_match": pin_fingerprint_match,
+                "pin_entry_age_seconds": pin_entry_age_seconds,
+                "token_iat": token_iat,
+                "token_exp": token_exp,
+                "token_age_seconds": token_age_seconds,
             },
         )
         self._write_entry(entry)

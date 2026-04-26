@@ -109,6 +109,65 @@ class TestAuditEntry:
 
 
 # ===========================================================================
+# log_identity_resolution_observed
+# ===========================================================================
+class TestLogIdentityResolutionObserved:
+    def test_writes_full_event(self, tmp_path):
+        logger = _make_logger(tmp_path)
+        logger.log_identity_resolution_observed(
+            agent_uuid="11111111-2222-3333-4444-555555555555",
+            resolution_source="continuity_token",
+            pin_match_scope=None,
+            pin_entry_present=True,
+            pin_fingerprint_match=False,
+            pin_entry_age_seconds=420,
+            token_iat=1700_000_000,
+            token_exp=1700_003_600,
+            token_age_seconds=900,
+        )
+        entries = _read_jsonl(logger.log_file)
+        assert len(entries) == 1
+        e = entries[0]
+        assert e["event_type"] == "identity_resolution_observed"
+        assert e["agent_id"] == "11111111-2222-3333-4444-555555555555"
+        d = e["details"]
+        assert d["resolution_source"] == "continuity_token"
+        assert d["pin_entry_present"] is True
+        assert d["pin_fingerprint_match"] is False
+        assert d["pin_entry_age_seconds"] == 420
+        assert d["token_iat"] == 1700_000_000
+        assert d["token_exp"] == 1700_003_600
+        assert d["token_age_seconds"] == 900
+
+    def test_accepts_none_agent_uuid(self, tmp_path):
+        """Resolutions that don't bind to an agent (pre-bind diagnostic paths)
+        must not crash on None — verifies the AuditEntry.agent_id Optional fix."""
+        logger = _make_logger(tmp_path)
+        logger.log_identity_resolution_observed(
+            agent_uuid=None,
+            resolution_source="ip_ua_fingerprint",
+        )
+        entries = _read_jsonl(logger.log_file)
+        assert entries[0]["agent_id"] is None
+        assert entries[0]["event_type"] == "identity_resolution_observed"
+
+    def test_pin_only_event(self, tmp_path):
+        """When PATH 7 wins, only pin_match_scope is meaningful — token fields stay None."""
+        logger = _make_logger(tmp_path)
+        logger.log_identity_resolution_observed(
+            agent_uuid="agent-pin",
+            resolution_source="pinned_onboard_session",
+            pin_match_scope="client_model",
+        )
+        entries = _read_jsonl(logger.log_file)
+        d = entries[0]["details"]
+        assert d["resolution_source"] == "pinned_onboard_session"
+        assert d["pin_match_scope"] == "client_model"
+        assert d["token_iat"] is None
+        assert d["token_exp"] is None
+
+
+# ===========================================================================
 # AuditLogger.__init__ and internal flags
 # ===========================================================================
 class TestAuditLoggerInit:

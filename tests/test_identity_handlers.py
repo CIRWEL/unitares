@@ -2001,6 +2001,42 @@ class TestHandleOnboardV2:
         assert data["is_new"] is True  # force_new_applied moved behind verbose=true
 
     @pytest.mark.asyncio
+    async def test_onboard_emits_identity_resolution_observed(
+        self, patch_onboard_deps, mock_db, mock_redis,
+    ):
+        """A successful onboard must emit one identity_resolution_observed audit event
+        carrying the resolved agent_uuid and the captured resolution_source."""
+        from src.mcp_handlers.identity.handlers import handle_onboard_v2
+
+        mock_redis.get.return_value = None
+        mock_db.get_session.return_value = None
+        mock_db.find_agent_by_label.return_value = None
+        mock_db.get_identity.return_value = SimpleNamespace(identity_id="new-ident", metadata={})
+
+        with patch(
+            "src.audit_log.audit_logger.log_identity_resolution_observed",
+        ) as audit_call:
+            result = await handle_onboard_v2({
+                "client_session_id": "onboard-emit-ires",
+                "force_new": True,
+            })
+        data = parse_result(result)
+
+        assert data["success"] is True
+        audit_call.assert_called_once()
+        kwargs = audit_call.call_args.kwargs
+        assert kwargs["agent_uuid"] == data["uuid"]
+        assert "resolution_source" in kwargs
+        assert "pin_match_scope" in kwargs
+        assert "pin_entry_present" in kwargs
+        assert "token_iat" in kwargs
+        assert "token_exp" in kwargs
+        # No continuity_token presented → token fields stay None.
+        assert kwargs["token_iat"] is None
+        assert kwargs["token_exp"] is None
+        assert kwargs["token_age_seconds"] is None
+
+    @pytest.mark.asyncio
     async def test_onboard_force_new_with_model_type(self, patch_onboard_deps, mock_db, mock_redis):
         """onboard(force_new=true, model_type='claude') uses model-suffixed key."""
         from src.mcp_handlers.identity.handlers import handle_onboard_v2

@@ -147,13 +147,15 @@ def create_continuity_token(
     return f"v1.{payload_b64}.{sig_b64}"
 
 
-def extract_token_iat(token: str) -> Optional[int]:
-    """Extract the `iat` (issued-at) claim from a continuity token.
+def _decode_token_payload(token: str) -> Optional[Dict[str, Any]]:
+    """Verify a continuity token's HMAC and return its decoded payload.
 
-    Signature-verified like `extract_token_agent_uuid`; does NOT check expiry.
-    Returned for grace-period telemetry under S1-a (docs/ontology/
-    s1-continuity-token-retirement.md §6) — callers need `iat` to compute
-    token lifetime at accept-time.
+    Single source of truth for token decoding. `extract_token_iat` and
+    `extract_token_exp` go through this so a token presented to both
+    accessors is signature-verified exactly once per call.
+
+    Does NOT check expiry — callers needing freshness must consult the
+    `exp` claim themselves (or use `resolve_continuity_token`).
     """
     if not token or not isinstance(token, str):
         return None
@@ -168,11 +170,51 @@ def extract_token_iat(token: str) -> Optional[int]:
         if not hmac.compare_digest(expected_sig, sig_b64):
             return None
         payload = json.loads(_b64url_decode(payload_b64).decode())
-        iat = payload.get("iat")
-        if iat is None:
+        if not isinstance(payload, dict):
             return None
-        return int(iat)
+        return payload
     except Exception:
+        return None
+
+
+def extract_token_iat(token: str) -> Optional[int]:
+    """Extract the `iat` (issued-at) claim from a continuity token.
+
+    Signature-verified like `extract_token_agent_uuid`; does NOT check expiry.
+    Returned for grace-period telemetry under S1-a (docs/ontology/
+    s1-continuity-token-retirement.md §6) — callers need `iat` to compute
+    token lifetime at accept-time.
+    """
+    payload = _decode_token_payload(token)
+    if payload is None:
+        return None
+    iat = payload.get("iat")
+    if iat is None:
+        return None
+    try:
+        return int(iat)
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_token_exp(token: str) -> Optional[int]:
+    """Extract the `exp` (expiry) claim from a continuity token.
+
+    Symmetric with `extract_token_iat`: signature-verified, does NOT check
+    whether the token has actually expired. Callers wanting that should use
+    `resolve_continuity_token`. This accessor exists so observation-only
+    instrumentation can record token lifetime / observed-staleness even on
+    tokens that resolution rejected.
+    """
+    payload = _decode_token_payload(token)
+    if payload is None:
+        return None
+    exp = payload.get("exp")
+    if exp is None:
+        return None
+    try:
+        return int(exp)
+    except (TypeError, ValueError):
         return None
 
 
@@ -340,6 +382,114 @@ async def derive_session_key(
     signals: "Optional[SessionSignals]" = None,
     arguments: Optional[Dict[str, Any]] = None,
 ) -> str:
+    """Resolve a session key from transport signals and call arguments.
+
+    Thin wrapper around :func:`_derive_session_key_impl` that — after the
+    winning path is decided — fires an observation-only shadow pin lookup
+    when the IP/UA pin path *didn't* win but the request carried an IP/UA
+    fingerprint signal. The shadow lookup answers "would the pin have hit
+    if we'd checked it?" without altering resolution order, and exists so
+    later analysis can distinguish (a) pin expired absolutely from
+    (b) pin alive but bypassed by ordering / fingerprint shift.
+    """
+    arguments = arguments or {}
+    resolved = await _derive_session_key_impl(signals, arguments)
+    try:
+        from ..context import get_session_resolution_source
+        # Skip the shadow lookup when the pin path either won
+        # ("pinned_onboard_session") or already ran and missed
+        # ("ip_ua_fingerprint" — fingerprint signal present but no pin
+        # candidate matched). In both cases re-running it tells us nothing
+        # new and just spends a Redis call.
+        source = get_session_resolution_source()
+        if source not in ("pinned_onboard_session", "ip_ua_fingerprint"):
+            await _shadow_pin_observe(signals, arguments, resolved)
+    except Exception:
+        # Shadow lookup is best-effort and never fatal — its job is
+        # observation, not resolution. Failure leaves the shadow
+        # contextvars at default (all None).
+        pass
+    return resolved
+
+
+async def _shadow_pin_observe(
+    signals: "Optional[SessionSignals]",
+    arguments: Dict[str, Any],
+    resolved_key: str,
+) -> None:
+    """Run an observation-only pin lookup and record the result on contextvars.
+
+    No TTL refresh, never alters resolution. Reuses the same candidate
+    construction as PATH 7 so the lookup probes exactly the keys the live
+    path would have probed. Bound by the same 500ms Redis timeout; on
+    failure or absence of fingerprint signal, the contextvars stay at
+    their defaults.
+    """
+    if not signals or not signals.ip_ua_fingerprint:
+        return
+    base_fp = _extract_base_fingerprint(signals.ip_ua_fingerprint)
+    if not base_fp:
+        return
+    hint = (arguments.get("client_hint") if arguments else None) or signals.client_hint
+    model = arguments.get("model_type") if arguments else None
+    candidates = _build_pin_fingerprint_candidates(
+        base_fp,
+        client_hint=hint,
+        model_type=model,
+        user_agent=signals.user_agent,
+        include_unscoped_fallback=not bool(hint or model),
+    )
+    if not candidates:
+        return
+    try:
+        await asyncio.wait_for(
+            _shadow_pin_observe_inner(candidates, resolved_key),
+            timeout=_PIN_REDIS_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.debug("[SHADOW_PIN] observation lookup timed out")
+    except Exception as e:  # noqa: BLE001 — best-effort observation
+        logger.debug(f"[SHADOW_PIN] observation lookup failed: {e}")
+
+
+async def _shadow_pin_observe_inner(
+    candidates: list,
+    resolved_key: str,
+) -> None:
+    from src.cache.redis_client import get_redis
+    from ..context import set_shadow_pin_observation
+    import json as _json
+
+    raw = await get_redis()
+    if not raw:
+        return
+    for fp in candidates:
+        pin_key = f"recent_onboard:{fp}"
+        pin_data = await raw.get(pin_key)
+        if not pin_data:
+            continue
+        ttl_remaining = await raw.ttl(pin_key)
+        try:
+            pin = _json.loads(pin_data if isinstance(pin_data, str) else pin_data.decode())
+        except Exception:
+            continue
+        pinned_session_id = pin.get("client_session_id")
+        age: Optional[int] = None
+        if isinstance(ttl_remaining, int) and ttl_remaining > 0:
+            age = max(0, _PIN_TTL - ttl_remaining)
+        set_shadow_pin_observation(
+            present=True,
+            match=(pinned_session_id == resolved_key),
+            age_seconds=age,
+        )
+        return
+    set_shadow_pin_observation(present=False, match=False, age_seconds=None)
+
+
+async def _derive_session_key_impl(
+    signals: "Optional[SessionSignals]" = None,
+    arguments: Optional[Dict[str, Any]] = None,
+) -> str:
     """Single source of truth for session key derivation.
 
     Priority (highest to lowest):
@@ -356,6 +506,40 @@ async def derive_session_key(
     from ..context import SessionSignals  # type hint import
 
     arguments = arguments or {}
+
+    def _mark_pin_scope(
+        candidate: str,
+        base_fp: str,
+        client_hint: Optional[str],
+        model_type: Optional[str],
+        user_agent: Optional[str],
+    ) -> None:
+        """Identify which scoped pin form matched and record it on a
+        side-channel contextvar. Kept off ``session_resolution_source`` so the
+        load-bearing exact-match comparison at handlers.py:128 is not affected.
+
+        Normalizes ``client_hint``/``model_type`` the same way
+        ``_build_pin_fingerprint_candidates`` does so the comparison matches
+        the candidates that were actually probed.
+        """
+        try:
+            from ..context import set_pin_match_scope
+            client_norm = _normalize_pin_client_hint(client_hint)
+            model_norm = _normalize_pin_model_type(model_type, user_agent)
+            scope: Optional[str]
+            if client_norm and model_norm and candidate == f"{base_fp}|{client_norm}|{model_norm}":
+                scope = "client_model"
+            elif client_norm and candidate == f"{base_fp}|{client_norm}":
+                scope = "client"
+            elif model_norm and candidate == f"{base_fp}|{model_norm}":
+                scope = "model"
+            elif candidate == base_fp:
+                scope = "unscoped"
+            else:
+                scope = None
+            set_pin_match_scope(scope)
+        except Exception:
+            pass
 
     def _mark(source: str) -> None:
         try:
@@ -440,6 +624,7 @@ async def derive_session_key(
                 pinned = await lookup_onboard_pin(candidate)
                 if pinned:
                     _mark("pinned_onboard_session")
+                    _mark_pin_scope(candidate, base_fp, hint, model, signals.user_agent)
                     # S13: emit passive observation event distinct from the
                     # active-alert identity_hijack_suspected. Caller may still
                     # have proof signals; this fires regardless to build the

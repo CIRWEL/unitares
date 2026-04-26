@@ -211,6 +211,59 @@ def get_session_resolution_source() -> Optional[str]:
     """Get session resolution source for current request."""
     return _session_resolution_source.get()
 
+
+# Pin scope detail. Set by derive_session_key when an onboard-pin lookup hits,
+# distinguishing which candidate form matched (client_model / client / model /
+# unscoped). Kept as a side-channel so the load-bearing exact-match comparison
+# at handlers.py against `session_resolution_source == "pinned_onboard_session"`
+# continues to work unchanged.
+_pin_match_scope: ContextVar[Optional[str]] = ContextVar('pin_match_scope', default=None)
+
+
+def set_pin_match_scope(scope: Optional[str]) -> object:
+    """Set pin match scope for current request. Returns token for reset."""
+    return _pin_match_scope.set(scope)
+
+
+def reset_pin_match_scope(token: object) -> None:
+    """Reset pin match scope."""
+    _pin_match_scope.reset(token)
+
+
+def get_pin_match_scope() -> Optional[str]:
+    """Get pin match scope for current request, or None if no pin matched."""
+    return _pin_match_scope.get()
+
+
+# Shadow pin lookup observation. Set by derive_session_key after-hook when a
+# non-pin path won despite an IP/UA fingerprint signal being present — answers
+# "would the pin have hit if we'd looked it up?" without changing resolution
+# order. None on all three keys means no shadow lookup ran.
+_shadow_pin_present: ContextVar[Optional[bool]] = ContextVar('shadow_pin_present', default=None)
+_shadow_pin_match: ContextVar[Optional[bool]] = ContextVar('shadow_pin_match', default=None)
+_shadow_pin_age_seconds: ContextVar[Optional[int]] = ContextVar('shadow_pin_age_seconds', default=None)
+
+
+def set_shadow_pin_observation(
+    *,
+    present: Optional[bool],
+    match: Optional[bool],
+    age_seconds: Optional[int],
+) -> None:
+    """Record an observation-only shadow pin lookup result."""
+    _shadow_pin_present.set(present)
+    _shadow_pin_match.set(match)
+    _shadow_pin_age_seconds.set(age_seconds)
+
+
+def get_shadow_pin_observation() -> Dict[str, Optional[Any]]:
+    """Get the shadow pin observation as a dict; all-None if not run."""
+    return {
+        "pin_entry_present": _shadow_pin_present.get(),
+        "pin_fingerprint_match": _shadow_pin_match.get(),
+        "pin_entry_age_seconds": _shadow_pin_age_seconds.get(),
+    }
+
 # Trajectory identity confidence - set during dispatch if verification runs
 _trajectory_confidence: ContextVar[Optional[float]] = ContextVar('trajectory_confidence', default=None)
 
