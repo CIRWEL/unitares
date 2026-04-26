@@ -265,6 +265,40 @@ class KnowledgeGraphPostgres:
             )
             target[row['agent_id']] = target.get(row['agent_id'], 0) + row['count']
 
+        # Embedding coverage (#165 part 5). The active embeddings table is
+        # selected by UNITARES_EMBEDDING_MODEL; this counts how many rows in
+        # the current scope have a row in that table. Critical diagnostic for
+        # finding 1 — operators couldn't tell whether semantic-search
+        # coverage was 5% or 95%.
+        embedding_coverage: Optional[Dict[str, Any]] = None
+        try:
+            from src.embeddings import get_active_table_name
+            embed_table = get_active_table_name()
+            covered_clauses = list(clauses)
+            covered_clauses.append(
+                f"id IN (SELECT discovery_id FROM {embed_table})"
+            )
+            covered_where = " WHERE " + " AND ".join(covered_clauses)
+            with_embeddings = await db._pool.fetchval(
+                f"SELECT COUNT(*) FROM knowledge.discoveries{covered_where}",
+                *params,
+            ) or 0
+            total_in_scope = total or 0
+            without_embeddings = max(0, total_in_scope - with_embeddings)
+            ratio = (
+                round(with_embeddings / total_in_scope, 4)
+                if total_in_scope else 0.0
+            )
+            embedding_coverage = {
+                "with_embeddings": with_embeddings,
+                "without_embeddings": without_embeddings,
+                "ratio": ratio,
+                "active_table": embed_table,
+            }
+        except Exception as exc:
+            logger.debug(f"embedding coverage probe failed: {exc}")
+            embedding_coverage = {"error": str(exc)}
+
         return {
             "total_discoveries": total or 0,
             "by_agent": by_agent,
@@ -273,6 +307,7 @@ class KnowledgeGraphPostgres:
             "by_type": by_type,
             "by_status": by_status,
             "by_provenance_source": by_provenance_source,
+            "embedding_coverage": embedding_coverage,
             "total_agents": len(by_agent),
             "epoch": epoch,
             "scope": {
