@@ -71,6 +71,7 @@ def _build_http_session_signals(request):
         x_agent_name=request.headers.get("x-agent-name"),
         x_agent_id=request.headers.get("x-agent-id"),
         transport="rest",
+        unitares_operator_token=request.headers.get("x-unitares-operator"),
     )
 
 
