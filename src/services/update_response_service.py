@@ -19,6 +19,7 @@ def build_process_update_response_data(
     agent_id: str,
     identity_assurance: Any,
     monitor: Any = None,
+    ctx_warnings: Sequence[str] = (),
 ) -> Dict[str, Any]:
     """Build the base response payload before enrichments and mode filtering.
 
@@ -26,6 +27,10 @@ def build_process_update_response_data(
     (self._last_prediction_id), surface it as top-level `prediction_id` so the
     agent can echo it back on outcome_event for exact filtration in the
     sequential calibration lane.
+
+    ctx_warnings: per-call non-fatal warnings (e.g. from Phase-5 evidence
+    iteration). De-duplicated preserving order; only written to response_data
+    if non-empty. Spec §2.
     """
     response_data = result.copy()
     response_data["agent_id"] = agent_id
@@ -34,6 +39,13 @@ def build_process_update_response_data(
         last_prediction_id = getattr(monitor, "_last_prediction_id", None)
         if last_prediction_id:
             response_data["prediction_id"] = last_prediction_id
+    # Merge ctx.warnings (de-duped, preserving first-occurrence order) per spec §2.
+    warnings_seen: list = []
+    for w in (ctx_warnings or []):
+        if w not in warnings_seen:
+            warnings_seen.append(w)
+    if warnings_seen:
+        response_data["warnings"] = warnings_seen
     return response_data
 
 

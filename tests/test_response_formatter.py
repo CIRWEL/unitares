@@ -724,3 +724,210 @@ class TestFormatResponseMirror:
         data = _sample_response()
         result = format_response(data, {"response_mode": "mirror"}, is_new_agent=False)
         assert "eisv_labels" not in result
+
+
+# ============================================================================
+# Task 2: prediction_id + warnings pass-through (spec §6 + §2)
+# ============================================================================
+
+def _make_governance_state_mocks():
+    """Create sys.modules stubs for governance_state + governance_core."""
+    mock_gs_instance = MagicMock()
+    mock_gs_instance.interpret_state.return_value = {"summary": "mocked"}
+    mock_gs_module = MagicMock()
+    mock_gs_module.GovernanceState = MagicMock(return_value=mock_gs_instance)
+
+    mock_core_module = MagicMock()
+    mock_core_module.State = MagicMock()
+    mock_core_module.Theta = MagicMock()
+    mock_core_module.DEFAULT_THETA = MagicMock()
+    return mock_gs_module, mock_core_module
+
+
+class TestFormatStandardPreservesPredictionId:
+    """_format_standard must pass prediction_id and warnings through (spec §6 + §2).
+
+    _format_standard does local imports (from governance_state import ...) so we
+    must inject into sys.modules. Same strategy as other tests in this suite that
+    call format_response with auto→standard routing (those mock _format_standard
+    wholesale; we mock the deps so we can actually exercise the body).
+    """
+
+    def _call_format_standard(self, response_data):
+        """Call _format_standard with all required module-level deps mocked."""
+        import sys
+        from src.mcp_handlers.response_formatter import _format_standard
+        gs_mock, core_mock = _make_governance_state_mocks()
+        with patch.dict(sys.modules, {
+            "governance_state": gs_mock,
+            "governance_core": core_mock,
+        }):
+            return _format_standard(response_data, task_type="general")
+
+    def test_prediction_id_passes_through(self):
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
+            "prediction_id": "abc-123",
+        }
+        result = self._call_format_standard(response_data)
+        assert result.get("prediction_id") == "abc-123"
+
+    def test_warnings_passes_through(self):
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
+            "warnings": ["evidence record failed for tool=pytest"],
+        }
+        result = self._call_format_standard(response_data)
+        assert result.get("warnings") == ["evidence record failed for tool=pytest"]
+
+    def test_no_prediction_id_when_absent(self):
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
+        }
+        result = self._call_format_standard(response_data)
+        assert "prediction_id" not in result
+
+    def test_no_warnings_when_absent(self):
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
+        }
+        result = self._call_format_standard(response_data)
+        assert "warnings" not in result
+
+
+class TestFormatMirrorPreservesPredictionId:
+    def test_prediction_id_passes_through(self):
+        from src.mcp_handlers.response_formatter import _format_mirror
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
+            "prediction_id": "abc-123",
+        }
+        result = _format_mirror(response_data, saved_trust_tier=None, meta=None)
+        assert result.get("prediction_id") == "abc-123"
+
+    def test_warnings_passes_through(self):
+        from src.mcp_handlers.response_formatter import _format_mirror
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
+            "warnings": ["W"],
+        }
+        result = _format_mirror(response_data, saved_trust_tier=None, meta=None)
+        assert result.get("warnings") == ["W"]
+
+    def test_no_prediction_id_when_absent(self):
+        from src.mcp_handlers.response_formatter import _format_mirror
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
+        }
+        result = _format_mirror(response_data, saved_trust_tier=None, meta=None)
+        assert "prediction_id" not in result
+
+
+class TestFormatCompactPreservesPredictionId:
+    def test_prediction_id_passes_through(self):
+        from src.mcp_handlers.response_formatter import _format_compact
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
+            "prediction_id": "abc-123",
+        }
+        result = _format_compact(response_data, using_default_mode=False, saved_trust_tier=None)
+        assert result.get("prediction_id") == "abc-123"
+
+    def test_warnings_passes_through(self):
+        from src.mcp_handlers.response_formatter import _format_compact
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
+            "warnings": ["compact-warning"],
+        }
+        result = _format_compact(response_data, using_default_mode=False, saved_trust_tier=None)
+        assert result.get("warnings") == ["compact-warning"]
+
+    def test_no_prediction_id_when_absent(self):
+        from src.mcp_handlers.response_formatter import _format_compact
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
+        }
+        result = _format_compact(response_data, using_default_mode=False, saved_trust_tier=None)
+        assert "prediction_id" not in result
+
+
+class TestFormatMinimalIntentionallyStrips:
+    def test_minimal_does_not_include_prediction_id(self):
+        # Spec §6: minimal mode is bandwidth-constrained; prediction_id stripped intentionally.
+        from src.mcp_handlers.response_formatter import _format_minimal
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
+            "prediction_id": "abc-123",
+        }
+        result = _format_minimal(response_data, using_default_mode=False, saved_trust_tier=None)
+        assert "prediction_id" not in result
+
+    def test_minimal_does_not_include_warnings(self):
+        # Spec §6: minimal mode is bandwidth-constrained; warnings stripped intentionally.
+        from src.mcp_handlers.response_formatter import _format_minimal
+        response_data = {
+            "decision": {"action": "proceed"},
+            "metrics": {"E": 0.5, "I": 0.5, "S": 0.3, "V": 0.0, "phi": 0.7},
+            "warnings": ["some-warning"],
+        }
+        result = _format_minimal(response_data, using_default_mode=False, saved_trust_tier=None)
+        assert "warnings" not in result
+
+
+class TestUpdateResponseServiceMergesWarnings:
+    def test_ctx_warnings_appear_in_response_data(self):
+        # build_process_update_response_data should merge ctx.warnings (de-duped)
+        # into response_data["warnings"].
+        from src.services.update_response_service import build_process_update_response_data
+        result = build_process_update_response_data(
+            result={},
+            agent_id="test-agent",
+            identity_assurance={},
+            monitor=None,
+            ctx_warnings=["w1", "w1", "w2"],  # duplicate to verify de-dup
+        )
+        assert sorted(result.get("warnings", [])) == ["w1", "w2"]
+
+    def test_no_warnings_key_when_ctx_warnings_empty(self):
+        from src.services.update_response_service import build_process_update_response_data
+        result = build_process_update_response_data(
+            result={},
+            agent_id="test-agent",
+            identity_assurance={},
+            monitor=None,
+            ctx_warnings=[],
+        )
+        assert "warnings" not in result
+
+    def test_no_warnings_key_when_ctx_warnings_not_provided(self):
+        from src.services.update_response_service import build_process_update_response_data
+        result = build_process_update_response_data(
+            result={},
+            agent_id="test-agent",
+            identity_assurance={},
+            monitor=None,
+        )
+        assert "warnings" not in result
+
+    def test_warnings_order_preserved_after_dedup(self):
+        from src.services.update_response_service import build_process_update_response_data
+        result = build_process_update_response_data(
+            result={},
+            agent_id="test-agent",
+            identity_assurance={},
+            monitor=None,
+            ctx_warnings=["a", "b", "a", "c", "b"],
+        )
+        # Order of first occurrence preserved; a comes before b before c
+        assert result["warnings"] == ["a", "b", "c"]

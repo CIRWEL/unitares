@@ -154,6 +154,10 @@ def _format_standard(response_data: dict, task_type: str) -> dict:
     identity_notifications = response_data.get("_identity_notifications")
     if identity_notifications:
         result["identity_notifications"] = identity_notifications
+    if response_data.get("prediction_id"):
+        result["prediction_id"] = response_data["prediction_id"]
+    if response_data.get("warnings"):
+        result["warnings"] = response_data["warnings"]
     return result
 
 def _format_mirror(response_data: dict, saved_trust_tier: Optional[str], meta: Any = None) -> dict:
@@ -289,6 +293,10 @@ def _format_mirror(response_data: dict, saved_trust_tier: Optional[str], meta: A
     if identity_notifications:
         result["identity_notifications"] = identity_notifications
 
+    if response_data.get("prediction_id"):
+        result["prediction_id"] = response_data["prediction_id"]
+    if response_data.get("warnings"):
+        result["warnings"] = response_data["warnings"]
     return result
 
 
@@ -389,6 +397,10 @@ def _format_compact(response_data: dict, using_default_mode: bool, saved_trust_t
     if identity_notifications:
         result["identity_notifications"] = identity_notifications
 
+    if response_data.get("prediction_id"):
+        result["prediction_id"] = response_data["prediction_id"]
+    if response_data.get("warnings"):
+        result["warnings"] = response_data["warnings"]
     return result
 
 def _strip_context(response_data: dict, is_new_agent: bool, key_was_generated: bool, api_key_auto_retrieved: bool):

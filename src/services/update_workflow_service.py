@@ -113,6 +113,7 @@ async def run_process_update_workflow(ctx, *, serializer=None) -> Sequence[TextC
             agent_id=ctx.agent_id,
             identity_assurance=ctx.identity_assurance,
             monitor=ctx.monitor,
+            ctx_warnings=getattr(ctx, "warnings", ()),
         )
         _tick("build_response")
 
