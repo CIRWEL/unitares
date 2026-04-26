@@ -428,12 +428,15 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
     if most_common_verdict and verdict_counts[most_common_verdict] == len(all_verdicts):
         pattern_insights.append(f"All similar agents share '{most_common_verdict}' verdict - this is a common pattern")
     
-    # Check for regime patterns (if regime available)
+    # Check for regime patterns. The similarity loop above already
+    # hydrated each candidate's monitor via ensure_hydrated; reuse from
+    # mcp_server.monitors instead of re-hydrating.
     all_regimes = []
     for similar in top_similar:
         try:
-            other_monitor = mcp_server.get_or_create_monitor(similar["agent_id"])
-            await ensure_hydrated(other_monitor, similar["agent_id"])
+            other_monitor = mcp_server.monitors.get(similar["agent_id"])
+            if other_monitor is None:
+                continue
             other_metrics = other_monitor.get_metrics()
             regime = other_metrics.get('regime', 'nominal')
             all_regimes.append(regime)
