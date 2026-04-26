@@ -45,6 +45,21 @@ classify() {
     echo "other"
 }
 
+# Emit unresolved Watcher fingerprints touching staged files, comma-separated.
+# Empty if nothing staged, no findings file, or no matches. Closes the race
+# where ship.sh would otherwise compose a commit message before the operator
+# processed a Watcher chime — CLAUDE.md asks for fingerprints in commit
+# messages, but post-edit-hook → next-turn-chime is a separate channel from
+# commit-message authorship. This pulls them back together.
+collect_watcher_fingerprints() {
+    local files; files=$(git diff --cached --name-only)
+    [[ -n "$files" ]] || return 0
+    local findings="$PROJECT_ROOT/data/watcher/findings.jsonl"
+    [[ -f "$findings" ]] || return 0
+    awk -v root="$PROJECT_ROOT" '{print root"/"$0}' <<< "$files" \
+        | python3 "$PROJECT_ROOT/scripts/dev/_ship_watcher_fingerprints.py" "$findings"
+}
+
 if [[ "${1:-}" == "--classify" ]]; then
     classify
     exit 0
@@ -58,6 +73,18 @@ fi
 
 KIND=$(classify)
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# Append Watcher-Findings trailer if any unresolved findings touch staged files.
+# COMMIT_MESSAGE is what `git commit -m` sees; MESSAGE stays clean for PR title.
+WATCHER_FPS=$(collect_watcher_fingerprints || true)
+if [[ -n "$WATCHER_FPS" ]]; then
+    COMMIT_MESSAGE="$MESSAGE
+
+Watcher-Findings: $WATCHER_FPS"
+    echo "[ship] appended Watcher-Findings trailer: $WATCHER_FPS"
+else
+    COMMIT_MESSAGE="$MESSAGE"
+fi
 
 # S15-d gate: if this commit touches skills/, the plugin's mirror must be
 # in sync with unitares canonical. Fires only when skills/ is staged AND the
@@ -91,7 +118,7 @@ case "$KIND" in
         NEW_BRANCH="${AGENT_PREFIX}/auto/$(date +%Y%m%d-%H%M%S)-${SLUG}"
         echo "[ship] runtime path → $NEW_BRANCH (PR + auto-merge)"
         git checkout -b "$NEW_BRANCH"
-        git commit -m "$MESSAGE"
+        git commit -m "$COMMIT_MESSAGE"
         git push -u origin "$NEW_BRANCH"
         PR_URL=$(gh pr create --title "$MESSAGE" --body "Auto-shipped by ship.sh — runtime path. Auto-merge is enabled; CI gate applies.")
         echo "$PR_URL"
@@ -100,7 +127,7 @@ case "$KIND" in
         ;;
     other)
         echo "[ship] non-runtime → direct commit + push on $BRANCH"
-        git commit -m "$MESSAGE"
+        git commit -m "$COMMIT_MESSAGE"
         # Push to the same-name branch on origin, not whatever upstream tracks
         # (a feature branch may track master and would otherwise push ambiguously).
         git push origin "HEAD:$BRANCH"
