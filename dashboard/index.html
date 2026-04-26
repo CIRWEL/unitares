@@ -493,6 +493,20 @@
             </div>
         </div>
 
+        <!-- Resident Progress — Phase 1 telemetry panel. Read-only snapshots
+             from /v1/progress_flat/recent. No actions in Phase 1. -->
+        <div class="live-chart-panel" id="resident-progress-panel">
+            <div class="panel-header">
+                <h3>Resident Progress</h3>
+                <div class="panel-controls">
+                    <label class="panel-select-label" title="Show only ticks where loop detector also fired">
+                        <input type="checkbox" id="rp-overlap-toggle"> Show overlap
+                    </label>
+                </div>
+            </div>
+            <div id="rp-rows" class="rp-rows"></div>
+        </div>
+
         <!-- Watcher — findings pipeline: open queue, pattern breakdown with
              dismiss ratio (surfaces noisy rules), daily detect/resolve/dismiss
              timeline. Backed by /v1/watcher/summary. -->
@@ -641,6 +655,7 @@
         aria-label="Scroll to top">&uarr;</button>
 
     <script src="/dashboard/dashboard.js"></script>
+    <script src="/dashboard/resident-progress.js"></script>
 </body>
 
 </html>
