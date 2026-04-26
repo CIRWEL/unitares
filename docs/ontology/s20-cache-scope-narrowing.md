@@ -1,0 +1,186 @@
+# S20 — Client cache scope narrowing
+
+**Date:** 2026-04-25
+**Scope:** Open row. Addresses cache *placement* / *sharing* — orthogonal to S2 (auto-resume retirement, semantic) and S1 (token format). Closes the passive-siphon surface created by a workspace-flat cache file readable by every co-resident process.
+**Stance:** Descriptive + recommendation. No code in this pass.
+**Stacks with:** S1-A′ (PID/nonce token binding) + S11 (cache contents lineage-only) + S19 (substrate attestation). Orthogonal to S2.
+**Authors:** Kenny Wang (CIRWEL) + process-instance `a61763e1` (Claude Opus 4.7, claude_code, 2026-04-25), declared lineage from `02fa2672`.
+**Companion:** S11-a (skill text drift from the S11 contract) — separate row, ships independently.
+**Review provenance:** Drafted 2026-04-25, reviewed by `dialectic-knowledge-architect` (ontology stress) and `feature-dev:code-reviewer` (call-site accuracy) before landing. Findings folded in: §1a/§1b honesty fixes; missed call-site `onboard_helper.py` added; §3d skill-drift carved out to S11-a; renumbered S2-a → S20 (orthogonal to S2, not sub); §2 bootstrap gated on empirical session-ID stability check (§5 step S20.0); §4 siphon-closure claim narrowed; §9 axiom #14 relabeled "convention-level, advisory."
+
+---
+
+## TL;DR
+
+The plugin cache helper supports per-slot files (`session-<slot>.json`) and is in active use — many such files exist on disk. But when callers omit `slot`, the helper falls back to flat `session.json`, which becomes the workspace's de-facto "current owner" file, readable by every same-UID process. **The siphon is the flat fallback.** Independently, the unitares-side `scripts/client/onboard_helper.py` writes the cache directly with default umask (0644 → world-readable on typical setups), bypassing the plugin helper entirely.
+
+S11 (2026-04-21) made the cache **content** lineage-only at the post-identity hook (no `continuity_token` write at v2). S20 makes the cache **location** per-process and the **enforcement** helper-level rather than hook-aspirational. It also closes the umask gap on the direct-writer path.
+
+S20 does not make tokens unforgeable. S1-A′ does that with PID/nonce binding (server-verified). S19 closes the substrate-resume case. The four cuts are stackable:
+
+| Layer | What gets fixed | Status |
+|---|---|---|
+| **Cache contents** (S11) | Token not at rest in v2 cache, at the post-identity hook path | Landed 2026-04-21 |
+| **Cache location + writer parity** (S20, this doc) | No shared "current" file; helper-level enforcement; umask-gap closed | Open |
+| **Token format** (S1-A′) | Server-verified PID/nonce binding | After S1-a grace |
+| **Substrate resume** (S19) | Resident UUID claims attested, not bearer | In flight (PR #164) |
+
+S20 is **convention-level**: helper rejects shape-violating writes, but anyone can `echo > .unitares/session-x.json` and bypass. It is descriptive partition, not earned defense. The earned defense lives in S1-A′ + S19. S20's job is to stop the system from *teaching* the shared-cache pattern; it does not prevent a determined caller from re-creating it.
+
+## 1. The siphon surface today
+
+### 1a. Where the cache lives (plugin helper)
+
+`unitares-governance-plugin/scripts/session_cache.py:_cache_path` resolves:
+
+- `slot` set → `<workspace>/.unitares/session-<safe(slot)>.json`
+- `slot` unset → `<workspace>/.unitares/session.json` **(the shared file)**
+
+`_write_json` writes mode 0600 via `os.fchmod`. Same-UID processes still read freely; mode protects against *other* users on multi-tenant hosts but not against co-resident agents under the operator's UID — which is the actual threat model on a workstation running Claude Code, Codex CLI, residents, dispatch workers, and ad-hoc scripts side by side.
+
+Note: workspace = caller's CWD by default. For a session launched from `$HOME`, workspace `.unitares/` and `~/.unitares/` are the same directory; for a session launched from a project directory, they differ. The 80+ slot files I observed live under `/Users/cirwel/.unitares/` because this Claude Code session was launched from `$HOME`, not because the helper writes to `~/.unitares/` by default.
+
+### 1b. Where the cache is also written (direct-writer path)
+
+`unitares/scripts/client/onboard_helper.py` is a parallel writer that **bypasses `session_cache.py` entirely**:
+
+| Site | File:line | Behavior |
+|---|---|---|
+| Cache write helper | `scripts/client/onboard_helper.py:98-101` | `path.write_text(...)` — no `os.fchmod`, inherits umask 022 → mode 0644 (world-readable on default macOS) |
+| Cache payload | `scripts/client/onboard_helper.py:234-245` | Includes `"continuity_token": parsed.get("continuity_token", "")` — writes the token field today, contra S11's intent at v2 |
+
+`onboard_helper.py` *does* slot-scope (line 99: `_slot_filename(slot)`), so it doesn't write a flat fallback the way `session_cache.py` does when slot is omitted. But the umask gap is independent of slot, and the token-field write is the unitares-side mirror of the skill-drift S11-a is fixing on the plugin side.
+
+### 1c. Who reads what
+
+- Plugin `hooks/session-start:102` hard-codes `WORKSPACE_CACHE="${PWD}/.unitares/session.json"` — **flat-file-only reader**. It does not enumerate slot files. Any lineage hint surfaced to the agent today comes from the flat file.
+- Plugin `scripts/onboard_helper.py` (separate from unitares-side, same name) — needs verification at the same level as session-start.
+- The `governance-start` command (Codex-side surface, also surfaced to Claude via Skill — see channel-bleed memory note) reads the flat path and writes back via `session_cache.py set session --merge --stamp` *without* `--slot`. **This is the live S11 regression surfaced as S11-a.**
+
+The contract is "callers pass slot"; the siphon vector is "callers don't or are replaced." There is no read-side or write-side enforcement. The plugin helper has a `_slot_suffix` mechanism that callers may use; it does not require them to.
+
+## 2. Bootstrap problem
+
+Session-start runs *before* the agent has been issued a `client_session_id`. That's why flat `session.json` exists — it's the "no slot yet known" sentinel. Killing the flat path requires a replacement bootstrap.
+
+Two viable replacements:
+
+### 2a. Platform-session slot (preferred, but unverified)
+
+Use the harness-provided session identifier as the slot at bootstrap:
+
+| Harness | Slot source candidate |
+|---|---|
+| Claude Code | hook-provided session ID, or `$CLAUDE_PROJECT_DIR` + transcript path hash |
+| Codex CLI | Codex's own session ID (already passed through to slot in some paths) |
+| Dispatch worker | Dispatch task ID |
+| SDK `GovernanceAgent` | PID + start-time hash |
+
+**Stability is unverified** for the Claude Code case — see §5 S20.0 gate. If `/clear` or compaction regenerates the session ID mid-conversation, the cache fragments and §3b collapses to §2b alone. The empirical check must precede §3b code, not follow it.
+
+This makes the cache file **process-stable for the lifetime of the harness session** (if the ID is stable) and **process-distinct across concurrent harness sessions**. Slot is *not* a security primitive — it's a partition. A misdeclared slot leaks identity to whoever guesses the slot value, which is a fingerprintable string. The strength comes from the helper not *teaching* a shared file as the canonical surface; it does not raise attacker work meaningfully against a same-UID process willing to `ls`.
+
+### 2b. Scan-newest fallback
+
+If platform session ID is not available or not stable, the bootstrap reader scans `<workspace>/.unitares/session-*.json`, sorts by `updated_at`, and uses the newest as a **lineage candidate** — never as a resume credential. This is a `parent_agent_id` hint, not a UUID claim. Under v2 ontology this is honest: lineage is declared, not inherited.
+
+The combination — platform slot when known, scan-newest fallback when not — covers every client. **Flat `session.json` becomes write-forbidden in the helper.**
+
+## 3. Proposal
+
+Change set, in dependency order:
+
+### 3a. Helper-side enforcement (`session_cache.py`)
+
+- `cmd_set` rejects `kind=session` when `slot` is unset, except when `--allow-shared` is passed. `--allow-shared` is reserved for substrate-earned single-tenant deployments (Lumen on dedicated Pi) where the workspace genuinely has one owner. Otherwise: error, exit 2.
+- `cmd_set` rejects payloads containing `continuity_token` at v2. Helper becomes the gate the hook layer was supposed to be. (S11 landed the *intent* at the post-identity hook layer; S20 moves the *check* into the helper, so out-of-tree callers can't bypass through it. Direct writers like `onboard_helper.py` are addressed in §3c.)
+- New `cmd_list` returns slot inventory `(slot, uuid, updated_at)` tuples sorted by recency. Bootstrap callers use this for the scan-newest fallback.
+
+### 3b. Bootstrap rewiring (hooks)
+
+- `hooks/session-start` (plugin): replace `WORKSPACE_CACHE="${PWD}/.unitares/session.json"` with platform-slot lookup → `cmd_list` fallback. Document the harness → slot mapping. Surface to the agent as "this workspace was last run by `<UUID>` (slot `<X>`, `<N>` minutes ago) — declare `parent_agent_id=<UUID>` if you inherit."
+- No "the cache" — many caches, treated as a pool.
+- This step is gated on S20.0 (see §5).
+
+### 3c. Direct-writer parity (`onboard_helper.py`)
+
+The unitares-side `scripts/client/onboard_helper.py` bypasses the helper entirely. Two options:
+
+- **Option C1 (preferred): converge on `session_cache.py`.** Replace `_write_cache` with a subprocess call to the plugin helper. Single enforcement point. Requires the unitares repo to depend on the plugin helper at runtime — already true via the bundled CLI.
+- **Option C2 (fallback): mirror the contract locally.** Set mode 0600 in `_write_cache`, add the `continuity_token` rejection. Two enforcement points stay in sync by convention.
+
+C1 is the descriptive-floor move (single source of truth); C2 is the pragmatic move if the dependency tax is real. Decision deferred to PR; either satisfies S20.
+
+### 3d. Migration
+
+- Existing flat `<workspace>/.unitares/session.json` files: read-only legacy, ignored by writes, surfaced by `cmd_list` for one release as a lineage candidate. Operator-runbook entry: `rm <workspace>/.unitares/session.json` after upgrade.
+- Existing slotted `session-<x>.json` files: unchanged. Pruning policy is out of scope (separate cleanup row — too many on disk over time).
+
+(Skill/command-text alignment was previously bundled here as §3d in the first draft; it carved out to **S11-a** because it is an S11 regression, not S20 scope. S20 lands independently of the skill fix and vice versa.)
+
+## 4. Threat closure (honest accounting)
+
+What S20 reduces:
+
+- **Teaching-surface convergence on a shared file.** The system stops *recommending* a single workspace cache as the "current" identity surface. Hooks, helpers, and skills route through slot-scoped paths or scan-and-pick-newest. This is descriptive — it brings the system's behavior in line with the ontology, nothing more.
+- **Channel partition** (caveats below). Codex sessions and Claude sessions in the same workspace stop colliding on flat `session.json`; each writes its own slot file. CLAUDE.md's stated invariant ("`.unitares/session.json` is the Codex cache; Claude shouldn't reference it") is a *read prohibition* that S20 does not satisfy — slot-scoping just gives Claude its own file *to read*, which is a different invariant. S20 makes the channel-bleed concern moot at the file-collision level; the original CLAUDE.md invariant remains a separate concern.
+- **The S11 backslide** (post-identity hook path). Helper-level rejection of `continuity_token` in v2 cache prevents future regressions on the hook path. The skill-text regression (S11-a) is a separate fix.
+- **Umask gap on the direct-writer path.** §3c ships mode 0600 parity (or removes the writer entirely via C1).
+
+What S20 does **not** reduce meaningfully:
+
+- **Same-UID file enumeration.** A same-UID process can `ls <workspace>/.unitares/` and read every slotted file trivially. The reduction is "attacker reads N files instead of 1" — negligible under the threat model. Real defense is S1-A′ (token can't be replayed without server-side process attestation).
+- **Active fork-time clone.** A child process that inherits memory or copies `~/.unitares/` wholesale gets every slot. Slot-scoping is a partition against passive-read habits, not against active duplication. Fork-detection ontology is the right tool for that branch.
+- **Same-process introspection.** A debugger or `/proc` reader against the live process still extracts the token. Out of scope; substrate-level concern.
+- **Token forgery.** Bearer tokens remain bearer until S1-A′.
+- **Substrate resume hijack.** S19's territory.
+
+The honest summary: **S20 stops the system from teaching the shared-cache pattern. It does not stop a determined attacker who wants to recreate it.** The earned defenses are S1-A′ and S19; S20 makes them composable by removing the easier passive vector.
+
+## 5. Sequencing
+
+| Step | What | Depends on | Gating |
+|---|---|---|---|
+| **S20.0** | **Empirical check: Claude Code session ID stability across `/clear`, compaction, restart.** Determines whether §2a is viable or whether §3b must collapse to §2b alone. | none | **Blocks S20.2** |
+| S20.1 | Helper-side `cmd_set` rejection of slotless writes; `--allow-shared` gate; v2 token-write block; new `cmd_list` | none | none |
+| S20.2 | `hooks/session-start` rewired to platform slot (if S20.0 passes) + scan-newest fallback | S20.0, S20.1 | none |
+| S20.3 | `onboard_helper.py` parity (C1 preferred; C2 fallback) | S20.1 | none |
+| S20.4 | Codex equivalents (commands + post-identity hook on Codex side) | S20.1 | none |
+| S20.5 | Operator-runbook migration note + flat-`session.json` cleanup guidance | S20.2, S20.3, S20.4 | none |
+| S20.6 | Tests: helper rejects slotless write; helper rejects token-bearing payload at v2; bootstrap reads platform slot; bootstrap falls back to scan-newest; flat `session.json` is read-only-legacy; `onboard_helper.py` writes mode 0600 (if C2) or routes through helper (if C1) | S20.1–S20.4 | Gates merge |
+
+No grace period needed beyond the helper-level rejection: flat `session.json` is treated as read-only-legacy from S20.1 forward. Existing files keep working as lineage candidates; new writes are slotted.
+
+## 6. Open questions
+
+- **S20.0 outcome.** If Claude Code's session ID is unstable across `/clear` or compaction, §3b's platform-slot path is unusable on Claude and the cache fragments. Fallback is scan-newest only, which is a different siphon shape (still per-process partition, but lineage-candidate selection is racier when multiple sessions are concurrent and recently-updated). Verify before §3b code.
+- **`--allow-shared` policy.** Substrate-earned single-tenant case (Lumen) genuinely wants a stable shared file. How is the gate gated? Env var? Config field? Operator declaration? Defer to S19's substrate-claim work — same registry.
+- **Slot-pruning.** Many slot files accumulate over weeks of dogfooding. Storage and auditability are fine; stale slots show up in `cmd_list` and skew "newest" scans if a long-dead session has a high `updated_at` (it shouldn't, but worth a TTL on the scan side: ignore slots updated > 30 days ago for lineage-candidate selection).
+- **Slot leakage as fingerprint.** Slot strings reveal harness identity (`claude_code-…`, `codex-…`). For a single-operator workstation this is fine; for shared-CI hosts it leaks who runs what. Acceptable for the dev-fleet scope this targets; flag for any future multi-tenant deployment.
+- **`bind_session` and other token consumers.** S20 does not touch them; they read tokens from arguments, not from cache. Out of scope. S1-A′ is where they get tightened.
+
+## 7. Relationship to other rows
+
+- **S1**: token format. Orthogonal — S20 removes the cache-as-shared-credential pattern; S1-A′ removes the token-as-bearer pattern. Either alone leaves a hole. Together they get to "earned, narrowed."
+- **S2**: auto-resume retirement. Orthogonal. S2 is *semantic* (don't auto-resume on read); S20 is *spatial* (don't share the file). Composable but independent. (Earlier framing as "S2-a sub-spec" was wrong; corrected per architect review.)
+- **S5**: resident-fork inversion (resolved). S20 doesn't change resident-fork semantics. Residents that legitimately use shared substrate-earned caches go through `--allow-shared` (§3a).
+- **S11**: cache contents (resolved at hook path). S20 moves the enforcement from "hook is supposed to" to "helper rejects" — closing the convention-drift gap that S11 alone leaves open.
+- **S11-a**: skill text drift (companion row). Carves out the skill/command-text fix that was incorrectly bundled here in the first draft. Ships independently.
+- **S19**: substrate attestation. Independent. S19 fixes resume-time verification; S20 fixes pre-resume cache placement. A substrate-earned agent under S19 can still use `--allow-shared` for its single-tenant cache.
+
+## 8. What this document does not commit to
+
+- The exact slot string for each harness. §2a lists candidates; harness-by-harness verification needed before code (S20.0 covers Claude Code).
+- The migration cutover date. Steps S20.1 through S20.6 can ship over multiple weeks; no big-bang.
+- A field rename. S20 keeps `session.json` filenames, just with slot suffixes. A broader cache-format reorganization is out of scope.
+- C1 vs C2 for the direct-writer path. PR-time decision.
+
+## 9. Stance check (axiom gate)
+
+- **Axiom #3 (build nothing that appears more alive than it is).** Slot-scoping is descriptive — it stops the *teaching surface* of "the workspace's current identity" from existing. It does not raise attacker work meaningfully against a same-UID process. Honestly labeled: **"convention-level partition, not earned defense."** The earned defense is S1-A′. ✓ (descriptive)
+- **Axiom #5 (process-instance boundaries are real).** Per-slot files honor the boundary at the *teaching surface* level. ✓ (descriptive)
+- **Axiom #10 (memory is not identity).** The cache becomes a lineage hint surface, not a resume credential. ✓
+- **Axiom #11 (let embodiment anchor expression).** Substrate-earned single-tenant agents retain `--allow-shared` opt-in. ✓
+- **Axiom #14 (let learning deepen reality, not theater).** Helper-level rejection is **convention-level, advisory** — bypassable by any caller writing JSON directly to the path. It is not a daemon; it is a checked subroutine that well-behaved callers route through. The deeper move (server-side process attestation, S1-A′ + S19) is where the reality-deepening happens. S20's contribution is removing the *taught* shared-cache pattern so the deeper move composes cleanly. ✓ (with this honesty caveat — earlier draft over-claimed)
+
+Pattern holds at the descriptive layer. The inventive-stance work continues to live in S1-A′ and S19.
