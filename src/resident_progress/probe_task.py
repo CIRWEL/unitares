@@ -178,3 +178,19 @@ class ProgressFlatProbe:
                     logger.warning(
                         "[PROGRESS_FLAT] candidate audit emit failed: %s", e,
                     )
+
+
+def _verify_unique_source_names() -> None:
+    seen = set()
+    for cfg in RESIDENT_PROGRESS_REGISTRY.values():
+        if cfg.source in seen:
+            raise RuntimeError(
+                f"resident-progress registry has duplicate source name "
+                f"'{cfg.source}' — orchestrator's source_outputs dict cannot "
+                f"distinguish them. If you intentionally share a source across "
+                f"residents, change source_outputs to key on (name, window) tuple."
+            )
+        seen.add(cfg.source)
+
+
+_verify_unique_source_names()

@@ -360,3 +360,163 @@ async def test_dogfood_write_failure_is_non_fatal(monkeypatch):
     # Audit event emitted despite dogfood failure (candidate vigil row)
     audit.emit.assert_called_once()
     assert audit.emit.call_args.kwargs["payload"]["resident_label"] == "vigil"
+
+
+# ---------------------------------------------------------------------------
+# Test 6: heartbeat_eval_error branch — alive=True ignored, forced to False
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_heartbeat_eval_error_forces_dead_and_suppresses(monkeypatch):
+    """hb.alive=True but hb.eval_error='db down' → heartbeat_alive=False, suppressed."""
+    vigil_uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+    monkeypatch.setattr(
+        "src.resident_progress.probe_task.RESIDENT_PROGRESS_REGISTRY",
+        _registry_one_vigil(),
+    )
+    monkeypatch.setattr(
+        "src.resident_progress.probe_task.resolve_resident_uuid",
+        lambda label: vigil_uuid if label == "vigil" else None,
+    )
+
+    source = MagicMock()
+    source.fetch = AsyncMock(return_value={vigil_uuid: 5})
+
+    heartbeat = MagicMock()
+    # alive=True but eval_error set — orchestrator must override alive to False
+    heartbeat.evaluate = AsyncMock(return_value=_hb(alive=True, eval_error="db down"))
+
+    writer = MagicMock()
+    writer.write = AsyncMock()
+
+    audit = MagicMock()
+    audit.emit = AsyncMock()
+
+    probe = _make_probe(
+        sources_by_name={"kg_writes": source},
+        heartbeat_evaluator=heartbeat,
+        writer=writer,
+        audit_emitter=audit,
+    )
+
+    await probe.tick()
+
+    resident_batch = writer.write.call_args_list[0][0][0]
+    assert len(resident_batch) == 1
+    row = resident_batch[0]
+
+    # Critical: heartbeat_alive must be forced False despite hb.alive=True
+    assert row.heartbeat_alive is False
+    assert row.suppressed_reason == "heartbeat_eval_error"
+    assert row.error_details == {"heartbeat_error": "db down"}
+    assert row.candidate is False
+    assert row.metric_value is None
+
+    # No audit event (not a candidate)
+    audit.emit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Test 7: heartbeat_not_alive suppression — metric below threshold but not candidate
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_heartbeat_not_alive_suppresses_candidate(monkeypatch):
+    """metric=0 < threshold=1 AND hb.alive=False → suppressed_reason='heartbeat_not_alive', candidate=False."""
+    vigil_uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+    monkeypatch.setattr(
+        "src.resident_progress.probe_task.RESIDENT_PROGRESS_REGISTRY",
+        _registry_one_vigil(),
+    )
+    monkeypatch.setattr(
+        "src.resident_progress.probe_task.resolve_resident_uuid",
+        lambda label: vigil_uuid if label == "vigil" else None,
+    )
+
+    source = MagicMock()
+    source.fetch = AsyncMock(return_value={vigil_uuid: 0})  # metric=0 < threshold=1
+
+    heartbeat = MagicMock()
+    heartbeat.evaluate = AsyncMock(return_value=_hb(alive=False))  # no eval_error
+
+    writer = MagicMock()
+    writer.write = AsyncMock()
+
+    audit = MagicMock()
+    audit.emit = AsyncMock()
+
+    probe = _make_probe(
+        sources_by_name={"kg_writes": source},
+        heartbeat_evaluator=heartbeat,
+        writer=writer,
+        audit_emitter=audit,
+    )
+
+    await probe.tick()
+
+    resident_batch = writer.write.call_args_list[0][0][0]
+    assert len(resident_batch) == 1
+    row = resident_batch[0]
+
+    assert row.suppressed_reason == "heartbeat_not_alive"
+    assert row.candidate is False  # NOT True even though metric_below_threshold=True
+    assert row.metric_below_threshold is True
+    assert row.heartbeat_alive is False
+
+    # No audit event (suppressed)
+    audit.emit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Test 8: dead resident with metric OK — no suppression, just record
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dead_resident_metric_ok_no_suppression(monkeypatch):
+    """hb.alive=False AND metric=5 >= threshold=1 → suppressed_reason=None, candidate=False."""
+    vigil_uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+    monkeypatch.setattr(
+        "src.resident_progress.probe_task.RESIDENT_PROGRESS_REGISTRY",
+        _registry_one_vigil(),
+    )
+    monkeypatch.setattr(
+        "src.resident_progress.probe_task.resolve_resident_uuid",
+        lambda label: vigil_uuid if label == "vigil" else None,
+    )
+
+    source = MagicMock()
+    source.fetch = AsyncMock(return_value={vigil_uuid: 5})  # metric=5 >= threshold=1
+
+    heartbeat = MagicMock()
+    heartbeat.evaluate = AsyncMock(return_value=_hb(alive=False))  # dead, no eval_error
+
+    writer = MagicMock()
+    writer.write = AsyncMock()
+
+    audit = MagicMock()
+    audit.emit = AsyncMock()
+
+    probe = _make_probe(
+        sources_by_name={"kg_writes": source},
+        heartbeat_evaluator=heartbeat,
+        writer=writer,
+        audit_emitter=audit,
+    )
+
+    await probe.tick()
+
+    resident_batch = writer.write.call_args_list[0][0][0]
+    assert len(resident_batch) == 1
+    row = resident_batch[0]
+
+    # Dead but metric not flat: no suppression, just record
+    assert row.suppressed_reason is None
+    assert row.candidate is False  # alive=False so not a candidate
+    assert row.heartbeat_alive is False
+    assert row.metric_below_threshold is False
+
+    # No audit event (not a candidate)
+    audit.emit.assert_not_called()
