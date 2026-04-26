@@ -108,6 +108,8 @@ from .identity.handlers import (
 from .support.model_inference import handle_call_model
 # Outcome Events - EISV validation infrastructure (Feb 2026)
 from .observability.outcome_events import handle_outcome_event
+# Resident Progress - sentinel push-based pulse (Phase 1)
+from .resident_progress import handle_record_progress_pulse
 # Consolidated tools - reduces cognitive load for agents (Jan 2026)
 from .consolidated import (
     handle_knowledge,
