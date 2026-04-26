@@ -6,11 +6,20 @@
 
 ## Revisions
 
+**v3 (2026-04-26)** — third council pass; folded in:
+
+- §4 — `peek_prediction` was a fabricated name; the actual non-destructive function is `lookup_prediction` (`monitor_prediction.py:35`). Renamed throughout.
+- Risks table — stale "Default → 1800s" row contradicted §5b's 3600s decision; fixed.
+- Test plan — clarified concurrency test is a regression canary, not a correctness assertion (lock fix deferred to a separate PR per code-review + dialectic).
+- New §8 "Deploy gate" — `UNITARES_PHASE5_EVIDENCE_WRITE` env flag (default off → shadow → enable). Protects EISV class-conditional scales from a sudden distribution shift when step 4 starts flooding `outcome_events` with agent-reported rows. Per memory's `feedback_eisv-bounds-drift.md`.
+- Implementation order — added one-liner clarifying steps 1–3 ship visibility, step 4 ships supply (gated by deploy flag).
+- §9 numbering bump (Compatibility bridge was §8 in v2).
+
 **v2 (2026-04-26)** — second council pass on the v1 spec surfaced concrete defects; folded in:
 
 - §1 — explicit `kind` → `outcome_type` mapping (was hand-waved as `_classify_outcome_type`).
 - §2 — pseudocode used dict `.get()` on Pydantic-validated objects; switched to attribute access. Added explicit `ctx.warnings → response_data["warnings"]` plumbing because warnings don't surface today. Added one sentence on calibrator weighting by `(verification_source, prediction_binding)` per dialectic.
-- §4 — `ttl_expired_fallback` was unreachable as written (consume returns `None`, indistinguishable from "missing"); replaced with two-phase lookup-then-consume using a non-destructive `peek_prediction` pre-check.
+- §4 — `ttl_expired_fallback` was unreachable as written (consume returns `None`, indistinguishable from "missing"); replaced with two-phase lookup-then-consume using a non-destructive `lookup_prediction` pre-check.
 - §5a — `consume_prediction` is a module-level function, not a method; fixed the sketch.
 - §5b — **TTL default is already 3600s** (`governance_monitor.py:167`), not 600s. Spec no longer proposes a bump; the change is the hard-on-consume check. Added explicit Lumen-class breakage disclosure per dialectic.
 - §6 — strip happens in `response_formatter.py` (`_format_standard|minimal|compact|mirror`), not `update_response_service.py`. Spec retargets the patch.
@@ -147,10 +156,10 @@ Add to `outcome_event` response payload:
 ]
 ```
 
-**Two-phase resolution to make `ttl_expired_fallback` reachable.** As written today, `consume_prediction` returns `None` for both "stale" and "missing" — the caller can't distinguish. Spec adds a non-destructive `peek_prediction(open_predictions, prediction_id)` (already exists at `monitor_prediction.py:35-45`) and uses it in `outcome_events.py` BEFORE calling `consume_prediction`:
+**Two-phase resolution to make `ttl_expired_fallback` reachable.** As written today, `consume_prediction` returns `None` for both "stale" and "missing" — the caller can't distinguish. Spec adds a non-destructive `lookup_prediction(open_predictions, prediction_id)` (already exists at `monitor_prediction.py:35-45`) and uses it in `outcome_events.py` BEFORE calling `consume_prediction`:
 
 ```python
-record = peek_prediction(open_predictions, prediction_id)
+record = lookup_prediction(open_predictions, prediction_id)
 if record is None:
     binding = "missing_prediction"   # never existed or already consumed
 elif _is_expired(record, ttl_seconds):
@@ -224,7 +233,26 @@ Also update `describe_tool("process_agent_update")` to document `prediction_id` 
 
 The actual gap this spec closes is on the `process_agent_update` side: agents have no contract to *report* tool outcomes that would mint and consume those predictions. Update the docstring to: (a) note the consume path is live; (b) point to this spec for the report path; (c) drop the "phase-two" framing.
 
-### 8. Compatibility bridge (Design B as parser-into-internal-model)
+### 8. Deploy gate
+
+Per memory's `feedback_eisv-bounds-drift.md`: EISV class-conditional scales were measured against the current sparse mix of `outcome_events` rows. Step 4 (the `recent_tool_results` Phase-5 iteration) will start writing rows at significantly higher volume — every reported tool outcome becomes one new row, with `verification_source="agent_reported_tool_result"`. If those rows shift the sample distribution before the calibrator's correction logic is re-measured, the bounds-drift invariant is at risk.
+
+Add an env flag `UNITARES_PHASE5_EVIDENCE_WRITE` controlling step 4 behavior:
+
+| Mode | Phase-5 behavior |
+|---|---|
+| unset (default) | iterate `recent_tool_results` but skip the `outcome_event` write; log per-item counts only |
+| `shadow` | write rows with `verification_source="agent_reported_tool_result"` AND a `detail.shadow_write=true` flag; calibrator excludes shadow rows from correction math |
+| `1` / `enable` | full write; rows participate in calibration |
+
+Deploy sequence:
+1. Ship step 4 with flag unset → operators see the count of would-be writes per check-in. Calibrator unchanged.
+2. Flip to `shadow` for 48h → distribution comparison: `(agent_reported, shadow)` vs current sparse mix. Operators inspect the bin shifts before live writes.
+3. Flip to `1` once distributions look acceptable.
+
+The flag is an operational seam, not a permanent feature — once the v2 server-verified primitive lands and class-conditional scales are re-measured against the broader mix, the flag can be retired.
+
+### 9. Compatibility bridge (Design B as parser-into-internal-model)
 
 Out of scope for v1 unless a real client emerges that cannot update its tool schema. If/when needed: a regex parser for `<eisv-evidence>{...}</eisv-evidence>` blocks in `response_text` produces the same `ToolResultEvidence` records the structured field would. Single internal model. Marked `compatibility-only` in code comments. **Not** implemented in v1 to avoid two surfaces drifting before there's a concrete need.
 
@@ -238,12 +266,14 @@ Out of scope for v1 unless a real client emerges that cannot update its tool sch
 | `extra="forbid"` collision with existing payloads | code-review | grep fleet for any existing `recent_tool_results` field name (none expected) |
 | Silent degradation of `prediction_id` misuse | live verifier | New `prediction_binding` echo |
 | TTL bleed (lazy enforcement) | live verifier (refined by user pressure) | Hard check on consume |
-| TTL too short for slow agents | live verifier | Default → 1800s; configurable |
+| TTL too short for slow agents | live verifier | Live default is already 3600s (verifier corrected v1); per-agent override is the escape hatch; per-agent-class TTL table is v2 work |
 | Existing fleet (Vigil, Sentinel, Watcher, Steward, Chronicler, Lumen) breaks on schema change | code-review | `Optional` field, default `None`, old clients no-op (verifier grep confirms zero collisions) |
 | `ttl_expired_fallback` was unreachable as v1-written | code-review (round 2) | Two-phase peek-then-consume in §4 makes the discrimination computable |
 | `ctx.warnings` populated but not surfaced in response | code-review (round 2) | §2 + §6 add `warnings` plumbing through formatters |
 | Pseudocode used `.get()` on Pydantic-validated objects (would AttributeError) | code-review (round 2) | §2 switched to attribute access |
 | Lumen-class agents will systematically hit `ttl_expired_fallback` at 3600s default | dialectic + verifier | Documented in §5b; `prediction_binding` echo makes it visible; per-agent override is the v1 escape hatch |
+| Production calibration shift when Phase-5 starts flooding `outcome_events` with `agent_reported_tool_result` rows; EISV class-conditional scales were measured on the current sparse mix | dialectic (round 3) | §"Deploy gate" — `UNITARES_PHASE5_EVIDENCE_WRITE` env flag (default off); enable shadow-write first, compare distributions for 48h, then enable correction-write |
+| Race on `consume_prediction.consumed` flag (two simultaneous outcome_events for same prediction_id) | code-review + dialectic (round 3) | Lock not added in v1; concurrency test is a regression canary not a correctness assertion; documented in test plan |
 | C might be transient — server-verified outcomes will replace it | dialectic (round 1) → corrected (round 2) | C is the permanent floor: ~70% of calibration signal is intrinsically agent-mediated (tests, builds, file ops, external tool calls). Server-verified covers ~30% (KG writes, dialectic verdicts, state transitions). v2 is a partial-coverage upgrade, not a replacement |
 
 ## Test plan
@@ -253,12 +283,12 @@ Out of scope for v1 unless a real client emerges that cannot update its tool sch
 - Unit: hard TTL on `consume_prediction` — predictions >TTL return None even if no sweep has fired
 - Unit: `prediction_binding` echo correctness for each enum value (mock each fallback path)
 - Integration: end-to-end `process_agent_update` with `recent_tool_results` advances tactical_evidence.eligible_samples by N
-- Integration: agent that registers a prediction at T=0, references it at T=900s (within 1800s TTL) → `prediction_binding == "registry"`
-- Integration: agent that references a prediction_id at T>1800s → `prediction_binding == "ttl_expired_fallback"`
+- Integration: agent that registers a prediction at T=0, references it at T=1800s (within 3600s TTL) → `prediction_binding == "registry"`
+- Integration: agent that references a prediction_id at T>3600s → `prediction_binding == "ttl_expired_fallback"`
 - Integration: agent that omits `prediction_id` → `prediction_binding == "argument_fallback"` or `"prev_confidence_fallback"` depending on arg presence
 - Schema migration test: existing `process_agent_update` calls without `recent_tool_results` continue to work (Vigil/Sentinel/Watcher/Steward/Chronicler call signatures)
 - Docstring drift test: `sequential_calibration.py` docstring no longer claims the seam is unimplemented
-- Concurrency test: two simultaneous `outcome_event` calls referencing the same `prediction_id` — current `consumed` flag is not lock-protected, so both might read `False` and proceed. Test asserts at most one resolves to `prediction_binding == "registry"`; the second resolves to `missing_prediction`. Low real-world probability but worth a regression test before merge.
+- Concurrency test (regression canary, NOT a correctness assertion): two simultaneous `outcome_event` calls referencing the same `prediction_id` — current `consumed` flag is not lock-protected, so both might read `False` and proceed. Test documents current behavior (at most one resolves to `prediction_binding == "registry"` under typical scheduling; the second resolves to `missing_prediction`). The lock fix is explicitly deferred to a separate PR; this test exists to catch regressions if the race becomes higher-probability under future async scheduling changes.
 - `describe_tool` drift test: parametrize over schema fields and assert each is documented in the `RETURNS` block of `describe_tool("process_agent_update")`. This catches the original "stale docstring" failure class that triggered this whole spec round.
 - `ctx.warnings` round-trip test: a Phase-5 evidence record that throws appends to `ctx.warnings`, and the resulting response payload includes the warning string. Covers the formatter-side regression risk.
 - `prediction_binding` table tests: parametrized over `(prediction_id state, confidence arg state, prev_confidence state, audit-trail state)` enumerate which fallback fires and assert the correct binding label. Mock each layer independently.
@@ -266,6 +296,8 @@ Out of scope for v1 unless a real client emerges that cannot update its tool sch
 ## Implementation order
 
 Per dialectic: ship pieces such that each step's surface is safe to live with if the next step delays. Step 1 must not strand without §6 (agents would have a binding-echo for an id they can't see). §4 + §5 are squashed because the field accepts data the server otherwise drops on the floor.
+
+**Read this as: steps 1–3 ship visibility/enforcement (calibration unchanged); step 4 ships supply (calibration starts to change, gated by §8 deploy flag).** Operators will not see calibration behavior shift until step 4 is deployed AND the env flag is flipped past `shadow`.
 
 1. **`prediction_binding` echo + hard TTL on `consume_prediction`** — both are pure-additions to `outcome_event` response/behavior; the binding label and TTL check together make `prediction_id` misuse visible. (Bundles old steps 1+2 because they're meaningless apart.)
 2. **Expose `prediction_id` + `warnings` in formatter modes** (was old step 6). Now agents can actually USE the binding echo from step 1. Same diff plumbs `ctx.warnings → response_data["warnings"]`.
