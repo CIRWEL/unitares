@@ -1,0 +1,69 @@
+# Git
+.git
+.gitignore
+
+# Worktrees (must be excluded — they live under .git but resolve as real paths)
+.worktrees
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.venv
+venv
+env
+uv.lock
+
+# Data — mounted as volume by docker-compose
+data/
+data_isolated/
+logs/
+*.db
+*.db-shm
+*.db-wal
+
+# IDE / tool config
+.claude
+.cursor
+.vscode
+.idea
+*.swp
+*.swo
+
+# Tests + coverage (not needed in production image)
+tests/
+.pytest_cache
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache
+.ruff_cache
+
+# Documentation / non-runtime
+papers/
+scripts/archive/
+docs/
+site/
+sketch/
+examples/
+reports/
+
+# Archives
+archive/
+archives/
+
+# Temporary
+*.tmp
+*.log
+.DS_Store
+
+# Local env (don't bake secrets into image)
+.env
+.env.local

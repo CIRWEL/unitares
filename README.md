@@ -20,15 +20,24 @@ Circuit breakers and kill switches are still there — they're just the last lin
 
 Running continuously in production since November 2025 with 6,200+ passing tests at 77% coverage. Long-run trajectories are stored in PostgreSQL + AGE; the state model is derived from what agents actually do (EMA-smoothed observations, not model predictions).
 
-**Try it** (assumes Postgres + AGE — full setup in [Installation](#installation)):
+**Try it** (one command, no Postgres/AGE on the host required):
 
 ```bash
 git clone https://github.com/CIRWEL/unitares.git && cd unitares
-pip install -r requirements-full.txt
-export DB_POSTGRES_URL=postgresql://postgres:postgres@localhost:5432/governance
-python src/mcp_server.py --port 8767
+docker compose up
 # then point any MCP client at http://localhost:8767/mcp/
 ```
+
+That brings up Postgres 17 + Apache AGE + pgvector + Redis + the governance server, all bound to `127.0.0.1`. Bare-metal setup (Homebrew Postgres, native install) is in [Installation](#installation). The Pi/Lumen embodiment side is **optional** — governance runs standalone.
+
+**Service ports** (bound to `127.0.0.1` by default; override host-side via `.env`):
+
+| Service | Port | Endpoint |
+|---|---|---|
+| Governance MCP server | `8767` | `http://localhost:8767/mcp/` |
+| Postgres + AGE + pgvector | `5432` | `postgresql://postgres:postgres@localhost:5432/governance` |
+| Redis (session cache) | `6379` | `redis://localhost:6379/0` |
+| Anima MCP (Pi-side, separate repo, optional) | `8766` | `http://lumen.local:8766/mcp/` |
 
 | | |
 |--|--|
@@ -171,9 +180,25 @@ The `onboard()` response includes `agent_uuid`. Store it as an identity anchor. 
 
 ### Installation
 
-**Prerequisites:** Python 3.12+, PostgreSQL 16+ with Apache AGE + pgvector (examples use PostgreSQL 17), Redis optional (session cache only).
+Two supported paths. Pick one.
 
-**Full local server (recommended for MCP + HTTP stack):**
+#### A. Docker Compose (recommended for evaluation)
+
+Zero host dependencies beyond Docker. Brings up Postgres+AGE+pgvector, Redis, and the governance server in one command.
+
+```bash
+git clone https://github.com/CIRWEL/unitares.git
+cd unitares
+cp .env.example .env       # optional — defaults work
+docker compose up
+# server: http://localhost:8767/mcp/
+```
+
+To override credentials or host-side ports (e.g. you already have Postgres on `5432`), edit `.env` first. Compose definition: [`docker-compose.yml`](docker-compose.yml). Postgres image: [`db/postgres/Dockerfile.age-vector`](db/postgres/Dockerfile.age-vector).
+
+#### B. Bare-metal (native Postgres + AGE)
+
+Lower overhead, faster iteration, what the maintainer runs in production. Requires PostgreSQL 16+ with Apache AGE + pgvector compiled and installed (examples use PostgreSQL 17). Redis optional (session cache only).
 
 ```bash
 git clone https://github.com/CIRWEL/unitares.git
@@ -188,7 +213,7 @@ export UNITARES_KNOWLEDGE_BACKEND=age
 python src/mcp_server.py --port 8767
 ```
 
-`requirements-full.txt` is the default for almost everything — running the local server, running tests (`pytest` is in `full` only), and handler development. `requirements-core.txt` is a 2-package subset (`mcp` + `numpy`) for thin stdio/proxy setups where the governance server runs elsewhere and you only need a local client. Database setup (PostgreSQL 17 + AGE + pgvector): [db/postgres/README.md](db/postgres/README.md).
+`requirements-full.txt` is the default for almost everything — running the local server, running tests (`pytest` is in `full` only), and handler development. `requirements-core.txt` is a 2-package subset (`mcp` + `numpy`) for thin stdio/proxy setups where the governance server runs elsewhere and you only need a local client. Database bring-up details (PostgreSQL 17 + AGE + pgvector compile): [db/postgres/README.md](db/postgres/README.md).
 
 The EISV **ODE** engine lives in this repo at `governance_core/` (pure Python, no separate install). The four-component drift decomposition is fully described in the v6 paper. To skip the ODE entirely and run with behavioral-EISV only: `export UNITARES_DISABLE_ODE=1`.
 
