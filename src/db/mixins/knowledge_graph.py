@@ -11,12 +11,19 @@ from src.logging_utils import get_logger
 logger = get_logger(__name__)
 
 
-def _or_default_query(query: str) -> str:
-    """Convert multi-term query to OR-default for websearch_to_tsquery.
+def _apply_operator(query: str, operator: str = "AND") -> str:
+    """Join multi-term queries with the given operator for websearch_to_tsquery.
 
-    Preserves quoted phrases, existing operators (OR, AND), and negations (-).
-    Single-term queries are returned unchanged.
+    Preserves quoted phrases, existing operators, and negations (-). Single-term
+    queries are returned unchanged. AND is the default — earlier OR-default
+    drowned paraphrased queries in common-token noise (issue #165 #1).
+
+    Callers wanting recall over precision pass operator="OR", typically as a
+    fallback after AND returns zero hits.
     """
+    op = operator.upper()
+    if op not in ("AND", "OR"):
+        op = "AND"
     # If query already contains explicit operators, leave as-is
     if re.search(r'\b(OR|AND)\b', query):
         return query
@@ -24,7 +31,14 @@ def _or_default_query(query: str) -> str:
     tokens = [m.group() for m in re.finditer(r'"[^"]*"|\S+', query)]
     if len(tokens) <= 1:
         return query
-    return ' OR '.join(tokens)
+    return f' {op} '.join(tokens)
+
+
+# Backwards-compat shim. Older imports expect _or_default_query; route them
+# through the new operator-aware helper with operator="OR" so behavior is
+# identical to the pre-#165 implementation.
+def _or_default_query(query: str) -> str:
+    return _apply_operator(query, operator="OR")
 
 
 class KnowledgeGraphMixin:
@@ -163,18 +177,20 @@ class KnowledgeGraphMixin:
         self,
         query: str,
         limit: int = 20,
+        operator: str = "AND",
     ) -> List[Dict[str, Any]]:
         """Full-text search using PostgreSQL tsvector.
 
-        Multi-term queries default to OR (any term matches).
-        Use explicit "AND" between terms for all-must-match behavior.
-        Quoted phrases are preserved as-is.
+        Multi-term queries default to AND (all terms must match) — switched
+        from OR-default in #165 because OR drowned paraphrased queries in
+        common-token noise. Callers wanting recall over precision pass
+        operator="OR", typically as an automatic fallback after AND returns
+        zero hits (the high-level handler handles that loop). Quoted phrases
+        and explicit AND/OR/NOT in the query are preserved as-is.
         """
-        # Default to OR for multi-term queries so "bug database" finds
-        # documents matching either term, not just both.
         # Use ts_rank_cd (cover density) — considers term proximity and is
         # generally better than vanilla ts_rank on short structured docs.
-        or_query = _or_default_query(query)
+        ts_query = _apply_operator(query, operator=operator)
         async with self.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT *, ts_rank_cd(search_vector, websearch_to_tsquery('english', $1)) as rank
@@ -182,7 +198,7 @@ class KnowledgeGraphMixin:
                 WHERE search_vector @@ websearch_to_tsquery('english', $1)
                 ORDER BY rank DESC, created_at DESC
                 LIMIT $2
-            """, or_query, limit)
+            """, ts_query, limit)
 
             return [self._row_to_discovery_dict(row) for row in rows]
 

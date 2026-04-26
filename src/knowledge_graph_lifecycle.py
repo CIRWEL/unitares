@@ -282,6 +282,38 @@ class KnowledgeGraphLifecycle:
         logger.info(f"{'[DRY RUN] Would move to cold' if dry_run else 'Moved to cold'} {len(to_cold)} very old archived discoveries")
         return to_cold
 
+    async def _embedding_coverage(self) -> Optional[Dict[str, Any]]:
+        """Coverage of the active embeddings table over all discoveries.
+
+        Lifecycle stats span all epochs and include cold rows, so the
+        coverage here is the cross-corpus answer (compare with list which
+        scopes to current epoch by default). Returns None on failure so the
+        caller can decide whether to surface or omit.
+        """
+        try:
+            from src.db import get_db
+            from src.embeddings import get_active_table_name
+            db = await get_db()
+            table = get_active_table_name()
+            total = await db._pool.fetchval(
+                "SELECT COUNT(*) FROM knowledge.discoveries"
+            ) or 0
+            with_embeddings = await db._pool.fetchval(
+                f"SELECT COUNT(*) FROM knowledge.discoveries d "
+                f"WHERE d.id IN (SELECT discovery_id FROM {table})"
+            ) or 0
+            without = max(0, total - with_embeddings)
+            ratio = round(with_embeddings / total, 4) if total else 0.0
+            return {
+                "with_embeddings": with_embeddings,
+                "without_embeddings": without,
+                "ratio": ratio,
+                "active_table": table,
+            }
+        except Exception as exc:
+            logger.debug(f"lifecycle embedding coverage probe failed: {exc}")
+            return None
+
     async def get_lifecycle_stats(self) -> Dict[str, Any]:
         """Get statistics about discovery lifecycle."""
         graph = await self._get_graph()
@@ -354,6 +386,21 @@ class KnowledgeGraphLifecycle:
                 "ephemeral_tags": list(EPHEMERAL_TAGS),
             },
             "philosophy": "Never delete. Archive to cold. Query with include_cold=true.",
+            # Scope marker (#165) — same-name fields on list_knowledge_graph
+            # report a different scope (raw status aggregate, epoch-current).
+            # Surface here so callers comparing the two know which is which.
+            "scope": {
+                "kind": "lifecycle_buckets",
+                "epoch_scope": "all",
+                "including_cold": True,
+                "note": (
+                    "Sums {open, resolved, archived, cold} from per-status "
+                    "queries across all epochs. Does not surface 'superseded' "
+                    "as a top-level bucket (those rows are absorbed by the "
+                    "supersede_chain). Compare with knowledge action=list."
+                ),
+            },
+            "embedding_coverage": await self._embedding_coverage(),
         }
 
 

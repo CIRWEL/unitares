@@ -542,6 +542,11 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
             provenance = {"system_version": system_version, "captured_at": datetime.now().isoformat()}
         elif "system_version" not in provenance:
             provenance["system_version"] = system_version
+        # Tag write origin so list/stats can split caller-intentional writes
+        # from automation traffic (#165). Single-discovery store path is the
+        # canonical "explicit" write surface.
+        from src.knowledge_graph import tag_provenance_source as _tag_src
+        provenance = _tag_src(provenance, "explicit_store")
 
         # Parse confidence if provided
         raw_confidence = arguments.get("confidence")
@@ -689,6 +694,28 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         # Accept both "query" and "text" as parameter names for better UX
         query_text = arguments.get("query") or arguments.get("text")
         agent_id = arguments.get("agent_id")
+        # Force a specific retrieval mode. 'auto' (default) preserves the
+        # historical heuristic; explicit values fail honestly instead of silently
+        # routing to FTS — the whole point of this surface is making the routing
+        # decision visible (issue #165).
+        search_mode_param = (arguments.get("search_mode") or "auto").lower()
+        if search_mode_param not in {"auto", "fts", "semantic", "hybrid"}:
+            return [error_response(
+                f"Invalid search_mode {search_mode_param!r}; "
+                "expected one of: auto, fts, semantic, hybrid"
+            )]
+        # FTS boolean operator: None = handler picks AND with OR-on-zero
+        # fallback. "AND" or "OR" force that operator with no fallback.
+        operator_param_raw = arguments.get("operator")
+        if operator_param_raw is None:
+            operator_forced: Optional[str] = None
+        else:
+            op_upper = str(operator_param_raw).upper()
+            if op_upper not in {"AND", "OR"}:
+                return [error_response(
+                    f"Invalid operator {operator_param_raw!r}; expected 'AND' or 'OR'"
+                )]
+            operator_forced = op_upper
         # Labels to exclude (e.g. ["Vigil"]) — lets the dashboard hide
         # janitorial residents from the default Discoveries feed. Resolved to
         # agent_ids below, applied as a post-query filter over `results`.
@@ -736,27 +763,79 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         graph_expand_on = _graph_expansion_enabled()
 
         t0 = time.perf_counter()
+        # Track why the chosen mode is what it is — surfaced in the response so
+        # callers can tell a configured-FTS run from a silent-degrade-to-FTS run
+        # (issue #165).
+        semantic_skipped_reason: Optional[str] = None
+        # FTS operator observability (#165 part 2). None when no FTS ran;
+        # "AND"/"OR" otherwise. fallback_used flips true when AND returned zero
+        # and we retried with OR.
+        fts_operator_used: Optional[str] = None
+        fts_fallback_used = False
         if query_text:
-            # UX FIX (Dec 2025): Auto-enable semantic search for conceptual queries
-            # - If semantic=True explicitly: always use semantic search
-            # - If semantic=False explicitly: never use semantic search
-            # - If semantic not specified: auto-detect based on query complexity
-            #   (queries with 2+ words are likely conceptual, benefit from semantic)
             has_semantic = hasattr(graph, "semantic_search")
+            has_fts = hasattr(graph, "full_text_search")
+            backend_label = graph.__class__.__name__
             explicit_semantic = arguments.get("semantic")
 
-            if explicit_semantic is not None:
-                # User explicitly chose - respect their choice
-                use_semantic = explicit_semantic and has_semantic
+            # Forced modes: error honestly when the backend can't deliver.
+            # 'auto' falls back to FTS but records the reason. 'fts' is always
+            # OK as long as the backend exposes full_text_search.
+            if search_mode_param == "semantic" and not has_semantic:
+                return [error_response(
+                    f"search_mode=semantic requires a backend with semantic_search; "
+                    f"active backend {backend_label} has none. "
+                    f"Use search_mode=fts, or set UNITARES_KNOWLEDGE_BACKEND=age."
+                )]
+            if search_mode_param == "hybrid" and not (has_semantic and has_fts):
+                missing = []
+                if not has_semantic:
+                    missing.append("semantic_search")
+                if not has_fts:
+                    missing.append("full_text_search")
+                return [error_response(
+                    f"search_mode=hybrid requires both semantic and FTS; "
+                    f"active backend {backend_label} is missing {', '.join(missing)}."
+                )]
+            if search_mode_param == "fts" and not has_fts:
+                return [error_response(
+                    f"search_mode=fts requires full_text_search; "
+                    f"active backend {backend_label} has none."
+                )]
+
+            # Decide whether semantic should run.
+            if search_mode_param in ("semantic", "hybrid"):
+                use_semantic = True
+            elif search_mode_param == "fts":
+                use_semantic = False
+                if has_semantic:
+                    semantic_skipped_reason = "caller forced search_mode=fts"
+            elif explicit_semantic is False:
+                use_semantic = False
+                semantic_skipped_reason = "caller passed semantic=false"
+            elif explicit_semantic is True:
+                if not has_semantic:
+                    return [error_response(
+                        f"semantic=true requires a backend with semantic_search; "
+                        f"active backend {backend_label} has none."
+                    )]
+                use_semantic = True
             else:
-                # Auto-detect: use semantic search when available for any text query
-                # Single-word queries benefit from semantic search too (substring_scan
-                # is limited to 50 recent entries and misses most results)
+                # auto: prefer semantic when the backend supports it
                 use_semantic = has_semantic
-            has_fts = hasattr(graph, "full_text_search")
-            # Phase 4 hybrid path: fires when hybrid flag on, semantic usable, FTS
-            # available. Skips the sequential single-mode branches below.
-            hybrid_path = hybrid_on and use_semantic and has_fts
+                if not has_semantic:
+                    semantic_skipped_reason = (
+                        f"backend {backend_label} has no semantic_search "
+                        "(set UNITARES_KNOWLEDGE_BACKEND=age to enable)"
+                    )
+
+            # Phase 4 hybrid path: only when caller forces hybrid, OR (auto + flag on + capable).
+            if search_mode_param == "hybrid":
+                hybrid_path = True  # already validated has_semantic and has_fts above
+            else:
+                hybrid_path = (
+                    search_mode_param == "auto" and hybrid_on and use_semantic and has_fts
+                )
             if hybrid_path:
                 import asyncio as _asyncio
                 min_similarity = arguments.get("min_similarity", 0.3)
@@ -764,7 +843,14 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 sem_task = graph.semantic_search(
                     str(query_text), limit=hybrid_fetch_limit, min_similarity=min_similarity
                 )
-                fts_task = graph.full_text_search(str(query_text), limit=hybrid_fetch_limit)
+                # Hybrid uses the caller's operator if forced, else AND. We
+                # don't AND→OR fallback inside hybrid because semantic+FTS
+                # already cover the recall/precision tradeoff via RRF.
+                hybrid_fts_op = operator_forced or "AND"
+                fts_task = graph.full_text_search(
+                    str(query_text), limit=hybrid_fetch_limit, operator=hybrid_fts_op,
+                )
+                fts_operator_used = hybrid_fts_op
                 sem_raw, fts_raw = await _asyncio.gather(sem_task, fts_task)
                 sem_res = []
                 if isinstance(sem_raw, tuple) and len(sem_raw) == 2 and isinstance(sem_raw[1], dict):
@@ -849,7 +935,27 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 # When reranker is on, use a wider pool so the cross-encoder has candidates.
                 base_fts_limit = int(min(max(limit * 5, limit), 500))
                 candidate_limit = max(base_fts_limit, rerank_pool_size) if rerank_on else base_fts_limit
-                candidates = await graph.full_text_search(str(query_text), limit=candidate_limit)
+                primary_op = operator_forced or "AND"
+                candidates = await graph.full_text_search(
+                    str(query_text), limit=candidate_limit, operator=primary_op,
+                )
+                fts_operator_used = primary_op
+                # AND→OR fallback (#165): when caller didn't force an operator
+                # and AND returned nothing, retry with OR. Marks fts_fallback_used
+                # so the caller can tell broad-recall results apart from
+                # precision-first results.
+                if (
+                    not candidates
+                    and operator_forced is None
+                    and primary_op == "AND"
+                    and len(str(query_text).split()) > 1
+                ):
+                    candidates = await graph.full_text_search(
+                        str(query_text), limit=candidate_limit, operator="OR",
+                    )
+                    if candidates:
+                        fts_operator_used = "OR"
+                        fts_fallback_used = True
                 search_mode = "fts"
             elif not hybrid_path and not use_semantic:
                 # JSON backend fallback: bounded scan of most recent entries.
@@ -920,12 +1026,16 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
 
             results = filtered
             # search_mode already set above
-            # UX FIX: Make operator explicit upfront - FTS defaults to OR for multi-term queries
+            # operator_used reports what the FTS layer actually ran. For
+            # non-FTS modes (semantic, hybrid, substring) this stays "N/A" —
+            # boolean operators only apply to the FTS query string. (#165)
             query_terms = str(query_text).split() if query_text else []
-            if search_mode == "fts" and len(query_terms) > 1:
-                operator_used = "OR"  # FTS defaults to OR for multi-term queries
+            if fts_operator_used and len(query_terms) > 1:
+                operator_used = fts_operator_used
+            elif len(query_terms) > 1:
+                operator_used = "N/A"  # semantic / hybrid / substring
             else:
-                operator_used = "AND" if len(query_terms) > 1 else "N/A"
+                operator_used = "N/A"  # single-term query
             fields_searched = ["summary", "details", "tags"]
         else:
             # Indexed filter query (fast)
@@ -965,7 +1075,24 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             if search_mode == "semantic" and hasattr(graph, "full_text_search"):
                 try:
                     logger.debug(f"Semantic search returned 0 results, falling back to FTS for '{query_text}'")
-                    fts_candidates = await graph.full_text_search(str(query_text), limit=limit * 2)
+                    primary_op = operator_forced or "AND"
+                    fts_candidates = await graph.full_text_search(
+                        str(query_text), limit=limit * 2, operator=primary_op,
+                    )
+                    semantic_fallback_op = primary_op
+                    semantic_fallback_or_retry = False
+                    if (
+                        not fts_candidates
+                        and operator_forced is None
+                        and primary_op == "AND"
+                        and len(str(query_text).split()) > 1
+                    ):
+                        fts_candidates = await graph.full_text_search(
+                            str(query_text), limit=limit * 2, operator="OR",
+                        )
+                        if fts_candidates:
+                            semantic_fallback_op = "OR"
+                            semantic_fallback_or_retry = True
                     # Apply same filters
                     for d in fts_candidates:
                         if agent_id and d.agent_id != agent_id:
@@ -988,18 +1115,21 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                     if len(results) > 0:
                         fallback_used = True
                         search_mode = "semantic_fallback_fts"
-                        operator_used = "OR" if len(str(query_text).split()) > 1 else "N/A"
+                        fts_operator_used = semantic_fallback_op
+                        fts_fallback_used = semantic_fallback_or_retry
                         fallback_explanation = (
                             f"Semantic search found no concepts similar to '{query_text}' "
                             f"(similarity threshold: {min_similarity}). "
-                            f"Falling back to keyword search (FTS) for exact term matching."
+                            f"Falling back to keyword search (FTS, operator={semantic_fallback_op}) "
+                            f"for exact term matching."
                         )
                 except Exception as e:
                     logger.debug(f"Semantic→FTS fallback failed: {e}")
 
-            # Strategy 2 (removed): Individual-term FTS fallback is no longer needed
-            # because kg_full_text_search now defaults to OR for multi-term queries
-            # via _or_default_query(). The primary FTS query already matches any term.
+            # Strategy 2 (removed): Individual-term FTS fallback is no longer
+            # needed. As of #165, the FTS path runs AND first and automatically
+            # retries with OR on zero hits (see fts_fallback_used in response),
+            # which subsumes the per-term retry strategy.
 
             # Strategy 3 (removed 2026-04-20): Previously retried semantic search at
             # threshold 0.2, which is near cosine noise floor for our embedder. This
@@ -1080,6 +1210,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         # Include similarity scores for semantic search
         response_data = {
             "search_mode_used": search_mode,
+            "search_mode_requested": search_mode_param,
             "operator_used": operator_used,
             "fields_searched": fields_searched,
             "query": query_text,
@@ -1087,6 +1218,14 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             "count": len(results),
             "message": f"Found {len(results)} discovery(ies)" + (" (details auto-included for small result set)" if auto_details else "" if include_details else " (summaries only)")
         }
+        if semantic_skipped_reason:
+            response_data["semantic_skipped_reason"] = semantic_skipped_reason
+        # FTS operator visibility (#165 part 2). Only populate when FTS actually
+        # ran — for semantic/hybrid/substring runs these stay absent so callers
+        # know the boolean operator was not the controlling factor.
+        if fts_operator_used:
+            response_data["fts_operator_used"] = fts_operator_used
+            response_data["fts_fallback_used"] = fts_fallback_used
 
         # Surface semantic search degradation to caller
         if search_degraded_warning:
@@ -1303,18 +1442,53 @@ async def handle_get_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Text
 
 @mcp_tool("list_knowledge_graph", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_list_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    """List knowledge graph statistics - full transparency"""
+    """List knowledge graph statistics — raw status aggregate.
+
+    Use ``epoch_scope`` ("current"|"all") and ``including_cold`` (bool) to
+    align this view with knowledge action=stats (which uses lifecycle
+    buckets). #165 — same-name fields used to report different totals
+    silently.
+    """
     try:
         graph = await get_knowledge_graph()
+        epoch_scope = (arguments.get("epoch_scope") or "current").lower()
+        if epoch_scope not in {"current", "all"}:
+            return [error_response(
+                f"Invalid epoch_scope {epoch_scope!r}; expected 'current' or 'all'"
+            )]
+        including_cold = bool(arguments.get("including_cold", False))
+
         t0 = time.perf_counter()
-        stats = await graph.get_stats()
+        try:
+            stats = await graph.get_stats(
+                epoch_scope=epoch_scope, including_cold=including_cold,
+            )
+        except TypeError:
+            # Older backend not yet updated to the new signature — best-effort
+            # call without scope params, then annotate the response.
+            stats = await graph.get_stats()
+            stats.setdefault("scope", {
+                "kind": "raw_status_aggregate",
+                "epoch_scope": "unknown",
+                "including_cold": "unknown",
+                "note": "backend predates #165 scope-flag plumbing",
+            })
         record_ms("knowledge.get_stats", (time.perf_counter() - t0) * 1000.0)
-        
+
+        scope_summary = (
+            f"epoch_scope={stats.get('scope', {}).get('epoch_scope', '?')}, "
+            f"including_cold={stats.get('scope', {}).get('including_cold', '?')}"
+        )
         return success_response({
             "stats": stats,
-            "message": f"Knowledge graph contains {stats['total_discoveries']} discoveries from {stats['total_agents']} agents"
+            "message": (
+                f"Knowledge graph contains {stats['total_discoveries']} "
+                f"discoveries from {stats['total_agents']} agents "
+                f"({scope_summary}). For lifecycle-bucketed counts see "
+                f"knowledge action=stats."
+            ),
         }, arguments=arguments)
-        
+
     except Exception as e:
         return [error_response(f"Failed to list knowledge: {str(e)}")]
 
@@ -1681,6 +1855,7 @@ async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_i
                     except (ValueError, TypeError):
                         pass
 
+                from src.knowledge_graph import tag_provenance_source as _tag_src
                 discovery = DiscoveryNode(
                     id=discovery_id,
                     agent_id=agent_id,
@@ -1691,7 +1866,8 @@ async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_i
                     severity=severity,
                     response_to=response_to,
                     references_files=disc_data.get("related_files", []),
-                    confidence=batch_confidence
+                    confidence=batch_confidence,
+                    provenance=_tag_src(disc_data.get("provenance"), "explicit_store"),
                 )
 
                 # CONFIDENCE CROSS-CHECK: Clamp to agent coherence + 0.3
@@ -1822,6 +1998,7 @@ async def handle_answer_question(arguments: Dict[str, Any]) -> Sequence[TextCont
             answer_text = answer_text[:MAX_ANSWER_LEN] + "... [truncated]"
 
         # Create answer linked to the question
+        from src.knowledge_graph import tag_provenance_source as _tag_src
         answer = DiscoveryNode(
             id=datetime.now().isoformat(),
             agent_id=agent_id,
@@ -1834,7 +2011,8 @@ async def handle_answer_question(arguments: Dict[str, Any]) -> Sequence[TextCont
             response_to=ResponseTo(
                 discovery_id=matched_question.id,
                 response_type="answers"
-            )
+            ),
+            provenance=_tag_src(None, "explicit_answer"),
         )
 
         # Link answer to question
@@ -1957,6 +2135,7 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             note_severity = "medium"
 
         # Create note with minimal ceremony
+        from src.knowledge_graph import tag_provenance_source as _tag_src
         note = DiscoveryNode(
             id=datetime.now().isoformat(),
             agent_id=agent_id,
@@ -1966,7 +2145,8 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
             tags=tags,
             severity=note_severity,
             status="open",
-            response_to=response_to
+            response_to=response_to,
+            provenance=_tag_src(None, "explicit_leave_note"),
         )
         
         # Auto-link if tags provided (fast with indexes)
@@ -2129,18 +2309,29 @@ async def handle_audit_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
 async def store_discovery_internal(
     agent_id: str,
     summary: str,
+    *,
+    source: str,
     discovery_type: str = "note",
     details: str = "",
     tags: Optional[list] = None,
     severity: str = "low",
+    extra_provenance: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Internal helper for storing discoveries without MCP handler overhead.
 
-    Used by lifecycle/self_recovery to log reflections and resume events.
+    Used by lifecycle/self_recovery and dialectic to log reflections and
+    resume events. Every implicit write declares its origin via the
+    required ``source`` parameter — recorded in provenance.source so list
+    and stats can split caller-intentional writes from automation traffic
+    (#165 phantom-write surface).
+
     Raises on failure (callers should catch exceptions).
     """
+    from src.knowledge_graph import tag_provenance_source
+
     graph = await get_knowledge_graph()
     discovery_id = datetime.now().isoformat()
+    provenance = tag_provenance_source(extra_provenance, source)
     node = DiscoveryNode(
         id=discovery_id,
         agent_id=agent_id,
@@ -2149,5 +2340,6 @@ async def store_discovery_internal(
         details=details,
         tags=normalize_tags(tags or []),
         severity=severity,
+        provenance=provenance,
     )
     await graph.add_discovery(node)

@@ -673,6 +673,7 @@ class TestHealthCheck:
              patch("src.audit_log.audit_logger", mock_audit), \
              patch("src.db.get_db", return_value=mock_db), \
              patch("src.embeddings.embeddings_available", return_value=True), \
+             patch("src.knowledge_graph.backend_supports_semantic_search", return_value=True), \
              patch("unitares_pi_plugin.handlers.call_pi_tool",
                    new_callable=AsyncMock,
                    return_value={"status": "healthy"}), \
@@ -723,6 +724,7 @@ class TestHealthCheck:
              patch("src.audit_log.audit_logger", mock_audit), \
              patch("src.db.get_db", return_value=mock_db), \
              patch("src.embeddings.embeddings_available", return_value=True), \
+             patch("src.knowledge_graph.backend_supports_semantic_search", return_value=True), \
              patch("unitares_pi_plugin.handlers.call_pi_tool",
                    new_callable=AsyncMock,
                    return_value={"status": "healthy"}), \
@@ -787,6 +789,7 @@ class TestHealthCheck:
              patch("src.audit_log.audit_logger", mock_audit), \
              patch("src.db.get_db", return_value=mock_db), \
              patch("src.embeddings.embeddings_available", return_value=True), \
+             patch("src.knowledge_graph.backend_supports_semantic_search", return_value=True), \
              patch("unitares_pi_plugin.handlers.call_pi_tool",
                    new_callable=AsyncMock,
                    return_value={"status": "healthy"}), \
@@ -963,6 +966,105 @@ class TestHealthCheck:
             # Just reports embeddings status — lifecycle warnings not propagated
             kg = data["checks"]["knowledge_graph"]
             assert kg["status"] in ("healthy", "degraded")
+
+
+# ============================================================================
+# Issue #165 — health response splits embedder vs backend capability
+# ============================================================================
+
+
+class TestIssue165HealthCapabilitySplit:
+
+    @pytest.mark.asyncio
+    async def test_embedder_up_but_backend_lacks_semantic_search(
+        self, mock_mcp_server, patch_context_agent_id,
+    ):
+        """embedder_available=true + semantic_backend_available=false should
+        be visible in the health response so callers don't infer that
+        semantic KG search works when the active backend can't deliver."""
+        pytest.importorskip("unitares_pi_plugin")
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        mock_db = AsyncMock()
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+        mock_db.init = AsyncMock()
+
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.embeddings.embeddings_available", return_value=True), \
+             patch("src.knowledge_graph.backend_supports_semantic_search", return_value=False), \
+             patch("src.knowledge_graph.selected_backend_name", return_value="postgres"), \
+             patch("unitares_pi_plugin.handlers.call_pi_tool",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy"}), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=False):
+
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
+            kg = data["checks"]["knowledge_graph"]
+            assert kg["embedder_available"] is True
+            assert kg["semantic_backend_available"] is False
+            assert kg["semantic_search_reachable"] is False
+            assert kg["status"] == "degraded"
+            assert "backend 'postgres' has no semantic_search" in kg["warning"]
+
+    @pytest.mark.asyncio
+    async def test_both_up_reports_reachable(
+        self, mock_mcp_server, patch_context_agent_id,
+    ):
+        pytest.importorskip("unitares_pi_plugin")
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        mock_db = AsyncMock()
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+        mock_db.init = AsyncMock()
+
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.embeddings.embeddings_available", return_value=True), \
+             patch("src.knowledge_graph.backend_supports_semantic_search", return_value=True), \
+             patch("src.knowledge_graph.selected_backend_name", return_value="age"), \
+             patch("unitares_pi_plugin.handlers.call_pi_tool",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy"}), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=False):
+
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({})
+            kg = data["checks"]["knowledge_graph"]
+            assert kg["embedder_available"] is True
+            assert kg["semantic_backend_available"] is True
+            assert kg["semantic_search_reachable"] is True
+            assert kg["status"] == "healthy"
+            assert kg.get("warning") is None or "warning" not in kg
 
 
 # ============================================================================
