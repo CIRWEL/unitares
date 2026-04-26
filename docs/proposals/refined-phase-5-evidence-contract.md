@@ -1,8 +1,23 @@
 # Refined Phase-5 Evidence Contract
 
-**Status:** Draft (2026-04-26)
+**Status:** Draft v2 (2026-04-26)
 **Companion docs:** `refined-phase-5-evidence-contract.dialectic-review.md`, `.code-review.md`, `.live-verification.md`, `.gpt-review.md`
 **Predecessor:** Calibration "honest absence" PR — surfaced the signal-starvation problem this spec resolves the supply side of.
+
+## Revisions
+
+**v2 (2026-04-26)** — second council pass on the v1 spec surfaced concrete defects; folded in:
+
+- §1 — explicit `kind` → `outcome_type` mapping (was hand-waved as `_classify_outcome_type`).
+- §2 — pseudocode used dict `.get()` on Pydantic-validated objects; switched to attribute access. Added explicit `ctx.warnings → response_data["warnings"]` plumbing because warnings don't surface today. Added one sentence on calibrator weighting by `(verification_source, prediction_binding)` per dialectic.
+- §4 — `ttl_expired_fallback` was unreachable as written (consume returns `None`, indistinguishable from "missing"); replaced with two-phase lookup-then-consume using a non-destructive `peek_prediction` pre-check.
+- §5a — `consume_prediction` is a module-level function, not a method; fixed the sketch.
+- §5b — **TTL default is already 3600s** (`governance_monitor.py:167`), not 600s. Spec no longer proposes a bump; the change is the hard-on-consume check. Added explicit Lumen-class breakage disclosure per dialectic.
+- §6 — strip happens in `response_formatter.py` (`_format_standard|minimal|compact|mirror`), not `update_response_service.py`. Spec retargets the patch.
+- §7 — noted the seam is already end-to-end at the `outcome_event` tool level; the gap is only on the `process_agent_update` side.
+- §"Risks" — reframed C as **the permanent floor, not a bridge**: server-verified outcomes (v2) cover ~30% of the calibration surface; the 70% (test runs, builds, file ops, external tool calls) is intrinsically agent-mediated and C is structurally required.
+- §"Implementation order" — reordered to `1 → 2 → 6 → 3 → (4+5 squashed)` so `prediction_binding` echo doesn't strand without `prediction_id` being visible to the agent.
+- §"Test plan" — added concurrency test for racing `outcome_event` calls on same `prediction_id`; added describe_tool drift test.
 
 ## Problem
 
@@ -51,30 +66,54 @@ class ProcessAgentUpdateParams(...):
 
 Strict nested schema (`extra="forbid"`); unknown fields are a 4xx, not silently dropped. Per GPT council: "schema-enforced decomposability" is the value here, not truthfulness — the contract is inspectable at the API boundary, lintable, versionable.
 
+**`kind` → `outcome_type` mapping.** The agent declares `kind` (what was the tool); the server derives `outcome_type` (what was the result, in calibration vocabulary):
+
+| `kind`     | `is_bad` or `exit_code` | derived `outcome_type` |
+|------------|-------------------------|------------------------|
+| `test`     | false / 0               | `test_passed` |
+| `test`     | true / non-zero         | `test_failed` |
+| `command`, `lint`, `build`, `file_op`, `tool_call` | false / 0 | `task_completed` |
+| `command`, `lint`, `build`, `file_op`, `tool_call` | true / non-zero | `task_failed` |
+
+Only `test` outcomes hit the `record_tactical_decision` path (tightest calibration coupling); the rest land as generic completion outcomes. This matches the existing `outcome_events.py:266` gate.
+
 ### 2. Phase-5 server-side processing
 
-Inside `src/mcp_handlers/updates/phases.py` (current Phase-5 enrichment region around line 418), iterate `recent_tool_results` after confidence correction:
+> Note: the "Phase-5" name is borrowed from `auto_ground_truth.py` lineage; in `phases.py` the calibration-correction code lives in the "Validate Inputs" / `transform_inputs` region around line 430. This spec's iteration lands in the same enrichment block, immediately after `apply_confidence_correction`.
+
+Pydantic has already validated `recent_tool_results` into a `List[ToolResultEvidence]` by the time Phase-5 runs. Use attribute access, not `.get()` — the latter would `AttributeError` on a model instance:
 
 ```python
-for evidence in (ctx.arguments.get("recent_tool_results") or []):
+for evidence in (ctx.recent_tool_results or []):
     try:
-        # validation already done by Pydantic
-        outcome_type = _classify_outcome_type(evidence)  # tests pass/fail, etc.
+        # outcome_type derivation per §1 mapping table
+        outcome_type, is_bad = _derive_outcome(evidence)
         await _emit_outcome_event_inline(
             agent_id=ctx.agent_id,
             outcome_type=outcome_type,
-            is_bad=evidence.get("is_bad", evidence.get("exit_code", 0) != 0),
-            prediction_id=evidence.get("prediction_id"),
+            is_bad=is_bad,
+            prediction_id=evidence.prediction_id,
             confidence=ctx.confidence,  # post-correction
             verification_source="agent_reported_tool_result",
-            detail={"tool": evidence["tool"], "summary": evidence["summary"], ...},
+            detail={
+                "tool": evidence.tool,
+                "summary": evidence.summary,
+                "kind": evidence.kind,
+                "exit_code": evidence.exit_code,
+                "observed_at": (evidence.observed_at or utcnow()).isoformat(),
+            },
         )
     except Exception as e:
-        logger.debug("Phase-5 evidence record failed: %s", e)
+        logger.debug("Phase-5 evidence record failed for %s: %s", evidence.tool, e)
+        ctx.warnings.append(f"evidence record failed for tool={evidence.tool}: {e}")
         # per-item isolation: one bad item must not abort siblings
 ```
 
-**Per-item isolation rule:** a malformed item must not abort the siblings (code-review #3 risk). Wrap each item in try/except; record the per-item failure to `ctx.warnings` so it surfaces to the agent on the response.
+**Per-item isolation rule:** a malformed item must not abort the siblings (code-review #3 risk). Wrap each item in try/except; append a per-item failure to `ctx.warnings`.
+
+**Surface `ctx.warnings` in the response.** Today `ctx.warnings` is populated (e.g., the identity-assurance dampening at `phases.py:443`) but never copied into the agent-visible response — the formatter modes don't read it. Spec adds: `build_process_update_response_data` merges `ctx.warnings` (de-duped) into `response_data["warnings"]: List[str]`, and each `_format_*` function in `response_formatter.py` preserves the key (alongside the §6 `prediction_id` plumbing — same surface, same diff).
+
+**Calibrator weighting (per dialectic).** Phase-5 records the `(verification_source, prediction_binding)` pair on each outcome row. Calibrator weighting by this pair is in scope for v1; **default uniform until measured**. The pair is captured so future weighting can be data-driven rather than guessed.
 
 ### 3. `verification_source` enum on `outcome_event`
 
@@ -99,53 +138,91 @@ Add to `outcome_event` response payload:
 ```python
 "prediction_binding": Literal[
     "registry",                  # the supplied prediction_id was found and consumed
-    "ttl_expired_fallback",      # supplied id was found but past TTL — see §5b
+    "ttl_expired_fallback",      # supplied id was found but past TTL — see §5
+    "missing_prediction",        # supplied id was unknown (never registered or already consumed)
     "argument_fallback",         # no id supplied; used the explicit confidence arg
     "prev_confidence_fallback",  # used monitor._prev_confidence
     "audit_trail_fallback",      # used db.get_latest_confidence_before
-    "no_binding",                # all four fallbacks failed; calibration NOT recorded
+    "no_binding",                # all fallbacks failed; calibration NOT recorded
 ]
 ```
 
-Agent sees immediately whether their `prediction_id` actually bound. Silent degradation becomes visible.
-
-### 5. Hard TTL enforcement on `consume_prediction`
-
-#### 5a. Hard check on consume
-
-Today TTL is "enforced lazily on each new register call" (verifier). A `consume_prediction` against a 30-min-old id can succeed if no register has fired in between. Move the check from "lazy on register" to "hard on consume":
+**Two-phase resolution to make `ttl_expired_fallback` reachable.** As written today, `consume_prediction` returns `None` for both "stale" and "missing" — the caller can't distinguish. Spec adds a non-destructive `peek_prediction(open_predictions, prediction_id)` (already exists at `monitor_prediction.py:35-45`) and uses it in `outcome_events.py` BEFORE calling `consume_prediction`:
 
 ```python
-def consume_prediction(self, prediction_id: str) -> Optional[dict]:
-    record = self._open_predictions.get(prediction_id)
-    if record is None:
-        return None
-    if record["consumed"]:
-        return None
-    if (utcnow() - record["registered_at"]) > self._prediction_ttl:
-        # signal ttl_expired_fallback to caller via separate path
-        return None
-    record["consumed"] = True
-    return record
+record = peek_prediction(open_predictions, prediction_id)
+if record is None:
+    binding = "missing_prediction"   # never existed or already consumed
+elif _is_expired(record, ttl_seconds):
+    binding = "ttl_expired_fallback"
+    # do NOT consume; let caller fall through to the next confidence source
+else:
+    consumed = consume_prediction(open_predictions, prediction_id)
+    binding = "registry" if consumed else "missing_prediction"
 ```
 
-#### 5b. Default TTL → 1800s
+This keeps `consume_prediction` simple (no signaling channel needed); the discrimination lives one layer up where the binding label is computed.
 
-Bump `_prediction_ttl_seconds` default from 600 to 1800. Verifier called 600s "short for slow outer-loop work (LLM agent that takes 15min to produce a result will systematically miss its registered prediction)." 1800s spans a typical multi-tool reasoning loop.
+Agent sees immediately whether their `prediction_id` actually bound. Silent degradation becomes visible.
 
-Per-agent override remains supported via `monitor._prediction_ttl_seconds` — but this spec does not establish per-agent-class defaults (separate spec, per the user's scope decision).
+### 5. Hard TTL enforcement at the consume layer
+
+Today TTL is enforced only inside `register_tactical_prediction` (which calls `expire_old_predictions` on each register). Verifier confirms `consume_prediction` itself does no TTL check. Result: a `consume_prediction` against a stale-but-unswept id will succeed and return its confidence, silently. Combined with the §4 misclassification, callers can't tell.
+
+`consume_prediction` is a module-level function in `src/monitor_prediction.py:48-64` taking `(open_predictions, prediction_id)`. Two layered changes:
+
+#### 5a. Add TTL parameter to `consume_prediction`; check it
+
+```python
+def consume_prediction(
+    open_predictions: Dict[str, Dict],
+    prediction_id: str,
+    *,
+    ttl_seconds: float = 3600.0,
+) -> Optional[Dict[str, Any]]:
+    if not prediction_id:
+        return None
+    record = open_predictions.get(prediction_id)
+    if not record or record.get("consumed"):
+        return None
+    age = _time.monotonic() - float(record.get("created_at", 0.0))
+    if age > ttl_seconds:
+        # leave the record in place for peek-based discrimination (see §4)
+        return None
+    record["consumed"] = True
+    return dict(record)
+```
+
+Caller in `outcome_events.py` passes `ttl_seconds=monitor._prediction_ttl_seconds` so the live config knob (`governance_monitor.py:167`) controls behavior.
+
+#### 5b. TTL default — keep at 3600s; do NOT bump
+
+Verifier corrected the v1 spec: live default is **3600s** at `governance_monitor.py:167`, not 600s as the v1 spec assumed. The earlier proposal to bump 600→1800 would have been a *reduction*. Spec keeps the live default unchanged.
+
+The 3600s default still leaves long-cadence agents broken-by-default. **Lumen and other slow-cadence substrate-anchored agents will systematically hit `ttl_expired_fallback` under this default** because their natural quiet windows exceed 1 hour. Per-agent override via `monitor._prediction_ttl_seconds` is the v1 escape hatch; the per-agent-class TTL table is the v2 fix (separate spec).
+
+The §4 `prediction_binding` echo is what makes this breakage *visible* rather than silent — Lumen-class agents will see `ttl_expired_fallback` in their outcome responses and operators can decide whether to override TTL or restructure prediction-emit timing.
 
 ### 6. Expose `prediction_id` in default response mode
 
-Today `prediction_id` is only surfaced when caller passes `response_mode="full"`. Default `auto`/`mirror` strip it. Verifier: "This is the biggest gotcha — clients building on this need to know to crank verbosity."
+Verifier corrected the v1 spec: `update_response_service.py:33-36` already injects `prediction_id` unconditionally onto `response_data`. The strip happens later in `src/mcp_handlers/response_formatter.py` — `_format_standard`, `_format_mirror`, `_format_minimal`, `_format_compact` each rebuild the response from scratch and don't pass `prediction_id` through. Only `full` mode preserves it.
 
-Update `src/services/update_response_service.py` to surface `prediction_id` on every response_mode that includes any agent-state echo (i.e., not `minimal`). The cost is one string field per response. The benefit is that the contract is discoverable from the default API surface.
+The fix targets the formatter, not the service:
+
+- `_format_standard` (default for explicit standard mode) — pass `prediction_id` through
+- `_format_mirror` (default for disembodied agents) — pass `prediction_id` through
+- `_format_compact` — pass `prediction_id` through
+- `_format_minimal` — leave stripped (this mode is explicitly bandwidth-constrained)
+
+Same diff also adds `warnings` preservation per §2 — both fields share the same plumbing change in each formatter, easier as one commit than two.
 
 Also update `describe_tool("process_agent_update")` to document `prediction_id` in the returns block.
 
 ### 7. Sequential-calibration docstring fix
 
-`src/sequential_calibration.py` has a docstring claiming "no prediction_id seam yet... A prediction_id seam is phase-two work." Verifier proved the seam works end-to-end today. Update the docstring to match reality, with a pointer to this spec for the v1 contract.
+`src/sequential_calibration.py:36-47` has a docstring claiming "no prediction_id seam yet... A prediction_id seam is phase-two work." Verifier and code reviewer both confirmed the seam is wired end-to-end at the `outcome_event` tool level today (`outcome_events.py:171-225` consumes `prediction_id` and forwards to `record_exogenous_tactical_outcome`). The seam is NOT phase-two; it's operational.
+
+The actual gap this spec closes is on the `process_agent_update` side: agents have no contract to *report* tool outcomes that would mint and consume those predictions. Update the docstring to: (a) note the consume path is live; (b) point to this spec for the report path; (c) drop the "phase-two" framing.
 
 ### 8. Compatibility bridge (Design B as parser-into-internal-model)
 
@@ -162,7 +239,12 @@ Out of scope for v1 unless a real client emerges that cannot update its tool sch
 | Silent degradation of `prediction_id` misuse | live verifier | New `prediction_binding` echo |
 | TTL bleed (lazy enforcement) | live verifier (refined by user pressure) | Hard check on consume |
 | TTL too short for slow agents | live verifier | Default → 1800s; configurable |
-| Existing fleet (Vigil, Sentinel, Watcher, Steward, Chronicler, Lumen) breaks on schema change | code-review | `Optional` field, default `None`, old clients no-op |
+| Existing fleet (Vigil, Sentinel, Watcher, Steward, Chronicler, Lumen) breaks on schema change | code-review | `Optional` field, default `None`, old clients no-op (verifier grep confirms zero collisions) |
+| `ttl_expired_fallback` was unreachable as v1-written | code-review (round 2) | Two-phase peek-then-consume in §4 makes the discrimination computable |
+| `ctx.warnings` populated but not surfaced in response | code-review (round 2) | §2 + §6 add `warnings` plumbing through formatters |
+| Pseudocode used `.get()` on Pydantic-validated objects (would AttributeError) | code-review (round 2) | §2 switched to attribute access |
+| Lumen-class agents will systematically hit `ttl_expired_fallback` at 3600s default | dialectic + verifier | Documented in §5b; `prediction_binding` echo makes it visible; per-agent override is the v1 escape hatch |
+| C might be transient — server-verified outcomes will replace it | dialectic (round 1) → corrected (round 2) | C is the permanent floor: ~70% of calibration signal is intrinsically agent-mediated (tests, builds, file ops, external tool calls). Server-verified covers ~30% (KG writes, dialectic verdicts, state transitions). v2 is a partial-coverage upgrade, not a replacement |
 
 ## Test plan
 
@@ -176,20 +258,24 @@ Out of scope for v1 unless a real client emerges that cannot update its tool sch
 - Integration: agent that omits `prediction_id` → `prediction_binding == "argument_fallback"` or `"prev_confidence_fallback"` depending on arg presence
 - Schema migration test: existing `process_agent_update` calls without `recent_tool_results` continue to work (Vigil/Sentinel/Watcher/Steward/Chronicler call signatures)
 - Docstring drift test: `sequential_calibration.py` docstring no longer claims the seam is unimplemented
+- Concurrency test: two simultaneous `outcome_event` calls referencing the same `prediction_id` — current `consumed` flag is not lock-protected, so both might read `False` and proceed. Test asserts at most one resolves to `prediction_binding == "registry"`; the second resolves to `missing_prediction`. Low real-world probability but worth a regression test before merge.
+- `describe_tool` drift test: parametrize over schema fields and assert each is documented in the `RETURNS` block of `describe_tool("process_agent_update")`. This catches the original "stale docstring" failure class that triggered this whole spec round.
+- `ctx.warnings` round-trip test: a Phase-5 evidence record that throws appends to `ctx.warnings`, and the resulting response payload includes the warning string. Covers the formatter-side regression risk.
+- `prediction_binding` table tests: parametrized over `(prediction_id state, confidence arg state, prev_confidence state, audit-trail state)` enumerate which fallback fires and assert the correct binding label. Mock each layer independently.
 
 ## Implementation order
 
-1. `prediction_binding` echo on `outcome_event` (no schema migration; pure response shape addition)
-2. Hard TTL on `consume_prediction` + bump default to 1800s
-3. `verification_source` enum on `outcome_event`
-4. `ToolResultEvidence` model + `recent_tool_results` field on `ProcessAgentUpdateParams`
-5. Phase-5 iteration in `phases.py`
-6. Expose `prediction_id` in default response mode
-7. Update `describe_tool` returns block
-8. `sequential_calibration.py` docstring cleanup
-9. Tests in same commits as their behavior changes (per `feedback_tests-with-fixes.md`)
+Per dialectic: ship pieces such that each step's surface is safe to live with if the next step delays. Step 1 must not strand without §6 (agents would have a binding-echo for an id they can't see). §4 + §5 are squashed because the field accepts data the server otherwise drops on the floor.
 
-Each step lands as its own commit on the same branch — incremental, reviewable, individually revertable. Final ship via `scripts/dev/ship.sh` after the full suite passes.
+1. **`prediction_binding` echo + hard TTL on `consume_prediction`** — both are pure-additions to `outcome_event` response/behavior; the binding label and TTL check together make `prediction_id` misuse visible. (Bundles old steps 1+2 because they're meaningless apart.)
+2. **Expose `prediction_id` + `warnings` in formatter modes** (was old step 6). Now agents can actually USE the binding echo from step 1. Same diff plumbs `ctx.warnings → response_data["warnings"]`.
+3. **`verification_source` enum on `outcome_event`**. Schema-only addition; default `agent_reported_tool_result`. Backward-compatible.
+4. **`ToolResultEvidence` model + `recent_tool_results` field + Phase-5 iteration in `phases.py`** (squashes old steps 4+5). Schema and the consumer ship together so the field never accepts data the server silently drops.
+5. **Update `describe_tool("process_agent_update")` returns block** (now includes `prediction_id` + `warnings` + `recent_tool_results` documentation).
+6. **`sequential_calibration.py` docstring cleanup** — fix the "phase-two" framing per §7.
+7. **Tests in same commits as their behavior changes** (per `feedback_tests-with-fixes.md`).
+
+Each step lands as its own commit on the same branch — incremental, reviewable, individually revertable. Final ship via `scripts/dev/ship.sh` after the full suite passes (`./scripts/dev/test-cache.sh`).
 
 ## Future work explicitly out of v1 scope
 
