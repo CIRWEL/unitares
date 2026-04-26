@@ -204,14 +204,16 @@ The hook MUST NOT fabricate confidence values from session metadata — it eithe
 
 Substrate-earned agents — those with hardcoded UUIDs that persist across process restarts (Lumen on the Pi, the long-lived residents per `docs/ontology/identity.md` substrate-earned-identity appendix) — are EXEMPT from hook-driven bootstrap. Their substrate IS their continuity-bearer; a synthetic 0.5/0.5/0.5 anchor written on every restart would collide with rich measured history that already exists.
 
-**Enforcement disposition (v2.1 ack-pass clarification):** the substrate-earned check is **two-layered**, primary hook-side and defensive server-side. The current `IdentityRecord` (`src/db/base.py:16–28`) has no dedicated `substrate_anchor_kind` column — identities carry a freeform `metadata: Dict[str, Any]`. Therefore:
+**Enforcement disposition (v2.1 ack-pass clarification, refined Phase 1 discovery):** the substrate-earned check is **two-layered**, primary hook-side and defensive server-side, and uses the **`core.substrate_claims` registry** (landed by S19 PR1, master `c93e40d4`) as the canonical source of truth — not a new metadata key.
 
-1. **Hook-side (primary, load-bearing):** the SessionStart hook knows the substrate-earned UUIDs (Lumen's UUID is hardcoded in the existing resident-agent registry — implementer locates the canonical list during Phase 4) and skips the `initial_state` parameter when calling `onboard` for those UUIDs. This is the enforcement that protects production today.
-2. **Server-side (defense-in-depth):** the handler reads `identity.metadata.get("substrate_anchor_kind")` and treats any non-empty value as "substrate-earned, refuse bootstrap." If the key is absent (the default for all current identities), the check is a no-op — nothing is auto-classified as substrate-earned. The Phase 1 migration backfills `metadata["substrate_anchor_kind"] = "hardware"` for Lumen's identity row (and any other resident UUIDs the substrate-earned-identity appendix lists). New substrate-earned identities mark themselves at registration time.
+1. **Hook-side (primary, load-bearing):** the SessionStart hook skips the `initial_state` parameter for substrate-earned UUIDs. The hook is the enforcement that protects production today. The hook's substrate-earned set comes from the same source the server uses (point 2).
+2. **Server-side (defense-in-depth):** the handler queries `SELECT 1 FROM core.substrate_claims WHERE agent_id = $1` for the target identity's `agent_id`. Any row match means "substrate-earned, refuse bootstrap." Membership is the load-bearing signal; no metadata key needed. New substrate-earned residents enrolled via `enroll_resident.py` (S19 PR1) automatically inherit bootstrap exemption.
 
 The defensive server check returns `bootstrap.written: false, reason: "substrate-earned-exempt"` rather than erroring, so a misconfigured hook degrades gracefully.
 
-A future canonical column (`identity.substrate_anchor_kind`) is out of scope for this proposal — the metadata-blob lookup is sufficient and avoids a schema change on the identity table. Promote to a column when a second consumer of the signal materializes.
+**Lumen carve-out (Pi-embodied, not in `core.substrate_claims`).** S19 v2 narrowed scope to 3 Mac-side residents (Vigil, Sentinel, Chronicler — Watcher excluded). Lumen is on the Pi; whether Lumen has an identity row in the Mac-side `core.identities` (via Steward EISV sync) is implementer-verified during Phase 2. If Lumen's identity exists Mac-side but is NOT in `substrate_claims`, the handler also checks for an explicit Lumen-UUID allowlist (one-line const, populated from the substrate-earned-identity appendix). The allowlist is sized for known Pi residents; a future S19-equivalent for Pi residents would replace it.
+
+This decision moves from "metadata-key with migration backfill" to "registry-membership lookup with a small allowlist for cross-substrate residents." It eliminates a schema-change on `core.identities` and reuses an existing canonical mechanism.
 
 **v2 amendment (code-review finding 6): anyio-safe insert.**
 
@@ -325,7 +327,7 @@ Existing tests that touch onboard or filter state rows MUST be reviewed for regr
    - `CREATE INDEX idx_agent_state_synthetic_partial ON core.agent_state (identity_id, ts DESC) WHERE synthetic = false;`
    - `CREATE UNIQUE INDEX uq_agent_state_one_bootstrap_per_identity ON core.agent_state (identity_id) WHERE synthetic = true;`
    - `DROP MATERIALIZED VIEW core.mv_latest_agent_states; CREATE MATERIALIZED VIEW ...` (recreate with `synthetic` projected). The matview's existing fallback path (`src/db/mixins/state.py:103` try/except) covers the brief recreate window.
-   - **Substrate-earned backfill (per §3.5):** `UPDATE core.identity SET metadata = jsonb_set(metadata, '{substrate_anchor_kind}', '"hardware"') WHERE id = '<Lumen-UUID>'` plus any other resident UUIDs from the substrate-earned-identity appendix. Idempotent; safe to re-run.
+   - **No identity-table backfill required** — the substrate-earned check uses the existing `core.substrate_claims` registry (S19 PR1) plus a small Pi-resident allowlist resolved in Phase 2. Phase 1 is pure `agent_state` schema work.
 2. **Schema + handler change** for `onboard.initial_state` — `BootstrapStateParams` model in `src/mcp_handlers/schemas/core.py`, INSERT in `handle_onboard_v2` wrapped with `asyncio.wait_for(..., timeout=0.5)`, substrate-earned defensive check.
 3. **Filter audit + filter changes.** Produce `docs/proposals/onboard-bootstrap-checkin.filter-audit.md` (the deliverable from §4.1). Add `synthetic = false` filter to every read site enumerated in the audit, with one test per site. **This is the danger step.** If the audit surfaces >10 call sites, escalate to council.
 4. **Hook update** — Claude Code `hooks/session-start`, Codex `plugins/codex/...`, dispatch bots if applicable. Substrate-earned bypass at hook level.
