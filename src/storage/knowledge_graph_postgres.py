@@ -160,38 +160,68 @@ class KnowledgeGraphPostgres:
         result = await db._pool.fetchval(query, *params)
         return result is not None
 
-    async def get_stats(self) -> Dict[str, Any]:
-        """Get knowledge graph statistics for current epoch."""
+    async def get_stats(
+        self,
+        epoch_scope: str = "current",
+        including_cold: bool = False,
+    ) -> Dict[str, Any]:
+        """Get knowledge graph statistics with explicit scope (#165 part 3).
+
+        Args:
+            epoch_scope: "current" (default) restricts to the active epoch;
+                "all" counts every epoch ever stored. The historical default
+                was epoch_current with no flag — list/stats reported very
+                different numbers for the same field, so the scope is now
+                surfaced in the response.
+            including_cold: When False (default), excludes rows in
+                status='cold' from totals and per-bucket counts. Cold rows
+                live in lifecycle's deep-archive tier; counting them by
+                default conflated active and dormant data.
+        """
         from config.governance_config import GovernanceConfig
         db = await self._get_db()
         epoch = GovernanceConfig.CURRENT_EPOCH
 
-        # Get total discoveries
-        total = await db._pool.fetchval(
-            "SELECT COUNT(*) FROM knowledge.discoveries WHERE epoch = $1", epoch)
+        clauses: list[str] = []
+        params: list[Any] = []
+        if epoch_scope == "current":
+            params.append(epoch)
+            clauses.append(f"epoch = ${len(params)}")
+        if not including_cold:
+            clauses.append("status != 'cold'")
+        where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
 
-        # Get discoveries by agent
-        by_agent_rows = await db._pool.fetch("""
+        total = await db._pool.fetchval(
+            f"SELECT COUNT(*) FROM knowledge.discoveries{where_sql}", *params)
+
+        by_agent_rows = await db._pool.fetch(
+            f"""
             SELECT agent_id, COUNT(*) as count
-            FROM knowledge.discoveries WHERE epoch = $1
+            FROM knowledge.discoveries{where_sql}
             GROUP BY agent_id
-        """, epoch)
+            """,
+            *params,
+        )
         by_agent = {row['agent_id']: row['count'] for row in by_agent_rows}
 
-        # Get discoveries by type
-        by_type_rows = await db._pool.fetch("""
+        by_type_rows = await db._pool.fetch(
+            f"""
             SELECT type, COUNT(*) as count
-            FROM knowledge.discoveries WHERE epoch = $1
+            FROM knowledge.discoveries{where_sql}
             GROUP BY type
-        """, epoch)
+            """,
+            *params,
+        )
         by_type = {row['type']: row['count'] for row in by_type_rows}
 
-        # Get discoveries by status
-        by_status_rows = await db._pool.fetch("""
+        by_status_rows = await db._pool.fetch(
+            f"""
             SELECT status, COUNT(*) as count
-            FROM knowledge.discoveries WHERE epoch = $1
+            FROM knowledge.discoveries{where_sql}
             GROUP BY status
-        """, epoch)
+            """,
+            *params,
+        )
         by_status = {row['status']: row['count'] for row in by_status_rows}
 
         return {
@@ -201,6 +231,17 @@ class KnowledgeGraphPostgres:
             "by_status": by_status,
             "total_agents": len(by_agent),
             "epoch": epoch,
+            "scope": {
+                "kind": "raw_status_aggregate",
+                "epoch_scope": epoch_scope,  # "current" | "all"
+                "including_cold": including_cold,
+                "note": (
+                    "Counts come straight from the discoveries table status "
+                    "column — includes 'superseded' rows. Compare with "
+                    "knowledge action=stats which uses lifecycle buckets and "
+                    "always includes cold rows but doesn't expose superseded."
+                ),
+            },
         }
 
     async def get_agent_discoveries(

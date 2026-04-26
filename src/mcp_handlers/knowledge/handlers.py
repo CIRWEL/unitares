@@ -1437,18 +1437,53 @@ async def handle_get_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Text
 
 @mcp_tool("list_knowledge_graph", timeout=10.0, rate_limit_exempt=True, register=False)
 async def handle_list_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[TextContent]:
-    """List knowledge graph statistics - full transparency"""
+    """List knowledge graph statistics — raw status aggregate.
+
+    Use ``epoch_scope`` ("current"|"all") and ``including_cold`` (bool) to
+    align this view with knowledge action=stats (which uses lifecycle
+    buckets). #165 — same-name fields used to report different totals
+    silently.
+    """
     try:
         graph = await get_knowledge_graph()
+        epoch_scope = (arguments.get("epoch_scope") or "current").lower()
+        if epoch_scope not in {"current", "all"}:
+            return [error_response(
+                f"Invalid epoch_scope {epoch_scope!r}; expected 'current' or 'all'"
+            )]
+        including_cold = bool(arguments.get("including_cold", False))
+
         t0 = time.perf_counter()
-        stats = await graph.get_stats()
+        try:
+            stats = await graph.get_stats(
+                epoch_scope=epoch_scope, including_cold=including_cold,
+            )
+        except TypeError:
+            # Older backend not yet updated to the new signature — best-effort
+            # call without scope params, then annotate the response.
+            stats = await graph.get_stats()
+            stats.setdefault("scope", {
+                "kind": "raw_status_aggregate",
+                "epoch_scope": "unknown",
+                "including_cold": "unknown",
+                "note": "backend predates #165 scope-flag plumbing",
+            })
         record_ms("knowledge.get_stats", (time.perf_counter() - t0) * 1000.0)
-        
+
+        scope_summary = (
+            f"epoch_scope={stats.get('scope', {}).get('epoch_scope', '?')}, "
+            f"including_cold={stats.get('scope', {}).get('including_cold', '?')}"
+        )
         return success_response({
             "stats": stats,
-            "message": f"Knowledge graph contains {stats['total_discoveries']} discoveries from {stats['total_agents']} agents"
+            "message": (
+                f"Knowledge graph contains {stats['total_discoveries']} "
+                f"discoveries from {stats['total_agents']} agents "
+                f"({scope_summary}). For lifecycle-bucketed counts see "
+                f"knowledge action=stats."
+            ),
         }, arguments=arguments)
-        
+
     except Exception as e:
         return [error_response(f"Failed to list knowledge: {str(e)}")]
 

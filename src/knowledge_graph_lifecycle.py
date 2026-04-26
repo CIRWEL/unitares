@@ -354,6 +354,20 @@ class KnowledgeGraphLifecycle:
                 "ephemeral_tags": list(EPHEMERAL_TAGS),
             },
             "philosophy": "Never delete. Archive to cold. Query with include_cold=true.",
+            # Scope marker (#165) — same-name fields on list_knowledge_graph
+            # report a different scope (raw status aggregate, epoch-current).
+            # Surface here so callers comparing the two know which is which.
+            "scope": {
+                "kind": "lifecycle_buckets",
+                "epoch_scope": "all",
+                "including_cold": True,
+                "note": (
+                    "Sums {open, resolved, archived, cold} from per-status "
+                    "queries across all epochs. Does not surface 'superseded' "
+                    "as a top-level bucket (those rows are absorbed by the "
+                    "supersede_chain). Compare with knowledge action=list."
+                ),
+            },
         }
 
 
