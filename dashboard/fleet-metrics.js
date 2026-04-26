@@ -227,17 +227,13 @@
         // auto-twins) so failures have a stable slot. They only matter
         // when a scraper has actually failed — hide empty twins from the
         // dropdown, surface active ones inline, and light a header badge.
+        // The catalog endpoint returns `last_point_ts` per metric (null
+        // if empty), so presence is one round-trip, not N+1.
         var raw = await fetchCatalog();
-        var errorTwins = raw.filter(function (m) { return m.name.endsWith('.error'); });
         var baseMetrics = raw.filter(function (m) { return !m.name.endsWith('.error'); });
-
-        // Probe error twins in parallel — typical fleet size ≤ ~10, cheap.
-        var twinPoints = await Promise.all(errorTwins.map(function (m) {
-            return fetchSeries(m.name).then(function (pts) { return { metric: m, pts: pts }; });
-        }));
-        var activeErrorTwins = twinPoints
-            .filter(function (r) { return r.pts && r.pts.length > 0; })
-            .map(function (r) { return r.metric; });
+        var activeErrorTwins = raw.filter(function (m) {
+            return m.name.endsWith('.error') && m.last_point_ts;
+        });
         setErrorBadge(activeErrorTwins.map(function (m) { return m.name; }));
 
         catalogCache = baseMetrics.concat(activeErrorTwins);

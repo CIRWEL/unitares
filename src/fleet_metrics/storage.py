@@ -96,3 +96,24 @@ async def query(
                 name, since, until, limit,
             )
     return [MetricPoint(ts=r["ts"], value=float(r["value"])) for r in rows]
+
+
+async def latest_ts_for_names(names: list[str]) -> dict[str, datetime]:
+    """Return ``{name: most_recent_ts}`` for the subset of ``names`` with data.
+
+    Names with no rows are absent from the result. One round-trip using
+    ``= ANY($1)`` against the ``(name, ts DESC)`` index — used by the
+    catalog endpoint so the dashboard can suppress empty ``.error``
+    twins without N+1 series probes.
+    """
+    if not names:
+        return {}
+    from src import agent_storage
+    db = agent_storage.get_db()
+    async with db.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT name, MAX(ts) AS last_ts FROM metrics.series "
+            "WHERE name = ANY($1::text[]) GROUP BY name",
+            list(names),
+        )
+    return {r["name"]: r["last_ts"] for r in rows}

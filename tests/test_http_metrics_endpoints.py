@@ -228,3 +228,42 @@ class TestGetMetricsCatalog:
         assert body["success"] is True
         names = {m["name"] for m in body["metrics"]}
         assert "tokei.unitares.src.code" in names
+
+    @pytest.mark.asyncio
+    async def test_includes_last_point_ts_field(self):
+        """Each catalog entry surfaces last_point_ts (ISO string or null) so
+        the dashboard can suppress empty `.error` twins without N+1 probes."""
+        from src.http_api import http_get_metrics_catalog
+
+        ts = datetime(2026, 4, 26, 12, 0, 0, tzinfo=timezone.utc)
+        with patch(
+            "src.fleet_metrics.storage.latest_ts_for_names",
+            new=AsyncMock(return_value={"tokei.unitares.src.code": ts}),
+        ):
+            req = _make_request("GET", "/v1/metrics/catalog")
+            resp = await http_get_metrics_catalog(req)
+            body = await _read_json(resp)
+
+        by_name = {m["name"]: m for m in body["metrics"]}
+        assert by_name["tokei.unitares.src.code"]["last_point_ts"] == ts.isoformat()
+        # An entry not in the latest_ts dict reports None — `.error` twins
+        # without points hit this branch and the dashboard hides them.
+        assert by_name["tokei.unitares.src.code.error"]["last_point_ts"] is None
+
+    @pytest.mark.asyncio
+    async def test_last_ts_probe_failure_degrades_to_null(self):
+        """If the aggregation query fails, the endpoint still returns the
+        catalog with last_point_ts=null rather than 500ing the dashboard."""
+        from src.http_api import http_get_metrics_catalog
+
+        with patch(
+            "src.fleet_metrics.storage.latest_ts_for_names",
+            new=AsyncMock(side_effect=RuntimeError("db down")),
+        ):
+            req = _make_request("GET", "/v1/metrics/catalog")
+            resp = await http_get_metrics_catalog(req)
+            body = await _read_json(resp)
+
+        assert resp.status_code == 200
+        assert body["success"] is True
+        assert all(m["last_point_ts"] is None for m in body["metrics"])

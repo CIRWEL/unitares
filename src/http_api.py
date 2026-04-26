@@ -1190,11 +1190,25 @@ async def http_get_metrics_catalog(request):
     if not _check_http_auth(request, http_api_token=http_api_token):
         return _http_unauthorized()
     from src.fleet_metrics import catalog as _catalog
+    from src.fleet_metrics.storage import latest_ts_for_names
+    metrics = sorted(_catalog.values(), key=lambda x: x.name)
+    # last_point_ts lets the dashboard suppress empty `.error` twins
+    # without firing a per-name probe — see dashboard/fleet-metrics.js.
+    try:
+        last_ts = await latest_ts_for_names([m.name for m in metrics])
+    except Exception as e:
+        logger.warning(f"metrics catalog: latest_ts probe failed: {e}")
+        last_ts = {}
     return JSONResponse({
         "success": True,
         "metrics": [
-            {"name": m.name, "description": m.description, "unit": m.unit}
-            for m in sorted(_catalog.values(), key=lambda x: x.name)
+            {
+                "name": m.name,
+                "description": m.description,
+                "unit": m.unit,
+                "last_point_ts": last_ts[m.name].isoformat() if m.name in last_ts else None,
+            }
+            for m in metrics
         ],
     })
 
