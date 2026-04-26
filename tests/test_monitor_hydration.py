@@ -23,6 +23,7 @@ import pytest
 from src.agent_monitor_state import (
     STATE_SAVE_TIMEOUT_SECONDS,
     _write_state_file,
+    ensure_hydrated,
     hydrate_from_db_if_fresh,
     save_monitor_state_async,
 )
@@ -139,6 +140,134 @@ async def test_hydrate_from_db_if_fresh_swallows_db_exceptions():
 
     assert applied is False
     assert monitor.state.update_count == 0
+
+
+# ─── Fix #5: get_or_create_monitor flag-and-drain wire-in ────────────────
+#
+# Cold factory + missing file + DB has rows must heal on the next async read.
+# The factory marks `_needs_hydration=True` (sync) and async handlers drain
+# the mark via `ensure_hydrated()`. Without these tests we have no regression
+# guard against a future handler being added that skips the drain.
+
+
+@pytest.mark.asyncio
+async def test_factory_marks_needs_hydration_when_file_missing_and_meta_has_activity(tmp_path, monkeypatch):
+    """Mnemos repro: file missing, meta says total_updates=9 → flag set."""
+    from src.agent_lifecycle import get_or_create_monitor
+    import src.agent_monitor_state as ams
+    from src.agent_monitor_state import monitors
+
+    agent_id = "factory-flag-set"
+    monitors.pop(agent_id, None)
+    monkeypatch.setattr(ams, "get_state_file", lambda _aid: tmp_path / "missing.json")
+
+    fake_meta = MagicMock(total_updates=9)
+    with patch("src.agent_lifecycle.get_or_create_metadata", return_value=fake_meta):
+        monitor = get_or_create_monitor(agent_id)
+
+    assert monitor._needs_hydration is True
+    monitors.pop(agent_id, None)
+
+
+@pytest.mark.asyncio
+async def test_factory_does_not_mark_needs_hydration_for_genuinely_new_agent(tmp_path, monkeypatch):
+    """Fresh-onboard agent with no prior activity must NOT trigger DB roundtrip.
+
+    Saves DB cost on cold first-observe of every newly-onboarded agent and
+    preserves the bootstrap-only "no measured trajectory" guard semantics.
+    """
+    from src.agent_lifecycle import get_or_create_monitor
+    import src.agent_monitor_state as ams
+    from src.agent_monitor_state import monitors
+
+    agent_id = "factory-flag-unset"
+    monitors.pop(agent_id, None)
+    monkeypatch.setattr(ams, "get_state_file", lambda _aid: tmp_path / "missing.json")
+
+    fake_meta = MagicMock(total_updates=0)
+    with patch("src.agent_lifecycle.get_or_create_metadata", return_value=fake_meta):
+        monitor = get_or_create_monitor(agent_id)
+
+    assert monitor._needs_hydration is False
+    monitors.pop(agent_id, None)
+
+
+@pytest.mark.asyncio
+async def test_factory_clears_needs_hydration_when_file_load_succeeds(tmp_path, monkeypatch):
+    """File present → no need for DB hydration; flag must be False."""
+    from src.agent_lifecycle import get_or_create_monitor
+    import src.agent_monitor_state as ams
+    from src.agent_monitor_state import monitors
+    from src.governance_state import GovernanceState
+
+    agent_id = "factory-file-loaded"
+    monitors.pop(agent_id, None)
+
+    fake_state = MagicMock(spec=GovernanceState, V_history=[1, 2, 3])
+    monkeypatch.setattr(ams, "get_state_file", lambda _aid: tmp_path / "any.json")
+
+    fake_meta = MagicMock(total_updates=9)
+    with patch("src.agent_lifecycle.get_or_create_metadata", return_value=fake_meta), \
+         patch("src.agent_lifecycle.load_monitor_state", return_value=fake_state):
+        monitor = get_or_create_monitor(agent_id)
+
+    assert monitor._needs_hydration is False
+    monitors.pop(agent_id, None)
+
+
+@pytest.mark.asyncio
+async def test_ensure_hydrated_drains_flag_and_calls_hydrate():
+    """Flag set → ensure_hydrated calls hydrate_from_db_if_fresh and clears flag."""
+    monitor = _make_fresh_monitor("ensure-drain")
+    monitor._needs_hydration = True
+
+    fake_identity = MagicMock(identity_id=7)
+    fake_rows = [_FakeStateRow(E=0.6, I=0.7, S=0.2, V=0.0, coherence=0.48, regime="EXPLORATION")]
+    fake_db = MagicMock()
+    fake_db.get_identity = AsyncMock(return_value=fake_identity)
+    fake_db.get_agent_state_history = AsyncMock(return_value=fake_rows)
+
+    with patch("src.db.get_db", return_value=fake_db):
+        applied = await ensure_hydrated(monitor, "ensure-drain")
+
+    assert applied is True
+    assert monitor._needs_hydration is False
+    assert monitor.state.update_count == 1
+    assert monitor.state.coherence == pytest.approx(0.48)
+
+
+@pytest.mark.asyncio
+async def test_ensure_hydrated_noop_when_flag_unset():
+    """Hot monitors (flag unset) must not trigger any DB call."""
+    monitor = _make_fresh_monitor("ensure-noop")
+    monitor._needs_hydration = False
+
+    fake_db = MagicMock()
+    fake_db.get_identity = AsyncMock(side_effect=AssertionError("must not be called"))
+
+    with patch("src.db.get_db", return_value=fake_db):
+        applied = await ensure_hydrated(monitor, "ensure-noop")
+
+    assert applied is False
+    fake_db.get_identity.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ensure_hydrated_clears_flag_on_db_failure():
+    """Single-shot semantics: DB unreachable still drains the flag — degrades
+    to seed defaults on subsequent reads instead of retrying every time."""
+    monitor = _make_fresh_monitor("ensure-db-down")
+    monitor._needs_hydration = True
+
+    fake_db = MagicMock()
+    fake_db.get_identity = AsyncMock(side_effect=RuntimeError("DB down"))
+
+    with patch("src.db.get_db", return_value=fake_db):
+        applied = await ensure_hydrated(monitor, "ensure-db-down")
+
+    assert applied is False
+    assert monitor._needs_hydration is False  # drained even on failure
+    assert monitor.state.update_count == 0  # seed defaults preserved
 
 
 # ─── Fix #2: Atomic file write ────────────────────────────────────────────

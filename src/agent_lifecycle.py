@@ -19,8 +19,16 @@ logger = get_logger(__name__)
 
 
 def get_or_create_monitor(agent_id: str) -> UNITARESMonitor:
-    """Get existing monitor or create new one with metadata, loading state if it exists"""
-    get_or_create_metadata(agent_id)
+    """Get existing monitor or create new one with metadata, loading state if it exists.
+
+    Sync by design — async-cascading would force ~28 callers (background tasks,
+    CLI, sync handler internals) to become async. When the file snapshot is
+    missing but metadata indicates prior activity (`total_updates > 0`), the
+    monitor is marked `_needs_hydration=True`; async handlers drain that mark
+    via `ensure_hydrated(monitor, agent_id)` at their entry point. Sync callers
+    skip hydration and see the same seed-default behavior they always have.
+    """
+    meta = get_or_create_metadata(agent_id)
 
     if agent_id not in monitors:
         monitor = UNITARESMonitor(agent_id)
@@ -28,11 +36,20 @@ def get_or_create_monitor(agent_id: str) -> UNITARESMonitor:
         persisted_state = load_monitor_state(agent_id)
         if persisted_state is not None:
             monitor.state = persisted_state
+            monitor._needs_hydration = False
             logger.info(f"Loaded persisted state for {agent_id} ({len(persisted_state.V_history)} history entries)")
         else:
+            # File snapshot missing. Mark for DB hydration only if metadata says
+            # we've seen prior activity — fresh-onboard agents stay update_count=0
+            # so downstream "no measured trajectory" guards still trigger.
             # Lineage is recorded via meta.parent_agent_id but never transplants
             # state; see docs/specs/2026-04-16-sever-fingerprint-eisv-inheritance-design.md
-            logger.info(f"Initialized new monitor for {agent_id}")
+            prior_activity = int(getattr(meta, "total_updates", 0) or 0) > 0
+            monitor._needs_hydration = prior_activity
+            if prior_activity:
+                logger.info(f"Initialized monitor for {agent_id} (file missing, marked for DB hydration)")
+            else:
+                logger.info(f"Initialized new monitor for {agent_id}")
 
         monitors[agent_id] = monitor
 

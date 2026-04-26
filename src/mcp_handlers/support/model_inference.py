@@ -237,7 +237,9 @@ async def handle_call_model(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         if agent_id:
             try:
                 monitor = mcp_server.get_or_create_monitor(agent_id)
-                
+                from src.agent_monitor_state import ensure_hydrated
+                await ensure_hydrated(monitor, agent_id)
+
                 # Update Energy through a lightweight process_update
                 # Model inference consumes Energy - reflect this in EISV dynamics
                 # Use low complexity (0.1-0.2) since inference is a tool, not core work

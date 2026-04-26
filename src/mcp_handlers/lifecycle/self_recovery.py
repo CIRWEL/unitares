@@ -248,13 +248,15 @@ async def handle_check_recovery_options(arguments: Dict[str, Any]) -> Sequence[T
     # Get current metrics (use safe_float for uninitialized agents with None coherence/risk)
     try:
         monitor = mcp_server.get_or_create_monitor(agent_uuid)
+        from src.agent_monitor_state import ensure_hydrated
+        await ensure_hydrated(monitor, agent_uuid)
         metrics = monitor.get_metrics()
-        
+
         coherence = safe_float(monitor.state.coherence, 0.5)
         risk_score = safe_float(metrics.get("mean_risk"), 0.5)
         void_active = bool(monitor.state.void_active)
         void_value = safe_float(monitor.state.V, 0.0)
-        
+
     except Exception as e:
         return [error_response(f"Could not get metrics: {e}")]
     
@@ -370,8 +372,10 @@ async def handle_quick_resume(arguments: Dict[str, Any]) -> Sequence[TextContent
     # Get current metrics (use safe_float for uninitialized agents)
     try:
         monitor = mcp_server.get_or_create_monitor(agent_uuid)
+        from src.agent_monitor_state import ensure_hydrated
+        await ensure_hydrated(monitor, agent_uuid)
         metrics = monitor.get_metrics()
-        
+
         coherence = safe_float(monitor.state.coherence, 0.5)
         risk_score = safe_float(metrics.get("mean_risk"), 0.5)
         void_active = bool(monitor.state.void_active)
@@ -560,8 +564,10 @@ async def handle_operator_resume_agent(arguments: Dict[str, Any]) -> Sequence[Te
     # Get target metrics (use safe_float for uninitialized agents)
     try:
         monitor = mcp_server.get_or_create_monitor(target_agent_id)
+        from src.agent_monitor_state import ensure_hydrated
+        await ensure_hydrated(monitor, target_agent_id)
         metrics = monitor.get_metrics()
-        
+
         coherence = safe_float(monitor.state.coherence, 0.5)
         risk_score = safe_float(metrics.get("mean_risk"), 0.5)
         void_active = bool(monitor.state.void_active)

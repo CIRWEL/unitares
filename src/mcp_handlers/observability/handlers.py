@@ -10,6 +10,7 @@ from ..utils import success_response, error_response, require_argument, require_
 from ..decorators import mcp_tool
 from src.logging_utils import get_logger
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
+from src.agent_monitor_state import ensure_hydrated
 logger = get_logger(__name__)
 
 # Import from mcp_server_std module (using shared utility)
@@ -89,7 +90,8 @@ async def handle_observe_agent(arguments: Dict[str, Any]) -> Sequence[TextConten
     
     # Load monitor state from disk if not in memory (consistent with get_governance_metrics)
     monitor = mcp_server.get_or_create_monitor(agent_id)
-    
+    await ensure_hydrated(monitor, agent_id)
+
     # Perform pattern analysis
     if analyze_patterns_flag:
         observation = mcp_server.analyze_agent_patterns(monitor, include_history=include_history)
@@ -298,6 +300,7 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
     
     # Get current agent's metrics
     monitor = mcp_server.get_or_create_monitor(agent_id)
+    await ensure_hydrated(monitor, agent_id)
     my_metrics = monitor.get_metrics()
     my_meta = mcp_server.agent_metadata.get(agent_id)
     
@@ -320,8 +323,9 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
         
         try:
             other_monitor = mcp_server.get_or_create_monitor(other_id)
+            await ensure_hydrated(other_monitor, other_id)
             other_metrics = other_monitor.get_metrics()
-            
+
             other_E = float(other_metrics.get('E', 0.7))
             other_I = float(other_metrics.get('I', 0.8))
             other_S = float(other_metrics.get('S', 0.2))
@@ -429,6 +433,7 @@ async def handle_compare_me_to_similar(arguments: Dict[str, Any]) -> Sequence[Te
     for similar in top_similar:
         try:
             other_monitor = mcp_server.get_or_create_monitor(similar["agent_id"])
+            await ensure_hydrated(other_monitor, similar["agent_id"])
             other_metrics = other_monitor.get_metrics()
             regime = other_metrics.get('regime', 'nominal')
             all_regimes.append(regime)

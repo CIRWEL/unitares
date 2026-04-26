@@ -380,6 +380,8 @@ async def _try_recover_agent(stuck: dict, note_cooldown_minutes: float) -> list:
         # Check if agent is responsive
         try:
             monitor = mcp_server.get_or_create_monitor(agent_id)
+            from src.agent_monitor_state import ensure_hydrated
+            await ensure_hydrated(monitor, agent_id)
             metrics = monitor.get_metrics()
             coherence = float(monitor.state.coherence)
             risk_score = float(metrics.get("mean_risk") or 0.5)

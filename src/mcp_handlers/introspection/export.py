@@ -37,7 +37,9 @@ async def handle_get_system_history(arguments: Dict[str, Any]) -> Sequence[TextC
     
     # Load monitor state from disk if not in memory (consistent with get_governance_metrics)
     monitor = mcp_server.get_or_create_monitor(agent_id)
-    
+    from src.agent_monitor_state import ensure_hydrated
+    await ensure_hydrated(monitor, agent_id)
+
     # Check if monitor has any history
     if not monitor.state.E_history and not monitor.state.timestamp_history:
         return [error_response(
@@ -79,7 +81,9 @@ async def handle_export_to_file(arguments: Dict[str, Any]) -> Sequence[TextConte
     
     # Load monitor state from disk if not in memory (consistent with get_governance_metrics)
     monitor = mcp_server.get_or_create_monitor(agent_id)
-    
+    from src.agent_monitor_state import ensure_hydrated
+    await ensure_hydrated(monitor, agent_id)
+
     if complete_package:
         # Export complete package: metadata + history + validation
         # NOTE: Knowledge layer removed November 28, 2025

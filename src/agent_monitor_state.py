@@ -310,3 +310,37 @@ async def hydrate_from_db_if_fresh(monitor: UNITARESMonitor, agent_id: str) -> b
     except Exception as e:
         logger.warning(f"DB hydration failed for {agent_id}: {e}", exc_info=True)
         return False
+
+
+async def ensure_hydrated(monitor: UNITARESMonitor, agent_id: str) -> bool:
+    """Drain the `_needs_hydration` mark set by `get_or_create_monitor`.
+
+    Idempotent: returns immediately when the flag is unset (the common hot-path
+    case). When the flag is set, runs `hydrate_from_db_if_fresh` and clears the
+    flag regardless of outcome — single-shot semantics.
+
+    Call this at the top of any async handler that reads `monitor.state`.
+    Without this drain, monitors created cold from a missing snapshot would
+    return seed-default EISV (the "uninitialized" symptom) on every read.
+
+    The flag-and-drain split exists because `get_or_create_monitor` is sync
+    (used from background tasks and CLI), but DB hydration is async. Sync
+    callers that never reach an async drain see the same seed-default behavior
+    they had before this fix — no regression.
+
+    Returns True iff hydration actually applied new state.
+    """
+    # Strict identity check — `is True` (not truthy). The factory sets the flag
+    # explicitly to True or False; any other value (None, MagicMock from tests,
+    # absent attr) means "not marked" and we no-op. Without this, MagicMock
+    # monitors in test fixtures fall through to hydrate and crash on
+    # `MagicMock > 0` inside hydrate_from_db_if_fresh.
+    if getattr(monitor, "_needs_hydration", False) is not True:
+        return False
+    try:
+        return await hydrate_from_db_if_fresh(monitor, agent_id)
+    finally:
+        # Single-shot: drain the mark even on hydrate failure (DB unreachable
+        # etc.) so we don't retry on every subsequent read. Behavior degrades
+        # to seed defaults — same as the pre-fix state.
+        monitor._needs_hydration = False

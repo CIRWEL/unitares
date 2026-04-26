@@ -92,6 +92,8 @@ async def _handle_governance_action_initiate(arguments: Dict[str, Any]) -> Seque
 
     if action_type == GovernanceActionType.VOID_INTERVENTION:
         monitor = mcp_server.get_or_create_monitor(agent_id)
+        from src.agent_monitor_state import ensure_hydrated
+        await ensure_hydrated(monitor, agent_id)
         metrics = monitor.get_metrics()
         payload["initiator_state"] = {
             "coherence": float(metrics.get("coherence", 0.5)),

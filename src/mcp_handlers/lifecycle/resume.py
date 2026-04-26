@@ -66,6 +66,8 @@ async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[Te
     # Get current governance metrics
     try:
         monitor = mcp_server.get_or_create_monitor(agent_uuid)
+        from src.agent_monitor_state import ensure_hydrated
+        await ensure_hydrated(monitor, agent_uuid)
         metrics = monitor.get_metrics()
 
         coherence = float(monitor.state.coherence)

@@ -153,6 +153,8 @@ async def handle_simulate_update(arguments: ToolArgumentsDict) -> Sequence[TextC
         if meta:
             # Agent exists - use their monitor with existing state
             monitor = mcp_server.get_or_create_monitor(agent_id)
+            from src.agent_monitor_state import ensure_hydrated
+            await ensure_hydrated(monitor, agent_id)
             agent_state_source = "existing"
 
     if monitor is None:

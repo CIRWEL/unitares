@@ -150,6 +150,8 @@ async def _handle_coherence_report_compute(arguments: Dict[str, Any]) -> Sequenc
 
     # Get source agent state
     source_monitor = mcp_server.get_or_create_monitor(source_agent_id)
+    from src.agent_monitor_state import ensure_hydrated
+    await ensure_hydrated(source_monitor, source_agent_id)
 
     # Get target agent state
     target_monitor = mcp_server.monitors.get(target_agent_id)
