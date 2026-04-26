@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import pytest
-import asyncpg
 
-GOVERNANCE_DB_URL = "postgresql://postgres:postgres@localhost:5432/governance"
+from tests.test_db_utils import TEST_DB_URL, can_connect_to_test_db
+
+if not can_connect_to_test_db():
+    pytest.skip("governance_test database not available", allow_module_level=True)
 
 
 @pytest.mark.asyncio
 async def test_progress_flat_snapshots_table_exists():
-    conn = await asyncpg.connect(GOVERNANCE_DB_URL)
+    import asyncpg
+
+    conn = await asyncpg.connect(TEST_DB_URL)
     try:
         cols = await conn.fetch("""
             SELECT column_name, data_type
@@ -34,7 +38,9 @@ async def test_progress_flat_snapshots_table_exists():
 
 @pytest.mark.asyncio
 async def test_resident_progress_pulse_table_exists():
-    conn = await asyncpg.connect(GOVERNANCE_DB_URL)
+    import asyncpg
+
+    conn = await asyncpg.connect(TEST_DB_URL)
     try:
         cols = await conn.fetch("""
             SELECT column_name FROM information_schema.columns
