@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd manifest for vigil-hygiene (weekly branch sweep).
+
+  Runs Sunday 03:00 local. Phase 1 ships in dry-run mode (no deletions);
+  flip ProgramArguments to add "--live" once dry-run logs validate the
+  sweep against real repo state for one week.
+
+  Install (render __VARS__ then load):
+    sed -e "s|__UNITARES_ROOT__|$HOME/projects/unitares|g" \
+        -e "s|__HOME__|$HOME|g" \
+        -e "s|__PYTHON3__|$(command -v python3)|g" \
+        scripts/ops/com.unitares.vigil-hygiene.plist.template \
+        > ~/Library/LaunchAgents/com.unitares.vigil-hygiene.plist
+    launchctl load ~/Library/LaunchAgents/com.unitares.vigil-hygiene.plist
+
+  Verify:
+    launchctl list | grep com.unitares.vigil-hygiene
+    tail -f __HOME__/Library/Logs/unitares-vigil-hygiene.out.log
+
+  Manual test (dry-run, anytime):
+    python3 __UNITARES_ROOT__/agents/vigil_hygiene/agent.py --repo __UNITARES_ROOT__
+
+  Spec: docs/proposals/branch-hygiene-automation.md
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.unitares.vigil-hygiene</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON3__</string>
+        <string>__UNITARES_ROOT__/agents/vigil_hygiene/agent.py</string>
+        <!-- Phase 1: dry-run only. Phase 2 will add "--live" here. -->
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__UNITARES_ROOT__</string>
+
+    <!-- Sunday at 03:00 local -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/unitares-vigil-hygiene.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/unitares-vigil-hygiene.err.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

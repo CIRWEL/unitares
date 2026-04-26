@@ -1,0 +1,116 @@
+"""Integration tests for agents/vigil_hygiene/agent.py sweep against an
+ephemeral local git repo. Avoids network by stubbing list_open_pr_branches.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from agents.vigil_hygiene import agent as agent_mod
+from agents.vigil_hygiene.agent import is_keepalive, sweep
+
+
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "t@t",
+    }
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True, capture_output=True, text=True, env=env,
+    )
+
+
+@pytest.fixture
+def fake_repo(tmp_path: Path) -> Path:
+    """Local git repo on master with one commit and a bare origin remote so
+    fetch/push/cherry against `origin/*` works without network."""
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--bare", "-b", "master", str(bare)], check=True, capture_output=True)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "master")
+    _git(repo, "config", "commit.gpgsign", "false")
+    _git(repo, "remote", "add", "origin", str(bare))
+    (repo / "README").write_text("hello\n")
+    _git(repo, "add", "README")
+    _git(repo, "commit", "-m", "initial")
+    _git(repo, "push", "-u", "origin", "master")
+    return repo
+
+
+class TestKeepaliveLogic:
+    def test_master_always_keepalive(self):
+        keep, reason = is_keepalive("master", set(), None, 1000.0)
+        assert keep
+        assert "name" in reason
+
+    def test_main_always_keepalive(self):
+        keep, _ = is_keepalive("main", set(), None, 1000.0)
+        assert keep
+
+    def test_open_pr_branch_keepalive(self):
+        keep, reason = is_keepalive("foo", {"foo"}, None, 1000.0)
+        assert keep
+        assert "PR" in reason
+
+    def test_newer_than_24h_keepalive(self):
+        now = 1_000_000.0
+        keep, reason = is_keepalive("foo", set(), int(now - 3600), now)
+        assert keep
+        assert "24h" in reason
+
+    def test_older_than_24h_not_keepalive(self):
+        now = 1_000_000.0
+        keep, _ = is_keepalive("foo", set(), int(now - 25 * 3600), now)
+        assert not keep
+
+    def test_unknown_age_not_keepalive(self):
+        # ts None means we couldn't measure age; default to non-keepalive (sweep-eligible)
+        keep, _ = is_keepalive("foo", set(), None, 1000.0)
+        assert not keep
+
+
+class TestSweepDryRun:
+    def test_dry_run_does_not_delete_worktree(self, fake_repo: Path, monkeypatch):
+        wt_dir = fake_repo / ".worktrees" / "wt1"
+        _git(fake_repo, "worktree", "add", "-b", "feature/x", str(wt_dir))
+        monkeypatch.setattr(agent_mod, "list_open_pr_branches", lambda repo: set())
+
+        report = sweep(fake_repo, dry_run=True)
+
+        assert report.dry_run is True
+        assert wt_dir.exists()
+        assert (wt_dir / ".git").exists()
+        assert report.worktrees_removed == 0
+
+    def test_dry_run_reports_no_errors_on_clean_repo(self, fake_repo: Path, monkeypatch):
+        monkeypatch.setattr(agent_mod, "list_open_pr_branches", lambda repo: set())
+
+        report = sweep(fake_repo, dry_run=True)
+
+        assert report.errors == []
+        assert report.duration_s > 0
+
+
+class TestSweepHelpers:
+    def test_list_worktrees_includes_main_and_added(self, fake_repo: Path):
+        wt_dir = fake_repo / ".worktrees" / "alpha"
+        _git(fake_repo, "worktree", "add", "-b", "feat/alpha", str(wt_dir))
+
+        worktrees = agent_mod.list_worktrees(fake_repo)
+
+        paths = {p for p, _ in worktrees}
+        branches = {b for _, b in worktrees if b}
+        assert fake_repo in paths
+        assert wt_dir in paths
+        assert "master" in branches
+        assert "feat/alpha" in branches
+
+    def test_list_origin_branches_returns_pushed_branches(self, fake_repo: Path):
+        result = agent_mod.list_origin_branches(fake_repo)
+        assert "master" in result
