@@ -1,5 +1,24 @@
 """
-UNITARES Governance Core - Coherence Functions
+UNITARES Governance Core - Coherence Functions (LEGACY THERMODYNAMIC FORM)
+
+NOTE — terminology drift. The `coherence` field exposed in MCP responses
+(`process_agent_update`, governance metrics, dashboards) is NO LONGER this
+`C(V, Θ)`. As of EISV grounding Phase 1+2 (PR #26, merged 2026-04-19), the
+canonical `coherence` slot in the runtime metrics dict is computed by
+`src/grounding/coherence.py::compute_coherence` — a manifold-distance form
+over (E, I, S) from a class-conditional healthy operating point. V is not
+in that formula. The thermodynamic value computed here lives in metrics as
+`coherence_legacy`.
+
+Use this module when you specifically want the V-driven thermodynamic
+coherence (e.g. ODE integration, drift telemetry baselines). For "is this
+agent's state coherent" questions in handler/response code, read
+`metrics["coherence"]` (manifold form) or `metrics["coherence_legacy"]`
+(this form) — and be explicit about which one your code depends on.
+
+See `src/mcp_handlers/updates/enrichments.py` for the swap site that
+populates both fields, and the paper v6.8.1 §6.7 translation table for
+the vocabulary mapping (paper ↔ runtime ↔ audit).
 
 Coherence is a key feedback mechanism in UNITARES that stabilizes
 the system. It depends on the void integral V and control parameters Θ.
