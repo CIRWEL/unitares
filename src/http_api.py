@@ -1304,6 +1304,73 @@ def _watcher_summary_from_rows(rows, now=None, window_days=_WATCHER_DAILY_WINDOW
     }
 
 
+async def http_bootstrap_silent(request):
+    """GET /v1/bootstrap/silent — agents bootstrapped past N hours with no real check-in.
+
+    Validation surface for onboard-bootstrap-checkin §6 (population
+    observability). The proposal exists to count exactly this population:
+    agents with a synthetic t=0 anchor but no measured trajectory.
+
+    Query params:
+      min_age_hours (int, default 24): skip recently-bootstrapped agents
+                                       that may genuinely be about to check in.
+      limit (int, default 50, max 200): cap the returned list.
+
+    Returns:
+      {success, count, min_age_hours, agents: [{agent_id, identity_id,
+        bootstrap_state_id, bootstrap_recorded_at, bootstrap_age_hours,
+        display_name}]}
+    """
+    http_api_token = os.getenv("UNITARES_HTTP_API_TOKEN")
+    if not _check_http_auth(request, http_api_token=http_api_token):
+        return _http_unauthorized()
+
+    try:
+        min_age_hours = int(request.query_params.get("min_age_hours", 24))
+    except (TypeError, ValueError):
+        min_age_hours = 24
+    min_age_hours = max(0, min_age_hours)
+
+    try:
+        limit = int(request.query_params.get("limit", 50))
+    except (TypeError, ValueError):
+        limit = 50
+    limit = max(1, min(limit, 200))
+
+    try:
+        from src.db import get_db
+        db = get_db()
+        count = await db.count_bootstrap_only_agents(min_age_hours=min_age_hours)
+        rows = await db.list_bootstrap_only_agents(
+            min_age_hours=min_age_hours, limit=limit,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "error": f"bootstrap_silent query failed: {e}"},
+            status_code=500,
+        )
+
+    # Datetimes need to be JSON-serializable.
+    def _norm(row):
+        out = dict(row)
+        ts = out.get("bootstrap_recorded_at")
+        if ts is not None and hasattr(ts, "isoformat"):
+            out["bootstrap_recorded_at"] = ts.isoformat()
+        age = out.get("bootstrap_age_hours")
+        if age is not None:
+            out["bootstrap_age_hours"] = round(float(age), 3)
+        return out
+
+    return JSONResponse({
+        "success": True,
+        "count": count,
+        "min_age_hours": min_age_hours,
+        "limit": limit,
+        "returned": len(rows),
+        "agents": [_norm(r) for r in rows],
+    })
+
+
 async def http_watcher_summary(request):
     """GET /v1/watcher/summary — aggregate Watcher findings for the dashboard panel.
 
@@ -2347,6 +2414,7 @@ def register_http_routes(
     app.routes.append(Route("/v1/metrics/series", http_get_metrics, methods=["GET"]))
     app.routes.append(Route("/v1/metrics/catalog", http_get_metrics_catalog, methods=["GET"]))
     app.routes.append(Route("/v1/watcher/summary", http_watcher_summary, methods=["GET"]))
+    app.routes.append(Route("/v1/bootstrap/silent", http_bootstrap_silent, methods=["GET"]))
     app.routes.append(Route("/v1/sentinel/summary", http_sentinel_summary, methods=["GET"]))
     app.routes.append(Route("/v1/vigil/summary", http_vigil_summary, methods=["GET"]))
     app.routes.append(Route("/api/activity", http_activity, methods=["GET"]))
