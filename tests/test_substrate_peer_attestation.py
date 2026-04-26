@@ -20,6 +20,12 @@ import pytest
 from src.substrate import peer_attestation as pa
 
 
+_skip_non_darwin = pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="exercises macOS launchctl path; Linux backend stubbed (NotImplementedError) — see docs/proposals/s19-attestation-mechanism.md",
+)
+
+
 # =============================================================================
 # Platform gate
 # =============================================================================
@@ -99,6 +105,7 @@ def _mock_launchctl(monkeypatch: pytest.MonkeyPatch, *, returncode: int = 0,
     monkeypatch.setattr(pa.subprocess, "run", lambda *a, **k: fake)
 
 
+@_skip_non_darwin
 def test_read_service_label_finds_governance_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -106,6 +113,7 @@ def test_read_service_label_finds_governance_mcp(
     assert pa.read_service_label(37807) == "com.unitares.governance-mcp"
 
 
+@_skip_non_darwin
 def test_read_service_label_finds_sentinel_with_negative_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -114,6 +122,7 @@ def test_read_service_label_finds_sentinel_with_negative_status(
     assert pa.read_service_label(13142) == "com.unitares.sentinel"
 
 
+@_skip_non_darwin
 def test_read_service_label_returns_none_for_unknown_pid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -121,6 +130,7 @@ def test_read_service_label_returns_none_for_unknown_pid(
     assert pa.read_service_label(99999) is None
 
 
+@_skip_non_darwin
 def test_read_service_label_skips_dash_pid_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -134,6 +144,7 @@ def test_read_service_label_skips_dash_pid_rows(
     assert pa.read_service_label(0) is None
 
 
+@_skip_non_darwin
 def test_read_service_label_rejects_negative_pid_without_subprocess(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -148,6 +159,7 @@ def test_read_service_label_rejects_negative_pid_without_subprocess(
     called.assert_not_called()
 
 
+@_skip_non_darwin
 def test_read_service_label_handles_subprocess_nonzero_exit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -155,6 +167,7 @@ def test_read_service_label_handles_subprocess_nonzero_exit(
     assert pa.read_service_label(123) is None
 
 
+@_skip_non_darwin
 def test_read_service_label_handles_missing_launchctl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -165,6 +178,7 @@ def test_read_service_label_handles_missing_launchctl(
     assert pa.read_service_label(123) is None
 
 
+@_skip_non_darwin
 def test_read_service_label_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(*a: object, **k: object) -> None:
         raise subprocess.TimeoutExpired(["launchctl", "list"], 2.0)
@@ -173,6 +187,7 @@ def test_read_service_label_handles_timeout(monkeypatch: pytest.MonkeyPatch) -> 
     assert pa.read_service_label(123) is None
 
 
+@_skip_non_darwin
 def test_read_service_label_ignores_header_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
