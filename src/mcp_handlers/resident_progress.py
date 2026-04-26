@@ -40,8 +40,16 @@ async def handle_record_progress_pulse(
     # Resolve bound UUID (canonical UUID from context / identity middleware)
     bound_uuid = get_bound_agent_id(arguments=arguments)
     if not bound_uuid:
-        # Fallback: resident agents pass their UUID as agent_id
-        bound_uuid = arguments.get("_agent_uuid") or agent_id
+        # Fallback: caller may supply their UUID explicitly
+        bound_uuid = arguments.get("_agent_uuid") or None
+
+    # Auth binding check: session must be bound to a UUID before validation
+    if not bound_uuid:
+        return [error_response(
+            "Session is not bound to a UUID",
+            error_code="UNBOUND_SESSION",
+            error_category="auth_error",
+        )]
 
     # Validate parameters with Pydantic schema
     try:
@@ -57,7 +65,7 @@ async def handle_record_progress_pulse(
     if params.resident_uuid is not None and params.resident_uuid != bound_uuid:
         return [error_response(
             "resident_uuid does not match authenticated agent's bound UUID",
-            error_code="AUTH_MISMATCH",
+            error_code="AUTH_RESIDENT_MISMATCH",
             error_category="auth_error",
             details={
                 "supplied": params.resident_uuid,
@@ -102,7 +110,6 @@ async def handle_record_progress_pulse(
         )]
 
     return success_response({
-        "success": True,
         "resident_uuid": effective_uuid,
         "metric_name": params.metric_name,
         "value": params.value,

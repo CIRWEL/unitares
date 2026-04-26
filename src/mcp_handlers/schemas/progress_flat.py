@@ -1,7 +1,7 @@
 """Pydantic schema for the record_progress_pulse MCP tool."""
 from __future__ import annotations
 
-from typing import Optional
+import re
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -22,7 +22,7 @@ class RecordProgressPulseParams(BaseModel):
         ge=0,
         description="Non-negative integer metric value.",
     )
-    resident_uuid: Optional[str] = Field(
+    resident_uuid: str | None = Field(
         default=None,
         description=(
             "UUID of the resident posting the pulse. If provided, MUST match "
@@ -33,7 +33,6 @@ class RecordProgressPulseParams(BaseModel):
     @field_validator("metric_name")
     @classmethod
     def metric_name_chars(cls, v: str) -> str:
-        import re
         if not re.fullmatch(r"[A-Za-z0-9._\-]+", v):
             raise ValueError(
                 "metric_name must contain only alphanumeric characters, "

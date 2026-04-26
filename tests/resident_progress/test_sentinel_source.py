@@ -204,6 +204,43 @@ async def test_record_progress_pulse_rejects_mismatched_resident_uuid(test_db):
     assert payload.get("error") is not None or payload.get("success") is not True, (
         f"Expected auth error but got: {payload}"
     )
-    # Verify error_code is AUTH_MISMATCH
-    assert "AUTH_MISMATCH" in str(payload), f"Expected AUTH_MISMATCH in: {payload}"
+    # Verify error_code is AUTH_RESIDENT_MISMATCH
+    assert "AUTH_RESIDENT_MISMATCH" in str(payload), f"Expected AUTH_RESIDENT_MISMATCH in: {payload}"
     assert len(inserted) == 0, "No DB row should be written on auth mismatch"
+
+
+@pytest.mark.asyncio
+async def test_unbound_session_is_rejected(test_db):
+    """Session with no bound UUID and no _agent_uuid → UNBOUND_SESSION error, no row."""
+    inserted = []
+
+    async def _fake_insert(query, *args, **kwargs):
+        inserted.append(args)
+
+    mock_conn = AsyncMock()
+    mock_conn.execute = _fake_insert
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+    mock_db = MagicMock()
+    mock_db.acquire = MagicMock(return_value=mock_ctx)
+
+    # Bypass require_registered_agent (auth system under test is UUID binding, not registration)
+    # and stub get_bound_agent_id at its source to return None so the handler hits UNBOUND_SESSION.
+    with patch("src.mcp_handlers.resident_progress.require_registered_agent",
+               return_value=("some-agent-id", None)), \
+         patch("src.mcp_handlers.identity.shared.get_bound_agent_id", return_value=None), \
+         patch("src.db.get_db", return_value=mock_db):
+        result = await handle_record_progress_pulse({
+            "metric_name": "evaluated",
+            "value": 5,
+            # no _agent_uuid, no bound context
+        })
+
+    import json
+    payload = json.loads(result[0].text)
+    assert payload.get("error") is not None or payload.get("success") is not True, (
+        f"Expected error but got: {payload}"
+    )
+    assert "UNBOUND_SESSION" in str(payload), f"Expected UNBOUND_SESSION in: {payload}"
+    assert len(inserted) == 0, "No DB row should be written for unbound session"
