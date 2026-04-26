@@ -854,6 +854,14 @@ async def main():
                     detected_client = detect_client_from_user_agent(ua)
                     ip_ua_fp = f"{client_ip}:{ua_fingerprint}"
 
+                    # S19: kernel-attested peer PID from the UDS listener,
+                    # if this request arrived over Unix-domain socket. The
+                    # PeerCredHTTPProtocol in src/uds_listener.py stamps
+                    # this value into the scope at connection-accept; HTTP
+                    # requests have it absent.
+                    _peer_pid = scope.get("unitares_peer_pid")
+                    _transport_label = "uds" if _peer_pid is not None else "mcp"
+
                     signals = SessionSignals(
                         mcp_session_id=mcp_sid,
                         x_session_id=x_session_id,
@@ -864,7 +872,8 @@ async def main():
                         client_hint=detected_client,
                         x_agent_name=headers.get("x-agent-name"),
                         x_agent_id=headers.get("x-agent-id"),
-                        transport="mcp",
+                        transport=_transport_label,
+                        peer_pid=_peer_pid,
                     )
                     signals_token = set_session_signals(signals)
 
@@ -952,15 +961,52 @@ async def main():
         )
         server = uvicorn.Server(config)
 
+        # S19: optional UDS listener for substrate-anchored residents. Gated
+        # by env var so existing HTTP-only deployments are unaffected. The
+        # UDS listener serves the same ASGI app, but every request scope
+        # gains `unitares_peer_pid` populated from kernel-attested
+        # LOCAL_PEERPID — used downstream by the substrate-claim verification
+        # path. See docs/proposals/s19-attestation-mechanism.md v2.
+        _uds_socket_path = os.getenv("UNITARES_UDS_SOCKET")
+        _uds_task: Optional[asyncio.Task[None]] = None
+        if _uds_socket_path:
+            try:
+                from src.uds_listener import start_uds_listener
+                _uds_task = await start_uds_listener(app, _uds_socket_path)
+                logger.info(
+                    "[UDS] substrate-attestation listener started at %s",
+                    _uds_socket_path,
+                )
+            except Exception as e:
+                logger.error(
+                    "[UDS] failed to start listener at %s: %s; "
+                    "HTTP-only mode (substrate residents will fall back)",
+                    _uds_socket_path, e, exc_info=True,
+                )
+                _uds_task = None
+
         # session_manager.run() owns the anyio task group lifecycle;
         # no manual _task_group/_has_started poking needed.
-        if HAS_STREAMABLE_HTTP:
-            async with _streamable_session_manager.run():
-                logger.info("[STREAMABLE] Session manager started")
+        try:
+            if HAS_STREAMABLE_HTTP:
+                async with _streamable_session_manager.run():
+                    logger.info("[STREAMABLE] Session manager started")
+                    await server.serve()
+                logger.info("[STREAMABLE] Session manager shut down")
+            else:
                 await server.serve()
-            logger.info("[STREAMABLE] Session manager shut down")
-        else:
-            await server.serve()
+        finally:
+            if _uds_task is not None:
+                _uds_task.cancel()
+                try:
+                    await _uds_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                if _uds_socket_path and os.path.exists(_uds_socket_path):
+                    try:
+                        os.unlink(_uds_socket_path)
+                    except OSError:
+                        pass
     except ImportError:
         print("Error: uvicorn not installed. Install with: pip install uvicorn", file=sys.stderr)
         sys.exit(1)
