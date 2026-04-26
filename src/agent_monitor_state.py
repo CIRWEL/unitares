@@ -301,13 +301,21 @@ async def hydrate_from_db_if_fresh(monitor: UNITARESMonitor, agent_id: str) -> b
         # replay rather than padding with placeholders. Pre-action-write rows
         # leave decision_history empty until the next live process_update
         # populates it, which observe surfaces as zero counts.
+        # verdict_history rebuilt from state_json.verdict — that key has been
+        # persisted since long before this change, so legacy rows DO replay.
         actions: list[str] = []
+        verdicts: list[str] = []
         for r in chrono:
             sj = getattr(r, "state_json", None) or {}
-            action = sj.get("action") if isinstance(sj, dict) else None
-            if isinstance(action, str) and action:
-                actions.append(action)
+            if isinstance(sj, dict):
+                action = sj.get("action")
+                if isinstance(action, str) and action:
+                    actions.append(action)
+                verdict = sj.get("verdict")
+                if isinstance(verdict, str) and verdict:
+                    verdicts.append(verdict)
         monitor.state.decision_history = actions
+        monitor.state.verdict_history = verdicts
 
         # update_count gates the "uninitialized" display. Using len(chrono) is
         # a floor (true count may be higher — we only fetched 50); that's fine

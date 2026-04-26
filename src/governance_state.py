@@ -54,6 +54,7 @@ class GovernanceState:
     coherence_history: List[float] = field(default_factory=list)
     risk_history: List[float] = field(default_factory=list)
     decision_history: List[str] = field(default_factory=list)  # Track approve/reflect/reject decisions
+    verdict_history: List[str] = field(default_factory=list)  # Track safe/caution/high-risk EISV verdict tier
     timestamp_history: List[str] = field(default_factory=list)  # Track timestamps for each update
     lambda1_history: List[float] = field(default_factory=list)  # Track lambda1 adaptation over time
     
@@ -168,6 +169,7 @@ class GovernanceState:
             'risk_history': [float(r) for r in cap_history(self.risk_history)],
             'lambda1_history': [float(l) for l in cap_history(getattr(self, 'lambda1_history', []))],  # Lambda1 adaptation history
             'decision_history': list(cap_history(self.decision_history)),
+            'verdict_history': list(cap_history(self.verdict_history)),
             'timestamp_history': list(cap_history(self.timestamp_history)),  # Timestamps for each update
             'pi_integral': float(getattr(self, 'pi_integral', 0.0)),  # PI controller integral state
             # HCK v3.0 metrics
@@ -245,6 +247,7 @@ class GovernanceState:
         state.coherence_history = [float(c) for c in data.get('coherence_history', [])]
         state.risk_history = [float(r) for r in data.get('risk_history', [])]
         state.decision_history = list(data.get('decision_history', []))
+        state.verdict_history = list(data.get('verdict_history', []))
         state.timestamp_history = list(data.get('timestamp_history', []))  # Load timestamps
         state.lambda1_history = [float(l) for l in data.get('lambda1_history', [])]  # Load lambda1 history
         

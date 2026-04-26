@@ -195,6 +195,12 @@ def analyze_agent_patterns(
     # Summary statistics
     decision_history = getattr(state, 'decision_history', [])
     decision_counts = Counter(decision_history)
+    # verdict_history (safe/caution/high-risk) is a separate vocabulary from
+    # decision_history (proceed/pause/...) — both surfaced so DB-hydrated
+    # agents whose state_json rows lack the (newer) action key still expose a
+    # non-empty governance signal via verdict_distribution.
+    verdict_history = getattr(state, 'verdict_history', [])
+    verdict_counts = Counter(verdict_history)
 
     summary = {
         "total_updates": state.update_count,
@@ -206,8 +212,14 @@ def analyze_agent_patterns(
             # Backward compatibility
             "approve": decision_counts.get("approve", 0),
             "reflect": decision_counts.get("reflect", 0) + decision_counts.get("revise", 0),
-            "reject": decision_counts.get("reject", 0)
-        }
+            "reject": decision_counts.get("reject", 0),
+        },
+        "verdict_distribution": {
+            "safe": verdict_counts.get("safe", 0),
+            "caution": verdict_counts.get("caution", 0),
+            "high-risk": verdict_counts.get("high-risk", 0),
+            "total": sum(verdict_counts.values()),
+        },
     }
 
     result = {
