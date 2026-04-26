@@ -473,7 +473,12 @@ class AuditLogger:
         self._write_entry(entry)
 
     def _write_entry(self, entry: AuditEntry):
-        """Write audit entry to JSONL log file with locking"""
+        """Write audit entry to JSONL log file with locking.
+
+        Postgres persistence is intentionally fire-and-forget: JSONL is the
+        durable local truth, and DB write loss is accepted in exchange for
+        keeping audit logging off latency-sensitive handler paths.
+        """
         entry_dict = asdict(entry)
         try:
             # Raw truth: JSONL append
@@ -492,7 +497,8 @@ class AuditLogger:
             # Don't crash on audit log failures
             logger.warning(f"Could not write audit log: {e}", exc_info=True)
 
-        # Fire-and-forget Postgres write
+        # Fire-and-forget Postgres write; see docstring for the loss/latency
+        # tradeoff.
         try:
             import asyncio
             try:
