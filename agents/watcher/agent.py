@@ -1007,6 +1007,16 @@ _P016_GETATTR_SUCCESS = re.compile(
     r"""\bgetattr\s*\([^,]+,\s*['"]success['"]"""
 )
 
+# Regex: P005 resource-leak false positive when the acquire/cursor/connect/lock
+# call sits inside an `async with` (or plain `with`) header — the context
+# manager guarantees release on `__aexit__`, so by construction it is not a
+# leak. The model still flags these because the keyword `acquire` triggers
+# the pattern. Caught when qwen3-coder-next flagged `async with db.acquire()`
+# sites on 2026-04-24 (KG 2026-04-24T02:01:05).
+_P005_CONTEXT_MANAGED = re.compile(
+    r"\b(?:async\s+)?with\b[^#]*\.(?:acquire|cursor|connect|lock)\s*\("
+)
+
 
 def _is_inside_get_or_create_monitor(
     flagged_line: int, snippet_lines_by_num: dict[int, str]
@@ -1115,6 +1125,16 @@ def _verify_finding_against_source(
         log(
             f"drop P003 {finding.file}:{finding.line} — flag lands inside "
             f"get_or_create_monitor body (the cache itself): {src_line.strip()[:80]}",
+            "warning",
+        )
+        return False
+    # P005 specifically: `async with X.acquire() as conn:` (or plain `with`)
+    # is the canonical context-managed acquire — release is guaranteed by
+    # `__aexit__`, so this is not a leak even though `acquire` appears.
+    if finding.pattern == "P005" and _P005_CONTEXT_MANAGED.search(src_line):
+        log(
+            f"drop P005 {finding.file}:{finding.line} — context-managed acquire "
+            f"(async with / with): {src_line.strip()[:80]}",
             "warning",
         )
         return False
