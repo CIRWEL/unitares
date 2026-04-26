@@ -4,6 +4,7 @@ Direct resume handler (deprecated).
 Extracted from lifecycle.py for maintainability.
 """
 
+from datetime import datetime, timezone
 from typing import Dict, Any, Sequence
 
 from mcp.types import TextContent
@@ -102,20 +103,40 @@ async def handle_direct_resume_if_safe(arguments: Dict[str, Any]) -> Sequence[Te
     # Get conditions if provided
     conditions = arguments.get("conditions", [])
     reason = arguments.get("reason", "Direct resume - state is safe")
+    event_details = f"Direct resume: {reason}. Conditions: {conditions}"
+    event_entry = {
+        "event": "resumed",
+        "reason": event_details,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
-    # Resume agent
+    # Persist FIRST so in-memory state can't diverge from DB on persist failure.
+    # Runtime state (paused_at, lifecycle_events) must be persisted alongside
+    # status or it gets clobbered on the next load_metadata_async(force=True).
+    try:
+        await agent_storage.update_agent(agent_uuid, status="active")
+        await agent_storage.persist_runtime_state(
+            agent_uuid,
+            paused_at=None,
+            loop_detected_at=None,
+            loop_cooldown_until=None,
+            append_lifecycle_event=event_entry,
+        )
+    except Exception as e:
+        logger.warning(f"PostgreSQL update failed for direct_resume: {e}", exc_info=True)
+        return [error_response(
+            f"Failed to resume agent '{agent_id}': persistence error",
+            error_code="PERSIST_FAILED",
+            error_category="system_error",
+            details={"agent_id": agent_id, "cause": str(e)},
+        )]
+
+    # Persist succeeded — now mutate in-memory state.
     meta.status = "active"
     meta.paused_at = None
-    # Clear loop detector state to prevent immediate re-pause
     from .self_recovery import clear_loop_detector_state
     clear_loop_detector_state(meta)
-    meta.add_lifecycle_event("resumed", f"Direct resume: {reason}. Conditions: {conditions}")
-
-    # PostgreSQL: Update status (single source of truth)
-    try:
-        await agent_storage.update_agent(agent_id, status="active")
-    except Exception as e:
-        logger.debug(f"PostgreSQL status update failed: {e}")
+    meta.add_lifecycle_event("resumed", event_details)
 
     response_data = {
         "success": True,
