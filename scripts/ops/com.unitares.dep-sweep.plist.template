@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Dep-sweep launchd template.
+
+    Weekly Homebrew + Pi outdated-package report. Runs scripts/dev/dep-sweep.sh
+    every Sunday at 09:00 local time. Output appended to
+    $HOME/Library/Logs/unitares-dep-sweep-launchd.log; the script itself also
+    writes a structured log per UNITARES_DEP_SWEEP_LOG (defaults to
+    $HOME/Library/Logs/unitares-dep-sweep.log).
+
+    Before installing, substitute placeholders:
+      __UNITARES_ROOT__  → absolute path to your unitares checkout
+      __HOME__           → your $HOME (expanded absolute path)
+
+    Example:
+      sed -e "s|__UNITARES_ROOT__|$HOME/projects/unitares|g" \
+          -e "s|__HOME__|$HOME|g" \
+          scripts/ops/com.unitares.dep-sweep.plist.template \
+          > ~/Library/LaunchAgents/com.unitares.dep-sweep.plist
+      launchctl load ~/Library/LaunchAgents/com.unitares.dep-sweep.plist
+
+    Run-once smoke test (skip the cron and run immediately):
+      launchctl kickstart -k gui/$(id -u)/com.unitares.dep-sweep
+      tail -50 $HOME/Library/Logs/unitares-dep-sweep.log
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.unitares.dep-sweep</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__UNITARES_ROOT__/scripts/dev/dep-sweep.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__HOME__</string>
+
+    <!-- Sunday 09:00 local -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Don't run on launchctl load — wait for the next scheduled fire. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/unitares-dep-sweep-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/unitares-dep-sweep-launchd.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Homebrew binaries first so `brew outdated` resolves; then std. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+</dict>
+</plist>
