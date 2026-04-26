@@ -759,9 +759,11 @@ class TestResolvePath3CreateNew:
         assert result["persisted"] is False
         assert result["source"] == "memory_only"
         assert result["agent_id"].startswith("Claude_Opus_4_")
-        # Lazy-created agents now get auto-labels from model_type/client_hint
-        assert result["display_name"] == "opus"
-        assert result["label"] == "opus"
+        # Auto-generated labels embed the UUID[:8] suffix for operator-facing
+        # disambiguation (otherwise every "opus"-model agent shares one stem).
+        uuid_prefix = result["agent_uuid"][:8]
+        assert result["display_name"] == f"opus_{uuid_prefix}"
+        assert result["label"] == f"opus_{uuid_prefix}"
         # UUID should be valid
         assert len(result["agent_uuid"]) == 36
         assert result["agent_uuid"].count("-") == 4
@@ -806,6 +808,31 @@ class TestResolvePath3CreateNew:
         mock_db.create_session.assert_called_once()
         call_args = mock_db.create_session.call_args
         assert call_args.kwargs["session_id"] == "session-bind-test"
+
+    @pytest.mark.asyncio
+    async def test_auto_label_embeds_uuid_prefix(self, patch_all_deps, mock_db):
+        """Auto-generated labels include the UUID[:8] suffix so dashboards and
+        logs can tell otherwise-identical sessions apart (e.g. 16 Claude Code
+        CLI sessions sharing the "claude_desktop-claude" stem). Explicit names
+        passed at onboard take a different path (set_agent_label) and keep
+        their verbatim value unless they collide."""
+        from src.mcp_handlers.identity.handlers import resolve_session_identity
+
+        r1 = await resolve_session_identity(
+            session_key="auto-label-1",
+            client_hint="claude_code",
+            model_type="claude-opus-4",
+        )
+        r2 = await resolve_session_identity(
+            session_key="auto-label-2",
+            client_hint="claude_code",
+            model_type="claude-opus-4",
+        )
+
+        assert r1["label"].startswith("claude_code-opus_")
+        assert r1["label"] == f"claude_code-opus_{r1['agent_uuid'][:8]}"
+        assert r2["label"] == f"claude_code-opus_{r2['agent_uuid'][:8]}"
+        assert r1["label"] != r2["label"]
 
     @pytest.mark.asyncio
     async def test_new_agent_uuid_is_unique(self, patch_all_deps):

@@ -743,11 +743,20 @@ async def resolve_session_identity(
     # agent_id is human-readable label (model+date format, for display)
     agent_uuid = str(uuid.uuid4())
     agent_id = _generate_agent_id(model_type, client_hint)
-    # Auto-assign a cosmetic default label from client signals. Multiple
-    # agents can share this label — it is NOT used for lookup (name-claim
-    # removed 2026-04-17). Operators set a meaningful label later via
-    # set_agent_label / identity(name=X).
+    # Auto-assign a cosmetic default label from client signals. The label is
+    # NOT used for lookup (name-claim removed 2026-04-17); operators can
+    # override later via set_agent_label / identity(name=X), at which point
+    # the explicit path's own collision rename at persistence.py:467 applies.
+    #
+    # Appended with the UUID prefix for operator-facing disambiguation: the
+    # auto-label stem ("claude_desktop-claude", "cursor-opus") is shared by
+    # every session of the same client+model, so bare labels in dashboards
+    # and logs can't tell 16 concurrent "claude_desktop-claude" agents apart.
+    # The suffix is purely display — UUID remains the real identity key, so
+    # adding it here does not re-introduce the lookup-by-name primitive.
     label = _generate_auto_label(model_type, client_hint)
+    if label:
+        label = f"{label}_{agent_uuid[:8]}"
 
     if persist:
         # Persist immediately to PostgreSQL
