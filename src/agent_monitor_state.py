@@ -295,6 +295,20 @@ async def hydrate_from_db_if_fresh(monitor: UNITARESMonitor, agent_id: str) -> b
         monitor.state.coherence_history = [float(r.coherence) for r in chrono]
         monitor.state.regime_history = [str(r.regime) for r in chrono]
 
+        # decision_history rebuilt from state_json.action when present.
+        # Rows written before record_agent_state's `action` parameter shipped
+        # carry no action key — those rows are skipped, preserving a partial
+        # replay rather than padding with placeholders. Pre-action-write rows
+        # leave decision_history empty until the next live process_update
+        # populates it, which observe surfaces as zero counts.
+        actions: list[str] = []
+        for r in chrono:
+            sj = getattr(r, "state_json", None) or {}
+            action = sj.get("action") if isinstance(sj, dict) else None
+            if isinstance(action, str) and action:
+                actions.append(action)
+        monitor.state.decision_history = actions
+
         # update_count gates the "uninitialized" display. Using len(chrono) is
         # a floor (true count may be higher — we only fetched 50); that's fine
         # since the gate is >0, and downstream consumers of update_count treat
