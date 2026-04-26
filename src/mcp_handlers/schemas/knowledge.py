@@ -104,6 +104,14 @@ class SearchKnowledgeGraphParams(AgentIdentityMixin):
             "router does not silently fall back to FTS."
         ),
     )
+    operator: Optional[Literal["AND", "OR"]] = Field(
+        default=None,
+        description=(
+            "Boolean operator for multi-term FTS queries. Default (None) is "
+            "AND with automatic OR fallback when AND returns zero results. "
+            "Pass 'OR' explicitly for broad recall (skips the AND-first step)."
+        ),
+    )
 
     @model_validator(mode='after')
     def coerce_types(self):

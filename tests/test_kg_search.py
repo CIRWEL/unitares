@@ -1308,7 +1308,7 @@ class TestSearchKnowledgeGraphAdditional:
 
     @pytest.mark.asyncio
     async def test_search_fts_multi_term_operator_note(self, patch_common):
-        """FTS multi-term queries show operator_note (line 823)."""
+        """FTS multi-term queries report the operator that ran (#165)."""
         mock_mcp_server, mock_graph = patch_common
         from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
 
@@ -1323,7 +1323,11 @@ class TestSearchKnowledgeGraphAdditional:
         data = parse_result(result)
         assert data["success"] is True
         if data["search_mode_used"] == "fts" and data["count"] > 0:
-            assert data["operator_used"] == "OR"
+            # Default switched from OR to AND in #165 (precision over recall);
+            # OR is now reachable via the AND→OR fallback or operator=OR.
+            assert data["operator_used"] == "AND"
+            assert data["fts_operator_used"] == "AND"
+            assert data["fts_fallback_used"] is False
 
     @pytest.mark.asyncio
     async def test_search_no_details_tip(self, patch_common):

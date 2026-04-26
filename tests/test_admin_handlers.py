@@ -673,6 +673,7 @@ class TestHealthCheck:
              patch("src.audit_log.audit_logger", mock_audit), \
              patch("src.db.get_db", return_value=mock_db), \
              patch("src.embeddings.embeddings_available", return_value=True), \
+             patch("src.knowledge_graph.backend_supports_semantic_search", return_value=True), \
              patch("unitares_pi_plugin.handlers.call_pi_tool",
                    new_callable=AsyncMock,
                    return_value={"status": "healthy"}), \
@@ -723,6 +724,7 @@ class TestHealthCheck:
              patch("src.audit_log.audit_logger", mock_audit), \
              patch("src.db.get_db", return_value=mock_db), \
              patch("src.embeddings.embeddings_available", return_value=True), \
+             patch("src.knowledge_graph.backend_supports_semantic_search", return_value=True), \
              patch("unitares_pi_plugin.handlers.call_pi_tool",
                    new_callable=AsyncMock,
                    return_value={"status": "healthy"}), \
@@ -787,6 +789,7 @@ class TestHealthCheck:
              patch("src.audit_log.audit_logger", mock_audit), \
              patch("src.db.get_db", return_value=mock_db), \
              patch("src.embeddings.embeddings_available", return_value=True), \
+             patch("src.knowledge_graph.backend_supports_semantic_search", return_value=True), \
              patch("unitares_pi_plugin.handlers.call_pi_tool",
                    new_callable=AsyncMock,
                    return_value={"status": "healthy"}), \

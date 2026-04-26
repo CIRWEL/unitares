@@ -699,6 +699,18 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 f"Invalid search_mode {search_mode_param!r}; "
                 "expected one of: auto, fts, semantic, hybrid"
             )]
+        # FTS boolean operator: None = handler picks AND with OR-on-zero
+        # fallback. "AND" or "OR" force that operator with no fallback.
+        operator_param_raw = arguments.get("operator")
+        if operator_param_raw is None:
+            operator_forced: Optional[str] = None
+        else:
+            op_upper = str(operator_param_raw).upper()
+            if op_upper not in {"AND", "OR"}:
+                return [error_response(
+                    f"Invalid operator {operator_param_raw!r}; expected 'AND' or 'OR'"
+                )]
+            operator_forced = op_upper
         # Labels to exclude (e.g. ["Vigil"]) — lets the dashboard hide
         # janitorial residents from the default Discoveries feed. Resolved to
         # agent_ids below, applied as a post-query filter over `results`.
@@ -750,6 +762,11 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         # callers can tell a configured-FTS run from a silent-degrade-to-FTS run
         # (issue #165).
         semantic_skipped_reason: Optional[str] = None
+        # FTS operator observability (#165 part 2). None when no FTS ran;
+        # "AND"/"OR" otherwise. fallback_used flips true when AND returned zero
+        # and we retried with OR.
+        fts_operator_used: Optional[str] = None
+        fts_fallback_used = False
         if query_text:
             has_semantic = hasattr(graph, "semantic_search")
             has_fts = hasattr(graph, "full_text_search")
@@ -821,7 +838,14 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 sem_task = graph.semantic_search(
                     str(query_text), limit=hybrid_fetch_limit, min_similarity=min_similarity
                 )
-                fts_task = graph.full_text_search(str(query_text), limit=hybrid_fetch_limit)
+                # Hybrid uses the caller's operator if forced, else AND. We
+                # don't AND→OR fallback inside hybrid because semantic+FTS
+                # already cover the recall/precision tradeoff via RRF.
+                hybrid_fts_op = operator_forced or "AND"
+                fts_task = graph.full_text_search(
+                    str(query_text), limit=hybrid_fetch_limit, operator=hybrid_fts_op,
+                )
+                fts_operator_used = hybrid_fts_op
                 sem_raw, fts_raw = await _asyncio.gather(sem_task, fts_task)
                 sem_res = []
                 if isinstance(sem_raw, tuple) and len(sem_raw) == 2 and isinstance(sem_raw[1], dict):
@@ -906,7 +930,27 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                 # When reranker is on, use a wider pool so the cross-encoder has candidates.
                 base_fts_limit = int(min(max(limit * 5, limit), 500))
                 candidate_limit = max(base_fts_limit, rerank_pool_size) if rerank_on else base_fts_limit
-                candidates = await graph.full_text_search(str(query_text), limit=candidate_limit)
+                primary_op = operator_forced or "AND"
+                candidates = await graph.full_text_search(
+                    str(query_text), limit=candidate_limit, operator=primary_op,
+                )
+                fts_operator_used = primary_op
+                # AND→OR fallback (#165): when caller didn't force an operator
+                # and AND returned nothing, retry with OR. Marks fts_fallback_used
+                # so the caller can tell broad-recall results apart from
+                # precision-first results.
+                if (
+                    not candidates
+                    and operator_forced is None
+                    and primary_op == "AND"
+                    and len(str(query_text).split()) > 1
+                ):
+                    candidates = await graph.full_text_search(
+                        str(query_text), limit=candidate_limit, operator="OR",
+                    )
+                    if candidates:
+                        fts_operator_used = "OR"
+                        fts_fallback_used = True
                 search_mode = "fts"
             elif not hybrid_path and not use_semantic:
                 # JSON backend fallback: bounded scan of most recent entries.
@@ -977,12 +1021,16 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
 
             results = filtered
             # search_mode already set above
-            # UX FIX: Make operator explicit upfront - FTS defaults to OR for multi-term queries
+            # operator_used reports what the FTS layer actually ran. For
+            # non-FTS modes (semantic, hybrid, substring) this stays "N/A" —
+            # boolean operators only apply to the FTS query string. (#165)
             query_terms = str(query_text).split() if query_text else []
-            if search_mode == "fts" and len(query_terms) > 1:
-                operator_used = "OR"  # FTS defaults to OR for multi-term queries
+            if fts_operator_used and len(query_terms) > 1:
+                operator_used = fts_operator_used
+            elif len(query_terms) > 1:
+                operator_used = "N/A"  # semantic / hybrid / substring
             else:
-                operator_used = "AND" if len(query_terms) > 1 else "N/A"
+                operator_used = "N/A"  # single-term query
             fields_searched = ["summary", "details", "tags"]
         else:
             # Indexed filter query (fast)
@@ -1022,7 +1070,24 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             if search_mode == "semantic" and hasattr(graph, "full_text_search"):
                 try:
                     logger.debug(f"Semantic search returned 0 results, falling back to FTS for '{query_text}'")
-                    fts_candidates = await graph.full_text_search(str(query_text), limit=limit * 2)
+                    primary_op = operator_forced or "AND"
+                    fts_candidates = await graph.full_text_search(
+                        str(query_text), limit=limit * 2, operator=primary_op,
+                    )
+                    semantic_fallback_op = primary_op
+                    semantic_fallback_or_retry = False
+                    if (
+                        not fts_candidates
+                        and operator_forced is None
+                        and primary_op == "AND"
+                        and len(str(query_text).split()) > 1
+                    ):
+                        fts_candidates = await graph.full_text_search(
+                            str(query_text), limit=limit * 2, operator="OR",
+                        )
+                        if fts_candidates:
+                            semantic_fallback_op = "OR"
+                            semantic_fallback_or_retry = True
                     # Apply same filters
                     for d in fts_candidates:
                         if agent_id and d.agent_id != agent_id:
@@ -1045,18 +1110,21 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
                     if len(results) > 0:
                         fallback_used = True
                         search_mode = "semantic_fallback_fts"
-                        operator_used = "OR" if len(str(query_text).split()) > 1 else "N/A"
+                        fts_operator_used = semantic_fallback_op
+                        fts_fallback_used = semantic_fallback_or_retry
                         fallback_explanation = (
                             f"Semantic search found no concepts similar to '{query_text}' "
                             f"(similarity threshold: {min_similarity}). "
-                            f"Falling back to keyword search (FTS) for exact term matching."
+                            f"Falling back to keyword search (FTS, operator={semantic_fallback_op}) "
+                            f"for exact term matching."
                         )
                 except Exception as e:
                     logger.debug(f"Semantic→FTS fallback failed: {e}")
 
-            # Strategy 2 (removed): Individual-term FTS fallback is no longer needed
-            # because kg_full_text_search now defaults to OR for multi-term queries
-            # via _or_default_query(). The primary FTS query already matches any term.
+            # Strategy 2 (removed): Individual-term FTS fallback is no longer
+            # needed. As of #165, the FTS path runs AND first and automatically
+            # retries with OR on zero hits (see fts_fallback_used in response),
+            # which subsumes the per-term retry strategy.
 
             # Strategy 3 (removed 2026-04-20): Previously retried semantic search at
             # threshold 0.2, which is near cosine noise floor for our embedder. This
@@ -1147,6 +1215,12 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         }
         if semantic_skipped_reason:
             response_data["semantic_skipped_reason"] = semantic_skipped_reason
+        # FTS operator visibility (#165 part 2). Only populate when FTS actually
+        # ran — for semantic/hybrid/substring runs these stay absent so callers
+        # know the boolean operator was not the controlling factor.
+        if fts_operator_used:
+            response_data["fts_operator_used"] = fts_operator_used
+            response_data["fts_fallback_used"] = fts_fallback_used
 
         # Surface semantic search degradation to caller
         if search_degraded_warning:

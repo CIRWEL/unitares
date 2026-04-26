@@ -87,10 +87,12 @@ class KnowledgeGraphPostgres:
             rows = [r for r in rows if r.get("status") != "archived"]
         return [self._dict_to_discovery(r) for r in rows]
 
-    async def full_text_search(self, query: str, limit: int = 20) -> List[DiscoveryNode]:
-        """Full-text search using PostgreSQL tsvector."""
+    async def full_text_search(
+        self, query: str, limit: int = 20, operator: str = "AND",
+    ) -> List[DiscoveryNode]:
+        """Full-text search using PostgreSQL tsvector. Defaults to AND (#165)."""
         db = await self._get_db()
-        rows = await db.kg_full_text_search(query, limit)
+        rows = await db.kg_full_text_search(query, limit, operator=operator)
         return [self._dict_to_discovery(r) for r in rows]
 
     async def find_similar(self, discovery: DiscoveryNode, limit: int = 10) -> List[DiscoveryNode]:
