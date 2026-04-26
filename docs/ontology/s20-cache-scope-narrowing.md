@@ -6,7 +6,7 @@
 **Stacks with:** S1-A′ (PID/nonce token binding) + S11 (cache contents lineage-only) + S19 (substrate attestation). Orthogonal to S2.
 **Authors:** Kenny Wang (CIRWEL) + process-instance `a61763e1` (Claude Opus 4.7, claude_code, 2026-04-25), declared lineage from `02fa2672`.
 **Companion:** S11-a (skill text drift from the S11 contract) — separate row, ships independently.
-**Review provenance:** Drafted 2026-04-25, reviewed by `dialectic-knowledge-architect` (ontology stress) and `feature-dev:code-reviewer` (call-site accuracy) before landing. Findings folded in: §1a/§1b honesty fixes; missed call-site `onboard_helper.py` added; §3d skill-drift carved out to S11-a; renumbered S2-a → S20 (orthogonal to S2, not sub); §2 bootstrap gated on empirical session-ID stability check (§5 step S20.0); §4 siphon-closure claim narrowed; §9 axiom #14 relabeled "convention-level, advisory." **Amendment 2026-04-25 (post-ship):** verified hook source directly — code-reviewer's claim about `hooks/session-start:102` was stale. PR #19 (`fix(session-start): only read slot-scoped workspace cache, never bare session.json`) already shipped the §3b proposal at the hook layer. §1c corrected; §3b scope reduced to "verify hook contract + ensure remaining readers comply"; S20.0 promoted to **answered** (Claude session ID stable within session lifetime, fresh on `/clear` — fine for writer key, scan-newest covers cross-`/clear` lineage). Real remaining scope is §3a helper enforcement + §3c direct-writer parity + §3d migration of pre-PR-19 flat caches.
+**Review provenance:** Drafted 2026-04-25, reviewed by `dialectic-knowledge-architect` (ontology stress) and `feature-dev:code-reviewer` (call-site accuracy) before landing. Findings folded in: §1a/§1b honesty fixes; missed call-site `onboard_helper.py` added; §3d skill-drift carved out to S11-a; renumbered S2-a → S20 (orthogonal to S2, not sub); §2 bootstrap gated on empirical session-ID stability check (§5 step S20.0); §4 siphon-closure claim narrowed; §9 axiom #14 relabeled "convention-level, advisory." **Amendment 2026-04-25 (post-ship):** verified hook source directly — code-reviewer's claim about `hooks/session-start:102` was stale. PR #19 (`fix(session-start): only read slot-scoped workspace cache, never bare session.json`) already shipped the §3b proposal at the hook layer. §1c corrected; §3b scope reduced to "verify hook contract + ensure remaining readers comply"; S20.0 promoted to **answered** (Claude session ID stable within session lifetime, fresh on `/clear` — fine for writer key, scan-newest covers cross-`/clear` lineage). Real remaining scope is §3a helper enforcement + §3c direct-writer parity + §3d migration of pre-PR-19 flat caches. **Amendment 2026-04-26 (pre-implementation audit):** discovered §3a blast radius before opening the implementation worktree. Two plugin hooks call `set session` without `--slot` (`hooks/post-checkin:50`, `hooks/post-edit:221`) and `hooks/post-edit:192` defaults `SLOT="${SLOT:-default}"` to a literal `"default"` string when unset — defeats slot-scoping. Hard helper rejection per original §3a would silently brick the auto-checkin milestone pipeline fleet-wide (errors swallowed via `\|\| true`). New §3.5 "Pre-implementation audit" added; §5 sequencing split S20.1 → S20.1a (hook write-path fixes) → S20.1b (helper rejection); operator decision recorded in §3.5: PR1 (hooks) lands and proves coverage before PR2 (helper rejection); optional warning-only grace only if PR1 reveals an uncovered client path.
 
 ---
 
@@ -115,6 +115,29 @@ The unitares-side `scripts/client/onboard_helper.py` bypasses the helper entirel
 
 C1 is the descriptive-floor move (single source of truth); C2 is the pragmatic move if the dependency tax is real. Decision deferred to PR; either satisfies S20.
 
+### 3.5 Pre-implementation audit (2026-04-26)
+
+Before opening the §3a implementation worktree, audited every plugin caller of `session_cache.py set session`. Findings:
+
+| Caller | Slot? | Behavior |
+|---|---|---|
+| `commands/governance-start.md` | `--slot=<client_session_id>` | Fixed in S11-a (`unitares-governance-plugin@ad4dfef`). |
+| `hooks/post-identity:139` | `--slot "${SLOT}"` (line 135 sets from hook stdin) | Compliant. |
+| `hooks/post-edit:208` (`bump-edit`) | `--slot "${SLOT}"` | Compliant for the bump-edit subcommand. |
+| `hooks/post-edit:221` (`set session`) | **None** | **In-file inconsistency** — uses `SLOT` for `bump-edit` 13 lines earlier, then drops it for the milestone-timestamp write. |
+| `hooks/post-edit:192` (`SLOT` default) | `"${SLOT:-default}"` | **Defeats slot-scoping** — literal string `"default"` collapses every slot-less process onto one shared `session-default.json`. |
+| `hooks/post-checkin:50` (`set session`) | **None** | No `SLOT` variable in scope at all; total flat-file writer. Errors swallowed via `\|\| true`. |
+
+**Implication:** S20.1 as originally written ("`cmd_set` rejects slotless writes") would silently brick the auto-checkin milestone pipeline on every channel that goes through `post-checkin` and `post-edit` (errors swallowed; pipeline degrades quietly). Helper-level enforcement is only honest *after* the hook write paths conform.
+
+**Operator decision (2026-04-26, accepted):** sequence implementation as
+
+1. **PR1: hook fixes.** `post-checkin` reads `CLAUDE_SESSION_ID` from its hook stdin (same pattern as `session-start`) and passes `--slot`. `post-edit:221` adds `--slot "${SLOT}"` to the second invocation. The `SLOT="${SLOT:-default}"` fallback either errors out when SLOT is missing (safer) or scopes per-PID with `pid_$$` style (functional fallback). Tests prove `last_checkin_ts` is written on every supported channel under realistic hook-stdin shapes.
+2. **PR2: helper rejection.** Once PR1 is in tree and the auto-checkin pipeline is proven on the slot path, `cmd_set` hard-rejects slotless writes (with `--allow-shared` escape).
+3. **Optional warning-only grace** *only* if PR1 reveals an uncovered client path that can't be fixed in tree (e.g., third-party hooks). Mirrors S1's grace pattern but only as fallback — not the default.
+
+Reasoning Kenny offered (folded in): a warning period is useful when consumers need migration time, but here the first problem is that the *replacement path is not fully audited*. Audit first, then enforce.
+
 ### 3d. Migration
 
 - Existing flat `<workspace>/.unitares/session.json` files: read-only legacy, ignored by writes, surfaced by `cmd_list` for one release as a lineage candidate. Operator-runbook entry: `rm <workspace>/.unitares/session.json` after upgrade.
@@ -146,8 +169,10 @@ The honest summary: **S20 stops the system from teaching the shared-cache patter
 | Step | What | Depends on | Gating |
 |---|---|---|---|
 | ~~S20.0~~ | ~~Empirical check~~ | — | **Answered 2026-04-25** — session ID stable within session, fresh on `/clear`; slot-scope is correct writer key, scan-newest is correct lineage reader |
-| S20.1 | Helper-side `cmd_set` rejection of slotless writes; `--allow-shared` gate; v2 token-write block; new `cmd_list` | none | none |
-| S20.2 | `hooks/session-start` audit + scan-newest secondary fallback (additive — slot-scoped read already in place via PR #19) | S20.1 | none |
+| **S20.1a** | **PR1 — hook write-path fixes** (`post-checkin`, `post-edit:221`, `post-edit:192` `default` fallback). Tests cover `last_checkin_ts` on every channel under realistic hook stdin. | none | **Blocks S20.1b** |
+| **S20.1b** | **PR2 — helper-side `cmd_set` rejection** of slotless writes; `--allow-shared` gate; v2 token-write block; new `cmd_list`. | S20.1a | none |
+| S20.1c | (Optional) Warning-only grace period in helper, only if S20.1a surfaces an uncovered client path | S20.1a | none |
+| S20.2 | `hooks/session-start` audit + scan-newest secondary fallback (additive — slot-scoped read already in place via PR #19) | S20.1b | none |
 | S20.3 | `onboard_helper.py` parity (C1 preferred; C2 fallback) | S20.1 | none |
 | S20.4 | Codex equivalents (commands + post-identity hook on Codex side) | S20.1 | none |
 | S20.5 | Operator-runbook migration note + flat-`session.json` cleanup guidance for pre-PR-19 files on disk | S20.2, S20.3, S20.4 | none |
