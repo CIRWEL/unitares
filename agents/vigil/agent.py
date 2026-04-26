@@ -212,9 +212,11 @@ def run_pytest(project_dir: Path, label: str) -> Tuple[bool, int, int, str]:
 
 # Sentinel findings that trigger a groundskeeper pass even when --no-audit is set.
 # These are fleet-level symptoms that a KG audit can help surface or remediate.
+# Names match what Sentinel actually emits (agents/sentinel/agent.py:249,266) and
+# the canonical taxonomy at agents/common/violation_taxonomy.yaml.
 _SENTINEL_AUDIT_TRIGGERS = frozenset({
-    "verdict_distribution_shift",
-    "correlated_governance_events",
+    "verdict_shift",
+    "correlated_events",
 })
 
 
