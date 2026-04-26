@@ -24,6 +24,8 @@ import os
 
 from src.logging_utils import get_logger
 from src.mcp_handlers.shared import lazy_mcp_server as mcp_server
+from src.mcp_handlers.context import get_session_signals
+from config.governance_config import session_fingerprint_check_mode
 logger = get_logger(__name__)
 
 # =============================================================================
@@ -37,6 +39,16 @@ _session_identities: Dict[str, Dict[str, Any]] = {}
 # O(1) lookup index: uuid_prefix (12 chars) -> full UUID
 # Populated when identity() registers a stable session binding
 _uuid_prefix_index: Dict[str, str] = {}
+
+# Parallel dict: session_key -> binding-time ip_ua_fingerprint.
+# Written by _cache_session (persistence.py) and the FALLBACK scan path
+# below — only when the key is not already present, so the legitimate
+# first bind is never silently overwritten by a later mismatched arrival
+# (e.g., after a server restart wipes _uuid_prefix_index). Read by the
+# PATH 1 sync fingerprint cross-check in _get_identity_record_sync.
+# Mirrors the async-path check at resolution.py:441-487; closes the
+# residual sync half of KG 2026-04-20T00:57:45.
+_bind_fingerprints: Dict[str, str] = {}
 
 # =============================================================================
 # UUID PREFIX INDEX
@@ -123,6 +135,111 @@ def make_client_session_id(agent_uuid: str) -> str:
 # BOUND AGENT LOOKUP
 # =============================================================================
 
+def _check_path1_fingerprint_sync(key: str, agent_uuid: Optional[str]) -> bool:
+    """Cross-check binding-time fingerprint against current request's fingerprint.
+
+    Mirrors the async-path check at resolution.py:441-487. Closes the residual
+    sync half of KG 2026-04-20T00:57:45 (PATH 1 hijack via agent-{uuid12}
+    prefix-bind). Gated by UNITARES_SESSION_FINGERPRINT_CHECK
+    (off / log (default) / strict).
+
+    Returns:
+        True  — caller should return the cached/resolved binding (match, off
+                mode, or no fingerprint data on either side).
+        False — strict-mode mismatch; caller should fall through to an empty
+                record so the legitimate owner can still resume from the
+                correct fingerprint.
+    """
+    bound_fp = _bind_fingerprints.get(key)
+    if not bound_fp:
+        # Pre-fingerprint binding, cold cache, or background-task caller path
+        # that bypassed _cache_session. Visible at debug for the future case
+        # where a non-MCP-dispatch caller hits this code (so it doesn't
+        # silently bypass the gate).
+        logger.debug(
+            f"[PATH1_SYNC_FP_SKIP] no bind fingerprint for {key[:20]}... "
+            f"— pre-fingerprint binding or cold cache"
+        )
+        return True
+
+    try:
+        sig = get_session_signals()
+        current_fp = getattr(sig, "ip_ua_fingerprint", None) if sig else None
+    except Exception:
+        current_fp = None
+
+    if not current_fp:
+        logger.debug(
+            f"[PATH1_SYNC_FP_SKIP] no current fingerprint for {key[:20]}... "
+            f"— likely background-task caller without session signals"
+        )
+        return True
+
+    if current_fp == bound_fp:
+        return True
+
+    try:
+        mode = session_fingerprint_check_mode()
+    except Exception:
+        mode = "log"
+
+    if mode == "off":
+        return True
+
+    logger.warning(
+        "[PATH1_FINGERPRINT_MISMATCH] session_key=%s... bound_fp=%s current_fp=%s "
+        "— suspected hijack of agent=%s... (mode=%s, surface=sync)",
+        key[:20],
+        bound_fp[:16],
+        current_fp[:16],
+        (agent_uuid or "?")[:8],
+        mode,
+    )
+
+    # Fire-and-forget broadcast. Sync context can't await; create_task on the
+    # running loop if there is one. Telemetry only — never load-bearing for
+    # the gate decision.
+    try:
+        import asyncio
+        from .handlers import _broadcaster
+        b = _broadcaster()
+        if b is not None:
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None and loop.is_running():
+                loop.create_task(
+                    b.broadcast_event(
+                        event_type="identity_hijack_suspected",
+                        agent_id=agent_uuid,
+                        payload={
+                            "path": "path1_sync_session_id",
+                            "mode": mode,
+                            "source": "path1_sync_fingerprint_mismatch",
+                            "bind_fp_prefix": bound_fp[:8],
+                            "current_fp_prefix": current_fp[:8],
+                        },
+                    )
+                )
+    except Exception as be:
+        logger.warning(f"[PATH1_FINGERPRINT_MISMATCH] broadcast failed: {be}")
+
+    return mode != "strict"
+
+
+def _strict_mismatch_record() -> Dict[str, Any]:
+    """Return the empty-binding record served when strict-mode fingerprint
+    check rejects a PATH 1 sync resume."""
+    return {
+        "bound_agent_id": None,
+        "api_key": None,
+        "bound_at": None,
+        "bind_count": 0,
+        "_session_key_type": "path1_sync_fingerprint_strict_mismatch",
+    }
+
+
 def _get_identity_record_sync(session_id: Optional[str] = None, arguments: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Get identity record for a session (synchronous, in-memory only).
 
@@ -134,7 +251,10 @@ def _get_identity_record_sync(session_id: Optional[str] = None, arguments: Optio
 
     # Check in-memory cache first
     if key in _session_identities:
-        return _session_identities[key]
+        cached = _session_identities[key]
+        if _check_path1_fingerprint_sync(key, cached.get("bound_agent_id")):
+            return cached
+        return _strict_mismatch_record()
 
     # SPECIAL CASE: agent-{uuid12} format session IDs
     if key.startswith("agent-"):
@@ -145,6 +265,8 @@ def _get_identity_record_sync(session_id: Optional[str] = None, arguments: Optio
         if full_uuid:
             meta = mcp_server.agent_metadata.get(full_uuid)
             if meta:
+                if not _check_path1_fingerprint_sync(key, full_uuid):
+                    return _strict_mismatch_record()
                 _session_identities[key] = {
                     "bound_agent_id": full_uuid,
                     "api_key": getattr(meta, 'api_key', None),
@@ -157,6 +279,18 @@ def _get_identity_record_sync(session_id: Optional[str] = None, arguments: Optio
         for agent_uuid, meta in mcp_server.agent_metadata.items():
             if agent_uuid.startswith(uuid_prefix):
                 _register_uuid_prefix(uuid_prefix, agent_uuid)
+                # Capture binding-time fingerprint on FIRST bind only.
+                # After a restart wipes _uuid_prefix_index, FALLBACK fires
+                # again — without this guard an attacker on a different
+                # IP/UA could overwrite the legitimate bind fingerprint.
+                if key not in _bind_fingerprints:
+                    try:
+                        sig = get_session_signals()
+                        current_fp = getattr(sig, "ip_ua_fingerprint", None) if sig else None
+                        if current_fp:
+                            _bind_fingerprints[key] = current_fp
+                    except Exception:
+                        pass
                 _session_identities[key] = {
                     "bound_agent_id": agent_uuid,
                     "api_key": getattr(meta, 'api_key', None),
@@ -267,6 +401,7 @@ __all__ = [
     # Data structures
     '_session_identities',
     '_uuid_prefix_index',
+    '_bind_fingerprints',
     # UUID prefix functions
     '_register_uuid_prefix',
     '_lookup_uuid_by_prefix',

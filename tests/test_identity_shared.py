@@ -21,6 +21,7 @@ from src.mcp_handlers.identity.shared import (
     _lookup_uuid_by_prefix,
     _uuid_prefix_index,
     _session_identities,
+    _bind_fingerprints,
     _get_session_key,
     make_client_session_id,
     get_bound_agent_id,
@@ -36,9 +37,11 @@ def clean_shared_state():
     """Clear shared dicts before/after each test."""
     _uuid_prefix_index.clear()
     _session_identities.clear()
+    _bind_fingerprints.clear()
     yield
     _uuid_prefix_index.clear()
     _session_identities.clear()
+    _bind_fingerprints.clear()
 
 
 # ============================================================================
@@ -338,6 +341,227 @@ class TestGetIdentityRecordSync:
             result = _get_identity_record_sync(session_id="random-key")
             assert result["bound_agent_id"] is None
             assert result["bind_count"] == 0
+
+
+# ============================================================================
+# PATH 1 sync fingerprint check
+# ============================================================================
+# Mirrors the resolution.py:441-487 async-path check on the sync site
+# (_get_identity_record_sync). Closes the residual sync half of KG
+# 2026-04-20T00:57:45 (PATH 1 hijack via agent-{uuid12} prefix-bind).
+# Gated by UNITARES_SESSION_FINGERPRINT_CHECK env var via
+# config.governance_config.session_fingerprint_check_mode().
+
+class TestPath1SyncFingerprintCheck:
+
+    def _setup_cached_binding(self, key, agent_uuid, bind_fp):
+        """Pre-populate _session_identities and _bind_fingerprints as if
+        _cache_session had been called for this session."""
+        _session_identities[key] = {
+            "bound_agent_id": agent_uuid,
+            "agent_uuid": agent_uuid,
+            "bind_count": 0,
+        }
+        _bind_fingerprints[key] = bind_fp
+
+    def _make_signals(self, current_fp):
+        sig = MagicMock()
+        sig.ip_ua_fingerprint = current_fp
+        return sig
+
+    def test_cached_path_fingerprint_match_returns_record(self):
+        self._setup_cached_binding("agent-abc123def456", "abc123def456-...", "fp_legit")
+        with patch(
+            "src.mcp_handlers.context.get_context_session_key",
+            return_value=None,
+        ), patch(
+            "src.mcp_handlers.identity.shared.get_session_signals",
+            return_value=self._make_signals("fp_legit"),
+        ), patch(
+            "src.mcp_handlers.identity.shared.session_fingerprint_check_mode",
+            return_value="log",
+        ):
+            result = _get_identity_record_sync(session_id="agent-abc123def456")
+            assert result["bound_agent_id"] == "abc123def456-..."
+
+    def test_cached_path_fingerprint_mismatch_log_mode_returns_record_with_warning(self, caplog):
+        self._setup_cached_binding("agent-abc123def456", "abc123def456-...", "fp_legit")
+        import logging
+        caplog.set_level(logging.WARNING)
+        with patch(
+            "src.mcp_handlers.context.get_context_session_key",
+            return_value=None,
+        ), patch(
+            "src.mcp_handlers.identity.shared.get_session_signals",
+            return_value=self._make_signals("fp_attacker"),
+        ), patch(
+            "src.mcp_handlers.identity.shared.session_fingerprint_check_mode",
+            return_value="log",
+        ):
+            result = _get_identity_record_sync(session_id="agent-abc123def456")
+            assert result["bound_agent_id"] == "abc123def456-..."
+        assert any("PATH1_FINGERPRINT_MISMATCH" in r.message for r in caplog.records)
+
+    def test_cached_path_fingerprint_mismatch_strict_mode_returns_empty(self):
+        self._setup_cached_binding("agent-abc123def456", "abc123def456-...", "fp_legit")
+        with patch(
+            "src.mcp_handlers.context.get_context_session_key",
+            return_value=None,
+        ), patch(
+            "src.mcp_handlers.identity.shared.get_session_signals",
+            return_value=self._make_signals("fp_attacker"),
+        ), patch(
+            "src.mcp_handlers.identity.shared.session_fingerprint_check_mode",
+            return_value="strict",
+        ):
+            result = _get_identity_record_sync(session_id="agent-abc123def456")
+            assert result["bound_agent_id"] is None
+            assert result.get("_session_key_type") == "path1_sync_fingerprint_strict_mismatch"
+
+    def test_cached_path_fingerprint_mismatch_off_mode_returns_record(self, caplog):
+        self._setup_cached_binding("agent-abc123def456", "abc123def456-...", "fp_legit")
+        import logging
+        caplog.set_level(logging.WARNING)
+        with patch(
+            "src.mcp_handlers.context.get_context_session_key",
+            return_value=None,
+        ), patch(
+            "src.mcp_handlers.identity.shared.get_session_signals",
+            return_value=self._make_signals("fp_attacker"),
+        ), patch(
+            "src.mcp_handlers.identity.shared.session_fingerprint_check_mode",
+            return_value="off",
+        ):
+            result = _get_identity_record_sync(session_id="agent-abc123def456")
+            assert result["bound_agent_id"] == "abc123def456-..."
+        assert not any("PATH1_FINGERPRINT_MISMATCH" in r.message for r in caplog.records)
+
+    def test_fallback_writes_bind_fingerprint_when_absent(self):
+        full_uuid = "abcdef123456-7890-abcd-ef01-234567890abc"
+        prefix = "abcdef123456"
+        key = f"agent-{prefix}"
+
+        mock_server = MagicMock()
+        mock_meta = MagicMock()
+        mock_meta.api_key = None
+        mock_server.agent_metadata = {full_uuid: mock_meta}
+
+        with patch(
+            "src.mcp_handlers.shared.get_mcp_server",
+            return_value=mock_server,
+        ), patch(
+            "src.mcp_handlers.context.get_context_session_key",
+            return_value=None,
+        ), patch(
+            "src.mcp_handlers.identity.shared.get_session_signals",
+            return_value=self._make_signals("fp_first_caller"),
+        ):
+            result = _get_identity_record_sync(session_id=key)
+            assert result["bound_agent_id"] == full_uuid
+        assert _bind_fingerprints.get(key) == "fp_first_caller"
+
+    def test_fallback_does_not_overwrite_existing_bind_fingerprint(self):
+        full_uuid = "abcdef123456-7890-abcd-ef01-234567890abc"
+        prefix = "abcdef123456"
+        key = f"agent-{prefix}"
+        # Pre-populate _bind_fingerprints as if _cache_session had recorded it
+        _bind_fingerprints[key] = "fp_legit_first_bind"
+
+        mock_server = MagicMock()
+        mock_meta = MagicMock()
+        mock_meta.api_key = None
+        mock_server.agent_metadata = {full_uuid: mock_meta}
+
+        # Attacker arrives via FALLBACK with a different fingerprint
+        with patch(
+            "src.mcp_handlers.shared.get_mcp_server",
+            return_value=mock_server,
+        ), patch(
+            "src.mcp_handlers.context.get_context_session_key",
+            return_value=None,
+        ), patch(
+            "src.mcp_handlers.identity.shared.get_session_signals",
+            return_value=self._make_signals("fp_attacker"),
+        ):
+            _get_identity_record_sync(session_id=key)
+
+        assert _bind_fingerprints[key] == "fp_legit_first_bind"
+
+    def test_cache_session_populates_bind_fingerprints(self):
+        """_cache_session writes the binding-time fingerprint to
+        _bind_fingerprints so the sync PATH 1 check can read it."""
+        import asyncio
+        from src.mcp_handlers.identity.persistence import _cache_session
+
+        key = "agent-aaaa11112222"
+        agent_uuid = "aaaa1111-2222-3333-4444-555566667777"
+
+        async def _run():
+            await _cache_session(key, agent_uuid, display_agent_id="alice")
+
+        with patch(
+            "src.mcp_handlers.context.get_session_signals",
+            return_value=self._make_signals("fp_first_bind"),
+        ), patch(
+            "src.mcp_handlers.identity.persistence._get_redis",
+            return_value=None,
+        ):
+            asyncio.run(_run())
+
+        assert _bind_fingerprints.get(key) == "fp_first_bind"
+
+    def test_cache_session_does_not_overwrite_existing_bind_fingerprint(self):
+        """A second _cache_session call for the same key must not overwrite
+        the original bind fingerprint — first-bind owner is authoritative."""
+        import asyncio
+        from src.mcp_handlers.identity.persistence import _cache_session
+
+        key = "agent-aaaa11112222"
+        agent_uuid = "aaaa1111-2222-3333-4444-555566667777"
+        _bind_fingerprints[key] = "fp_legit_first_bind"
+
+        async def _run():
+            await _cache_session(key, agent_uuid, display_agent_id="alice")
+
+        with patch(
+            "src.mcp_handlers.context.get_session_signals",
+            return_value=self._make_signals("fp_attacker"),
+        ), patch(
+            "src.mcp_handlers.identity.persistence._get_redis",
+            return_value=None,
+        ):
+            asyncio.run(_run())
+
+        assert _bind_fingerprints[key] == "fp_legit_first_bind"
+
+    def test_o1_index_path_fingerprint_mismatch_strict_returns_empty(self):
+        full_uuid = "5e728ecb1234-5678-9abc-def0-12345678aaaa"
+        prefix = "5e728ecb1234"
+        key = f"agent-{prefix}"
+        _register_uuid_prefix(prefix, full_uuid)
+        _bind_fingerprints[key] = "fp_legit"
+
+        mock_server = MagicMock()
+        mock_meta = MagicMock()
+        mock_meta.api_key = None
+        mock_server.agent_metadata = {full_uuid: mock_meta}
+
+        with patch(
+            "src.mcp_handlers.shared.get_mcp_server",
+            return_value=mock_server,
+        ), patch(
+            "src.mcp_handlers.context.get_context_session_key",
+            return_value=None,
+        ), patch(
+            "src.mcp_handlers.identity.shared.get_session_signals",
+            return_value=self._make_signals("fp_attacker"),
+        ), patch(
+            "src.mcp_handlers.identity.shared.session_fingerprint_check_mode",
+            return_value="strict",
+        ):
+            result = _get_identity_record_sync(session_id=key)
+            assert result["bound_agent_id"] is None
+            assert result.get("_session_key_type") == "path1_sync_fingerprint_strict_mismatch"
 
 
 # ============================================================================

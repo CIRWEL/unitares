@@ -73,7 +73,7 @@ Same shape as the existing PATH 1 fingerprint test fixtures (locate via `grep -l
 ## Out of scope
 
 - Changing the `UNITARES_SESSION_FINGERPRINT_CHECK` default from `log` to `strict`. That is a separate rollout decision once the sync path also has the check in place; flipping the default to `strict` should happen for both paths simultaneously.
-- The legacy concern that `_get_identity_record_sync` is `DEPRECATED`. Killing it entirely would close this gap by elimination but expands the blast radius (every call site that uses it would need conversion to async). Not pursued here.
+- The `DEPRECATED` docstring is on `_get_session_key` (shared.py:67), not on `_get_identity_record_sync`. `_get_identity_record_sync` itself has no active deprecation — `get_bound_agent_id` calls it explicitly, and `require_write_permission → is_session_bound → get_bound_agent_id` is used throughout the tool layer. Hardening (this proposal) is the right move; killing it would push `await` into every handler that calls `require_write_permission`. Not pursued here.
 - The KG `_agent_id`, `observe_agent`, `get_agent_metadata` redaction questions from `uuid-leak-audit.md`. Those become per-handler UX decisions once PATH 1 is closed.
 - PATH 0 — already gated by `UNITARES_IDENTITY_STRICT`.
 - PATH 2 — separate IP:UA pin gate already exists.
