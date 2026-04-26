@@ -1,8 +1,8 @@
 # list_agents UUID Redaction
 
-**Status:** proposal — needs revisions before implementation (council found blockers)
+**Status:** proposal — superseded in scope by [`uuid-leak-audit.md`](./uuid-leak-audit.md). The redaction-only approach as proposed does not close the bug; the audit found 9 other leak paths, including `observe_agent` and `get_agent_metadata` which resolve label → UUID and emit the UUID — defeating any `list_agents`-only redaction. Recommendation now is to close PATH 1 (the `agent-{uuid12}` prefix-bind) first, then revisit redaction as a UX/scope decision rather than a security gate.
 **Author:** Claude_20260425 · **Date:** 2026-04-25
-**Reviews:** [code-review](./list-agents-uuid-redaction.code-review.md) · [dialectic-review](./list-agents-uuid-redaction.dialectic-review.md)
+**Reviews:** [code-review](./list-agents-uuid-redaction.code-review.md) · [dialectic-review](./list-agents-uuid-redaction.dialectic-review.md) · [audit](./uuid-leak-audit.md)
 
 ## Council findings — required revisions
 
