@@ -25,6 +25,29 @@ def test_build_identity_response_data_verbose_includes_continuity_context():
     assert payload["continuity_token"] == "token-abc"
     assert payload["session_continuity"]["continuity_token"] == "token-abc"
     assert payload["quick_reference"]["for_strong_resume"] == "token-abc"
+    # Doctrine: KG keys on agent_id, never on the cosmetic display_name.
+    # The previous `display_name or agent_id` fallback leaked the cosmetic
+    # label into a functional key path.
+    assert payload["quick_reference"]["for_knowledge_graph"] == "agent-123"
+
+
+def test_quick_reference_does_not_fall_back_to_display_name_for_kg():
+    payload = build_identity_response_data(
+        agent_uuid="uuid-xyz",
+        agent_id="agent-xyz",
+        display_name="CosmeticLabel",
+        client_session_id="sess-xyz",
+        continuity_source="client_session_id",
+        continuity_support={"enabled": False},
+        continuity_token=None,
+        identity_status="active",
+        model_type=None,
+        resumed=None,
+        session_continuity=None,
+        verbose=True,
+    )
+    assert payload["quick_reference"]["for_knowledge_graph"] == "agent-xyz"
+    assert payload["quick_reference"]["for_knowledge_graph"] != "CosmeticLabel"
 
 
 def test_build_identity_diag_payload_keeps_fast_path_shape_consistent():
