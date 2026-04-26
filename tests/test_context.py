@@ -260,3 +260,47 @@ class TestTrajectoryConfidence:
             assert get_trajectory_confidence() == 0.5
         finally:
             reset_trajectory_confidence(token1)
+
+
+class TestSessionSignalsPeerPid:
+    """S19: SessionSignals.peer_pid field for substrate attestation.
+
+    Populated by the UDS listener (PR3c) at connection-accept via
+    LOCAL_PEERPID; left None for HTTP/SSE/stdio transports. Read by the
+    substrate-claim verification path in ``src/substrate/verification.py``.
+    """
+
+    def test_default_is_none(self):
+        from src.mcp_handlers.context import SessionSignals
+        signals = SessionSignals()
+        assert signals.peer_pid is None
+
+    def test_explicit_value_round_trips_via_contextvar(self):
+        from src.mcp_handlers.context import (
+            SessionSignals, set_session_signals, get_session_signals,
+            reset_session_signals,
+        )
+        token = set_session_signals(SessionSignals(peer_pid=37807))
+        try:
+            recovered = get_session_signals()
+            assert recovered is not None
+            assert recovered.peer_pid == 37807
+        finally:
+            reset_session_signals(token)
+
+    def test_field_is_frozen(self):
+        """SessionSignals is frozen — peer_pid cannot be mutated post-construction."""
+        import dataclasses
+        from src.mcp_handlers.context import SessionSignals
+        signals = SessionSignals(peer_pid=1234)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            signals.peer_pid = 5678  # type: ignore[misc]
+
+    def test_uds_transport_label_documented(self):
+        """The transport field comment lists 'uds' as a valid value (PR3c
+        will set transport='uds' on UDS connections). Field-level cross-
+        check that the inline documentation has been updated."""
+        import inspect
+        from src.mcp_handlers.context import SessionSignals
+        src = inspect.getsource(SessionSignals)
+        assert '"uds"' in src
