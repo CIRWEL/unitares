@@ -131,10 +131,85 @@ class StateMixin:
                 )
             )
 
+    async def list_bootstrap_only_agents(
+        self,
+        min_age_hours: int = 24,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """Agents with a bootstrap row but no measured check-in past the age window.
+
+        This is the validation surface for onboard-bootstrap-checkin §6 —
+        the population the proposal exists to count. The default 24-hour
+        window filters out agents that just onboarded and may genuinely be
+        about to check in; a positive count past 24h means the agent
+        bootstrapped and went silent.
+
+        Returns most-recent bootstraps first. Row shape:
+          {agent_id, identity_id, bootstrap_state_id, bootstrap_recorded_at,
+           bootstrap_age_hours, display_name}
+        """
+        async with self.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT i.agent_id,
+                       i.identity_id,
+                       b.state_id AS bootstrap_state_id,
+                       b.recorded_at AS bootstrap_recorded_at,
+                       EXTRACT(EPOCH FROM (now() - b.recorded_at)) / 3600.0
+                           AS bootstrap_age_hours,
+                       (i.metadata->>'display_name') AS display_name
+                FROM core.identities i
+                JOIN core.agent_state b
+                  ON b.identity_id = i.identity_id
+                  AND b.synthetic = true
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM core.agent_state m
+                    WHERE m.identity_id = i.identity_id
+                      AND m.synthetic = false
+                )
+                  AND b.recorded_at <= now() - ($1 * interval '1 hour')
+                ORDER BY b.recorded_at DESC
+                LIMIT $2
+                """,
+                min_age_hours, limit,
+            )
+            return [dict(r) for r in rows]
+
+    async def count_bootstrap_only_agents(
+        self,
+        min_age_hours: int = 24,
+    ) -> int:
+        """Count of agents bootstrapped past the age window with no measured
+        check-in. Cheap query for dashboard count badges."""
+        async with self.acquire() as conn:
+            return int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM core.identities i
+                    JOIN core.agent_state b
+                      ON b.identity_id = i.identity_id
+                      AND b.synthetic = true
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM core.agent_state m
+                        WHERE m.identity_id = i.identity_id
+                          AND m.synthetic = false
+                    )
+                      AND b.recorded_at <= now() - ($1 * interval '1 hour')
+                    """,
+                    min_age_hours,
+                )
+                or 0
+            )
+
     async def get_latest_agent_state(
         self,
         identity_id: int,
     ) -> Optional[AgentStateRecord]:
+        """Latest measured state for an identity. Bootstrap (synthetic) rows
+        are excluded by default per onboard-bootstrap-checkin §4.1; this is
+        the user-visible "what is this agent's current state" question, and
+        a synthetic anchor is not the answer."""
         from config.governance_config import GovernanceConfig
         async with self.acquire() as conn:
             row = await conn.fetchrow(
@@ -145,6 +220,7 @@ class StateMixin:
                 FROM core.agent_state s
                 JOIN core.identities i ON i.identity_id = s.identity_id
                 WHERE s.identity_id = $1 AND s.epoch = $2
+                  AND s.synthetic = false
                 ORDER BY s.recorded_at DESC
                 LIMIT 1
                 """,
@@ -158,26 +234,54 @@ class StateMixin:
         self,
         identity_id: int,
         limit: int = 100,
+        exclude_synthetic: bool = False,
     ) -> List[AgentStateRecord]:
+        """State-row history for an identity.
+
+        Per onboard-bootstrap-checkin §4 inclusion rule #2 ("Identity audit /
+        lineage queries"), the default INCLUDES synthetic rows — history is
+        the audit/lineage record and legitimately wants the full picture.
+        Bootstrap rows in the result carry their flag in `state_json` (and
+        the underlying row's `synthetic` column is true) so callers can
+        introspect.
+
+        Set `exclude_synthetic=True` for measured-only history reads. The
+        canonical caller for that mode is `hydrate_from_db_if_fresh` in
+        agent_monitor_state.py — the in-memory monitor must NEVER be seeded
+        from a synthetic row, because every downstream consumer of
+        monitor.state (self-recovery, dialectic, trajectory ODE) treats
+        seeded values as measured. See
+        docs/proposals/onboard-bootstrap-checkin.filter-audit.md sites #5/#6.
+        """
         from config.governance_config import GovernanceConfig
         async with self.acquire() as conn:
-            rows = await conn.fetch(
-                """
+            base_sql = """
                 SELECT s.state_id, s.identity_id, i.agent_id, s.recorded_at,
                        s.entropy, s.integrity, s.stability_index, s.volatility,
                        s.regime, s.coherence, s.state_json
                 FROM core.agent_state s
                 JOIN core.identities i ON i.identity_id = s.identity_id
                 WHERE s.identity_id = $1 AND s.epoch = $2
-                ORDER BY s.recorded_at DESC
-                LIMIT $3
-                """,
+            """
+            if exclude_synthetic:
+                base_sql += " AND s.synthetic = false"
+            base_sql += " ORDER BY s.recorded_at DESC LIMIT $3"
+            rows = await conn.fetch(
+                base_sql,
                 identity_id, GovernanceConfig.CURRENT_EPOCH, limit,
             )
             return [self._row_to_agent_state(r) for r in rows]
 
     async def get_all_latest_agent_states(self) -> list[AgentStateRecord]:
-        """Get latest state per identity, using matview with base-table fallback."""
+        """Get latest measured state per identity, using matview with base-table fallback.
+
+        The matview is measured-only by definition (migration 019 bakes
+        `WHERE synthetic = false` into the matview SELECT), so the matview
+        path needs no query-time filter. The base-table fallback queries
+        agent_state directly and adds the filter explicitly. Both paths
+        agree: bootstrap rows never appear here. Per onboard-bootstrap-
+        checkin §4.1.
+        """
         async with self.acquire() as conn:
             try:
                 rows = await conn.fetch(
@@ -189,7 +293,9 @@ class StateMixin:
                     """,
                 )
             except Exception:
-                # Matview may not exist yet — fall back to base table
+                # Matview may not exist yet — fall back to base table.
+                # Filter `synthetic = false` here because the base table
+                # contains both measured and synthetic rows.
                 from config.governance_config import GovernanceConfig
                 logger.debug("Matview unavailable, falling back to base table")
                 rows = await conn.fetch(
@@ -201,6 +307,7 @@ class StateMixin:
                     FROM core.agent_state s
                     JOIN core.identities i ON i.identity_id = s.identity_id
                     WHERE s.epoch = $1
+                      AND s.synthetic = false
                     ORDER BY s.identity_id, s.recorded_at DESC
                     """,
                     GovernanceConfig.CURRENT_EPOCH,
@@ -212,9 +319,12 @@ class StateMixin:
         exclude_identity_id: int,
         minutes: int = 60,
     ) -> list[dict]:
-        """Get recent activity from other agents, grouped by agent.
+        """Get recent measured activity from other agents, grouped by agent.
 
         Returns list of dicts with agent_id, recorded_at (most recent), count.
+        Bootstrap (synthetic) rows are excluded — the COUNT is "how many real
+        check-ins" and a session-start anchor is not activity. Per onboard-
+        bootstrap-checkin §4.1.
         """
         from config.governance_config import GovernanceConfig
         window = minutes or GovernanceConfig.TEMPORAL_CROSS_AGENT_MINUTES
@@ -229,6 +339,7 @@ class StateMixin:
                 WHERE s.identity_id != $1
                   AND s.recorded_at > now() - ($2 * interval '1 minute')
                   AND s.epoch = $3
+                  AND s.synthetic = false
                 GROUP BY i.agent_id
                 ORDER BY MAX(s.recorded_at) DESC
                 LIMIT 5

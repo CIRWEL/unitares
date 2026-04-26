@@ -47,8 +47,11 @@ def build_identity_response_data(
         response_data["resumed"] = resumed
 
     if verbose:
+        # Doctrine: `display_name` is cosmetic (name-claim resolution removed
+        # 2026-04-17). KG queries key on `agent_id`; canonical identity is
+        # `agent_uuid`. Do not fall back to display_name for any functional key.
         response_data["quick_reference"] = {
-            "for_knowledge_graph": display_name or agent_id,
+            "for_knowledge_graph": agent_id,
             "for_session_continuity": client_session_id,
             "for_internal_lookup": agent_uuid,
             "to_set_display_name": "identity(name='YourName')",

@@ -23,7 +23,7 @@ _hb_module = importlib.util.module_from_spec(spec)
 sys.modules["vigil_agent"] = _hb_module
 spec.loader.exec_module(_hb_module)
 
-from vigil_agent import VigilAgent, _filter_sentinel_findings
+from vigil_agent import VigilAgent, _filter_sentinel_findings, _SENTINEL_AUDIT_TRIGGERS
 
 from unitares_sdk.models import (
     ArchiveResult,
@@ -60,13 +60,13 @@ class TestFilterSentinelFindings:
             {
                 "id": "old",
                 "summary": "stale",
-                "tags": ["sentinel", "verdict_distribution_shift", "high"],
+                "tags": ["sentinel", "verdict_shift", "high"],
                 "created_at": "2026-04-14T09:00:00+00:00",
             },
             {
                 "id": "new",
                 "summary": "fresh",
-                "tags": ["sentinel", "verdict_distribution_shift", "high"],
+                "tags": ["sentinel", "verdict_shift", "high"],
                 "created_at": "2026-04-14T11:00:00+00:00",
             },
         ]
@@ -91,7 +91,7 @@ class TestFilterSentinelFindings:
             {
                 "id": "c",
                 "summary": "ok",
-                "tags": ["sentinel", "correlated_governance_events", "high"],
+                "tags": ["sentinel", "correlated_events", "high"],
                 "created_at": "2026-04-14T10:00:00+00:00",
             },
         ]
@@ -102,7 +102,7 @@ class TestFilterSentinelFindings:
         results = [{
             "id": "n",
             "summary": "no ts",
-            "tags": ["sentinel", "verdict_distribution_shift", "high"],
+            "tags": ["sentinel", "verdict_shift", "high"],
         }]
         # No created_at and no since_iso → keep it
         out = _filter_sentinel_findings(results, since_iso=None)
@@ -201,6 +201,35 @@ def _patch_health_checks(monkeypatch):
     monkeypatch.setattr(_hb_module, "run_health_checks", _no_checks)
 
 
+class TestSentinelTriggerNamesMatchEmittedTypes:
+    """Vigil's audit-trigger set must contain types Sentinel actually emits.
+
+    Discovery 2026-04-25T10:49:00 documented production divergence: Vigil watched for
+    `verdict_distribution_shift` / `correlated_governance_events`, but Sentinel emits
+    `verdict_shift` / `correlated_events` (agents/sentinel/agent.py:249,266). The
+    short names are also the canonical taxonomy entries (agents/common/violation_taxonomy.yaml).
+    Tests previously passed because their fixtures used the long names too — the
+    integration-level mismatch was invisible.
+    """
+
+    def test_verdict_shift_triggers_audit(self):
+        assert "verdict_shift" in _SENTINEL_AUDIT_TRIGGERS, (
+            "Sentinel emits 'verdict_shift' (sentinel/agent.py:249) — Vigil must trigger "
+            "audit on it; sentinel_force_audit otherwise never fires in production."
+        )
+
+    def test_correlated_events_triggers_audit(self):
+        assert "correlated_events" in _SENTINEL_AUDIT_TRIGGERS, (
+            "Sentinel emits 'correlated_events' (sentinel/agent.py:266) — Vigil must "
+            "trigger audit on it."
+        )
+
+    def test_old_long_names_are_not_in_trigger_set(self):
+        # Catches regressions back to the divergent vocabulary.
+        assert "verdict_distribution_shift" not in _SENTINEL_AUDIT_TRIGGERS
+        assert "correlated_governance_events" not in _SENTINEL_AUDIT_TRIGGERS
+
+
 class TestRunCycleCoordination:
     @pytest.mark.asyncio
     async def test_audit_triggering_finding_forces_groundskeeper(self, monkeypatch):
@@ -212,7 +241,7 @@ class TestRunCycleCoordination:
         client = _full_mock_client(search_results=[{
             "id": "shift1",
             "summary": "10% reject rate",
-            "tags": ["sentinel", "verdict_distribution_shift", "high"],
+            "tags": ["sentinel", "verdict_shift", "high"],
             "created_at": "2026-04-14T11:00:00+00:00",
         }])
 
@@ -222,7 +251,7 @@ class TestRunCycleCoordination:
         # Groundskeeper ran despite with_audit=False
         client.audit_knowledge.assert_awaited()
         # Finding and the forced-audit marker both appear in the check-in summary
-        assert "Sentinel/verdict_distribution_shift" in result.summary
+        assert "Sentinel/verdict_shift" in result.summary
         assert "Groundskeeper forced by Sentinel coordination" in result.summary
 
     @pytest.mark.asyncio

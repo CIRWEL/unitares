@@ -372,3 +372,96 @@ class TestSlotIsolation:
         assert _slot_filename(None) == "session.json"
         assert _slot_filename("") == "session.json"
 
+
+# --- Phase 4: bootstrap initial_state wiring -------------------------------
+
+class TestBootstrapInitialState:
+    """Phase 4 of onboard-bootstrap-checkin.md — the SessionStart hook
+    wires initial_state into the onboard call. Tests live here in the
+    onboard helper test file because the helper owns the wiring."""
+
+    def test_default_attaches_initial_state(self, tmp_path: Path) -> None:
+        """Hook-driven onboards default to with_bootstrap=True so the server
+        writes a t=0 anchor."""
+        poster = FakePoster([_success_response()])
+        run_onboard(
+            server_url="http://fake",
+            agent_name="acme",
+            model_type="claude-code",
+            workspace=tmp_path,
+            post_json=poster,
+        )
+        sent_args = poster.calls[0][1]["arguments"]
+        assert "initial_state" in sent_args
+        assert sent_args["initial_state"]["task_type"] == "introspection"
+        # Hook MUST NOT fabricate confidence/complexity from session metadata —
+        # let the server fill its 0.5 defaults.
+        assert "confidence" not in sent_args["initial_state"]
+        assert "complexity" not in sent_args["initial_state"]
+
+    def test_with_bootstrap_false_omits_initial_state(self, tmp_path: Path) -> None:
+        """Explicit opt-out for callers like /governance-start that want
+        no bootstrap row."""
+        poster = FakePoster([_success_response()])
+        run_onboard(
+            server_url="http://fake",
+            agent_name="acme",
+            model_type="claude-code",
+            workspace=tmp_path,
+            with_bootstrap=False,
+            post_json=poster,
+        )
+        sent_args = poster.calls[0][1]["arguments"]
+        assert "initial_state" not in sent_args
+
+    def test_initial_state_present_on_resume(self, tmp_path: Path) -> None:
+        """Resume via continuity_token still sends initial_state — the
+        server's idempotency contract handles it (returns existing
+        bootstrap row's state_id)."""
+        initial = {
+            "continuity_token": "v1.cached-token",
+            "client_session_id": "agent-cached",
+        }
+        cache_dir = tmp_path / ".unitares"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / "session.json").write_text(json.dumps(initial))
+
+        poster = FakePoster([_success_response()])
+        run_onboard(
+            server_url="http://fake",
+            agent_name="acme",
+            model_type="claude-code",
+            workspace=tmp_path,
+            post_json=poster,
+        )
+        sent_args = poster.calls[0][1]["arguments"]
+        assert sent_args.get("continuity_token") == "v1.cached-token"
+        assert "initial_state" in sent_args
+
+    def test_initial_state_present_with_force_new(self, tmp_path: Path) -> None:
+        """force_new=True still attaches initial_state — the new identity
+        gets its own t=0 anchor per spec §3.4."""
+        poster = FakePoster([_success_response()])
+        run_onboard(
+            server_url="http://fake",
+            agent_name="acme",
+            model_type="claude-code",
+            workspace=tmp_path,
+            force_new=True,
+            post_json=poster,
+        )
+        sent_args = poster.calls[0][1]["arguments"]
+        assert sent_args.get("force_new") is True
+        assert "initial_state" in sent_args
+
+    def test_initial_state_payload_shape_is_minimal(self, tmp_path: Path) -> None:
+        """The hook-built initial_state contains exactly task_type. Anything
+        beyond that — response_text, complexity, confidence, ethical_drift —
+        is left to the server's defaults so the hook stays honest about
+        what it actually knows at session-start."""
+        from scripts.client.onboard_helper import _build_bootstrap_initial_state
+
+        payload = _build_bootstrap_initial_state()
+        assert set(payload.keys()) == {"task_type"}
+        assert payload["task_type"] == "introspection"
+

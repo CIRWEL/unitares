@@ -7,6 +7,7 @@ import asyncio
 import anyio
 import json
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -55,10 +56,22 @@ class GovernanceClient:
         mcp_url: str = "http://127.0.0.1:8767/mcp/",
         timeout: float = 30.0,
         retry_delay: float = 3.0,
+        uds_path: str | None = None,
     ):
+        # S19 substrate-anchored residents (Vigil, Sentinel, Chronicler)
+        # connect over Unix-domain socket so the kernel attests their PID
+        # to the governance MCP. Set ``uds_path`` explicitly OR set the
+        # ``UNITARES_UDS_SOCKET`` env var (the launchd plist is the
+        # documented place to set it). Passing ``uds_path`` overrides the
+        # env var so tests can pin a value without polluting the
+        # environment.
+        if uds_path is None:
+            uds_path = os.environ.get("UNITARES_UDS_SOCKET") or None
+
         self.mcp_url = mcp_url
         self.timeout = timeout
         self.retry_delay = retry_delay
+        self.uds_path = uds_path
 
         # Session state — updated after identity/onboard responses
         self.client_session_id: str | None = None
@@ -83,7 +96,22 @@ class GovernanceClient:
         scope in a different task than it was entered in" crash that killed
         the sentinel repeatedly (KG 2026-04-19T00:51:46).
         """
-        self._http_client = httpx.AsyncClient(http2=False, timeout=self.timeout)
+        # S19: when uds_path is set, route the underlying HTTP requests over
+        # a Unix-domain socket via httpx.AsyncHTTPTransport(uds=...). The MCP
+        # client still speaks HTTP semantically; only the network boundary
+        # changes. The Host header in mcp_url is informational under UDS
+        # (the kernel resolves the connection via the socket file path).
+        if self.uds_path:
+            transport = httpx.AsyncHTTPTransport(uds=self.uds_path)
+            self._http_client = httpx.AsyncClient(
+                http2=False, timeout=self.timeout, transport=transport,
+            )
+            logger.info(
+                "[SDK] connecting via UDS at %s (substrate-attestation transport)",
+                self.uds_path,
+            )
+        else:
+            self._http_client = httpx.AsyncClient(http2=False, timeout=self.timeout)
         try:
             cm = streamable_http_client(self.mcp_url, http_client=self._http_client)
             read, write, _ = await cm.__aenter__()

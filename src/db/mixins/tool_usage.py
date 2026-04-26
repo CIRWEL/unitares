@@ -104,7 +104,14 @@ class ToolUsageMixin:
                 return []
 
     async def get_latest_eisv_by_agent_id(self, agent_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch latest EISV snapshot for an agent."""
+        """Fetch latest measured EISV snapshot for an agent.
+
+        Bootstrap (synthetic) rows are excluded — the outcome correlator
+        snapshots EISV at outcome-event time for calibration; correlating
+        a real test outcome against a synthetic 0.5/0.5/0.5 anchor would
+        inject default-encoded noise into every agent's calibration prior.
+        Per onboard-bootstrap-checkin §4.1.
+        """
         from config.governance_config import GovernanceConfig
         async with self.acquire() as conn:
             try:
@@ -115,6 +122,7 @@ class ToolUsageMixin:
                     FROM core.agent_state s
                     JOIN core.identities i ON i.identity_id = s.identity_id
                     WHERE i.agent_id = $1 AND s.epoch = $2
+                      AND s.synthetic = false
                     ORDER BY s.recorded_at DESC
                     LIMIT 1
                     """,

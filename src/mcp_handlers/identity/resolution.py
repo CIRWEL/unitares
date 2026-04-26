@@ -680,6 +680,52 @@ async def resolve_session_identity(
     # The token embeds the agent UUID. If session bindings expired but the
     # agent still exists in PG, rebind the session and return — no fork.
     if token_agent_uuid and not force_new:
+        # S19 PR4: substrate-anchored UUIDs cannot resume over HTTP via
+        # token alone. The token is a copyable bearer; the substrate
+        # commitment lives in the resident's process attestation over
+        # UDS. If a core.substrate_claims row exists for this UUID AND
+        # this request arrived without a kernel-attested peer PID
+        # (i.e. HTTP path), refuse the resume with an explicit pointer
+        # to UDS. Closes the Hermes-incident leak path in production.
+        # The gate is self-scoping by the substrate_claims table —
+        # non-substrate UUIDs are unaffected (no row, no rejection).
+        try:
+            from src.mcp_handlers.context import get_session_signals
+            _signals = get_session_signals()
+            _peer_pid = _signals.peer_pid if _signals else None
+            if _peer_pid is None:
+                from src.substrate.verification import fetch_substrate_claim
+                _claim = await fetch_substrate_claim(token_agent_uuid)
+                if _claim is not None:
+                    logger.warning(
+                        "[SUBSTRATE_HTTP_REJECT] PATH 2.8 token resume for "
+                        "substrate-anchored UUID %s... over HTTP — refusing. "
+                        "Resident must connect via UNITARES_UDS_SOCKET.",
+                        token_agent_uuid[:8],
+                    )
+                    return {
+                        "resume_failed": True,
+                        "error": "substrate_anchored_uuid_requires_uds",
+                        "token_agent_uuid": token_agent_uuid,
+                        "message": (
+                            f"Agent {token_agent_uuid[:8]}... is substrate-"
+                            f"anchored ({_claim.expected_launchd_label}). "
+                            f"Token-based resume is not accepted over HTTP. "
+                            f"Connect via the UNITARES_UDS_SOCKET path so the "
+                            f"kernel can attest peer credentials. See "
+                            f"docs/proposals/s19-attestation-mechanism.md."
+                        ),
+                    }
+        except Exception as exc:
+            # Defense-in-depth: any unexpected error in the gate falls
+            # through to the existing PATH 2.8 behavior. Never default-
+            # accepts AND never silently breaks the existing flow.
+            logger.warning(
+                "[SUBSTRATE_HTTP_REJECT] gate raised for %s...: %s; falling "
+                "through to existing PATH 2.8 (HTTP path unchanged)",
+                token_agent_uuid[:8], exc, exc_info=True,
+            )
+
         try:
             if await _agent_exists_in_postgres(token_agent_uuid):
                 status = await _get_agent_status(token_agent_uuid)

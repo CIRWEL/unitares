@@ -1308,7 +1308,7 @@ class TestSearchKnowledgeGraphAdditional:
 
     @pytest.mark.asyncio
     async def test_search_fts_multi_term_operator_note(self, patch_common):
-        """FTS multi-term queries show operator_note (line 823)."""
+        """FTS multi-term queries report the operator that ran (#165)."""
         mock_mcp_server, mock_graph = patch_common
         from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
 
@@ -1323,7 +1323,11 @@ class TestSearchKnowledgeGraphAdditional:
         data = parse_result(result)
         assert data["success"] is True
         if data["search_mode_used"] == "fts" and data["count"] > 0:
-            assert data["operator_used"] == "OR"
+            # Default switched from OR to AND in #165 (precision over recall);
+            # OR is now reachable via the AND→OR fallback or operator=OR.
+            assert data["operator_used"] == "AND"
+            assert data["fts_operator_used"] == "AND"
+            assert data["fts_fallback_used"] is False
 
     @pytest.mark.asyncio
     async def test_search_no_details_tip(self, patch_common):
@@ -1595,5 +1599,271 @@ class TestOrDefaultQuery:
 # ============================================================================
 # Supersede handler
 # ============================================================================
+
+
+# ============================================================================
+# Issue #165 — search_mode + routing-reason + AND default + scope + provenance
+# ============================================================================
+
+
+class TestIssue165SearchMode:
+    """Forced search modes error honestly when the backend can't deliver."""
+
+    @pytest.mark.asyncio
+    async def test_auto_falls_back_with_reason_when_backend_lacks_semantic(self, patch_common):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        # Backend has FTS only — no semantic_search method on the instance.
+        del mock_graph.semantic_search
+        mock_graph.full_text_search = AsyncMock(
+            return_value=[make_discovery(id="f1", summary="Match")]
+        )
+
+        result = await handle_search_knowledge_graph({"query": "anything goes here"})
+        data = parse_result(result)
+
+        assert data["success"] is True
+        assert data["search_mode_used"] == "fts"
+        assert data["search_mode_requested"] == "auto"
+        assert "semantic_skipped_reason" in data
+        assert "no semantic_search" in data["semantic_skipped_reason"]
+
+    @pytest.mark.asyncio
+    async def test_forced_semantic_errors_when_backend_lacks_it(self, patch_common):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        del mock_graph.semantic_search
+        mock_graph.full_text_search = AsyncMock(return_value=[])
+
+        result = await handle_search_knowledge_graph({
+            "query": "doesnt matter",
+            "search_mode": "semantic",
+        })
+        data = parse_result(result)
+        assert data["success"] is False
+        assert "semantic_search" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_forced_hybrid_errors_when_backend_partial(self, patch_common):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        del mock_graph.semantic_search  # only FTS available
+
+        result = await handle_search_knowledge_graph({
+            "query": "test",
+            "search_mode": "hybrid",
+        })
+        data = parse_result(result)
+        assert data["success"] is False
+        assert "hybrid" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_search_mode_rejected(self, patch_common):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+        result = await handle_search_knowledge_graph({
+            "query": "test",
+            "search_mode": "wat",
+        })
+        data = parse_result(result)
+        assert data["success"] is False
+        assert "Invalid search_mode" in data["error"]
+
+
+class TestIssue165FtsOperator:
+    """AND default with OR fallback on zero hits — surfaced in response."""
+
+    @pytest.mark.asyncio
+    async def test_and_default_records_operator_in_response(self, patch_common):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        del mock_graph.semantic_search
+        # AND returns one match — no fallback fires.
+        mock_graph.full_text_search = AsyncMock(
+            return_value=[make_discovery(id="f1", summary="Hit")]
+        )
+
+        result = await handle_search_knowledge_graph({"query": "two terms"})
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["fts_operator_used"] == "AND"
+        assert data["fts_fallback_used"] is False
+        # Backend was called with operator=AND
+        first_call = mock_graph.full_text_search.await_args_list[0]
+        assert first_call.kwargs.get("operator") == "AND"
+
+    @pytest.mark.asyncio
+    async def test_and_then_or_fallback_on_zero(self, patch_common):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        del mock_graph.semantic_search
+
+        call_count = {"n": 0}
+
+        async def fts(query, limit=20, operator="AND"):
+            call_count["n"] += 1
+            # First call (AND): empty. Second call (OR): one hit.
+            if operator == "AND":
+                return []
+            return [make_discovery(id="r1", summary="Recovered")]
+
+        mock_graph.full_text_search = AsyncMock(side_effect=fts)
+
+        result = await handle_search_knowledge_graph({"query": "two terms"})
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["count"] == 1
+        assert data["fts_operator_used"] == "OR"
+        assert data["fts_fallback_used"] is True
+        assert call_count["n"] == 2
+
+    @pytest.mark.asyncio
+    async def test_explicit_or_skips_fallback(self, patch_common):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        del mock_graph.semantic_search
+
+        async def fts(query, limit=20, operator="AND"):
+            assert operator == "OR"  # caller forced it
+            return [make_discovery(id="o1")]
+
+        mock_graph.full_text_search = AsyncMock(side_effect=fts)
+
+        result = await handle_search_knowledge_graph({
+            "query": "two terms",
+            "operator": "OR",
+        })
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["fts_operator_used"] == "OR"
+        assert data["fts_fallback_used"] is False
+
+    @pytest.mark.asyncio
+    async def test_invalid_operator_rejected(self, patch_common):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+        result = await handle_search_knowledge_graph({
+            "query": "x y",
+            "operator": "XOR",
+        })
+        data = parse_result(result)
+        assert data["success"] is False
+        assert "Invalid operator" in data["error"]
+
+
+class TestIssue165ListScope:
+    """list response declares its scope and accepts epoch_scope/including_cold."""
+
+    @pytest.mark.asyncio
+    async def test_list_passes_scope_params_through(self, patch_common):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_list_knowledge_graph
+
+        captured: Dict[str, Any] = {}
+
+        async def get_stats(**kw):
+            captured.update(kw)
+            return {
+                "total_discoveries": 7,
+                "total_agents": 1,
+                "scope": {
+                    "kind": "raw_status_aggregate",
+                    "epoch_scope": kw.get("epoch_scope"),
+                    "including_cold": kw.get("including_cold"),
+                },
+            }
+
+        mock_graph.get_stats = AsyncMock(side_effect=get_stats)
+
+        result = await handle_list_knowledge_graph({
+            "epoch_scope": "all",
+            "including_cold": True,
+        })
+        data = parse_result(result)
+        assert data["success"] is True
+        assert captured == {"epoch_scope": "all", "including_cold": True}
+        assert data["stats"]["scope"]["epoch_scope"] == "all"
+        assert data["stats"]["scope"]["including_cold"] is True
+
+    @pytest.mark.asyncio
+    async def test_list_rejects_invalid_epoch_scope(self, patch_common):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_list_knowledge_graph
+        result = await handle_list_knowledge_graph({"epoch_scope": "nope"})
+        data = parse_result(result)
+        assert data["success"] is False
+        assert "Invalid epoch_scope" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_list_falls_back_for_old_backend(self, patch_common):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_list_knowledge_graph
+
+        # Older backend signature (no scope kwargs) → TypeError → handler
+        # retries without kwargs and annotates the response.
+        async def old_get_stats(**kw):
+            if kw:
+                raise TypeError("get_stats() got unexpected kw")
+            return {"total_discoveries": 1, "total_agents": 1}
+
+        mock_graph.get_stats = AsyncMock(side_effect=old_get_stats)
+        result = await handle_list_knowledge_graph({"epoch_scope": "current"})
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["stats"]["scope"]["epoch_scope"] == "unknown"
+
+
+class TestIssue165Provenance:
+    """Implicit and explicit writes are distinguishable via provenance.source."""
+
+    def test_explicit_source_classifier(self):
+        from src.knowledge_graph import is_explicit_source, tag_provenance_source
+        assert is_explicit_source(tag_provenance_source(None, "explicit_store"))
+        assert is_explicit_source(tag_provenance_source(None, "explicit_answer"))
+        assert is_explicit_source(tag_provenance_source(None, "explicit_leave_note"))
+        # Implicit / unknown / legacy
+        assert not is_explicit_source(tag_provenance_source(None, "self_recovery_quick_resume"))
+        assert not is_explicit_source(tag_provenance_source(None, "operator_resume"))
+        assert not is_explicit_source(None)
+        assert not is_explicit_source({})
+        assert not is_explicit_source({"source": "rando"})
+
+    def test_tag_does_not_clobber_existing_keys(self):
+        from src.knowledge_graph import tag_provenance_source
+        existing = {"system_version": "v2.12.0", "captured_at": "2026-04-25"}
+        out = tag_provenance_source(existing, "explicit_store")
+        assert out["source"] == "explicit_store"
+        assert out["system_version"] == "v2.12.0"
+        assert out["captured_at"] == "2026-04-25"
+        # Existing source must not be overwritten
+        with_existing_source = {"source": "preserved"}
+        out2 = tag_provenance_source(with_existing_source, "explicit_store")
+        assert out2["source"] == "preserved"
+
+    @pytest.mark.asyncio
+    async def test_store_discovery_internal_requires_source(self, patch_common):
+        from src.mcp_handlers.knowledge.handlers import store_discovery_internal
+        with pytest.raises(TypeError):
+            await store_discovery_internal(  # type: ignore[call-arg]
+                agent_id="a", summary="s",
+            )
+
+    @pytest.mark.asyncio
+    async def test_store_discovery_internal_tags_provenance(self, patch_common):
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import store_discovery_internal
+        await store_discovery_internal(
+            agent_id="a-1", summary="recovery", source="self_recovery_quick_resume",
+        )
+        mock_graph.add_discovery.assert_awaited()
+        node = mock_graph.add_discovery.await_args.args[0]
+        assert node.provenance["source"] == "self_recovery_quick_resume"
+
 
 

@@ -818,15 +818,27 @@ class KnowledgeGraphAGE:
             logger.error(f"Failed to update discovery {discovery_id}: {e}")
             return False
 
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(
+        self,
+        epoch_scope: str = "current",
+        including_cold: bool = False,
+    ) -> Dict[str, Any]:
         """Get graph statistics.
-        
+
         Note: AGE doesn't support GROUP BY or multi-column returns well,
         so we use single-column collect() queries and aggregate in Python.
+
+        AGE vertices have no epoch property — epoch_scope is accepted for
+        signature parity with the postgres backend but always behaves as
+        'all'. including_cold=False filters cold rows from the by_status
+        aggregation in Python after the collect() returns.
         """
         from collections import Counter
-        
+
         db = await self._get_db()
+        # AGE's epoch is intentionally unscoped — declare that in the response
+        # so callers comparing across backends know which is which.
+        effective_epoch_scope = "all"
         
         # Total discoveries
         cypher = "MATCH (d:Discovery) RETURN count(d)"
@@ -849,6 +861,13 @@ class KnowledgeGraphAGE:
         cypher = "MATCH (d:Discovery) RETURN collect(d.status)"
         result = await db.graph_query(cypher, {})
         statuses = result[0] if result and isinstance(result[0], list) else []
+        cold_count = sum(1 for s in statuses if s == "cold")
+        if not including_cold:
+            statuses = [s for s in statuses if s != "cold"]
+            # Keep total_discoveries consistent with by_status — subtracting
+            # cold here means a list response with including_cold=False reports
+            # exactly the rows it bucketed.
+            total_count = max(0, total_count - cold_count)
         by_status = dict(Counter(s for s in statuses if s))
         
         # Count edges
@@ -893,6 +912,16 @@ class KnowledgeGraphAGE:
             "total_edges": total_edges,
             "total_agents": len(by_agent),
             "total_tags": total_tags,
+            "scope": {
+                "kind": "raw_status_aggregate",
+                "epoch_scope": effective_epoch_scope,  # AGE: always "all"
+                "including_cold": including_cold,
+                "note": (
+                    "AGE backend has no epoch property — counts span all "
+                    "epochs. Compare with knowledge action=stats which uses "
+                    "lifecycle buckets."
+                ),
+            },
         }
 
     async def health_check(self) -> Dict[str, Any]:
@@ -1606,15 +1635,19 @@ class KnowledgeGraphAGE:
         self,
         query: str,
         limit: int = 20,
+        operator: str = "AND",
     ) -> List[DiscoveryNode]:
         """Full-text search using PostgreSQL tsvector (ts_rank_cd ranking).
 
         AGE and PG backends share the same underlying `knowledge.discoveries`
         table, so we can reuse the DB mixin's kg_full_text_search. This keeps
         hybrid retrieval (RRF over semantic + FTS) identical across backends.
+
+        Defaults to AND for multi-term queries (#165). Callers wanting recall
+        pass operator="OR".
         """
         db = await self._get_db()
-        rows = await db.kg_full_text_search(query, limit)
+        rows = await db.kg_full_text_search(query, limit, operator=operator)
         # Hydrate via get_discovery so edge/response metadata is consistent
         # with what the rest of AGE returns. Row count is small (<= limit).
         results: List[DiscoveryNode] = []

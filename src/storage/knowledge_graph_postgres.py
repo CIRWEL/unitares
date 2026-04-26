@@ -87,10 +87,12 @@ class KnowledgeGraphPostgres:
             rows = [r for r in rows if r.get("status") != "archived"]
         return [self._dict_to_discovery(r) for r in rows]
 
-    async def full_text_search(self, query: str, limit: int = 20) -> List[DiscoveryNode]:
-        """Full-text search using PostgreSQL tsvector."""
+    async def full_text_search(
+        self, query: str, limit: int = 20, operator: str = "AND",
+    ) -> List[DiscoveryNode]:
+        """Full-text search using PostgreSQL tsvector. Defaults to AND (#165)."""
         db = await self._get_db()
-        rows = await db.kg_full_text_search(query, limit)
+        rows = await db.kg_full_text_search(query, limit, operator=operator)
         return [self._dict_to_discovery(r) for r in rows]
 
     async def find_similar(self, discovery: DiscoveryNode, limit: int = 10) -> List[DiscoveryNode]:
@@ -158,47 +160,168 @@ class KnowledgeGraphPostgres:
         result = await db._pool.fetchval(query, *params)
         return result is not None
 
-    async def get_stats(self) -> Dict[str, Any]:
-        """Get knowledge graph statistics for current epoch."""
+    async def get_stats(
+        self,
+        epoch_scope: str = "current",
+        including_cold: bool = False,
+    ) -> Dict[str, Any]:
+        """Get knowledge graph statistics with explicit scope (#165 part 3).
+
+        Args:
+            epoch_scope: "current" (default) restricts to the active epoch;
+                "all" counts every epoch ever stored. The historical default
+                was epoch_current with no flag — list/stats reported very
+                different numbers for the same field, so the scope is now
+                surfaced in the response.
+            including_cold: When False (default), excludes rows in
+                status='cold' from totals and per-bucket counts. Cold rows
+                live in lifecycle's deep-archive tier; counting them by
+                default conflated active and dormant data.
+        """
         from config.governance_config import GovernanceConfig
         db = await self._get_db()
         epoch = GovernanceConfig.CURRENT_EPOCH
 
-        # Get total discoveries
-        total = await db._pool.fetchval(
-            "SELECT COUNT(*) FROM knowledge.discoveries WHERE epoch = $1", epoch)
+        clauses: list[str] = []
+        params: list[Any] = []
+        if epoch_scope == "current":
+            params.append(epoch)
+            clauses.append(f"epoch = ${len(params)}")
+        if not including_cold:
+            clauses.append("status != 'cold'")
+        where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
 
-        # Get discoveries by agent
-        by_agent_rows = await db._pool.fetch("""
+        total = await db._pool.fetchval(
+            f"SELECT COUNT(*) FROM knowledge.discoveries{where_sql}", *params)
+
+        by_agent_rows = await db._pool.fetch(
+            f"""
             SELECT agent_id, COUNT(*) as count
-            FROM knowledge.discoveries WHERE epoch = $1
+            FROM knowledge.discoveries{where_sql}
             GROUP BY agent_id
-        """, epoch)
+            """,
+            *params,
+        )
         by_agent = {row['agent_id']: row['count'] for row in by_agent_rows}
 
-        # Get discoveries by type
-        by_type_rows = await db._pool.fetch("""
+        by_type_rows = await db._pool.fetch(
+            f"""
             SELECT type, COUNT(*) as count
-            FROM knowledge.discoveries WHERE epoch = $1
+            FROM knowledge.discoveries{where_sql}
             GROUP BY type
-        """, epoch)
+            """,
+            *params,
+        )
         by_type = {row['type']: row['count'] for row in by_type_rows}
 
-        # Get discoveries by status
-        by_status_rows = await db._pool.fetch("""
+        by_status_rows = await db._pool.fetch(
+            f"""
             SELECT status, COUNT(*) as count
-            FROM knowledge.discoveries WHERE epoch = $1
+            FROM knowledge.discoveries{where_sql}
             GROUP BY status
-        """, epoch)
+            """,
+            *params,
+        )
         by_status = {row['status']: row['count'] for row in by_status_rows}
+
+        # Provenance-source split (#165 part 4). NULL provenance → "legacy"
+        # bucket so callers can tell which rows predate the tagging convention.
+        # provenance is stored as JSONB; the extraction operator works on both
+        # JSONB and JSON rows.
+        prov_rows = await db._pool.fetch(
+            f"""
+            SELECT
+                COALESCE(provenance->>'source', '__legacy_or_untagged__') AS source,
+                COUNT(*) AS count
+            FROM knowledge.discoveries{where_sql}
+            GROUP BY 1
+            """,
+            *params,
+        )
+        by_provenance_source = {row['source']: row['count'] for row in prov_rows}
+
+        # Same split per-agent so operators can audit a specific agent's
+        # caller-intentional writes apart from automation noise.
+        agent_prov_rows = await db._pool.fetch(
+            f"""
+            SELECT
+                agent_id,
+                COALESCE(provenance->>'source', '__legacy_or_untagged__') AS source,
+                COUNT(*) AS count
+            FROM knowledge.discoveries{where_sql}
+            GROUP BY agent_id, source
+            """,
+            *params,
+        )
+        explicit_sources = {
+            "explicit_store", "explicit_answer", "explicit_leave_note",
+        }
+        by_agent_explicit: Dict[str, int] = {}
+        by_agent_implicit: Dict[str, int] = {}
+        for row in agent_prov_rows:
+            target = (
+                by_agent_explicit if row['source'] in explicit_sources
+                else by_agent_implicit
+            )
+            target[row['agent_id']] = target.get(row['agent_id'], 0) + row['count']
+
+        # Embedding coverage (#165 part 5). The active embeddings table is
+        # selected by UNITARES_EMBEDDING_MODEL; this counts how many rows in
+        # the current scope have a row in that table. Critical diagnostic for
+        # finding 1 — operators couldn't tell whether semantic-search
+        # coverage was 5% or 95%.
+        embedding_coverage: Optional[Dict[str, Any]] = None
+        try:
+            from src.embeddings import get_active_table_name
+            embed_table = get_active_table_name()
+            covered_clauses = list(clauses)
+            covered_clauses.append(
+                f"id IN (SELECT discovery_id FROM {embed_table})"
+            )
+            covered_where = " WHERE " + " AND ".join(covered_clauses)
+            with_embeddings = await db._pool.fetchval(
+                f"SELECT COUNT(*) FROM knowledge.discoveries{covered_where}",
+                *params,
+            ) or 0
+            total_in_scope = total or 0
+            without_embeddings = max(0, total_in_scope - with_embeddings)
+            ratio = (
+                round(with_embeddings / total_in_scope, 4)
+                if total_in_scope else 0.0
+            )
+            embedding_coverage = {
+                "with_embeddings": with_embeddings,
+                "without_embeddings": without_embeddings,
+                "ratio": ratio,
+                "active_table": embed_table,
+            }
+        except Exception as exc:
+            logger.debug(f"embedding coverage probe failed: {exc}")
+            embedding_coverage = {"error": str(exc)}
 
         return {
             "total_discoveries": total or 0,
             "by_agent": by_agent,
+            "by_agent_explicit": by_agent_explicit,
+            "by_agent_implicit": by_agent_implicit,
             "by_type": by_type,
             "by_status": by_status,
+            "by_provenance_source": by_provenance_source,
+            "embedding_coverage": embedding_coverage,
             "total_agents": len(by_agent),
             "epoch": epoch,
+            "scope": {
+                "kind": "raw_status_aggregate",
+                "epoch_scope": epoch_scope,  # "current" | "all"
+                "including_cold": including_cold,
+                "note": (
+                    "Counts come straight from the discoveries table status "
+                    "column — includes 'superseded' rows. by_agent_explicit "
+                    "covers rows tagged with provenance.source in "
+                    f"{sorted(explicit_sources)}; everything else (including "
+                    "untagged legacy rows) lands in by_agent_implicit."
+                ),
+            },
         }
 
     async def get_agent_discoveries(

@@ -373,6 +373,27 @@ async def get_governance_metrics_data(agent_id: str, arguments: Dict[str, Any], 
     return standardized_metrics
 
 
+# Per-prefix scan ceiling for the `redis_cache.keys` health-check section.
+# At 10000 keys per prefix and a typical SCAN cost of <0.1s the probe stays
+# well inside the 15s budget; values past the cap are reported as "{cap}+".
+_HEALTH_KEYS_CAP = 10000
+_HEALTH_KEYS_SCAN_PAGE = 500
+
+
+async def _bounded_scan_count(redis, pattern: str, *, cap: int = _HEALTH_KEYS_CAP, page: int = _HEALTH_KEYS_SCAN_PAGE):
+    """Count keys matching `pattern` without materializing the cursor.
+
+    Returns the integer count, or `f"{cap}+"` once the ceiling is hit.
+    Caller should run multiple invocations under `asyncio.gather` for parallel fan-out.
+    """
+    n = 0
+    async for _ in redis.scan_iter(match=pattern, count=page):
+        n += 1
+        if n >= cap:
+            return f"{cap}+"
+    return n
+
+
 async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[str, Any]:
     """Build plain health-check data for operators and transports."""
     server = server or mcp_server
@@ -485,12 +506,27 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
                         "note": "Keyspace hit/miss counts cover the whole Redis instance, not just session_cache lookups.",
                     }
                     try:
-                        checks["redis_cache"]["keys"] = {
-                            "sessions": len([k async for k in redis.scan_iter(match="session:*", count=100)]),
-                            "rate_limits": len([k async for k in redis.scan_iter(match="rate_limit:*", count=100)]),
-                            "metadata": len([k async for k in redis.scan_iter(match="agent_meta:*", count=100)]),
-                            "locks": len([k async for k in redis.scan_iter(match="lock:*", count=100)]),
-                        }
+                        # Count keys per prefix in parallel with a per-prefix ceiling.
+                        # Sequential materializing scans (`len([k async for k in scan_iter(...)])`)
+                        # blew the 15s probe budget once `session:*` and `agent_meta:*` grew past
+                        # ~10K keys combined. `_bounded_scan_count` streams the cursor without
+                        # materializing the key list and short-circuits at `cap`, returning
+                        # `f"{cap}+"` so operators still see an "above ceiling" signal.
+                        labels = ("sessions", "rate_limits", "metadata", "locks")
+                        patterns = ("session:*", "rate_limit:*", "agent_meta:*", "lock:*")
+                        # Read cap/page from module namespace so test patches and operator
+                        # overrides take effect without per-call argument plumbing.
+                        results = await asyncio.gather(
+                            *(_bounded_scan_count(redis, p, cap=_HEALTH_KEYS_CAP, page=_HEALTH_KEYS_SCAN_PAGE) for p in patterns),
+                            return_exceptions=True,
+                        )
+                        keys_info: Dict[str, Any] = {}
+                        for label, value in zip(labels, results):
+                            if isinstance(value, BaseException):
+                                keys_info[f"{label}_error"] = str(value)
+                            else:
+                                keys_info[label] = value
+                        checks["redis_cache"]["keys"] = keys_info
                     except Exception as e:
                         checks["redis_cache"]["keys_error"] = str(e)
             except Exception as e:
@@ -518,21 +554,46 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
 
     # KG check: get_knowledge_graph() initializes the AGE backend which acquires a
     # PostgreSQL connection — this deadlocks in the anyio context. Skip DB interaction
-    # and report embeddings status only (the actual signal of KG health).
+    # and report capability flags via class introspection.
+    #
+    # Two separate signals — the embedder service can be up while the active
+    # backend lacks semantic_search, in which case `knowledge action=search`
+    # silently routes to FTS. Surfacing both lets callers see the gap.
     try:
-        embeddings_ok = False
+        embedder_ok = False
         try:
             from src.embeddings import embeddings_available
-            embeddings_ok = embeddings_available()
+            embedder_ok = embeddings_available()
         except Exception:
             pass
+        try:
+            from src.knowledge_graph import (
+                backend_supports_semantic_search,
+                selected_backend_name,
+            )
+            backend_name = selected_backend_name()
+            semantic_backend_ok = backend_supports_semantic_search()
+        except Exception:
+            backend_name = "unknown"
+            semantic_backend_ok = False
+
+        semantic_search_reachable = embedder_ok and semantic_backend_ok
         checks["knowledge_graph"] = {
-            "status": "healthy" if embeddings_ok else "degraded",
-            "backend": "age",
-            "embeddings_available": embeddings_ok,
+            "status": "healthy" if semantic_search_reachable else "degraded",
+            "backend": backend_name,
+            "embedder_available": embedder_ok,
+            "semantic_backend_available": semantic_backend_ok,
+            "semantic_search_reachable": semantic_search_reachable,
         }
-        if not embeddings_ok:
-            checks["knowledge_graph"]["warning"] = "Semantic search unavailable — embeddings service not loaded."
+        if not embedder_ok:
+            checks["knowledge_graph"]["warning"] = (
+                "Embedder service not loaded — semantic search unavailable."
+            )
+        elif not semantic_backend_ok:
+            checks["knowledge_graph"]["warning"] = (
+                f"Embedder is up but backend '{backend_name}' has no semantic_search; "
+                f"`knowledge action=search` falls back to FTS."
+            )
     except Exception as e:
         checks["knowledge_graph"] = {"status": "error", "error": str(e)}
 
@@ -649,9 +710,19 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
     lite = arguments.get("lite", True)
     if lite:
         lite_checks = {}
+        # Keys the lite payload always carries forward when present. Includes
+        # the #165 capability split so operators reading the lite response can
+        # see embedder_available vs semantic_backend_available without having
+        # to opt into lite=false.
+        lite_keys = (
+            "mode", "redis_present", "present", "source_of_truth",
+            "session_binding_backend", "backend",
+            "embedder_available", "semantic_backend_available",
+            "semantic_search_reachable",
+        )
         for name, check in checks.items():
             lite_checks[name] = {"status": check.get("status", "unknown")}
-            for key in ("mode", "redis_present", "present", "source_of_truth", "session_binding_backend"):
+            for key in lite_keys:
                 if key in check:
                     lite_checks[name][key] = check[key]
             if "warning" in check:

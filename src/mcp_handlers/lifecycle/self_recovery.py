@@ -453,6 +453,7 @@ async def handle_quick_resume(arguments: Dict[str, Any]) -> Sequence[TextContent
             }),
             tags=["recovery", "quick-resume", "audit"],
             severity="info",
+            source="self_recovery_quick_resume",
         )
     except Exception as e:
         logger.warning(f"Failed to log quick_resume: {e}")
@@ -641,6 +642,8 @@ async def handle_operator_resume_agent(arguments: Dict[str, Any]) -> Sequence[Te
             }),
             tags=["operator", "intervention", "recovery", "audit"],
             severity="warning",  # Operator interventions are always notable
+            source="operator_resume",
+            extra_provenance={"target_agent_id": target_agent_id},
         )
     except Exception as e:
         logger.warning(f"Failed to log operator intervention: {e}")

@@ -546,6 +546,59 @@ async def _try_resume_by_agent_uuid_direct(
         _partc_token_aid = extract_token_agent_uuid(str(arguments["continuity_token"]))
     _partc_owned = _partc_token_aid == _direct_uuid
 
+    # S19 substrate-attestation gate (PR3e): when the resume request arrives
+    # over UDS (peer_pid set by PeerCredHTTPProtocol) AND the UUID has a
+    # core.substrate_claims row, kernel-attested peer match is treated as
+    # ownership proof equivalent to the continuity_token. Verification
+    # rejection short-circuits to an explicit error pointing at the cause
+    # (label/exec/start-time mismatch). HTTP requests (peer_pid is None)
+    # and non-substrate UUIDs (no claim row) fall through unchanged.
+    if not _partc_owned:
+        try:
+            from ..context import get_session_signals
+            _signals = get_session_signals()
+            _peer_pid = _signals.peer_pid if _signals else None
+            if _peer_pid is not None:
+                from src.substrate.handler_gate import verify_substrate_at_resume
+                _substrate_result = await verify_substrate_at_resume(
+                    _direct_uuid, _peer_pid,
+                )
+                if _substrate_result is not None:
+                    if _substrate_result.accepted:
+                        _partc_owned = True
+                        logger.info(
+                            "[SUBSTRATE_VERIFIED] %s... via UDS peer attestation "
+                            "(pid=%d)", _direct_uuid[:8], _peer_pid,
+                        )
+                    else:
+                        # Verification fired and rejected — return an
+                        # explicit error naming the failure mode rather
+                        # than falling through to the generic strict-mode
+                        # message. The specific reason helps operators
+                        # diagnose deployment issues (label mismatch,
+                        # binary substitution, PID reuse).
+                        return error_response(
+                            _substrate_result.reason,
+                            recovery={
+                                "reason": _substrate_result.failure_code,
+                                "agent_uuid": _direct_uuid,
+                                "hint": (
+                                    "Substrate-anchored UUIDs require "
+                                    "kernel-attested peer match over UDS. "
+                                    "See docs/proposals/s19-attestation-mechanism.md."
+                                ),
+                            },
+                        )
+        except Exception as _exc:
+            # Defense-in-depth: handler_gate is designed to fail-closed
+            # within itself. This except catches truly unexpected errors
+            # (e.g., import failures) and falls through to the existing
+            # strict-mode behavior. Never default-accepts.
+            logger.warning(
+                "[SUBSTRATE_GATE] unexpected error for %s...: %s",
+                _direct_uuid[:8], _exc, exc_info=True,
+            )
+
     if not _partc_owned:
         from config.governance_config import identity_strict_mode
         _partc_mode = identity_strict_mode()

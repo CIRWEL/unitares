@@ -95,6 +95,23 @@ class SearchKnowledgeGraphParams(AgentIdentityMixin):
         default=False,
         description="If true, includes full details for each discovery"
     )
+    search_mode: Optional[Literal["auto", "fts", "semantic", "hybrid"]] = Field(
+        default="auto",
+        description=(
+            "Force a specific retrieval mode. 'auto' picks the best available "
+            "(hybrid > semantic > fts > substring). 'semantic' and 'hybrid' "
+            "fail honestly when the backend has no semantic_search — the "
+            "router does not silently fall back to FTS."
+        ),
+    )
+    operator: Optional[Literal["AND", "OR"]] = Field(
+        default=None,
+        description=(
+            "Boolean operator for multi-term FTS queries. Default (None) is "
+            "AND with automatic OR fallback when AND returns zero results. "
+            "Pass 'OR' explicitly for broad recall (skips the AND-first step)."
+        ),
+    )
 
     @model_validator(mode='after')
     def coerce_types(self):
@@ -137,9 +154,35 @@ class GetKnowledgeGraphParams(AgentIdentityMixin):
 
 class ListKnowledgeGraphParams(AgentIdentityMixin):
     """
-    List knowledge graph statistics
+    List knowledge graph statistics (raw status aggregate).
+
+    Numbers may differ from knowledge action=stats (which uses lifecycle
+    buckets) — see #165. The response surfaces a `scope` block declaring
+    the epoch_scope and including_cold settings so the difference is
+    visible rather than hidden behind same-name fields.
     """
-    pass
+    epoch_scope: Optional[Literal["current", "all"]] = Field(
+        default="current",
+        description=(
+            "'current' restricts to the active epoch (default); 'all' "
+            "counts every epoch ever stored. AGE backend ignores this — "
+            "it has no epoch property."
+        ),
+    )
+    including_cold: Union[bool, str, None] = Field(
+        default=False,
+        description=(
+            "Include cold-storage rows in totals and by_status. False "
+            "(default) excludes them so 'active' KG counts aren't "
+            "conflated with the deep-archive tier."
+        ),
+    )
+
+    @model_validator(mode='after')
+    def coerce_types(self):
+        if isinstance(self.including_cold, str):
+            self.including_cold = self.including_cold.lower() in ('true', '1', 'yes')
+        return self
 
 
 class UpdateDiscoveryStatusGraphParams(AgentIdentityMixin):
