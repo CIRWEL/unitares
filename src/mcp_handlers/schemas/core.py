@@ -1,6 +1,32 @@
 from typing import Optional, Union, Literal, Dict, Any, List, Sequence
-from pydantic import Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .mixins import AgentIdentityMixin
+
+
+# Single source of truth for the task_type Literal — used by
+# ProcessAgentUpdateParams and BootstrapStateParams. If the canonical set
+# changes, edit it here.
+TaskType = Literal[
+    "convergent", "divergent", "mixed", "refactoring", "bugfix", "testing",
+    "documentation", "feature", "exploration", "research", "design", "debugging",
+    "review", "deployment", "introspection"
+]
+
+
+class BootstrapStateParams(BaseModel):
+    """Subset of process_agent_update fields accepted as a bootstrap check-in
+    via onboard.initial_state. All fields optional; the server fills defaults
+    when absent. Extras are rejected (model_config below) so this isn't a
+    back-door for setting arbitrary internal state."""
+    model_config = ConfigDict(extra="forbid")
+
+    response_text: Optional[str] = Field(default=None)
+    complexity: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    task_type: Optional[TaskType] = Field(default=None)
+    ethical_drift: Optional[List[float]] = Field(
+        default=None, min_length=3, max_length=3
+    )
 
 
 class GetGovernanceMetricsParams(AgentIdentityMixin):
@@ -119,11 +145,7 @@ class ProcessAgentUpdateParams(AgentIdentityMixin):
         default=False,
         description="If true, reject updates unless identity assurance tier is strong."
     )
-    task_type: Literal[
-        "convergent", "divergent", "mixed", "refactoring", "bugfix", "testing",
-        "documentation", "feature", "exploration", "research", "design", "debugging",
-        "review", "deployment", "introspection"
-    ] = Field(
+    task_type: TaskType = Field(
         default="mixed",
         description="Task type context. Core types: convergent | divergent | mixed. Use 'introspection' for epistemic self-examination where low confidence is appropriate."
     )
