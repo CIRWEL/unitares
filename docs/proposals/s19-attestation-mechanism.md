@@ -147,7 +147,7 @@ Non-substrate-anchored UUIDs continue through PATH 2.8 unchanged (S1-a TTL appli
 
 ## Sequencing (v2)
 
-1. **Schema + enrollment CLI.** Migration creating `core.substrate_claims`. `scripts/ops/enroll-resident.sh` with the loud-warning behavior on user-writable binary paths.
+1. **Schema + enrollment CLI.** Migration creating `core.substrate_claims`. `scripts/ops/enroll_resident.py` (renamed from `.sh` during PR1 implementation) with the loud-warning behavior on user-writable binary paths.
 2. **`peer_attestation.py` module + macOS backend** with fixture-tested parsers. Includes start-time read.
 3. **UDS listener + `SessionSignals.peer_pid` extension + verification at connection-accept** (steps 1-7 above). All verification calls via `run_in_executor`. In-process `verified_pairs` cache for PID-reuse mitigation.
 4. **PATH 2.8 substrate-anchored gate** in `resolution.py:679` returning explicit-rejection with UDS path hint.

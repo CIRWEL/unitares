@@ -331,7 +331,7 @@ R1 (behavioral-continuity verification, per `plan.md`) is independent. Path (d) 
 If this spec reads as roughly-right: run the two-session sequence.
 
 - **Session 1**: Execute §2.5 fit protocol. Produce `data/v7-fhat/params.json` committed to git. Artifact: the frozen parameter file + a short report on fit convergence and stability.
-- **Session 2**: Execute §6 horse race. Produce AUC comparison table per §6.3, decision against §6.4 rule. Artifact: `docs/ontology/v7-fhat-spike-results.md` with the table + decision + interpretation of scope-limited wins if any.
+- **Session 2**: Execute §6 horse race. Produce AUC comparison table per §6.3, decision against §6.4 rule. Artifact: `<not-produced>/docs/ontology/v7-fhat-spike-results.md` (planned per this doc; never produced as a separate file — Session 1b results landed inline in §2.6 and the S12 row of `plan.md`, where SC2 tripped and FEP was redirected per spec §5.1(b)).
 
 If the spec needs re-scoping first: redirect on the §7 open questions before Session 1. Particularly the latent-dimensionality choice — that determines the state-space of everything downstream.
 

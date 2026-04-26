@@ -99,7 +99,7 @@ v2.1 protects the action meter explicitly:
 
 1. **Read access in dashboards is per-agent only at first.** Phase 4 dashboard panes show one agent's action history at a time. NO cross-agent action ranking ships in any phase covered by this proposal.
 2. **Cross-agent action analysis requires its own proposal.** Any PR that introduces a query joining action counts across agents (whether via Chronicler roll-ups, dashboard tables, or governance code) MUST cite a passing council review of a separate proposal. Enforcement: a `// CHECKLIST: cross-agent-action-analysis` PR template item that reviewers must check.
-3. **Action types are tightly scoped.** The allowlist (`src/services/meter/actions.py:ACTION_TYPES`) starts with the minimum vocabulary and grows by PR. Each addition requires justifying which substrate emits it and what calibration it supports.
+3. **Action types are tightly scoped.** The allowlist (`<proposed>/src/services/meter/actions.py:ACTION_TYPES`) starts with the minimum vocabulary and grows by PR. Each addition requires justifying which substrate emits it and what calibration it supports.
 4. **Calibration view (Phase 4) operates on ratios, not raw counts.** `tokens_per_kg_write` is dashboard-allowed (within-substrate ratio). `kg_writes_per_day` ranked across agents is not, even though the data trivially supports it.
 
 These are policy controls, not code controls. They are weaker than schema controls. That is acknowledged. The structural protection comes from the fact that adding a cross-agent ranking query is a deliberate act with a checklist trip, not a one-line dashboard tweak.
@@ -253,7 +253,7 @@ A new background task `periodic_meter_partition_maintenance` is registered in `s
 
 ### Pydantic schema
 
-`src/mcp_handlers/schemas/meter.py`:
+`<proposed>/src/mcp_handlers/schemas/meter.py`:
 
 ```python
 from pydantic import BaseModel, Field

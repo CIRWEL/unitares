@@ -64,8 +64,8 @@
 - `agents/watcher/agent.py` — Watcher mirrors the SDK pattern
 
 **Plugin repo (unitares-governance-plugin):**
-- `scripts/onboard_helper.py` — plugin's onboard wrapper (same behavior as unitares-side `scripts/client/onboard_helper.py`)
-- `scripts/checkin.py` — passes `continuity_token` on every check-in (`tests/test_checkin_helper.py:31-223`)
+- `unitares-governance-plugin/scripts/onboard_helper.py` — plugin's onboard wrapper (same behavior as unitares-side `scripts/client/onboard_helper.py`)
+- `unitares-governance-plugin/scripts/checkin.py` — passes `continuity_token` on every check-in (`tests/test_checkin_helper.py:31-223`)
 - `tests/test_post_identity_hook.py:94-97, 208` — **enforces v2 cache schema has empty `continuity_token`** (S11 landing)
 - `tests/test_auto_checkin_decision.py:155-169` — `test_prefers_continuity_token_but_falls_back_to_session_id` pins the fallback hierarchy
 - `tests/test_session_cache_perms.py:31, 55, 60` — cache secret-writeback perms test
@@ -205,7 +205,7 @@ Grace-period deprecation warning (§4.3) helps the *discoverable* long tail — 
 
 **Known consumers (all operator-controlled):**
 
-1. **Codex plugin (`unitares-governance-plugin`).** S11 migrated the cache-write path. Option-A landing updates `scripts/onboard_helper.py:181-184` + test expectations. In-process token-pass (`tests/test_checkin_helper.py:31-223`) stays valid — that's role (3).
+1. **Codex plugin (`unitares-governance-plugin`).** S11 migrated the cache-write path. Option-A landing updates `unitares-governance-plugin/scripts/onboard_helper.py:181-184` + test expectations. In-process token-pass (`tests/test_checkin_helper.py:31-223`) stays valid — that's role (3).
 2. **CLI `scripts/unitares`.** Update startup path; keep per-call token-pass.
 3. **SDK `GovernanceAgent` + Watcher.** Already loading saved token for PATH 0. Short TTL means residents get forced into a re-onboard if they go TTL-without-call. Cadences: Vigil 30min, Sentinel continuous, Chronicler daily, Watcher event-driven, Steward 5min sync. Chronicler needs re-onboard on wake under 1h TTL (see §7 breakage note).
 

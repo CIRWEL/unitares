@@ -44,7 +44,7 @@ These values bake one operator's environment into code that ships to others. Eac
 Applying the fix as written (`${ANIMA_HEALTH_URL:-}`, skip if unset) silently stops Kenny's running anima/Lumen monitoring because `com.unitares.health-watchdog.plist` does not currently set `ANIMA_HEALTH_URL` — it relied on the hardcoded default. Three paths forward:
 
 1. Operator first adds `ANIMA_HEALTH_URL` env var to the live plist, then the script default is removed in a follow-up PR.
-2. Ship a gitignored `scripts/ops/operator.env.local` that the script sources if present; operator maintains their Pi IP there.
+2. Ship a gitignored `<workspace>/scripts/ops/operator.env.local` (proposed; not yet created) that the script sources if present; operator maintains their Pi IP there.
 3. Keep the current hardcoded default AND add an `ANIMA_HEALTH_URL` override, with an explicit comment that stranger installs can ignore the (unreachable) default — it just logs a timeout.
 
 Option 2 is cleanest for cross-machine portability. Not applied in this PR because it requires an operator-side change (creating the `.local` file) that coincides with the script change.

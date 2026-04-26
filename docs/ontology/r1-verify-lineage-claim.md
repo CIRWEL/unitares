@@ -80,7 +80,7 @@ These four each look like 1-2 weeks of storage/fit work. None of them are blocke
 
 ## New helper: `reconstruct_eisv_series`
 
-`src/identity/lineage_continuity.py` (new file) exposes:
+`src/mcp_handlers/identity/lineage_verification.py` (proposed module name at draft time was `<draft>/src/identity/lineage_continuity.py`; landed at the current path during implementation) exposes:
 
 ```python
 def reconstruct_eisv_series(
@@ -144,7 +144,7 @@ Near-term call-sites and their postures:
 
 ## Implementation sketch
 
-- **Location:** `src/identity/lineage_continuity.py` (new). Consumers import `score_trajectory_continuity` directly.
+- **Location:** `<draft>/src/identity/lineage_continuity.py` (new — landed at `src/mcp_handlers/identity/lineage_verification.py` during implementation; this section captures the design intent at draft time). Consumers import `score_trajectory_continuity` directly.
 - **DB pattern:** sync DB read inside `run_in_executor`. The project's `src/agent_loop_detection.py:374` template uses in-memory state and does *not* generalize to DB reads. The correct template already exists at `tests/test_db_utils.py:36-38` — it runs an asyncpg connection on a fresh event loop inside the executor thread via `asyncio.run(...)`. This adds no new dependency (project already has `asyncpg>=0.29.0`; `psycopg2` is not in `pyproject.toml`). Env var is `DB_POSTGRES_URL` (see `src/db/postgres_backend.py:72`), not `DATABASE_URL`. An implementation may promote the `test_db_utils` pattern into a reusable helper, but no new driver is required.
 - **Exposure:** internal policy consumers only. No MCP tool wrapper in v3.
 - **Observability:** emits a KG discovery of type `trajectory_continuity_score` with `plausibility`, `verdict`, `components` (per-dimension), and `observations`. Provides audit trail.

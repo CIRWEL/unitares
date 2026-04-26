@@ -132,7 +132,7 @@ CREATE INDEX idx_meter_compute_session
 ```
 
 Notes:
-- Money values are NOT stored. `cost_usd` is derived at query time from a versioned rates file (`config/compute_rates.toml`), keyed on (substrate, model_id, ts) with a `rate_version` column. This avoids the v1 type-inconsistency issue (no `numeric` columns elsewhere — see code-review §3) and keeps cost calculation honest about rate drift.
+- Money values are NOT stored. `cost_usd` is derived at query time from a versioned rates file (`<proposed>/config/compute_rates.toml`), keyed on (substrate, model_id, ts) with a `rate_version` column. This avoids the v1 type-inconsistency issue (no `numeric` columns elsewhere — see code-review §3) and keeps cost calculation honest about rate drift.
 - Soft join to `audit.outcome_events`: `JOIN audit.outcome_events e ON e.outcome_id = m.outcome_id AND e.ts = m.outcome_ts`. No FK; partitioned-table FK is impossible per code-review §1. Application-level consistency: the handler inserts the emission with the same `(outcome_id, outcome_ts)` returned by `record_outcome_event`, within the same request boundary, with `try/except` around the meter insert so a meter failure never blocks the outcome write.
 - Substrate is an `enum` enforced by `CHECK (substrate IN ('llm_api', 'local_llm', 'python', 'embodied', 'mixed'))`.
 
@@ -215,7 +215,7 @@ Phase 0 is the dispatch repo, not unitares. It can ship first and stand alone �
 
 1. **Watt-hour estimates are estimates.** No power meter on the Pi or laptops. Lumen's watt-hours are computed as `wall_time_seconds * estimated_watts_for_pi_state`. We carry the estimate explicitly and label it `source: 'estimated'`. Low-precision is acceptable for trend detection; do not present it as ground truth.
 
-2. **Cross-substrate dashboard discipline.** The doctrine "never combine units" is easy to state and easy to violate by a future dashboard PR ("just for the Sankey"). Mitigation: a CSS-level convention that each substrate gets its own card, plus a dashboard linter rule (`scripts/dev/check-dashboard-units.py`) that fails CI if a single chart datapoint sums values across substrate types. Best-effort only — UI conventions can rot.
+2. **Cross-substrate dashboard discipline.** The doctrine "never combine units" is easy to state and easy to violate by a future dashboard PR ("just for the Sankey"). Mitigation: a CSS-level convention that each substrate gets its own card, plus a dashboard linter rule (`<proposed>/scripts/dev/check-dashboard-units.py`) that fails CI if a single chart datapoint sums values across substrate types. Best-effort only — UI conventions can rot.
 
 3. **Watcher's local-LLM tokens.** Ollama returns usage, but cache semantics differ from API Claude. The schema's `cache_read_tokens` / `cache_creation_tokens` fields will be NULL for local-LLM emissions. Acceptable.
 

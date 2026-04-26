@@ -54,7 +54,7 @@ Note: workspace = caller's CWD by default. For a session launched from `$HOME`, 
 ### 1c. Who reads what
 
 - Plugin `hooks/session-start:109-140` reads `session_id` from Claude Code's SessionStart hook stdin payload, sanitizes it via the same `_slot_suffix` rules as `session_cache.py`, and points `WORKSPACE_CACHE` at `${PWD}/.unitares/session-<safe-claude-session-id>.json`. **Slot-scoped reader, not flat.** PR #19 (commit `87affc9`) explicitly removed flat-file reads after KG bug `2026-04-20T00:09:51` (cross-instance UUID menu inviting fresh agents to pattern-match and resume into other instances' identities). The hook block contains a permanent comment forbidding the flat read pattern.
-- Plugin `scripts/onboard_helper.py` (separate from unitares-side, same name) — slot-scoped writer.
+- Plugin `unitares-governance-plugin/scripts/onboard_helper.py` (separate from unitares-side, same name) — slot-scoped writer.
 - The `governance-start` command (Codex-side surface, also surfaced to Claude via Skill — see channel-bleed memory note) writes back via `session_cache.py set session --merge --stamp` *without* `--slot`, **producing the flat `session.json` the hook deliberately ignores**. The hook fix doesn't propagate because the helper still allows slotless writes; the command exploits that allowance. **This is the live S11 regression surfaced as S11-a, and the load-bearing argument for §3a helper enforcement.**
 
 The contract is "callers pass slot"; the siphon vector is "callers don't or are replaced." There is no read-side or write-side enforcement. The plugin helper has a `_slot_suffix` mechanism that callers may use; it does not require them to.
