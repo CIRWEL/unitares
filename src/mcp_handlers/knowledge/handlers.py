@@ -14,7 +14,19 @@ Claude Desktop compatible: All operations are async and non-blocking.
 
 from typing import Dict, Any, Sequence, Optional
 from mcp.types import TextContent
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utc_now_iso() -> str:
+    """Return current UTC time as an offset-aware ISO 8601 string.
+
+    Bug fix 2026-04-25: write-path timestamps were generated with
+    naive ``datetime.now()`` (server local TZ), causing ``id`` to drift
+    from ``created_at`` (UTC, via PG TIMESTAMPTZ) by the server's offset
+    and breaking lex-sort across multi-tz fleets. All KG write-path
+    timestamps must be UTC-aware.
+    """
+    return datetime.now(timezone.utc).isoformat()
 import time
 from ..utils import success_response, error_response, require_argument, require_agent_id, require_registered_agent
 from ..decorators import mcp_tool
@@ -115,9 +127,13 @@ def _compute_staleness_warning(discovery, current_server_version: str) -> Option
     warning_parts = []
 
     # Age-based check: >60 days old
+    # Compare in UTC. Legacy rows may have naive timestamps (treat as UTC);
+    # post-2026-04-25 rows are UTC-aware.
     try:
         created = datetime.fromisoformat(discovery.timestamp) if isinstance(discovery.timestamp, str) else discovery.timestamp
-        age_days = (datetime.now() - created).days
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - created).days
         if age_days > 60:
             warning_parts.append(f"This entry is {age_days} days old and still open.")
     except (ValueError, TypeError):
@@ -432,7 +448,7 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
             raw_details = raw_details[:MAX_DETAILS_LEN] + "... [truncated]"
         
         # Create discovery node
-        discovery_id = datetime.now().isoformat()
+        discovery_id = _utc_now_iso()
         
         # Parse response_to if provided (typed response to parent discovery)
         response_to = None
@@ -499,8 +515,30 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
                         "total_updates": meta.total_updates,
                         **monitor_state
                     },
-                    "captured_at": datetime.now().isoformat(),
+                    "captured_at": _utc_now_iso(),
                 }
+
+                # Bug A fix 2026-04-25: pin writer attribution at write time.
+                # `agent_id` (UUID) is stable across resumed sessions; the
+                # display_name and active session_id are not. Without this,
+                # search/get rebuilds `by:` from current metadata and erases
+                # which session/label actually authored each row.
+                writer_label = (
+                    getattr(meta, "display_name", None)
+                    or getattr(meta, "label", None)
+                    or getattr(meta, "structured_id", None)
+                    or agent_id
+                )
+                provenance["writer_label_at_write"] = writer_label
+                writer_session = arguments.get("client_session_id")
+                if not writer_session:
+                    try:
+                        from ..context import get_context_client_session_id
+                        writer_session = get_context_client_session_id()
+                    except Exception:
+                        writer_session = None
+                if writer_session:
+                    provenance["writer_session_id_at_write"] = writer_session
 
                 # CAPTURE PROVENANCE CHAIN: Full lineage context
                 try:
@@ -539,7 +577,7 @@ async def handle_store_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Te
 
         # Ensure system_version is always in provenance, even if agent metadata was unavailable
         if provenance is None:
-            provenance = {"system_version": system_version, "captured_at": datetime.now().isoformat()}
+            provenance = {"system_version": system_version, "captured_at": _utc_now_iso()}
         elif "system_version" not in provenance:
             provenance["system_version"] = system_version
         # Tag write origin so list/stats can split caller-intentional writes
@@ -1165,14 +1203,26 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
         current_server_version = getattr(mcp_server, "SERVER_VERSION", "unknown")
         discovery_list = []
         for d in results:
-            agent_display = _resolve_agent_display(d.agent_id)
-            display_name = agent_display.get("display_name", d.agent_id)
+            # Bug A fix 2026-04-25: prefer write-time writer label from
+            # provenance over live resolve. Multiple sessions may resume
+            # the same agent UUID; live resolve would rewrite past `by:`
+            # values to the current session's display_name.
+            prov = d.provenance if isinstance(d.provenance, dict) else None
+            display_name = (prov or {}).get("writer_label_at_write")
+            if not display_name:
+                agent_display = _resolve_agent_display(d.agent_id)
+                display_name = agent_display.get("display_name", d.agent_id)
 
             # Build dict with display_name first for prominence
             d_dict = {
                 "by": display_name,  # WHO - first for attribution
                 "summary": d.summary,  # WHAT - second for context
             }
+
+            # Surface write-time session id when present (audit trail)
+            session_at_write = (prov or {}).get("writer_session_id_at_write")
+            if session_at_write:
+                d_dict["session_id_at_write"] = session_at_write
 
             # Add remaining fields from discovery
             full_dict = d.to_dict(include_details=include_details)
@@ -1190,8 +1240,8 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             d_dict["_agent_id"] = d.agent_id
 
             # Surface system_version from provenance (Task 1: KG version coupling)
-            if d.provenance and isinstance(d.provenance, dict):
-                d_dict["system_version"] = d.provenance.get("system_version")
+            if prov:
+                d_dict["system_version"] = prov.get("system_version")
             else:
                 d_dict["system_version"] = None  # Pre-v2.8.0 discovery
 
@@ -1370,7 +1420,7 @@ async def handle_search_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[T
             async def _touch_referenced(ids):
                 try:
                     g = await get_knowledge_graph()
-                    now_iso = datetime.now().isoformat()
+                    now_iso = _utc_now_iso()
                     for did in ids:
                         await g.update_discovery(did, {"last_referenced": now_iso})
                 except Exception:
@@ -1404,13 +1454,18 @@ async def handle_get_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Text
 
         # UX FIX (Dec 2025): Display name FIRST for human readability
         agent_display = arguments.get("_agent_display") or _resolve_agent_display(agent_id)
-        display_name = agent_display.get("display_name", agent_id)
+        live_display_name = agent_display.get("display_name", agent_id)
         discovery_list = []
         for d in discoveries:
             full_dict = d.to_dict(include_details=include_details)
+            # Bug A fix 2026-04-25: prefer write-time label over live resolve.
+            # The same UUID may have been written under multiple display_names
+            # across resumed sessions; live resolve would erase that history.
+            prov = d.provenance if isinstance(d.provenance, dict) else None
+            row_display_name = (prov or {}).get("writer_label_at_write") or live_display_name
             # Build dict with display_name first for prominence
             d_dict = {
-                "by": display_name,  # WHO - first for attribution
+                "by": row_display_name,  # WHO - first for attribution
                 "summary": d.summary,  # WHAT - second for context
                 "id": full_dict.get("id"),
                 "type": full_dict.get("type"),
@@ -1418,6 +1473,9 @@ async def handle_get_knowledge_graph(arguments: Dict[str, Any]) -> Sequence[Text
                 "tags": full_dict.get("tags", []),
                 "created_at": full_dict.get("created_at"),
             }
+            session_at_write = (prov or {}).get("writer_session_id_at_write")
+            if session_at_write:
+                d_dict["session_id_at_write"] = session_at_write
             if include_details and full_dict.get("details"):
                 d_dict["details"] = full_dict.get("details")
             d_dict["_agent_id"] = d.agent_id
@@ -1583,7 +1641,7 @@ async def handle_update_discovery_status_graph(arguments: Dict[str, Any]) -> Seq
                     }
                 )]
         
-        updates = {"updated_at": datetime.now().isoformat()}
+        updates = {"updated_at": _utc_now_iso()}
 
         if status is not None:
             VALID_STATUSES = {"open", "resolved", "archived", "disputed", "closed", "wont_fix", "superseded"}
@@ -1592,7 +1650,7 @@ async def handle_update_discovery_status_graph(arguments: Dict[str, Any]) -> Seq
                 return [error_response(f"Invalid status '{status}'. Valid: {sorted(VALID_STATUSES)}")]
             updates["status"] = status
             if status == "resolved":
-                updates["resolved_at"] = datetime.now().isoformat()
+                updates["resolved_at"] = _utc_now_iso()
 
         if summary is not None:
             updates["summary"] = str(summary)
@@ -1732,7 +1790,7 @@ async def handle_get_discovery_details(arguments: Dict[str, Any]) -> Sequence[Te
 
         async def _touch(did):
             try:
-                await graph.update_discovery(did, {"last_referenced": datetime.now().isoformat()})
+                await graph.update_discovery(did, {"last_referenced": _utc_now_iso()})
             except Exception:
                 pass
 
@@ -1819,7 +1877,7 @@ async def _handle_store_knowledge_graph_batch(arguments: Dict[str, Any], agent_i
                     details = details[:MAX_DETAILS_LEN] + "... [truncated]"
                 
                 # Create discovery node
-                discovery_id = datetime.now().isoformat()
+                discovery_id = _utc_now_iso()
                 
                 # Parse response_to if provided
                 response_to = None
@@ -2000,7 +2058,7 @@ async def handle_answer_question(arguments: Dict[str, Any]) -> Sequence[TextCont
         # Create answer linked to the question
         from src.knowledge_graph import tag_provenance_source as _tag_src
         answer = DiscoveryNode(
-            id=datetime.now().isoformat(),
+            id=_utc_now_iso(),
             agent_id=agent_id,
             type="answer",
             summary=f"Answer: {answer_text[:200]}..." if len(answer_text) > 200 else f"Answer: {answer_text}",
@@ -2024,7 +2082,7 @@ async def handle_answer_question(arguments: Dict[str, Any]) -> Sequence[TextCont
         if arguments.get("resolve_question", False):
             await graph.update_discovery(matched_question.id, {
                 "status": "resolved",
-                "resolved_at": datetime.now().isoformat()
+                "resolved_at": _utc_now_iso()
             })
 
         return success_response({
@@ -2137,7 +2195,7 @@ async def handle_leave_note(arguments: Dict[str, Any]) -> Sequence[TextContent]:
         # Create note with minimal ceremony
         from src.knowledge_graph import tag_provenance_source as _tag_src
         note = DiscoveryNode(
-            id=datetime.now().isoformat(),
+            id=_utc_now_iso(),
             agent_id=agent_id,
             type="note",
             summary=note_summary,
@@ -2330,7 +2388,7 @@ async def store_discovery_internal(
     from src.knowledge_graph import tag_provenance_source
 
     graph = await get_knowledge_graph()
-    discovery_id = datetime.now().isoformat()
+    discovery_id = _utc_now_iso()
     provenance = tag_provenance_source(extra_provenance, source)
     node = DiscoveryNode(
         id=discovery_id,

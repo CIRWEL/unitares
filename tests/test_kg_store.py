@@ -1044,3 +1044,139 @@ class TestLeaveNoteTagPassthrough:
 # Archived filtering in search
 # ============================================================================
 
+
+# ============================================================================
+# Provenance bugs (2026-04-25 dogfood)
+#   Bug A: writer display_name resolved at read time overwrites historical label
+#   Bug B: discovery id generated in local TZ while created_at is UTC
+# ============================================================================
+
+class TestProvenanceWriterLabel:
+    """Bug A: capture writer label + session_id at write time."""
+
+    @pytest.mark.asyncio
+    async def test_store_captures_writer_label_at_write(
+        self, patch_common, registered_agent
+    ):
+        """Discovery provenance records the writer's display_name at write time."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+
+        result = await handle_store_knowledge_graph({
+            "agent_id": registered_agent,
+            "summary": "Provenance test write",
+            "discovery_type": "note",
+            "client_session_id": "agent-test-session-001",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        discovery = mock_graph.add_discovery.call_args[0][0]
+        assert discovery.provenance is not None
+        assert discovery.provenance.get("writer_label_at_write") == "TestAgent"
+        assert discovery.provenance.get("writer_session_id_at_write") == "agent-test-session-001"
+
+    @pytest.mark.asyncio
+    async def test_search_prefers_writer_label_at_write_over_live(
+        self, patch_common, registered_agent
+    ):
+        """Search returns the writer label from provenance, not the current display_name.
+
+        Resuming the same agent UUID under a different display_name must not
+        rewrite history — the `by` field on past discoveries should reflect
+        who wrote them.
+        """
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        # Agent's CURRENT display_name has changed since the historical write
+        mock_mcp_server.agent_metadata[registered_agent].display_name = "RenamedAgent"
+
+        # Historical row: provenance pinned to original writer
+        historical = make_discovery(
+            id="2026-04-25T06:00:00.000000+00:00",
+            agent_id=registered_agent,
+            provenance={
+                "system_version": "2.12.0",
+                "writer_label_at_write": "OriginalSession",
+                "writer_session_id_at_write": "agent-original-001",
+                "captured_at": "2026-04-25T06:00:00.000000+00:00",
+            },
+        )
+        mock_graph.full_text_search = AsyncMock(return_value=[historical])
+
+        result = await handle_search_knowledge_graph({
+            "agent_id": registered_agent,
+            "query": "anything",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert len(data["discoveries"]) == 1
+        assert data["discoveries"][0]["by"] == "OriginalSession"
+        assert data["discoveries"][0].get("session_id_at_write") == "agent-original-001"
+
+    @pytest.mark.asyncio
+    async def test_search_falls_back_to_live_for_legacy_rows(
+        self, patch_common, registered_agent
+    ):
+        """Legacy rows without writer_label_at_write fall back to live resolution."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_search_knowledge_graph
+
+        legacy = make_discovery(
+            id="2025-12-01T12:00:00",
+            agent_id=registered_agent,
+            provenance={"system_version": "2.10.0"},  # no writer_label_at_write
+        )
+        mock_graph.full_text_search = AsyncMock(return_value=[legacy])
+
+        result = await handle_search_knowledge_graph({
+            "agent_id": registered_agent,
+            "query": "anything",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        assert data["discoveries"][0]["by"] == "TestAgent"  # live-resolved fallback
+
+
+class TestUtcTimestamps:
+    """Bug B: write-path timestamps must be UTC, not local TZ."""
+
+    @pytest.mark.asyncio
+    async def test_store_emits_utc_timestamps(
+        self, patch_common, registered_agent
+    ):
+        """Discovery id, timestamp, and provenance.captured_at are all UTC-aware."""
+        mock_mcp_server, mock_graph = patch_common
+        from src.mcp_handlers.knowledge.handlers import handle_store_knowledge_graph
+        from datetime import datetime
+
+        result = await handle_store_knowledge_graph({
+            "agent_id": registered_agent,
+            "summary": "UTC timestamp test",
+            "discovery_type": "note",
+        })
+
+        data = parse_result(result)
+        assert data["success"] is True
+        discovery = mock_graph.add_discovery.call_args[0][0]
+
+        # All three timestamps must parse as UTC-aware (offset present)
+        for label, value in (
+            ("id", discovery.id),
+            ("timestamp", discovery.timestamp),
+            ("captured_at", discovery.provenance.get("captured_at")),
+        ):
+            assert value, f"{label} is empty"
+            parsed = datetime.fromisoformat(value)
+            assert parsed.tzinfo is not None, f"{label} is TZ-naive: {value}"
+            assert parsed.utcoffset().total_seconds() == 0, (
+                f"{label} is not UTC: {value}"
+            )
+
+        # id and captured_at represent the same instant (within a few ms)
+        id_dt = datetime.fromisoformat(discovery.id)
+        captured_dt = datetime.fromisoformat(discovery.provenance["captured_at"])
+        assert abs((id_dt - captured_dt).total_seconds()) < 1.0
