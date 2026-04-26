@@ -131,6 +131,77 @@ class StateMixin:
                 )
             )
 
+    async def list_bootstrap_only_agents(
+        self,
+        min_age_hours: int = 24,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """Agents with a bootstrap row but no measured check-in past the age window.
+
+        This is the validation surface for onboard-bootstrap-checkin §6 —
+        the population the proposal exists to count. The default 24-hour
+        window filters out agents that just onboarded and may genuinely be
+        about to check in; a positive count past 24h means the agent
+        bootstrapped and went silent.
+
+        Returns most-recent bootstraps first. Row shape:
+          {agent_id, identity_id, bootstrap_state_id, bootstrap_recorded_at,
+           bootstrap_age_hours, display_name}
+        """
+        async with self.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT i.agent_id,
+                       i.identity_id,
+                       b.state_id AS bootstrap_state_id,
+                       b.recorded_at AS bootstrap_recorded_at,
+                       EXTRACT(EPOCH FROM (now() - b.recorded_at)) / 3600.0
+                           AS bootstrap_age_hours,
+                       (i.metadata->>'display_name') AS display_name
+                FROM core.identities i
+                JOIN core.agent_state b
+                  ON b.identity_id = i.identity_id
+                  AND b.synthetic = true
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM core.agent_state m
+                    WHERE m.identity_id = i.identity_id
+                      AND m.synthetic = false
+                )
+                  AND b.recorded_at <= now() - ($1 * interval '1 hour')
+                ORDER BY b.recorded_at DESC
+                LIMIT $2
+                """,
+                min_age_hours, limit,
+            )
+            return [dict(r) for r in rows]
+
+    async def count_bootstrap_only_agents(
+        self,
+        min_age_hours: int = 24,
+    ) -> int:
+        """Count of agents bootstrapped past the age window with no measured
+        check-in. Cheap query for dashboard count badges."""
+        async with self.acquire() as conn:
+            return int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM core.identities i
+                    JOIN core.agent_state b
+                      ON b.identity_id = i.identity_id
+                      AND b.synthetic = true
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM core.agent_state m
+                        WHERE m.identity_id = i.identity_id
+                          AND m.synthetic = false
+                    )
+                      AND b.recorded_at <= now() - ($1 * interval '1 hour')
+                    """,
+                    min_age_hours,
+                )
+                or 0
+            )
+
     async def get_latest_agent_state(
         self,
         identity_id: int,
