@@ -80,3 +80,103 @@ class TestP005DropDoesNotLeakToOtherPatterns:
         # before reaching our new P005 branch.
         snippet = {1: "async with db.acquire() as conn:"}
         assert _verify_finding_against_source(_make(1, pattern="P001"), "", snippet) is False
+
+
+class TestP005PreInitTryFinally:
+    """`<var> = None; try: <var> = await X.connect(...)` must drop — manual
+    release via finally with None-check is the canonical safe shape when the
+    resource type has no async context-manager protocol (e.g. asyncpg)."""
+
+    def test_basic_conn_none_then_try_acquire_dropped(self):
+        # Mirrors the chronicler scrapers.py shape that refired P005 after the
+        # 2026-04-25 fix moved acquire inside try.
+        snippet = {
+            40: "async def _run() -> float:",
+            41: "conn = None",
+            42: "try:",
+            43: "conn = await asyncpg.connect(dsn)",
+        }
+        assert _verify_finding_against_source(_make(43), "", snippet) is False
+
+    def test_pool_acquire_dropped(self):
+        snippet = {
+            10: "async def use_pool():",
+            11: "client = None",
+            12: "try:",
+            13: "client = await pool.acquire()",
+        }
+        assert _verify_finding_against_source(_make(13), "", snippet) is False
+
+    def test_cursor_dropped(self):
+        snippet = {
+            10: "async def use_cursor(conn):",
+            11: "cur = None",
+            12: "try:",
+            13: "cur = await conn.cursor()",
+        }
+        assert _verify_finding_against_source(_make(13), "", snippet) is False
+
+    def test_no_try_between_init_and_acquire_kept(self):
+        # `<var> = None` then bare acquire (no try:) is NOT the safe pattern.
+        snippet = {
+            10: "async def f():",
+            11: "conn = None",
+            12: "conn = await db.acquire()",
+        }
+        assert _verify_finding_against_source(_make(12), "", snippet) is True
+
+    def test_no_none_init_kept(self):
+        # try: <var> = await ... without a preceding None-init is unsafe — if
+        # the acquire raises, the var is unbound and `finally: await x.close()`
+        # raises NameError, masking the original exception.
+        snippet = {
+            10: "async def f():",
+            11: "try:",
+            12: "conn = await db.acquire()",
+        }
+        assert _verify_finding_against_source(_make(12), "", snippet) is True
+
+    def test_mismatched_var_name_kept(self):
+        # None-init is for a different variable than the acquired one.
+        snippet = {
+            10: "async def f():",
+            11: "other = None",
+            12: "try:",
+            13: "conn = await db.acquire()",
+        }
+        assert _verify_finding_against_source(_make(13), "", snippet) is True
+
+    def test_function_boundary_stops_walk(self):
+        # `<var> = None` lives in a different function — must not match.
+        snippet = {
+            5:  "async def other():",
+            6:  "conn = None",
+            7:  "    pass",
+            10: "async def f():",
+            11: "try:",
+            12: "conn = await db.acquire()",
+        }
+        assert _verify_finding_against_source(_make(12), "", snippet) is True
+
+    def test_blank_lines_and_comments_ignored_in_walk(self):
+        snippet = {
+            10: "async def f():",
+            11: "conn = None",
+            12: "",
+            13: "# acquire and use",
+            14: "try:",
+            15: "conn = await db.acquire()",
+        }
+        assert _verify_finding_against_source(_make(15), "", snippet) is False
+
+    def test_acquire_outside_try_with_pre_init_kept(self):
+        # `<var> = None` then bare acquire OUTSIDE any try block is the
+        # original buggy shape — must NOT drop.
+        snippet = {
+            10: "async def f():",
+            11: "conn = None",
+            12: "conn = await db.acquire()",
+            13: "try:",
+            14: "    pass",
+        }
+        assert _verify_finding_against_source(_make(12), "", snippet) is True

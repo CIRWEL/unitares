@@ -1017,6 +1017,65 @@ _P005_CONTEXT_MANAGED = re.compile(
     r"\b(?:async\s+)?with\b[^#]*\.(?:acquire|cursor|connect|lock)\s*\("
 )
 
+# Regex pieces: P005 false positive on the `<var> = None` + try/finally pattern,
+# where the acquire is INSIDE try and a None pre-init guards finally's close.
+# This is the canonical safe pattern when the resource type does not implement
+# the async-context-manager protocol (e.g. asyncpg.Connection has no __aenter__).
+# Cancel-between-acquire-and-try is impossible because the acquire is inside
+# try, and `finally: if <var> is not None: await <var>.close()` is well-defined
+# whether the acquire raised or succeeded. Caught when qwen3-coder-next refired
+# on scrapers.py:43 after the chronicler fix adopted this pattern (KG
+# 2026-04-25T20:07).
+_P005_VAR_AWAIT_ACQUIRE = re.compile(
+    r"^\s*(\w+)\s*=\s*await\s+\S+\.(?:acquire|cursor|connect|lock)\s*\("
+)
+_P005_VAR_NONE_INIT = re.compile(r"^\s*(\w+)\s*=\s*None\s*$")
+_P005_TRY_HEADER = re.compile(r"^\s*try\s*:\s*$")
+
+
+def _is_acquire_inside_try_with_none_init(
+    flagged_line: int,
+    snippet_lines_by_num: dict[int, str],
+    lookback: int = 12,
+) -> bool:
+    """Detect the safe `<var> = None ... try: <var> = await X.connect(...)` shape.
+
+    Walks back from ``flagged_line`` up to ``lookback`` non-blank, non-comment
+    lines. The flagged line must itself be ``<var> = await SOMETHING.acquire(...)``
+    (or .cursor/.connect/.lock — same set the LLM matches). We require:
+      - a ``try:`` line strictly between the None-init and the flagged line
+        (i.e. the acquire is inside try), AND
+      - a ``<var> = None`` line for the SAME variable above that try.
+
+    The matching ``finally:`` block is not separately verified — once the
+    structural shape is present, the operator's intent is clear and the
+    only remaining failure mode (forgot the close) is a different bug class
+    than P005 catches.
+    """
+    src_line = snippet_lines_by_num.get(flagged_line, "")
+    m = _P005_VAR_AWAIT_ACQUIRE.match(src_line)
+    if not m:
+        return False
+    var = m.group(1)
+
+    saw_try = False
+    for line_no in range(flagged_line - 1, flagged_line - lookback - 1, -1):
+        line = snippet_lines_by_num.get(line_no, "")
+        if not line or _looks_like_comment(line):
+            continue
+        # Function boundary stops the walk — pre-init must live in same scope.
+        if _P003_OTHER_DEF.match(line) or _P003_CACHE_FUNC_HEADER.match(line):
+            return False
+        if _P005_TRY_HEADER.match(line):
+            saw_try = True
+            continue
+        none_match = _P005_VAR_NONE_INIT.match(line)
+        if none_match and none_match.group(1) == var:
+            # We require try: to appear BETWEEN None-init and the flagged line,
+            # i.e. we must have already seen it on the way down.
+            return saw_try
+    return False
+
 
 def _is_inside_get_or_create_monitor(
     flagged_line: int, snippet_lines_by_num: dict[int, str]
@@ -1135,6 +1194,20 @@ def _verify_finding_against_source(
         log(
             f"drop P005 {finding.file}:{finding.line} — context-managed acquire "
             f"(async with / with): {src_line.strip()[:80]}",
+            "warning",
+        )
+        return False
+    # P005 specifically: `<var> = None; try: <var> = await X.connect(...)` is
+    # the safe manual-release pattern for resource types without async context
+    # manager support (e.g. asyncpg.Connection). The pre-init guards finally's
+    # None-check and the in-try acquire closes the cancel-between-acquire-and-try
+    # gap, so this is not a leak even though the acquire keyword appears.
+    if finding.pattern == "P005" and _is_acquire_inside_try_with_none_init(
+        finding.line, snippet_lines_by_num
+    ):
+        log(
+            f"drop P005 {finding.file}:{finding.line} — acquire inside try with "
+            f"<var> = None pre-init: {src_line.strip()[:80]}",
             "warning",
         )
         return False
