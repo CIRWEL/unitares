@@ -674,9 +674,19 @@ async def get_health_check_data(arguments: Dict[str, Any], server=None) -> Dict[
     lite = arguments.get("lite", True)
     if lite:
         lite_checks = {}
+        # Keys the lite payload always carries forward when present. Includes
+        # the #165 capability split so operators reading the lite response can
+        # see embedder_available vs semantic_backend_available without having
+        # to opt into lite=false.
+        lite_keys = (
+            "mode", "redis_present", "present", "source_of_truth",
+            "session_binding_backend", "backend",
+            "embedder_available", "semantic_backend_available",
+            "semantic_search_reachable",
+        )
         for name, check in checks.items():
             lite_checks[name] = {"status": check.get("status", "unknown")}
-            for key in ("mode", "redis_present", "present", "source_of_truth", "session_binding_backend"):
+            for key in lite_keys:
                 if key in check:
                     lite_checks[name][key] = check[key]
             if "warning" in check:
