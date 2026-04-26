@@ -112,6 +112,18 @@ async def _cache_session(
     except Exception:
         bind_ip_ua = None
 
+    # Mirror the bind fingerprint into the in-memory parallel dict consumed
+    # by the sync PATH 1 check in shared.py:_check_path1_fingerprint_sync.
+    # Only write on first bind so re-binds (legitimate or not) don't
+    # silently overwrite the original owner's fingerprint.
+    if bind_ip_ua:
+        try:
+            from .shared import _bind_fingerprints
+            if session_key not in _bind_fingerprints:
+                _bind_fingerprints[session_key] = bind_ip_ua
+        except Exception as e:
+            logger.debug(f"_bind_fingerprints update failed: {e}")
+
     session_cache = _get_redis()
     if session_cache:
         try:
