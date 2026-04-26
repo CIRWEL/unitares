@@ -1,10 +1,22 @@
-"""Coherence — spec §3.1 Coherence.
+"""Coherence — spec §3.1 Coherence (CANONICAL runtime form).
+
+This is the form populated into `metrics["coherence"]` by
+`src/mcp_handlers/updates/enrichments.py` and exposed in MCP responses
+(`process_agent_update`, governance metrics, dashboards) since EISV
+grounding Phase 1+2 (PR #26, merged 2026-04-19). The legacy thermodynamic
+`C(V, Θ) = 0.5 · (1 + tanh(Θ.C₁ · V))` is preserved as
+`metrics["coherence_legacy"]` and lives in `governance_core/coherence.py`.
 
 Two grounded forms:
   - manifold:  C = 1 - ||Δ||_2 / ||Δ||_max, Δ = (E,I,S) - (E,I,S)_healthy
   - kl:        C = exp(-D_KL(q_now || q_ref)), requires reference distribution
 
 Manifold form ships as primary (needs only existing EISV). KL stubbed for Phase 2.
+
+Physical interpretation: "how close is this agent's (E, I, S) state to its
+class's healthy operating point?" V is NOT in this formula — for V-driven
+thermodynamic coherence read `coherence_legacy`. See paper v6.8.1 §6.7
+translation table for the paper ↔ runtime ↔ audit vocabulary mapping.
 """
 import math
 from typing import Any, Dict
