@@ -1204,27 +1204,28 @@ async function loadCalibration() {
             const th = result.trajectory_health ?? result.accuracy ?? 0;
             if (samples === 0) {
                 valueEl.textContent = '—';
+                valueEl.style.color = '';
                 detailEl.textContent = 'No samples \u00b7 Fleet-wide';
             } else {
-                var healthPercent = (th * 100).toFixed(0);
-                valueEl.textContent = healthPercent + '%';
-                detailEl.textContent = samples + ' samples \u00b7 Fleet-wide';
-                // Color code: green >= 70%, yellow 40-70%, red < 40%
-                if (th >= 0.7) {
-                    valueEl.style.color = 'var(--color-success, #22c55e)';
-                } else if (th >= 0.4) {
-                    valueEl.style.color = 'var(--color-warning, #eab308)';
-                } else {
-                    valueEl.style.color = 'var(--color-danger, #ef4444)';
-                }
+                var calibrated = result.calibrated === true;
+                valueEl.textContent = calibrated ? 'Yes' : 'No';
+                valueEl.style.color = calibrated
+                    ? 'var(--color-success, #22c55e)'
+                    : 'var(--color-danger, #ef4444)';
+                var trajectoryPct = (th * 100).toFixed(0);
+                detailEl.textContent = samples + ' samples \u00b7 ' + trajectoryPct + '% trajectory';
             }
         } else {
             valueEl.textContent = '-';
+            valueEl.style.color = '';
             detailEl.textContent = '';
         }
     } catch (e) {
         const valueEl = document.getElementById('calibration-value');
-        if (valueEl) valueEl.textContent = '-';
+        if (valueEl) {
+            valueEl.textContent = '-';
+            valueEl.style.color = '';
+        }
     }
 }
 
