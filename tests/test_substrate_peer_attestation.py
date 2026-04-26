@@ -97,6 +97,11 @@ def _mock_launchctl(monkeypatch: pytest.MonkeyPatch, *, returncode: int = 0,
     fake.returncode = returncode
     fake.stdout = stdout
     monkeypatch.setattr(pa.subprocess, "run", lambda *a, **k: fake)
+    # On non-darwin CI, pa._require_supported_platform() raises NotImplementedError
+    # before the subprocess mock can take effect — these tests exercise the
+    # launchctl parser, which is a pure-Python operation worth testing on every
+    # platform. Spoof platform=darwin so the parser is reachable everywhere.
+    monkeypatch.setattr(pa.sys, "platform", "darwin")
 
 
 def test_read_service_label_finds_governance_mcp(
