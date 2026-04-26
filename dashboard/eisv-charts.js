@@ -857,13 +857,17 @@
                     if (typeof ResidentsModule !== 'undefined' && ResidentsModule.onEISVUpdate) {
                         ResidentsModule.onEISVUpdate(data);
                     }
-                } else if (data.type && typeof TimelineModule !== 'undefined'
-                           && TimelineModule.onGovernanceEvent) {
+                } else if (data.type) {
                     // lifecycle_*, identity_*, knowledge_*, circuit_breaker_*
                     // were silently dropped before this branch existed.
-                    TimelineModule.onGovernanceEvent(data);
+                    if (typeof TimelineModule !== 'undefined' && TimelineModule.onGovernanceEvent) {
+                        TimelineModule.onGovernanceEvent(data);
+                    }
                     if (typeof ResidentsModule !== 'undefined' && ResidentsModule.onGovernanceEvent) {
                         ResidentsModule.onGovernanceEvent(data);
+                    }
+                    if (typeof AgentsModule !== 'undefined' && AgentsModule.onGovernanceEvent) {
+                        AgentsModule.onGovernanceEvent(data);
                     }
                 }
             },

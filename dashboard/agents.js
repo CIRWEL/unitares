@@ -935,6 +935,60 @@
     }
 
     // ========================================================================
+    // Live updates from the EISV WebSocket pipeline
+    // ========================================================================
+    //
+    // Until this hook existed, lifecycle transitions only reflected on the
+    // grid at the next 30s `loadAgents()` tick. Now `eisv-charts.js`'s WS
+    // dispatch fans `lifecycle_*` events into here so a paused/archived/
+    // resumed agent reflects within seconds of the broadcast.
+    //
+    // Contract (from src/broadcaster.py:broadcast_event):
+    //   { type: "lifecycle_paused"|"lifecycle_archived"|"lifecycle_resumed",
+    //     agent_id: "<uuid>", timestamp: "...", reason, event }
+    //
+    // For unknown agent_ids we no-op — the next periodic refresh fills in
+    // the full record. We don't fire an extra fetch from a single event.
+
+    var LIFECYCLE_STATUS_FLIPS = {
+        'lifecycle_paused':   'paused',
+        'lifecycle_archived': 'archived',
+        'lifecycle_resumed':  'active'
+    };
+
+    function flashAgentCard(agentId) {
+        if (!agentId || typeof CSS === 'undefined' || !CSS.escape) return;
+        var card = document.querySelector(
+            '.agent-item[data-agent-uuid="' + CSS.escape(agentId) + '"]'
+        );
+        if (!card) return;
+        card.classList.add('just-updated');
+        setTimeout(function () { card.classList.remove('just-updated'); }, 1200);
+    }
+
+    function onGovernanceEvent(data) {
+        if (!data || !data.type || !data.agent_id) return;
+        var newStatus = LIFECYCLE_STATUS_FLIPS[data.type];
+        if (!newStatus) return;
+
+        var cached = state.get('cachedAgents') || [];
+        var hit = null;
+        for (var i = 0; i < cached.length; i++) {
+            if (cached[i].agent_id === data.agent_id) { hit = cached[i]; break; }
+        }
+        if (!hit) return;  // unknown agent — wait for the periodic refresh
+
+        var current = hit.lifecycle_status || hit.status;
+        if (current === newStatus) return;  // already there
+
+        hit.lifecycle_status = newStatus;
+        hit.status = newStatus;  // some renderers read .status directly
+
+        applyAgentFilters();
+        flashAgentCard(data.agent_id);
+    }
+
+    // ========================================================================
     // Public API
     // ========================================================================
 
@@ -953,6 +1007,7 @@
         exportAgents: exportAgents,
         isTestAgent: isTestAgent,
         getProductionAgents: getProductionAgents,
-        isProdOnlyActive: function () { return state.get('prodOnlyActive'); }
+        isProdOnlyActive: function () { return state.get('prodOnlyActive'); },
+        onGovernanceEvent: onGovernanceEvent
     };
 })();
