@@ -44,6 +44,16 @@ class SessionSignals:
     # LOCAL_PEERPID; left None for HTTP/SSE/stdio transports. Read by the
     # substrate-claim verification path in src/substrate/verification.py.
     peer_pid: Optional[int] = None
+    # Operator-tier credential (X-Unitares-Operator header). Application-level
+    # bearer token presented by trusted infrastructure (Discord bridge,
+    # dashboard, ollama bridge) to opt into operator-class privileges in
+    # specific handlers (initially: list_agents UUID disclosure). Compared
+    # against UNITARES_OPERATOR_TOKENS env-var allowlist by
+    # ``is_operator_caller`` in ``src/mcp_handlers/identity/operator.py``.
+    # Distinct from transport fingerprints — see KG 2026-04-20T00:57:45 and
+    # docs/proposals/list-agents-uuid-redaction.code-review.md for why
+    # client_session_id cannot serve this role.
+    unitares_operator_token: Optional[str] = None
 
 # Contextvar for SessionSignals — set once per request at the transport layer
 _session_signals: ContextVar[Optional[SessionSignals]] = ContextVar('session_signals', default=None)

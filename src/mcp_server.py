@@ -874,6 +874,7 @@ async def main():
                         x_agent_id=headers.get("x-agent-id"),
                         transport=_transport_label,
                         peer_pid=_peer_pid,
+                        unitares_operator_token=headers.get("x-unitares-operator"),
                     )
                     signals_token = set_session_signals(signals)
 
