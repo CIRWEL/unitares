@@ -817,6 +817,111 @@ class TestHealthCheck:
             assert data["checks"]["identity_continuity"]["redis_present"] is True
 
     @pytest.mark.asyncio
+    async def test_bounded_scan_count_returns_int_below_cap(self):
+        """Counts under the cap are returned as plain ints."""
+        from src.services.runtime_queries import _bounded_scan_count
+
+        class FakeRedis:
+            async def scan_iter(self, match=None, count=None):
+                for i in range(7):
+                    yield f"{match[:-1]}{i}"
+
+        n = await _bounded_scan_count(FakeRedis(), "session:*", cap=100)
+        assert n == 7
+
+    @pytest.mark.asyncio
+    async def test_bounded_scan_count_caps_and_short_circuits(self):
+        """At-or-above cap → returns f'{cap}+' AND stops iterating (no full keyspace materialization)."""
+        from src.services.runtime_queries import _bounded_scan_count
+
+        yielded = 0
+        cap = 50
+
+        class FakeRedis:
+            async def scan_iter(self, match=None, count=None):
+                nonlocal yielded
+                # Source has way more than `cap` keys; bounded helper must NOT exhaust it.
+                for i in range(cap * 100):
+                    yielded += 1
+                    yield f"k{i}"
+
+        result = await _bounded_scan_count(FakeRedis(), "k*", cap=cap)
+        assert result == f"{cap}+"
+        # Helper should have stopped pulling from the iterator at the cap.
+        # Allow one extra (the iteration that triggered the early return).
+        assert yielded <= cap + 1, f"helper exhausted iterator: yielded={yielded}, cap={cap}"
+
+    @pytest.mark.asyncio
+    async def test_bounded_scan_count_runs_in_parallel_for_health_check(self, mock_mcp_server, patch_context_agent_id):
+        """Health-check redis_cache.keys section uses parallel bounded counts, not sequential materialization.
+
+        Regression for KG 2026-04-11T11:28:05.774339: the old `len([k async for k in scan_iter(...)])`
+        materialization x4 sequentially blew the 15s probe budget once `session:*` and `agent_meta:*`
+        grew past ~10K combined keys. The fix runs four bounded scans in parallel via asyncio.gather.
+        """
+        mock_audit = MagicMock()
+        mock_audit.log_file = MagicMock()
+        mock_audit.log_file.exists.return_value = True
+
+        mock_db = AsyncMock()
+        mock_db.health_check = AsyncMock(return_value={"status": "healthy"})
+        mock_db.init = AsyncMock()
+
+        mock_cal = MagicMock()
+        mock_cal.get_pending_updates.return_value = 0
+
+        session_cache = AsyncMock()
+        session_cache.health_check = AsyncMock(return_value={"status": "healthy", "backend": "redis"})
+        dist_lock = AsyncMock()
+        dist_lock.health_check = AsyncMock(return_value={"status": "healthy", "backend": "redis"})
+
+        # Per-pattern key counts — chosen to exercise both the under-cap and over-cap paths.
+        # `session:*` is set just over the cap (via the test patching cap=10) so the helper must
+        # short-circuit; the others stay below cap and return real counts.
+        per_pattern_keys = {
+            "session:*": 25,        # over cap (10) → "10+"
+            "rate_limit:*": 3,
+            "agent_meta:*": 5,
+            "lock:*": 0,
+        }
+
+        raw_redis = AsyncMock()
+        raw_redis.info = AsyncMock(return_value={"keyspace_hits": 5, "keyspace_misses": 1, "total_commands_processed": 12})
+
+        async def _scan_iter(match=None, count=None):
+            for i in range(per_pattern_keys.get(match, 0)):
+                yield f"{match[:-1]}{i}"
+
+        raw_redis.scan_iter = _scan_iter
+
+        with patch("src.mcp_handlers.admin.handlers.mcp_server", mock_mcp_server), \
+             patch("src.calibration.calibration_checker", mock_cal), \
+             patch("src.telemetry.telemetry_collector", MagicMock()), \
+             patch("src.audit_log.audit_logger", mock_audit), \
+             patch("src.db.get_db", return_value=mock_db), \
+             patch("src.embeddings.embeddings_available", return_value=True), \
+             patch("src.calibration_db.calibration_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.audit_db.audit_health_check_async",
+                   new_callable=AsyncMock,
+                   return_value={"status": "healthy", "backend": "postgres"}), \
+             patch("src.cache.is_redis_available", return_value=True), \
+             patch("src.cache.get_session_cache", return_value=session_cache), \
+             patch("src.cache.get_distributed_lock", return_value=dist_lock), \
+             patch("src.cache.get_redis", new_callable=AsyncMock, return_value=raw_redis), \
+             patch("src.services.runtime_queries._HEALTH_KEYS_CAP", 10):
+
+            from src.services.runtime_queries import get_health_check_data
+            data = await get_health_check_data({"lite": False})
+
+        keys = data["checks"]["redis_cache"]["keys"]
+        assert keys["sessions"] == "10+", f"expected over-cap marker, got {keys['sessions']!r}"
+        assert keys["rate_limits"] == 3
+        assert keys["metadata"] == 5
+        assert keys["locks"] == 0
+
+    @pytest.mark.asyncio
     async def test_health_check_knowledge_graph_lifecycle_warning(self, mock_mcp_server, patch_context_agent_id):
         """KG health should degrade to warning when lifecycle cleanup recently failed."""
         mock_audit = MagicMock()
